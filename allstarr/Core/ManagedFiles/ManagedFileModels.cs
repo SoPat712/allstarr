@@ -10,9 +10,7 @@ public enum ManagedFilePlacementMethod
 public sealed record ManagedFileRoot(
     Guid Id,
     string CanonicalPath,
-    Guid? TenantId,
-    Guid? OwnerUserId,
-    string? LibraryScopeId);
+    Guid? OwnerUserId);
 
 public sealed record ManagedTrackPathValues(
     string Title,
@@ -49,19 +47,17 @@ public sealed record ManagedFileSystemIdentity(string DeviceId, string FileId, u
 
 public static class ManagedFileScopeKey
 {
-    public static string Create(Guid tenantId, Guid? ownerUserId, Guid rootId, string? libraryScopeId)
+    public static string Create(Guid? ownerUserId, Guid rootId)
     {
-        if (tenantId == Guid.Empty || rootId == Guid.Empty)
-            throw new ArgumentException("Managed-file scopes require tenant and root identities.");
-        return $"managed:{tenantId:N}:{ownerUserId?.ToString("N") ?? "shared"}:{rootId:N}:" +
-               (string.IsNullOrWhiteSpace(libraryScopeId) ? "default" : libraryScopeId.Trim());
+        if (rootId == Guid.Empty || ownerUserId == Guid.Empty)
+            throw new ArgumentException("Managed-file scopes require a root identity and a valid owner when supplied.");
+        return $"managed:{ownerUserId?.ToString("N") ?? "shared"}:{rootId:N}";
     }
 }
 
 public sealed record ManagedFileReference(
     Guid Id,
     Guid ManagedFileId,
-    Guid TenantId,
     Guid? OwnerUserId,
     string ScopeKey,
     string ReferenceKey,
@@ -75,9 +71,7 @@ public sealed record ManagedFileRecord(
     string ContentSha256,
     long Length,
     ManagedFilePlacementMethod PlacementMethod,
-    Guid? TenantId,
     Guid? OwnerUserId,
-    string? LibraryScopeId,
     Guid? SourceJobId,
     string ScopeKey,
     int ReferenceCount,

@@ -160,7 +160,7 @@ public sealed class ManualAuthorityIntegrationTests
         var actor = fixture.Listener;
         var principal = actor.UserId.ToString("N");
         var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", principal,
-            new AllstarrPrincipal(actor.TenantId, actor.UserId, "jellyfin", "backend", principal, "Listener", false),
+            new AllstarrPrincipal(actor.UserId, "jellyfin", "backend", principal, "Listener", false),
             "clear-rematch", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
         var result = await fixture.Service.RematchManualAuthorityAsync(context, fixture.SourceB,
             ManualTrackAuthorityKind.ProviderMatch, before.Personal!.Id, before.Personal.Revision, "clear-rematch");
@@ -186,19 +186,20 @@ public sealed class ManualAuthorityIntegrationTests
         public static async Task<Fixture> CreateAsync()
         {
             var result = new Fixture(await SqliteTestDatabase.CreateAsync());
-            var tenant = Guid.CreateVersion7();
-            result.Admin = new(tenant, Guid.CreateVersion7(), true);
-            result.Listener = new(tenant, Guid.CreateVersion7(), false);
+            result.Admin = new(Guid.CreateVersion7(), true);
+            result.Listener = new(Guid.CreateVersion7(), false);
             await using var db = result.Factory.CreateDbContext();
-            db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "household", Name = "Household", CreatedAt = result._now });
             foreach (var actor in new[] { result.Admin, result.Listener })
             {
-                db.Users.Add(new PlatformUserRecord
+                db.Users.Add(new UserRecord
                 {
                     Id = actor.UserId,
-                    TenantId = tenant,
                     DisplayName = "Listener",
-                    Status = PlatformUserStatus.Active,
+                    Enabled = true,
+                    IsAdmin = actor.IsAdministrator,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "backend",
+                    BackendPrincipalId = actor.UserId.ToString("N"),
                     CreatedAt = result._now,
                     UpdatedAt = result._now
                 });
@@ -207,7 +208,6 @@ public sealed class ManualAuthorityIntegrationTests
                 db.ProviderAccounts.Add(new ProviderAccountRecord
                 {
                     Id = accountId,
-                    TenantId = tenant,
                     OwnerUserId = actor.UserId,
                     ProviderId = "spotify",
                     DisplayName = "Source",
@@ -232,11 +232,9 @@ public sealed class ManualAuthorityIntegrationTests
             var snapshot = new ExternalMetadataSnapshotRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = Admin.TenantId,
                 OwnerUserId = ownerId,
                 ProviderAccountId = _accounts[ownerId],
                 ProviderId = "spotify",
-                LibraryScopeId = "music",
                 BackendInstanceId = "backend",
                 BackendPrincipalId = ownerId.ToString("N"),
                 Protocol = "jellyfin",

@@ -72,10 +72,10 @@ public class ConfigController : ControllerBase
     {
         IReadOnlyDictionary<string, EffectiveRuntimeSetting> runtimeSettings =
             new Dictionary<string, EffectiveRuntimeSetting>(StringComparer.OrdinalIgnoreCase);
-        if (GetAdminSession()?.TenantId is { } tenantId &&
+        if (GetAdminSession()?.AllstarrUserId is not null &&
             HttpContext.RequestServices.GetService<IDurableRuntimeSettings>() is { } settings)
         {
-            runtimeSettings = await settings.GetManyAsync(tenantId, RuntimeSettingCatalog.Definitions.Keys);
+            runtimeSettings = await settings.GetManyAsync(RuntimeSettingCatalog.Definitions.Keys);
         }
 
         string RuntimeString(string key, string fallback) =>
@@ -313,12 +313,12 @@ public class ConfigController : ControllerBase
         try
         {
             var session = GetAdminSession();
-            if (session?.TenantId is not { } tenantId)
+            if (session?.AllstarrUserId is null)
             {
                 return Conflict(new
                 {
-                    error = "The administrator session is not linked to an Allstarr tenant.",
-                    code = "tenant_required"
+                    error = "The administrator session is not linked to an Allstarr user.",
+                    code = "user_required"
                 });
             }
 
@@ -340,7 +340,7 @@ public class ConfigController : ControllerBase
             }
 
             var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
-            var current = await settings.GetManyAsync(tenantId, normalized.Select(item => item.DurableKey));
+            var current = await settings.GetManyAsync(normalized.Select(item => item.DurableKey));
             var writes = normalized.Select(item =>
             {
                 var existing = current[item.DurableKey];
@@ -350,14 +350,10 @@ public class ConfigController : ControllerBase
                     existing.Origin == RuntimeSettingOrigin.Durable ? existing.Revision : null);
             }).ToArray();
             var result = await settings.ApplyBatchAsync(
-                tenantId,
                 writes,
                 "admin-ui",
                 session.AllstarrUserId,
                 HttpContext.RequestAborted);
-            if (HttpContext.RequestServices.GetService<ProviderAccountOptions>() is { } accountOptions &&
-                result.Settings.FirstOrDefault(item => item.Key == ProviderAccountOptions.ListenerConnectionsKey) is { Value: bool allowed })
-                accountOptions.ListenersCanConnectOwnAccounts = allowed;
             var cacheEntriesInvalidated = normalized.Any(item =>
                 !item.DurableKey.StartsWith("Scrobbling:", StringComparison.OrdinalIgnoreCase) &&
                 !item.DurableKey.StartsWith("WebUi:", StringComparison.OrdinalIgnoreCase))
@@ -418,7 +414,7 @@ public class ConfigController : ControllerBase
 
         var session = GetAdminSession();
         var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
-        return Ok(await service.GetStatusAsync(session?.TenantId, cancellationToken));
+        return Ok(await service.GetStatusAsync(cancellationToken));
     }
 
     [HttpPost("config/migration/preview")]
@@ -568,7 +564,7 @@ public class ConfigController : ControllerBase
             "An administrator session is required.");
         var correlationId = HttpContext.Items[CorrelationMiddleware.HttpContextItemKey]?.ToString()
                             ?? HttpContext.TraceIdentifier;
-        return new(session.SessionId, session.TenantId, session.AllstarrUserId, correlationId);
+        return new(session.SessionId, session.AllstarrUserId, correlationId);
     }
 
     public sealed class ApplyLegacyEnvMigrationRequest
@@ -852,8 +848,9 @@ public class ConfigController : ControllerBase
         using var lease = await secretStore.OpenAsync(
             account.SecretReferenceId.Value,
             new SecretAccessContext(
-                account.TenantId,
-                AllowGlobal: account.TenantId == null),
+                account.OwnerUserId,
+                $"provider-account:{account.ProviderId}:{account.Id:N}",
+                AllowShared: account.OwnerUserId == null),
             cancellationToken);
         using var document = JsonDocument.Parse(lease.Value);
         if (document.RootElement.ValueKind != JsonValueKind.Object)

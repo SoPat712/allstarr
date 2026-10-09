@@ -42,7 +42,6 @@ public sealed class PlaylistLinksController(
     IPlaylistTrackRetentionQueue retentionQueue,
     IConfiguration configuration,
     ApplicationCacheRequestCoalescer requestCoalescer,
-    IBackendLibraryAccessResolver libraryAccess,
     IEffectiveProviderPolicyResolver? effectivePolicies = null) : ControllerBase
 {
     [HttpGet("/api/admin/playlist-sources")]
@@ -55,8 +54,8 @@ public sealed class PlaylistLinksController(
                 .ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var accounts = await db.ProviderAccounts.AsNoTracking()
-                .AvailableTo(session.TenantId, session.AllstarrUserId)
-                .Where(item => item.Enabled)
+                .Where(item => item.Enabled &&
+                               (item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId))
                 .OrderBy(item => item.ProviderId)
                 .ThenBy(item => item.DisplayName)
                 .ToListAsync(cancellationToken);
@@ -77,9 +76,9 @@ public sealed class PlaylistLinksController(
             }).ToArray();
             var availableAccounts = capableAccounts;
             ProviderAccountRecord[] blockedAccounts = [];
-            var effectivePolicy = effectivePolicies == null || !session.TenantId.HasValue
+            var effectivePolicy = effectivePolicies == null
                 ? null
-                : await effectivePolicies.ResolveAsync(session.TenantId.Value, cancellationToken);
+                : await effectivePolicies.ResolveForUserAsync(session.AllstarrUserId!.Value, cancellationToken);
             var playlistOrderDefinition = ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Playlist)!;
             var bootstrapOrder = (configuration[playlistOrderDefinition.SettingKey] ??
                                   configuration[playlistOrderDefinition.BootstrapKey] ??
@@ -150,10 +149,9 @@ public sealed class PlaylistLinksController(
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(
                 item => item.Id == accountId && item.Enabled &&
-                        (item.TenantId == null || item.TenantId == session.TenantId) &&
                         (item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId),
                 cancellationToken) ?? throw new KeyNotFoundException();
-            var execution = await CreateExecutionAsync(session, null, cancellationToken);
+            var execution = await CreateExecutionAsync(session, cancellationToken);
             var actor = execution.RequireActor();
             var providerId = account.ProviderId.Trim().ToLowerInvariant();
             var policy = new ProviderExecutionPolicy(
@@ -163,7 +161,6 @@ public sealed class PlaylistLinksController(
                 allowSharedAccount: true,
                 allowManagedDownloads: false,
                 allowedProviderIds: [providerId]);
-            ProviderLibraryContext? library = null;
             var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
                 ProviderCapabilityKind.Playlist,
                 actor,
@@ -173,7 +170,6 @@ public sealed class PlaylistLinksController(
                 clock.UtcNow.AddMinutes(2),
                 [providerId],
                 [new ProviderRouteProviderState(providerId, requestedAccountId: account.Id, expectedAccountRevision: account.Revision)],
-                library: library,
                 cancellationToken: cancellationToken));
             var candidate = plan.Candidates.FirstOrDefault();
             if (candidate == null)
@@ -192,7 +188,6 @@ public sealed class PlaylistLinksController(
             {
                 var pageRequest = new ProviderPageRequest(limit, currentCursor);
                 var cacheKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
-                    session.TenantId,
                     session.AllstarrUserId,
                     account.Id,
                     account.Revision,
@@ -297,7 +292,6 @@ public sealed class PlaylistLinksController(
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(
                 item => item.Id == accountId && item.Enabled &&
-                        (item.TenantId == null || item.TenantId == session.TenantId) &&
                         (item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId),
                 cancellationToken) ?? throw new KeyNotFoundException();
             var candidate = await PlanPlaylistSourceAsync(session, account, "playlist-artwork", cancellationToken);
@@ -310,7 +304,6 @@ public sealed class PlaylistLinksController(
             ProviderError? failure = null;
             var asset = await mediaAssets.ResolveAsync(
                 new MediaAssetIdentity(
-                    session.TenantId,
                     session.AllstarrUserId,
                     account.Id,
                     providerId,
@@ -350,29 +343,19 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var identities = await db.BackendIdentities.AsNoTracking()
-                .Where(item => item.TenantId == session.TenantId && item.UserId == session.AllstarrUserId)
+            var identities = await db.Users.AsNoTracking()
+                .Where(item => item.Id == session.AllstarrUserId && item.Enabled &&
+                               item.BackendType == session.BackendType.Trim().ToLowerInvariant() &&
+                               item.BackendInstanceId == session.BackendInstanceId &&
+                               item.BackendPrincipalId == session.UserId &&
+                               item.IsAdmin == session.IsAdministrator)
                 .OrderByDescending(item => item.LastSeenAt)
                 .ToListAsync(cancellationToken);
-            var access = await libraryAccess.ResolveUserAsync(session.AllstarrUserId!.Value, cancellationToken);
-            var libraryScopes = await LibraryTrackAccess.Query(db, access)
-                .Where(item => item.TenantId == session.TenantId)
-                .GroupBy(item => new { item.BackendInstanceId, item.Protocol })
-                .Select(group => new
-                {
-                    group.Key.BackendInstanceId,
-                    group.Key.Protocol,
-                    LibraryScopeId = group.OrderBy(item => item.LibraryScopeId)
-                        .Select(item => item.LibraryScopeId)
-                        .First()
-                })
-                .ToListAsync(cancellationToken);
             var subsonicCredentialRows = await db.SecretReferences.AsNoTracking()
-                .Where(item => item.TenantId == session.TenantId &&
-                    item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null &&
-                    item.BackendIdentityId != null)
+                .Where(item => item.UserId == session.AllstarrUserId &&
+                    item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null)
                 .OrderByDescending(item => item.UpdatedAt).ToListAsync(cancellationToken);
-            var subsonicCredentials = subsonicCredentialRows.GroupBy(item => item.BackendIdentityId!.Value)
+            var subsonicCredentials = subsonicCredentialRows.GroupBy(item => item.UserId!.Value)
                 .ToDictionary(group => group.Key, group => (Guid?)group.First().Id);
             return Ok(new
             {
@@ -381,11 +364,8 @@ public sealed class PlaylistLinksController(
                     id = item.Id,
                     protocol = NormalizeTargetProtocol(item.BackendType),
                     backendInstanceId = item.BackendInstanceId,
-                    libraryScopeId = libraryScopes.FirstOrDefault(scope =>
-                        scope.BackendInstanceId == item.BackendInstanceId &&
-                        scope.Protocol == NormalizeTargetProtocol(item.BackendType))?.LibraryScopeId,
-                    displayName = item.DisplayName ?? session.UserName,
-                    principalId = item.PrincipalId,
+                    displayName = item.DisplayName,
+                    principalId = item.BackendPrincipalId,
                     credentialReferenceId = NormalizeTargetProtocol(item.BackendType) == "subsonic"
                         ? subsonicCredentials.GetValueOrDefault(item.Id)
                         : null,
@@ -408,15 +388,17 @@ public sealed class PlaylistLinksController(
             limit = Math.Clamp(limit, 1, 100);
             var offset = DecodeOffsetCursor(cursor);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var identity = await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(
-                item => item.Id == identityId && item.TenantId == session.TenantId && item.UserId == session.AllstarrUserId,
+            var identity = await db.Users.AsNoTracking().SingleOrDefaultAsync(
+                item => item.Id == identityId && item.Id == session.AllstarrUserId && item.Enabled &&
+                        item.BackendType == session.BackendType.Trim().ToLowerInvariant() &&
+                        item.BackendInstanceId == session.BackendInstanceId &&
+                        item.BackendPrincipalId == session.UserId &&
+                        item.IsAdmin == session.IsAdministrator,
                 cancellationToken) ?? throw new KeyNotFoundException();
             var protocol = NormalizeTargetProtocol(identity.BackendType);
             var context = new BackendPlaylistTargetContext(
                 identity.BackendInstanceId,
-                identity.PrincipalId,
-                null,
-                identity.TenantId);
+                identity.BackendPrincipalId);
             var result = await targetResolver.Resolve(protocol).ListPageAsync(context, query, offset, limit + 1, cancellationToken);
             if (!result.IsSuccess)
                 return StatusCode(StatusCodes.Status502BadGateway, new { error = "The media server could not return playlists", reasonCode = result.ErrorCode });
@@ -453,15 +435,18 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var identity = await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(
-                item => item.Id == identityId && item.TenantId == session.TenantId && item.UserId == session.AllstarrUserId,
+            var identity = await db.Users.AsNoTracking().SingleOrDefaultAsync(
+                item => item.Id == identityId && item.Id == session.AllstarrUserId && item.Enabled &&
+                        item.BackendType == session.BackendType.Trim().ToLowerInvariant() &&
+                        item.BackendInstanceId == session.BackendInstanceId &&
+                        item.BackendPrincipalId == session.UserId &&
+                        item.IsAdmin == session.IsAdministrator,
                 cancellationToken) ?? throw new KeyNotFoundException();
             var protocol = NormalizeTargetProtocol(identity.BackendType);
-            var context = new BackendPlaylistTargetContext(identity.BackendInstanceId, identity.PrincipalId, null, identity.TenantId);
+            var context = new BackendPlaylistTargetContext(identity.BackendInstanceId, identity.BackendPrincipalId);
             var backendPlaylistId = Required(playlistId, nameof(playlistId));
             var asset = await mediaAssets.ResolveAsync(
                 new MediaAssetIdentity(
-                    session.TenantId,
                     session.AllstarrUserId,
                     null,
                     protocol,
@@ -488,14 +473,13 @@ public sealed class PlaylistLinksController(
         });
     }
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] string? libraryScopeId, CancellationToken cancellationToken)
+    public async Task<IActionResult> List(CancellationToken cancellationToken)
     {
         return await Execute(async session =>
         {
-            var context = await CreateExecutionAsync(session, libraryScopeId, cancellationToken);
-            var links = await playlists.ListLinksAsync(context, libraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
+            var links = await playlists.ListLinksAsync(context, cancellationToken);
             var projectionsByLink = await projections.ReadByLinkIdsAsync(
-                session.TenantId!.Value,
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 links.Select(item => item.Id).ToArray(),
                 cancellationToken, session.AllstarrUserId);
@@ -517,7 +501,6 @@ public sealed class PlaylistLinksController(
         {
             var link = await LoadScopedLink(session, id, cancellationToken);
             var projection = await projections.ReadByLinkIdAsync(
-                session.TenantId!.Value,
                 session.IsAdministrator ? null : session.AllstarrUserId,
                 id,
                 cancellationToken, session.AllstarrUserId);
@@ -529,10 +512,10 @@ public sealed class PlaylistLinksController(
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var schedule = link.ScheduleId is { } scheduleId
                 ? await db.JobSchedules.AsNoTracking().SingleOrDefaultAsync(
-                    item => item.Id == scheduleId && item.TenantId == link.TenantId,
+                    item => item.Id == scheduleId && item.OwnerUserId == link.OwnerUserId,
                     cancellationToken)
                 : null;
-            var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var execution = await CreateExecutionAsync(session, cancellationToken);
             var clientProjection = await virtualization.ReadAsync(
                 execution,
                 PlaylistVirtualizationService.CreateProtocolId(link.Id),
@@ -564,24 +547,28 @@ public sealed class PlaylistLinksController(
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
                 return BadRequest(new { error = "A one-time import cannot have an update schedule" });
             if (!ValidTargetProtocol(request.TargetProtocol)) return BadRequest(new { error = "TargetProtocol must be jellyfin or subsonic" });
-            var context = await CreateExecutionAsync(session, request.LibraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             if (request.TargetProtocol.Equals("subsonic", StringComparison.OrdinalIgnoreCase) && mode != PlaylistLinkMode.Virtual)
             {
-                var grant = await CurrentPlaylistCredentialAsync(context, request.TargetBackendInstanceId, cancellationToken);
+                var grant = await CurrentPlaylistCredentialAsync(
+                    context, session.AllstarrUserId!.Value, request.TargetBackendInstanceId, cancellationToken);
                 if (!grant.HasValue) return Conflict(new { error = "Allow playlist management in your Accounts page before creating a backend playlist." });
                 if (request.TargetCredentialReferenceId.HasValue && request.TargetCredentialReferenceId != grant)
                     return BadRequest(new { error = "The playlist credential is no longer current." });
                 request = request with { TargetCredentialReferenceId = grant };
             }
             if (!await CredentialReferenceAllowed(context, request.TargetProtocol, request.TargetBackendInstanceId,
-                    request.TargetCredentialReferenceId, cancellationToken))
+                    session.AllstarrUserId!.Value, request.TargetCredentialReferenceId, cancellationToken))
                 return BadRequest(new { error = "TargetCredentialReferenceId is unavailable for this backend identity" });
-            if (!await TargetIdentityAllowed(context, request.TargetProtocol, request.TargetBackendInstanceId, cancellationToken)) return BadRequest(new { error = "The target backend identity is not linked to this user" });
-            if (!await ScheduleAllowed(context, request.ScheduleId, request.LibraryScopeId, cancellationToken)) return BadRequest(new { error = "ScheduleId is unavailable in this owner and library scope" });
+            if (!await TargetIdentityAllowed(context, session.AllstarrUserId!.Value,
+                    request.TargetProtocol, request.TargetBackendInstanceId, cancellationToken))
+                return BadRequest(new { error = "The target backend identity is not linked to this user" });
+            if (!await ScheduleAllowed(context, session.AllstarrUserId!.Value, request.ScheduleId, cancellationToken))
+                return BadRequest(new { error = "ScheduleId is unavailable for this owner" });
             var source = Required(request.SourcePlaylistId, nameof(request.SourcePlaylistId));
             var record = await playlists.CreateLinkAsync(context, new PlaylistLinkInput(
                 request.ProviderAccountId, Required(request.SourceProviderId, nameof(request.SourceProviderId)).ToLowerInvariant(), source,
-                Hash(source), Required(request.LibraryScopeId, nameof(request.LibraryScopeId)), request.TargetProtocol.Trim().ToLowerInvariant(),
+                Hash(source), request.TargetProtocol.Trim().ToLowerInvariant(),
                 Required(request.TargetBackendInstanceId, nameof(request.TargetBackendInstanceId)), mode, materialization,
                 "playlist-rules-v1", "playlist-policy-v1", request.ScheduleId, request.TargetPlaylistId,
                 request.TargetCredentialReferenceId, request.MirrorStaleEntries, request.PreserveManualEntries,
@@ -591,10 +578,9 @@ public sealed class PlaylistLinksController(
             var initial = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
                 "playlist.materialize", $"initial-import:{record.Id:N}",
                 new PlaylistMaterializationJobPayload(record.Id, generation),
-                record.TenantId, record.OwnerUserId, ProviderAccountId: record.ProviderAccountId,
-                LibraryScopeId: record.LibraryScopeId, Capability: "playlist",
+                record.OwnerUserId, ProviderAccountId: record.ProviderAccountId, Capability: "playlist",
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
-            return CreatedAtAction(nameof(List), new { libraryScopeId = record.LibraryScopeId },
+            return CreatedAtAction(nameof(List),
                 ToDto(record, initial.JobId));
         });
     }
@@ -616,19 +602,21 @@ public sealed class PlaylistLinksController(
                 return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
                 return BadRequest(new { error = "Remove the update schedule before changing this to a one-time import" });
-            var context = await CreateExecutionAsync(session, existing.LibraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             if (existing.TargetProtocol == "subsonic" && mode != PlaylistLinkMode.Virtual)
             {
-                var grant = await CurrentPlaylistCredentialAsync(context, existing.TargetBackendInstanceId, cancellationToken);
+                var grant = await CurrentPlaylistCredentialAsync(
+                    context, existing.OwnerUserId, existing.TargetBackendInstanceId, cancellationToken);
                 if (!grant.HasValue) return Conflict(new { error = "Allow playlist management in your Accounts page before updating a backend playlist." });
                 if (request.TargetCredentialReferenceId.HasValue && request.TargetCredentialReferenceId != grant)
                     return BadRequest(new { error = "The playlist credential is no longer current." });
                 request = request with { TargetCredentialReferenceId = grant };
             }
             if (!await CredentialReferenceAllowed(context, existing.TargetProtocol, existing.TargetBackendInstanceId,
-                    request.TargetCredentialReferenceId, cancellationToken))
+                    existing.OwnerUserId, request.TargetCredentialReferenceId, cancellationToken))
                 return BadRequest(new { error = "TargetCredentialReferenceId is unavailable for this backend identity" });
-            if (!await ScheduleAllowed(context, request.ScheduleId, existing.LibraryScopeId, cancellationToken)) return BadRequest(new { error = "ScheduleId is unavailable in this owner and library scope" });
+            if (!await ScheduleAllowed(context, existing.OwnerUserId, request.ScheduleId, cancellationToken))
+                return BadRequest(new { error = "ScheduleId is unavailable for this owner" });
             var updated = await playlists.UpdateLinkAsync(context, id, new PlaylistLinkUpdate(
                 request.ExpectedRevision, mode, materialization, request.RuleVersion ?? existing.RuleVersion,
                 request.PolicyVersion ?? existing.PolicyVersion, request.ScheduleId, request.TargetPlaylistId,
@@ -650,7 +638,7 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             var existing = await LoadScopedLink(session, id, cancellationToken);
-            var context = await CreateExecutionAsync(session, existing.LibraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             await playlists.DeleteLinkAsync(context, id, request.ExpectedRevision, cancellationToken);
             return NoContent();
         });
@@ -664,7 +652,7 @@ public sealed class PlaylistLinksController(
             var link = await LoadScopedLink(session, id, cancellationToken);
             if (link.ImportMode == PlaylistImportMode.OneTime)
                 return Conflict(new { error = "This was imported once and does not refresh from the source." });
-            var context = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             var refreshed = await orchestration.RefreshAsync(context, id, cancellationToken: cancellationToken);
             var preview = await playlists.ReadPreviewAsync(context, id, refreshed.SnapshotId, cancellationToken);
             return Ok(new { snapshot = new { snapshotId = refreshed.SnapshotId, snapshotVersion = refreshed.SnapshotVersion, sourceRevision = refreshed.SourceRevision }, preview = ToPreviewDto(preview) });
@@ -678,7 +666,8 @@ public sealed class PlaylistLinksController(
         {
             var existing = await LoadScopedLink(session, id, cancellationToken);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-            var tracked = await db.PlaylistLinks.SingleAsync(item => item.Id == id && item.TenantId == existing.TenantId, cancellationToken);
+            var tracked = await db.PlaylistLinks.SingleAsync(item =>
+                item.Id == id && item.OwnerUserId == existing.OwnerUserId, cancellationToken);
             if (tracked.Revision != request.ExpectedRevision)
                 throw new DbUpdateConcurrencyException("The playlist changed before its state could be updated.");
             tracked.Enabled = request.Enabled;
@@ -686,7 +675,8 @@ public sealed class PlaylistLinksController(
             tracked.Revision++;
             if (tracked.ScheduleId is { } scheduleId)
             {
-                var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId && item.TenantId == tracked.TenantId, cancellationToken);
+                var schedule = await db.JobSchedules.SingleOrDefaultAsync(item =>
+                    item.Id == scheduleId && item.OwnerUserId == tracked.OwnerUserId, cancellationToken);
                 if (schedule != null)
                 {
                     schedule.Enabled = request.Enabled;
@@ -708,7 +698,7 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             var link = await LoadScopedLink(session, id, cancellationToken);
-            var context = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             return Ok(ToPreviewDto(await playlists.ReadPreviewAsync(context, id, snapshotId, cancellationToken)));
         });
     }
@@ -726,7 +716,7 @@ public sealed class PlaylistLinksController(
             {
                 await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
                 var frozenSnapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
-                    .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
+                    .Where(item => item.OwnerUserId == link.OwnerUserId && item.PlaylistLinkId == link.Id &&
                                    item.PublishedAt.HasValue)
                     .OrderBy(item => item.PublishedAt)
                     .ThenBy(item => item.SnapshotVersion)
@@ -738,9 +728,8 @@ public sealed class PlaylistLinksController(
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
                 "playlist.materialize", $"manual:{id:N}:generation:{generation}",
                 new PlaylistMaterializationJobPayload(id, generation, request?.SnapshotId),
-                link.TenantId, link.OwnerUserId,
+                link.OwnerUserId,
                 ProviderAccountId: link.ImportMode == PlaylistImportMode.Linked ? link.ProviderAccountId : null,
-                LibraryScopeId: link.LibraryScopeId,
                 Capability: link.ImportMode == PlaylistImportMode.Linked ? "playlist" : null,
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
             return Accepted(new { jobId = result.JobId, created = result.Created, generation });
@@ -753,7 +742,6 @@ public sealed class PlaylistLinksController(
         return await Execute(async session =>
         {
             var preview = await rematches.PreviewAsync(
-                session.TenantId!.Value,
                 session.AllstarrUserId!.Value,
                 cancellationToken);
             return Ok(ToRematchPreviewDto(preview));
@@ -771,7 +759,6 @@ public sealed class PlaylistLinksController(
                 request.ConfirmationId.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
                 return BadRequest(new { error = "Review the rematch preview again before applying it." });
             var preview = await rematches.PreviewAsync(
-                session.TenantId!.Value,
                 session.AllstarrUserId!.Value,
                 cancellationToken);
             if (!preview.ConfirmationId.Equals(request.ConfirmationId, StringComparison.Ordinal))
@@ -782,7 +769,6 @@ public sealed class PlaylistLinksController(
                 PlaylistRematchJobHandler.Type,
                 $"playlist-rematch:{session.AllstarrUserId:N}:{preview.ConfirmationId}",
                 new(preview.ConfirmationId, preview.ScopeFingerprint, preview.Targets),
-                session.TenantId,
                 session.AllstarrUserId,
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
             return Accepted(new { jobId = queued.JobId, created = queued.Created });
@@ -801,11 +787,10 @@ public sealed class PlaylistLinksController(
                 return Conflict(new { error = "A one-time import never writes changes back to its source." });
             if (session.AllstarrUserId != link.OwnerUserId)
                 return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the playlist owner can update its source playlist." });
-            var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var execution = await CreateExecutionAsync(session, cancellationToken);
             var preview = await providerUpdates.PreviewAsync(
                 execution.RequireActor(),
                 link.Id,
-                link.LibraryScopeId,
                 HttpContext.TraceIdentifier,
                 cancellationToken);
             const int visibleLimit = 500;
@@ -870,11 +855,10 @@ public sealed class PlaylistLinksController(
                 return StatusCode(StatusCodes.Status403Forbidden, new { error = "Only the playlist owner can update its source playlist." });
             if (link.Revision != request.ExpectedRevision)
                 return Conflict(new { error = "The playlist settings changed. Preview the source update again." });
-            var execution = await CreateExecutionAsync(session, link.LibraryScopeId, cancellationToken);
+            var execution = await CreateExecutionAsync(session, cancellationToken);
             var preview = await providerUpdates.PreviewAsync(
                 execution.RequireActor(),
                 link.Id,
-                link.LibraryScopeId,
                 HttpContext.TraceIdentifier,
                 cancellationToken);
             if (!preview.CanApply)
@@ -890,10 +874,8 @@ public sealed class PlaylistLinksController(
                     preview.ConfirmationId,
                     preview.TargetFingerprint,
                     preview.DesiredFingerprint),
-                link.TenantId,
                 link.OwnerUserId,
                 ProviderAccountId: link.ProviderAccountId,
-                LibraryScopeId: link.LibraryScopeId,
                 Capability: "playlist",
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
             return Accepted(new { jobId = queued.JobId, created = queued.Created });
@@ -907,13 +889,12 @@ public sealed class PlaylistLinksController(
         {
             if (!Enum.TryParse<ManualOverrideDecision>(request.Decision, true, out var decision)) return BadRequest(new { error = "Decision must be pin or reject" });
             var snapshot = await matches.FindSnapshotAsync(
-                session.TenantId!.Value,
                 externalSnapshotId,
                 cancellationToken) ?? throw new KeyNotFoundException("External snapshot not found.");
-            EnsureSessionScope(session, snapshot.TenantId, snapshot.OwnerUserId);
-            var context = await CreateExecutionAsync(session, snapshot.LibraryScopeId, cancellationToken);
+            EnsureSessionScope(session, snapshot.OwnerUserId);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             var value = await matches.SetOverrideAsync(context, new ManualOverrideInput(externalSnapshotId,
-                snapshot.LibraryScopeId, decision, request.LibraryTrackId, Required(request.Reason, nameof(request.Reason)), request.ExpectedAuthority), cancellationToken);
+                decision, request.LibraryTrackId, Required(request.Reason, nameof(request.Reason)), request.ExpectedAuthority), cancellationToken);
             return Ok(value);
         });
     }
@@ -927,11 +908,10 @@ public sealed class PlaylistLinksController(
             var revision = expectedRevision ?? request?.ExpectedRevision;
             if (!revision.HasValue) return BadRequest(new { error = "ExpectedRevision is required" });
             var value = await matches.FindOverrideAsync(
-                session.TenantId!.Value,
                 overrideId,
                 cancellationToken) ?? throw new KeyNotFoundException("Override not found.");
             if (value.OwnerUserId != session.AllstarrUserId) throw new UnauthorizedAccessException("Only the owner may clear a personal choice here.");
-            var context = await CreateExecutionAsync(session, value.LibraryScopeId, cancellationToken);
+            var context = await CreateExecutionAsync(session, cancellationToken);
             await matches.RevokeOverrideAsync(context, overrideId, revision.Value, cancellationToken);
             return NoContent();
         });
@@ -952,9 +932,7 @@ public sealed class PlaylistLinksController(
             var schedule = new JobScheduleRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = link.TenantId,
                 OwnerUserId = link.OwnerUserId,
-                LibraryScopeId = link.LibraryScopeId,
                 JobType = DurableScheduleEngine.PlaylistSyncJobType,
                 CronExpression = request.CronExpression.Trim(),
                 TimeZoneId = request.TimeZoneId.Trim(),
@@ -968,7 +946,8 @@ public sealed class PlaylistLinksController(
                 UpdatedAt = now
             };
             db.JobSchedules.Add(schedule);
-            var tracked = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.TenantId == link.TenantId, cancellationToken);
+            var tracked = await db.PlaylistLinks.SingleAsync(item =>
+                item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
             if (tracked.ScheduleId.HasValue) return Conflict(new { error = "The playlist link already has a schedule" });
             tracked.ScheduleId = schedule.Id; tracked.UpdatedAt = now; tracked.Revision++;
             await db.SaveChangesAsync(cancellationToken);
@@ -986,9 +965,9 @@ public sealed class PlaylistLinksController(
             DurableScheduleEngine.Validate(request.CronExpression, request.TimeZoneId);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId, cancellationToken) ?? throw new KeyNotFoundException("Schedule not found.");
-            EnsureSessionScope(session, schedule.TenantId, schedule.OwnerUserId);
+            EnsureSessionScope(session, schedule.OwnerUserId);
             var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.TenantId == schedule.TenantId && item.ScheduleId == schedule.Id, cancellationToken);
+                item.OwnerUserId == schedule.OwnerUserId && item.ScheduleId == schedule.Id, cancellationToken);
             if (link?.ImportMode == PlaylistImportMode.OneTime)
                 return Conflict(new { error = "A one-time import cannot have an update schedule." });
             if (schedule.Revision != request.ExpectedRevision) throw new DbUpdateConcurrencyException("The schedule changed before this update.");
@@ -1005,7 +984,7 @@ public sealed class PlaylistLinksController(
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) || value is not AdminAuthSession session)
             return Unauthorized(new { error = "Authentication required" });
-        if (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue)
+        if (!session.AllstarrUserId.HasValue)
             return StatusCode(403, new { error = "The backend identity is not linked to an Allstarr user" });
         try { return await action(session); }
         catch (KeyNotFoundException) { return NotFound(); }
@@ -1028,19 +1007,20 @@ public sealed class PlaylistLinksController(
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
     }
 
-    private async Task<ProtocolExecutionContext> CreateExecutionAsync(AdminAuthSession session, string? libraryScopeId, CancellationToken cancellationToken)
+    private async Task<ProtocolExecutionContext> CreateExecutionAsync(
+        AdminAuthSession session, CancellationToken cancellationToken)
         => await protocolContexts.CreateAsync(
-            session, libraryScopeId, HttpContext.TraceIdentifier, cancellationToken);
+            session, HttpContext.TraceIdentifier, cancellationToken);
 
     private async Task<PlaylistLinkRecord> LoadScopedLink(AdminAuthSession session, Guid id, CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id, cancellationToken) ?? throw new KeyNotFoundException();
-        EnsureSessionScope(session, link.TenantId, link.OwnerUserId); return link;
+        EnsureSessionScope(session, link.OwnerUserId); return link;
     }
 
-    private static void EnsureSessionScope(AdminAuthSession session, Guid tenantId, Guid ownerUserId)
-    { if (session.TenantId != tenantId || (!session.IsAdministrator && session.AllstarrUserId != ownerUserId)) throw new UnauthorizedAccessException(); }
+    private static void EnsureSessionScope(AdminAuthSession session, Guid ownerUserId)
+    { if (!session.IsAdministrator && session.AllstarrUserId != ownerUserId) throw new UnauthorizedAccessException(); }
 
     private async Task<ProviderRouteCandidate<IProviderPlaylistCapability>?> PlanPlaylistSourceAsync(
         AdminAuthSession session,
@@ -1048,7 +1028,7 @@ public sealed class PlaylistLinksController(
         string operationId,
         CancellationToken cancellationToken)
     {
-        var execution = await CreateExecutionAsync(session, null, cancellationToken);
+        var execution = await CreateExecutionAsync(session, cancellationToken);
         var actor = execution.RequireActor();
         var providerId = account.ProviderId.Trim().ToLowerInvariant();
         var policy = new ProviderExecutionPolicy(
@@ -1058,7 +1038,6 @@ public sealed class PlaylistLinksController(
             allowSharedAccount: true,
             allowManagedDownloads: false,
             allowedProviderIds: [providerId]);
-        ProviderLibraryContext? library = null;
         var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
             ProviderCapabilityKind.Playlist,
             actor,
@@ -1068,7 +1047,6 @@ public sealed class PlaylistLinksController(
             clock.UtcNow.AddMinutes(2),
             [providerId],
             [new ProviderRouteProviderState(providerId, requestedAccountId: account.Id, expectedAccountRevision: account.Revision)],
-            library: library,
             cancellationToken: cancellationToken));
         return plan.Candidates.FirstOrDefault();
     }
@@ -1106,52 +1084,74 @@ public sealed class PlaylistLinksController(
             reasonCode
         };
 
-    private async Task<Guid?> CurrentPlaylistCredentialAsync(ProtocolExecutionContext context,
-        string backendInstanceId, CancellationToken cancellationToken)
+    private async Task<Guid?> CurrentPlaylistCredentialAsync(
+        ProtocolExecutionContext context, Guid ownerUserId, string backendInstanceId,
+        CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var actor = context.RequireActor();
+        if (actor.EffectiveUserId != ownerUserId && actor.Kind != ProviderActorKind.Administrator)
+            throw new UnauthorizedAccessException();
+        var subsonicProtocols = new[] { "subsonic", "navidrome", "opensubsonic" };
         return await db.SecretReferences.AsNoTracking().Where(secret =>
-                secret.TenantId == actor.TenantId && secret.Purpose == BackendCredentialScope.SubsonicPurpose &&
-                secret.RevokedAt == null && db.BackendIdentities.Any(identity =>
-                    identity.Id == secret.BackendIdentityId && identity.UserId == actor.EffectiveUserId &&
-                    identity.BackendType == "subsonic" && identity.BackendInstanceId == backendInstanceId &&
-                    identity.PrincipalId == context.VerifiedBackendPrincipalId))
+                secret.UserId == ownerUserId &&
+                secret.Purpose == BackendCredentialScope.SubsonicPurpose && secret.RevokedAt == null &&
+                db.Users.Any(user => user.Id == secret.UserId && user.Enabled &&
+                    subsonicProtocols.Contains(user.BackendType) && user.BackendInstanceId == backendInstanceId &&
+                    user.BackendPrincipalId == context.VerifiedBackendPrincipalId))
             .OrderByDescending(item => item.UpdatedAt).Select(item => (Guid?)item.Id)
             .FirstOrDefaultAsync(cancellationToken);
     }
 
-    private async Task<bool> CredentialReferenceAllowed(ProtocolExecutionContext context, string protocol,
-        string backendInstanceId, Guid? id, CancellationToken cancellationToken)
+    private async Task<bool> CredentialReferenceAllowed(
+        ProtocolExecutionContext context, string protocol, string backendInstanceId,
+        Guid ownerUserId, Guid? id, CancellationToken cancellationToken)
     {
         if (!id.HasValue) return true;
+        if (NormalizeTargetProtocol(protocol) != "subsonic") return false;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var actor = context.RequireActor();
-        var identityId = await db.BackendIdentities.AsNoTracking().Where(item => item.TenantId == actor.TenantId &&
-                item.UserId == actor.UserId && item.BackendType == protocol.Trim().ToLowerInvariant() &&
-                item.BackendInstanceId == backendInstanceId.Trim())
+        if (actor.EffectiveUserId != ownerUserId && actor.Kind != ProviderActorKind.Administrator)
+            return false;
+        var protocols = TargetProtocols(protocol);
+        var userId = await db.Users.AsNoTracking().Where(item => item.Id == ownerUserId && item.Enabled &&
+                protocols.Contains(item.BackendType) &&
+                item.BackendInstanceId == backendInstanceId.Trim() &&
+                (ownerUserId != actor.EffectiveUserId ||
+                 item.BackendPrincipalId == context.VerifiedBackendPrincipalId))
             .Select(item => (Guid?)item.Id).SingleOrDefaultAsync(cancellationToken);
-        return identityId.HasValue && await db.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == id &&
-            item.RevokedAt == null && item.TenantId == actor.TenantId && item.BackendIdentityId == identityId &&
+        return userId.HasValue && await db.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == id &&
+            item.RevokedAt == null && item.UserId == userId &&
             item.Purpose == BackendCredentialScope.SubsonicPurpose, cancellationToken);
     }
 
-    private async Task<bool> TargetIdentityAllowed(ProtocolExecutionContext context, string targetProtocol, string backendInstanceId, CancellationToken cancellationToken)
+    private async Task<bool> TargetIdentityAllowed(
+        ProtocolExecutionContext context, Guid ownerUserId, string targetProtocol,
+        string backendInstanceId, CancellationToken cancellationToken)
     {
         var actor = context.RequireActor();
+        if (actor.EffectiveUserId != ownerUserId && actor.Kind != ProviderActorKind.Administrator)
+            return false;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await db.BackendIdentities.AsNoTracking().AnyAsync(item => item.TenantId == actor.TenantId &&
-            item.UserId == actor.EffectiveUserId && item.BackendType == targetProtocol.Trim().ToLowerInvariant() &&
-            item.BackendInstanceId == backendInstanceId.Trim(), cancellationToken);
+        var protocols = TargetProtocols(targetProtocol);
+        return await db.Users.AsNoTracking().AnyAsync(item => item.Id == ownerUserId && item.Enabled &&
+            protocols.Contains(item.BackendType) &&
+            item.BackendInstanceId == backendInstanceId.Trim() &&
+            (ownerUserId != actor.EffectiveUserId ||
+             item.BackendPrincipalId == context.VerifiedBackendPrincipalId), cancellationToken);
     }
 
-    private async Task<bool> ScheduleAllowed(ProtocolExecutionContext context, Guid? id, string libraryScopeId, CancellationToken cancellationToken)
+    private async Task<bool> ScheduleAllowed(
+        ProtocolExecutionContext context, Guid ownerUserId, Guid? id,
+        CancellationToken cancellationToken)
     {
         if (!id.HasValue) return true;
         var actor = context.RequireActor();
+        if (actor.EffectiveUserId != ownerUserId && actor.Kind != ProviderActorKind.Administrator)
+            return false;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await db.JobSchedules.AsNoTracking().AnyAsync(item => item.Id == id && item.TenantId == actor.TenantId &&
-            item.OwnerUserId == actor.EffectiveUserId && item.LibraryScopeId == libraryScopeId, cancellationToken);
+        return await db.JobSchedules.AsNoTracking().AnyAsync(item => item.Id == id &&
+            item.OwnerUserId == ownerUserId, cancellationToken);
     }
 
     private static bool TryEnums(string modeValue, string materializationValue, out PlaylistLinkMode mode, out PlaylistMaterializationMode materialization, out string? error)
@@ -1178,6 +1178,12 @@ public sealed class PlaylistLinksController(
     private static bool TryScheduleEnums(ScheduleRequest request, out ScheduleOverlapPolicy overlap, out ScheduleMisfirePolicy misfire, out string? error)
     { error = null; if (!Enum.TryParse(request.OverlapPolicy, true, out overlap) || !Enum.IsDefined(overlap)) { misfire = default; error = "OverlapPolicy must be skip or queue"; return false; } if (!Enum.TryParse(request.MisfirePolicy, true, out misfire) || !Enum.IsDefined(misfire)) { error = "MisfirePolicy must be skip or runOnce"; return false; } return true; }
     private static bool ValidTargetProtocol(string value) => value?.Trim().ToLowerInvariant() is "jellyfin" or "subsonic";
+    private static string[] TargetProtocols(string value) => NormalizeTargetProtocol(value) switch
+    {
+        "jellyfin" => ["jellyfin"],
+        "subsonic" => ["subsonic", "navidrome", "opensubsonic"],
+        _ => []
+    };
     private static string NormalizeTargetProtocol(string value) => value.Trim().ToLowerInvariant() switch
     {
         "jellyfin" => "jellyfin",
@@ -1244,7 +1250,7 @@ public sealed class PlaylistLinksController(
     }
     private static string EncodeOffsetCursor(int offset) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(offset.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, libraryScopeId = value.LibraryScopeId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
+    private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
     private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
         id = value.Id,
@@ -1257,7 +1263,6 @@ public sealed class PlaylistLinksController(
         sourceProviderId = value.SourceProviderId,
         sourcePlaylistId = value.SourcePlaylistId,
         sourceUpdateAvailable = value.ImportMode == PlaylistImportMode.Linked && value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
-        libraryScopeId = value.LibraryScopeId,
         targetProtocol = value.TargetProtocol,
         targetBackendInstanceId = value.TargetBackendInstanceId,
         mode = value.Mode.ToString().ToLowerInvariant(),
@@ -1456,7 +1461,6 @@ public sealed class PlaylistLinksController(
         name = value.Name,
         description = value.Description,
         artworkReferenceKey = value.ArtworkReferenceKey,
-        libraryScopeId = value.LibraryScopeId,
         target = new
         {
             protocol = value.TargetProtocol,
@@ -1502,7 +1506,7 @@ public sealed class PlaylistLinksController(
                 backendItemId = item.ResolvedRoute.BackendItemId,
                 backendInstanceId = item.ResolvedRoute.BackendInstanceId,
                 protocol = item.ResolvedRoute.Protocol,
-                libraryScopeId = item.ResolvedRoute.LibraryScopeId,
+                backendLibraryId = item.ResolvedRoute.BackendLibraryId,
                 canonicalRecordingId = item.ResolvedRoute.CanonicalRecordingId
             },
             targetEligible = item.TargetEligible,
@@ -1533,7 +1537,7 @@ public sealed class PlaylistLinksController(
 }
 
 public sealed record CreatePlaylistLinkRequest(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId,
-    string LibraryScopeId, string TargetProtocol, string TargetBackendInstanceId, string Mode, string MaterializationMode,
+    string TargetProtocol, string TargetBackendInstanceId, string Mode, string MaterializationMode,
     Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null,
     bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true,
     bool SyncDescription = true, bool SyncArtwork = true, string ProjectionMode = "resolved",

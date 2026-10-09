@@ -1,16 +1,20 @@
 using allstarr.Core.Storage;
+using allstarr.Core.Matching;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
 
-public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbContext> factory) : ILocalRecommendationCatalog
+public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbContext> factory,
+    IBackendLibraryAccessResolver libraryAccess) : ILocalRecommendationCatalog
 {
     public async Task<bool> HasCoverageAsync(IntelligenceScope scope, bool requireMusicBrainz, CancellationToken token)
-    { await using var db = await factory.CreateDbContextAsync(token); var query = Scoped(db, scope); if (requireMusicBrainz) query = query.Where(x => x.MusicBrainzRecordingId != null || x.MusicBrainzArtistId != null || x.MusicBrainzReleaseId != null); return await query.AnyAsync(token); }
+    { await using var db = await factory.CreateDbContextAsync(token); var query = await ScopedAsync(db, scope, libraryAccess, token); if (requireMusicBrainz) query = query.Where(x => x.MusicBrainzRecordingId != null || x.MusicBrainzArtistId != null || x.MusicBrainzReleaseId != null); return await query.AnyAsync(token); }
     public async Task<IReadOnlyList<RecommendationSourceItem>> FindRelatedAsync(ScopedRecommendationQuery query, CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var tracks = await Scoped(db, query.Scope).AsNoTracking().ToListAsync(cancellationToken);
+        var tracks = Coalesce(await (await ScopedAsync(db, query.Scope, libraryAccess, cancellationToken))
+            .AsNoTracking().ToListAsync(cancellationToken));
         var seedKeys = query.SeedTrackKeys.Select(NormalizeTrackKey).ToHashSet(StringComparer.Ordinal);
         var seeds = tracks.Where(track => seedKeys.Contains(track.BackendItemId) ||
             track.CanonicalRecordingId is { } canonical && seedKeys.Contains(canonical.ToString("D"))).ToArray();
@@ -35,10 +39,11 @@ public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbConte
         if (ids.Length > 200) throw new ArgumentOutOfRangeException(nameof(backendItemIds));
         if (ids.Length == 0) return new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        return await Scoped(db, scope).AsNoTracking().Where(item => ids.Contains(item.BackendItemId))
-            .ToDictionaryAsync(item => item.BackendItemId, item => new RecommendationTrackIdentity(
-                "local", null, item.MusicBrainzRecordingId, item.Isrc, item.Title, item.Artist,
-                item.Album, item.Id, item.BackendItemId), StringComparer.Ordinal, cancellationToken);
+        var tracks = await (await ScopedAsync(db, scope, libraryAccess, cancellationToken)).AsNoTracking()
+            .Where(item => ids.Contains(item.BackendItemId)).ToListAsync(cancellationToken);
+        return Coalesce(tracks).ToDictionary(item => item.BackendItemId, item => new RecommendationTrackIdentity(
+            "local", null, item.MusicBrainzRecordingId, item.Isrc, item.Title, item.Artist,
+            item.Album, item.Id, item.BackendItemId), StringComparer.Ordinal);
     }
 
     public async Task<IReadOnlyList<string>> ResolveTrackKeysAsync(IntelligenceScope scope,
@@ -58,16 +63,17 @@ public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbConte
         var canonicalIds = backendIds.Select(item => Guid.TryParse(item, out var id) ? id : Guid.Empty)
             .Where(item => item != Guid.Empty).ToArray();
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var tracks = await Scoped(db, scope).AsNoTracking().Where(item =>
+        var accessible = await (await ScopedAsync(db, scope, libraryAccess, cancellationToken)).AsNoTracking().Where(item =>
                 backendIds.Contains(item.BackendItemId) || libraryIds.Contains(item.Id) ||
                 item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value))
             .ToListAsync(cancellationToken);
+        var tracks = Coalesce(accessible);
         var resolved = new List<string>(keys.Length);
         foreach (var key in keys)
         {
             LibraryTrackRecord? track;
             if (key.StartsWith("library:", StringComparison.Ordinal))
-                track = tracks.SingleOrDefault(item => item.Id == Guid.Parse(key[8..]));
+                track = accessible.SingleOrDefault(item => item.Id == Guid.Parse(key[8..]));
             else
             {
                 var normalized = NormalizeTrackKey(key);
@@ -84,29 +90,44 @@ public sealed class LocalRecommendationCatalog(IDbContextFactory<AllstarrDbConte
         return resolved;
     }
 
-    internal static IQueryable<LibraryTrackRecord> Scoped(AllstarrDbContext db, IntelligenceScope scope) => db.LibraryTracks.Where(track =>
-        track.TenantId == scope.TenantId && track.OwnerUserId == scope.OwnerUserId && track.Protocol == scope.Protocol &&
-        track.BackendInstanceId == scope.BackendInstanceId && track.LibraryScopeId == scope.LibraryScopeId);
+    internal static async Task<IQueryable<LibraryTrackRecord>> ScopedAsync(AllstarrDbContext db,
+        IntelligenceScope scope, IBackendLibraryAccessResolver libraryAccess, CancellationToken cancellationToken)
+    {
+        IntelligencePolicyService.ValidateScope(scope);
+        var viewer = await libraryAccess.ResolveUserAsync(scope.OwnerUserId, cancellationToken);
+        if (viewer.Context == null || viewer.Context.BackendInstanceId != scope.BackendInstanceId ||
+            !viewer.Context.Protocol.ToString().Equals(scope.Protocol, StringComparison.OrdinalIgnoreCase))
+            return db.LibraryTracks.Where(_ => false);
+        return LibraryTrackAccess.Query(db, viewer.Context, viewer.Access);
+    }
+    internal static LibraryTrackRecord[] Coalesce(IEnumerable<LibraryTrackRecord> tracks) => tracks
+        .GroupBy(item => item.BackendItemId, StringComparer.Ordinal)
+        .Select(group => group.OrderBy(item => item.Id).First())
+        .OrderBy(item => item.Id)
+        .ToArray();
     internal static string NormalizeTrackKey(string value) => value.StartsWith("backend:", StringComparison.Ordinal) ? value[8..] : value;
 }
 
-public sealed class MusicBrainzLocalRecommendationProvider(IDbContextFactory<AllstarrDbContext> factory)
+public sealed class MusicBrainzLocalRecommendationProvider(IDbContextFactory<AllstarrDbContext> factory,
+    IBackendLibraryAccessResolver libraryAccess)
     : IRecommendationProvider, IRecommendationProviderReadiness
 {
     public string Id => "musicbrainz-local";
     public async Task<RecommendationProviderReadiness> GetReadinessAsync(IntelligenceScope scope, CancellationToken token = default)
-    { await using var db = await factory.CreateDbContextAsync(token); return await LocalRecommendationCatalog.Scoped(db, scope).AnyAsync(x => x.MusicBrainzRecordingId != null || x.MusicBrainzArtistId != null || x.MusicBrainzReleaseId != null, token) ? new(Id, RecommendationProviderReadinessState.Ready) : new(Id, RecommendationProviderReadinessState.Degraded, "musicbrainz_local_coverage_missing"); }
+    { await using var db = await factory.CreateDbContextAsync(token); return await (await LocalRecommendationCatalog.ScopedAsync(db, scope, libraryAccess, token)).AnyAsync(x => x.MusicBrainzRecordingId != null || x.MusicBrainzArtistId != null || x.MusicBrainzReleaseId != null, token) ? new(Id, RecommendationProviderReadinessState.Ready) : new(Id, RecommendationProviderReadinessState.Degraded, "musicbrainz_local_coverage_missing"); }
     public async Task<RecommendationProviderResult> RecommendAsync(RecommendationRequest request)
     {
         if (!request.ExplicitlyOptedIn) return new(RecommendationProviderState.Disabled, [], "recommendation_opt_in_required");
         IntelligencePolicyService.ValidateScope(request.Scope);
-        if (request.Profile.TenantId != request.Scope.TenantId || request.Profile.OwnerUserId != request.Scope.OwnerUserId ||
-            request.Profile.BackendInstanceId != request.Scope.BackendInstanceId || request.Profile.LibraryScopeId != request.Scope.LibraryScopeId)
+        if (request.Profile.OwnerUserId != request.Scope.OwnerUserId ||
+            request.Profile.BackendInstanceId != request.Scope.BackendInstanceId)
             return new(RecommendationProviderState.Unauthorized, [], "recommendation_scope_mismatch");
         try
         {
             await using var db = await factory.CreateDbContextAsync(request.CancellationToken);
-            var tracks = await LocalRecommendationCatalog.Scoped(db, request.Scope).AsNoTracking().ToListAsync(request.CancellationToken);
+            var tracks = LocalRecommendationCatalog.Coalesce(await (await LocalRecommendationCatalog.ScopedAsync(
+                    db, request.Scope, libraryAccess, request.CancellationToken))
+                .AsNoTracking().ToListAsync(request.CancellationToken));
             var keys = request.SeedTrackKeys.Concat(request.Profile.TopTrackKeys).Select(LocalRecommendationCatalog.NormalizeTrackKey).ToHashSet(StringComparer.Ordinal);
             var seeds = tracks.Where(track => keys.Contains(track.BackendItemId) || track.CanonicalRecordingId is { } id && keys.Contains(id.ToString("D"))).ToArray();
             var candidates = new List<RecommendationCandidate>();

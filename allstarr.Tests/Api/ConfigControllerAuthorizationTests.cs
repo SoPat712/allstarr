@@ -32,7 +32,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         "allstarr-tests",
         Guid.NewGuid().ToString("N"));
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
@@ -57,19 +56,15 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         });
         _storageState.Set(DurableStorageReadiness.Ready, "fixture");
         await using var context = await _factory.CreateDbContextAsync();
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "config-test",
-            Name = "Config test",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
-        context.Users.Add(new PlatformUserRecord
+        context.Users.Add(new UserRecord
         {
             Id = _userId,
-            TenantId = _tenantId,
             DisplayName = "Test administrator",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            IsAdmin = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "primary",
+            BackendPrincipalId = "administrator",
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
@@ -125,8 +120,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
         Assert.Equal("CACHE_LYRICS_DAYS=14\n", await File.ReadAllTextAsync(envPath));
         await using var db = await _factory.CreateDbContextAsync();
-        var setting = Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
-        Assert.Equal(_tenantId, setting.TenantId);
+        var setting = Assert.Single(await db.RuntimeSettings.ToListAsync());
+        Assert.Null(setting.OwnerUserId);
         Assert.Equal("Cache:LyricsDays", setting.Key);
         Assert.Equal("45", setting.ValueJson);
         Assert.False(await cache.ExistsAsync("lyrics:v2:fixture"));
@@ -150,7 +145,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
 
         Assert.Equal(StatusCodes.Status200OK, result.StatusCode);
         await using var db = await _factory.CreateDbContextAsync();
-        var setting = Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        var setting = Assert.Single(await db.RuntimeSettings.ToListAsync());
         Assert.Equal("Audio:Quality", setting.Key);
         Assert.Equal("\"HiResLossless\"", setting.ValueJson);
 
@@ -177,7 +172,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Equal(StatusCodes.Status400BadRequest, result.StatusCode);
         Assert.Equal("JELLYFIN_URL=http://old\n", await File.ReadAllTextAsync(envPath));
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
     }
 
     [Fact]
@@ -237,7 +232,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             }));
         Assert.Equal(StatusCodes.Status200OK, applied.StatusCode);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Contains(await db.TenantRuntimeSettings.ToListAsync(), item => item.Key == "Cache:LyricsDays");
+        Assert.Contains(await db.RuntimeSettings.ToListAsync(), item => item.Key == "Cache:LyricsDays");
         var account = Assert.Single(await db.ProviderAccounts.Where(item => item.ProviderId == "spotify").ToListAsync());
         Assert.False(account.Enabled);
         Assert.NotNull(account.SecretReferenceId);
@@ -316,7 +311,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     {
         var secretStore = CreateSecretStore();
         var secret = await secretStore.StoreAsync(
-            tenantId: null,
+            userId: null,
             purpose: $"provider-account:deezer:{_providerAccountId:N}",
             plaintext: Encoding.UTF8.GetBytes("{\"arl\":\"selected-account-arl\"}"));
         await using (var context = await _factory.CreateDbContextAsync())
@@ -397,7 +392,6 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             JellyfinServerId = "server-id",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
             LastSeenUtc = DateTime.UtcNow,
-            TenantId = _tenantId,
             AllstarrUserId = _userId
         };
 

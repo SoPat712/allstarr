@@ -23,7 +23,6 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         var result = await resolver.ResolveAsync(workspace.Reference, Output("provider/output.flac", content));
 
         Assert.Equal(Path.GetFullPath(path), result.SourcePath);
-        Assert.Equal(request.TenantId, result.TenantId);
         Assert.Equal(request.OwnerUserId, result.OwnerUserId);
         Assert.Equal(request.DurableJobId, result.DurableJobId);
         Assert.Equal(request.ProviderId, result.ProviderId);
@@ -127,7 +126,7 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         await File.WriteAllBytesAsync(path, Encoding.UTF8.GetBytes("modified-audio"));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            resolver.FindByJobAsync(request.TenantId, request.DurableJobId, request.ProviderId));
+            resolver.FindByJobAsync(request.DurableJobId, request.ProviderId));
 
         Assert.Contains("content changed", exception.Message, StringComparison.Ordinal);
     }
@@ -177,7 +176,7 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
     }
 
     private ProviderDownloadArtifactResolver Resolver(MemoryStore store) => new(store, new() { RootPath = root });
-    private ProviderDownloadWorkspaceRequest Request() => new(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "qobuz", Guid.CreateVersion7(), "favorite:event:download");
+    private ProviderDownloadWorkspaceRequest Request() => new(Guid.CreateVersion7(), Guid.CreateVersion7(), "qobuz", Guid.CreateVersion7(), "favorite:event:download");
     private string Write(ProviderManagedWorkspaceReference workspace, string relative, byte[] content)
     { var path = Path.Combine(root, workspace.WorkspaceId, relative); Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllBytes(path, content); return path; }
     private static ProviderDownloadedArtifact Output(string id, byte[] bytes) => new(id,
@@ -195,7 +194,7 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         public Task<ProviderDownloadWorkspaceEntity?> GetWorkspaceAsync(string id, CancellationToken token) => Task.FromResult(Workspaces.SingleOrDefault(item => item.WorkspaceId == id));
         public Task<ProviderDownloadArtifactEntity> AddVerifiedAsync(ProviderDownloadArtifactEntity value, CancellationToken token)
         { var existing = Artifacts.SingleOrDefault(item => item.WorkspaceRecordId == value.WorkspaceRecordId && item.ProviderArtifactId == value.ProviderArtifactId); if (existing is not null) { if (existing.ContentSha256 != value.ContentSha256) throw new InvalidOperationException(); return Task.FromResult(existing); } Artifacts.Add(value); return Task.FromResult(value); }
-        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid tenantId, Guid jobId, string provider, CancellationToken token) => Task.FromResult(Artifacts.SingleOrDefault(item => item.TenantId == tenantId && item.DurableJobId == jobId && item.ProviderId == provider));
+        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid jobId, string provider, CancellationToken token) => Task.FromResult(Artifacts.SingleOrDefault(item => item.DurableJobId == jobId && item.ProviderId == provider));
         public Task MarkPlacedAsync(Guid id, Guid managedId, CancellationToken token) { var item = Artifacts.Single(value => value.Id == id); item.State = ProviderDownloadArtifactState.Placed; item.ManagedFileId = managedId; return Task.CompletedTask; }
     }
 }

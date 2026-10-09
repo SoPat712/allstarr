@@ -57,18 +57,18 @@ public sealed class ListeningIntakeTokenService(
         {
             var id = Guid.CreateVersion7();
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
+                throw new UnauthorizedAccessException("The intake user is unavailable for this backend.");
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
             var reference = await secrets.StoreWithinTransactionAsync(
-                db, scope.TenantId, Purpose, secret, cancellationToken: cancellationToken);
+                db, scope.OwnerUserId, Purpose, secret, cancellationToken: cancellationToken);
             var createdAt = clock.UtcNow;
             db.ListeningIntakeTokens.Add(new ListeningIntakeTokenRecord
             {
                 Id = id,
-                TenantId = scope.TenantId,
                 OwnerUserId = scope.OwnerUserId,
                 Protocol = scope.Protocol,
                 BackendInstanceId = scope.BackendInstanceId,
-                LibraryScopeId = scope.LibraryScopeId,
                 SecretReferenceId = reference.Id,
                 RelayExternally = relayExternally,
                 CreatedAt = createdAt
@@ -93,7 +93,7 @@ public sealed class ListeningIntakeTokenService(
         var record = await Query(db, scope).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (record == null) return false;
         var reference = await db.SecretReferences.SingleAsync(item =>
-            item.Id == record.SecretReferenceId && item.TenantId == scope.TenantId, cancellationToken);
+            item.Id == record.SecretReferenceId && item.UserId == scope.OwnerUserId && item.Purpose == Purpose, cancellationToken);
         var now = clock.UtcNow;
         record.RevokedAt ??= now;
         reference.RevokedAt ??= now;
@@ -116,25 +116,21 @@ public sealed class ListeningIntakeTokenService(
                 !Enum.TryParse<ProtocolKind>(record.Protocol, true, out var protocol) ||
                 protocol == ProtocolKind.Unknown)
                 return null;
-            var scope = new IntelligenceScope(record.TenantId, record.OwnerUserId, record.Protocol,
-                record.BackendInstanceId, record.LibraryScopeId);
+            var scope = new IntelligenceScope(record.OwnerUserId, record.Protocol, record.BackendInstanceId);
             var enabled = await IntelligencePolicyService.Query(db, scope).AsNoTracking()
                 .AnyAsync(item => item.Enabled, cancellationToken);
-            var identity = await db.BackendIdentities.AsNoTracking().Where(item =>
-                    item.TenantId == record.TenantId && item.UserId == record.OwnerUserId &&
-                    item.BackendType == record.Protocol && item.BackendInstanceId == record.BackendInstanceId)
-                .OrderBy(item => item.Id).FirstOrDefaultAsync(cancellationToken);
             var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.TenantId == record.TenantId && item.Id == record.OwnerUserId &&
-                item.Status == PlatformUserStatus.Active, cancellationToken);
-            if (!enabled || identity == null || user == null) return null;
-            using var stored = await secrets.OpenAsync(record.SecretReferenceId, new(record.TenantId), cancellationToken);
+                item.Id == record.OwnerUserId && item.Enabled && item.BackendType == record.Protocol &&
+                item.BackendInstanceId == record.BackendInstanceId, cancellationToken);
+            if (!enabled || user == null) return null;
+            using var stored = await secrets.OpenAsync(record.SecretReferenceId,
+                new(record.OwnerUserId, Purpose), cancellationToken);
             if (stored.Value.Length != supplied.Length ||
                 !CryptographicOperations.FixedTimeEquals(stored.Value.Span, supplied))
                 return null;
             return new(id, scope, record.RelayExternally, protocol, new(
-                record.TenantId, record.OwnerUserId, record.Protocol, record.BackendInstanceId,
-                identity.PrincipalId, user.DisplayName, false));
+                record.OwnerUserId, record.Protocol, record.BackendInstanceId,
+                user.BackendPrincipalId, user.DisplayName, user.IsAdmin));
         }
         catch (Exception exception) when (exception is KeyNotFoundException or InvalidOperationException or UnauthorizedAccessException)
         {
@@ -169,7 +165,8 @@ public sealed class ListeningIntakeTokenService(
 
     private static IQueryable<ListeningIntakeTokenRecord> Query(AllstarrDbContext db, IntelligenceScope scope) =>
         db.ListeningIntakeTokens.Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.LibraryScopeId == scope.LibraryScopeId);
+            db.Users.Any(user => user.Id == scope.OwnerUserId && user.Enabled &&
+                user.BackendType == scope.Protocol && user.BackendInstanceId == scope.BackendInstanceId));
 }

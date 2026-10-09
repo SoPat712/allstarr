@@ -16,12 +16,12 @@ public static class LibraryTrackAccess
         var protocol = context.Protocol.ToString().ToLowerInvariant();
         var libraries = access.Succeeded ? access.LibraryIds : [];
         return db.LibraryTracks.AsNoTracking().Where(track =>
-            track.TenantId == principal.TenantId && track.Protocol == protocol &&
-            track.BackendInstanceId == context.BackendInstanceId && libraries.Contains(track.LibraryScopeId));
+            track.Protocol == protocol &&
+            track.BackendInstanceId == context.BackendInstanceId && libraries.Contains(track.BackendLibraryId));
     }
 
     public static bool Allows(LibraryTrackRecord track, ProtocolExecutionContext context, BackendLibraryAccess access) =>
-        context.Principal != null && track.TenantId == context.Principal.TenantId &&
+        context.Principal != null &&
         track.Protocol == context.Protocol.ToString().ToLowerInvariant() &&
-        track.BackendInstanceId == context.BackendInstanceId && access.Allows(track.LibraryScopeId);
+        track.BackendInstanceId == context.BackendInstanceId && access.Allows(track.BackendLibraryId);
 }

@@ -26,9 +26,9 @@ public sealed class JellyfinItemProtocolAdapter(JellyfinResponseBuilder response
         var http = httpContextAccessor?.HttpContext;
         var context = http?.GetProtocolExecutionContext();
         var source = context == null || song.IsLocal ? null : playbackActivity?.StreamFor(
-            context.Actor?.TenantId, context.Actor?.EffectiveUserId, context.Client.DeviceId, song.Id);
+            context.Actor?.EffectiveUserId, context.Client.DeviceId, song.Id);
         if (source == null || !source.Matches(context!.Protocol.ToString().ToLowerInvariant(),
-            context.BackendInstanceId, context.LibraryScopeId))
+            context.BackendInstanceId))
             return responseBuilder.CreateSongResponse(song);
 
         var item = responseBuilder.ConvertSongToJellyfinItem(song);

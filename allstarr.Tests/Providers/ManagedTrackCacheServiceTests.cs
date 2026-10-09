@@ -128,7 +128,7 @@ public sealed class ManagedTrackCacheServiceTests
             var cached = await service.TryOpenAsync(
                 new ProviderExternalResourceId("apple-download", ProviderResourceKind.Track, "song-1"),
                 new DownloadedSongMappingScope(
-                    Context().Actor!.TenantId, null, "music", ProviderAudioQuality.Any),
+                    null, ProviderAudioQuality.Any),
                 CancellationToken.None);
             Assert.NotNull(cached);
             Assert.True(cached.IsCached);
@@ -162,7 +162,7 @@ public sealed class ManagedTrackCacheServiceTests
             var cached = await service.TryOpenAsync(
                 new ProviderExternalResourceId("apple-download", ProviderResourceKind.Track, "song-1"),
                 new DownloadedSongMappingScope(
-                    Context().Actor!.TenantId, null, "music", ProviderAudioQuality.Any),
+                    null, ProviderAudioQuality.Any),
                 CancellationToken.None);
 
             Assert.Equal(!ownedCache, cached != null);
@@ -293,7 +293,6 @@ public sealed class ManagedTrackCacheServiceTests
         "backend",
         "principal",
         new AllstarrPrincipal(
-            Guid.Parse("10000000-0000-0000-0000-000000000001"),
             Guid.Parse("20000000-0000-0000-0000-000000000001"),
             "jellyfin",
             "backend",
@@ -303,8 +302,7 @@ public sealed class ManagedTrackCacheServiceTests
         "cache-test",
         DateTimeOffset.UtcNow.AddMinutes(1),
         CancellationToken.None,
-        new ProtocolClientDescriptor("client", "device"),
-        libraryScopeId: "music");
+        new ProtocolClientDescriptor("client", "device"));
 
     private static string CreateRoot()
     {

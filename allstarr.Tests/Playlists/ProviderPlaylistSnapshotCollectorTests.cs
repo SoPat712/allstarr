@@ -213,10 +213,8 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
         bool includeAccount = true,
         CancellationToken cancellationToken = default)
     {
-        var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var actor = new ProviderActorContext(
-            tenant,
             ProviderActorKind.User,
             user,
             new ProviderBackendPrincipal("jellyfin", "backend", "principal"));
@@ -226,14 +224,12 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
                 provider,
                 ProviderAccountScope.Personal,
                 1,
-                tenantId: tenant,
-                ownerUserId: user)
+                    ownerUserId: user)
             : null;
         return new(
             actor,
             provider,
             account,
-            null,
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow,

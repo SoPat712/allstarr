@@ -14,7 +14,6 @@ namespace allstarr.Tests;
 
 public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _jobId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
@@ -27,27 +26,21 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
         _factory = new TestFactory(_database.Options);
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 14, 20, 0, 0, TimeSpan.Zero));
         await using var db = await _factory.CreateDbContextAsync();
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "route-decisions",
-            Name = "Route decisions",
-            CreatedAt = _clock.UtcNow
-        });
-        db.Users.Add(new PlatformUserRecord
+        db.Users.Add(new UserRecord
         {
             Id = _userId,
-            TenantId = _tenantId,
             DisplayName = "Route user",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = "principal",
             CreatedAt = _clock.UtcNow,
             UpdatedAt = _clock.UtcNow
         });
         db.Jobs.Add(new DurableJobRecord
         {
             Id = _jobId,
-            ScopeKey = $"user:{_tenantId:N}:{_userId:N}",
-            TenantId = _tenantId,
+            ScopeKey = $"user:{_userId:N}",
             OwnerUserId = _userId,
             ProviderCapability = "Download",
             PolicySnapshotJson = "{}",
@@ -73,9 +66,7 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
         var favoriteEvent = new FavoriteEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             OwnerUserId = _userId,
-            LibraryScopeId = "music",
             ItemId = "ext-deezer-song-track-1",
             JobId = _jobId,
             CorrelationId = "favorite-route-empty"
@@ -83,7 +74,6 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
         var action = new FavoriteActionRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             OwnerUserId = _userId,
             EventId = favoriteEvent.Id,
             ActionType = "download",
@@ -93,7 +83,6 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
         var request = new ProviderRouteRequest(
             ProviderCapabilityKind.Download,
             new ProviderActorContext(
-                _tenantId,
                 ProviderActorKind.SystemJob,
                 null,
                 durableJobId: _jobId,
@@ -104,7 +93,6 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
             _clock.UtcNow.AddMinutes(30),
             ["deezer"],
             [new ProviderRouteProviderState("deezer", availableQualities: Enum.GetValues<ProviderAudioQuality>())],
-            new ProviderLibraryContext(_tenantId, "music"),
             new ProviderExternalResourceId("deezer", ProviderResourceKind.Track, "track-1"),
             action.IdempotencyKey);
         var plan = new ProviderRoutePlan<IProviderDownloadCapability>(

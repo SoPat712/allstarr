@@ -10,7 +10,6 @@ namespace allstarr.Tests;
 
 public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
     private readonly DateTimeOffset _now = new(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
@@ -24,26 +23,20 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
         _factory = new TestDbContextFactory(_database.Options);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = _tenantId,
-                Slug = "playlist-retention-tests",
-                Name = "Playlist retention tests",
-                CreatedAt = _now
-            });
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = _userId,
-                TenantId = _tenantId,
                 DisplayName = "Playlist retention owner",
-                Status = PlatformUserStatus.Active,
+                Enabled = true,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "principal",
                 CreatedAt = _now,
                 UpdatedAt = _now
             });
             db.ProviderAccounts.Add(new ProviderAccountRecord
             {
                 Id = _providerAccountId,
-                TenantId = _tenantId,
                 OwnerUserId = _userId,
                 ProviderId = "spotify",
                 DisplayName = "Personal Spotify",
@@ -183,9 +176,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
         Assert.Equal(0, repeatedQueued);
         await using var db = await _factory.CreateDbContextAsync();
         var job = await db.Jobs.AsNoTracking().SingleAsync();
-        Assert.Equal(_tenantId, job.TenantId);
         Assert.Equal(_userId, job.OwnerUserId);
-        Assert.Equal(link.LibraryScopeId, job.LibraryScopeId);
         Assert.Null(job.ProviderAccountId);
         Assert.Null(job.ProviderCapability);
         Assert.Equal(PlaylistTrackRetentionJobHandler.JobTypeName, job.Type);
@@ -234,7 +225,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
 
     [Fact]
     [Trait("Category", "Sqlite")]
-    public async Task RetentionJob_RejectsSourceMetadataOutsideTheLinkedLibraryScope()
+    public async Task RetentionJob_RejectsSourceMetadataOutsideTheLinkedBackendPrincipal()
     {
         var link = Link(PlaylistTrackRetention.KeepAll);
         var snapshotId = Guid.CreateVersion7();
@@ -246,7 +237,6 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             db.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
             {
                 Id = snapshotId,
-                TenantId = _tenantId,
                 OwnerUserId = _userId,
                 PlaylistLinkId = link.Id,
                 ProviderAccountId = _providerAccountId,
@@ -261,12 +251,10 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
             {
                 Id = metadataId,
-                TenantId = _tenantId,
                 OwnerUserId = _userId,
                 ProviderAccountId = _providerAccountId,
-                LibraryScopeId = "different-library",
+                BackendPrincipalId = "different-principal",
                 BackendInstanceId = link.TargetBackendInstanceId,
-                BackendPrincipalId = "principal",
                 Protocol = link.TargetProtocol,
                 ProviderId = "spotify",
                 ResourceKind = "track",
@@ -281,7 +269,6 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             db.PlaylistSourceEntries.Add(new PlaylistSourceEntryRecord
             {
                 Id = entryId,
-                TenantId = _tenantId,
                 PlaylistSourceSnapshotId = snapshotId,
                 ExternalMetadataSnapshotId = metadataId,
                 SourcePosition = 0,
@@ -306,10 +293,8 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             1,
             PlaylistTrackRetentionJobHandler.JobTypeName,
             JsonSerializer.SerializeToElement(payload),
-            _tenantId,
             _userId,
             null,
-            link.LibraryScopeId,
             null,
             JsonSerializer.SerializeToElement(new { }),
             "retention-scope",
@@ -334,10 +319,8 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
     private PlaylistLinkRecord Link(PlaylistTrackRetention retention) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _tenantId,
         OwnerUserId = _userId,
         ProviderAccountId = _providerAccountId,
-        LibraryScopeId = "music-retention",
         SourceProviderId = "spotify",
         SourcePlaylistId = "playlist-retention",
         SourcePlaylistIdHash = new string('a', 64),

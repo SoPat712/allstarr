@@ -15,12 +15,11 @@ public sealed class TrackRematchAllIntegrationTests
 {
     [Fact]
     [Trait("Category", "Sqlite")]
-    public async Task Administrator_preview_includes_every_owner_in_the_tenant()
+    public async Task Administrator_preview_includes_every_owner()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
         var now = new DateTimeOffset(2026, 8, 25, 12, 0, 0, TimeSpan.Zero);
-        var tenantId = Guid.CreateVersion7();
         var firstUserId = Guid.CreateVersion7();
         var secondUserId = Guid.CreateVersion7();
         var firstAccountId = Guid.CreateVersion7();
@@ -28,23 +27,16 @@ public sealed class TrackRematchAllIntegrationTests
 
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = $"tenant-rematch-{tenantId:N}",
-                Name = "Tenant rematch",
-                CreatedAt = now
-            });
             db.Users.AddRange(
-                User(firstUserId, tenantId, "First owner", now),
-                User(secondUserId, tenantId, "Second owner", now));
+                User(firstUserId, "First owner", now),
+                User(secondUserId, "Second owner", now));
             db.ProviderAccounts.AddRange(
-                Account(firstAccountId, tenantId, firstUserId, now),
-                Account(secondAccountId, tenantId, secondUserId, now));
+                Account(firstAccountId, firstUserId, now),
+                Account(secondAccountId, secondUserId, now));
             db.ExternalMetadataSnapshots.AddRange(
-                Snapshot(Guid.CreateVersion7(), firstAccountId, tenantId, firstUserId,
+                Snapshot(Guid.CreateVersion7(), firstAccountId, firstUserId,
                     "First", Hash(200), now),
-                Snapshot(Guid.CreateVersion7(), secondAccountId, tenantId, secondUserId,
+                Snapshot(Guid.CreateVersion7(), secondAccountId, secondUserId,
                     "Second", Hash(201), now));
             await db.SaveChangesAsync();
         }
@@ -58,12 +50,12 @@ public sealed class TrackRematchAllIntegrationTests
             new DurableJobContextAuthorizer(factory));
         var rematches = new TrackRematchAllService(factory, queue, new Clock(now));
 
-        var tenantPreview = await rematches.PreviewAsync(tenantId, null);
-        var ownerPreview = await rematches.PreviewAsync(tenantId, firstUserId);
+        var householdPreview = await rematches.PreviewAsync(new(firstUserId, true), null);
+        var ownerPreview = await rematches.PreviewAsync(new(firstUserId, true), firstUserId);
 
-        Assert.Equal(2, tenantPreview.TotalTracks);
-        Assert.Equal(2, tenantPreview.TracksToRematch);
-        Assert.Null(tenantPreview.ScopeOwnerUserId);
+        Assert.Equal(2, householdPreview.TotalTracks);
+        Assert.Equal(2, householdPreview.TracksToRematch);
+        Assert.Null(householdPreview.ScopeOwnerUserId);
         Assert.Equal(1, ownerPreview.TotalTracks);
         Assert.Equal(firstUserId, ownerPreview.ScopeOwnerUserId);
     }
@@ -76,9 +68,7 @@ public sealed class TrackRematchAllIntegrationTests
         var factory = new DbFactory(database.Options);
         var now = new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero);
         var clock = new Clock(now);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
-        var backendIdentityId = Guid.CreateVersion7();
         var providerAccountId = Guid.CreateVersion7();
         var localOne = Guid.CreateVersion7();
         var localTwo = Guid.CreateVersion7();
@@ -88,37 +78,10 @@ public sealed class TrackRematchAllIntegrationTests
 
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = $"rematch-{tenantId:N}",
-                Name = "Rematch tenant",
-                CreatedAt = now
-            });
-            db.Users.Add(new PlatformUserRecord
-            {
-                Id = userId,
-                TenantId = tenantId,
-                DisplayName = "Rematch owner",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-            db.BackendIdentities.Add(new BackendIdentityRecord
-            {
-                Id = backendIdentityId,
-                TenantId = tenantId,
-                UserId = userId,
-                BackendType = "jellyfin",
-                BackendInstanceId = "backend",
-                PrincipalId = "principal",
-                CreatedAt = now,
-                LastSeenAt = now
-            });
+            db.Users.Add(User(userId, "Rematch owner", now));
             db.ProviderAccounts.Add(new ProviderAccountRecord
             {
                 Id = providerAccountId,
-                TenantId = tenantId,
                 OwnerUserId = userId,
                 ProviderId = "spotify",
                 DisplayName = "Spotify",
@@ -129,7 +92,6 @@ public sealed class TrackRematchAllIntegrationTests
             db.CanonicalRecordings.Add(new CanonicalRecordingRecord
             {
                 Id = manualCanonicalId,
-                TenantId = tenantId,
                 CreatedByUserId = userId,
                 CreatedAt = now,
                 UpdatedAt = now
@@ -138,7 +100,6 @@ public sealed class TrackRematchAllIntegrationTests
                 new ProviderTrackIdentityRecord
                 {
                     Id = manualSourceIdentityId,
-                    TenantId = tenantId,
                     CanonicalRecordingId = manualCanonicalId,
                     ProviderAccountId = providerAccountId,
                     ProviderId = "spotify",
@@ -156,7 +117,6 @@ public sealed class TrackRematchAllIntegrationTests
                 new ProviderTrackIdentityRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenantId,
                     CanonicalRecordingId = manualCanonicalId,
                     ProviderId = "manual-provider",
                     ResourceKind = ProviderResourceKind.Track,
@@ -171,33 +131,31 @@ public sealed class TrackRematchAllIntegrationTests
                     UpdatedAt = now
                 });
             db.LibraryTracks.AddRange(
-                Local(localOne, backendIdentityId, tenantId, userId, "One", now),
-                Local(localTwo, backendIdentityId, tenantId, userId, "Two", now));
+                Local(localOne, userId, "One", now),
+                Local(localTwo, userId, "Two", now));
             db.ExternalMetadataSnapshots.AddRange(
-                Snapshot(snapshotIds[0], providerAccountId, tenantId, userId, "One", Hash(0), now),
-                Snapshot(snapshotIds[1], providerAccountId, tenantId, userId, "Two", Hash(1), now),
-                Snapshot(snapshotIds[2], providerAccountId, tenantId, userId, "One", Hash(2), now),
-                Snapshot(snapshotIds[3], providerAccountId, tenantId, userId, "Manual", Hash(3), now,
+                Snapshot(snapshotIds[0], providerAccountId, userId, "One", Hash(0), now),
+                Snapshot(snapshotIds[1], providerAccountId, userId, "Two", Hash(1), now),
+                Snapshot(snapshotIds[2], providerAccountId, userId, "One", Hash(2), now),
+                Snapshot(snapshotIds[3], providerAccountId, userId, "Manual", Hash(3), now,
                     manualSourceIdentityId));
             db.ExternalMetadataSnapshots.AddRange(snapshotIds.Skip(4).Select((id, index) =>
-                Snapshot(id, providerAccountId, tenantId, userId, "One", Hash(index + 4), now)));
+                Snapshot(id, providerAccountId, userId, "One", Hash(index + 4), now)));
             db.TrackMatches.AddRange(
-                Decision(snapshotIds[0], tenantId, userId, localOne, null, TrackMatchState.Accepted, now),
-                Decision(snapshotIds[1], tenantId, userId, null, null, TrackMatchState.Unresolved, now),
-                Decision(snapshotIds[2], tenantId, userId, localOne, null, TrackMatchState.Accepted, now),
-                Decision(snapshotIds[3], tenantId, userId, null, manualCanonicalId, TrackMatchState.Accepted, now));
+                Decision(snapshotIds[0], userId, localOne, null, TrackMatchState.Accepted, now),
+                Decision(snapshotIds[1], userId, null, null, TrackMatchState.Unresolved, now),
+                Decision(snapshotIds[2], userId, localOne, null, TrackMatchState.Accepted, now),
+                Decision(snapshotIds[3], userId, null, manualCanonicalId, TrackMatchState.Accepted, now));
             db.TrackMatches.AddRange(snapshotIds.Skip(4).Select(id =>
-                Decision(id, tenantId, userId, localOne, null, TrackMatchState.Accepted, now)));
+                Decision(id, userId, localOne, null, TrackMatchState.Accepted, now)));
             db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
                 OwnerUserId = userId,
                 ExternalSnapshotId = snapshotIds[2],
                 SourceProviderId = "spotify",
                 SourceExternalIdHash = Hash(2),
                 LibraryTrackId = localOne,
-                LibraryScopeId = "music",
                 Decision = ManualOverrideDecision.Pin,
                 Reason = "Keep this selection",
                 DecisionVersion = 1,
@@ -207,14 +165,12 @@ public sealed class TrackRematchAllIntegrationTests
             db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
                 OwnerUserId = null,
                 ExternalSnapshotId = snapshotIds[3],
                 SourceProviderId = "spotify",
                 SourceExternalIdHash = Hash(3),
                 TargetProviderId = "deezer",
                 TargetExternalId = "manual-target",
-                LibraryScopeId = "music",
                 Decision = ManualOverrideDecision.Pin,
                 Reason = "Household provider choice",
                 DecisionVersion = 1,
@@ -232,14 +188,14 @@ public sealed class TrackRematchAllIntegrationTests
             clock,
             new DurableJobContextAuthorizer(factory));
         var rematches = new TrackRematchAllService(factory, queue, clock);
-        var preview = await rematches.PreviewAsync(tenantId, userId);
+        var preview = await rematches.PreviewAsync(new(userId, true), userId);
 
         Assert.Equal(28, preview.TotalTracks);
         Assert.Equal(2, preview.ProtectedManualTracks);
         Assert.Equal(26, preview.TracksToRematch);
         Assert.Equal(26, preview.AutomaticDecisionsToReplace);
 
-        var receipt = await rematches.QueueForceAsync(tenantId, userId, preview);
+        var receipt = await rematches.QueueForceAsync(new(userId, true), preview);
         var lateSnapshotId = Guid.CreateVersion7();
         TrackRematchAllJobPayload payload;
         await using (var db = await factory.CreateDbContextAsync())
@@ -249,7 +205,6 @@ public sealed class TrackRematchAllIntegrationTests
             db.ExternalMetadataSnapshots.Add(Snapshot(
                 lateSnapshotId,
                 providerAccountId,
-                tenantId,
                 userId,
                 "Late",
                 Hash(99),
@@ -264,9 +219,7 @@ public sealed class TrackRematchAllIntegrationTests
             1,
             TrackRematchAllJobHandler.Type,
             JsonSerializer.SerializeToElement(payload),
-            tenantId,
             userId,
-            null,
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
@@ -325,17 +278,13 @@ public sealed class TrackRematchAllIntegrationTests
 
     private static LibraryTrackRecord Local(
         Guid id,
-        Guid backendIdentityId,
-        Guid tenantId,
         Guid userId,
         string title,
         DateTimeOffset now) => new()
         {
             Id = id,
-            TenantId = tenantId,
             OwnerUserId = userId,
-            BackendIdentityId = backendIdentityId,
-            LibraryScopeId = "music",
+            BackendLibraryId = "music",
             Protocol = "jellyfin",
             BackendInstanceId = "backend",
             BackendItemId = $"local-{title.ToLowerInvariant()}",
@@ -349,28 +298,28 @@ public sealed class TrackRematchAllIntegrationTests
             UpdatedAt = now
         };
 
-    private static PlatformUserRecord User(
+    private static UserRecord User(
         Guid id,
-        Guid tenantId,
         string name,
         DateTimeOffset now) => new()
         {
             Id = id,
-            TenantId = tenantId,
             DisplayName = name,
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            IsAdmin = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = id.ToString("N"),
             CreatedAt = now,
             UpdatedAt = now
         };
 
     private static ProviderAccountRecord Account(
         Guid id,
-        Guid tenantId,
         Guid ownerUserId,
         DateTimeOffset now) => new()
         {
             Id = id,
-            TenantId = tenantId,
             OwnerUserId = ownerUserId,
             ProviderId = "spotify",
             DisplayName = "Spotify",
@@ -382,7 +331,6 @@ public sealed class TrackRematchAllIntegrationTests
     private static ExternalMetadataSnapshotRecord Snapshot(
         Guid id,
         Guid providerAccountId,
-        Guid tenantId,
         Guid userId,
         string title,
         string hash,
@@ -390,13 +338,11 @@ public sealed class TrackRematchAllIntegrationTests
         Guid? providerTrackIdentityId = null) => new()
         {
             Id = id,
-            TenantId = tenantId,
             OwnerUserId = userId,
             ProviderAccountId = providerAccountId,
             ProviderTrackIdentityId = providerTrackIdentityId,
-            LibraryScopeId = "music",
             BackendInstanceId = "backend",
-            BackendPrincipalId = "principal",
+            BackendPrincipalId = userId.ToString("N"),
             Protocol = "jellyfin",
             ProviderId = "spotify",
             ResourceKind = "track",
@@ -416,7 +362,6 @@ public sealed class TrackRematchAllIntegrationTests
 
     private static TrackMatchRecord Decision(
         Guid snapshotId,
-        Guid tenantId,
         Guid userId,
         Guid? libraryTrackId,
         Guid? canonicalRecordingId,
@@ -424,12 +369,10 @@ public sealed class TrackRematchAllIntegrationTests
         DateTimeOffset now) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             OwnerUserId = userId,
             ExternalSnapshotId = snapshotId,
             LibraryTrackId = libraryTrackId,
             CanonicalRecordingId = canonicalRecordingId,
-            LibraryScopeId = "music",
             State = state,
             Confidence = state == TrackMatchState.Accepted ? .95 : 0,
             Threshold = .88,

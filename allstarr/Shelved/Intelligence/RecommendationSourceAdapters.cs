@@ -150,12 +150,12 @@ public abstract class BoundedRecommendationProvider(string id) : IRecommendation
     private static void Validate(RecommendationRequest request)
     {
         var scope = request.Scope;
-        if (scope.TenantId == Guid.Empty || scope.OwnerUserId == Guid.Empty || request.RunId == Guid.Empty ||
+        if (scope.OwnerUserId == Guid.Empty || request.RunId == Guid.Empty ||
             string.IsNullOrWhiteSpace(scope.Protocol) || string.IsNullOrWhiteSpace(scope.BackendInstanceId) ||
-            string.IsNullOrWhiteSpace(scope.LibraryScopeId) || request.Limit is < 1 or > 200 ||
+            request.Limit is < 1 or > 200 ||
             string.IsNullOrWhiteSpace(request.IdempotencyKey) || request.IdempotencyKey.Length > 300 ||
-            request.Profile.TenantId != scope.TenantId || request.Profile.OwnerUserId != scope.OwnerUserId ||
-            request.Profile.BackendInstanceId != scope.BackendInstanceId || request.Profile.LibraryScopeId != scope.LibraryScopeId)
+            request.Profile.OwnerUserId != scope.OwnerUserId ||
+            request.Profile.BackendInstanceId != scope.BackendInstanceId)
             throw new ArgumentException("Recommendation request scope is invalid.", nameof(request));
     }
 

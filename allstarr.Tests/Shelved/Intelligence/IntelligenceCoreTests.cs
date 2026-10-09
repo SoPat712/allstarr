@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class IntelligenceCoreTests : IAsyncLifetime
 {
-    private readonly Guid _tenant = Guid.CreateVersion7(); private readonly Guid _user = Guid.CreateVersion7();
+    private readonly Guid _user = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private Factory _factory = null!; private Clock _clock = null!; private IntelligenceScope _scope = null!;
     private IntelligencePolicyService _policies = null!; private DurableJobQueue _jobs = null!;
@@ -20,16 +20,14 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     {
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
-        _clock = new(new(2026, 7, 13, 0, 0, 0, TimeSpan.Zero)); _scope = new(_tenant, _user, "jellyfin", "main", "music");
+        _clock = new(new(2026, 7, 13, 0, 0, 0, TimeSpan.Zero));
+        _scope = new(_user, "jellyfin", "main");
         await using var db = await _factory.CreateDbContextAsync();
-        db.Tenants.Add(new() { Id = _tenant, Slug = "intel", Name = "Intelligence", CreatedAt = _clock.UtcNow });
-        db.Users.Add(new() { Id = _user, TenantId = _tenant, DisplayName = "Listener", Status = PlatformUserStatus.Active, CreatedAt = _clock.UtcNow, UpdatedAt = _clock.UtcNow });
-        var identityId = Guid.CreateVersion7();
-        db.BackendIdentities.Add(new() { Id = identityId, TenantId = _tenant, UserId = _user, BackendType = "jellyfin", BackendInstanceId = "main", PrincipalId = "listener", CreatedAt = _clock.UtcNow, LastSeenAt = _clock.UtcNow });
+        db.Users.Add(User(_user, "jellyfin", "main", "listener"));
         db.CanonicalRecordings.AddRange(Canonical(Guid.Parse("11111111-1111-1111-1111-111111111111")),
             Canonical(Guid.Parse("22222222-2222-2222-2222-222222222222")));
-        db.LibraryTracks.AddRange(Track(Guid.Parse("11111111-1111-1111-1111-111111111111"), identityId, "track-secret"),
-            Track(Guid.Parse("22222222-2222-2222-2222-222222222222"), identityId, "track-two"));
+        db.LibraryTracks.AddRange(Track(Guid.Parse("11111111-1111-1111-1111-111111111111"), "track-secret"),
+            Track(Guid.Parse("22222222-2222-2222-2222-222222222222"), "track-two"));
         await db.SaveChangesAsync(); _policies = new(_factory, _clock);
         var options = new DurableJobOptions { LeaseSeconds = 30, PollIntervalMilliseconds = 10 };
         _jobs = new(_factory, options, new JobPayloadPolicy(options), _clock);
@@ -38,42 +36,21 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     [Fact]
     public async Task SubsonicPolicyAcceptsOnlySubsonicBackendCredentials()
     {
-        var scope = _scope with { Protocol = "subsonic" };
+        var subsonicUser = Guid.CreateVersion7();
+        var otherUser = Guid.CreateVersion7();
+        var scope = new IntelligenceScope(subsonicUser, "subsonic", "main");
         var unrelated = Guid.CreateVersion7();
         var credential = Guid.CreateVersion7();
-        var identity = Guid.CreateVersion7();
-        var otherIdentity = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.BackendIdentities.AddRange(
-                new()
-                {
-                    Id = identity,
-                    TenantId = _tenant,
-                    UserId = _user,
-                    BackendType = "subsonic",
-                    BackendInstanceId = "main",
-                    PrincipalId = "listener",
-                    CreatedAt = _clock.UtcNow,
-                    LastSeenAt = _clock.UtcNow
-                },
-                new()
-                {
-                    Id = otherIdentity,
-                    TenantId = _tenant,
-                    UserId = _user,
-                    BackendType = "subsonic",
-                    BackendInstanceId = "other",
-                    PrincipalId = "listener-other",
-                    CreatedAt = _clock.UtcNow,
-                    LastSeenAt = _clock.UtcNow
-                });
+            db.Users.AddRange(
+                User(subsonicUser, "subsonic", "main", "listener-subsonic"),
+                User(otherUser, "subsonic", "other", "listener-other"));
             db.SecretReferences.AddRange(
                 new()
                 {
                     Id = unrelated,
-                    TenantId = _tenant,
-                    BackendIdentityId = otherIdentity,
+                    UserId = otherUser,
                     Purpose = BackendCredentialScope.SubsonicPurpose,
                     CreatedAt = _clock.UtcNow,
                     UpdatedAt = _clock.UtcNow
@@ -81,8 +58,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 new()
                 {
                     Id = credential,
-                    TenantId = _tenant,
-                    BackendIdentityId = identity,
+                    UserId = subsonicUser,
                     Purpose = BackendCredentialScope.SubsonicPurpose,
                     CreatedAt = _clock.UtcNow,
                     UpdatedAt = _clock.UtcNow
@@ -100,32 +76,25 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     [Fact]
     public async Task SignalsRequireExactOptInAndRetentionPrunesExpiredData()
     {
-        var writer = new RecommendationSignalWriter(_factory, _clock);
+        var writer = SignalWriter();
         Assert.False(await writer.WriteAsync(_scope, "play", "track-secret", 1, _clock.UtcNow));
         await _policies.SetAsync(_scope, new(true, 2, ["play", "skip"], ["local"]));
         await using (var setup = await _factory.CreateDbContextAsync())
         {
-            var identityId = Guid.CreateVersion7();
-            setup.BackendIdentities.Add(new()
-            {
-                Id = identityId,
-                TenantId = _tenant,
-                UserId = _user,
-                BackendType = "subsonic",
-                BackendInstanceId = "main",
-                PrincipalId = "listener",
-                CreatedAt = _clock.UtcNow,
-                LastSeenAt = _clock.UtcNow
-            });
-            var crossProtocol = Track(Guid.CreateVersion7(), identityId, "subsonic-only");
+            var otherUser = Guid.CreateVersion7();
+            setup.Users.Add(User(otherUser, "subsonic", "main", "listener-subsonic"));
+            var crossProtocol = Track(Guid.CreateVersion7(), "subsonic-only", ownerUserId: otherUser);
             crossProtocol.CanonicalRecordingId = Guid.Parse("11111111-1111-1111-1111-111111111111");
             crossProtocol.Protocol = "subsonic";
-            setup.LibraryTracks.Add(crossProtocol);
+            var inaccessibleLibrary = Track(Guid.CreateVersion7(), "other-library-only",
+                backendLibraryId: "other");
+            inaccessibleLibrary.CanonicalRecordingId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+            setup.LibraryTracks.AddRange(crossProtocol, inaccessibleLibrary);
             await setup.SaveChangesAsync();
         }
         Assert.True(await writer.WriteAsync(_scope, "play", "track-secret", 1, _clock.UtcNow));
         Assert.False(await writer.WriteAsync(_scope, "play", "subsonic-only", 1, _clock.UtcNow));
-        Assert.False(await writer.WriteAsync(_scope with { LibraryScopeId = "other" }, "play", "track-secret", 1, _clock.UtcNow));
+        Assert.False(await writer.WriteAsync(_scope, "play", "other-library-only", 1, _clock.UtcNow));
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var signal = Assert.Single(await db.ListeningSignals.ToListAsync());
@@ -147,8 +116,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.NotNull(claim);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            (await db.BackendIdentities.SingleAsync(item => item.BackendType == "jellyfin"))
-                .BackendInstanceId = "removed";
+            (await db.Users.SingleAsync(item => item.Id == _user)).Enabled = false;
             await db.SaveChangesAsync();
         }
 
@@ -172,7 +140,13 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     [Fact]
     public async Task ListeningHistoryRetentionKeepsScopesExactAndAbandonsStalePlayback()
     {
-        var otherScope = _scope with { LibraryScopeId = "other" };
+        var otherUser = Guid.CreateVersion7();
+        var otherScope = new IntelligenceScope(otherUser, "jellyfin", "other");
+        await using (var userSetup = await _factory.CreateDbContextAsync())
+        {
+            userSetup.Users.Add(User(otherUser, "jellyfin", "other", "listener-other"));
+            await userSetup.SaveChangesAsync();
+        }
         await _policies.SetAsync(_scope, new(true, 2, ["play"], ["local"]));
         await _policies.SetAsync(otherScope, new(true, 30, ["play"], ["local"]));
         var expiredKey = new string('a', 64);
@@ -189,9 +163,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 HistoryEvent(_scope, activeKey, _clock.UtcNow.AddHours(-1), ListeningEventState.Playing),
                 HistoryEvent(otherScope, otherKey, _clock.UtcNow.AddDays(-3)));
             setup.PlaybackDeliveryCheckpoints.AddRange(
-                HistoryCheckpoint(expiredKey, new string('f', 64)),
-                HistoryCheckpoint(recentKey, new string('1', 64)),
-                HistoryCheckpoint(otherKey, new string('2', 64)));
+                HistoryCheckpoint(_user, expiredKey, new string('f', 64)),
+                HistoryCheckpoint(_user, recentKey, new string('1', 64)),
+                HistoryCheckpoint(otherUser, otherKey, new string('2', 64)));
             setup.ListeningSignals.AddRange(
                 HistorySignal(_scope, _clock.UtcNow.AddDays(-1)),
                 HistorySignal(_scope, _clock.UtcNow.AddDays(1)),
@@ -213,18 +187,19 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Equal(ListeningEventState.Abandoned, events[staleKey].State);
         Assert.Equal(1, events[staleKey].Revision);
         Assert.Equal(ListeningEventState.Playing, events[activeKey].State);
-        Assert.Equal("other", events[otherKey].LibraryScopeId);
+        Assert.Equal(otherUser, events[otherKey].OwnerUserId);
+        Assert.Equal("other", events[otherKey].BackendInstanceId);
         Assert.Equal([recentKey, otherKey], await db.PlaybackDeliveryCheckpoints.AsNoTracking()
             .OrderBy(item => item.OccurrenceKey).Select(item => item.OccurrenceKey!).ToArrayAsync());
         var signals = await db.ListeningSignals.AsNoTracking().ToListAsync();
         Assert.DoesNotContain(signals, item => item.ExpiresAt <= _clock.UtcNow);
-        Assert.Contains(signals, item => item.LibraryScopeId == "music");
-        Assert.Contains(signals, item => item.LibraryScopeId == "other");
+        Assert.Contains(signals, item => item.OwnerUserId == _user);
+        Assert.Contains(signals, item => item.OwnerUserId == otherUser);
         var profiles = await db.ListeningProfiles.AsNoTracking().ToListAsync();
-        Assert.DoesNotContain(profiles, item => item.LibraryScopeId == "music" &&
+        Assert.DoesNotContain(profiles, item => item.OwnerUserId == _user &&
             item.CreatedAt == _clock.UtcNow.AddDays(-3));
-        Assert.Contains(profiles, item => item.LibraryScopeId == "music");
-        Assert.Contains(profiles, item => item.LibraryScopeId == "other");
+        Assert.Contains(profiles, item => item.OwnerUserId == _user);
+        Assert.Contains(profiles, item => item.OwnerUserId == otherUser);
     }
 
     [Fact]
@@ -256,11 +231,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         {
             Id = Guid.CreateVersion7(),
             CandidateId = candidate.Id,
-            TenantId = _tenant,
             OwnerUserId = _user,
             Protocol = "jellyfin",
             BackendInstanceId = "main",
-            LibraryScopeId = "music",
             TrackKey = candidate.TrackKey,
             Kind = "dislike",
             CreatedAt = _clock.UtcNow,
@@ -305,20 +278,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         var otherAccount = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Users.Add(new()
-            {
-                Id = otherUser,
-                TenantId = _tenant,
-                DisplayName = "Other",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
-            });
-            db.ProviderAccounts.Add(Account(otherAccount, ProviderAccountScope.Personal, otherUser));
+            db.Users.Add(User(otherUser, "jellyfin", "other", "other-listener"));
+            db.ProviderAccounts.Add(Account(otherAccount, otherUser));
             db.ProviderTrackIdentities.Add(new()
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
                 CanonicalRecordingId = Guid.Parse("11111111-1111-1111-1111-111111111111"),
                 ProviderAccountId = otherAccount,
                 ProviderId = "fixture",
@@ -391,9 +355,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
             db.JobSchedules.Add(new()
             {
                 Id = scheduleId,
-                TenantId = _tenant,
                 OwnerUserId = _user,
-                LibraryScopeId = "music",
                 JobType = DurableScheduleEngine.RecommendationJobType,
                 CronExpression = "* * * * *",
                 TimeZoneId = "UTC",
@@ -441,32 +403,35 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     {
         var policy = await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
         var otherPolicy = Guid.CreateVersion7();
+        var otherUser = Guid.CreateVersion7();
+        var otherScope = new IntelligenceScope(otherUser, "jellyfin", "other");
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.JobSchedules.AddRange(Schedule(policy.Id, "music"), Schedule(otherPolicy, "music"),
-                Schedule(policy.Id, "other"));
+            db.Users.Add(User(otherUser, "jellyfin", "other", "schedule-other"));
+            db.JobSchedules.AddRange(Schedule(policy.Id, _scope), Schedule(otherPolicy, _scope),
+                Schedule(policy.Id, otherScope));
             await db.SaveChangesAsync();
         }
 
         await _policies.SetAsync(_scope, new(false, 30, ["play"], ["fixture"]));
 
         await using var verify = await _factory.CreateDbContextAsync();
-        var schedules = await verify.JobSchedules.OrderBy(item => item.LibraryScopeId)
+        var schedules = await verify.JobSchedules.OrderBy(item => item.OwnerUserId)
             .ThenBy(item => item.PayloadTemplateJson).ToListAsync();
-        Assert.False(schedules.Single(item => item.LibraryScopeId == "music" &&
+        Assert.False(schedules.Single(item => item.OwnerUserId == _user &&
             item.PayloadTemplateJson.Contains(policy.Id.ToString(), StringComparison.OrdinalIgnoreCase)).Enabled);
-        Assert.Null(schedules.Single(item => item.LibraryScopeId == "music" &&
+        Assert.Null(schedules.Single(item => item.OwnerUserId == _user &&
             item.PayloadTemplateJson.Contains(policy.Id.ToString(), StringComparison.OrdinalIgnoreCase)).NextRunAt);
         Assert.True(schedules.Single(item => item.PayloadTemplateJson.Contains(otherPolicy.ToString(),
             StringComparison.OrdinalIgnoreCase)).Enabled);
-        Assert.True(schedules.Single(item => item.LibraryScopeId == "other").Enabled);
+        Assert.True(schedules.Single(item => item.OwnerUserId == otherUser).Enabled);
     }
 
     [Fact]
     public async Task DisableAndPurgeRemovesOnlyExactScopeIntelligenceData()
     {
         var policy = await _policies.SetAsync(_scope, new(true, 30, ["play"], ["fixture"]));
-        await new RecommendationSignalWriter(_factory, _clock).WriteAsync(_scope, "play", "track", 1, _clock.UtcNow);
+        await SignalWriter().WriteAsync(_scope, "play", "track", 1, _clock.UtcNow);
         await new ListeningProfileService(_factory, _clock).BuildAsync(_scope);
         var pending = await new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "purged-run");
         var directSetId = await new SmartPlaylistService(_factory, _clock, _jobs)
@@ -474,21 +439,21 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 [new("track-secret", 1, "audiomuse-ai", [new("preview", 1, "Preview.")],
                     new(LibraryTrackId: Guid.Parse("11111111-1111-1111-1111-111111111111"), BackendItemId: "track-secret"))],
                 "purged-preview");
-        var schedule = Schedule(policy.Id, "music");
+        var schedule = Schedule(policy.Id, _scope);
         var childJobId = Guid.CreateVersion7();
-        var otherScope = _scope with { BackendInstanceId = "other" };
+        var otherUser = Guid.CreateVersion7();
+        var otherScope = new IntelligenceScope(otherUser, "jellyfin", "other");
         var exactEnrichment = HistoryJob(_scope, new string('a', 64));
         var otherEnrichment = HistoryJob(otherScope, new string('b', 64));
         await using (var setup = await _factory.CreateDbContextAsync())
         {
+            setup.Users.Add(User(otherUser, "jellyfin", "other", "purge-other"));
             setup.JobSchedules.Add(schedule);
             setup.Jobs.AddRange(exactEnrichment, otherEnrichment, new()
             {
                 Id = childJobId,
-                ScopeKey = $"{_tenant:N}:{_user:N}",
-                TenantId = _tenant,
+                ScopeKey = $"user:{_user:N}",
                 OwnerUserId = _user,
-                LibraryScopeId = "music",
                 Type = "smart-playlist.materialize",
                 PayloadJson = "{}",
                 PolicySnapshotJson = "{}",
@@ -508,8 +473,8 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
                 HistoryImport(_scope, new string('c', 64)),
                 HistoryImport(otherScope, new string('d', 64)));
             setup.PlaybackDeliveryCheckpoints.AddRange(
-                HistoryCheckpoint(new string('a', 64), new string('e', 64)),
-                HistoryCheckpoint(new string('b', 64), new string('f', 64)));
+                HistoryCheckpoint(_user, new string('a', 64), new string('e', 64)),
+                HistoryCheckpoint(otherUser, new string('b', 64), new string('f', 64)));
             await setup.SaveChangesAsync();
         }
         await _policies.DisableAndPurgeAsync(_scope);
@@ -532,12 +497,10 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         await Assert.ThrowsAsync<InvalidOperationException>(() => new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "disabled"));
     }
 
-    private JobScheduleRecord Schedule(Guid policyId, string libraryScopeId) => new()
+    private JobScheduleRecord Schedule(Guid policyId, IntelligenceScope scope) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _tenant,
-        OwnerUserId = _user,
-        LibraryScopeId = libraryScopeId,
+        OwnerUserId = scope.OwnerUserId,
         JobType = DurableScheduleEngine.RecommendationJobType,
         CronExpression = "* * * * *",
         TimeZoneId = "UTC",
@@ -556,11 +519,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         DateTimeOffset? observedAt = null, ListeningEventState state = ListeningEventState.Completed) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             OccurrenceKey = occurrenceKey,
             State = state,
             StartedAt = observedAt ?? _clock.UtcNow,
@@ -573,11 +534,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     private ListeningHistoryImportRecord HistoryImport(IntelligenceScope scope, string hash) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = scope.TenantId,
         OwnerUserId = scope.OwnerUserId,
         Protocol = scope.Protocol,
         BackendInstanceId = scope.BackendInstanceId,
-        LibraryScopeId = scope.LibraryScopeId,
         DisplayFileName = "history.json",
         Format = "spotify",
         ContentSha256 = hash,
@@ -593,11 +552,9 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     private ListeningSignalRecord HistorySignal(IntelligenceScope scope, DateTimeOffset expiresAt) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = scope.TenantId,
         OwnerUserId = scope.OwnerUserId,
         Protocol = scope.Protocol,
         BackendInstanceId = scope.BackendInstanceId,
-        LibraryScopeId = scope.LibraryScopeId,
         SignalType = "play",
         TrackKeyHash = Convert.ToHexStringLower(Guid.NewGuid().ToByteArray()),
         TrackReference = "library:11111111111111111111111111111111",
@@ -609,36 +566,32 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     private ListeningProfileRecord HistoryProfile(IntelligenceScope scope, DateTimeOffset createdAt) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = scope.TenantId,
         OwnerUserId = scope.OwnerUserId,
         Protocol = scope.Protocol,
         BackendInstanceId = scope.BackendInstanceId,
-        LibraryScopeId = scope.LibraryScopeId,
         ProfileJson = "{}",
         WindowStart = createdAt.AddDays(-1),
         WindowEnd = createdAt,
         CreatedAt = createdAt
     };
 
-    private PlaybackDeliveryCheckpointEntity HistoryCheckpoint(string occurrenceKey, string signalKey) => new()
-    {
-        Id = Guid.CreateVersion7(),
-        TenantId = _tenant,
-        OwnerUserId = _user,
-        OccurrenceKey = occurrenceKey,
-        SignalKey = signalKey,
-        TargetId = "lastfm",
-        State = ScopedPlaybackScrobbleOutcome.Delivered,
-        UpdatedAt = _clock.UtcNow
-    };
+    private PlaybackDeliveryCheckpointEntity HistoryCheckpoint(Guid ownerUserId, string occurrenceKey,
+        string signalKey) => new()
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = ownerUserId,
+            OccurrenceKey = occurrenceKey,
+            SignalKey = signalKey,
+            TargetId = "lastfm",
+            State = ScopedPlaybackScrobbleOutcome.Delivered,
+            UpdatedAt = _clock.UtcNow
+        };
 
     private DurableJobRecord HistoryJob(IntelligenceScope scope, string occurrenceKey) => new()
     {
         Id = Guid.CreateVersion7(),
-        ScopeKey = $"{scope.TenantId:N}:{scope.OwnerUserId:N}",
-        TenantId = scope.TenantId,
+        ScopeKey = $"user:{scope.OwnerUserId:N}",
         OwnerUserId = scope.OwnerUserId,
-        LibraryScopeId = scope.LibraryScopeId,
         Type = MusicBrainzListeningEnrichmentQueue.JobType,
         PayloadJson = JsonSerializer.Serialize(new MusicBrainzListeningEnrichmentPayload(scope, occurrenceKey)),
         PolicySnapshotJson = "{}",
@@ -699,7 +652,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     public async Task EmptySeedRunUsesWeightedExactScopeListeningHabits()
     {
         await _policies.SetAsync(_scope, new(true, 30, ["favorite", "skip"], ["capture"]));
-        var writer = new RecommendationSignalWriter(_factory, _clock);
+        var writer = SignalWriter();
         await writer.WriteAsync(_scope, "favorite", "track-secret", 1, _clock.UtcNow);
         await writer.WriteAsync(_scope, "skip", "track-two", 1, _clock.UtcNow);
         await new RecommendationRunService(_factory, _jobs, _clock).EnqueueAsync(_scope, [], 10, "habit-run");
@@ -737,19 +690,11 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         var sharedAccount = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Users.Add(new()
-            {
-                Id = otherUser,
-                TenantId = _tenant,
-                DisplayName = "Other",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
-            });
+            db.Users.Add(User(otherUser, "jellyfin", "other", "account-other"));
             db.ProviderAccounts.AddRange(
-                Account(userAccount, ProviderAccountScope.Personal, _user),
-                Account(Guid.CreateVersion7(), ProviderAccountScope.Personal, otherUser),
-                Account(sharedAccount, ProviderAccountScope.Shared, null));
+                Account(userAccount, _user),
+                Account(Guid.CreateVersion7(), otherUser),
+                Account(sharedAccount, null));
             await db.SaveChangesAsync();
         }
         var accessor = new ScopedRecommendationAccountAccessor(_factory, null!);
@@ -767,7 +712,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         Assert.Null(await accessor.FindAccountAsync(
-            _scope with { OwnerUserId = Guid.CreateVersion7(), LibraryScopeId = "missing" },
+            _scope with { OwnerUserId = Guid.CreateVersion7() },
             "fixture", default));
     }
 
@@ -835,47 +780,59 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
     { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext()); }
     private sealed class EmptyServices : IServiceProvider { public static readonly EmptyServices Instance = new(); public object? GetService(Type serviceType) => null; }
-    private LibraryTrackRecord Track(Guid id, Guid identityId, string backendId) => new()
-    {
-        Id = id,
-        TenantId = _tenant,
-        OwnerUserId = _user,
-        BackendIdentityId = identityId,
-        CanonicalRecordingId = id,
-        LibraryScopeId = "music",
-        Protocol = "jellyfin",
-        BackendInstanceId = "main",
-        BackendItemId = backendId,
-        FilePath = $"/library/{backendId}.flac",
-        Title = backendId,
-        Artist = "Fixture",
-        DurationMilliseconds = 180000,
-        ProviderIdsJson = "{}",
-        IndexedAt = _clock.UtcNow,
-        SourceModifiedAt = _clock.UtcNow,
-        UpdatedAt = _clock.UtcNow
-    };
+    private RecommendationSignalWriter SignalWriter() =>
+        new(_factory, _clock, new TestBackendLibraryAccess(_factory, "music"));
+    private UserRecord User(Guid id, string backendType, string backendInstanceId,
+        string backendPrincipalId) => new()
+        {
+            Id = id,
+            BackendType = backendType,
+            BackendInstanceId = backendInstanceId,
+            BackendPrincipalId = backendPrincipalId,
+            DisplayName = backendPrincipalId,
+            IsAdmin = false,
+            Enabled = true,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow,
+            LastSeenAt = _clock.UtcNow
+        };
+    private LibraryTrackRecord Track(Guid id, string backendId, Guid? ownerUserId = null,
+        string backendLibraryId = "music") => new()
+        {
+            Id = id,
+            OwnerUserId = ownerUserId ?? _user,
+            BackendLibraryId = backendLibraryId,
+            CanonicalRecordingId = id,
+            Protocol = "jellyfin",
+            BackendInstanceId = "main",
+            BackendItemId = backendId,
+            FilePath = $"/library/{backendId}.flac",
+            Title = backendId,
+            Artist = "Fixture",
+            DurationMilliseconds = 180000,
+            ProviderIdsJson = "{}",
+            IndexedAt = _clock.UtcNow,
+            SourceModifiedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        };
 
     private CanonicalRecordingRecord Canonical(Guid id) => new()
     {
         Id = id,
-        TenantId = _tenant,
         CreatedByUserId = _user,
         CreatedAt = _clock.UtcNow,
         UpdatedAt = _clock.UtcNow,
         Revision = 1
     };
-    private ProviderAccountRecord Account(Guid id, ProviderAccountScope scope,
-        Guid? owner, string? library = null) => new()
-        {
-            Id = id,
-            TenantId = owner.HasValue ? _tenant : null,
-            OwnerUserId = owner,
-            ProviderId = "fixture",
-            DisplayName = "Fixture",
-            Enabled = true,
-            CreatedAt = _clock.UtcNow,
-            UpdatedAt = _clock.UtcNow,
-            Revision = 1
-        };
+    private ProviderAccountRecord Account(Guid id, Guid? owner) => new()
+    {
+        Id = id,
+        OwnerUserId = owner,
+        ProviderId = "fixture",
+        DisplayName = "Fixture",
+        Enabled = true,
+        CreatedAt = _clock.UtcNow,
+        UpdatedAt = _clock.UtcNow,
+        Revision = 1
+    };
 }

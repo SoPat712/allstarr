@@ -15,14 +15,13 @@ public sealed class OnboardingController(
     [HttpGet("status")]
     public async Task<IActionResult> GetStatus(CancellationToken cancellationToken = default)
     {
-        if (!TryGetAdminScope(out _, out var tenantId, out var userId, out var error))
+        if (!TryGetAdminScope(out _, out var userId, out var error))
         {
             return error!;
         }
 
         return Ok(await CreateResponseAsync(
-            await onboarding.GetAsync(tenantId, userId, cancellationToken),
-            tenantId,
+            await onboarding.GetAsync(userId, cancellationToken),
             alreadyCompleted: false,
             cancellationToken));
     }
@@ -30,23 +29,21 @@ public sealed class OnboardingController(
     [HttpPost("complete")]
     public async Task<IActionResult> Complete(CancellationToken cancellationToken = default)
     {
-        if (!TryGetAdminScope(out var session, out var tenantId, out var userId, out var error))
+        if (!TryGetAdminScope(out var session, out var userId, out var error))
         {
             return error!;
         }
 
-        var current = await onboarding.GetAsync(tenantId, userId, cancellationToken);
+        var current = await onboarding.GetAsync(userId, cancellationToken);
         try
         {
             var completed = await onboarding.CompleteAsync(
-                tenantId,
-                userId,
+                    userId,
                 $"onboarding:{session.SessionId}",
                 cancellationToken);
             return Ok(await CreateResponseAsync(
                 completed,
-                tenantId,
-                current.Completed,
+                    current.Completed,
                 cancellationToken));
         }
         catch (OnboardingStateException exception)
@@ -58,30 +55,27 @@ public sealed class OnboardingController(
     [HttpPost("reopen")]
     public async Task<IActionResult> Reopen(CancellationToken cancellationToken = default)
     {
-        if (!TryGetAdminScope(out var session, out var tenantId, out var userId, out var error))
+        if (!TryGetAdminScope(out var session, out var userId, out var error))
         {
             return error!;
         }
 
         var state = await onboarding.ReopenAsync(
-            tenantId,
             userId,
             $"onboarding:{session.SessionId}",
             cancellationToken);
         return Ok(await CreateResponseAsync(
             state,
-            tenantId,
             alreadyCompleted: false,
             cancellationToken));
     }
 
     private async Task<object> CreateResponseAsync(
         OnboardingStateSnapshot state,
-        Guid tenantId,
         bool alreadyCompleted,
         CancellationToken cancellationToken)
     {
-        var migration = await legacyMigration.GetStatusAsync(tenantId, cancellationToken);
+        var migration = await legacyMigration.GetStatusAsync(cancellationToken);
         return new
         {
             completed = state.Completed,
@@ -107,12 +101,10 @@ public sealed class OnboardingController(
 
     private bool TryGetAdminScope(
         out AdminAuthSession session,
-        out Guid tenantId,
         out Guid userId,
         out IActionResult? error)
     {
         session = null!;
-        tenantId = Guid.Empty;
         userId = Guid.Empty;
         error = null;
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
@@ -130,19 +122,17 @@ public sealed class OnboardingController(
             return false;
         }
 
-        if (current.TenantId is not { } linkedTenantId ||
-            current.AllstarrUserId is not { } linkedUserId)
+        if (current.AllstarrUserId is not { } linkedUserId)
         {
             error = Conflict(new
             {
-                error = "The administrator session is not linked to an Allstarr tenant and user.",
+                error = "The administrator session is not linked to an Allstarr user.",
                 code = "user_required"
             });
             return false;
         }
 
         session = current;
-        tenantId = linkedTenantId;
         userId = linkedUserId;
         return true;
     }

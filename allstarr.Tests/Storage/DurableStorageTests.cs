@@ -56,7 +56,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.Equal(DurableStorageReadiness.Ready, snapshot.Readiness);
         await using var context = new AllstarrDbContext(_database.Options);
         Assert.Equal(Assert.Single(context.Database.GetMigrations()), snapshot.SchemaVersion);
-        foreach (var table in new[] { "durable_jobs", "canonical_recordings", "provider_track_identities", "tenant_runtime_settings" })
+        foreach (var table in new[] { "durable_jobs", "canonical_recordings", "provider_track_identities", "runtime_settings" })
             Assert.True(await context.Database.SqlQuery<bool>($"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name={table}) AS Value").SingleAsync());
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -99,6 +99,21 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.Equal(DurableSchemaCompatibility.UnsupportedVersionErrorCode, snapshot.ErrorCode);
         Assert.Equal("99991231235959_FutureAllstarrSchema", snapshot.SchemaVersion);
         Assert.Equal(before, await context.Database.GetAppliedMigrationsAsync());
+    }
+
+    [Fact]
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task Initializer_RejectsPreviousBaselineWithoutChangingData()
+    {
+        await using var context = new AllstarrDbContext(_database.Options);
+        await context.Database.MigrateAsync();
+        await context.Database.ExecuteSqlRawAsync("""
+            UPDATE "__EFMigrationsHistory" SET "MigrationId"='20261008210212_SqliteBaseline'
+            """);
+        var snapshot = (await Initialize(_database.StorageOptions)).GetSnapshot();
+        Assert.Equal(DurableStorageReadiness.SchemaIncompatible, snapshot.Readiness);
+        Assert.Equal(DurableSchemaCompatibility.UnsupportedVersionErrorCode, snapshot.ErrorCode);
+        Assert.Equal("20261008210212_SqliteBaseline", Assert.Single(await context.Database.GetAppliedMigrationsAsync()));
     }
 
     [Fact]
@@ -168,7 +183,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     {
         using var context = new AllstarrDbContext(_database.Options);
         var script = context.GetService<IMigrator>().GenerateScript();
-        Assert.Contains("CREATE TABLE \"tenants\"", script, StringComparison.Ordinal);
+        Assert.Contains("CREATE TABLE \"users\"", script, StringComparison.Ordinal);
         Assert.Contains("CREATE TABLE \"canonical_recordings\"", script, StringComparison.Ordinal);
         Assert.Contains(" BLOB", script, StringComparison.Ordinal);
         Assert.Contains(" INTEGER", script, StringComparison.Ordinal);

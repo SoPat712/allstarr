@@ -17,16 +17,19 @@ public sealed class SqliteTestDatabaseTests
         await using var reader = new AllstarrDbContext(second.Options);
         Assert.Equal(await writer.Database.GetAppliedMigrationsAsync(), await reader.Database.GetAppliedMigrationsAsync());
         Assert.Single(await reader.Database.GetAppliedMigrationsAsync());
-        writer.Tenants.Add(new TenantRecord
+        writer.Users.Add(new UserRecord
         {
             Id = Guid.CreateVersion7(),
-            Slug = "isolated",
-            Name = "Isolated",
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = "isolated",
+            DisplayName = "Isolated",
+            Enabled = true,
             CreatedAt = DateTimeOffset.UtcNow
         });
         await writer.SaveChangesAsync();
-        Assert.Single(await writer.Tenants.ToListAsync());
-        Assert.Empty(await reader.Tenants.ToListAsync());
+        Assert.Single(await writer.Users.ToListAsync());
+        Assert.Empty(await reader.Users.ToListAsync());
     }
 
     [Fact]

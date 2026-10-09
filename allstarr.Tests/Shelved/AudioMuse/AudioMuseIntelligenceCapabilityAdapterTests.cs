@@ -78,15 +78,13 @@ public sealed class AudioMuseIntelligenceCapabilityAdapterTests
 
     private static ProviderExecutionContext Context()
     {
-        var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
-        return new(new ProviderActorContext(tenant, ProviderActorKind.User, user,
+        return new(new ProviderActorContext(ProviderActorKind.User, user,
                 new("jellyfin", "backend", "principal")),
             "audiomuse-ai",
             new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "audiomuse-ai",
-                ProviderAccountScope.Personal, 1, tenantId: tenant, ownerUserId: user,
+                ProviderAccountScope.Personal, 1, ownerUserId: user,
                 secretReferenceId: Guid.Parse("44444444-4444-4444-4444-444444444444")),
-            new(tenant, "music"),
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, true, true, false, ["audiomuse-ai"]),
             "intelligence-test", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);

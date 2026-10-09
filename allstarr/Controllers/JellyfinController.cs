@@ -65,7 +65,6 @@ public partial class JellyfinController : ControllerBase
     private readonly IPlaybackSignalPipeline? _playbackSignals;
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
-    private readonly IProtocolLibraryScopeResolver? _libraryScopes;
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
@@ -98,7 +97,6 @@ public partial class JellyfinController : ControllerBase
         IPlaybackSignalPipeline? playbackSignals = null,
         IProtocolProviderGateway? providerGateway = null,
         IAudioMuseRecommendationClient? audioMuse = null,
-        IProtocolLibraryScopeResolver? libraryScopes = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         ManagedTrackCacheService? managedTrackCache = null,
         IBackendLibraryAccessResolver? libraryAccess = null)
@@ -131,7 +129,6 @@ public partial class JellyfinController : ControllerBase
         _playbackSignals = playbackSignals;
         _providerGateway = providerGateway;
         _audioMuse = audioMuse;
-        _libraryScopes = libraryScopes;
         _intelligencePolicies = intelligencePolicies;
         _managedTrackCache = managedTrackCache;
 
@@ -817,7 +814,6 @@ public partial class JellyfinController : ControllerBase
         var actor = HttpContext.GetProtocolExecutionContext()?.Actor;
         return await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                actor?.TenantId,
                 actor?.EffectiveUserId,
                 null,
                 provider,

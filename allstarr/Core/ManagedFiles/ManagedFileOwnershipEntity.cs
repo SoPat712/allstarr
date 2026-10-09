@@ -14,9 +14,7 @@ public sealed class ManagedFileOwnershipEntity
     public string? FileSystemFileId { get; set; }
     public uint? FileSystemLinkCount { get; set; }
     public ManagedFilePlacementMethod PlacementMethod { get; set; }
-    public Guid TenantId { get; set; }
     public Guid? OwnerUserId { get; set; }
-    public string? LibraryScopeId { get; set; }
     public Guid? SourceJobId { get; set; }
     public string ScopeKey { get; set; } = string.Empty;
     public int ReferenceCount { get; set; }

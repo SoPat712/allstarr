@@ -16,7 +16,6 @@ namespace allstarr.Tests;
 public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
@@ -34,21 +33,18 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "migration",
-            Name = "Migration",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
-        db.Users.Add(new PlatformUserRecord
+        db.Users.Add(new UserRecord
         {
             Id = _userId,
-            TenantId = _tenantId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "primary",
+            BackendPrincipalId = "jellyfin-user-id",
             DisplayName = "Administrator",
-            Status = PlatformUserStatus.Active,
+            IsAdmin = true,
+            Enabled = true,
             CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UpdatedAt = DateTimeOffset.UtcNow,
+            LastSeenAt = DateTimeOffset.UtcNow
         });
         await db.SaveChangesAsync();
     }
@@ -97,7 +93,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.DoesNotContain("never-return-this-arl", json, StringComparison.Ordinal);
         Assert.DoesNotContain("never-return-this-session", json, StringComparison.Ordinal);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
         Assert.Empty(await db.SecretReferences.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
@@ -116,13 +112,13 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal(0, result.SettingsImported);
         Assert.Equal(1, result.PlaylistHandoffsPending);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
         Assert.Empty(await db.PlaylistLinks.ToListAsync());
         Assert.Empty(await db.JobSchedules.ToListAsync());
     }
 
     [Fact]
-    public async Task Apply_ImportsBackendIdentityPlaylistLinkAndActiveScheduleWhenExplicit()
+    public async Task Apply_UsesVerifiedAdminIdentityForPlaylistLinkAndActiveScheduleWhenExplicit()
     {
         var service = CreateService();
         var preview = await service.PreviewAsync(Source("""
@@ -135,25 +131,28 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             """), Actor());
 
         Assert.True(preview.CanApply);
-        Assert.Equal(1, preview.BackendIdentityCount);
+        Assert.Equal(0, preview.BackendIdentityCount);
         Assert.Equal(1, preview.PlaylistLinkCount);
         Assert.Equal(1, preview.ScheduleCount);
         Assert.Equal("import_playlist_link", Assert.Single(preview.PlaylistHandoffs).Action);
-        Assert.Equal("import_backend_identity",
+        Assert.Equal("retain_in_deployment",
             Assert.Single(preview.Items, item => item.Key == "JELLYFIN_USER_ID").Action);
 
         var result = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
 
-        Assert.Equal(1, result.BackendIdentitiesCreated);
+        Assert.Equal(0, result.BackendIdentitiesCreated);
         Assert.Equal(1, result.PlaylistLinksCreated);
         Assert.Equal(1, result.SchedulesCreated);
         Assert.Equal(1, result.SettingsImported);
         Assert.Equal(0, result.PlaylistHandoffsPending);
         await using var db = await _factory.CreateDbContextAsync();
-        var identity = Assert.Single(await db.BackendIdentities.ToListAsync());
+        var identity = Assert.Single(await db.Users.ToListAsync());
+        Assert.Equal(_userId, identity.Id);
         Assert.Equal("jellyfin", identity.BackendType);
         Assert.Equal("primary", identity.BackendInstanceId);
-        Assert.Equal("jellyfin-user-id", identity.PrincipalId);
+        Assert.Equal("jellyfin-user-id", identity.BackendPrincipalId);
+        Assert.True(identity.Enabled);
+        Assert.True(identity.IsAdmin);
         var schedule = Assert.Single(await db.JobSchedules.ToListAsync());
         Assert.True(schedule.Enabled);
         Assert.True(schedule.NextRunAt > DateTimeOffset.UtcNow.AddMinutes(-1));
@@ -167,9 +166,9 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal("primary", link.TargetBackendInstanceId);
         Assert.Equal("spotify", (await db.ProviderAccounts.SingleAsync()).ProviderId);
         Assert.Equal("[\"spotify\",\"deezer\"]",
-            (await db.TenantRuntimeSettings.SingleAsync()).ValueJson);
+            (await db.RuntimeSettings.SingleAsync()).ValueJson);
         using var provenance = JsonDocument.Parse((await db.LegacyEnvImports.SingleAsync()).ProvenanceJson);
-        Assert.Single(provenance.RootElement.GetProperty("backendIdentities").EnumerateArray());
+        Assert.False(provenance.RootElement.TryGetProperty("backendIdentities", out _));
         Assert.Single(provenance.RootElement.GetProperty("playlistLinks").EnumerateArray());
         Assert.Single(provenance.RootElement.GetProperty("schedules").EnumerateArray());
         Assert.Equal(
@@ -213,14 +212,14 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 
         var backend = Assert.Single(preview.Items, item => item.Key == "BACKEND_TYPE");
         Assert.Equal("quarantine_deployment_backend", backend.Action);
-        Assert.Equal(1, preview.BackendIdentityCount);
+        Assert.Equal(0, preview.BackendIdentityCount);
 
         await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
 
         await using var db = await _factory.CreateDbContextAsync();
-        var identity = Assert.Single(await db.BackendIdentities.ToListAsync());
+        var identity = Assert.Single(await db.Users.ToListAsync());
         Assert.Equal("jellyfin", identity.BackendType);
-        Assert.Equal("jellyfin-user-id", identity.PrincipalId);
+        Assert.Equal("jellyfin-user-id", identity.BackendPrincipalId);
     }
 
     [Fact]
@@ -238,32 +237,18 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Id = spotifyAccountId,
                 ProviderId = "spotify",
                 DisplayName = "Spotify",
-                TenantId = _tenantId,
                 OwnerUserId = _userId,
                 Enabled = true,
                 CreatedAt = DateTimeOffset.UtcNow,
                 UpdatedAt = DateTimeOffset.UtcNow,
                 Revision = 1
             });
-            db.BackendIdentities.Add(new BackendIdentityRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = _tenantId,
-                UserId = _userId,
-                BackendType = "jellyfin",
-                BackendInstanceId = "primary",
-                PrincipalId = "jellyfin-user-id",
-                CreatedAt = DateTimeOffset.UtcNow,
-                LastSeenAt = DateTimeOffset.UtcNow
-            });
             db.PlaylistLinks.Add(new PlaylistLinkRecord
             {
                 Id = linkId,
-                TenantId = _tenantId,
                 OwnerUserId = _userId,
                 ProviderAccountId = spotifyAccountId,
                 Enabled = true,
-                LibraryScopeId = "music",
                 SourceProviderId = "spotify",
                 SourcePlaylistId = "source-id",
                 SourcePlaylistIdHash = Sha256("source-id"),
@@ -279,11 +264,10 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Revision = 1
             });
             var auditId = Guid.CreateVersion7();
-            db.AuditEvents.Add(MigrationAudit(auditId, _tenantId, _userId));
+            db.AuditEvents.Add(MigrationAudit(auditId, _userId));
             db.LegacyEnvImports.Add(new LegacyEnvImportRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenantId,
                 SourceSha256 = LegacyEnvParser.Parse(source).SourceSha256,
                 SchemaVersion = "legacy-env-import-v1",
                 ActorUserId = _userId,
@@ -336,12 +320,10 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Equal("21", Assert.Single(await db.TenantRuntimeSettings.ToListAsync()).ValueJson);
+        Assert.Equal("21", Assert.Single(await db.RuntimeSettings.ToListAsync()).ValueJson);
         var deezer = Assert.Single(await db.ProviderAccounts.ToListAsync());
         Assert.Equal("Shared Deezer account", deezer.DisplayName);
-        using var lease = await CreateSecretStore().OpenAsync(
-            deezer.SecretReferenceId!.Value,
-            new SecretAccessContext(null, AllowGlobal: true));
+        using var lease = await OpenSecretAsync(deezer.SecretReferenceId!.Value, null, allowShared: true);
         using var secret = JsonDocument.Parse(lease.Value);
         Assert.Equal("second-private-value", secret.RootElement.GetProperty("arl").GetString());
     }
@@ -369,10 +351,11 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            var setting = Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+            var setting = Assert.Single(await db.RuntimeSettings.ToListAsync());
             Assert.Equal("Cache:LyricsDays", setting.Key);
             Assert.Equal("30", setting.ValueJson);
             Assert.Equal("legacy-env-import", setting.Source);
+            Assert.Null(setting.OwnerUserId);
             var accounts = await db.ProviderAccounts.OrderBy(item => item.ProviderId).ToListAsync();
             Assert.Equal(4, accounts.Count);
             Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Shared), account => Assert.False(account.Enabled));
@@ -381,15 +364,19 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Assert.Equal("Shared Spotify account", Assert.Single(accounts, account => account.ProviderId == "spotify").DisplayName);
             Assert.True(listenBrainz.Enabled);
             Assert.Equal(ProviderAccountScope.Personal, listenBrainz.Scope);
-            Assert.Equal(_tenantId, listenBrainz.TenantId);
             Assert.Equal(_userId, listenBrainz.OwnerUserId);
             Assert.All(accounts, account => Assert.NotNull(account.SecretReferenceId));
-            Assert.Equal(4, await db.SecretReferences.CountAsync());
+            var secretReferences = await db.SecretReferences.ToDictionaryAsync(item => item.Id);
+            Assert.Equal(4, secretReferences.Count);
             Assert.Equal(4, await db.SecretVersions.CountAsync());
+            Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Shared), account =>
+                Assert.Null(secretReferences[account.SecretReferenceId!.Value].UserId));
+            Assert.Equal(_userId, secretReferences[listenBrainz.SecretReferenceId!.Value].UserId);
+            Assert.All(secretReferences.Values, reference =>
+                Assert.StartsWith("provider-account:", reference.Purpose, StringComparison.Ordinal));
             var receipt = Assert.Single(await db.LegacyEnvImports.ToListAsync());
-            Assert.Equal(_tenantId, receipt.TenantId);
             Assert.Equal(result.SourceFingerprint, receipt.SourceSha256);
-            Assert.Equal("legacy-env-import-v2", receipt.SchemaVersion);
+            Assert.Equal("legacy-env-import-v3", receipt.SchemaVersion);
             using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
             var settingProvenance = Assert.Single(
                 provenance.RootElement.GetProperty("settings").EnumerateArray());
@@ -409,16 +396,14 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Assert.DoesNotContain("cookie", audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
 
             var qobuz = Assert.Single(accounts, item => item.ProviderId == "qobuz");
-            using var lease = await CreateSecretStore().OpenAsync(
-                qobuz.SecretReferenceId!.Value,
-                new SecretAccessContext(null, AllowGlobal: true));
+            using var lease = await OpenSecretAsync(
+                qobuz.SecretReferenceId!.Value, null, allowShared: true);
             using var secret = JsonDocument.Parse(lease.Value);
             Assert.Equal("qobuz-token", secret.RootElement.GetProperty("userAuthToken").GetString());
             Assert.Equal("55", secret.RootElement.GetProperty("userId").GetString());
 
-            using var listenBrainzLease = await CreateSecretStore().OpenAsync(
-                listenBrainz.SecretReferenceId!.Value,
-                new SecretAccessContext(_tenantId));
+            using var listenBrainzLease = await OpenSecretAsync(
+                listenBrainz.SecretReferenceId!.Value, _userId);
             using var listenBrainzSecret = JsonDocument.Parse(listenBrainzLease.Value);
             Assert.Equal("personal-token", listenBrainzSecret.RootElement.GetProperty("token").GetString());
         }
@@ -450,13 +435,10 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         var account = Assert.Single(await db.ProviderAccounts.ToListAsync());
         Assert.Equal(ProviderAccountScope.Personal, account.Scope);
-        Assert.Equal(_tenantId, account.TenantId);
         Assert.Equal(_userId, account.OwnerUserId);
         Assert.True(account.Enabled);
         Assert.Equal("My Last.fm account", account.DisplayName);
-        using var lease = await CreateSecretStore().OpenAsync(
-            account.SecretReferenceId!.Value,
-            new SecretAccessContext(_tenantId));
+        using var lease = await OpenSecretAsync(account.SecretReferenceId!.Value, _userId);
         using var secret = JsonDocument.Parse(lease.Value);
         Assert.Equal("lastfm-api", secret.RootElement.GetProperty("apiKey").GetString());
         Assert.Equal("lastfm-secret", secret.RootElement.GetProperty("sharedSecret").GetString());
@@ -481,7 +463,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor()));
         Assert.Equal("preview_not_applicable", error.Code);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
     }
@@ -548,10 +530,10 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.TenantRuntimeSettings.Add(new TenantRuntimeSettingRecord
+            db.RuntimeSettings.Add(new RuntimeSettingRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenantId,
+                OwnerUserId = null,
                 Key = "Cache:SearchResultsMinutes",
                 ValueType = RuntimeSettingValueType.Integer,
                 ValueJson = "5",
@@ -567,7 +549,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor()));
         Assert.Equal("state_changed", stateError.Code);
         await using var verify = await _factory.CreateDbContextAsync();
-        Assert.DoesNotContain(await verify.TenantRuntimeSettings.ToListAsync(), item => item.Key == "Cache:LyricsDays");
+        Assert.DoesNotContain(await verify.RuntimeSettings.ToListAsync(), item => item.Key == "Cache:LyricsDays");
         Assert.Empty(await verify.AuditEvents.ToListAsync());
     }
 
@@ -584,7 +566,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor()));
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
         Assert.Empty(await db.SecretReferences.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
@@ -627,7 +609,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal(0, result.ProviderAccountsCreated);
         Assert.Equal(1, result.ProviderAccountsSkipped);
         await using var verify = await _factory.CreateDbContextAsync();
-        Assert.Contains(await verify.TenantRuntimeSettings.ToListAsync(), item => item.Key == "Cache:LyricsDays");
+        Assert.Contains(await verify.RuntimeSettings.ToListAsync(), item => item.Key == "Cache:LyricsDays");
         Assert.Single(await verify.ProviderAccounts.Where(item => item.ProviderId == "deezer").ToListAsync());
     }
 
@@ -649,7 +631,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Actor());
         Assert.True(replay.AlreadyApplied);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Single(await db.RuntimeSettings.ToListAsync());
         Assert.Single(await db.AuditEvents.ToListAsync());
         Assert.Single(await db.LegacyEnvImports.ToListAsync());
     }
@@ -677,13 +659,13 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal(0, result.ProviderAccountsCreated);
 
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Single(await db.RuntimeSettings.ToListAsync());
         Assert.Single(await db.ProviderAccounts.ToListAsync());
         Assert.Equal(2, await db.LegacyEnvImports.CountAsync());
     }
 
     [Fact]
-    public async Task Apply_ConcurrentServiceInstancesUseOneDurableTenantSourceReceipt()
+    public async Task Apply_ConcurrentServiceInstancesUseOneDurableSourceReceipt()
     {
         const string source = "CACHE_LYRICS_DAYS=30";
         var first = CreateService();
@@ -698,13 +680,13 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Single(results, result => !result.AlreadyApplied);
         Assert.Single(results, result => result.AlreadyApplied);
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Single(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Single(await db.RuntimeSettings.ToListAsync());
         Assert.Single(await db.LegacyEnvImports.ToListAsync());
         Assert.Single(await db.AuditEvents.ToListAsync());
     }
 
     [Fact]
-    public async Task Database_EnforcesReceiptTenantSourceUniquenessAndActorScope()
+    public async Task Database_EnforcesReceiptSourceUniquenessAndActorForeignKey()
     {
         var service = CreateService();
         var preview = await service.PreviewAsync(Source("CACHE_LYRICS_DAYS=30"), Actor());
@@ -713,14 +695,13 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         await using (var duplicate = await _factory.CreateDbContextAsync())
         {
             var auditId = Guid.CreateVersion7();
-            duplicate.AuditEvents.Add(MigrationAudit(auditId, _tenantId, _userId));
+            duplicate.AuditEvents.Add(MigrationAudit(auditId, _userId));
             duplicate.LegacyEnvImports.Add(new LegacyEnvImportRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenantId,
                 ActorUserId = _userId,
                 SourceSha256 = result.SourceFingerprint,
-                SchemaVersion = "legacy-env-import-v2",
+                SchemaVersion = "legacy-env-import-v3",
                 AuditEventId = auditId,
                 ResultJson = JsonSerializer.Serialize(result),
                 AppliedAt = DateTimeOffset.UtcNow
@@ -728,38 +709,16 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             await Assert.ThrowsAsync<DbUpdateException>(() => duplicate.SaveChangesAsync());
         }
 
-        var otherTenantId = Guid.CreateVersion7();
-        var otherUserId = Guid.CreateVersion7();
-        await using (var seed = await _factory.CreateDbContextAsync())
-        {
-            seed.Tenants.Add(new TenantRecord
-            {
-                Id = otherTenantId,
-                Slug = "other-migration",
-                Name = "Other migration",
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-            seed.Users.Add(new PlatformUserRecord
-            {
-                Id = otherUserId,
-                TenantId = otherTenantId,
-                DisplayName = "Other admin",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
-            await seed.SaveChangesAsync();
-        }
-
+        var unknownUserId = Guid.CreateVersion7();
         await using var crossed = await _factory.CreateDbContextAsync();
         var crossedAuditId = Guid.CreateVersion7();
-        crossed.AuditEvents.Add(MigrationAudit(crossedAuditId, _tenantId, otherUserId));
+        crossed.AuditEvents.Add(MigrationAudit(crossedAuditId, unknownUserId));
         crossed.LegacyEnvImports.Add(new LegacyEnvImportRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
-            ActorUserId = otherUserId,
+            ActorUserId = unknownUserId,
             SourceSha256 = new string('b', 64),
+            SchemaVersion = "legacy-env-import-v3",
             AuditEventId = crossedAuditId,
             ResultJson = JsonSerializer.Serialize(result),
             AppliedAt = DateTimeOffset.UtcNow
@@ -809,16 +768,27 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             new SystemPlatformClock());
     }
 
+    private async Task<SecretLease> OpenSecretAsync(
+        Guid referenceId, Guid? userId, bool allowShared = false)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var purpose = await db.SecretReferences.AsNoTracking()
+            .Where(item => item.Id == referenceId)
+            .Select(item => item.Purpose)
+            .SingleAsync();
+        return await CreateSecretStore().OpenAsync(
+            referenceId,
+            new SecretAccessContext(userId, purpose, allowShared));
+    }
+
     private LegacyEnvMigrationActor Actor() => new(
         "admin-session",
-        _tenantId,
         _userId,
         "migration-correlation");
 
-    private static AuditEventRecord MigrationAudit(Guid id, Guid tenantId, Guid actorUserId) => new()
+    private static AuditEventRecord MigrationAudit(Guid id, Guid actorUserId) => new()
     {
         Id = id,
-        TenantId = tenantId,
         ActorUserId = actorUserId,
         Category = "configuration-migration",
         Action = "legacy-env.apply",

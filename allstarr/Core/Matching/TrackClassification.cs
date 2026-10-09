@@ -65,7 +65,6 @@ public static class TrackRouteProjector
             .ToArray();
         var scopedLibrary = accessibleLibraryTracks
             .Where(item =>
-                item.TenantId == snapshot.TenantId &&
                 item.BackendInstanceId == snapshot.BackendInstanceId)
             .ToArray();
         var libraryById = scopedLibrary.ToDictionary(item => item.Id);
@@ -85,7 +84,7 @@ public static class TrackRouteProjector
         {
             local = scopedLibrary
                 .Where(item => item.CanonicalRecordingId == canonicalId.Value)
-                .OrderBy(item => item.LibraryScopeId, StringComparer.Ordinal)
+                .OrderBy(item => item.BackendLibraryId, StringComparer.Ordinal)
                 .ThenBy(item => item.BackendItemId, StringComparer.Ordinal)
                 .ThenBy(item => item.Id)
                 .FirstOrDefault();

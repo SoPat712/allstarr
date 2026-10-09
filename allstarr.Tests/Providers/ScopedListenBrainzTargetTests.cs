@@ -113,7 +113,7 @@ public sealed class ScopedListenBrainzTargetTests
         Assert.Equal(0, handler.Calls);
     }
 
-    private static IntelligenceScope Scope() => new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "backend", "library");
+    private static IntelligenceScope Scope() => new(Guid.NewGuid(), "jellyfin", "backend");
 
     private sealed class AccountAccessor(string json = "{\"token\":\"test-token\"}")
         : IScopedRecommendationAccountAccessor
@@ -309,7 +309,7 @@ public sealed class ScopedLastFmTargetTests
         Assert.Equal(503, details.RootElement.GetProperty("httpStatus").GetInt32());
     }
 
-    private static IntelligenceScope Scope() => new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "backend", "library");
+    private static IntelligenceScope Scope() => new(Guid.NewGuid(), "jellyfin", "backend");
 
     private static Dictionary<string, string> ParseForm(string body) => body.Split('&')
         .Select(part => part.Split('=', 2))

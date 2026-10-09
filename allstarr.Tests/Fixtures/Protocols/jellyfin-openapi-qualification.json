@@ -280,7 +280,7 @@
     {
       "area": "synthesized playlist writes and sharing",
       "class": "native-relay",
-      "difference": "Hybrid Allstarr playlist IDs are resolved within the verified tenant, owner, backend, protocol, and library scope before normal Jellyfin mutations, ACL reads/writes, and instant mixes are relayed to their writable target. Pure virtual and provider-only playlists return a read-only conflict instead of leaking synthetic IDs upstream."
+      "difference": "Hybrid Allstarr playlist IDs are resolved within the verified owner, backend, and protocol context with backend playlist permissions before normal Jellyfin mutations, ACL reads/writes, and instant mixes are relayed to their writable target. Pure virtual and provider-only playlists return a read-only conflict instead of leaking synthetic IDs upstream."
     },
     {
       "area": "playlist deletion",

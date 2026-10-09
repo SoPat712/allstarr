@@ -8,7 +8,6 @@ public sealed record ProviderAccountResolutionRequest(
     string ProviderId,
     string Capability,
     Guid? RequestedAccountId = null,
-    string? LibraryScopeId = null,
     IReadOnlyCollection<ProviderAccountScope>? AllowedScopes = null,
     bool AllowSharedAccount = true);
 
@@ -29,14 +28,17 @@ public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext>
             throw new ArgumentException("Provider and capability are required.", nameof(request));
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        if (!await context.Users.AsNoTracking().AnyAsync(item => item.Id == request.Principal.UserId && item.Enabled,
+                cancellationToken))
+            throw new UnauthorizedAccessException("The requesting user is unavailable.");
         var providerId = request.ProviderId.Trim().ToLowerInvariant();
         var allowPersonal = request.AllowedScopes == null || request.AllowedScopes.Contains(ProviderAccountScope.Personal);
         var allowShared = request.AllowSharedAccount &&
             (request.AllowedScopes == null || request.AllowedScopes.Contains(ProviderAccountScope.Shared));
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .Where(item => item.Enabled && item.ProviderId == providerId &&
-                (allowPersonal && item.OwnerUserId == request.Principal.UserId && item.TenantId == request.Principal.TenantId ||
-                 allowShared && item.OwnerUserId == null && item.TenantId == null))
+                (allowPersonal && item.OwnerUserId == request.Principal.UserId ||
+                 allowShared && item.OwnerUserId == null))
             .Where(item => !item.SecretReferenceId.HasValue || context.SecretReferences.Any(secret =>
                 secret.Id == item.SecretReferenceId && secret.RevokedAt == null))
             .OrderByDescending(item => item.OwnerUserId.HasValue)

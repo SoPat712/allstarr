@@ -6,7 +6,7 @@ public static class BackendCredentialScope
 {
     public const string SubsonicPurpose = "playlist-backend:subsonic";
 
-    public static bool Matches(SecretReferenceRecord secret, BackendIdentityRecord identity) =>
-        secret.TenantId == identity.TenantId && secret.BackendIdentityId == identity.Id &&
+    public static bool Matches(SecretReferenceRecord secret, UserRecord user) =>
+        user.Enabled && secret.UserId == user.Id &&
         secret.Purpose == SubsonicPurpose && secret.RevokedAt == null;
 }

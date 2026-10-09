@@ -11,15 +11,15 @@ namespace allstarr.Tests;
 public sealed class ListeningIntakeTokenServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-listening-intake", Guid.NewGuid().ToString("N"));
-    private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
+    private readonly Guid _otherUser = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private Factory _factory = null!;
     private ListeningIntakeTokenService _service = null!;
     private readonly IntelligenceScope _scope;
 
     public ListeningIntakeTokenServiceTests() =>
-        _scope = new(_tenant, _user, "jellyfin", "main", "music");
+        _scope = new(_user, "jellyfin", "main");
 
     public async Task InitializeAsync()
     {
@@ -29,35 +29,15 @@ public sealed class ListeningIntakeTokenServiceTests : IAsyncLifetime
         var now = DateTimeOffset.UtcNow;
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new() { Id = _tenant, Slug = "intake", Name = "Intake", CreatedAt = now });
-            db.Users.Add(new()
-            {
-                Id = _user,
-                TenantId = _tenant,
-                DisplayName = "Listener",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-            db.BackendIdentities.Add(new()
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
-                UserId = _user,
-                BackendType = "jellyfin",
-                BackendInstanceId = "main",
-                PrincipalId = "listener",
-                CreatedAt = now,
-                LastSeenAt = now
-            });
+            db.Users.AddRange(
+                User(_user, "main", "listener", now),
+                User(_otherUser, "other", "other-listener", now));
             db.IntelligencePolicies.Add(new()
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
                 OwnerUserId = _user,
                 Protocol = "jellyfin",
                 BackendInstanceId = "main",
-                LibraryScopeId = "music",
                 Enabled = true,
                 RetentionDays = 30,
                 AllowedSignalTypesJson = "[\"complete\"]",
@@ -95,9 +75,15 @@ public sealed class ListeningIntakeTokenServiceTests : IAsyncLifetime
         Assert.False(grant.RelayExternally);
         Assert.Null(await _service.AuthorizeAsync(created.Token[..^1] + (created.Token[^1] == '0' ? '1' : '0')));
         Assert.Single(await _service.ListAsync(_scope));
+        var otherScope = new IntelligenceScope(_otherUser, "jellyfin", "other");
+        Assert.Empty(await _service.ListAsync(otherScope));
+        Assert.False(await _service.RevokeAsync(otherScope, created.Id));
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var row = await db.ListeningIntakeTokens.SingleAsync();
+            var reference = await db.SecretReferences.SingleAsync(item => item.Id == row.SecretReferenceId);
+            Assert.Equal(_user, reference.UserId);
+            Assert.Equal("listening-intake-token", reference.Purpose);
             var encrypted = await db.SecretVersions.SingleAsync(item => item.SecretReferenceId == row.SecretReferenceId);
             Assert.DoesNotContain(created.Token, Convert.ToBase64String(encrypted.Ciphertext), StringComparison.Ordinal);
         }
@@ -105,7 +91,30 @@ public sealed class ListeningIntakeTokenServiceTests : IAsyncLifetime
         Assert.True(await _service.RevokeAsync(_scope, created.Id));
         Assert.Null(await _service.AuthorizeAsync(created.Token));
         Assert.Empty(await _service.ListAsync(_scope));
+
+        var disabled = await _service.CreateAsync(_scope, relayExternally: true);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(item => item.Id == _user)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        Assert.Null(await _service.AuthorizeAsync(disabled.Token));
     }
+
+    private static UserRecord User(Guid id, string backendInstanceId, string backendPrincipalId,
+        DateTimeOffset now) => new()
+        {
+            Id = id,
+            BackendType = "jellyfin",
+            BackendInstanceId = backendInstanceId,
+            BackendPrincipalId = backendPrincipalId,
+            DisplayName = backendPrincipalId,
+            IsAdmin = false,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
 
     public async Task DisposeAsync()
     {

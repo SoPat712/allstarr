@@ -26,15 +26,15 @@ public sealed class ScopedRecommendationAccountAccessor(IDbContextFactory<Allsta
         IntelligenceScope scope, string providerId, CancellationToken cancellationToken)
     {
         IntelligencePolicyService.ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken)) return null;
         var accounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
             item.ProviderId == providerId &&
-            (item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId ||
-             item.TenantId == null && item.OwnerUserId == null))
+            (item.OwnerUserId == scope.OwnerUserId || item.OwnerUserId == null))
             .ToListAsync(cancellationToken);
         var account = accounts.OrderBy(item => item.OwnerUserId != null ? 0 : 1)
             .ThenBy(item => item.Id).FirstOrDefault();
         return account == null ? null : new ProviderAccountContext(account.Id, account.ProviderId, account.Scope,
-            account.Revision, account.Enabled, account.TenantId, account.OwnerUserId, null,
+            account.Revision, account.Enabled, account.OwnerUserId,
             "recommendation-account", account.SecretReferenceId);
     }
     public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,

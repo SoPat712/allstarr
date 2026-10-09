@@ -1818,7 +1818,7 @@ public sealed class ProtocolRouteFixtureTests
         var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
         audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
         audioMuse.Setup(client => client.FindSimilarAsync(
-                It.Is<IntelligenceScope>(scope => scope.Protocol == "jellyfin" && scope.LibraryScopeId == "music"),
+                It.Is<IntelligenceScope>(scope => scope.Protocol == "jellyfin" && scope.BackendInstanceId == "primary" && scope.OwnerUserId == Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd")),
                 It.Is<IReadOnlyList<string>>(ids => ids.SequenceEqual(new[] { "seed" })),
                 2,
                 It.IsAny<CancellationToken>()))
@@ -1889,7 +1889,7 @@ public sealed class ProtocolRouteFixtureTests
         var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
         audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
         audioMuse.Setup(client => client.FindSimilarAsync(
-                It.Is<IntelligenceScope>(scope => scope.Protocol == "subsonic" && scope.LibraryScopeId == "music"),
+                It.Is<IntelligenceScope>(scope => scope.Protocol == "subsonic" && scope.BackendInstanceId == "primary" && scope.OwnerUserId == Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd")),
                 It.Is<IReadOnlyList<string>>(ids => ids.SequenceEqual(new[] { "seed" })),
                 2,
                 It.IsAny<CancellationToken>()))
@@ -1922,7 +1922,7 @@ public sealed class ProtocolRouteFixtureTests
         var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
         audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
         audioMuse.Setup(client => client.FindPathAsync(
-                It.Is<IntelligenceScope>(scope => scope.Protocol == "subsonic" && scope.LibraryScopeId == "music"),
+                It.Is<IntelligenceScope>(scope => scope.Protocol == "subsonic" && scope.BackendInstanceId == "primary" && scope.OwnerUserId == Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd")),
                 "start", "end", 3, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new AudioMusePathResult([
                 SonicTrack("start", .7, "Start"),
@@ -1950,17 +1950,22 @@ public sealed class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task OpenSubsonicSonicPath_RejectsEndpointsFromDifferentLibraries()
+    public async Task OpenSubsonicSonicPath_RejectsAnInaccessibleNativeEndpoint()
     {
         var audioMuse = new Mock<IAudioMuseRecommendationClient>(MockBehavior.Strict);
         audioMuse.SetupGet(client => client.IsAvailable).Returns(true);
+        audioMuse.Setup(client => client.FindPathAsync(
+                It.IsAny<IntelligenceScope>(), "start", "end", 3, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AudioMusePathResult(
+                [SonicTrack("start", 1, "Start"), SonicTrack("end", .5, "End")], 1.2));
         using var factory = new ProtocolFactory(
             "Subsonic",
-            request => request.RequestUri!.AbsolutePath == "/rest/ping.view"
+            request => request.RequestUri!.AbsolutePath == "/rest/getSong.view" &&
+                       QueryHelpers.ParseQuery(request.RequestUri.Query)["id"] == "end"
                 ? Json(StatusCodes.Status200OK,
-                    """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
-                : throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"),
-            SonicServices(audioMuse.Object, otherLibraryItem: "end"));
+                    """{"subsonic-response":{"status":"failed","version":"1.16.1","error":{"code":70,"message":"Unavailable"}}}""")
+                : SubsonicSonicBackend(request),
+            SonicServices(audioMuse.Object));
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
@@ -1974,7 +1979,7 @@ public sealed class ProtocolRouteFixtureTests
             It.IsAny<string>(),
             It.IsAny<string>(),
             It.IsAny<int>(),
-            It.IsAny<CancellationToken>()), Times.Never);
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -4169,16 +4174,8 @@ public sealed class ProtocolRouteFixtureTests
 
     private static Action<IServiceCollection> SonicServices(
         IAudioMuseRecommendationClient audioMuse,
-        bool selected = true,
-        string? otherLibraryItem = null)
+        bool selected = true)
     {
-        var scopes = new Mock<IProtocolLibraryScopeResolver>(MockBehavior.Strict);
-        scopes.Setup(service => service.ResolveAsync(
-                It.IsAny<ProtocolExecutionContext>(),
-                It.IsAny<string>(),
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync((ProtocolExecutionContext context, string itemId, CancellationToken _) =>
-                context.WithLibraryScope(itemId == otherLibraryItem ? "other" : "music"));
         var policies = new Mock<IIntelligencePolicyService>(MockBehavior.Strict);
         policies.Setup(service => service.GetAsync(
                 It.IsAny<IntelligenceScope>(), It.IsAny<CancellationToken>()))
@@ -4192,18 +4189,14 @@ public sealed class ProtocolRouteFixtureTests
             services.AddSingleton<IStartupFilter, SonicPrincipalStartupFilter>();
             var providerPolicies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
             providerPolicies.Setup(item => item.ResolveForUserAsync(
-                    Guid.Parse("018f1f6e-7db7-7ab0-8b32-f26f12ff6d6a"),
                     Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd"), It.IsAny<CancellationToken>()))
-                .ReturnsAsync((Guid tenant, Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(
-                    tenant, ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                .ReturnsAsync((Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
                     ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
                 { UserId = user });
             services.RemoveAll<IEffectiveProviderPolicyResolver>();
             services.AddSingleton(providerPolicies.Object);
             services.RemoveAll<IAudioMuseRecommendationClient>();
             services.AddSingleton(audioMuse);
-            services.RemoveAll<IProtocolLibraryScopeResolver>();
-            services.AddSingleton(scopes.Object);
             services.RemoveAll<IIntelligencePolicyService>();
             services.AddSingleton(policies.Object);
         };
@@ -4217,7 +4210,6 @@ public sealed class ProtocolRouteFixtureTests
             {
                 var subsonic = context.Request.Path.StartsWithSegments("/rest");
                 context.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = new AllstarrPrincipal(
-                    Guid.Parse("018f1f6e-7db7-7ab0-8b32-f26f12ff6d6a"),
                     Guid.Parse("018f1f6e-8e9c-77f5-9a79-3d8a494d60cd"),
                     subsonic ? "subsonic" : "jellyfin",
                     "primary",

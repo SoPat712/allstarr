@@ -27,9 +27,9 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task HybridMode_MapsStableBackendIdentitiesToTenantScopedUsers()
+    public async Task SignIn_CreatesStableUsersForDistinctBackendPrincipals()
     {
-        var options = Options(MultiUserMode.Hybrid);
+        var options = Options();
         var resolver = Resolver(options);
 
         var first = await resolver.ResolveAsync(new BackendIdentityDescriptor(
@@ -49,39 +49,86 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
         Assert.NotNull(repeated);
         Assert.NotNull(second);
         Assert.Equal(first.UserId, repeated.UserId);
-        Assert.Equal(first.TenantId, second.TenantId);
         Assert.NotEqual(first.UserId, second.UserId);
         Assert.Equal("Listener One Updated", repeated.DisplayName);
         await using var context = await _factory.CreateDbContextAsync();
-        Assert.Equal(2, await context.BackendIdentities.CountAsync());
         Assert.Equal(2, await context.Users.CountAsync());
     }
 
     [Fact]
-    public async Task StrictMode_DoesNotAutoProvisionUnknownBackendIdentity()
+    public async Task ConcurrentFirstSignIn_CoalescesOneUserAndRefreshesBackendRole()
     {
-        var resolver = Resolver(Options(MultiUserMode.Strict));
+        var resolver = Resolver(Options());
+        var principals = await Task.WhenAll(Enumerable.Range(0, 12).Select(_ =>
+            resolver.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "same-listener", "Listener"))));
+        var id = Assert.Single(principals.Select(item => item!.UserId).Distinct());
+        var administrator = await resolver.ResolveAsync(new("jellyfin", "same-listener", "Renamed", true));
+        Assert.Equal(id, administrator!.UserId);
+        Assert.True(administrator.IsAdministrator);
+        Assert.Equal("Renamed", administrator.DisplayName);
+        var listener = await resolver.ResolveAsync(new("jellyfin", "same-listener", "Renamed", false));
+        Assert.False(listener!.IsAdministrator);
+        await using var db = await _factory.CreateDbContextAsync();
+        var persisted = Assert.Single(await db.Users.ToListAsync());
+        Assert.Equal(id, persisted.Id);
+        Assert.False(persisted.IsAdmin);
+        Assert.True(persisted.Enabled);
+        Assert.Equal("jellyfin", persisted.BackendType);
+        Assert.Equal("fixture-backend", persisted.BackendInstanceId);
+        Assert.Equal("same-listener", persisted.BackendPrincipalId);
+        Assert.True(persisted.LastSeenAt >= persisted.CreatedAt);
+    }
 
-        var principal = await resolver.ResolveAsync(new BackendIdentityDescriptor(
-            "Jellyfin",
-            "unknown-user"));
+    [Fact]
+    public async Task UnknownProtocolRole_PreservesVerifiedRoleUntilExplicitBackendRefresh()
+    {
+        var resolver = Resolver(Options());
+        var initial = await resolver.ResolveAsync(new("subsonic", "role-listener", "Listener"));
+        Assert.NotNull(initial);
+        Assert.False(initial.IsAdministrator);
 
-        Assert.Null(principal);
-        await using var context = await _factory.CreateDbContextAsync();
-        Assert.Empty(await context.Users.ToListAsync());
+        var administrator = await resolver.ResolveAsync(new("subsonic", "role-listener", "Listener", true));
+        Assert.Equal(initial.UserId, administrator!.UserId);
+        Assert.True(administrator.IsAdministrator);
+
+        var observed = await resolver.ResolveAsync(new("subsonic", "role-listener", "Listener"));
+        Assert.Equal(initial.UserId, observed!.UserId);
+        Assert.True(observed.IsAdministrator);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            Assert.True((await db.Users.SingleAsync()).IsAdmin);
+        }
+
+        var listener = await resolver.ResolveAsync(new("subsonic", "role-listener", "Listener", false));
+        Assert.False(listener!.IsAdministrator);
+        var laterObserved = await resolver.ResolveAsync(new("subsonic", "role-listener", "Listener"));
+        Assert.False(laterObserved!.IsAdministrator);
+        await using var verification = await _factory.CreateDbContextAsync();
+        Assert.False((await verification.Users.SingleAsync()).IsAdmin);
+    }
+
+    [Fact]
+    public async Task SamePrincipalOnDifferentBackendInstances_RemainsDistinct()
+    {
+        var resolver = Resolver(Options());
+        var first = await resolver.ResolveAsync(new("jellyfin", "listener", BackendInstanceId: "one"));
+        var other = await resolver.ResolveAsync(new("jellyfin", "listener", BackendInstanceId: "two"));
+        Assert.NotEqual(first!.UserId, other!.UserId);
+        Assert.Equal("one", first.BackendInstanceId);
+        Assert.Equal("two", other.BackendInstanceId);
     }
 
     [Fact]
     public async Task DisabledMappedUser_IsDenied()
     {
-        var resolver = Resolver(Options(MultiUserMode.Hybrid));
+        var resolver = Resolver(Options());
         var principal = await resolver.ResolveAsync(new BackendIdentityDescriptor(
             "Jellyfin",
             "disabled-user"));
         await using (var context = await _factory.CreateDbContextAsync())
         {
             var user = await context.Users.SingleAsync(item => item.Id == principal!.UserId);
-            user.Status = PlatformUserStatus.Disabled;
+            user.Enabled = false;
             await context.SaveChangesAsync();
         }
 
@@ -92,12 +139,12 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     [Fact]
     public async Task AccountResolution_UsesPersonalBeforeSharedAndRejectsAnotherUsersAccount()
     {
-        var resolver = Resolver(Options(MultiUserMode.Hybrid));
+        var resolver = Resolver(Options());
         var first = (await resolver.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "user-1")))!;
         var second = (await resolver.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "user-2")))!;
-        var firstAccount = Account("applemusic", ProviderAccountScope.Personal, first.TenantId, first.UserId);
-        var secondAccount = Account("applemusic", ProviderAccountScope.Personal, second.TenantId, second.UserId);
-        var global = Account("applemusic", ProviderAccountScope.Shared, null, null);
+        var firstAccount = Account("applemusic", ProviderAccountScope.Personal, first.UserId);
+        var secondAccount = Account("applemusic", ProviderAccountScope.Personal, second.UserId);
+        var global = Account("applemusic", ProviderAccountScope.Shared, null);
         await AddAccounts(firstAccount, secondAccount, global);
         var accountResolver = new ProviderAccountResolver(_factory);
 
@@ -119,9 +166,9 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     [Fact]
     public async Task SharedAccounts_AreAvailableForEveryUserAndCapability()
     {
-        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var identities = Resolver(Options());
         var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
-        var shared = Account("spotify", ProviderAccountScope.Shared, null, null);
+        var shared = Account("spotify", ProviderAccountScope.Shared, null);
         await AddAccounts(shared);
         var resolver = new ProviderAccountResolver(_factory);
         foreach (var capability in new[] { "streaming", "download", "playlist", "scrobbling", "favorites", "personal-library" })
@@ -136,10 +183,10 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     [Fact]
     public async Task PersonalAccount_PrecedesSharedForDownloadsAndFallsBackWhenDisabled()
     {
-        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var identities = Resolver(Options());
         var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
-        var personal = Account("qobuz", ProviderAccountScope.Personal, user.TenantId, user.UserId);
-        var shared = Account("qobuz", ProviderAccountScope.Shared, null, null);
+        var personal = Account("qobuz", ProviderAccountScope.Personal, user.UserId);
+        var shared = Account("qobuz", ProviderAccountScope.Shared, null);
         await AddAccounts(shared, personal);
         var resolver = new ProviderAccountResolver(_factory);
         foreach (var capability in new[] { "download", "playlist" })
@@ -155,10 +202,10 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     [Fact]
     public async Task AccountResolution_FiltersUnsupportedScopesAndRevokedCredentialsBeforeFallback()
     {
-        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var identities = Resolver(Options());
         var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
-        var personal = Account("fixture-extension", ProviderAccountScope.Personal, user.TenantId, user.UserId);
-        var shared = Account("fixture-extension", ProviderAccountScope.Shared, null, null);
+        var personal = Account("fixture-extension", ProviderAccountScope.Personal, user.UserId);
+        var shared = Account("fixture-extension", ProviderAccountScope.Shared, null);
         await AddAccounts(personal, shared);
         var resolver = new ProviderAccountResolver(_factory);
         Assert.Equal(shared.Id, (await resolver.ResolveAsync(new(user, "fixture-extension", "streaming",
@@ -172,7 +219,7 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
         db.SecretReferences.Add(new()
         {
             Id = secretId,
-            TenantId = user.TenantId,
+            UserId = user.UserId,
             Purpose = $"provider-account:fixture-extension:{personal.Id:N}",
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow,
@@ -192,17 +239,17 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     public async Task Routing_FallsBackFromUnusablePersonalAccountButHonorsExplicitSelection(
         string provider, ProviderRouteHealthState personalHealth, bool circuitOpen)
     {
-        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var identities = Resolver(Options());
         var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
-        var personal = Account(provider, ProviderAccountScope.Personal, user.TenantId, user.UserId);
-        var shared = Account(provider, ProviderAccountScope.Shared, null, null);
+        var personal = Account(provider, ProviderAccountScope.Personal, user.UserId);
+        var shared = Account(provider, ProviderAccountScope.Shared, null);
         await AddAccounts(personal, shared);
         var routes = new DurableProviderRouteAccountResolver(new ProviderAccountResolver(_factory),
             new AccountHealth(personal.Id, personalHealth, circuitOpen));
-        var actor = new ProviderActorContext(user.TenantId, ProviderActorKind.User, user.UserId,
+        var actor = new ProviderActorContext(ProviderActorKind.User, user.UserId,
             new ProviderBackendPrincipal("jellyfin", "fixture", "listener"));
         var request = new ProviderRouteAccountRequest(actor, provider, ProviderCapabilityKind.Streaming,
-            null, null, [ProviderAccountScope.Personal, ProviderAccountScope.Shared]);
+            null, [ProviderAccountScope.Personal, ProviderAccountScope.Shared]);
         Assert.Equal(shared.Id, (await routes.ResolveAsync(request))!.Account.AccountId);
         Assert.Equal(personal.Id, (await routes.ResolveAsync(request with { RequestedAccountId = personal.Id }))!.Account.AccountId);
     }
@@ -215,15 +262,15 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AccountOwnership_DoesNotChangeWithLibraryAndAdministratorCannotImpersonateOwner()
+    public async Task AccountOwnership_AdministratorCannotImpersonateOwner()
     {
-        var identities = Resolver(Options(MultiUserMode.Hybrid));
+        var identities = Resolver(Options());
         var a = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "a")))!;
         var b = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "b")))!;
-        var personal = Account("deezer", ProviderAccountScope.Personal, a.TenantId, a.UserId);
+        var personal = Account("deezer", ProviderAccountScope.Personal, a.UserId);
         await AddAccounts(personal);
         var resolver = new ProviderAccountResolver(_factory);
-        Assert.Equal(personal.Id, (await resolver.ResolveAsync(new(a, "deezer", "metadata", LibraryScopeId: "other-library")))!.Account.Id);
+        Assert.Equal(personal.Id, (await resolver.ResolveAsync(new(a, "deezer", "metadata")))!.Account.Id);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => resolver.ResolveAsync(
             new(b with { IsAdministrator = true }, "deezer", "metadata", personal.Id)));
     }
@@ -234,26 +281,16 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
         options,
         new SystemPlatformClock());
 
-    private static IdentityOptions Options(MultiUserMode mode) => new()
-    {
-        Mode = mode.ToString(),
-        DefaultTenantId = Guid.CreateVersion7().ToString(),
-        SingleUserId = Guid.CreateVersion7().ToString(),
-        DefaultTenantSlug = $"tenant-{Guid.NewGuid():N}",
-        DefaultTenantName = "Fixture tenant",
-        BackendInstanceId = "fixture-backend"
-    };
+    private static IdentityOptions Options() => new() { BackendInstanceId = "fixture-backend" };
 
     private static ProviderAccountRecord Account(
         string provider,
         ProviderAccountScope scope,
-        Guid? tenantId,
         Guid? ownerId) => new()
         {
             Id = Guid.CreateVersion7(),
             ProviderId = provider,
             DisplayName = $"{provider} fixture",
-            TenantId = tenantId,
             OwnerUserId = ownerId,
             Enabled = true,
             CreatedAt = DateTimeOffset.UtcNow,

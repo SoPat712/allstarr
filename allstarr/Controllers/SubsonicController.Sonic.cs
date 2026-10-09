@@ -128,8 +128,6 @@ public partial class SubsonicController
         if (_audioMuse?.IsAvailable != true) return null;
         return await SonicProtocolScope.ResolveAsync(
             CurrentProtocolContext,
-            itemId,
-            _libraryScopes,
             _intelligencePolicies,
             HttpContext.RequestAborted);
     }

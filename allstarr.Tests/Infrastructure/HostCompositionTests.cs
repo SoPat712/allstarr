@@ -242,16 +242,14 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
-    public async Task AdministratorSchema_UsesTheSessionTenantProviderPolicy()
+    public async Task AdministratorSchema_UsesHouseholdProviderPolicy()
     {
-        var tenantId = Guid.CreateVersion7();
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
             item => item.Capability,
             item => (item.Capability == ProviderCapabilityKind.Streaming
                 ? new[] { "qobuz", "deezer" }
                 : item.DefaultValue.Split(',')).ToImmutableArray());
         var policy = new EffectiveProviderPolicySnapshot(
-            tenantId,
             orders,
             ImmutableHashSet.Create(StringComparer.OrdinalIgnoreCase, "deezer"),
             "CdLossless",
@@ -259,7 +257,7 @@ public sealed class HostCompositionTests
         using var factory = new AllstarrFactory("Jellyfin", effectivePolicy: policy);
         using var scope = factory.Services.CreateScope();
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
-        controller.ControllerContext = Context(administrator: true, tenantId: tenantId);
+        controller.ControllerContext = Context(administrator: true);
 
         var result = Assert.IsType<OkObjectResult>(await controller.GetSchema());
         var schema = Assert.IsType<AdminUiSchemaResponse>(result.Value);
@@ -365,16 +363,17 @@ public sealed class HostCompositionTests
             Assert.Equal(TimeSpan.FromSeconds(5), clients.CreateClient(name).Timeout));
     }
 
-    private static ControllerContext Context(bool administrator, Guid? tenantId = null)
+    private static ControllerContext Context(bool administrator)
     {
         var httpContext = new DefaultHttpContext();
         httpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
             SessionId = "fixture",
+            AllstarrUserId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            BackendInstanceId = "primary",
             UserId = "fixture",
             UserName = "fixture",
             IsAdministrator = administrator,
-            TenantId = tenantId,
             JellyfinAccessToken = "fixture",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
             LastSeenUtc = DateTime.UtcNow
@@ -546,12 +545,11 @@ public sealed class HostCompositionTests
                 services.RemoveAll<IEffectiveProviderPolicyResolver>();
                 var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
                 resolver.Setup(item => item.ResolveAsync(
-                        _effectivePolicy.TenantId,
                         It.IsAny<CancellationToken>()))
                     .ReturnsAsync(_effectivePolicy);
                 resolver.Setup(item => item.ResolveForUserAsync(
-                        _effectivePolicy.TenantId, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-                    .ReturnsAsync((Guid _, Guid userId, CancellationToken _) => _effectivePolicy with { UserId = userId });
+                        It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync((Guid userId, CancellationToken _) => _effectivePolicy with { UserId = userId });
                 services.AddSingleton(resolver.Object);
             });
         }

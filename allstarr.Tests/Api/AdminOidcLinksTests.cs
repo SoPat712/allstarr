@@ -93,9 +93,12 @@ public sealed class AdminOidcLinksTests
             jellyfin.Url = subsonic.Url = "http://native.test";
 
             var bobSession = await sessions.CreateSessionAsync("bob", "Bob", false, "", null,
-                backendType: backendName, tenantId: bob.TenantId, allstarrUserId: bob.UserId);
+                backendType: backendName, allstarrUserId: bob.UserId);
             Assert.False(await links.IsLinkedAsync(bobSession, default));
             await links.UnlinkAsync(bobSession, default);
+            Assert.False(await links.IsLinkedAsync(session, default));
+            session = (await links.SignInAsync(key, default))!;
+            Assert.NotNull(session);
             Assert.True(await links.IsLinkedAsync(session, default));
             var csrf = new Mock<IAntiforgery>();
             csrf.Setup(item => item.IsRequestValidAsync(It.IsAny<HttpContext>())).ReturnsAsync(false);

@@ -70,23 +70,23 @@ public sealed class ProviderPlaylistSourceGateway(
         CancellationToken cancellationToken)
     {
         var actor = context.RequireActor();
+        RequireLinkExecutionContext(context, actor, link);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
             cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
         if (account.Scope == ProviderAccountScope.Personal &&
-            (account.TenantId != actor.TenantId || account.OwnerUserId != link.OwnerUserId))
+            (account.OwnerUserId != link.OwnerUserId ||
+             account.OwnerUserId != actor.EffectiveUserId))
             throw new UnauthorizedAccessException("The playlist account is outside the link scope.");
 
         var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(
             link.SourceProviderId, ProviderCapabilityKind.Playlist);
         var accountContext = new ProviderAccountContext(
             account.Id, account.ProviderId, account.Scope, account.Revision, account.Enabled,
-            account.TenantId, account.OwnerUserId, null,
-            "playlist-link", account.SecretReferenceId);
+            account.OwnerUserId, "playlist-link", account.SecretReferenceId);
         var providerContext = new ProviderExecutionContext(
             actor, account.ProviderId, accountContext,
-            new ProviderLibraryContext(actor.TenantId, link.LibraryScopeId),
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, false, account.Scope == ProviderAccountScope.Shared, false,
@@ -106,26 +106,41 @@ public sealed class ProviderPlaylistSourceGateway(
         ProviderPlaylistArtworkRequest request, CancellationToken cancellationToken)
     {
         var actor = context.RequireActor();
+        RequireLinkExecutionContext(context, actor, link);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
             cancellationToken);
         if (account == null) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
         if (account.Scope == ProviderAccountScope.Personal &&
-            (account.TenantId != actor.TenantId || account.OwnerUserId != link.OwnerUserId))
+            (account.OwnerUserId != link.OwnerUserId ||
+             account.OwnerUserId != actor.EffectiveUserId))
             return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.Forbidden));
         var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(
             link.SourceProviderId, ProviderCapabilityKind.Playlist);
         var accountContext = new ProviderAccountContext(account.Id, account.ProviderId, account.Scope,
-            account.Revision, account.Enabled, account.TenantId, account.OwnerUserId, null,
+            account.Revision, account.Enabled, account.OwnerUserId,
             "playlist-link-artwork", account.SecretReferenceId);
         var providerContext = new ProviderExecutionContext(actor, account.ProviderId, accountContext,
-            new ProviderLibraryContext(actor.TenantId, link.LibraryScopeId),
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any,
                     ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow, false,
                 account.Scope == ProviderAccountScope.Shared, false, [account.ProviderId]),
             "playlist-artwork", context.CorrelationId, clock.UtcNow.AddMinutes(2), cancellationToken);
         return await capability.ResolveArtworkAsync(providerContext, request);
+    }
+
+    private static void RequireLinkExecutionContext(
+        ProtocolExecutionContext context,
+        ProviderActorContext actor,
+        PlaylistLinkRecord link)
+    {
+        var expectedProtocol = link.TargetProtocol.Equals("jellyfin", StringComparison.OrdinalIgnoreCase)
+            ? ProtocolKind.Jellyfin
+            : ProtocolKind.Subsonic;
+        if (actor.EffectiveUserId != link.OwnerUserId ||
+            context.BackendInstanceId != link.TargetBackendInstanceId ||
+            context.Protocol != expectedProtocol)
+            throw new UnauthorizedAccessException("Playlist execution requires the playlist owner's context.");
     }
 }
 
@@ -205,15 +220,21 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var actor = execution.RequireActor();
         await using var initial = await _factory.CreateDbContextAsync(cancellationToken);
         var link = await initial.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == request.PlaylistLinkId && item.TenantId == actor.TenantId,
+            item.Id == request.PlaylistLinkId,
             cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
-        PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
+        RequireLinkExecutionContext(execution, actor, link);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before synchronizing.");
+        var account = await initial.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
+            cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+        if (account.Scope == ProviderAccountScope.Personal &&
+            (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
+            throw new UnauthorizedAccessException("The playlist account is outside the execution owner.");
 
         var frozenSnapshotId = link.ImportMode == PlaylistImportMode.OneTime
             ? await initial.PlaylistSourceSnapshots.AsNoTracking()
-                .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id && item.PublishedAt.HasValue)
+                .Where(item => item.OwnerUserId == link.OwnerUserId && item.PlaylistLinkId == link.Id && item.PublishedAt.HasValue)
                 .OrderBy(item => item.PublishedAt)
                 .ThenBy(item => item.SnapshotVersion)
                 .Select(item => (Guid?)item.Id)
@@ -237,7 +258,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 ? PlaylistPlanMode.Recreate
                 : PlaylistPlanMode.Reconcile;
         var owned = await initial.PlaylistTargetMemberships.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && item.PlaylistLinkId == link.Id && item.Active)
+            .Where(item => item.PlaylistLinkId == link.Id && item.Active)
             .Select(item => item.TargetEntryId).ToListAsync(cancellationToken);
         var rules = new PlaylistPlanningRules(
             link.RuleVersion, request.Generation, link.PreserveManualEntries, link.MirrorStaleEntries,
@@ -245,7 +266,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var planningTarget = new PlaylistPlanningTarget(
             link.TargetProtocol, link.TargetBackendInstanceId, link.TargetPlaylistId);
         var latestPublishedSnapshotId = await initial.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == link.TenantId &&
+            .Where(item => item.OwnerUserId == link.OwnerUserId &&
                            item.PlaylistLinkId == link.Id &&
                            item.PublishedAt.HasValue)
             .OrderByDescending(item => item.SnapshotVersion)
@@ -292,8 +313,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             var targetContext = new BackendPlaylistTargetContext(
                 link.TargetBackendInstanceId,
                 execution.VerifiedBackendPrincipalId,
-                link.TargetCredentialReferenceId?.ToString(),
-                link.TenantId);
+                link.TargetCredentialReferenceId?.ToString());
             BackendPlaylistSnapshot? before = null;
             if (link.TargetPlaylistId != null)
             {
@@ -374,10 +394,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var actor = execution.RequireActor();
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == playlistLinkId && item.TenantId == actor.TenantId, cancellationToken)
+            item.Id == playlistLinkId, cancellationToken)
             ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
-        PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
+        RequireLinkExecutionContext(execution, actor, link);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before refreshing.");
         if (link.ImportMode == PlaylistImportMode.OneTime)
             throw new InvalidOperationException("A one-time import keeps its original snapshot and cannot refresh from the source.");
@@ -401,15 +421,14 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var link = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
-            item.Id == playlistLinkId && item.TenantId == actor.TenantId,
+            item.Id == playlistLinkId,
             cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
-        PersistenceGuard.RequireLibrary(execution, link.LibraryScopeId);
         if (link.Revision != expectedLinkRevision)
             throw new DbUpdateConcurrencyException("The playlist changed before rematch publication.");
         var snapshot = await LoadSnapshotAsync(db, link, sourceSnapshotId, cancellationToken);
         var currentId = await db.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == link.TenantId &&
+            .Where(item => item.OwnerUserId == link.OwnerUserId &&
                            item.PlaylistLinkId == link.Id &&
                            item.PublishedAt.HasValue)
             .OrderByDescending(item => item.SnapshotVersion)
@@ -420,16 +439,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             throw new DbUpdateConcurrencyException("The published playlist changed before rematch publication.");
         var externalIds = externalSnapshotIds.Distinct().ToArray();
         var entries = await db.PlaylistSourceEntries
-            .Where(item => item.TenantId == link.TenantId &&
-                           item.PlaylistSourceSnapshotId == snapshot.Id &&
+            .Where(item => item.PlaylistSourceSnapshotId == snapshot.Id &&
                            externalIds.Contains(item.ExternalMetadataSnapshotId))
             .ToListAsync(cancellationToken);
         if (entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().Count() != externalIds.Length)
             throw new DbUpdateConcurrencyException("The rematched playlist rows changed before publication.");
         var decisions = db.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == link.TenantId &&
-                           item.OwnerUserId == link.OwnerUserId &&
-                           item.LibraryScopeId == link.LibraryScopeId &&
+            .Where(item => item.OwnerUserId == link.OwnerUserId &&
                            externalIds.Contains(item.ExternalSnapshotId));
         var versions = decisions.GroupBy(item => item.ExternalSnapshotId).Select(group => new
         {
@@ -457,7 +473,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         if (_logger == null) return;
         var projection = await new DurablePlaylistProjectionReader(_factory, _libraryAccess)
             .ReadByLinkIdAsync(
-                link.TenantId,
                 link.OwnerUserId,
                 link.Id,
                 cancellationToken);
@@ -501,7 +516,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
             var retained = await db.PlaylistSourceSnapshots.AsNoTracking()
-                .Where(item => item.TenantId == link.TenantId &&
+                .Where(item => item.OwnerUserId == link.OwnerUserId &&
                                item.PlaylistLinkId == link.Id &&
                                item.PublishedAt.HasValue)
                 .OrderByDescending(item => item.SnapshotVersion)
@@ -536,12 +551,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var published = await db.PlaylistSourceSnapshots.SingleAsync(item =>
             item.Id == snapshot.Id &&
-            item.TenantId == link.TenantId &&
+            item.OwnerUserId == link.OwnerUserId &&
             item.PlaylistLinkId == link.Id,
             cancellationToken);
         var entries = await db.PlaylistSourceEntries
-            .Where(item => item.TenantId == link.TenantId &&
-                           item.PlaylistSourceSnapshotId == snapshot.Id)
+            .Where(item => item.PlaylistSourceSnapshotId == snapshot.Id)
             .ToListAsync(cancellationToken);
         if (entries.Count != decisionIds.Count ||
             entries.Any(item => !decisionIds.TryGetValue(item.Id, out var decisionId) ||
@@ -549,7 +563,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             throw new InvalidOperationException("A playlist generation cannot publish without one durable decision per source entry.");
         var matchIds = decisionIds.Values.Select(item => item!.Value).Distinct().ToArray();
         var matches = await db.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == link.TenantId && matchIds.Contains(item.Id))
+            .Where(item => item.OwnerUserId == link.OwnerUserId && matchIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         if (matches.Count != matchIds.Length ||
             entries.Any(item =>
@@ -607,7 +621,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         });
         var playlistPayloadHash = Hash(playlistPayload);
         var existing = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
-                item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
+                item.OwnerUserId == link.OwnerUserId && item.PlaylistLinkId == link.Id &&
                 item.PayloadSha256 == playlistPayloadHash)
             .OrderByDescending(item => item.SnapshotVersion).FirstOrDefaultAsync(cancellationToken);
         if (existing != null && await db.PlaylistSourceEntries.AsNoTracking()
@@ -615,8 +629,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 .AllAsync(item => db.ExternalMetadataSnapshots.Any(external =>
                     external.Id == item.ExternalMetadataSnapshotId &&
                     external.OwnerUserId == link.OwnerUserId &&
-                    external.LibraryScopeId == link.LibraryScopeId &&
+                    external.ProviderAccountId == link.ProviderAccountId &&
                     external.BackendInstanceId == link.TargetBackendInstanceId &&
+                    external.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
                     external.Protocol == link.TargetProtocol), cancellationToken))
         {
             _logger?.LogInformation(
@@ -632,7 +647,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             return existing;
         }
         var version = (await db.PlaylistSourceSnapshots.Where(item =>
-                item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
+                item.OwnerUserId == link.OwnerUserId && item.PlaylistLinkId == link.Id)
             .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken) ?? 0) + 1;
         var externalBySourceEntry = new Dictionary<string, ExternalMetadataSnapshotRecord>(StringComparer.Ordinal);
         var storedExternals = new List<ExternalMetadataSnapshotRecord>();
@@ -643,7 +658,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         foreach (var hashes in providerTrackHashes.Chunk(500))
         {
             storedExternals.AddRange(await db.ExternalMetadataSnapshots.AsNoTracking()
-                .Where(item => item.TenantId == link.TenantId &&
+                .Where(item => item.OwnerUserId == link.OwnerUserId &&
                                item.ProviderAccountId == link.ProviderAccountId &&
                                item.ResourceKind == "track" &&
                                hashes.Contains(item.ExternalIdHash))
@@ -651,8 +666,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         }
         var exactExternals = storedExternals
             .Where(item => item.OwnerUserId == link.OwnerUserId &&
-                           item.LibraryScopeId == link.LibraryScopeId &&
                            item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           item.BackendPrincipalId == execution.VerifiedBackendPrincipalId &&
                            item.Protocol == link.TargetProtocol &&
                            item.PayloadSha256 != null)
             .GroupBy(item => (item.ExternalIdHash, item.PayloadSha256))
@@ -662,10 +677,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             .ToDictionary(group => group.Key, group => group.Max(item => item.SnapshotVersion), StringComparer.Ordinal);
         var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
             .Where(item =>
-                item.TenantId == link.TenantId &&
                 item.ProviderId == link.SourceProviderId &&
                 item.ResourceKind == ProviderResourceKind.Track &&
                 providerTrackHashes.Contains(item.ExternalIdHash) &&
+                (item.ProviderAccountId == link.ProviderAccountId ||
+                 item.Scope == ProviderIdentityScope.Catalog && !item.ProviderAccountId.HasValue) &&
                 (item.Verification == ProviderIdentityVerification.Verified ||
                  item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
@@ -691,13 +707,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 external = new ExternalMetadataSnapshotRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = link.TenantId,
                     OwnerUserId = link.OwnerUserId,
                     ProviderAccountId = link.ProviderAccountId,
                     ProviderTrackIdentityId = providerIdentityByHash
                         .GetValueOrDefault(entry.ProviderTrackIdHash)?.Id,
                     SourceJobId = jobId,
-                    LibraryScopeId = link.LibraryScopeId,
                     BackendInstanceId = link.TargetBackendInstanceId,
                     BackendPrincipalId = execution.VerifiedBackendPrincipalId,
                     Protocol = link.TargetProtocol,
@@ -720,7 +734,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var snapshot = new PlaylistSourceSnapshotRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = link.TenantId,
             OwnerUserId = link.OwnerUserId,
             PlaylistLinkId = link.Id,
             ProviderAccountId = link.ProviderAccountId,
@@ -740,7 +753,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             new PlaylistSourceEntryRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = link.TenantId,
                 PlaylistSourceSnapshotId = snapshot.Id,
                 ExternalMetadataSnapshotId = externalBySourceEntry[entry.SourceEntryIdHash].Id,
                 SourcePosition = entry.SourcePosition,
@@ -764,7 +776,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private static async Task<PlaylistSourceSnapshotRecord> LoadSnapshotAsync(
         AllstarrDbContext db, PlaylistLinkRecord link, Guid id, CancellationToken cancellationToken) =>
         await db.PlaylistSourceSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == id && item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id &&
+            item.Id == id && item.PlaylistLinkId == link.Id &&
             item.OwnerUserId == link.OwnerUserId && item.ProviderAccountId == link.ProviderAccountId,
             cancellationToken) ?? throw new UnauthorizedAccessException("The source snapshot is outside the playlist link.");
 
@@ -778,15 +790,19 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var effectiveMatcher = _effectivePolicies == null
             ? _matcher
             : _matcher.WithLocalPriorityWindow(
-                (await _effectivePolicies.ResolveAsync(link.TenantId, cancellationToken)).LocalPreferenceWindow);
+                (await _effectivePolicies.ResolveForUserAsync(link.OwnerUserId, cancellationToken)).LocalPreferenceWindow);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var entries = await db.PlaylistSourceEntries.AsNoTracking().Where(item =>
-            item.TenantId == link.TenantId && item.PlaylistSourceSnapshotId == snapshot.Id)
+            item.PlaylistSourceSnapshotId == snapshot.Id)
             .OrderBy(item => item.SourcePosition).ToListAsync(cancellationToken);
         var externalIds = entries.Select(entry => entry.ExternalMetadataSnapshotId).ToList();
 
         var externals = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
-            externalIds.Contains(item.Id) && item.TenantId == link.TenantId)
+            externalIds.Contains(item.Id) &&
+            item.OwnerUserId == link.OwnerUserId &&
+            item.ProviderAccountId == link.ProviderAccountId &&
+            item.BackendInstanceId == link.TargetBackendInstanceId &&
+            item.BackendPrincipalId == execution.VerifiedBackendPrincipalId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var providerIdentityIds = externals.Values
             .Where(item => item.ProviderTrackIdentityId.HasValue)
@@ -794,20 +810,19 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             .Distinct()
             .ToArray();
         var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == link.TenantId &&
-                           providerIdentityIds.Contains(item.Id))
+            .Where(item => providerIdentityIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
 
         var access = await _libraryAccess.ResolveAsync(execution, cancellationToken);
         var candidates = await LibraryTrackAccess.Query(db, execution, access)
-            .Where(item => item.TenantId == link.TenantId && item.BackendInstanceId == link.TargetBackendInstanceId)
+            .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId)
             .Select(item => new LibraryTrackRecord
             {
                 Id = item.Id,
-                TenantId = item.TenantId,
                 OwnerUserId = item.OwnerUserId,
                 CanonicalRecordingId = item.CanonicalRecordingId,
-                LibraryScopeId = item.LibraryScopeId,
+                BackendLibraryId = item.BackendLibraryId,
+                Protocol = item.Protocol,
                 BackendInstanceId = item.BackendInstanceId,
                 BackendItemId = item.BackendItemId,
                 Title = item.Title,
@@ -823,9 +838,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var candidateIds = candidates.Select(item => item.Id).ToHashSet();
         var candidateDecisions = db.TrackMatches.AsNoTracking()
             .Where(item =>
-                item.TenantId == link.TenantId &&
                 item.OwnerUserId == link.OwnerUserId &&
-                item.LibraryScopeId == link.LibraryScopeId &&
                 item.CanonicalRecordingId.HasValue &&
                 item.LibraryTrackId.HasValue &&
                 candidateIds.Contains(item.LibraryTrackId.Value));
@@ -883,11 +896,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var actor = execution.RequireActor();
         var resolution = await _trackMatches.GetResolutionDataAsync(
             new TrackMatchActor(
-                actor.TenantId,
                 actor.EffectiveUserId ?? link.OwnerUserId,
                 actor.Kind == ProviderActorKind.Administrator),
             link.OwnerUserId,
-            link.LibraryScopeId,
             externalIds,
             cancellationToken);
         var storedByExternalId = resolution.LatestDecisions
@@ -948,9 +959,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 manual.LibraryTrackId.HasValue &&
                 manual.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion
                     ? new ScopedTrackMatchOverride(
-                        link.TenantId,
                         link.OwnerUserId,
-                        link.LibraryScopeId,
                         source.ProviderId,
                         source.ExternalId,
                         null,
@@ -958,7 +967,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     : null;
 
             var match = effectiveMatcher.Decide(
-                new TrackMatchScope(link.TenantId, link.OwnerUserId, link.TargetBackendInstanceId, link.LibraryScopeId, link.ProviderAccountId, 1, snapshot.SnapshotVersion, access.LibraryIds.ToHashSet(StringComparer.Ordinal)),
+                new TrackMatchScope(link.OwnerUserId, link.TargetBackendInstanceId, link.ProviderAccountId, 1, snapshot.SnapshotVersion, access.LibraryIds.ToHashSet(StringComparer.Ordinal)),
                 source,
                 candidateSet,
                 rejectedOverride);
@@ -1015,11 +1024,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             resolution = await _trackMatches.GetResolutionDataAsync(
                 new TrackMatchActor(
-                    actor.TenantId,
                     actor.EffectiveUserId ?? link.OwnerUserId,
                     actor.Kind == ProviderActorKind.Administrator),
                 link.OwnerUserId,
-                link.LibraryScopeId,
                 externalIds,
                 cancellationToken);
             storedByExternalId = resolution.LatestDecisions
@@ -1042,7 +1049,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 external.ProviderTrackIdentityId.HasValue &&
                 item.Id == external.ProviderTrackIdentityId.Value) ??
                 resolution.ProviderIdentities.FirstOrDefault(item =>
-                    item.TenantId == external.TenantId &&
                     item.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
                     item.ExternalIdHash == external.ExternalIdHash &&
                     item.ResourceKind == ProviderResourceKind.Track);
@@ -1075,6 +1081,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     effectiveLibraryTrackId,
                     library?.BackendItemId,
                     library?.BackendInstanceId,
+                    library?.Protocol,
+                    library?.BackendLibraryId,
                     CanonicalRecordingId: canonicalId),
                 TrackRouteKind.External when classification.PrimaryProviderRoute is { } selected =>
                     new PlaylistResolvedRoute(
@@ -1144,7 +1152,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var existing = await db.PlaylistSyncRuns.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == link.TenantId &&
+            item.OwnerUserId == link.OwnerUserId &&
             item.PlaylistLinkId == link.Id &&
             item.IdempotencyKey == plan.IdempotencyKey,
             cancellationToken);
@@ -1155,7 +1163,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             request, link, snapshot, plan, PlaylistSyncState.Running, null, null);
         db.PlaylistSyncRuns.Add(run);
         db.PlaylistSyncEntryResults.AddRange(
-            ToRunEntries(link.TenantId, run.Id, plan, decisionIds));
+            ToRunEntries(run.Id, plan, decisionIds));
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -1165,7 +1173,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             db.ChangeTracker.Clear();
             var winner = await db.PlaylistSyncRuns.AsNoTracking().SingleAsync(item =>
-                item.TenantId == link.TenantId &&
+                item.OwnerUserId == link.OwnerUserId &&
                 item.PlaylistLinkId == link.Id &&
                 item.IdempotencyKey == plan.IdempotencyKey,
                 cancellationToken);
@@ -1222,11 +1230,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var run = await db.PlaylistSyncRuns.SingleAsync(item =>
-            item.Id == runId && item.TenantId == link.TenantId &&
+            item.Id == runId && item.OwnerUserId == link.OwnerUserId &&
             item.PlaylistLinkId == link.Id && item.State == PlaylistSyncState.Running,
             cancellationToken);
         var memberships = await db.PlaylistTargetMemberships
-            .Where(item => item.TenantId == link.TenantId && item.PlaylistLinkId == link.Id)
+            .Where(item => item.PlaylistLinkId == link.Id)
             .ToListAsync(cancellationToken);
         var verification = await VerifyMaterializationAsync(
             db, link, plan, before, receipt.Snapshot, memberships, verificationError,
@@ -1261,7 +1269,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 membership = new PlaylistTargetMembershipRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = link.TenantId,
                     PlaylistLinkId = link.Id,
                     LibraryTrackId = entry.LibraryTrackId!.Value,
                     CreatedBySyncRunId = run.Id,
@@ -1277,7 +1284,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         if (link.MirrorStaleEntries)
             foreach (var stale in memberships.Where(item => item.Active && !includedLibraryTrackIds.Contains(item.LibraryTrackId)))
             { stale.Active = false; stale.UpdatedAt = _clock.UtcNow; stale.Revision++; }
-        var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.TenantId == link.TenantId, cancellationToken);
+        var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
         trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
         return new(plan, run.Id, state, true, false,
@@ -1308,7 +1315,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             .ToArray();
         var durations = await db.LibraryTracks.AsNoTracking()
             .Where(item =>
-                item.TenantId == link.TenantId &&
+                item.OwnerUserId == link.OwnerUserId &&
                 item.Protocol == link.TargetProtocol &&
                 item.BackendInstanceId == link.TargetBackendInstanceId &&
                 expectedIds.Contains(item.BackendItemId))
@@ -1408,7 +1415,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         string? before, string? after, string? conflict = null) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = link.TenantId,
             OwnerUserId = link.OwnerUserId,
             PlaylistLinkId = link.Id,
             PlaylistSourceSnapshotId = snapshot.Id,
@@ -1428,11 +1434,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 : _clock.UtcNow
         };
 
-    private static IEnumerable<PlaylistSyncEntryResultRecord> ToRunEntries(Guid tenantId, Guid runId,
+    private static IEnumerable<PlaylistSyncEntryResultRecord> ToRunEntries(Guid runId,
         PlaylistMaterializationPlan plan, IReadOnlyDictionary<Guid, Guid?> decisionIds) => plan.Entries.Select(entry => new PlaylistSyncEntryResultRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             PlaylistSyncRunId = runId,
             PlaylistSourceEntryId = entry.SourceEntryId,
             TrackMatchId = decisionIds[entry.SourceEntryId],
@@ -1454,7 +1459,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     {
         IReadOnlyDictionary<string, string>? providers = null;
         try { providers = JsonSerializer.Deserialize<Dictionary<string, string>>(item.ProviderIdsJson); } catch (JsonException) { }
-        return new(item.Id, item.TenantId, item.OwnerUserId, item.BackendInstanceId, item.LibraryScopeId,
+        return new(item.Id, item.OwnerUserId, item.BackendInstanceId, item.BackendLibraryId,
             item.BackendItemId, item.CanonicalRecordingId, item.Title, item.Artist, item.Album, item.AlbumArtist,
             item.DurationMilliseconds,
             item.Isrc, item.MusicBrainzRecordingId, null, providers);
@@ -1469,6 +1474,19 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         TrackMatchState.Ambiguous => TrackMatchReviewState.Ambiguous,
         _ => TrackMatchReviewState.Unresolved
     };
+    private static void RequireLinkExecutionContext(
+        ProtocolExecutionContext execution,
+        ProviderActorContext actor,
+        PlaylistLinkRecord link)
+    {
+        var expectedProtocol = link.TargetProtocol.Equals("jellyfin", StringComparison.OrdinalIgnoreCase)
+            ? ProtocolKind.Jellyfin
+            : ProtocolKind.Subsonic;
+        if (actor.EffectiveUserId != link.OwnerUserId ||
+            execution.BackendInstanceId != link.TargetBackendInstanceId ||
+            execution.Protocol != expectedProtocol)
+            throw new UnauthorizedAccessException("Playlist execution requires the playlist owner's context.");
+    }
     private static IReadOnlyList<string> DeserializeStrings(string json) =>
         JsonSerializer.Deserialize<string[]>(json) ?? [];
     private static long? ReadDurationMilliseconds(JsonElement root)
@@ -1511,11 +1529,12 @@ public sealed class PlaylistMaterializationJobHandler(
                     scheduled.ScheduledFor.UtcTicks);
         }
         if (payload == null || payload.PlaylistLinkId == Guid.Empty || payload.Generation <= 0 ||
-            !context.Claim.TenantId.HasValue || !context.Claim.OwnerUserId.HasValue)
+            !context.Claim.OwnerUserId.HasValue || !context.Claim.ProviderAccountId.HasValue)
             return DurableJobCompletion.Failure("playlist_payload_invalid", "The playlist materialization payload is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == payload.PlaylistLinkId &&
-            item.TenantId == context.Claim.TenantId && item.OwnerUserId == context.Claim.OwnerUserId, cancellationToken);
+            item.OwnerUserId == context.Claim.OwnerUserId &&
+            item.ProviderAccountId == context.Claim.ProviderAccountId, cancellationToken);
         if (link == null) return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
         if (!link.Enabled) return DurableJobCompletion.Success();
         var playlistName = await db.PlaylistSourceSnapshots.AsNoTracking()
@@ -1527,16 +1546,16 @@ public sealed class PlaylistMaterializationJobHandler(
         await context.ReportProgressAsync(
             new("playlist.prepare", "Preparing playlist synchronization.",
                 Provider: link.SourceProviderId, Playlist: playlistName), cancellationToken);
-        var identity = await db.BackendIdentities.AsNoTracking().FirstOrDefaultAsync(item => item.TenantId == link.TenantId &&
-            item.UserId == link.OwnerUserId && item.BackendType == link.TargetProtocol &&
-            item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken);
-        if (identity == null) return DurableJobCompletion.Failure("playlist_backend_identity_unavailable", "The target backend identity is unavailable.");
-        var user = await db.Users.AsNoTracking().SingleAsync(item => item.Id == link.OwnerUserId && item.TenantId == link.TenantId, cancellationToken);
         var protocol = link.TargetProtocol == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
-        var execution = new ProtocolExecutionContext(protocol, link.TargetBackendInstanceId, identity.PrincipalId,
-            new AllstarrPrincipal(link.TenantId, link.OwnerUserId, protocol.ToString().ToLowerInvariant(),
-                link.TargetBackendInstanceId, identity.PrincipalId, user.DisplayName, false),
-            context.Claim.CorrelationId, clock.UtcNow.AddMinutes(10), cancellationToken, libraryScopeId: link.LibraryScopeId);
+        var backendType = protocol.ToString().ToLowerInvariant();
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == link.OwnerUserId &&
+            item.Enabled && item.BackendType == backendType &&
+            item.BackendInstanceId == link.TargetBackendInstanceId, cancellationToken);
+        if (user == null) return DurableJobCompletion.Failure("playlist_backend_identity_unavailable", "The target backend identity is unavailable.");
+        var execution = new ProtocolExecutionContext(protocol, link.TargetBackendInstanceId, user.BackendPrincipalId,
+            new AllstarrPrincipal(link.OwnerUserId, user.BackendType,
+                user.BackendInstanceId, user.BackendPrincipalId, user.DisplayName, user.IsAdmin),
+            context.Claim.CorrelationId, clock.UtcNow.AddMinutes(10), cancellationToken);
         try
         {
             await context.ReportProgressAsync(

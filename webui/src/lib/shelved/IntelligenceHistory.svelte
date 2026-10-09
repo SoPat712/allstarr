@@ -88,7 +88,7 @@
   let liveRefreshGeneration = 0;
   let liveRefreshError = $state(false);
 
-  const scopeKey = $derived(`${scope.protocol}\0${scope.backendInstanceId}\0${scope.libraryScopeId}`);
+  const scopeKey = $derived(`${scope.protocol}\0${scope.backendInstanceId}`);
   const selectedTop = $derived(top[topKind]);
   const topTrack = $derived(top.track[0]);
   const periodName = $derived(period === "all" ? "All time" : period === "365" ? "Last year" : period === "custom" ? "Selected dates" : `Last ${period} days`);

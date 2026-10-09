@@ -120,9 +120,8 @@
       const target = targets.targets.find((item) =>
         item.protocol === playlist.targetProtocol &&
         item.backendInstanceId === playlist.targetBackendInstanceId &&
-        (item.libraryScopeId ?? null) === (playlist.libraryScopeId ?? null) &&
         (item.credentialReferenceId ?? null) === (playlist.targetCredentialReferenceId ?? null));
-      if (!target) throw new Error(`${targetName} is no longer connected to this library.`);
+      if (!target) throw new Error(`${targetName} is no longer connected to your account.`);
       const response = await playlistLinks.targetPlaylists(target.id);
       targetPlaylists = response.items.filter((item) => item.writable);
       if (requestedPlaylistId && !targetPlaylists.some((item) => item.id === requestedPlaylistId))

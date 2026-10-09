@@ -7,10 +7,9 @@ public enum ListeningEventState { Playing, Completed, Skipped, Abandoned }
 public sealed class IntelligencePolicyRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = ""; public bool Enabled { get; set; }
+    public bool Enabled { get; set; }
     public Guid? TargetCredentialReferenceId { get; set; }
     public int RetentionDays { get; set; } = 0; public string AllowedSignalTypesJson { get; set; } = "[]";
     public string EnabledProvidersJson { get; set; } = "[]"; public DateTimeOffset CreatedAt { get; set; }
@@ -20,10 +19,9 @@ public sealed class IntelligencePolicyRecord
 public sealed class ListeningSignalRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = ""; public string SignalType { get; set; } = "";
+    public string SignalType { get; set; } = "";
     public string TrackKeyHash { get; set; } = ""; public double Value { get; set; }
     public string TrackReference { get; set; } = "";
     public string? SignalKey { get; set; }
@@ -34,11 +32,9 @@ public sealed class ListeningSignalRecord
 public sealed class ListeningIntakeTokenRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = "";
     public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = "";
     public Guid SecretReferenceId { get; set; }
     public bool RelayExternally { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -47,11 +43,9 @@ public sealed class ListeningIntakeTokenRecord
 public sealed class ListeningEventRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = "";
     public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = "";
     public string OccurrenceKey { get; set; } = "";
     public ListeningEventState State { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
@@ -97,10 +91,9 @@ public enum MusicBrainzEnrichmentState
 public sealed class ListeningProfileRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = ""; public string ProfileJson { get; set; } = "{}";
+    public string ProfileJson { get; set; } = "{}";
     public DateTimeOffset WindowStart { get; set; }
     public DateTimeOffset WindowEnd { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -108,10 +101,9 @@ public sealed class ListeningProfileRecord
 public sealed class RecommendationRunRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = ""; public Guid JobId { get; set; }
+    public Guid JobId { get; set; }
     public string IdempotencyKey { get; set; } = ""; public string PolicySnapshotJson { get; set; } = "{}";
     public string SeedTrackKeysJson { get; set; } = "[]"; public int Limit { get; set; }
     public Guid? TargetCredentialReferenceId { get; set; }
@@ -128,7 +120,6 @@ public sealed class RecommendationCandidateRecord
 {
     public Guid Id { get; set; }
     public Guid RunId { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public int Position { get; set; }
     public string TrackKey { get; set; } = "";
@@ -146,11 +137,9 @@ public sealed class RecommendationFeedbackRecord
 {
     public Guid Id { get; set; }
     public Guid CandidateId { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = "";
     public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = "";
     public string TrackKey { get; set; } = "";
     public string Kind { get; set; } = "";
     public string? ReasonCode { get; set; }
@@ -162,10 +151,9 @@ public sealed class GeneratedSetRecord
 {
     public Guid Id { get; set; }
     public Guid? RunId { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = "";
-    public string BackendInstanceId { get; set; } = ""; public string LibraryScopeId { get; set; } = "";
+    public string BackendInstanceId { get; set; } = "";
     public string Name { get; set; } = ""; public DateTimeOffset CreatedAt { get; set; }
     public Guid? TargetCredentialReferenceId { get; set; }
     public Guid? ScheduleId { get; set; }
@@ -181,7 +169,6 @@ public sealed class GeneratedSetEntryRecord
 {
     public Guid Id { get; set; }
     public Guid GeneratedSetId { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public int Position { get; set; }
     public string TrackKey { get; set; } = "";

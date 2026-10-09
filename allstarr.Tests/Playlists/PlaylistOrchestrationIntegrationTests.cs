@@ -14,13 +14,11 @@ using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
-using allstarr.Models.Settings;
 using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using Xunit.Abstractions;
 
@@ -34,12 +32,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private FakeTarget _target = null!;
     private PlaylistOrchestrationService _service = null!;
     private TrackMatchCommandService _trackMatches = null!;
-    private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
     private readonly Guid _link = Guid.CreateVersion7();
     private readonly Guid _credential = Guid.CreateVersion7();
-    private Guid _identity;
     private Guid _canonical;
     private Guid _trackOne;
     private Guid _trackTwo;
@@ -63,25 +59,23 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new TrackMatchDecisionEngine(), _trackMatches, clock, new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"),
             new CollectingLogger<PlaylistOrchestrationService>(_logs));
         await using var db = await _factory.CreateDbContextAsync();
-        _identity = Guid.CreateVersion7(); _canonical = Guid.CreateVersion7();
+        _canonical = Guid.CreateVersion7();
         _trackOne = Guid.CreateVersion7(); _trackTwo = Guid.CreateVersion7();
-        db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "orchestration", Name = "Orchestration", CreatedAt = _now });
-        db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = _now, UpdatedAt = _now });
-        db.BackendIdentities.Add(new BackendIdentityRecord
+        db.Users.Add(new UserRecord
         {
-            Id = _identity,
-            TenantId = _tenant,
-            UserId = _user,
+            Id = _user,
             BackendType = "jellyfin",
             BackendInstanceId = "backend",
-            PrincipalId = "principal",
+            BackendPrincipalId = "principal",
+            DisplayName = "Owner",
+            Enabled = true,
             CreatedAt = _now,
+            UpdatedAt = _now,
             LastSeenAt = _now
         });
         db.ProviderAccounts.Add(new ProviderAccountRecord
         {
             Id = _account,
-            TenantId = _tenant,
             OwnerUserId = _user,
             ProviderId = "fixture",
             DisplayName = "Fixture",
@@ -92,7 +86,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         db.CanonicalRecordings.Add(new CanonicalRecordingRecord
         {
             Id = _canonical,
-            TenantId = _tenant,
             CreatedByUserId = _user,
             CreatedAt = _now,
             UpdatedAt = _now
@@ -229,29 +222,46 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
-    public async Task Refresh_does_not_reuse_metadata_from_another_library_scope()
+    public async Task Refresh_does_not_reuse_metadata_from_another_provider_account()
     {
-        _source.Snapshot = Snapshot("revision-scope", Entry(0, "entry-0", "source-1", "One"));
+        var otherAccount = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = otherAccount,
+                OwnerUserId = _user,
+                ProviderId = "fixture",
+                DisplayName = "Other fixture account",
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now
+            });
             var link = await db.PlaylistLinks.SingleAsync();
-            link.LibraryScopeId = "old-scope";
+            link.ProviderAccountId = otherAccount;
             await db.SaveChangesAsync();
         }
-        var oldScope = await _service.RefreshAsync(Context("old-scope"), _link);
+        _source.Snapshot = Snapshot("revision-account", Entry(0, "entry-0", "source-1", "One")) with
+        {
+            ProviderAccountId = otherAccount
+        };
+        var other = await _service.RefreshAsync(Context(), _link);
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var link = await db.PlaylistLinks.SingleAsync();
-            link.LibraryScopeId = "music";
+            link.ProviderAccountId = _account;
             await db.SaveChangesAsync();
         }
-        var currentScope = await _service.RefreshAsync(Context(), _link);
+        _source.Snapshot = Snapshot("revision-account", Entry(0, "entry-0", "source-1", "One"));
+        var current = await _service.RefreshAsync(Context(), _link);
 
         await using var verify = await _factory.CreateDbContextAsync();
-        var snapshots = await verify.ExternalMetadataSnapshots.OrderBy(item => item.SnapshotVersion).ToListAsync();
-        Assert.Equal(["old-scope", "music"], snapshots.Select(item => item.LibraryScopeId));
-        Assert.NotEqual(oldScope.SnapshotId, currentScope.SnapshotId);
+        var snapshots = await verify.ExternalMetadataSnapshots.ToListAsync();
+        Assert.Equal(2, snapshots.Count);
+        Assert.Contains(snapshots, item => item.ProviderAccountId == otherAccount);
+        Assert.Contains(snapshots, item => item.ProviderAccountId == _account);
+        Assert.NotEqual(other.SnapshotId, current.SnapshotId);
     }
 
     [Fact]
@@ -342,7 +352,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.NotEqual(firstPlan.Plan.IdempotencyKey, secondPlan.Plan.IdempotencyKey);
 
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
-            .ReadByLinkIdAsync(_tenant, _user, _link);
+            .ReadByLinkIdAsync(_user, _link);
         var reconciliation = Assert.IsType<DurablePlaylistReconciliation>(
             projection!.Reconciliation);
         Assert.Equal(3, reconciliation.ProviderAdvertisedRows);
@@ -376,7 +386,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Entry(0, "entry-a", "source-1", "One") with { ArtworkUrl = "https://art/new" });
         await _service.RefreshAsync(Context(), _link);
         var artworkOnly = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
-            .ReadByLinkIdAsync(_tenant, _user, _link);
+            .ReadByLinkIdAsync(_user, _link);
         Assert.Empty(artworkOnly!.Reconciliation!.ChangedPositions);
 
         _source.Snapshot = Snapshot(
@@ -384,7 +394,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Entry(0, "entry-a", "source-1", "Renamed") with { ArtworkUrl = "https://art/new" });
         await _service.RefreshAsync(Context(), _link);
         var renamed = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
-            .ReadByLinkIdAsync(_tenant, _user, _link);
+            .ReadByLinkIdAsync(_user, _link);
         Assert.Equal([0], renamed!.Reconciliation!.ChangedPositions);
     }
 
@@ -542,7 +552,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         }
         await _service.RunAsync(Context(), new(_link, 5, refresh.SnapshotId));
 
-        var actor = new TrackMatchActor(_tenant, _user, false);
+        var actor = new TrackMatchActor(_user, false);
         var rematch = await _trackMatches.RematchSnapshotAsync(
             actor, externalId, "forced-rematch");
 
@@ -615,7 +625,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             _factory,
             new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")),
             new TrackMatchDecisionEngine(), new TestBackendLibraryAccess(_factory, "music"));
-        var preview = await rematches.PreviewAsync(_tenant, _user);
+        var preview = await rematches.PreviewAsync(_user);
         Assert.Equal(2, preview.TotalRows);
         Assert.Equal(2, preview.StaleRevisionRows);
         Assert.Equal(1, preview.ConfirmedManualRows);
@@ -630,9 +640,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 preview.ConfirmationId,
                 preview.ScopeFingerprint,
                 preview.Targets)),
-            _tenant,
             _user,
-            null,
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
@@ -662,7 +670,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             await verify.SaveChangesAsync();
         }
 
-        var after = await rematches.PreviewAsync(_tenant, _user);
+        var after = await rematches.PreviewAsync(_user);
         Assert.False(after.CanApply);
         await using (var interrupted = await _factory.CreateDbContextAsync())
         {
@@ -730,7 +738,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         }
 
         var result = await _trackMatches.ResolveSnapshotAsync(
-            new TrackMatchActor(_tenant, _user, false),
+            new TrackMatchActor(_user, false),
             externalSnapshotId,
             new ResolveTrackMatchCommand(
                 "provider",
@@ -741,7 +749,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.True(result.Succeeded);
         var previous = await _trackMatches.GetActiveOverrideAsync(Context(), externalSnapshotId);
         Assert.True((await _trackMatches.ResolveSnapshotAsync(
-            new TrackMatchActor(_tenant, _user, false),
+            new TrackMatchActor(_user, false),
             externalSnapshotId,
             new ResolveTrackMatchCommand(
                 "provider",
@@ -763,11 +771,11 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(snapshot.ExternalIdHash, selected.SourceExternalIdHash);
         Assert.Equal("deezer", selected.TargetProviderId);
         Assert.Equal("manual-deezer-track", selected.TargetExternalId);
-        var review = await _trackMatches.GetReviewDataAsync(new TrackMatchActor(_tenant, _user, false),
+        var review = await _trackMatches.GetReviewDataAsync(new TrackMatchActor(_user, false),
             externalSnapshotId: externalSnapshotId);
         Assert.Equal(selected.Id, Assert.Single(review.ActiveOverrides).Id);
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
-            .ReadByLinkIdAsync(_tenant, _user, _link);
+            .ReadByLinkIdAsync(_user, _link);
         Assert.Equal("external", Assert.Single(projection!.Entries).RouteKind);
         Assert.Equal("deezer", Assert.Single(projection.Entries).RouteProviderId);
     }
@@ -780,7 +788,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await using var db = await _factory.CreateDbContextAsync();
         var snapshot = await db.PlaylistSourceEntries.Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
             .Select(item => item.ExternalMetadataSnapshotId).SingleAsync();
-        Assert.True((await _trackMatches.ResolveSnapshotAsync(new(_tenant, _user, false), snapshot,
+        Assert.True((await _trackMatches.ResolveSnapshotAsync(new(_user, false), snapshot,
             new("provider", ExternalProvider: "deezer", ExternalId: "chosen-track"), "pin")).Succeeded);
         var result = Assert.Single(await _trackMatches.MatchSourceTracksAsync(
             [new SourceTrackSeed("fixture", "source-1", "One", "Artist", "Album", 180000, null, null, "1")], "project"));
@@ -820,13 +828,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new PlaylistPlayableSearchService(
                 gateway.Object,
                 matcher,
-                null!,
-                new IdentityOptions(),
-                Options.Create(new JellyfinSettings()),
                 NullLogger<PlaylistPlayableSearchService>.Instance));
 
         var result = await matches.ResolveSnapshotAsync(
-            new TrackMatchActor(_tenant, _user, false),
+            new TrackMatchActor(_user, false),
             externalSnapshotId,
             new ResolveTrackMatchCommand(
                 "provider",
@@ -888,9 +893,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new PlaylistPlayableSearchService(
                 gateway.Object,
                 matcher,
-                null!,
-                new IdentityOptions(),
-                Options.Create(new JellyfinSettings()),
                 NullLogger<PlaylistPlayableSearchService>.Instance));
         var service = new PlaylistOrchestrationService(
             _factory,
@@ -918,7 +920,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(2, routes.Count);
         Assert.All(routes, item => Assert.Equal("automatic-suggestion", item.VerificationMethod));
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object)
-            .ReadByLinkIdAsync(_tenant, _user, _link);
+            .ReadByLinkIdAsync(_user, _link);
         Assert.NotNull(projection);
         Assert.Equal(1, projection.TotalCount);
         Assert.Equal(1, projection.PlayableCount);
@@ -948,8 +950,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var matcher = new TrackMatchDecisionEngine();
         var matches = new TrackMatchCommandService(
             _factory, matcher, new ProviderAccountResolver(_factory), new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
-            new PlaylistPlayableSearchService(gateway.Object, matcher, null!, new IdentityOptions(),
-                Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance));
+            new PlaylistPlayableSearchService(
+                gateway.Object, matcher, NullLogger<PlaylistPlayableSearchService>.Instance));
         var service = new PlaylistOrchestrationService(
             _factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(), matcher,
             matches, new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"));
@@ -989,10 +991,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 new ExternalMetadataSnapshotRecord
                 {
                     Id = id,
-                    TenantId = _tenant,
                     OwnerUserId = _user,
                     ProviderAccountId = _account,
-                    LibraryScopeId = "music",
                     BackendInstanceId = "backend",
                     BackendPrincipalId = "principal",
                     Protocol = "jellyfin",
@@ -1050,9 +1050,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new PlaylistPlayableSearchService(
                 gateway.Object,
                 matcher,
-                null!,
-                new IdentityOptions(),
-                Options.Create(new JellyfinSettings()),
                 NullLogger<PlaylistPlayableSearchService>.Instance));
 
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
@@ -1096,7 +1093,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(["local-2", "local-1"], _target.LastWrite!.OrderedBackendItemIds);
         Assert.Equal(BackendPlaylistWriteMode.Reconcile, _target.LastWrite.Mode);
         Assert.Equal(_credential.ToString(), _target.Contexts.Last().CredentialReference);
-        Assert.Equal(_tenant, _target.Contexts.Last().TenantId);
+        Assert.Equal("backend", _target.Contexts.Last().BackendInstanceId);
         Assert.True(retry.ReusedRun);
         Assert.False(retry.BackendWriteAttempted);
         Assert.Equal(first.RunId, retry.RunId);
@@ -1135,7 +1132,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             seed.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
             {
                 Id = laterSnapshotId,
-                TenantId = _tenant,
                 OwnerUserId = _user,
                 PlaylistLinkId = _link,
                 ProviderAccountId = _account,
@@ -1260,17 +1256,33 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
-    public async Task Foreign_tenant_cannot_load_link_or_snapshot_and_no_target_call_occurs()
+    public async Task Foreign_owner_cannot_load_link_or_snapshot_and_no_target_call_occurs()
     {
         _source.Snapshot = Snapshot("revision-scope", Entry(0, "entry-0", "source-1", "One"));
         var refresh = await _service.RefreshAsync(Context(), _link);
-        var foreignTenant = Guid.CreateVersion7();
         var foreignUser = Guid.CreateVersion7();
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            setup.Users.Add(new UserRecord
+            {
+                Id = foreignUser,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "foreign",
+                DisplayName = "Foreign",
+                Enabled = true,
+                CreatedAt = _now,
+                UpdatedAt = _now,
+                LastSeenAt = _now
+            });
+            await setup.SaveChangesAsync();
+        }
         var foreign = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "foreign",
-            new AllstarrPrincipal(foreignTenant, foreignUser, "jellyfin", "backend", "foreign", "Foreign", false),
-            "foreign-correlation", _now.AddMinutes(2), default, libraryScopeId: "music");
+            new AllstarrPrincipal(foreignUser, "jellyfin", "backend", "foreign", "Foreign", false),
+            "foreign-correlation", _now.AddMinutes(2), default);
 
-        await Assert.ThrowsAsync<KeyNotFoundException>(() => _service.RunAsync(foreign, new(_link, 1, refresh.SnapshotId)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            _service.RunAsync(foreign, new(_link, 1, refresh.SnapshotId)));
         Assert.Equal(0, _target.TotalCalls);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Empty(await db.PlaylistSyncRuns.ToListAsync());
@@ -1322,8 +1334,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await _service.RunAsync(Context(), new(_link, 73));
 
         var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
-        var projection = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
-        var projectionByLink = await reader.ReadByLinkIdAsync(_tenant, null, _link);
+        var projection = await reader.ReadByNameAsync(_user, "Provider Mix");
+        var projectionByLink = await reader.ReadByLinkIdAsync(null, _link);
 
         Assert.NotNull(projection);
         Assert.NotNull(projectionByLink);
@@ -1352,7 +1364,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "revision-after-sync",
             Entry(0, "entry-after-sync", "source-1", "One"));
         await _service.RefreshAsync(Context(), _link);
-        var refreshed = await reader.ReadByLinkIdAsync(_tenant, _user, _link);
+        var refreshed = await reader.ReadByLinkIdAsync(_user, _link);
         Assert.Equal(_now, refreshed!.CompletedAt);
         Assert.Equal(_now, refreshed.LastMatchedAt);
     }
@@ -1393,7 +1405,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             db.CanonicalRecordings.Add(new CanonicalRecordingRecord
             {
                 Id = externalCanonical,
-                TenantId = _tenant,
                 CreatedByUserId = _user,
                 CreatedAt = _now,
                 UpdatedAt = _now
@@ -1441,7 +1452,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["qobuz"]);
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object)
-            .ReadByNameAsync(_tenant, _user, "Provider Mix");
+            .ReadByNameAsync(_user, "Provider Mix");
 
         Assert.NotNull(projection);
         Assert.Equal(3, projection.TotalCount);
@@ -1495,7 +1506,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             foreach (var id in new[] { "copy-z", "copy-a" })
             {
                 var copy = Local(Guid.CreateVersion7(), id, "source-1", "Accessible copy");
-                copy.LibraryScopeId = "second-library";
+                copy.BackendLibraryId = "second-library";
                 copy.CanonicalRecordingId = _canonical;
                 db.LibraryTracks.Add(copy);
             }
@@ -1504,7 +1515,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var permissions = new TestBackendLibraryAccess(_factory, "second-library");
         var projections = new DurablePlaylistProjectionReader(_factory, permissions);
         var virtualization = new PlaylistVirtualizationService(_factory, projections, permissions);
-        var projected = await projections.ReadByLinkIdAsync(_tenant, _user, _link);
+        var projected = await projections.ReadByLinkIdAsync(_user, _link);
         var local = Assert.Single(projected!.Entries);
         Assert.Equal("local", local.RouteKind);
         Assert.Equal("copy-a", local.BackendItemId);
@@ -1512,7 +1523,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal("copy-a", Assert.Single(visible!.Tracks).BackendItemId);
 
         permissions.Permissions[_user] = BackendLibraryAccess.Unavailable;
-        projected = await projections.ReadByLinkIdAsync(_tenant, _user, _link);
+        projected = await projections.ReadByLinkIdAsync(_user, _link);
         var fallback = Assert.Single(projected!.Entries);
         Assert.Equal("external", fallback.RouteKind);
         Assert.Null(fallback.BackendItemId);
@@ -1535,24 +1546,16 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var backendType = protocol.ToString().ToLowerInvariant();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = viewer,
-                TenantId = _tenant,
-                DisplayName = "Viewer",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = _now,
-                UpdatedAt = _now
-            });
-            db.BackendIdentities.Add(new BackendIdentityRecord
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
-                UserId = viewer,
                 BackendType = backendType,
                 BackendInstanceId = "backend",
-                PrincipalId = "viewer",
+                BackendPrincipalId = "viewer",
+                DisplayName = "Viewer",
+                Enabled = true,
                 CreatedAt = _now,
+                UpdatedAt = _now,
                 LastSeenAt = _now
             });
             var link = await db.PlaylistLinks.SingleAsync();
@@ -1562,7 +1565,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             await db.SaveChangesAsync();
         }
         var context = new ProtocolExecutionContext(protocol, "backend", "viewer",
-            new AllstarrPrincipal(_tenant, viewer, backendType, "backend", "viewer", "Viewer", false),
+            new AllstarrPrincipal(viewer, backendType, "backend", "viewer", "Viewer", false),
             "shared-check", _now.AddMinutes(1), default);
         var access = new TestBackendLibraryAccess(_factory, "music");
         access.Permissions[viewer] = new BackendLibraryAccess(true, []);
@@ -1633,9 +1636,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         foreach (var inaccessible in new[]
         {
-            ScopedContext(_tenant, Guid.CreateVersion7(), "backend"),
-            ScopedContext(_tenant, _user, "other-backend"),
-            ScopedContext(Guid.CreateVersion7(), Guid.CreateVersion7(), "backend")
+            ScopedContext(Guid.CreateVersion7(), "backend"),
+            ScopedContext(_user, "other-backend"),
+            ScopedContext(_user, "backend", "other-principal")
         })
         {
             Assert.Empty(await virtualization.ListAsync(inaccessible));
@@ -1643,15 +1646,12 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Assert.Null(await virtualization.ReadBySourceAsync(inaccessible, "fixture", "playlist"));
         }
 
-        Assert.NotNull(await virtualization.ReadAsync(Context("other-library"), protocolId));
-
         var ambiguousAccount = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
             db.ProviderAccounts.Add(new ProviderAccountRecord
             {
                 Id = ambiguousAccount,
-                TenantId = _tenant,
                 OwnerUserId = _user,
                 ProviderId = "fixture",
                 DisplayName = "Fixture duplicate",
@@ -1662,10 +1662,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             db.PlaylistLinks.Add(new PlaylistLinkRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
                 OwnerUserId = _user,
                 ProviderAccountId = ambiguousAccount,
-                LibraryScopeId = "music",
                 SourceProviderId = "fixture",
                 SourcePlaylistId = "playlist",
                 SourcePlaylistIdHash = Hash("playlist"),
@@ -1710,7 +1708,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             building = new PlaylistSourceSnapshotRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
                 OwnerUserId = _user,
                 PlaylistLinkId = _link,
                 ProviderAccountId = _account,
@@ -1726,7 +1723,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             buildingEntry = new PlaylistSourceEntryRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenant,
                 PlaylistSourceSnapshotId = building.Id,
                 ExternalMetadataSnapshotId = firstEntry.ExternalMetadataSnapshotId,
                 SourcePosition = 0,
@@ -1752,7 +1748,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             "[]"));
 
         var reader = new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"));
-        var active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
+        var active = await reader.ReadByNameAsync(_user, "Provider Mix");
         Assert.NotNull(active);
         Assert.Equal(first.SnapshotId, active.SnapshotId);
         Assert.True(active.HasNewerSourceGeneration);
@@ -1769,7 +1765,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             await db.SaveChangesAsync();
         }
 
-        active = await reader.ReadByNameAsync(_tenant, _user, "Provider Mix");
+        active = await reader.ReadByNameAsync(_user, "Provider Mix");
         Assert.NotNull(active);
         Assert.Equal(building.Id, active.SnapshotId);
         Assert.False(active.HasNewerSourceGeneration);
@@ -1802,8 +1798,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 "playlist.materialize",
                 "playlist-restart-fixture",
                 new(_link, 81),
-                _tenant,
-                _user))));
+                _user, ProviderAccountId: _account, Capability: "playlist"))));
 
         Assert.Single(requests, item => item.Created);
         Assert.Single(requests.Select(item => item.JobId).Distinct());
@@ -1831,7 +1826,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 .Select(item => item.Id)
                 .SingleAsync();
         }
-        var actor = new TrackMatchActor(_tenant, _user, false);
+        var actor = new TrackMatchActor(_user, false);
         using var rematchGate = new Barrier(8);
         var rematches = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
             Task.Factory.StartNew(() =>
@@ -1847,7 +1842,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         var restartedFactory = new DbFactory(_database.Options);
         var projection = await new DurablePlaylistProjectionReader(restartedFactory, new TestBackendLibraryAccess(restartedFactory, "music"))
-            .ReadByNameAsync(_tenant, _user, "Provider Mix");
+            .ReadByNameAsync(_user, "Provider Mix");
         Assert.NotNull(projection);
         Assert.Equal(1, projection.TotalCount);
         Assert.Equal(1, projection.LocalCount);
@@ -1917,10 +1912,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,
-        TenantId = _tenant,
         OwnerUserId = _user,
         ProviderAccountId = _account,
-        LibraryScopeId = "music",
         SourceProviderId = "fixture",
         SourcePlaylistId = "playlist",
         SourcePlaylistIdHash = Hash("playlist"),
@@ -1943,10 +1936,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private LibraryTrackRecord Local(Guid id, string backendItem, string sourceId, string title) => new()
     {
         Id = id,
-        TenantId = _tenant,
         OwnerUserId = _user,
-        BackendIdentityId = _identity,
-        LibraryScopeId = "music",
+        BackendLibraryId = "music",
         Protocol = "jellyfin",
         BackendInstanceId = "backend",
         BackendItemId = backendItem,
@@ -1964,7 +1955,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     private ProviderTrackIdentityRecord ProviderIdentity(string externalId) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _tenant,
         CanonicalRecordingId = _canonical,
         ProviderId = "fixture",
         ResourceKind = ProviderResourceKind.Track,
@@ -1987,13 +1977,11 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         return new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenant,
             OwnerUserId = _user,
             ExternalSnapshotId = external,
             SourceProviderId = snapshot.ProviderId,
             SourceExternalIdHash = snapshot.ExternalIdHash,
             LibraryTrackId = track,
-            LibraryScopeId = "music",
             Decision = decision,
             Reason = "reviewed",
             DecisionVersion = 1,
@@ -2028,12 +2016,13 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await db.SaveChangesAsync();
     }
 
-    private ProtocolExecutionContext Context(string libraryScopeId = "music") => new(ProtocolKind.Jellyfin, "backend", "principal",
-        new AllstarrPrincipal(_tenant, _user, "jellyfin", "backend", "principal", "Owner", false),
-        "correlation", _now.AddMinutes(5), default, libraryScopeId: libraryScopeId);
-    private ProtocolExecutionContext ScopedContext(Guid tenant, Guid user, string backend, string libraryScopeId = "music") => new(ProtocolKind.Jellyfin, backend, "principal",
-        new AllstarrPrincipal(tenant, user, "jellyfin", backend, "principal", "Owner", false),
-        "correlation", _now.AddMinutes(5), default, libraryScopeId: libraryScopeId);
+    private ProtocolExecutionContext Context() => new(ProtocolKind.Jellyfin, "backend", "principal",
+        new AllstarrPrincipal(_user, "jellyfin", "backend", "principal", "Owner", false),
+        "correlation", _now.AddMinutes(5), default);
+    private ProtocolExecutionContext ScopedContext(Guid user, string backend, string principal = "principal") => new(
+        ProtocolKind.Jellyfin, backend, principal,
+        new AllstarrPrincipal(user, "jellyfin", backend, principal, "Owner", false),
+        "correlation", _now.AddMinutes(5), default);
     private CollectedPlaylistSourceSnapshot Snapshot(string revision, params CollectedPlaylistSourceEntry[] entries) =>
         new("fixture", _account, Hash("playlist"), revision, $"etag-{revision}", "Provider Mix", "Description",
             "provider-artwork:stable:key", entries);

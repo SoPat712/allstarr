@@ -9,11 +9,10 @@ public sealed class TrackClassifierTests
     [Fact]
     public void Classify_UsesOneThresholdOverrideAndFallbackPolicy()
     {
-        var tenant = Guid.CreateVersion7();
         var canonical = Guid.CreateVersion7();
         var local = Guid.CreateVersion7();
-        var source = Identity(tenant, canonical, "spotify", "source");
-        var fallback = Identity(tenant, canonical, "qobuz", "fallback");
+        var source = Identity(canonical, "spotify", "source");
+        var fallback = Identity(canonical, "qobuz", "fallback");
         var suggested = Decision(local, TrackMatchState.Suggested, .87, .88);
 
         var classification = TrackClassifier.Classify(
@@ -86,10 +85,9 @@ public sealed class TrackClassifierTests
     [Fact]
     public void Classify_CatalogPinsDoNotBecomePersonalAuthority()
     {
-        var tenant = Guid.CreateVersion7();
         var canonical = Guid.CreateVersion7();
-        var source = Identity(tenant, canonical, "spotify", "source");
-        var pinned = Identity(tenant, canonical, "apple-download", "target");
+        var source = Identity(canonical, "spotify", "source");
+        var pinned = Identity(canonical, "apple-download", "target");
         pinned.Verification = ProviderIdentityVerification.Pinned;
         var ambiguous = Decision(Guid.Empty, TrackMatchState.Ambiguous, .958, .88);
         ambiguous.LibraryTrackId = null;
@@ -111,18 +109,16 @@ public sealed class TrackClassifierTests
     [InlineData(false)]
     public void ProviderPin_OverridesAutomaticLocalOnlyWhenViewerCanUseProvider(bool eligible)
     {
-        var tenant = Guid.CreateVersion7();
         var canonical = Guid.CreateVersion7();
         var local = Guid.CreateVersion7();
-        var source = Identity(tenant, canonical, "spotify", "source");
-        var snapshot = new ExternalMetadataSnapshotRecord { TenantId = tenant, BackendInstanceId = "backend" };
+        var source = Identity(canonical, "spotify", "source");
+        var snapshot = new ExternalMetadataSnapshotRecord { BackendInstanceId = "backend" };
         var track = new LibraryTrackRecord
         {
             Id = local,
-            TenantId = tenant,
             BackendInstanceId = "backend",
             CanonicalRecordingId = canonical,
-            LibraryScopeId = "music",
+            BackendLibraryId = "music",
             BackendItemId = "native"
         };
         var decision = Decision(local, TrackMatchState.Accepted, 1, .88);
@@ -162,13 +158,11 @@ public sealed class TrackClassifierTests
         };
 
     private static ProviderTrackIdentityRecord Identity(
-        Guid tenant,
         Guid canonical,
         string provider,
         string externalId) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             CanonicalRecordingId = canonical,
             ProviderId = provider,
             ResourceKind = ProviderResourceKind.Track,

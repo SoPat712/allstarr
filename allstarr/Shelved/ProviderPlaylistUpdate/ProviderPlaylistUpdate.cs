@@ -8,6 +8,8 @@ using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
+using allstarr.Core.Matching;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -188,7 +190,8 @@ public sealed class ProviderPlaylistUpdateService(
     IProviderRegistry registry,
     IProviderRouter providerRouter,
     IBackendPlaylistTargetResolver targetResolver,
-    IPlatformClock clock)
+    IPlatformClock clock,
+    IBackendLibraryAccessResolver libraryAccess)
 {
     private const int MaximumEntries = 100_000;
     private const int MaximumPages = 1_000;
@@ -206,31 +209,24 @@ public sealed class ProviderPlaylistUpdateService(
     public async Task<ProviderPlaylistUpdatePlan> PreviewAsync(
         ProviderActorContext actor,
         Guid playlistLinkId,
-        string libraryScopeId,
         string correlationId,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
         if (playlistLinkId == Guid.Empty) throw new ArgumentException("A playlist link is required.", nameof(playlistLinkId));
-        if (string.IsNullOrWhiteSpace(libraryScopeId)) throw new ArgumentException("A library is required.", nameof(libraryScopeId));
 
         PlaylistLinkRecord link;
         ProviderAccountRecord account;
-        BackendIdentityRecord backendIdentity;
+        UserRecord backendUser;
         await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
         {
             link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.Id == playlistLinkId && item.TenantId == actor.TenantId,
+                item.Id == playlistLinkId,
                 cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
             if (actor.EffectiveUserId != link.OwnerUserId)
                 throw new ProviderPlaylistUpdateException(
                     "playlist-owner-required",
                     "Only the playlist owner can update its source playlist.",
-                    forbidden: true);
-            if (!link.LibraryScopeId.Equals(libraryScopeId.Trim(), StringComparison.Ordinal))
-                throw new ProviderPlaylistUpdateException(
-                    "playlist-library-denied",
-                    "The selected playlist belongs to another library.",
                     forbidden: true);
             if (string.IsNullOrWhiteSpace(link.TargetPlaylistId))
                 throw new ProviderPlaylistUpdateException(
@@ -250,10 +246,9 @@ public sealed class ProviderPlaylistUpdateService(
                     forbidden: true);
 
             var targetProtocols = TargetProtocols(link.TargetProtocol);
-            backendIdentity = await db.BackendIdentities.AsNoTracking()
+            backendUser = await db.Users.AsNoTracking()
                 .Where(item =>
-                    item.TenantId == link.TenantId &&
-                    item.UserId == link.OwnerUserId &&
+                    item.Id == link.OwnerUserId && item.Enabled &&
                     item.BackendInstanceId == link.TargetBackendInstanceId &&
                     targetProtocols.Contains(item.BackendType))
                 .OrderByDescending(item => item.LastSeenAt)
@@ -271,9 +266,8 @@ public sealed class ProviderPlaylistUpdateService(
         var target = targetResolver.Resolve(link.TargetProtocol);
         var targetContext = new BackendPlaylistTargetContext(
             link.TargetBackendInstanceId,
-            backendIdentity.PrincipalId,
-            link.TargetCredentialReferenceId?.ToString(),
-            link.TenantId);
+            backendUser.BackendPrincipalId,
+            link.TargetCredentialReferenceId?.ToString());
         var sourceTask = ReadSourceAsync(candidate, sourceId, null, cancellationToken);
         var targetTask = target.ReadAsync(targetContext, link.TargetPlaylistId!, cancellationToken);
         await Task.WhenAll(sourceTask, targetTask);
@@ -347,7 +341,6 @@ public sealed class ProviderPlaylistUpdateService(
             context.Actor,
             context.ProviderId,
             context.Account,
-            context.Library,
             context.Policy,
             "provider-source-update",
             context.CorrelationId,
@@ -412,7 +405,6 @@ public sealed class ProviderPlaylistUpdateService(
                 link.SourceProviderId,
                 requestedAccountId: account.Id,
                 expectedAccountRevision: account.Revision)],
-            new ProviderLibraryContext(link.TenantId, link.LibraryScopeId),
             cancellationToken: cancellationToken));
         var candidate = plan.Candidates.FirstOrDefault();
         if (candidate == null ||
@@ -425,10 +417,6 @@ public sealed class ProviderPlaylistUpdateService(
             candidate.Context.ProviderId != link.SourceProviderId ||
             candidate.Context.ProviderId != account.ProviderId ||
             !MatchesRoutedAccount(account, candidate.Context.Account) ||
-            candidate.Context.Library is not { } routedLibrary ||
-            routedLibrary.TenantId != link.TenantId ||
-            routedLibrary.ScopeId != link.LibraryScopeId ||
-            candidate.Context.Actor.TenantId != actor.TenantId ||
             candidate.Context.Actor.EffectiveUserId != actor.EffectiveUserId)
             throw new ProviderPlaylistUpdateException(
                 "provider-route-unavailable",
@@ -444,9 +432,7 @@ public sealed class ProviderPlaylistUpdateService(
         PlaylistLinkRecord link,
         ProviderAccountRecord account) =>
         account.Enabled && account.ProviderId == link.SourceProviderId &&
-        (account.OwnerUserId.HasValue
-            ? account.TenantId == link.TenantId && account.OwnerUserId == link.OwnerUserId
-            : account.TenantId == null);
+        (account.OwnerUserId == link.OwnerUserId || account.OwnerUserId == null);
 
     private static bool MatchesRoutedAccount(
         ProviderAccountRecord account,
@@ -456,7 +442,6 @@ public sealed class ProviderPlaylistUpdateService(
         routed.ProviderId == account.ProviderId &&
         routed.Scope == account.Scope &&
         routed.Revision == account.Revision &&
-        routed.TenantId == account.TenantId &&
         routed.OwnerUserId == account.OwnerUserId &&
         routed.SecretReferenceId == account.SecretReferenceId;
 
@@ -531,13 +516,14 @@ public sealed class ProviderPlaylistUpdateService(
         var backendIds = target.Members.Select(item => item.BackendItemId).Distinct(StringComparer.Ordinal).ToArray();
         var libraryTracks = new List<LibraryTrackRecord>();
         var targetProtocols = TargetProtocols(link.TargetProtocol);
+        var viewer = await libraryAccess.ResolveUserAsync(link.OwnerUserId, cancellationToken);
+        if (viewer.Context == null || viewer.Context.BackendInstanceId != link.TargetBackendInstanceId ||
+            !targetProtocols.Contains(viewer.Context.Protocol.ToString().ToLowerInvariant()))
+            throw new ProviderPlaylistUpdateException("backend-user-unavailable", "The playlist owner's backend access is unavailable.", forbidden: true);
         await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
         {
             foreach (var chunk in backendIds.Chunk(500))
-                libraryTracks.AddRange(await db.LibraryTracks.AsNoTracking().Where(item =>
-                    item.TenantId == link.TenantId &&
-                    item.OwnerUserId == link.OwnerUserId &&
-                    item.LibraryScopeId == link.LibraryScopeId &&
+                libraryTracks.AddRange(await LibraryTrackAccess.Query(db, viewer.Context, viewer.Access).Where(item =>
                     item.BackendInstanceId == link.TargetBackendInstanceId &&
                     targetProtocols.Contains(item.Protocol) &&
                     chunk.Contains(item.BackendItemId)).ToListAsync(cancellationToken));
@@ -562,7 +548,6 @@ public sealed class ProviderPlaylistUpdateService(
         {
             foreach (var chunk in canonicalIds.Chunk(500))
                 identities.AddRange(await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                    item.TenantId == link.TenantId &&
                     item.ProviderId == link.SourceProviderId &&
                     item.ResourceKind == ProviderResourceKind.Track &&
                     chunk.Contains(item.CanonicalRecordingId) &&
@@ -570,7 +555,6 @@ public sealed class ProviderPlaylistUpdateService(
                      item.Verification == ProviderIdentityVerification.Pinned)).ToListAsync(cancellationToken));
             foreach (var chunk in sourceHashes.Chunk(500))
                 identities.AddRange(await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                    item.TenantId == link.TenantId &&
                     item.ProviderId == link.SourceProviderId &&
                     item.ResourceKind == ProviderResourceKind.Track &&
                     chunk.Contains(item.ExternalIdHash) &&
@@ -765,10 +749,8 @@ public sealed class ProviderPlaylistUpdateJobHandler(
         try { payload = context.Claim.Payload.Deserialize<ProviderPlaylistUpdateJobPayload>(); }
         catch (JsonException) { payload = null; }
         if (!Valid(payload) ||
-            !context.Claim.TenantId.HasValue ||
             !context.Claim.OwnerUserId.HasValue ||
-            !context.Claim.ProviderAccountId.HasValue ||
-            string.IsNullOrWhiteSpace(context.Claim.LibraryScopeId))
+            !context.Claim.ProviderAccountId.HasValue)
             return DurableJobCompletion.Failure(
                 "provider-source-update-payload-invalid",
                 "The confirmed source playlist update is invalid.");
@@ -778,16 +760,14 @@ public sealed class ProviderPlaylistUpdateJobHandler(
         {
             link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
                 item.Id == payload!.PlaylistLinkId &&
-                item.TenantId == context.Claim.TenantId &&
                 item.OwnerUserId == context.Claim.OwnerUserId &&
-                item.ProviderAccountId == context.Claim.ProviderAccountId &&
-                item.LibraryScopeId == context.Claim.LibraryScopeId,
+                item.ProviderAccountId == context.Claim.ProviderAccountId,
                 cancellationToken);
         }
         if (link == null)
             return DurableJobCompletion.Failure(
                 "provider-source-update-scope-invalid",
-                "The confirmed source playlist update is outside its saved account or library.");
+                "The confirmed source playlist update is outside its saved account or user.");
 
         ProviderPlaylistUpdatePlan? plan = null;
         try
@@ -798,7 +778,6 @@ public sealed class ProviderPlaylistUpdateJobHandler(
                 "Checking the two selected playlists.",
                 Provider: link.SourceProviderId), cancellationToken);
             var actor = new ProviderActorContext(
-                link.TenantId,
                 ProviderActorKind.SystemJob,
                 null,
                 durableJobId: context.Claim.JobId,
@@ -806,7 +785,6 @@ public sealed class ProviderPlaylistUpdateJobHandler(
             plan = await updates.PreviewAsync(
                 actor,
                 link.Id,
-                link.LibraryScopeId,
                 context.Claim.CorrelationId,
                 cancellationToken);
             if (plan.LinkRevision != payload!.ExpectedLinkRevision)
@@ -917,7 +895,6 @@ public sealed class ProviderPlaylistUpdateJobHandler(
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = link.TenantId,
             ActorUserId = context.Claim.OwnerUserId,
             Category = "playlist",
             Action = "provider-source-update",

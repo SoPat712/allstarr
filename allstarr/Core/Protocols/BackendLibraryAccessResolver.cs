@@ -50,17 +50,14 @@ public sealed class BackendLibraryAccessResolver(
             ? "subsonic" : "jellyfin";
         var backendInstance = configuration["Identity:BackendInstanceId"] ?? "primary";
         await using var db = await contexts.CreateDbContextAsync(cancellationToken);
-        var binding = await (from identity in db.BackendIdentities.AsNoTracking()
-                             join user in db.Users on identity.UserId equals user.Id
-                             where user.Id == userId && user.Status == PlatformUserStatus.Active &&
-                                   identity.TenantId == user.TenantId && identity.BackendType == backendType &&
-                                   identity.BackendInstanceId == backendInstance
-                             select new { identity, user }).SingleOrDefaultAsync(cancellationToken);
-        if (binding == null) return BackendLibraryAccessContext.Unavailable;
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(user =>
+            user.Id == userId && user.Enabled && user.BackendType == backendType &&
+            user.BackendInstanceId == backendInstance, cancellationToken);
+        if (user == null) return BackendLibraryAccessContext.Unavailable;
         var context = new ProtocolExecutionContext(backendType == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic,
-            backendInstance, binding.identity.PrincipalId,
-            new AllstarrPrincipal(binding.user.TenantId, userId, backendType, backendInstance,
-                binding.identity.PrincipalId, binding.user.DisplayName, false),
+            backendInstance, user.BackendPrincipalId,
+            new AllstarrPrincipal(userId, backendType, backendInstance,
+                user.BackendPrincipalId, user.DisplayName, user.IsAdmin),
             "library-access", clock.UtcNow.Add(Lifetime), cancellationToken);
         return new(context, await ResolveAsync(context, cancellationToken));
     }

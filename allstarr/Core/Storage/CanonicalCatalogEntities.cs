@@ -12,7 +12,6 @@ public enum CanonicalCatalogEntityKind
 public sealed class CanonicalArtistRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public string Name { get; set; } = string.Empty;
     public string SortName { get; set; } = string.Empty;
     public string? Disambiguation { get; set; }
@@ -26,7 +25,6 @@ public sealed class CanonicalArtistRecord
 public sealed class CanonicalReleaseGroupRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? PrimaryType { get; set; }
     public string SecondaryTypesJson { get; set; } = "[]";
@@ -41,7 +39,6 @@ public sealed class CanonicalReleaseGroupRecord
 public sealed class CanonicalReleaseRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid CanonicalReleaseGroupId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? Disambiguation { get; set; }
@@ -59,7 +56,6 @@ public sealed class CanonicalReleaseRecord
 public sealed class CanonicalReleaseTrackRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid CanonicalReleaseId { get; set; }
     public Guid CanonicalRecordingId { get; set; }
     public int MediumPosition { get; set; }
@@ -74,7 +70,6 @@ public sealed class CanonicalReleaseTrackRecord
 
 public sealed class CanonicalRecordingArtistRecord
 {
-    public Guid TenantId { get; set; }
     public Guid CanonicalRecordingId { get; set; }
     public Guid CanonicalArtistId { get; set; }
     public int Position { get; set; }
@@ -84,7 +79,6 @@ public sealed class CanonicalRecordingArtistRecord
 
 public sealed class CanonicalReleaseGroupArtistRecord
 {
-    public Guid TenantId { get; set; }
     public Guid CanonicalReleaseGroupId { get; set; }
     public Guid CanonicalArtistId { get; set; }
     public int Position { get; set; }
@@ -95,7 +89,6 @@ public sealed class CanonicalReleaseGroupArtistRecord
 public sealed class CanonicalCatalogAliasRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public CanonicalCatalogEntityKind EntityKind { get; set; }
     public Guid CanonicalEntityId { get; set; }
     public string Namespace { get; set; } = string.Empty;
@@ -108,7 +101,6 @@ public sealed class CanonicalCatalogAliasRecord
 public sealed class CatalogFactRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public CanonicalCatalogEntityKind EntityKind { get; set; }
     public Guid CanonicalEntityId { get; set; }
     public string FieldName { get; set; } = string.Empty;

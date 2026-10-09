@@ -53,8 +53,8 @@
     "protocol": "jellyfin",
     "feature": "playlists",
     "currentStatus": "explicit-partial",
-    "target": "Tenant-scoped virtual/materialized/hybrid playlist links with paging and idempotent writes.",
-    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact enabled tenant owner, library, protocol, and backend instance before snapshots are read or a writable target is selected.",
+    "target": "User-owned virtual/materialized/hybrid playlist links with paging and idempotent writes.",
+    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact enabled user, protocol, and backend instance, with backend playlist visibility checked for shared reads before snapshots are read or a writable target is selected.",
     "fixture": "jellyfin-playlist-order.json; provider-neutral-virtual-playlists.json; jellyfin-openapi-qualification.json",
     "testLocation": "ProtocolRouteFixtureTests; JellyfinPlaylistRouteMatchingTests; VirtualPlaylistProtocolAdapterTests; SubsonicPlaylistMutationTests",
     "notes": "Pure virtual reads preserve source order and expose accepted or pinned local matches only. Writable hybrid aliases are omitted from browse results, and their read, update, membership, reorder, sharing, ACL, and instant-mix routes rewrite only the exact scoped target playlist ID. Pure virtual/provider-only links return 409. Native POST or DELETE /Items/{id} requires backend Type=Playlist."
@@ -163,8 +163,8 @@
     "protocol": "subsonic",
     "feature": "playlist-read",
     "currentStatus": "explicit",
-    "target": "Tenant-scoped virtual/materialized/hybrid playlist links with ordered local matches and idempotent writes.",
-    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact tenant owner, library, Subsonic-compatible backend instance, and optional musicFolderId scope.",
+    "target": "User-owned virtual/materialized/hybrid playlist links with ordered local matches and idempotent writes.",
+    "authBoundary": "Provider-neutral virtual and hybrid links require the verified backend principal to resolve to the exact enabled user and Subsonic-compatible backend instance, with backend playlist visibility checked for shared reads.",
     "fixture": "provider-neutral-virtual-playlists.json",
     "testLocation": "VirtualPlaylistProtocolAdapterTests; ProtocolSupportMatrixTests",
     "notes": "getPlaylist and getPlaylist.view shape XML or JSON from the immutable source snapshot using accepted or pinned local backend IDs in source order. Native playlist IDs still relay, and virtual reads never mutate the backend or silently fall back to external streaming."
@@ -174,7 +174,7 @@
     "feature": "playlist-update",
     "currentStatus": "explicit",
     "target": "Exact-scoped materialized or hybrid target updates with ordered adds/removes; virtual and unmaterialized links remain immutable.",
-    "authBoundary": "Backend verification and ProtocolExecutionContext identity resolution precede mutation. Allstarr link lookup requires the exact tenant, owner, Subsonic-compatible backend, and requested library scope before the backend target ID is substituted.",
+    "authBoundary": "Backend verification and ProtocolExecutionContext identity resolution precede mutation. Allstarr link lookup requires the exact owner and Subsonic-compatible backend context before the backend target ID is substituted.",
     "fixture": "subsonic-relay-fidelity.json",
     "testLocation": "ProtocolRouteFixtureTests; SubsonicRequestParserTests; SubsonicPlaylistMutationTests",
     "notes": "Native playlist IDs relay unchanged. Exact-scoped materialized and hybrid Allstarr links with a target preserve repeated add/remove order and query/form source while rewriting only playlistId. Pure virtual or unmaterialized links return a protocol read-only error without a backend mutation."

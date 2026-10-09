@@ -49,7 +49,7 @@ public sealed class PlaylistLinksControllerContractTests
     public async Task List_RejectsMissingOrUnlinkedAdminSessionBeforeStorageAccess()
     {
         var controller = Controller();
-        Assert.IsType<UnauthorizedObjectResult>(await controller.List("music", CancellationToken.None));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.List(CancellationToken.None));
 
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
@@ -61,17 +61,17 @@ public sealed class PlaylistLinksControllerContractTests
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
             LastSeenUtc = DateTime.UtcNow
         };
-        var forbidden = Assert.IsType<ObjectResult>(await controller.List("music", CancellationToken.None));
+        var forbidden = Assert.IsType<ObjectResult>(await controller.List(CancellationToken.None));
         Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
     }
 
     [Fact]
-    public void List_AllowsAnOmittedLibraryScopeFilter()
+    public void List_IsScopedByAuthenticatedOwnerWithoutRequestScopeIds()
     {
-        var parameter = typeof(PlaylistLinksController).GetMethod(nameof(PlaylistLinksController.List))!
-            .GetParameters().Single(item => item.Name == "libraryScopeId");
-
-        Assert.True(new NullabilityInfoContext().Create(parameter).ReadState == NullabilityState.Nullable);
+        var parameters = typeof(PlaylistLinksController).GetMethod(nameof(PlaylistLinksController.List))!
+            .GetParameters();
+        Assert.Single(parameters);
+        Assert.Equal(typeof(CancellationToken), parameters[0].ParameterType);
     }
 
     [Fact]
@@ -142,7 +142,6 @@ public sealed class PlaylistLinksControllerContractTests
         var preview = new PlaylistPreview(Guid.NewGuid(), Guid.NewGuid(), "List", null, null, [row])
         {
             SourceRevision = "source-revision",
-            LibraryScopeId = "music",
             TargetProtocol = "jellyfin",
             TargetBackendInstanceId = "backend"
         };
@@ -211,7 +210,7 @@ public sealed class PlaylistLinksControllerContractTests
             "allstarr", "Controllers", "PlaylistLinksController.cs"));
 
         Assert.Contains("includeNonOperational: false", source, StringComparison.Ordinal);
-        Assert.Contains(".AvailableTo(session.TenantId, session.AllstarrUserId)", source, StringComparison.Ordinal);
+        Assert.Contains("item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId", source, StringComparison.Ordinal);
         Assert.DoesNotContain("AllowsGlobalAccount", source, StringComparison.Ordinal);
         Assert.Contains("session.IsAdministrator", source, StringComparison.Ordinal);
         Assert.Contains("Response.Headers.RetryAfter", source, StringComparison.Ordinal);
@@ -224,7 +223,7 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Contains("ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag)", source, StringComparison.Ordinal);
         Assert.Contains("ProviderOrderPolicyCatalog.Find(ProviderCapabilityKind.Playlist)", source,
             StringComparison.Ordinal);
-        Assert.Contains("effectivePolicies.ResolveAsync(session.TenantId.Value", source,
+        Assert.Contains("effectivePolicies.ResolveForUserAsync(session.AllstarrUserId!.Value, cancellationToken)", source,
             StringComparison.Ordinal);
         Assert.Contains("effectivePolicy?.ApplyProviderAvailability(", source, StringComparison.Ordinal);
         Assert.Contains("configuredProviderOrder.GetValueOrDefault", source, StringComparison.Ordinal);

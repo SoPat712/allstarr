@@ -9,7 +9,7 @@ public static class IdentityRegistration
         var identity = configuration.GetSection(IdentityOptions.SectionName)
                            .Get<IdentityOptions>()
                        ?? new IdentityOptions();
-        _ = identity.ParseMode();
+        identity.Validate();
         var providerAccounts = configuration.GetSection(ProviderAccountOptions.SectionName)
                                    .Get<ProviderAccountOptions>()
                                ?? new ProviderAccountOptions();
@@ -17,7 +17,6 @@ public static class IdentityRegistration
         services.AddSingleton(providerAccounts);
         services.AddSingleton<BackendIdentityResolver>();
         services.AddSingleton<ProviderAccountResolver>();
-        services.AddHostedService<IdentityBootstrapper>();
         return services;
     }
 }

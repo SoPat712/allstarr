@@ -9,8 +9,10 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
     public async Task<ManagedFilePlacementResult> PlaceAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        if (request.Root.TenantId is null)
-            throw new ArgumentException("Managed files require explicit tenant ownership.", nameof(request));
+        if (!StringComparer.Ordinal.Equals(
+                request.ScopeKey,
+                ManagedFileScopeKey.Create(request.Root.OwnerUserId, request.Root.Id)))
+            throw new UnauthorizedAccessException("The managed-file scope key does not match its owner and root.");
         var root = ValidateRoot(request.Root.CanonicalPath);
         var source = Path.GetFullPath(request.SourcePath);
         if (!File.Exists(source))
@@ -68,8 +70,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         RejectSymlinksUnder(root, stagingDirectory);
         var staging = Path.Combine(stagingDirectory, $"{Guid.NewGuid():N}.partial");
         pending = new PlacementJournal(
-            1, request.Root.Id, request.Root.TenantId.Value, request.Root.OwnerUserId,
-            request.Root.LibraryScopeId, request.ScopeKey, referenceKey, root, target, staging,
+            1, request.Root.Id, request.Root.OwnerUserId, request.ScopeKey, referenceKey, root, target, staging,
             fingerprint, length, request.SourceJobId, null, DateTimeOffset.UtcNow);
         await WriteJournalAsync(journal, pending, cancellationToken);
         ManagedFilePlacementMethod method;
@@ -89,7 +90,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             finalized = true;
             var identity = files.TryGetFileIdentity(target, out var currentIdentity) ? currentIdentity : null;
             var record = new ManagedFileRecord(Guid.NewGuid(), request.Root.Id, target, fingerprint, length, method,
-                request.Root.TenantId, request.Root.OwnerUserId, request.Root.LibraryScopeId, request.SourceJobId,
+                request.Root.OwnerUserId, request.SourceJobId,
                 request.ScopeKey, 1, true, DateTimeOffset.UtcNow)
             {
                 TargetRootPath = root,
@@ -149,8 +150,8 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         var identity = files.TryGetFileIdentity(pending.TargetPath, out var currentIdentity) ? currentIdentity : null;
         var record = new ManagedFileRecord(
             Guid.NewGuid(), request.Root.Id, pending.TargetPath, pending.ContentSha256, pending.Length,
-            pending.PlacementMethod ?? ManagedFilePlacementMethod.Copy, request.Root.TenantId,
-            request.Root.OwnerUserId, request.Root.LibraryScopeId, request.SourceJobId, request.ScopeKey,
+            pending.PlacementMethod ?? ManagedFilePlacementMethod.Copy, request.Root.OwnerUserId,
+            request.SourceJobId, request.ScopeKey,
             1, true, DateTimeOffset.UtcNow)
         {
             TargetRootPath = root,
@@ -165,7 +166,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
 
     private static string PlacementJournalPath(string root, ManagedFilePlacementRequest request, string referenceKey)
     {
-        var material = $"{request.Root.TenantId:N}|{request.Root.OwnerUserId:N}|{request.Root.Id:N}|{request.ScopeKey}|{referenceKey}";
+        var material = $"{request.Root.OwnerUserId:N}|{request.Root.Id:N}|{request.ScopeKey}|{referenceKey}";
         var name = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant();
         return ContainedPath(root, Path.Combine(".allstarr-staging", $"{name}.placement.json"));
     }
@@ -207,8 +208,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         string referenceKey)
     {
         if (journal.Version != 1 || journal.RootId != request.Root.Id ||
-            journal.TenantId != request.Root.TenantId || journal.OwnerUserId != request.Root.OwnerUserId ||
-            !StringComparer.Ordinal.Equals(journal.LibraryScopeId, request.Root.LibraryScopeId) ||
+            journal.OwnerUserId != request.Root.OwnerUserId ||
             !StringComparer.Ordinal.Equals(journal.ScopeKey, request.ScopeKey) ||
             !StringComparer.Ordinal.Equals(journal.ReferenceKey, referenceKey) ||
             !StringComparer.Ordinal.Equals(journal.RootPath, root) ||
@@ -226,9 +226,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
     private sealed record PlacementJournal(
         int Version,
         Guid RootId,
-        Guid TenantId,
         Guid? OwnerUserId,
-        string? LibraryScopeId,
         string ScopeKey,
         string ReferenceKey,
         string RootPath,
@@ -382,13 +380,12 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         ManagedFilePlacementRequest request,
         Guid managedFileId,
         string referenceKey) => new(
-        Guid.NewGuid(), managedFileId, request.Root.TenantId!.Value, request.Root.OwnerUserId,
+        Guid.NewGuid(), managedFileId, request.Root.OwnerUserId,
         request.ScopeKey, referenceKey, DateTimeOffset.UtcNow);
 
     private static void ValidateCompatibleOwnership(ManagedFilePlacementRequest request, ManagedFileRecord record)
     {
-        if (record.TenantId != request.Root.TenantId || record.OwnerUserId != request.Root.OwnerUserId ||
-            !StringComparer.Ordinal.Equals(record.LibraryScopeId, request.Root.LibraryScopeId) ||
+        if (record.OwnerUserId != request.Root.OwnerUserId ||
             !StringComparer.Ordinal.Equals(record.ScopeKey, request.ScopeKey))
             throw new UnauthorizedAccessException("The existing managed file is outside the requested ownership scope.");
     }

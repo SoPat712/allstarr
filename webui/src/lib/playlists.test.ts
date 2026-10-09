@@ -22,7 +22,6 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
   sourceProviderId: "source",
   sourcePlaylistId: "source-playlist",
   providerAccountId: "account",
-  libraryScopeId: "music",
   targetProtocol: "target",
   targetBackendInstanceId: "backend",
   targetPlaylistId: "target-playlist",

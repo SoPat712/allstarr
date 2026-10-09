@@ -14,7 +14,7 @@ public static class SubsonicSessionAuthentication
     };
 
     public static bool TryGetViewerReadParameters(HttpContext httpContext, string backendInstanceId,
-        string verifiedPrincipalId, Guid? tenantId, out IReadOnlyList<KeyValuePair<string, string>> parameters)
+        string verifiedPrincipalId, out IReadOnlyList<KeyValuePair<string, string>> parameters)
     {
         parameters = [];
         var protocol = httpContext.GetProtocolExecutionContext();
@@ -23,7 +23,7 @@ public static class SubsonicSessionAuthentication
             if (protocol.Protocol != ProtocolKind.Subsonic ||
                 !protocol.BackendInstanceId.Equals(backendInstanceId, StringComparison.Ordinal) ||
                 !protocol.VerifiedBackendPrincipalId.Equals(verifiedPrincipalId, StringComparison.Ordinal) ||
-                (tenantId.HasValue && protocol.Principal?.TenantId != tenantId) ||
+                protocol.Principal == null ||
                 !httpContext.Items.TryGetValue(SubsonicAuthFilter.RequestParametersItemKey, out var value) ||
                 value is not SubsonicRequestParameters requestParameters)
                 return false;
@@ -36,8 +36,9 @@ public static class SubsonicSessionAuthentication
         if (!httpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
             sessionValue is not AdminAuthSession session ||
             !IsSubsonicDialect(session.BackendType) ||
+            !session.BackendInstanceId.Equals(backendInstanceId, StringComparison.Ordinal) ||
             !session.UserId.Equals(verifiedPrincipalId, StringComparison.Ordinal) ||
-            (tenantId.HasValue && session.TenantId != tenantId) ||
+            !session.AllstarrUserId.HasValue ||
             session.SubsonicReadAuthentication == null)
             return false;
         parameters = session.SubsonicReadAuthentication.Where(pair => ReadParameterNames.Contains(pair.Key)).ToArray();

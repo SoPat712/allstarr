@@ -103,7 +103,6 @@ public sealed class PlaylistVirtualizationService(
         {
             linkIds = await db.PlaylistLinks.AsNoTracking()
                 .Where(item =>
-                    item.TenantId == actor.TenantId &&
                     (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
                     item.TargetBackendInstanceId == context.BackendInstanceId &&
                     (context.Protocol == ProtocolKind.Jellyfin
@@ -153,8 +152,13 @@ public sealed class PlaylistVirtualizationService(
 
         var actor = context.Actor;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var backendType = context.Protocol.ToString().ToLowerInvariant();
+        if (!await db.Users.AsNoTracking().AnyAsync(user => user.Id == actor.EffectiveUserId && user.Enabled &&
+                user.BackendType == backendType && user.BackendInstanceId == context.BackendInstanceId &&
+                user.BackendPrincipalId == context.VerifiedBackendPrincipalId, cancellationToken))
+            return null;
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == linkId && item.TenantId == actor.TenantId &&
+            item.Id == linkId &&
             (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
             item.TargetBackendInstanceId == context.BackendInstanceId &&
             (context.Protocol == ProtocolKind.Jellyfin
@@ -169,15 +173,14 @@ public sealed class PlaylistVirtualizationService(
             if (targets == null) return null;
             var read = await targets.Resolve(link.TargetProtocol).ReadAsync(
                 new BackendPlaylistTargetContext(link.TargetBackendInstanceId, context.VerifiedBackendPrincipalId,
-                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null,
-                    link.TenantId), link.TargetPlaylistId, cancellationToken);
+                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null), link.TargetPlaylistId, cancellationToken);
             if (!read.IsSuccess || read.Value == null) return null;
             authorizedTarget = read.Value;
         }
         else if (link.OwnerUserId != actor.EffectiveUserId) return null;
 
         var projection = await projections.ReadByLinkIdAsync(
-            actor.TenantId, link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId);
+            link.OwnerUserId, link.Id, cancellationToken, actor.EffectiveUserId);
         if (projection == null) return null;
         var selectedMode = projectionMode ?? link.ProjectionMode;
         var snapshot = await db.PlaylistSourceSnapshots.AsNoTracking()
@@ -192,7 +195,7 @@ public sealed class PlaylistVirtualizationService(
         var access = await libraryAccess.ResolveAsync(context, cancellationToken);
         var localCopies = await LibraryTrackAccess.Query(db, context, access)
             .Where(item => item.BackendInstanceId == link.TargetBackendInstanceId && backendIds.Contains(item.BackendItemId))
-            .OrderBy(item => item.LibraryScopeId).ThenBy(item => item.Id)
+            .OrderBy(item => item.BackendLibraryId).ThenBy(item => item.Id)
             .ToListAsync(cancellationToken);
         var libraryTracks = localCopies.DistinctBy(item => item.BackendItemId, StringComparer.Ordinal)
             .ToDictionary(item => item.BackendItemId, StringComparer.Ordinal);
@@ -208,8 +211,7 @@ public sealed class PlaylistVirtualizationService(
                 new BackendPlaylistTargetContext(
                     link.TargetBackendInstanceId,
                     context.VerifiedBackendPrincipalId,
-                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null,
-                    link.TenantId),
+                    link.OwnerUserId == actor.EffectiveUserId ? link.TargetCredentialReferenceId?.ToString() : null),
                 backendIds,
                 cancellationToken);
             if (!nativeResult.IsSuccess || nativeResult.Value == null) return null;
@@ -270,7 +272,6 @@ public sealed class PlaylistVirtualizationService(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var candidates = await db.PlaylistLinks.AsNoTracking()
             .Where(item =>
-                item.TenantId == actor.TenantId &&
                 (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
                 item.TargetBackendInstanceId == context.BackendInstanceId &&
                 item.SourceProviderId == providerId &&

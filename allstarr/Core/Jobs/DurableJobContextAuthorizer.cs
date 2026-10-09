@@ -13,13 +13,12 @@ public sealed record DurableJobPolicySnapshot(
     string AuthorizationRule,
     string? ProviderId,
     string? Capability,
-    string? ProviderAccountScope);
+    string? ProviderAccountScope,
+    long? ProviderAccountRevision = null);
 
 public sealed record DurableJobSavedContext(
-    Guid TenantId,
     Guid OwnerUserId,
     Guid? ProviderAccountId,
-    string? LibraryScopeId,
     string? ProviderCapability,
     string CorrelationId,
     string PolicySnapshotJson);
@@ -41,7 +40,7 @@ public sealed record DurableJobContextAuthorization(
 /// </summary>
 public sealed class DurableJobContextAuthorizer
 {
-    private const int SnapshotVersion = 1;
+    private const int SnapshotVersion = 2;
 
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly IProviderRegistry? _providers;
@@ -54,33 +53,28 @@ public sealed class DurableJobContextAuthorizer
     }
 
     public async Task<DurableJobSavedContext> AuthorizeEnqueueAsync(
-        Guid? tenantId,
         Guid? ownerUserId,
         Guid? providerAccountId,
-        string? libraryScopeId,
         string? capability,
         string? correlationId,
         CancellationToken cancellationToken = default)
     {
-        if (!tenantId.HasValue || tenantId == Guid.Empty ||
-            !ownerUserId.HasValue || ownerUserId == Guid.Empty)
+        if (!ownerUserId.HasValue || ownerUserId == Guid.Empty)
         {
             throw new ArgumentException(
-                "Durable jobs require the initiating tenant and user.");
+                "Durable jobs require the initiating user.");
         }
 
-        var normalizedLibraryScope = NormalizeLibraryScope(libraryScopeId);
         var normalizedCapability = NormalizeCapability(capability, providerAccountId.HasValue);
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var userIsActive = await context.Users.AsNoTracking().AnyAsync(
             item => item.Id == ownerUserId.Value &&
-                    item.TenantId == tenantId.Value &&
-                    item.Status == PlatformUserStatus.Active,
+                    item.Enabled,
             cancellationToken);
         if (!userIsActive)
         {
             throw new UnauthorizedAccessException(
-                "The initiating user is missing, disabled, or outside the tenant scope.");
+                "The initiating user is missing or disabled.");
         }
 
         ProviderAccountRecord? account = null;
@@ -98,7 +92,6 @@ public sealed class DurableJobContextAuthorizer
                 !await IsExactAccountAuthorizedAsync(
                     context,
                     account,
-                    tenantId.Value,
                     ownerUserId.Value,
                     normalizedCapability!,
                     cancellationToken))
@@ -110,10 +103,8 @@ public sealed class DurableJobContextAuthorizer
 
         var snapshot = BuildSnapshot(account, normalizedCapability);
         return new DurableJobSavedContext(
-            tenantId.Value,
             ownerUserId.Value,
             providerAccountId,
-            normalizedLibraryScope,
             normalizedCapability,
             RedactCorrelationId(correlationId),
             JsonSerializer.Serialize(snapshot));
@@ -123,11 +114,11 @@ public sealed class DurableJobContextAuthorizer
         DurableJobClaim claim,
         CancellationToken cancellationToken = default)
     {
-        if (!claim.TenantId.HasValue || !claim.OwnerUserId.HasValue)
+        if (!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty)
         {
             return DurableJobContextAuthorization.Deny(
                 "job_context_missing",
-                "The durable job does not contain an initiating tenant and user.");
+                "The durable job does not contain an initiating user.");
         }
 
         DurableJobPolicySnapshot? savedSnapshot;
@@ -150,8 +141,7 @@ public sealed class DurableJobContextAuthorizer
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var userIsActive = await context.Users.AsNoTracking().AnyAsync(
             item => item.Id == claim.OwnerUserId.Value &&
-                    item.TenantId == claim.TenantId.Value &&
-                    item.Status == PlatformUserStatus.Active,
+                    item.Enabled,
             cancellationToken);
         if (!userIsActive)
         {
@@ -188,7 +178,6 @@ public sealed class DurableJobContextAuthorizer
             !await IsExactAccountAuthorizedAsync(
                 context,
                 account,
-                claim.TenantId.Value,
                 claim.OwnerUserId.Value,
                 claim.ProviderCapability,
                 cancellationToken))
@@ -226,13 +215,13 @@ public sealed class DurableJobContextAuthorizer
             authorizationRule,
             account.ProviderId.Trim().ToLowerInvariant(),
             capability,
-            account.Scope.ToString().ToLowerInvariant());
+            account.Scope.ToString().ToLowerInvariant(),
+            account.Revision);
     }
 
     private async Task<bool> IsExactAccountAuthorizedAsync(
         AllstarrDbContext context,
         ProviderAccountRecord account,
-        Guid tenantId,
         Guid ownerUserId,
         string capability,
         CancellationToken cancellationToken)
@@ -243,9 +232,7 @@ public sealed class DurableJobContextAuthorizer
             return false;
         }
 
-        var owned = account.OwnerUserId.HasValue
-            ? account.TenantId == tenantId && account.OwnerUserId == ownerUserId
-            : account.TenantId == null;
+        var owned = account.OwnerUserId == null || account.OwnerUserId == ownerUserId;
         if (!owned || _providers != null && (!_providers.TryGet(account.ProviderId, out var provider) ||
                 provider?.Capabilities.Any(item => item.Capability == kind && item.HasUsableImplementation &&
                     item.AllowedAccountScopes.Contains(account.Scope)) != true))
@@ -254,26 +241,8 @@ public sealed class DurableJobContextAuthorizer
         if (account.SecretReferenceId is not { } secretId) return true;
         var purpose = $"provider-account:{account.ProviderId}:{account.Id:N}";
         return await context.SecretReferences.AsNoTracking().AnyAsync(item => item.Id == secretId &&
-            item.TenantId == account.TenantId && item.BackendIdentityId == null &&
+            item.UserId == account.OwnerUserId &&
             item.Purpose == purpose && item.RevokedAt == null, cancellationToken);
-    }
-
-    private static string? NormalizeLibraryScope(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return null;
-        }
-
-        var normalized = value.Trim();
-        if (normalized.Length > 300)
-        {
-            throw new ArgumentOutOfRangeException(
-                nameof(value),
-                "Library scope must be at most 300 characters.");
-        }
-
-        return normalized;
     }
 
     private static string? NormalizeCapability(string? value, bool required)

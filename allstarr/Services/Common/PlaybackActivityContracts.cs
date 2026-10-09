@@ -13,8 +13,7 @@ public sealed record PlaybackActivityState(
     string? BackendUserId = null,
     string? UserName = null,
     string? Client = null,
-    string? Device = null,
-    Guid? TenantId = null);
+    string? Device = null);
 
 public sealed record PlaybackTrackMetadata(
     string Title,
@@ -48,8 +47,8 @@ public interface IPlaybackMetadataResolver
 
 public interface IPlaybackDeliveryActivitySource
 {
-    bool WasDelivered(Guid? tenantId, Guid? userId, string itemId, string deviceId);
-    PlaybackStreamSource? StreamFor(Guid? tenantId, Guid? userId, string? deviceId, string itemId) => null;
+    bool WasDelivered(Guid? userId, string itemId, string deviceId);
+    PlaybackStreamSource? StreamFor(Guid? userId, string? deviceId, string itemId) => null;
 }
 
 public sealed record PlaybackStreamSource(
@@ -58,14 +57,12 @@ public sealed record PlaybackStreamSource(
     Guid? AccountId,
     string Protocol,
     string BackendInstanceId,
-    string? LibraryScopeId,
     bool Cached,
     DateTimeOffset OpenedAt,
     string SelectionReason)
 {
-    public bool Matches(string protocol, string backendInstanceId, string? libraryScopeId) =>
-        Protocol == protocol && BackendInstanceId == backendInstanceId &&
-        (LibraryScopeId == null || LibraryScopeId == libraryScopeId);
+    public bool Matches(string protocol, string backendInstanceId) =>
+        Protocol == protocol && BackendInstanceId == backendInstanceId;
 }
 
 public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySource, IDisposable
@@ -77,13 +74,13 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             SizeLimit = 4_096
         });
 
-    public void MarkDelivered(Guid tenantId, Guid userId, string itemId, string? deviceId)
+    public void MarkDelivered(Guid userId, string itemId, string? deviceId)
     {
         if (!string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
         {
             Microsoft.Extensions.Caching.Memory.CacheExtensions.Set(
                 _delivered,
-                (tenantId, userId, deviceId, StreamItemKey(itemId), "delivered"),
+                (userId, deviceId, StreamItemKey(itemId), "delivered"),
                 true,
                 new Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions
                 {
@@ -93,9 +90,9 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         }
     }
 
-    public bool WasDelivered(Guid? tenantId, Guid? userId, string itemId, string deviceId) =>
-        tenantId is { } tenant && userId is { } user &&
-        _delivered.TryGetValue((tenant, user, deviceId, StreamItemKey(itemId), "delivered"), out _);
+    public bool WasDelivered(Guid? userId, string itemId, string deviceId) =>
+        userId is { } user &&
+        _delivered.TryGetValue((user, deviceId, StreamItemKey(itemId), "delivered"), out _);
 
     public void StreamOpened(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality, ProtocolProviderStream stream)
@@ -104,22 +101,22 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             string.IsNullOrWhiteSpace(context.Client.DeviceId) || stream.ServingExternalId == null) return;
         var source = new PlaybackStreamSource(stream.ServingProviderId, stream.ServingExternalId,
             stream.ServingAccountId, context.Protocol.ToString().ToLowerInvariant(),
-            context.BackendInstanceId, context.LibraryScopeId, stream.IsCached, DateTimeOffset.UtcNow,
+            context.BackendInstanceId, stream.IsCached, DateTimeOffset.UtcNow,
             stream.SelectionReason);
-        var key = (context.Actor.TenantId, userId, context.Client.DeviceId, StreamItemKey(itemId));
+        var key = (userId, context.Client.DeviceId, StreamItemKey(itemId));
         Set(key, source);
-        Set((key, context.Protocol, context.BackendInstanceId, context.LibraryScopeId, quality), source);
+        Set((key, context.Protocol, context.BackendInstanceId, quality), source);
     }
 
     public PlaybackStreamSource? StreamFor(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality) => context.Actor?.EffectiveUserId is { } userId
-        ? _delivered.Get<PlaybackStreamSource>(((context.Actor.TenantId, userId, context.Client.DeviceId, StreamItemKey(itemId)),
-            context.Protocol, context.BackendInstanceId, context.LibraryScopeId, quality))
+        ? _delivered.Get<PlaybackStreamSource>(((userId, context.Client.DeviceId, StreamItemKey(itemId)),
+            context.Protocol, context.BackendInstanceId, quality))
         : null;
 
-    public PlaybackStreamSource? StreamFor(Guid? tenantId, Guid? userId, string? deviceId, string itemId) =>
-        tenantId is { } tenant && userId is { } user && !string.IsNullOrWhiteSpace(deviceId)
-            ? _delivered.Get<PlaybackStreamSource>((tenant, user, deviceId, StreamItemKey(itemId)))
+    public PlaybackStreamSource? StreamFor(Guid? userId, string? deviceId, string itemId) =>
+        userId is { } user && !string.IsNullOrWhiteSpace(deviceId)
+            ? _delivered.Get<PlaybackStreamSource>((user, deviceId, StreamItemKey(itemId)))
             : null;
 
     private static string StreamItemKey(string itemId)

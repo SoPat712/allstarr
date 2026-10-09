@@ -270,7 +270,7 @@ public sealed partial class ExtensionControlPlaneService
                       ?? throw new KeyNotFoundException("Extension package not found.");
         if (package.Revision != expectedRevision) throw new DbUpdateConcurrencyException("The extension package changed before review.");
         if (package.State != ExtensionPackageState.ReviewRequired) throw new InvalidOperationException("Only a review-required package can be reviewed.");
-        if (!await db.Users.AnyAsync(item => item.Id == reviewerUserId && item.Status == PlatformUserStatus.Active, cancellationToken))
+        if (!await db.Users.AnyAsync(item => item.Id == reviewerUserId && item.Enabled, cancellationToken))
             throw new UnauthorizedAccessException("The extension reviewer is unavailable.");
         var reviews = await db.ExtensionPermissionReviews.Where(item => item.ExtensionPackageId == package.Id).ToListAsync(cancellationToken);
         var lookup = decisions.ToDictionary(item => (item.Kind.Trim().ToLowerInvariant(), item.Value.Trim()));

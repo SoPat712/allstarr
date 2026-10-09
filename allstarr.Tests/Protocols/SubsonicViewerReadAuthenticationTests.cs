@@ -16,7 +16,6 @@ namespace allstarr.Tests;
 
 public sealed class SubsonicViewerReadAuthenticationTests
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
 
     [Theory]
     [InlineData("getPlaylists")]
@@ -81,15 +80,15 @@ public sealed class SubsonicViewerReadAuthenticationTests
     [Theory]
     [InlineData("principal")]
     [InlineData("backend")]
-    [InlineData("tenant")]
+    [InlineData("unlinked")]
     [InlineData("protocol")]
     [InlineData("missing_parameters")]
-    public async Task MismatchedProtocolViewerCannotOpenStoredOrGlobalSecret(string mismatch)
+    public async Task MismatchedProtocolViewerCannotOpenStoredOrSharedSecret(string mismatch)
     {
         var http = ProtocolHttp(
             backend: mismatch == "backend" ? "other-backend" : "backend",
             principal: mismatch == "principal" ? "playlist-owner" : "viewer",
-            tenant: mismatch == "tenant" ? Guid.CreateVersion7() : _tenantId,
+            linked: mismatch != "unlinked",
             protocol: mismatch == "protocol" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic);
         if (mismatch != "missing_parameters")
             http.Items[SubsonicAuthFilter.RequestParametersItemKey] = ViewerParameters();
@@ -102,16 +101,16 @@ public sealed class SubsonicViewerReadAuthenticationTests
 
     [Theory]
     [InlineData("principal")]
-    [InlineData("tenant")]
+    [InlineData("backend")]
     [InlineData("dialect")]
     [InlineData("missing_authentication")]
-    public async Task MismatchedAdminViewerCannotOpenStoredOrGlobalSecret(string mismatch)
+    public async Task MismatchedAdminViewerCannotOpenStoredOrSharedSecret(string mismatch)
     {
         var http = new DefaultHttpContext();
         http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(
             mismatch == "dialect" ? "Jellyfin" : "Subsonic",
             mismatch == "principal" ? "playlist-owner" : "viewer",
-            mismatch == "tenant" ? Guid.CreateVersion7() : _tenantId,
+            mismatch == "backend" ? "other-backend" : "backend",
             authentication: mismatch != "missing_authentication");
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () =>
@@ -174,29 +173,29 @@ public sealed class SubsonicViewerReadAuthenticationTests
         new HttpContextAccessor { HttpContext = http });
 
     private BackendPlaylistTargetContext TargetContext() => new(
-        "backend", "viewer", Guid.CreateVersion7().ToString(), _tenantId);
+        "backend", "viewer", Guid.CreateVersion7().ToString());
 
     private DefaultHttpContext ProtocolHttp(string backend = "backend", string principal = "viewer",
-        Guid? tenant = null, ProtocolKind protocol = ProtocolKind.Subsonic)
+        bool linked = true, ProtocolKind protocol = ProtocolKind.Subsonic)
     {
         var http = new DefaultHttpContext();
         http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
             protocol, backend, principal,
-            new AllstarrPrincipal(tenant ?? _tenantId, Guid.CreateVersion7(), protocol.ToString().ToLowerInvariant(),
-                backend, principal, "Fixture", false),
+            linked ? new AllstarrPrincipal(Guid.CreateVersion7(), protocol.ToString().ToLowerInvariant(),
+                backend, principal, "Fixture", false) : null,
             "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
         return http;
     }
 
     private AdminAuthSession Session(string dialect = "Subsonic", string principal = "viewer",
-        Guid? tenant = null, bool authentication = true) => new()
+        string backend = "backend", bool authentication = true) => new()
         {
             SessionId = "fixture",
             UserId = principal,
             UserName = "Fixture",
             IsAdministrator = false,
             BackendType = dialect,
-            TenantId = tenant ?? _tenantId,
+            BackendInstanceId = backend,
             AllstarrUserId = Guid.CreateVersion7(),
             JellyfinAccessToken = "protected",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),

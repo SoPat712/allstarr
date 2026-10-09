@@ -34,21 +34,21 @@ describe("API response normalization", () => {
     });
   });
 
-  it("creates a listening-app key for the exact selected library", async () => {
+  it("creates a listening-app key for the selected backend", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       Id: "token-id", Token: "private-key", RelayExternally: false, CreatedAt: "2026-01-01T00:00:00Z",
     }), { status: 201 }));
     vi.stubGlobal("fetch", fetch);
 
     const created = await intelligence.createListeningApp({
-      protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+      protocol: "jellyfin", backendInstanceId: "main",
     }, false);
 
     expect(created).toMatchObject({ id: "token-id", token: "private-key", relayExternally: false });
     expect(fetch).toHaveBeenCalledWith("/api/admin/intelligence/listening-apps", expect.objectContaining({
       method: "POST",
       body: JSON.stringify({
-        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+        protocol: "jellyfin", backendInstanceId: "main",
         sendToConnectedServices: false,
       }),
     }));

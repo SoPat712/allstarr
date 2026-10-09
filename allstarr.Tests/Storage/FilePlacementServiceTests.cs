@@ -11,18 +11,17 @@ public sealed class FilePlacementServiceTests : IDisposable
     private readonly string testRoot = Path.Combine(Path.GetTempPath(), $"allstarr-placement-{Guid.NewGuid():N}");
 
     [Fact]
-    public void ManagedScopeKey_IsStablePerOwnerRootAndLibraryButNotPerAction()
+    public void ManagedScopeKey_IsStablePerOwnerAndRootButNotPerAction()
     {
-        var tenant = Guid.CreateVersion7();
         var owner = Guid.CreateVersion7();
         var root = Guid.CreateVersion7();
 
-        var first = ManagedFileScopeKey.Create(tenant, owner, root, "music");
-        var retry = ManagedFileScopeKey.Create(tenant, owner, root, " music ");
+        var first = ManagedFileScopeKey.Create(owner, root);
+        var retry = ManagedFileScopeKey.Create(owner, root);
 
         Assert.Equal(first, retry);
-        Assert.NotEqual(first, ManagedFileScopeKey.Create(tenant, owner, root, "audiobooks"));
-        Assert.NotEqual(first, ManagedFileScopeKey.Create(tenant, owner, Guid.CreateVersion7(), "music"));
+        Assert.NotEqual(first, ManagedFileScopeKey.Create(Guid.CreateVersion7(), root));
+        Assert.NotEqual(first, ManagedFileScopeKey.Create(owner, Guid.CreateVersion7()));
     }
 
     [Fact]
@@ -110,8 +109,7 @@ public sealed class FilePlacementServiceTests : IDisposable
         Assert.True(operations.TryGetFileIdentity(source, out var identity));
         store.Seed(new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), source,
             Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("audio"))).ToLowerInvariant(), 5,
-            ManagedFilePlacementMethod.Copy, request.Root.TenantId, request.Root.OwnerUserId,
-            request.Root.LibraryScopeId, Guid.NewGuid(), request.ScopeKey, 1, true, DateTimeOffset.UtcNow)
+            ManagedFilePlacementMethod.Copy, request.Root.OwnerUserId, Guid.NewGuid(), request.ScopeKey, 1, true, DateTimeOffset.UtcNow)
         {
             TargetRootPath = Path.GetDirectoryName(source)!,
             FileSystemDeviceId = identity.DeviceId,
@@ -206,16 +204,14 @@ public sealed class FilePlacementServiceTests : IDisposable
         File.Copy(source, target);
         var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("recoverable-audio")))
             .ToLowerInvariant();
-        var material = $"{request.Root.TenantId:N}|{request.Root.OwnerUserId:N}|{request.Root.Id:N}|{request.ScopeKey}|{request.ReferenceKey}";
+        var material = $"{request.Root.OwnerUserId:N}|{request.Root.Id:N}|{request.ScopeKey}|{request.ReferenceKey}";
         var journalName = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(material))).ToLowerInvariant();
         var journal = Path.Combine(stagingDirectory, $"{journalName}.placement.json");
         await File.WriteAllTextAsync(journal, JsonSerializer.Serialize(new
         {
             Version = 1,
             RootId = request.Root.Id,
-            TenantId = request.Root.TenantId!.Value,
             request.Root.OwnerUserId,
-            request.Root.LibraryScopeId,
             request.ScopeKey,
             ReferenceKey = request.ReferenceKey!,
             RootPath = Path.GetFullPath(root),
@@ -406,7 +402,7 @@ public sealed class FilePlacementServiceTests : IDisposable
     {
         var path = CreateSource("managed/song.flac", "managed");
         var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), path, new string('a', 64), 7,
-            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
+            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(),
             "owned-scope", 2, true, DateTimeOffset.UtcNow)
         { TargetRootPath = Path.GetDirectoryName(path)! };
         var store = new MemoryRemovalStore(record);
@@ -424,7 +420,7 @@ public sealed class FilePlacementServiceTests : IDisposable
     {
         var path = CreateSource("managed/song.flac", "managed");
         var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), path, new string('a', 64), 7,
-            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
+            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(),
             "owned-scope", 1, true, DateTimeOffset.UtcNow)
         { TargetRootPath = Path.GetDirectoryName(path)! };
         var store = new MemoryRemovalStore(record);
@@ -446,7 +442,7 @@ public sealed class FilePlacementServiceTests : IDisposable
         Directory.Delete(artistDirectory, recursive: true);
         Directory.CreateSymbolicLink(artistDirectory, Path.GetDirectoryName(outside)!);
         var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), original, new string('a', 64), 7,
-            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
+            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(),
             "owned-scope", 1, true, DateTimeOffset.UtcNow)
         { TargetRootPath = managedRoot };
         var store = new MemoryRemovalStore(record);
@@ -465,7 +461,7 @@ public sealed class FilePlacementServiceTests : IDisposable
         var operations = new PhysicalManagedFileOperations();
         if (!operations.TryGetFileIdentity(path, out var identity)) return;
         var record = new ManagedFileRecord(Guid.NewGuid(), Guid.NewGuid(), path, new string('a', 64), 7,
-            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(), "library", Guid.NewGuid(),
+            ManagedFilePlacementMethod.Copy, Guid.NewGuid(), Guid.NewGuid(),
             "owned-scope", 1, true, DateTimeOffset.UtcNow)
         {
             TargetRootPath = Path.GetDirectoryName(path)!,
@@ -484,10 +480,13 @@ public sealed class FilePlacementServiceTests : IDisposable
         Assert.False(store.Removed);
     }
 
-    private ManagedFilePlacementRequest Request(string source, string root, bool sourceManaged) => new(
-        new(Guid.NewGuid(), Path.GetFullPath(root), Guid.NewGuid(), Guid.NewGuid(), "library-1"), source,
-        "{albumArtist}/{album}/{track:00} - {title}",
-        new("A/B", "Artist", "Album", Track: 3, Extension: ".flac"), Guid.NewGuid(), "tenant/user/library", sourceManaged);
+    private ManagedFilePlacementRequest Request(string source, string root, bool sourceManaged)
+    {
+        var target = new ManagedFileRoot(Guid.NewGuid(), Path.GetFullPath(root), Guid.NewGuid());
+        return new(target, source, "{albumArtist}/{album}/{track:00} - {title}",
+            new("A/B", "Artist", "Album", Track: 3, Extension: ".flac"), Guid.NewGuid(),
+            ManagedFileScopeKey.Create(target.OwnerUserId, target.Id), sourceManaged);
+    }
 
     private string CreateSource(string relative, string content)
     {

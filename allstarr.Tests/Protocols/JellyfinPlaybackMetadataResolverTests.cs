@@ -12,7 +12,6 @@ namespace allstarr.Tests;
 
 public sealed class JellyfinPlaybackMetadataResolverTests
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
 
     [Fact]
     public async Task ResolveAsyncUsesExactViewerAuthenticationAndFreshUserFilteredItemQueries()
@@ -114,7 +113,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
         var unlinked = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "viewer", null,
             "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
         var subsonic = new ProtocolExecutionContext(ProtocolKind.Subsonic, "backend", "viewer",
-            new AllstarrPrincipal(_tenantId, Guid.CreateVersion7(), "subsonic", "backend", "viewer", "Viewer", false),
+            new AllstarrPrincipal(Guid.CreateVersion7(), "subsonic", "backend", "viewer", "Viewer", false),
             "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
 
         foreach (var context in new[] { unlinked, subsonic })
@@ -235,7 +234,7 @@ public sealed class JellyfinPlaybackMetadataResolverTests
         NullLogger<JellyfinPlaybackMetadataResolver>.Instance);
 
     private ProtocolExecutionContext Context(string viewer = "viewer") => new(ProtocolKind.Jellyfin, "backend", viewer,
-        new AllstarrPrincipal(_tenantId, Guid.CreateVersion7(), "jellyfin", "backend", viewer, "Viewer", false),
+        new AllstarrPrincipal(Guid.CreateVersion7(), "jellyfin", "backend", viewer, "Viewer", false),
         "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
 
     private static HttpResponseMessage Item(string id, string title = "Fixture title") => Json(JsonSerializer.Serialize(new

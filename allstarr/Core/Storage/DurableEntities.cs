@@ -2,12 +2,6 @@ using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Storage;
 
-public enum PlatformUserStatus
-{
-    Active,
-    Disabled
-}
-
 public enum ProviderAccountScope
 {
     Shared,
@@ -54,41 +48,23 @@ public enum ProviderIdentityVerification
     Pinned = 2
 }
 
-public sealed class TenantRecord
+public sealed class UserRecord
 {
     public Guid Id { get; set; }
-    public string Slug { get; set; } = string.Empty;
-    public string Name { get; set; } = string.Empty;
-    public DateTimeOffset CreatedAt { get; set; }
-}
-
-public sealed class PlatformUserRecord
-{
-    public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
-    public string DisplayName { get; set; } = string.Empty;
-    public PlatformUserStatus Status { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-}
-
-public sealed class BackendIdentityRecord
-{
-    public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
-    public Guid UserId { get; set; }
     public string BackendType { get; set; } = string.Empty;
     public string BackendInstanceId { get; set; } = string.Empty;
-    public string PrincipalId { get; set; } = string.Empty;
-    public string? DisplayName { get; set; }
+    public string BackendPrincipalId { get; set; } = string.Empty;
+    public string DisplayName { get; set; } = string.Empty;
+    public bool IsAdmin { get; set; }
+    public bool Enabled { get; set; } = true;
     public DateTimeOffset CreatedAt { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
     public DateTimeOffset LastSeenAt { get; set; }
 }
 
 public sealed class OnboardingStateRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid UserId { get; set; }
     public string SchemaVersion { get; set; } = string.Empty;
     public string CompletedStepsJson { get; set; } = "[]";
@@ -111,7 +87,6 @@ public sealed class AdminAuthSessionRecord
 public sealed class ProviderAccountRecord
 {
     public Guid Id { get; set; }
-    public Guid? TenantId { get; set; }
     public Guid? OwnerUserId { get; set; }
     public Guid? CreatedByUserId { get; set; }
     public string ProviderId { get; set; } = string.Empty;
@@ -129,8 +104,7 @@ public sealed class ProviderAccountRecord
 public sealed class SecretReferenceRecord
 {
     public Guid Id { get; set; }
-    public Guid? TenantId { get; set; }
-    public Guid? BackendIdentityId { get; set; }
+    public Guid? UserId { get; set; }
     public string Purpose { get; set; } = string.Empty;
     public int ActiveVersion { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
@@ -155,10 +129,8 @@ public sealed class DurableJobRecord
 {
     public Guid Id { get; set; }
     public string ScopeKey { get; set; } = string.Empty;
-    public Guid? TenantId { get; set; }
     public Guid? OwnerUserId { get; set; }
     public Guid? ProviderAccountId { get; set; }
-    public string? LibraryScopeId { get; set; }
     public string? ProviderCapability { get; set; }
     public string PolicySnapshotJson { get; set; } = "{}";
     public string RequestFingerprint { get; set; } = string.Empty;
@@ -202,7 +174,6 @@ public sealed class JobAttemptRecord
 public sealed class ProviderHealthSampleRecord
 {
     public Guid Id { get; set; }
-    public Guid? TenantId { get; set; }
     public Guid ProviderAccountId { get; set; }
     public string Capability { get; set; } = string.Empty;
     public ProviderHealthState State { get; set; }
@@ -215,7 +186,6 @@ public sealed class ProviderHealthSampleRecord
 public sealed class ProviderHealthRollupRecord
 {
     public Guid Id { get; set; }
-    public Guid? TenantId { get; set; }
     public Guid ProviderAccountId { get; set; }
     public string Capability { get; set; } = string.Empty;
     public DateTimeOffset WindowStart { get; set; }
@@ -248,7 +218,6 @@ public sealed class ProviderCircuitRecord
 public sealed class CanonicalRecordingRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid CreatedByUserId { get; set; }
     public string Title { get; set; } = string.Empty;
     public string? Disambiguation { get; set; }
@@ -265,7 +234,6 @@ public sealed class CanonicalRecordingRecord
 public sealed class ProviderTrackIdentityRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid CanonicalRecordingId { get; set; }
     public Guid? ProviderAccountId { get; set; }
     public string ProviderId { get; set; } = string.Empty;
@@ -286,7 +254,6 @@ public sealed class ProviderTrackIdentityRecord
 public sealed class AuditEventRecord
 {
     public Guid Id { get; set; }
-    public Guid? TenantId { get; set; }
     public Guid? ActorUserId { get; set; }
     public string Category { get; set; } = string.Empty;
     public string Action { get; set; } = string.Empty;
@@ -299,7 +266,6 @@ public sealed class AuditEventRecord
 public sealed class LegacyEnvImportRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public string SourceSha256 { get; set; } = string.Empty;
     public string SchemaVersion { get; set; } = "legacy-env-import-v1";
     public Guid? ActorUserId { get; set; }

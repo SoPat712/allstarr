@@ -71,7 +71,6 @@ public class JellyfinSessionManager : IDisposable
                 existingSession.LastActivity = DateTime.UtcNow;
                 existingSession.HasProxiedWebSocket = hasProxiedWebSocket;
                 existingSession.UserId ??= principal?.UserId;
-                existingSession.TenantId ??= principal?.TenantId;
                 existingSession.BackendUserId ??= principal?.BackendPrincipalId ?? AuthHeaderHelper.ExtractUserId(headers);
                 existingSession.UserName ??= principal?.DisplayName;
                 _logger.LogInformation("Session already exists for device {DeviceId}", key);
@@ -130,7 +129,6 @@ public class JellyfinSessionManager : IDisposable
                 Headers = CloneHeaders(headers),
                 ClientIp = clientIp,
                 HasProxiedWebSocket = hasProxiedWebSocket,
-                TenantId = principal?.TenantId,
                 UserId = principal?.UserId,
                 BackendUserId = principal?.BackendPrincipalId ?? AuthHeaderHelper.ExtractUserId(headers),
                 UserName = principal?.DisplayName
@@ -355,8 +353,7 @@ public class JellyfinSessionManager : IDisposable
                 session.BackendUserId,
                 session.UserName,
                 session.Client,
-                session.Device,
-                session.TenantId))
+                session.Device))
             .ToList();
     }
 
@@ -736,7 +733,6 @@ public class JellyfinSessionManager : IDisposable
         public string? LastExplicitStopItemId { get; set; }
         public DateTime? LastExplicitStopAtUtc { get; set; }
         public bool HasProxiedWebSocket { get; set; }
-        public Guid? TenantId { get; set; }
         public Guid? UserId { get; set; }
         public string? BackendUserId { get; set; }
         public string? UserName { get; set; }
@@ -751,8 +747,7 @@ public class JellyfinSessionManager : IDisposable
         string? BackendUserId = null,
         string? UserName = null,
         string? Client = null,
-        string? Device = null,
-        Guid? TenantId = null);
+        string? Device = null);
 
     private enum CapabilitiesPostResult
     {

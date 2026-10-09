@@ -43,8 +43,7 @@ public sealed record ProtocolExecutionContext
         string correlationId,
         DateTimeOffset deadline,
         CancellationToken cancellationToken,
-        ProtocolClientDescriptor? client = null,
-        string? libraryScopeId = null)
+        ProtocolClientDescriptor? client = null)
     {
         if (!Enum.IsDefined(protocol) || protocol == ProtocolKind.Unknown)
         {
@@ -68,10 +67,6 @@ public sealed record ProtocolExecutionContext
             correlationId,
             nameof(correlationId),
             100);
-        LibraryScopeId = ProviderContractValidation.OptionalText(
-            libraryScopeId,
-            nameof(libraryScopeId),
-            300);
 
         var expectedBackendType = protocol.ToString().ToLowerInvariant();
         if (principal != null &&
@@ -91,7 +86,6 @@ public sealed record ProtocolExecutionContext
         Actor = principal == null
             ? null
             : new ProviderActorContext(
-                principal.TenantId,
                 principal.IsAdministrator
                     ? ProviderActorKind.Administrator
                     : ProviderActorKind.User,
@@ -114,8 +108,6 @@ public sealed record ProtocolExecutionContext
 
     public ProtocolClientDescriptor Client { get; }
 
-    public string? LibraryScopeId { get; }
-
     public string CorrelationId { get; }
 
     public DateTimeOffset Deadline { get; }
@@ -130,17 +122,7 @@ public sealed record ProtocolExecutionContext
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(
         "The verified backend principal is not linked to an Allstarr user.");
 
-    public ProtocolExecutionContext WithLibraryScope(string libraryScopeId) => new(
-        Protocol,
-        BackendInstanceId,
-        VerifiedBackendPrincipalId,
-        Principal,
-        CorrelationId,
-        Deadline,
-        CancellationToken,
-        Client,
-        libraryScopeId)
-    { Policy = Policy };
+
 }
 
 public sealed class ProtocolExecutionOptions
@@ -184,8 +166,7 @@ public sealed class ProtocolExecutionContextFactory
         ProtocolKind protocol,
         string verifiedBackendPrincipalId,
         string? backendInstanceId = null,
-        ProtocolClientDescriptor? client = null,
-        string? libraryScopeId = null)
+        ProtocolClientDescriptor? client = null)
     {
         ArgumentNullException.ThrowIfNull(httpContext);
         var principal = httpContext.Items.TryGetValue(
@@ -209,8 +190,7 @@ public sealed class ProtocolExecutionContextFactory
             correlationId,
             _clock.UtcNow.Add(_options.GetOperationTimeout()),
             httpContext.RequestAborted,
-            client,
-            libraryScopeId);
+            client);
     }
 }
 

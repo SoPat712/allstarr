@@ -5,7 +5,6 @@ using SkiaSharp;
 namespace allstarr.Services.Common;
 
 public sealed record MediaAssetIdentity(
-    Guid? TenantId,
     Guid? UserId,
     Guid? ProviderAccountId,
     string ProviderId,

@@ -29,22 +29,18 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         _clock = new FakeClock(new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero));
-        _scope = new(Guid.NewGuid(), Guid.NewGuid(), "jellyfin", "fixture-server", "music");
+        _scope = new(Guid.NewGuid(), "jellyfin", "fixture-server");
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = _scope.TenantId,
-                Slug = "history-import",
-                Name = "History import",
-                CreatedAt = _clock.UtcNow
-            });
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = _scope.OwnerUserId,
-                TenantId = _scope.TenantId,
+
                 DisplayName = "History owner",
-                Status = PlatformUserStatus.Active,
+                Enabled = true,
+                BackendType = _scope.Protocol,
+                BackendInstanceId = _scope.BackendInstanceId,
+                BackendPrincipalId = "history-owner",
                 CreatedAt = _clock.UtcNow,
                 UpdatedAt = _clock.UtcNow
             });
@@ -92,7 +88,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             _jobs,
             Options.Create(new MusicBrainzSettings { Enabled = true }));
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz);
+            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz, new TestBackendLibraryAccess(_factory, "music"));
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
@@ -195,11 +191,11 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             db.IntelligencePolicies.Add(new IntelligencePolicyRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _scope.TenantId,
+
                 OwnerUserId = _scope.OwnerUserId,
                 Protocol = _scope.Protocol,
                 BackendInstanceId = _scope.BackendInstanceId,
-                LibraryScopeId = _scope.LibraryScopeId,
+
                 Enabled = true,
                 RetentionDays = 30,
                 AllowedSignalTypesJson = "[]",
@@ -230,7 +226,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         var musicBrainz = new MusicBrainzListeningEnrichmentQueue(
             _jobs, Options.Create(new MusicBrainzSettings { Enabled = false }));
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz);
+            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz, new TestBackendLibraryAccess(_factory, "music"));
         using var services = new ServiceCollection().BuildServiceProvider();
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
         await _jobs.CompleteAsync(claim!, completion, CancellationToken.None);
@@ -343,7 +339,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
             _jobs,
             Options.Create(new MusicBrainzSettings { Enabled = false }));
         var handler = new ListeningHistoryImportJobHandler(
-            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz);
+            _factory, _importers, _artifacts, _importOptions, _clock, musicBrainz, new TestBackendLibraryAccess(_factory, "music"));
         using var services = new ServiceCollection().BuildServiceProvider();
 
         var completion = await handler.ExecuteAsync(new(claim!, services), CancellationToken.None);
@@ -454,11 +450,11 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
     private ListeningEventRecord ImportedEvent(Guid importId, string occurrenceKey) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _scope.TenantId,
+
         OwnerUserId = _scope.OwnerUserId,
         Protocol = _scope.Protocol,
         BackendInstanceId = _scope.BackendInstanceId,
-        LibraryScopeId = _scope.LibraryScopeId,
+
         OccurrenceKey = occurrenceKey,
         State = ListeningEventState.Completed,
         StartedAt = _clock.UtcNow.AddMinutes(-3),
@@ -476,7 +472,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
     private PlaybackDeliveryCheckpointEntity Checkpoint(string occurrenceKey, string signalKey) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _scope.TenantId,
+
         OwnerUserId = _scope.OwnerUserId,
         OccurrenceKey = occurrenceKey,
         SignalKey = signalKey,

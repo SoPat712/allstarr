@@ -116,8 +116,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             var context = Context();
             var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
             local.Setup(item => item.GetLocalPathForExternalSongAsync(
-                    It.Is<DownloadedSongMappingScope>(scope =>
-                        scope.TenantId == context.RequireActor().TenantId),
+                    It.Is<DownloadedSongMappingScope>(scope => scope.ProviderAccountId == null),
                     "qobuz",
                     "qobuz-track"))
                 .ReturnsAsync((string?)null);
@@ -155,14 +154,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task OpenStream_UsesTenantPolicyInsteadOfProcessConfiguration()
+    public async Task OpenStream_UsesHouseholdPolicyInsteadOfProcessConfiguration()
     {
         var configuredFirst = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
-        var tenantFirst = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var householdFirst = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
         var (gateway, router) = FailoverGateway(
             configuredFirst,
-            tenantFirst,
-            tenantStreamingOrder: ["qobuz", "deezer"]);
+            householdFirst,
+            householdStreamingOrder: ["qobuz", "deezer"]);
 
         var opened = await gateway.OpenStreamAsync(
             Context(),
@@ -179,15 +178,15 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task OpenStream_UsesTenantQualityWhenTheClientDoesNotSetALowerCap()
+    public async Task OpenStream_UsesHouseholdQualityWhenTheClientDoesNotSetALowerCap()
     {
         var preferred = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
         var fallback = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
         var (gateway, router) = FailoverGateway(
             preferred,
             fallback,
-            tenantStreamingOrder: ["qobuz", "deezer"],
-            tenantAudioQuality: "High");
+            householdStreamingOrder: ["qobuz", "deezer"],
+            householdAudioQuality: "High");
 
         using var response = (await gateway.OpenStreamAsync(
             Context(),
@@ -206,15 +205,15 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task OpenStream_ExcludesProvidersDisabledForTheTenant()
+    public async Task OpenStream_ExcludesProvidersDisabledForTheHousehold()
     {
         var disabled = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
         var available = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
         var (gateway, router) = FailoverGateway(
             disabled,
             available,
-            tenantStreamingOrder: ["qobuz", "deezer"],
-            tenantDisabledProviders: ["qobuz"]);
+            householdStreamingOrder: ["qobuz", "deezer"],
+            householdDisabledProviders: ["qobuz"]);
 
         var opened = await gateway.OpenStreamAsync(
             Context(),
@@ -331,7 +330,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
-    public async Task PlaybackSourceIsScopedToUserDeviceLibraryAndQuality()
+    public async Task PlaybackSourceIsScopedToUserDeviceBackendAndQuality()
     {
         using var activity = new PlaybackDeliveryActivityStore();
         var context = ClientContext();
@@ -342,12 +341,13 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             ProviderAudioQuality.Any, null))!.Response;
         const string itemId = "ext-deezer-song-source-track";
         Assert.NotNull(activity.StreamFor(context, itemId, ProviderAudioQuality.Any));
-        Assert.Null(activity.StreamFor(context.WithLibraryScope("other-library"), itemId, ProviderAudioQuality.Any));
+        var otherBackend = new ProtocolExecutionContext(context.Protocol, "other-backend", context.VerifiedBackendPrincipalId,
+            context.Principal! with { BackendInstanceId = "other-backend" }, context.CorrelationId, context.Deadline, default, context.Client);
+        Assert.Null(activity.StreamFor(otherBackend, itemId, ProviderAudioQuality.Any));
         Assert.Null(activity.StreamFor(context, itemId, ProviderAudioQuality.Lossy));
-        Assert.Null(activity.StreamFor(context.Actor!.TenantId, Guid.CreateVersion7(), "device", itemId));
-        Assert.Null(activity.StreamFor(Guid.CreateVersion7(), context.Actor.UserId, "device", itemId));
-        Assert.Null(activity.StreamFor(context.Actor.TenantId, context.Actor.UserId, "other-device", itemId));
-        Assert.Null(activity.StreamFor(context.Actor.TenantId, context.Actor.UserId, "device", "ext-deezer-song-another"));
+        Assert.Null(activity.StreamFor(Guid.CreateVersion7(), "device", itemId));
+        Assert.Null(activity.StreamFor(context.Actor!.UserId, "other-device", itemId));
+        Assert.Null(activity.StreamFor(context.Actor!.UserId, "device", "ext-deezer-song-another"));
     }
 
     [Fact]
@@ -402,9 +402,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     private static (ProtocolProviderGateway Gateway, Mock<IProviderRouter> Router) FailoverGateway(
         Mock<IProviderStreamingCapability> first, Mock<IProviderStreamingCapability> second,
         PlaybackDeliveryActivityStore? activity = null,
-        IReadOnlyList<string>? tenantStreamingOrder = null,
-        IReadOnlyList<string>? tenantDisabledProviders = null,
-        string tenantAudioQuality = AudioQualityPolicy.DefaultStep,
+        IReadOnlyList<string>? householdStreamingOrder = null,
+        IReadOnlyList<string>? householdDisabledProviders = null,
+        string householdAudioQuality = AudioQualityPolicy.DefaultStep,
         ManagedTrackCacheService? managedTrackCache = null)
     {
         var registry = Registry(first.Object, second.Object);
@@ -427,20 +427,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             ["Providers:StreamingOrder"] = $"{first.Object.ProviderId},{second.Object.ProviderId}"
         }).Build();
         IEffectiveProviderPolicyResolver? policies = null;
-        if (tenantStreamingOrder != null)
+        if (householdStreamingOrder != null)
         {
             var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
             resolver.Setup(item => item.ResolveForUserAsync(
-                    It.IsAny<Guid>(), It.IsAny<Guid>(),
+                    It.IsAny<Guid>(),
                     It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new EffectiveProviderPolicySnapshot(
-                    Context().RequireActor().TenantId,
                     new Dictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>
                     {
-                        [ProviderCapabilityKind.Streaming] = tenantStreamingOrder.ToImmutableArray()
+                        [ProviderCapabilityKind.Streaming] = householdStreamingOrder.ToImmutableArray()
                     }.ToImmutableDictionary(),
-                    (tenantDisabledProviders ?? []).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
-                    tenantAudioQuality,
+                    (householdDisabledProviders ?? []).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
+                    householdAudioQuality,
                     0.07));
             policies = resolver.Object;
         }
@@ -454,7 +453,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var original = Context();
         return new ProtocolExecutionContext(original.Protocol, original.BackendInstanceId, original.VerifiedBackendPrincipalId,
             original.Principal, original.CorrelationId, original.Deadline, cancellationToken,
-            new ProtocolClientDescriptor("client", "device"), original.LibraryScopeId);
+            new ProtocolClientDescriptor("client", "device"));
     }
 
     private sealed class ObservedContent(byte[] bytes) : ByteArrayContent(bytes)

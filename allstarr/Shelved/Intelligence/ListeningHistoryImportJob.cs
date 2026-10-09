@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
@@ -19,7 +20,8 @@ public sealed class ListeningHistoryImportJobHandler(
     ListeningHistoryImportArtifactStore artifacts,
     ListeningHistoryImportOptions options,
     IPlatformClock clock,
-    MusicBrainzListeningEnrichmentQueue musicBrainz) : IDurableJobHandler
+    MusicBrainzListeningEnrichmentQueue musicBrainz,
+    IBackendLibraryAccessResolver libraryAccess) : IDurableJobHandler
 {
     public const string JobTypeName = "listening-history.import";
     public string JobType => JobTypeName;
@@ -31,9 +33,7 @@ public sealed class ListeningHistoryImportJobHandler(
         var payload = execution.Claim.Payload.Deserialize<ListeningHistoryImportJobPayload>();
         if (payload == null || payload.ImportId == Guid.Empty || payload.Generation < 1 ||
             payload.PreviewRevision.Length != 64 || !payload.PreviewRevision.All(Uri.IsHexDigit) ||
-            execution.Claim.TenantId != payload.Scope.TenantId ||
-            execution.Claim.OwnerUserId != payload.Scope.OwnerUserId ||
-            execution.Claim.LibraryScopeId != payload.Scope.LibraryScopeId)
+            execution.Claim.OwnerUserId != payload.Scope.OwnerUserId)
             return DurableJobCompletion.Failure(
                 "history_import_job_scope_invalid",
                 "The saved history import scope is invalid.");
@@ -41,6 +41,8 @@ public sealed class ListeningHistoryImportJobHandler(
         ListeningHistoryImportRecord record;
         await using (var db = await factory.CreateDbContextAsync(cancellationToken))
         {
+            if (!await IntelligencePolicyService.OwnsBackendAsync(db, payload.Scope, cancellationToken))
+                return DurableJobCompletion.Failure("history_import_user_unavailable", "The history import user is unavailable for this backend.");
             record = await Query(db, payload, execution.Claim.JobId).SingleOrDefaultAsync(cancellationToken)
                      ?? throw new ListeningHistoryImportException(
                          "history_import_job_missing",
@@ -86,7 +88,7 @@ public sealed class ListeningHistoryImportJobHandler(
                       ?? throw new ListeningHistoryImportException(
                           "history_import_preview_invalid",
                           "The saved history import preview is invalid.");
-        var accumulator = new ApplyAccumulator(factory, payload, execution.Claim.JobId, clock, musicBrainz.Enabled);
+        var accumulator = new ApplyAccumulator(factory, payload, execution.Claim.JobId, clock, musicBrainz.Enabled, libraryAccess);
         try
         {
             var scan = await importers.ScanAsync(
@@ -151,9 +153,9 @@ public sealed class ListeningHistoryImportJobHandler(
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var provenance = $"history-import:{payload.ImportId:N}:";
         var candidates = await db.ListeningEvents.AsNoTracking().Where(item =>
-                item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
+                item.OwnerUserId == payload.Scope.OwnerUserId &&
                 item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
-                item.LibraryScopeId == payload.Scope.LibraryScopeId && item.State == ListeningEventState.Completed &&
+                item.State == ListeningEventState.Completed &&
                 item.SourceKind == "import" && item.ImportProvenance != null &&
                 item.ImportProvenance.StartsWith(provenance) &&
                 item.MusicBrainzEnrichmentState == MusicBrainzEnrichmentState.Pending)
@@ -231,10 +233,12 @@ public sealed class ListeningHistoryImportJobHandler(
         ListeningHistoryImportJobPayload payload,
         Guid jobId) =>
         db.ListeningHistoryImports.Where(item => item.Id == payload.ImportId &&
-            item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
+            item.OwnerUserId == payload.Scope.OwnerUserId &&
             item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
-            item.LibraryScopeId == payload.Scope.LibraryScopeId && item.JobId == jobId &&
-            item.PreviewRevision == payload.PreviewRevision && item.ApplyGeneration == payload.Generation);
+            item.JobId == jobId &&
+            item.PreviewRevision == payload.PreviewRevision && item.ApplyGeneration == payload.Generation &&
+            db.Users.Any(user => user.Id == payload.Scope.OwnerUserId && user.Enabled &&
+                user.BackendType == payload.Scope.Protocol && user.BackendInstanceId == payload.Scope.BackendInstanceId));
 
     internal static ListeningEventRecord CreateEvent(
         ListeningHistoryImportJobPayload payload,
@@ -249,11 +253,9 @@ public sealed class ListeningHistoryImportJobHandler(
         return new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = payload.Scope.TenantId,
             OwnerUserId = payload.Scope.OwnerUserId,
             Protocol = payload.Scope.Protocol,
             BackendInstanceId = payload.Scope.BackendInstanceId,
-            LibraryScopeId = payload.Scope.LibraryScopeId,
             OccurrenceKey = occurrenceKey,
             State = row.Classification switch
             {
@@ -295,7 +297,6 @@ public sealed class ListeningHistoryImportJobHandler(
         DateTimeOffset now) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = record.TenantId,
             ActorUserId = record.OwnerUserId,
             Category = "listening-history-import",
             Action = action,
@@ -323,7 +324,8 @@ public sealed class ListeningHistoryImportJobHandler(
         ListeningHistoryImportJobPayload payload,
         Guid jobId,
         IPlatformClock clock,
-        bool enrichWithMusicBrainz)
+        bool enrichWithMusicBrainz,
+        IBackendLibraryAccessResolver libraryAccess)
     {
         private readonly List<ListeningHistoryImportRow> _rows = new(500);
         private long _nextSequence = -1;
@@ -367,7 +369,7 @@ public sealed class ListeningHistoryImportJobHandler(
                 : _rows.ToArray();
             var occurrenceKeys = retainedRows.Select(row => ListeningHistoryImportService.OccurrenceKey(payload.Scope, row)).ToArray();
             var existing = await db.ListeningEvents.AsNoTracking().Where(item =>
-                    item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
+                    item.OwnerUserId == payload.Scope.OwnerUserId &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
                 .Select(item => item.OccurrenceKey).ToHashSetAsync(cancellationToken);
             var externalHashes = retainedRows.Select(ListeningHistoryImportService.ProviderIdentityHash)
@@ -375,7 +377,7 @@ public sealed class ListeningHistoryImportJobHandler(
             var identities = externalHashes.Length == 0
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                        item.TenantId == payload.Scope.TenantId && item.ProviderId == "spotify" &&
+                        item.ProviderId == "spotify" &&
                         item.ResourceKind == ProviderResourceKind.Track && item.Scope == ProviderIdentityScope.Catalog &&
                         externalHashes.Contains(item.ExternalIdHash))
                     .OrderBy(item => item.CatalogNamespace).ThenBy(item => item.Id)
@@ -387,7 +389,6 @@ public sealed class ListeningHistoryImportJobHandler(
             var canonicals = canonicalIds.Length == 0 && recordingMbids.Length == 0
                 ? []
                 : await db.CanonicalRecordings.AsNoTracking().Where(item =>
-                        item.TenantId == payload.Scope.TenantId &&
                         (canonicalIds.Contains(item.Id) ||
                          item.MusicBrainzRecordingId != null && recordingMbids.Contains(item.MusicBrainzRecordingId)))
                     .ToListAsync(cancellationToken);
@@ -398,10 +399,8 @@ public sealed class ListeningHistoryImportJobHandler(
             var resolvedCanonicalIds = canonicals.Select(item => item.Id).ToArray();
             var libraryTracks = resolvedCanonicalIds.Length == 0
                 ? []
-                : await db.LibraryTracks.AsNoTracking().Where(item =>
-                        item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
-                        item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
-                        item.LibraryScopeId == payload.Scope.LibraryScopeId &&
+                : await (await LocalRecommendationCatalog.ScopedAsync(db, payload.Scope, libraryAccess, cancellationToken))
+                    .AsNoTracking().Where(item =>
                         item.CanonicalRecordingId != null && resolvedCanonicalIds.Contains(item.CanonicalRecordingId.Value))
                     .OrderBy(item => item.Id).ToListAsync(cancellationToken);
             var libraryByCanonical = libraryTracks.GroupBy(item => item.CanonicalRecordingId!.Value)

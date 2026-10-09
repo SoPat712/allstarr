@@ -92,7 +92,7 @@
   let view = $state<MappingView>("review");
   let searchInput = $state("");
   let search = $state("");
-  let libraryScopeId = $state("");
+  let backendLibraryId = $state("");
   let sort = $state("");
   let page = $state(1);
   let loading = $state(true);
@@ -130,7 +130,7 @@
         search,
         state: stateFilter,
         sort,
-        libraryScopeId,
+        backendLibraryId,
       });
       if (version !== loadVersion) return;
       data = response;
@@ -450,7 +450,7 @@
         <SearchField bind:value={searchInput} label="Search" placeholder="Title, artist, album, or provider" />
         <label>
           <span>Library scope</span>
-          <input bind:value={libraryScopeId} placeholder="All libraries" />
+          <input bind:value={backendLibraryId} placeholder="All libraries" />
         </label>
         <div class="filter-field"><span>Confidence</span><SelectField bind:value={sort} label="Confidence" onchange={() => { page = 1; void load(); }} options={[
           { value: "", label: "Default order" }, { value: "confidence_desc", label: "Highest first" },

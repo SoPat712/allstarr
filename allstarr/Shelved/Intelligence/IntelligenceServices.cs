@@ -6,6 +6,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
@@ -33,7 +34,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
 {
     private static readonly HashSet<string> Signals = new(["play", "skip", "complete", "favorite", "playlist"], StringComparer.Ordinal);
     public async Task<IntelligencePolicyRecord?> GetAsync(IntelligenceScope scope, CancellationToken cancellationToken = default)
-    { ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken); return await Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken); }
+    { ValidateScope(scope); await using var db = await factory.CreateDbContextAsync(cancellationToken); return await OwnsBackendAsync(db, scope, cancellationToken) ? await Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken) : null; }
     public async Task<IntelligencePolicyRecord> SetAsync(IntelligenceScope scope, IntelligencePolicyInput input, CancellationToken cancellationToken = default)
     {
         ValidateScope(scope); if (!ValidRetentionDays(input.RetentionDays)) throw new ArgumentOutOfRangeException(nameof(input));
@@ -47,22 +48,19 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
             scope.Protocol == "subsonic" && input.Enabled && !input.TargetCredentialReferenceId.HasValue)
             throw new ArgumentException("Subsonic intelligence requires an exact-scope target credential reference; Jellyfin does not accept one.", nameof(input));
         if (input.TargetCredentialReferenceId.HasValue && !await db.SecretReferences.AsNoTracking().AnyAsync(item =>
-                item.Id == input.TargetCredentialReferenceId && item.TenantId == scope.TenantId &&
+                item.Id == input.TargetCredentialReferenceId && item.UserId == scope.OwnerUserId &&
                 item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null &&
-                db.BackendIdentities.Any(identity => identity.Id == item.BackendIdentityId &&
-                    identity.TenantId == scope.TenantId && identity.UserId == scope.OwnerUserId &&
-                    identity.BackendType == scope.Protocol && identity.BackendInstanceId == scope.BackendInstanceId),
+                db.Users.Any(user => user.Id == scope.OwnerUserId && user.Enabled &&
+                    user.BackendType == scope.Protocol && user.BackendInstanceId == scope.BackendInstanceId),
                 cancellationToken))
-            throw new UnauthorizedAccessException("The intelligence target credential is outside this tenant or revoked.");
+            throw new UnauthorizedAccessException("The intelligence target credential is outside this user scope or revoked.");
         var record = await Query(db, scope).SingleOrDefaultAsync(cancellationToken);
         var now = clock.UtcNow; record ??= new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             CreatedAt = now
         };
         if (db.Entry(record).State == EntityState.Detached) db.IntelligencePolicies.Add(record);
@@ -81,15 +79,13 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         var policy = await Query(db, scope).SingleOrDefaultAsync(cancellationToken);
         if (policy != null) { policy.Enabled = false; policy.UpdatedAt = clock.UtcNow; policy.Revision++; }
         var imports = await db.ListeningHistoryImports.AsNoTracking().Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.LibraryScopeId == scope.LibraryScopeId).ToListAsync(cancellationToken);
+            item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
+            item.BackendInstanceId == scope.BackendInstanceId).ToListAsync(cancellationToken);
         if (historyArtifacts != null)
             foreach (var import in imports) historyArtifacts.Delete(import.Id);
         var importJobIds = imports.Select(item => item.JobId).OfType<Guid>().ToHashSet();
         var historyJobs = await db.Jobs.Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.LibraryScopeId == scope.LibraryScopeId &&
+            item.OwnerUserId == scope.OwnerUserId &&
             (item.Type == ListeningHistoryImportJobHandler.JobTypeName ||
              item.Type == MusicBrainzListeningEnrichmentQueue.JobType) &&
             (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled ||
@@ -102,19 +98,17 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
             { job.State = DurableJobState.Cancelled; job.CompletedAt = clock.UtcNow; }
         }
         var history = db.ListeningEvents.Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.LibraryScopeId == scope.LibraryScopeId);
+            item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
+            item.BackendInstanceId == scope.BackendInstanceId);
         var occurrenceKeys = history.Select(item => item.OccurrenceKey);
         await db.PlaybackDeliveryCheckpoints.Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.OwnerUserId == scope.OwnerUserId &&
                 item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
             .ExecuteDeleteAsync(cancellationToken);
         await history.ExecuteDeleteAsync(cancellationToken);
         await db.ListeningHistoryImports.Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                item.LibraryScopeId == scope.LibraryScopeId)
+                item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
+                item.BackendInstanceId == scope.BackendInstanceId)
             .ExecuteDeleteAsync(cancellationToken);
         var runs = await ScopedRuns(db, scope).ToListAsync(cancellationToken); var runIds = runs.Select(x => x.Id).ToArray();
         var jobIds = runs.Select(x => x.JobId).ToArray(); var jobs = await db.Jobs.Where(x => jobIds.Contains(x.Id)).ToListAsync(cancellationToken);
@@ -125,8 +119,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         }
         var runningJobIds = jobs.Where(x => x.State == DurableJobState.Running).Select(x => x.Id).ToHashSet();
         foreach (var run in runs.Where(x => runningJobIds.Contains(x.JobId))) { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++; }
-        var schedules = await db.JobSchedules.Where(x => x.TenantId == scope.TenantId &&
-            x.OwnerUserId == scope.OwnerUserId && x.LibraryScopeId == scope.LibraryScopeId &&
+        var schedules = await db.JobSchedules.Where(x => x.OwnerUserId == scope.OwnerUserId &&
             x.JobType == DurableScheduleEngine.RecommendationJobType).ToListAsync(cancellationToken);
         foreach (var schedule in schedules)
         {
@@ -139,8 +132,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
         var scheduleIds = schedules.Where(schedule => !schedule.Enabled).Select(schedule => schedule.Id).ToHashSet();
         if (scheduleIds.Count > 0)
         {
-            var childJobs = await db.Jobs.Where(job => job.TenantId == scope.TenantId &&
-                job.OwnerUserId == scope.OwnerUserId && job.LibraryScopeId == scope.LibraryScopeId &&
+            var childJobs = await db.Jobs.Where(job => job.OwnerUserId == scope.OwnerUserId &&
                 job.Type == "smart-playlist.materialize" &&
                 (job.State == DurableJobState.Pending || job.State == DurableJobState.RetryScheduled ||
                  job.State == DurableJobState.Running)).ToListAsync(cancellationToken);
@@ -152,14 +144,12 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
                 { job.State = DurableJobState.Cancelled; job.CompletedAt = clock.UtcNow; }
             }
         }
-        var sets = await db.GeneratedSets.Where(x => x.TenantId == scope.TenantId &&
-            x.OwnerUserId == scope.OwnerUserId && x.Protocol == scope.Protocol &&
-            x.BackendInstanceId == scope.BackendInstanceId && x.LibraryScopeId == scope.LibraryScopeId)
+        var sets = await db.GeneratedSets.Where(x => x.OwnerUserId == scope.OwnerUserId &&
+            x.Protocol == scope.Protocol && x.BackendInstanceId == scope.BackendInstanceId)
             .ToListAsync(cancellationToken); var setIds = sets.Select(x => x.Id).ToArray();
         if (setIds.Length > 0)
         {
-            var setJobs = await db.Jobs.Where(job => job.TenantId == scope.TenantId &&
-                job.OwnerUserId == scope.OwnerUserId && job.LibraryScopeId == scope.LibraryScopeId &&
+            var setJobs = await db.Jobs.Where(job => job.OwnerUserId == scope.OwnerUserId &&
                 job.Type == "smart-playlist.materialize" &&
                 (job.State == DurableJobState.Pending || job.State == DurableJobState.RetryScheduled ||
                  job.State == DurableJobState.Running)).ToListAsync(cancellationToken);
@@ -181,8 +171,7 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     private static async Task DisableSchedulesAsync(AllstarrDbContext db, IntelligenceScope scope,
         Guid policyId, DateTimeOffset now, CancellationToken cancellationToken)
     {
-        var schedules = await db.JobSchedules.Where(schedule => schedule.TenantId == scope.TenantId &&
-            schedule.OwnerUserId == scope.OwnerUserId && schedule.LibraryScopeId == scope.LibraryScopeId &&
+        var schedules = await db.JobSchedules.Where(schedule => schedule.OwnerUserId == scope.OwnerUserId &&
             schedule.JobType == DurableScheduleEngine.RecommendationJobType && schedule.Enabled)
             .ToListAsync(cancellationToken);
         foreach (var schedule in schedules)
@@ -196,17 +185,17 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     }
     internal static void ValidateScope(IntelligenceScope s)
     {
-        if (s.TenantId == Guid.Empty || s.OwnerUserId == Guid.Empty ||
-        s.Protocol is not ("jellyfin" or "subsonic") || string.IsNullOrWhiteSpace(s.BackendInstanceId) || string.IsNullOrWhiteSpace(s.LibraryScopeId)) throw new ArgumentException("The intelligence scope is invalid.");
+        if (s.OwnerUserId == Guid.Empty || s.Protocol is not ("jellyfin" or "subsonic") ||
+            string.IsNullOrWhiteSpace(s.BackendInstanceId)) throw new ArgumentException("The intelligence scope is invalid.");
     }
-    internal static IQueryable<IntelligencePolicyRecord> Query(AllstarrDbContext db, IntelligenceScope s) => db.IntelligencePolicies.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
-    internal static IQueryable<ListeningSignalRecord> ScopedSignals(AllstarrDbContext db, IntelligenceScope s) => db.ListeningSignals.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
-    internal static IQueryable<ListeningProfileRecord> ScopedProfiles(AllstarrDbContext db, IntelligenceScope s) => db.ListeningProfiles.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
-    internal static IQueryable<RecommendationRunRecord> ScopedRuns(AllstarrDbContext db, IntelligenceScope s) => db.RecommendationRuns.Where(x => x.TenantId == s.TenantId && x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId && x.LibraryScopeId == s.LibraryScopeId);
+    internal static IQueryable<IntelligencePolicyRecord> Query(AllstarrDbContext db, IntelligenceScope s) => db.IntelligencePolicies.Where(x => x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId);
+    internal static IQueryable<ListeningSignalRecord> ScopedSignals(AllstarrDbContext db, IntelligenceScope s) => db.ListeningSignals.Where(x => x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId);
+    internal static IQueryable<ListeningProfileRecord> ScopedProfiles(AllstarrDbContext db, IntelligenceScope s) => db.ListeningProfiles.Where(x => x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId);
+    internal static IQueryable<RecommendationRunRecord> ScopedRuns(AllstarrDbContext db, IntelligenceScope s) => db.RecommendationRuns.Where(x => x.OwnerUserId == s.OwnerUserId && x.Protocol == s.Protocol && x.BackendInstanceId == s.BackendInstanceId);
     internal static Task<bool> OwnsBackendAsync(AllstarrDbContext db, IntelligenceScope scope,
-        CancellationToken cancellationToken) => db.BackendIdentities.AsNoTracking().AnyAsync(item =>
-            item.TenantId == scope.TenantId && item.UserId == scope.OwnerUserId &&
-            item.BackendType == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId,
+        CancellationToken cancellationToken) => db.Users.AsNoTracking().AnyAsync(item =>
+            item.Id == scope.OwnerUserId && item.Enabled && item.BackendType == scope.Protocol &&
+            item.BackendInstanceId == scope.BackendInstanceId,
             cancellationToken);
     private static bool JobMatchesScope(string payloadJson, IntelligenceScope scope)
     {
@@ -219,7 +208,8 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
     internal static string Normalize(string value) { value = value?.Trim().ToLowerInvariant() ?? ""; if (value.Length is < 1 or > 100 || value.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_')) throw new ArgumentException("An intelligence catalog value is invalid."); return value; }
 }
 
-public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock) : IIdempotentRecommendationSignalWriter
+public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbContext> factory, IPlatformClock clock,
+    IBackendLibraryAccessResolver libraryAccess) : IIdempotentRecommendationSignalWriter
 {
     public async Task<bool> WriteAsync(IntelligenceScope scope, string signalType, string trackKey, double value,
         DateTimeOffset observedAt, CancellationToken cancellationToken = default)
@@ -238,24 +228,23 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
         if (signalKey != null && (signalKey.Length != 64 || signalKey.Any(character => !Uri.IsHexDigit(character))) || sourceJobId == Guid.Empty)
             throw new ArgumentException("The recommendation signal lineage is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken)) return false;
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy == null || !policy.Enabled || !JsonSerializer.Deserialize<string[]>(policy.AllowedSignalTypesJson)!.Contains(signalType)) return false;
-        var tracks = await LocalRecommendationCatalog.Scoped(db, scope).AsNoTracking()
+        var tracks = await (await LocalRecommendationCatalog.ScopedAsync(db, scope, libraryAccess, cancellationToken)).AsNoTracking()
             .ToListAsync(cancellationToken);
         var track = tracks.SingleOrDefault(x => x.BackendItemId == trackKey || x.Id.ToString("D") == trackKey) ??
             tracks.FirstOrDefault(x => ProviderValueMatches(x.ProviderIdsJson, trackKey));
         if (track == null) return false;
         var expires = policy.RetentionDays == 0 ? DateTimeOffset.MaxValue : observedAt.AddDays(policy.RetentionDays);
         if (expires <= clock.UtcNow) return false;
-        if (signalKey != null && await db.ListeningSignals.AsNoTracking().AnyAsync(x => x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId && x.SignalKey == signalKey, cancellationToken)) return true;
+        if (signalKey != null && await db.ListeningSignals.AsNoTracking().AnyAsync(x => x.OwnerUserId == scope.OwnerUserId && x.SignalKey == signalKey, cancellationToken)) return true;
         db.ListeningSignals.Add(new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             SignalType = signalType,
             TrackKeyHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(trackKey))),
             TrackReference = $"library:{track.Id:N}",
@@ -269,7 +258,7 @@ public sealed class RecommendationSignalWriter(IDbContextFactory<AllstarrDbConte
         catch (DbUpdateException) when (signalKey != null)
         {
             db.ChangeTracker.Clear();
-            if (await db.ListeningSignals.AsNoTracking().AnyAsync(x => x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId && x.SignalKey == signalKey, cancellationToken)) return true;
+            if (await db.ListeningSignals.AsNoTracking().AnyAsync(x => x.OwnerUserId == scope.OwnerUserId && x.SignalKey == signalKey, cancellationToken)) return true;
             throw;
         }
     }

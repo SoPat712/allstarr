@@ -379,7 +379,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         if (explicitFilter != null)
             context = context with
             {
-                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(context.RequireActor().TenantId,
+                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
                     System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
                         .Add(ProviderCapabilityKind.Streaming, System.Collections.Immutable.ImmutableArray.Create(providerIds)),
                     System.Collections.Immutable.ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
@@ -554,11 +554,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         Assert.Empty(songs);
         var listenerA = Context().RequireActor();
-        var listenerB = new ProviderActorContext(listenerA.TenantId, ProviderActorKind.User,
+        var listenerB = new ProviderActorContext(ProviderActorKind.User,
             Guid.CreateVersion7(), listenerA.BackendPrincipal);
         Assert.Empty(await gateway.GetPlayableProviderOrderAsync(listenerA));
         var privateAccount = new ProviderAccountContext(Guid.CreateVersion7(), "qobuz", ProviderAccountScope.Personal,
-            1, true, listenerA.TenantId, listenerA.EffectiveUserId, null, "personal-account");
+            1, true, listenerA.EffectiveUserId, "personal-account");
         accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProviderRouteAccountRequest request, CancellationToken _) =>
                 request.Actor.EffectiveUserId == listenerA.EffectiveUserId
@@ -926,7 +926,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     request.Actor,
                     capability.ProviderId,
                     null,
-                    request.Library,
                     request.Policy,
                     request.OperationId,
                     request.CorrelationId,
@@ -971,7 +970,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     request.Actor,
                     capability.ProviderId,
                     null,
-                    request.Library,
                     request.Policy,
                     request.OperationId,
                     request.CorrelationId,
@@ -1034,19 +1032,17 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
     private static ProtocolExecutionContext Context()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         return new ProtocolExecutionContext(
             ProtocolKind.Jellyfin,
             "backend",
             "principal",
             new AllstarrPrincipal(
-                tenant, user, "jellyfin", "backend", "principal", "User", false),
+                user, "jellyfin", "backend", "principal", "User", false),
             "stream-test",
             DateTimeOffset.UtcNow.AddMinutes(1),
             CancellationToken.None,
-            new ProtocolClientDescriptor("client", "device"),
-            libraryScopeId: "music");
+            new ProtocolClientDescriptor("client", "device"));
     }
 
     private sealed class HttpClientFactory : IHttpClientFactory

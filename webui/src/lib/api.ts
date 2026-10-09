@@ -517,7 +517,6 @@ export type PlaylistLink = {
   sourcePlaylistId: string;
   sourceUpdateAvailable?: boolean;
   providerAccountId: string;
-  libraryScopeId: string;
   targetProtocol: string;
   targetBackendInstanceId: string;
   targetPlaylistId?: string | null;
@@ -707,7 +706,6 @@ export type PlaylistSourceAccount = {
   providerId: string;
   displayName: string;
   ownerDisplayName?: string | null;
-  libraryScopeId?: string | null;
   accessLabel: string;
 };
 
@@ -724,7 +722,6 @@ export type MediaTarget = {
   id: string;
   protocol: "jellyfin" | "subsonic";
   backendInstanceId: string;
-  libraryScopeId?: string | null;
   displayName: string;
   credentialReferenceId?: string | null;
 };
@@ -782,7 +779,6 @@ export type MatchReviewItem = {
   externalSnapshotId: string;
   providerId: string;
   providerAccountId?: string | null;
-  libraryScopeId: string;
   state: string;
   decisionSource: string;
   confidence?: number | null;
@@ -923,7 +919,6 @@ export type DownloadsResponse = {
 export type IntelligenceScope = {
   protocol: string;
   backendInstanceId: string;
-  libraryScopeId: string;
 };
 
 export type ListeningApp = {
@@ -1804,12 +1799,12 @@ export const playlistLinks = {
     );
   },
   targets: () => json<{ targets: MediaTarget[] }>("/api/admin/media-targets"),
-  enqueueLibraryIndex: (target: MediaTarget, credentialReferenceId: string) =>
+  libraryIndexCounts: () => json<{ trackCount: number }>("/api/admin/library-index/counts"),
+  enqueueLibraryIndex: (credentialReferenceId: string) =>
     json<{ jobId: string; created: boolean; generation: number }>("/api/admin/library-index/enqueue", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        libraryScopeId: target.libraryScopeId || "music",
         credentialReferenceId,
         pageSize: 200,
       }),
@@ -1826,8 +1821,7 @@ export const playlistLinks = {
     providerAccountId: string;
     sourceProviderId: string;
     sourcePlaylistId: string;
-    libraryScopeId: string;
-    targetProtocol: string;
+      targetProtocol: string;
     targetBackendInstanceId: string;
     targetCredentialReferenceId?: string | null;
     targetPlaylistId?: string | null;
@@ -1905,7 +1899,7 @@ export const matchReview = {
     search?: string;
     state?: string;
     sort?: string;
-    libraryScopeId?: string;
+    backendLibraryId?: string;
     externalSnapshotId?: string;
   }) => {
     const query = new URLSearchParams();
@@ -1916,12 +1910,12 @@ export const matchReview = {
   },
   get: async (externalSnapshotId: string) =>
     (await matchReview.list({ externalSnapshotId, pageSize: 1 })).matches[0] ?? null,
-  searchLocal: (query: string, libraryScopeId: string, externalSnapshotId: string) =>
+  searchLocal: (query: string, externalSnapshotId: string, backendLibraryId = "") =>
     json<{ tracks: MatchTarget[] }>(
-      `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&libraryScopeId=${encodeURIComponent(libraryScopeId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
+      `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&backendLibraryId=${encodeURIComponent(backendLibraryId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
     ),
-  searchProviders: (query: string, libraryScopeId: string, externalSnapshotId: string) => {
-    const params = new URLSearchParams({ query, libraryScopeId, externalSnapshotId, limit: "50" });
+  searchProviders: (query: string, externalSnapshotId: string) => {
+    const params = new URLSearchParams({ query, externalSnapshotId, limit: "50" });
     return json<{ tracks: MatchTarget[]; providers: string[] }>(
       `/api/admin/track-matches/targets/provider?${params}`,
     );

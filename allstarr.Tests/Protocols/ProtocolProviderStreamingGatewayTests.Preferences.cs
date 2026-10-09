@@ -16,7 +16,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProtocolKind.Subsonic)]
     public async Task MetadataCollectionsFilterPerViewerWithoutChangingSharedProviderData(ProtocolKind protocol)
     {
-        var tenant = Guid.CreateVersion7();
         var userA = Guid.CreateVersion7();
         var userB = Guid.CreateVersion7();
         var tracks = new int?[] { 0, 1, 2, 3, 6, 7, null }.Select((flag, index) =>
@@ -49,9 +48,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, streaming.Object));
         var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
         var modeA = "CleanOnly";
-        policies.Setup(s => s.ResolveForUserAsync(tenant, It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync((Guid _, Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(
-                tenant, ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+        policies.Setup(s => s.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((Guid user, CancellationToken _) => new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
                 ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
             {
                 UserId = user,
@@ -65,7 +64,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         foreach (var user in new[] { userA, userB, userA })
         {
             var context = new ProtocolExecutionContext(protocol, "backend", "listener",
-                new AllstarrPrincipal(tenant, user, protocol.ToString().ToLowerInvariant(), "backend", "listener", "Listener", false),
+                new AllstarrPrincipal(user, protocol.ToString().ToLowerInvariant(), "backend", "listener", "Listener", false),
                 "preferences", DateTimeOffset.UtcNow.AddMinutes(1), default);
             var expected = user == userB ? tracks : modeA == "CleanOnly"
                 ? tracks.Where(track => track.ExplicitContentLyrics != 1).ToArray()

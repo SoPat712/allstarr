@@ -18,7 +18,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
-using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.FileProviders;
@@ -28,22 +27,18 @@ namespace allstarr.Tests;
 public sealed class StorageIntegrationTests
 {
     [Fact]
-    public async Task DownloadedTrackCache_SeparatesTenantsAccountsLibrariesAndQuality()
+    public async Task DownloadedTrackCache_SeparatesAccountsAnonymousScopeAndQuality()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var store = new EfDownloadedSongMappingStore(new TestDbContextFactory(database.Options));
-        var tenant = Guid.CreateVersion7();
-        var otherTenant = Guid.CreateVersion7();
         var account = Guid.CreateVersion7();
         var scope = new DownloadedSongMappingScope(
-            tenant, account, "music", ProviderAudioQuality.Lossless);
+            account, ProviderAudioQuality.Lossless);
         await store.UpsertAsync(new DownloadedSongMappingEntity
         {
             Id = Guid.CreateVersion7(),
             ScopeKey = scope.Key,
-            TenantId = tenant,
             ProviderAccountId = account,
-            LibraryScopeId = "music",
             AudioQuality = ProviderAudioQuality.Lossless,
             ProviderId = "deezer",
             ExternalId = "track",
@@ -56,41 +51,33 @@ public sealed class StorageIntegrationTests
 
         Assert.NotNull(await store.FindAsync(scope, "deezer", "track"));
         Assert.Null(await store.FindAsync(
-            scope with { TenantId = otherTenant }, "deezer", "track"));
-        Assert.Null(await store.FindAsync(
             scope with { ProviderAccountId = Guid.CreateVersion7() }, "deezer", "track"));
         Assert.Null(await store.FindAsync(
-            scope with { LibraryScopeId = "other" }, "deezer", "track"));
-        Assert.Null(await store.FindAsync(
             scope with { AudioQuality = ProviderAudioQuality.HighResolution }, "deezer", "track"));
+        Assert.NotEqual(scope.Key, new DownloadedSongMappingScope(
+            null, ProviderAudioQuality.Lossless).Key);
         Assert.Null(await store.FindAsync("deezer", "track"));
     }
 
     [Fact]
-    public async Task StorageLineageConstraints_RejectCrossTenantFavoriteJob()
+    public async Task StorageLineageConstraints_RejectCrossOwnerFavoriteJob()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
 
         var now = DateTimeOffset.UtcNow;
-        var tenantA = Guid.CreateVersion7();
-        var tenantB = Guid.CreateVersion7();
         var userA = Guid.CreateVersion7();
         var userB = Guid.CreateVersion7();
         var jobA = Guid.CreateVersion7();
-        db.Tenants.AddRange(
-            new TenantRecord { Id = tenantA, Slug = "pg-lineage-a", Name = "Lineage A", CreatedAt = now },
-            new TenantRecord { Id = tenantB, Slug = "pg-lineage-b", Name = "Lineage B", CreatedAt = now });
         db.Users.AddRange(
-            new PlatformUserRecord { Id = userA, TenantId = tenantA, DisplayName = "A", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now },
-            new PlatformUserRecord { Id = userB, TenantId = tenantB, DisplayName = "B", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
-        db.Jobs.Add(DatabaseLineageConstraintTests.Job(jobA, tenantA, userA, "pg-lineage", now));
+            User(userA, "lineage-a", "A", now, backendType: "subsonic"),
+            User(userB, "lineage-b", "B", now, backendType: "subsonic"));
+        db.Jobs.Add(DatabaseLineageConstraintTests.Job(jobA, userA, "pg-lineage", now));
         await db.SaveChangesAsync();
 
         db.FavoriteEvents.Add(new FavoriteEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantB,
             OwnerUserId = userB,
             Protocol = "subsonic",
             BackendInstanceId = "primary",
@@ -128,15 +115,7 @@ public sealed class StorageIntegrationTests
             storageState.Set(DurableStorageReadiness.Ready, db.Database.GetMigrations().Last());
         }
 
-        var identityOptions = new IdentityOptions
-        {
-            Mode = "Hybrid",
-            DefaultTenantId = Guid.CreateVersion7().ToString(),
-            SingleUserId = Guid.CreateVersion7().ToString(),
-            DefaultTenantSlug = "host-sqlite",
-            DefaultTenantName = "Host SQLite",
-            BackendInstanceId = "primary"
-        };
+        var identityOptions = new IdentityOptions { BackendInstanceId = "primary" };
         var clock = new SystemPlatformClock();
         var resolver = new BackendIdentityResolver(factory, storageState, identityOptions, clock);
         var principal = await resolver.ResolveAsync(new BackendIdentityDescriptor(
@@ -149,8 +128,7 @@ public sealed class StorageIntegrationTests
             "sqlite.host-transaction",
             "sqlite-host-transaction",
             new { value = "safe" },
-            principal!.TenantId,
-            principal.UserId));
+            principal!.UserId));
         Assert.True(enqueued.Created);
         var claim = await queue.ClaimNextAsync("sqlite-host-worker");
         Assert.NotNull(claim);
@@ -160,15 +138,13 @@ public sealed class StorageIntegrationTests
             "sqlite.host-cancel",
             "sqlite-host-cancel",
             new { value = "cancel" },
-            principal.TenantId,
             principal.UserId));
-        Assert.True(await queue.RequestCancellationAsync(cancellable.JobId, principal.TenantId));
+        Assert.True(await queue.RequestCancellationAsync(cancellable.JobId, principal.UserId));
 
         var failing = await queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
             "sqlite.host-failure",
             "sqlite-host-failure",
             new { value = "fail" },
-            principal.TenantId,
             principal.UserId));
         var failureClaim = await queue.ClaimNextAsync(
             "sqlite-host-failure-worker",
@@ -187,7 +163,6 @@ public sealed class StorageIntegrationTests
             seedSchedule.ProviderAccounts.Add(new ProviderAccountRecord
             {
                 Id = accountId,
-                TenantId = principal.TenantId,
                 OwnerUserId = principal.UserId,
                 ProviderId = "spotify",
                 DisplayName = "Schedule source",
@@ -198,9 +173,7 @@ public sealed class StorageIntegrationTests
             seedSchedule.JobSchedules.Add(new JobScheduleRecord
             {
                 Id = scheduleId,
-                TenantId = principal.TenantId,
                 OwnerUserId = principal.UserId,
-                LibraryScopeId = "music",
                 JobType = DurableScheduleEngine.PlaylistSyncJobType,
                 CronExpression = "* * * * *",
                 TimeZoneId = "UTC",
@@ -215,11 +188,9 @@ public sealed class StorageIntegrationTests
             seedSchedule.PlaylistLinks.Add(new PlaylistLinkRecord
             {
                 Id = linkId,
-                TenantId = principal.TenantId,
                 OwnerUserId = principal.UserId,
                 ProviderAccountId = accountId,
                 ScheduleId = scheduleId,
-                LibraryScopeId = "music",
                 SourceProviderId = "spotify",
                 SourcePlaylistId = "native-sqlite-playlist",
                 SourcePlaylistIdHash = new string('a', 64),
@@ -238,9 +209,7 @@ public sealed class StorageIntegrationTests
         Assert.Equal(1, scheduleResult.Enqueued);
 
         await using var verify = await factory.CreateDbContextAsync();
-        Assert.Single(await verify.Tenants.AsNoTracking().ToListAsync());
         Assert.Single(await verify.Users.AsNoTracking().ToListAsync());
-        Assert.Single(await verify.BackendIdentities.AsNoTracking().ToListAsync());
         var jobs = await verify.Jobs.AsNoTracking().OrderBy(item => item.Type).ToListAsync();
         Assert.Equal(4, jobs.Count);
         Assert.Contains(jobs, item => item.State == DurableJobState.Succeeded);
@@ -263,26 +232,14 @@ public sealed class StorageIntegrationTests
             {
                 Assert.False(strategyContext.Database.CreateExecutionStrategy().RetriesOnFailure);
             }
-            var tenantId = Guid.CreateVersion7();
             var userId = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())
             {
-                db.Tenants.Add(new TenantRecord
-                {
-                    Id = tenantId,
-                    Slug = "sqlite-env-migration",
-                    Name = "SQLite environment migration",
-                    CreatedAt = DateTimeOffset.UtcNow
-                });
-                db.Users.Add(new PlatformUserRecord
-                {
-                    Id = userId,
-                    TenantId = tenantId,
-                    DisplayName = "Migration administrator",
-                    Status = PlatformUserStatus.Active,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                });
+                db.Users.Add(User(
+                    userId,
+                    "migration-admin",
+                    "Migration administrator",
+                    DateTimeOffset.UtcNow));
                 await db.SaveChangesAsync();
             }
 
@@ -318,7 +275,6 @@ public sealed class StorageIntegrationTests
                 clock);
             var actor = new LegacyEnvMigrationActor(
                 "sqlite-admin-session",
-                tenantId,
                 userId,
                 "sqlite-migration-correlation");
             var source = Encoding.UTF8.GetBytes("""
@@ -343,9 +299,12 @@ public sealed class StorageIntegrationTests
             Assert.True(result.Success);
             Assert.Equal(2, result.SettingsImported);
             Assert.Equal(2, result.ProviderAccountsCreated);
+            var status = await migration.GetStatusAsync();
+            Assert.True(status.Completed);
+            Assert.False(status.FirstRun);
             await using (var db = await factory.CreateDbContextAsync())
             {
-                var storedSettings = await db.TenantRuntimeSettings.AsNoTracking().ToListAsync();
+                var storedSettings = await db.RuntimeSettings.AsNoTracking().ToListAsync();
                 Assert.Equal(2, storedSettings.Count);
                 Assert.Contains(storedSettings, setting =>
                     setting.Key == "Cache:LyricsDays" && setting.ValueJson == "45");
@@ -362,13 +321,15 @@ public sealed class StorageIntegrationTests
                 Assert.NotNull(account.SecretReferenceId);
                 var personalAccount = Assert.Single(accounts, item => item.ProviderId == "lastfm");
                 Assert.True(personalAccount.Enabled);
-                Assert.Equal(tenantId, personalAccount.TenantId);
                 Assert.Equal(userId, personalAccount.OwnerUserId);
                 Assert.Single(await db.AuditEvents.AsNoTracking().ToListAsync());
 
                 using var lease = await secrets.OpenAsync(
                     account.SecretReferenceId!.Value,
-                    new SecretAccessContext(null, AllowGlobal: true));
+                    new SecretAccessContext(
+                        null,
+                        $"provider-account:deezer:{account.Id:N}",
+                        AllowShared: true));
                 using var secret = JsonDocument.Parse(lease.Value);
                 Assert.Equal("sqlite-deezer-secret", secret.RootElement.GetProperty("arl").GetString());
             }
@@ -447,7 +408,6 @@ public sealed class StorageIntegrationTests
 
         var now = new DateTimeOffset(2026, 7, 24, 17, 0, 0, TimeSpan.Zero);
         var clock = new FixedClock(now);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         var recordingId = Guid.CreateVersion7();
@@ -460,26 +420,11 @@ public sealed class StorageIntegrationTests
         await using (var seed = await factory.CreateDbContextAsync())
         {
             seed.AddRange(
-                new TenantRecord
-                {
-                    Id = tenantId,
-                    Slug = "cache-loss",
-                    Name = "Cache loss",
-                    CreatedAt = now
-                },
-                new PlatformUserRecord
-                {
-                    Id = userId,
-                    TenantId = tenantId,
-                    DisplayName = "Cache owner",
-                    Status = PlatformUserStatus.Active,
-                    CreatedAt = now,
-                    UpdatedAt = now
-                },
+                User(userId, "principal", "Cache owner", now,
+                    backendType: "jellyfin", backendInstanceId: "home"),
                 new ProviderAccountRecord
                 {
                     Id = accountId,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
                     ProviderId = "fixture",
                     DisplayName = "Fixture",
@@ -490,7 +435,6 @@ public sealed class StorageIntegrationTests
                 new CanonicalRecordingRecord
                 {
                     Id = recordingId,
-                    TenantId = tenantId,
                     CreatedByUserId = userId,
                     CreatedAt = now,
                     UpdatedAt = now
@@ -498,7 +442,6 @@ public sealed class StorageIntegrationTests
                 new ProviderTrackIdentityRecord
                 {
                     Id = providerIdentityId,
-                    TenantId = tenantId,
                     CanonicalRecordingId = recordingId,
                     ProviderAccountId = accountId,
                     ProviderId = "fixture",
@@ -516,10 +459,8 @@ public sealed class StorageIntegrationTests
                 new PlaylistLinkRecord
                 {
                     Id = linkId,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
                     ProviderAccountId = accountId,
-                    LibraryScopeId = "music",
                     SourceProviderId = "fixture",
                     SourcePlaylistId = "playlist",
                     SourcePlaylistIdHash = hash,
@@ -537,7 +478,6 @@ public sealed class StorageIntegrationTests
                 new PlaylistSourceSnapshotRecord
                 {
                     Id = snapshotId,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
                     PlaylistLinkId = linkId,
                     ProviderAccountId = accountId,
@@ -551,7 +491,6 @@ public sealed class StorageIntegrationTests
                 new PlaylistSourceEntryRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenantId,
                     PlaylistSourceSnapshotId = snapshotId,
                     ExternalMetadataSnapshotId = firstExternalId,
                     SourcePosition = 0,
@@ -560,7 +499,6 @@ public sealed class StorageIntegrationTests
                 new PlaylistSourceEntryRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenantId,
                     PlaylistSourceSnapshotId = snapshotId,
                     ExternalMetadataSnapshotId = secondExternalId,
                     SourcePosition = 1,
@@ -571,10 +509,8 @@ public sealed class StorageIntegrationTests
             ExternalMetadataSnapshotRecord External(Guid id, int version) => new()
             {
                 Id = id,
-                TenantId = tenantId,
                 OwnerUserId = userId,
                 ProviderAccountId = accountId,
-                LibraryScopeId = "music",
                 BackendInstanceId = "home",
                 BackendPrincipalId = "principal",
                 Protocol = "jellyfin",
@@ -599,7 +535,6 @@ public sealed class StorageIntegrationTests
             "playlist.materialize",
             "sqlite-cache-loss",
             new { generation = 1 },
-            tenantId,
             userId));
         var claim = await queue.ClaimNextAsync("sqlite-cache-worker");
         Assert.NotNull(claim);
@@ -638,6 +573,26 @@ public sealed class StorageIntegrationTests
             item.Category == "job-progress" &&
             item.CorrelationId == claim!.CorrelationId));
     }
+
+    private static UserRecord User(
+        Guid id,
+        string backendPrincipalId,
+        string displayName,
+        DateTimeOffset now,
+        string backendType = "jellyfin",
+        string backendInstanceId = "primary") => new()
+        {
+            Id = id,
+            BackendType = backendType,
+            BackendInstanceId = backendInstanceId,
+            BackendPrincipalId = backendPrincipalId,
+            DisplayName = displayName,
+            IsAdmin = true,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
 
     private sealed class FixedClock(DateTimeOffset now) : IPlatformClock
     {

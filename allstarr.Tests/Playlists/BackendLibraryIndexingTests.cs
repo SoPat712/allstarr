@@ -12,24 +12,23 @@ namespace allstarr.Tests;
 
 public sealed class BackendLibraryIndexingTests
 {
-    private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
 
     public static TheoryData<ProtocolKind> BothProtocols => new() { ProtocolKind.Jellyfin, ProtocolKind.Subsonic };
 
     [Theory]
     [MemberData(nameof(BothProtocols))]
-    public async Task Scanner_NullScopeIndexesEveryDiscoveredLibrary(ProtocolKind protocol)
+    public async Task Scanner_NoExplicitTargetIndexesEveryDiscoveredLibrary(ProtocolKind protocol)
     {
         var handler = new RecordingHandler(CatalogWithTrack(protocol), Discovery(protocol, "lib-a", "lib-b"));
         var index = new RecordingIndex();
         var scanner = CreateScanner(protocol, handler, index);
 
-        var result = await scanner.ScanAsync(Context(protocol, null), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null, 50), default);
+        var result = await scanner.ScanAsync(Context(protocol), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null, 50), default);
 
         Assert.Equal(2, result.Pages);
-        Assert.Equal(new[] { "lib-a", "lib-b" }, index.Inputs.Select(track => track.LibraryScopeId).ToArray());
-        Assert.Equal(new[] { "lib-a", "lib-b" }, index.ContextScopes);
+        Assert.Equal(new[] { "lib-a", "lib-b" }, index.Inputs.Select(track => track.BackendLibraryId).ToArray());
+        Assert.Equal(new[] { _user, _user }, index.ContextOwners);
         var pages = handler.Requests.Where(request => IsCatalogRequest(request.Uri)).ToArray();
         Assert.Equal(2, pages.Length);
         foreach (var library in new[] { "lib-a", "lib-b" })
@@ -56,11 +55,11 @@ public sealed class BackendLibraryIndexingTests
         var scanner = CreateScanner(protocol, handler, index,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [BackendMusicLibraries.SelectionKey] = "lib-b" }).Build());
 
-        var result = await scanner.ScanAsync(Context(protocol, null), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null, 50), default);
+        var result = await scanner.ScanAsync(Context(protocol), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null, 50), default);
 
         Assert.Equal(1, result.Pages);
-        Assert.Equal(new[] { "lib-b" }, index.Inputs.Select(track => track.LibraryScopeId).ToArray());
-        Assert.Equal(new[] { "lib-b" }, index.ContextScopes);
+        Assert.Equal(new[] { "lib-b" }, index.Inputs.Select(track => track.BackendLibraryId).ToArray());
+        Assert.Equal(new[] { _user }, index.ContextOwners);
         Assert.Single(handler.Requests, request => IsCatalogRequest(request.Uri));
         Assert.Contains(handler.Requests, request => IsCatalogRequest(request.Uri) && HasLibraryParameter(request, protocol, "lib-b"));
     }
@@ -74,7 +73,7 @@ public sealed class BackendLibraryIndexingTests
         var scanner = CreateScanner(protocol, handler, index,
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { [BackendMusicLibraries.SelectionKey] = "lib-a" }).Build());
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanAsync(Context(protocol, "lib-b"), new("lib-b", protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null), default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanAsync(Context(protocol), new("lib-b", protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null), default));
 
         Assert.Empty(index.Inputs);
         Assert.DoesNotContain(handler.Requests, request => IsCatalogRequest(request.Uri));
@@ -89,7 +88,7 @@ public sealed class BackendLibraryIndexingTests
         var index = new RecordingIndex();
         var scanner = CreateScanner(protocol, handler, index);
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanAsync(Context(protocol, null), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null), default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => scanner.ScanAsync(Context(protocol), new(null, protocol == ProtocolKind.Subsonic ? Guid.CreateVersion7() : null), default));
 
         Assert.Empty(index.Inputs);
         Assert.DoesNotContain(handler.Requests, request => IsCatalogRequest(request.Uri));
@@ -231,15 +230,14 @@ public sealed class BackendLibraryIndexingTests
         Assert.Null(track.DurationRetrievedAt);
     }
 
-    private ProtocolExecutionContext Context(ProtocolKind protocol, string? libraryScopeId = "music") => new(
+    private ProtocolExecutionContext Context(ProtocolKind protocol) => new(
         protocol,
         "primary",
         "principal",
-        new AllstarrPrincipal(_tenant, _user, protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic", "primary", "principal", "Owner", false),
+        new AllstarrPrincipal(_user, protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic", "primary", "principal", "Owner", false),
         "library-index-test",
         DateTimeOffset.UtcNow.AddMinutes(5),
-        default,
-        libraryScopeId: libraryScopeId);
+        default);
 
     private sealed class Clock : IPlatformClock
     {
@@ -285,12 +283,12 @@ public sealed class BackendLibraryIndexingTests
     private sealed class RecordingIndex : ILibraryIndexService
     {
         public List<LibraryTrackIndexInput> Inputs { get; } = [];
-        public List<string?> ContextScopes { get; } = [];
+        public List<Guid> ContextOwners { get; } = [];
 
         public Task<IndexedLibraryTrack> UpsertAsync(ProtocolExecutionContext executionContext, LibraryTrackIndexInput input, CancellationToken cancellationToken = default)
         {
             Inputs.Add(input);
-            ContextScopes.Add(executionContext.LibraryScopeId);
+            ContextOwners.Add(executionContext.Principal!.UserId);
             return Task.FromResult(new IndexedLibraryTrack(
                 Guid.CreateVersion7(), input.BackendItemId, input.FilePath, input.Title, input.Artist,
                 input.Album, input.AlbumArtist, input.DurationMilliseconds,
@@ -300,10 +298,10 @@ public sealed class BackendLibraryIndexingTests
                 input.SourceModifiedAt, 0));
         }
 
-        public Task<IReadOnlyList<IndexedLibraryTrack>> ListAsync(ProtocolExecutionContext executionContext, string libraryScopeId, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<IndexedLibraryTrack>> ListAsync(ProtocolExecutionContext executionContext, string backendLibraryId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<IndexedLibraryTrack>>([]);
 
-        public Task<IReadOnlyList<LocalTrackMatchCandidate>> GetMatchCandidatesAsync(ProtocolExecutionContext executionContext, string libraryScopeId, CancellationToken cancellationToken = default) =>
+        public Task<IReadOnlyList<LocalTrackMatchCandidate>> GetMatchCandidatesAsync(ProtocolExecutionContext executionContext, string backendLibraryId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LocalTrackMatchCandidate>>([]);
     }
 }

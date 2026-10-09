@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Matching;
 
 public sealed record LibraryTrackIndexInput(
-    string LibraryScopeId,
+    string BackendLibraryId,
     string BackendItemId,
     string FilePath,
     string Title,
@@ -55,12 +55,12 @@ public interface ILibraryIndexService
 
     Task<IReadOnlyList<IndexedLibraryTrack>> ListAsync(
         ProtocolExecutionContext executionContext,
-        string libraryScopeId,
+        string backendLibraryId,
         CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<LocalTrackMatchCandidate>> GetMatchCandidatesAsync(
         ProtocolExecutionContext executionContext,
-        string libraryScopeId,
+        string backendLibraryId,
         CancellationToken cancellationToken = default);
 }
 
@@ -96,27 +96,28 @@ public sealed class LibraryIndexService : ILibraryIndexService
         LibraryTrackIndexInput input,
         CancellationToken cancellationToken = default)
     {
-        var principal = RequireScope(executionContext, input.LibraryScopeId);
+        var principal = RequireScope(executionContext, input.BackendLibraryId);
         ValidateInput(input);
         EnsureStorageReady();
         cancellationToken.ThrowIfCancellationRequested();
         var providerIds = NormalizeProviderIds(input.ProviderTrackIds);
 
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var backendIdentity = await RequireBackendIdentityAsync(db, principal, cancellationToken);
+        _ = await RequireUserAsync(db, principal, cancellationToken);
+        var access = await _libraryAccess.ResolveAsync(executionContext, cancellationToken);
+        if (!access.Allows(input.BackendLibraryId))
+            throw new UnauthorizedAccessException("The backend library is not available to this user.");
         if (input.CanonicalRecordingId.HasValue &&
             !await db.CanonicalRecordings.AsNoTracking().AnyAsync(recording =>
-                recording.Id == input.CanonicalRecordingId &&
-                recording.TenantId == principal.TenantId,
+                recording.Id == input.CanonicalRecordingId,
                 cancellationToken))
         {
-            throw new KeyNotFoundException("The canonical recording is outside the indexed track tenant.");
+            throw new KeyNotFoundException("The canonical recording does not exist.");
         }
 
         var record = await db.LibraryTracks.SingleOrDefaultAsync(track =>
-            track.TenantId == principal.TenantId &&
             track.OwnerUserId == principal.UserId &&
-            track.LibraryScopeId == input.LibraryScopeId &&
+            track.BackendLibraryId == input.BackendLibraryId &&
             track.BackendInstanceId == principal.BackendInstanceId &&
             track.BackendItemId == input.BackendItemId,
             cancellationToken);
@@ -125,10 +126,8 @@ public sealed class LibraryIndexService : ILibraryIndexService
         record ??= new LibraryTrackRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = principal.TenantId,
             OwnerUserId = principal.UserId,
-            BackendIdentityId = backendIdentity.Id,
-            LibraryScopeId = input.LibraryScopeId,
+            BackendLibraryId = input.BackendLibraryId,
             Protocol = principal.BackendType,
             BackendInstanceId = principal.BackendInstanceId,
             BackendItemId = input.BackendItemId,
@@ -164,14 +163,14 @@ public sealed class LibraryIndexService : ILibraryIndexService
             var aliasNamespace = CanonicalCatalogKeys.NativeTrackNamespace(record.Protocol, record.BackendInstanceId);
             var itemHash = CanonicalCatalogKeys.Hash(record.BackendItemId);
             record.CanonicalRecordingId = await db.CanonicalCatalogAliases.AsNoTracking()
-                .Where(alias => alias.TenantId == principal.TenantId && alias.Namespace == aliasNamespace &&
+                .Where(alias => alias.Namespace == aliasNamespace &&
                     alias.EntityKind == CanonicalCatalogEntityKind.Recording &&
                     alias.ExternalIdHash == itemHash && alias.ExternalId == record.BackendItemId)
                 .Select(alias => (Guid?)alias.CanonicalEntityId).SingleOrDefaultAsync(cancellationToken);
         }
         if (Guid.TryParse(record.MusicBrainzRecordingId, out var mbid) && mbid != Guid.Empty &&
             (!record.CanonicalRecordingId.HasValue || await db.CanonicalRecordings.AsNoTracking().AnyAsync(
-                item => item.TenantId == principal.TenantId && item.Id == record.CanonicalRecordingId &&
+                item => item.Id == record.CanonicalRecordingId &&
                     item.MusicBrainzRecordingId == mbid.ToString("D"), cancellationToken)))
         {
             try
@@ -196,7 +195,6 @@ public sealed class LibraryIndexService : ILibraryIndexService
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = principal.TenantId,
             ActorUserId = principal.UserId,
             Category = "library-index",
             Action = created ? "track.create" : "track.update",
@@ -205,7 +203,7 @@ public sealed class LibraryIndexService : ILibraryIndexService
             DetailsJson = JsonSerializer.Serialize(new
             {
                 libraryTrackId = record.Id,
-                libraryScopeId = input.LibraryScopeId,
+                backendLibraryId = input.BackendLibraryId,
                 backendInstanceId = principal.BackendInstanceId,
                 hasCanonicalRecording = record.CanonicalRecordingId.HasValue,
                 canonicalEnrichment = enrichment
@@ -218,14 +216,14 @@ public sealed class LibraryIndexService : ILibraryIndexService
 
     public async Task<IReadOnlyList<IndexedLibraryTrack>> ListAsync(
         ProtocolExecutionContext executionContext,
-        string libraryScopeId,
+        string backendLibraryId,
         CancellationToken cancellationToken = default)
     {
-        _ = RequireScope(executionContext, libraryScopeId);
+        _ = RequireScope(executionContext, backendLibraryId);
         EnsureStorageReady();
         var access = await _libraryAccess.ResolveAsync(executionContext, cancellationToken);
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        return (await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.LibraryScopeId == libraryScopeId)
+        return (await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.BackendLibraryId == backendLibraryId)
                 .OrderBy(track => track.Artist)
                 .ThenBy(track => track.Album)
                 .ThenBy(track => track.Title)
@@ -236,22 +234,21 @@ public sealed class LibraryIndexService : ILibraryIndexService
 
     public async Task<IReadOnlyList<LocalTrackMatchCandidate>> GetMatchCandidatesAsync(
         ProtocolExecutionContext executionContext,
-        string libraryScopeId,
+        string backendLibraryId,
         CancellationToken cancellationToken = default)
     {
-        _ = RequireScope(executionContext, libraryScopeId);
+        _ = RequireScope(executionContext, backendLibraryId);
         EnsureStorageReady();
         var access = await _libraryAccess.ResolveAsync(executionContext, cancellationToken);
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var tracks = await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.LibraryScopeId == libraryScopeId)
+        var tracks = await LibraryTrackAccess.Query(db, executionContext, access).Where(track => track.BackendLibraryId == backendLibraryId)
             .OrderBy(track => track.Id)
             .ToListAsync(cancellationToken);
         return tracks.Select(track => new LocalTrackMatchCandidate(
             track.Id,
-            track.TenantId,
             track.OwnerUserId,
             track.BackendInstanceId,
-            track.LibraryScopeId,
+            track.BackendLibraryId,
             track.BackendItemId,
             track.CanonicalRecordingId,
             track.Title,
@@ -267,7 +264,7 @@ public sealed class LibraryIndexService : ILibraryIndexService
 
     private static Core.Identity.AllstarrPrincipal RequireScope(
         ProtocolExecutionContext executionContext,
-        string libraryScopeId)
+        string backendLibraryId)
     {
         ArgumentNullException.ThrowIfNull(executionContext);
         if (executionContext.Principal == null || executionContext.Actor?.UserId == null)
@@ -275,28 +272,25 @@ public sealed class LibraryIndexService : ILibraryIndexService
             throw new UnauthorizedAccessException("A linked user is required to access the library index.");
         }
 
-        if (string.IsNullOrWhiteSpace(libraryScopeId) ||
-            executionContext.LibraryScopeId != null &&
-            !executionContext.LibraryScopeId.Equals(libraryScopeId, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(backendLibraryId))
         {
-            throw new UnauthorizedAccessException("The requested library is outside the protocol context.");
+            throw new UnauthorizedAccessException("A backend library is required.");
         }
 
         return executionContext.Principal;
     }
 
-    private static async Task<BackendIdentityRecord> RequireBackendIdentityAsync(
+    private static async Task<UserRecord> RequireUserAsync(
         AllstarrDbContext db,
         Core.Identity.AllstarrPrincipal principal,
         CancellationToken cancellationToken) =>
-        await db.BackendIdentities.SingleOrDefaultAsync(identity =>
-            identity.TenantId == principal.TenantId &&
-            identity.UserId == principal.UserId &&
-            identity.BackendType == principal.BackendType &&
-            identity.BackendInstanceId == principal.BackendInstanceId &&
-            identity.PrincipalId == principal.BackendPrincipalId,
+        await db.Users.SingleOrDefaultAsync(user =>
+            user.Id == principal.UserId && user.Enabled &&
+            user.BackendType == principal.BackendType &&
+            user.BackendInstanceId == principal.BackendInstanceId &&
+            user.BackendPrincipalId == principal.BackendPrincipalId,
             cancellationToken)
-        ?? throw new UnauthorizedAccessException("The linked backend identity no longer exists.");
+        ?? throw new UnauthorizedAccessException("The linked user is no longer available.");
 
     private static void ValidateInput(LibraryTrackIndexInput input)
     {

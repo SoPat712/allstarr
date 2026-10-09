@@ -1,7 +1,7 @@
 {
   "idFormat": "allstarr-vpl-{playlistLinkGuidN}",
   "eligibleModes": ["virtual", "hybrid"],
-  "requiredScope": ["tenant", "ownerUser", "library", "protocol", "backendInstance"],
+  "requiredScope": ["ownerUser", "protocol", "backendInstance", "backendPlaylistVisibility"],
   "includedMatchStates": ["accepted", "pinned"],
   "excludedMatchStates": ["unresolved", "suggested", "rejected", "ambiguous"],
   "order": "immutable source position",

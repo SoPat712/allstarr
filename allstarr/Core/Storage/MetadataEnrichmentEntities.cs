@@ -5,7 +5,6 @@ public enum MetadataEnrichmentApplicationState { Pending, Applied, Failed }
 public sealed class MetadataEnrichmentPlanRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid LineageJobId { get; set; }
     public Guid ManagedArtifactId { get; set; }
@@ -21,7 +20,6 @@ public sealed class MetadataEnrichmentPlanRecord
 public sealed class MetadataEnrichmentApplicationRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid PlanId { get; set; }
     public Guid ManagedArtifactId { get; set; }

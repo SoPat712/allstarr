@@ -233,7 +233,6 @@ public sealed class MetadataEnrichmentTests
         {
             await using var database = await SqliteTestDatabase.CreateAsync();
             var factory = new DbFactory(database.Options);
-            var tenantId = Guid.CreateVersion7();
             var userId = Guid.CreateVersion7();
             var jobId = Guid.CreateVersion7();
             var fileId = Guid.CreateVersion7();
@@ -241,22 +240,22 @@ public sealed class MetadataEnrichmentTests
             var now = DateTimeOffset.UtcNow;
             await using (var db = await factory.CreateDbContextAsync())
             {
-                db.Tenants.Add(new TenantRecord { Id = tenantId, Slug = "enrichment-apps", Name = "Enrichment apps", CreatedAt = now });
-                db.Users.Add(new PlatformUserRecord
+                db.Users.Add(new UserRecord
                 {
                     Id = userId,
-                    TenantId = tenantId,
                     DisplayName = "Owner",
-                    Status = PlatformUserStatus.Active,
+                    Enabled = true,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "backend",
+                    BackendPrincipalId = "principal",
                     CreatedAt = now,
                     UpdatedAt = now
                 });
                 db.Jobs.Add(new DurableJobRecord
                 {
                     Id = jobId,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
-                    ScopeKey = $"user:{tenantId:N}:{userId:N}",
+                    ScopeKey = $"user:{userId:N}",
                     Type = "enrichment.test",
                     PayloadJson = "{}",
                     IdempotencyKey = "enrichment-test",
@@ -279,10 +278,9 @@ public sealed class MetadataEnrichmentTests
                     ContentSha256 = new string('a', 64),
                     Length = 1,
                     PlacementMethod = allstarr.Core.ManagedFiles.ManagedFilePlacementMethod.Copy,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
                     SourceJobId = jobId,
-                    ScopeKey = $"user:{tenantId:N}:{userId:N}",
+                    ScopeKey = $"user:{userId:N}",
                     ReferenceCount = 0,
                     IsManaged = true,
                     CreatedAt = now
@@ -290,7 +288,6 @@ public sealed class MetadataEnrichmentTests
                 db.MetadataEnrichmentPlans.Add(new MetadataEnrichmentPlanRecord
                 {
                     Id = planId,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
                     LineageJobId = jobId,
                     ManagedArtifactId = fileId,
@@ -306,12 +303,12 @@ public sealed class MetadataEnrichmentTests
             }
             var service = new DurableMetadataEnrichmentService(factory, new Clock());
             var first = await service.BeginApplicationAsync(new(
-                tenantId, userId, jobId, fileId, planId, new string('a', 64)));
-            await service.MarkAppliedAsync(tenantId, userId, first.Id);
+                userId, jobId, fileId, planId, new string('a', 64)));
+            await service.MarkAppliedAsync(userId, first.Id);
             var changed = await service.BeginApplicationAsync(new(
-                tenantId, userId, jobId, fileId, planId, new string('c', 64)));
+                userId, jobId, fileId, planId, new string('c', 64)));
             var recoveredPending = await service.BeginApplicationAsync(new(
-                tenantId, userId, jobId, fileId, planId, new string('d', 64)));
+                userId, jobId, fileId, planId, new string('d', 64)));
 
             Assert.NotEqual(first.Id, changed.Id);
             Assert.Equal(MetadataEnrichmentApplicationState.Pending, changed.State);
@@ -383,7 +380,7 @@ public sealed class MetadataEnrichmentTests
     }
 
     [Fact]
-    public async Task RefreshJob_RejectsCrossTenantIdentityWithoutCallingBackend()
+    public async Task RefreshJob_RejectsForeignBackendPrincipalWithoutCallingBackend()
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-refresh-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
@@ -391,39 +388,27 @@ public sealed class MetadataEnrichmentTests
         {
             await using var database = await SqliteTestDatabase.CreateAsync();
             var factory = new DbFactory(database.Options);
-            var tenant = Guid.CreateVersion7(); var foreignTenant = Guid.CreateVersion7(); var user = Guid.CreateVersion7();
+            var user = Guid.CreateVersion7();
             await using (var db = await factory.CreateDbContextAsync())
             {
-                db.Tenants.AddRange(
-                    new TenantRecord { Id = tenant, Slug = "owner", Name = "Owner", CreatedAt = DateTimeOffset.UtcNow },
-                    new TenantRecord { Id = foreignTenant, Slug = "foreign", Name = "Foreign", CreatedAt = DateTimeOffset.UtcNow });
-                db.Users.Add(new PlatformUserRecord
+                db.Users.Add(new UserRecord
                 {
                     Id = user,
-                    TenantId = foreignTenant,
                     DisplayName = "Foreign",
-                    Status = PlatformUserStatus.Active,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                });
-                db.BackendIdentities.Add(new BackendIdentityRecord
-                {
-                    Id = Guid.CreateVersion7(),
-                    TenantId = foreignTenant,
-                    UserId = user,
+                    Enabled = true,
                     BackendType = "jellyfin",
                     BackendInstanceId = "backend",
-                    PrincipalId = "principal",
+                    BackendPrincipalId = "other-principal",
                     CreatedAt = DateTimeOffset.UtcNow,
-                    LastSeenAt = DateTimeOffset.UtcNow
+                    UpdatedAt = DateTimeOffset.UtcNow
                 });
                 await db.SaveChangesAsync();
             }
             var fake = new FakeRefresher();
-            var handler = new BackendLibraryRefreshJobHandler(factory, new([fake]), new Clock());
+            var handler = new BackendLibraryRefreshJobHandler(factory, new([fake]), new Clock(), new TestBackendLibraryAccess(factory, "music"));
             var payload = JsonSerializer.SerializeToElement(new BackendLibraryRefreshJobPayload("music", "backend", "principal"));
             var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "library.refresh", payload,
-                tenant, user, null, "music", null, JsonSerializer.SerializeToElement(new { }), "correlation", "worker", DateTimeOffset.UtcNow.AddMinutes(1));
+                user, null, null, JsonSerializer.SerializeToElement(new { }), "correlation", "worker", DateTimeOffset.UtcNow.AddMinutes(1));
 
             var result = await handler.ExecuteAsync(new(claim,
                 Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(
@@ -437,8 +422,8 @@ public sealed class MetadataEnrichmentTests
     }
 
     private static ProtocolExecutionContext Context(ProtocolKind protocol) => new(protocol, "primary", "principal",
-        new AllstarrPrincipal(Guid.CreateVersion7(), Guid.CreateVersion7(), protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic",
-            "primary", "principal", "Owner", false), "refresh-test", DateTimeOffset.UtcNow.AddMinutes(5), default, libraryScopeId: "music");
+        new AllstarrPrincipal(Guid.CreateVersion7(), protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic",
+            "primary", "principal", "Owner", false), "refresh-test", DateTimeOffset.UtcNow.AddMinutes(5), default);
 
     private sealed class RecordingWriter : IManagedMetadataWriter
     {

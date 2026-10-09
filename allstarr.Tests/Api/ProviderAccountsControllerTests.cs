@@ -24,7 +24,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Path.GetTempPath(),
         "allstarr-tests",
         Guid.NewGuid().ToString("N"));
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
@@ -54,13 +53,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "fixture",
-            Name = "Fixture tenant",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
         context.Users.AddRange(
             User(_userId, "User one"),
             User(_otherUserId, "User two"));
@@ -84,7 +76,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             ProviderId = "qobuz",
             DisplayName = "My Qobuz",
             Scope = "Personal",
-            TenantId = Guid.CreateVersion7(),
             OwnerUserId = _otherUserId,
             Secret = secret.RootElement.Clone()
         });
@@ -94,7 +85,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.DoesNotContain("fixture-private-token", response, StringComparison.Ordinal);
         await using var context = await _factory.CreateDbContextAsync();
         var account = await context.ProviderAccounts.SingleAsync();
-        Assert.Equal(_tenantId, account.TenantId);
         Assert.Equal(_userId, account.OwnerUserId);
         Assert.Equal(ProviderAccountScope.Personal, account.Scope);
         Assert.True(account.Enabled);
@@ -102,7 +92,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Single(await context.AuditEvents.ToListAsync());
         using var lease = await _secretStore.OpenAsync(
             account.SecretReferenceId!.Value,
-            new SecretAccessContext(_tenantId));
+            new SecretAccessContext(_userId, $"provider-account:{account.ProviderId}:{account.Id:N}"));
         Assert.Contains("fixture-private-token", lease.ReadUtf8(), StringComparison.Ordinal);
     }
 
@@ -166,7 +156,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         var persisted = await context.ProviderAccounts.SingleAsync(item => item.Id == accountId);
         using var lease = await _secretStore.OpenAsync(
             persisted.SecretReferenceId!.Value,
-            new SecretAccessContext(_tenantId));
+            new SecretAccessContext(_userId, $"provider-account:{persisted.ProviderId}:{persisted.Id:N}"));
         using var saved = JsonDocument.Parse(lease.Value);
         Assert.Equal("jp", saved.RootElement.GetProperty("storefront").GetString());
         Assert.Equal("fixture-private-token", saved.RootElement.GetProperty("mediaUserToken").GetString());
@@ -194,9 +184,9 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
 
         Assert.DoesNotContain("secretReferenceFixture", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
         var cacheKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
-            _tenantId, _userId, account.Id, account.Revision, "spotify", null, null, 100);
+            _userId, account.Id, account.Revision, "spotify", null, null, 100);
         var artworkKey = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            _tenantId, _userId, account.Id, "spotify", "playlist", "private", "revision"));
+            _userId, account.Id, "spotify", "playlist", "private", "revision"));
         await _cache.SetStringAsync(cacheKey, "{}");
         await _cache.SetStringAsync(artworkKey, "{}");
         await Controller(Session(_userId)).SetEnabled(
@@ -284,7 +274,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         var controller = Controller(Session(_userId), false);
         Assert.IsType<OkObjectResult>(await controller.List());
         AssertForbidden(await controller.Create(new() { ProviderId = "qobuz", DisplayName = "New account" }));
-        var principal = new AllstarrPrincipal(_tenantId, _userId, "Jellyfin", "fixture", "a", "A", false);
+        var principal = new AllstarrPrincipal(_userId, "Jellyfin", "fixture", "a", "A", false);
         Assert.Equal(account.Id, (await new ProviderAccountResolver(_factory).ResolveAsync(new(principal, "deezer", "streaming")))!.Account.Id);
         Assert.IsType<NoContentResult>(await controller.Revoke(account.Id));
     }
@@ -312,7 +302,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         var other = await CreateUserAccount(_otherUserId, "qobuz", "Other personal account");
         var controller = Controller(Session(_userId, administrator: true), false);
         Assert.IsType<OkObjectResult>(await controller.List());
-        var actor = new AllstarrPrincipal(_tenantId, _userId, "Jellyfin", "fixture", "admin", "Admin", true);
+        var actor = new AllstarrPrincipal(_userId, "Jellyfin", "fixture", "admin", "Admin", true);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => new ProviderAccountResolver(_factory)
             .ResolveAsync(new(actor, "qobuz", "streaming", other.Id)));
         using var secret = JsonDocument.Parse("""{"token":"admin-managed"}""");
@@ -321,28 +311,12 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AdministratorCannotCreateUserAccountWithCrossTenantOwner()
+    public async Task AdministratorCannotCreatePersonalAccountWithDisabledOwner()
     {
-        var otherTenantId = Guid.CreateVersion7();
-        var crossTenantUserId = Guid.CreateVersion7();
         await using (var context = await _factory.CreateDbContextAsync())
         {
-            context.Tenants.Add(new TenantRecord
-            {
-                Id = otherTenantId,
-                Slug = "other-tenant",
-                Name = "Other tenant",
-                CreatedAt = DateTimeOffset.UtcNow
-            });
-            context.Users.Add(new PlatformUserRecord
-            {
-                Id = crossTenantUserId,
-                TenantId = otherTenantId,
-                DisplayName = "Other tenant user",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
+            var disabled = await context.Users.SingleAsync(item => item.Id == _otherUserId);
+            disabled.Enabled = false;
             await context.SaveChangesAsync();
         }
 
@@ -350,17 +324,13 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         var result = await controller.Create(new ProviderAccountsController.CreateProviderAccountRequest
         {
             ProviderId = "deezer",
-            DisplayName = "Invalid cross-tenant account",
+            DisplayName = "Invalid disabled-owner account",
             Scope = "Personal",
-            TenantId = _tenantId,
-            OwnerUserId = crossTenantUserId
+            OwnerUserId = _otherUserId
         });
 
         var badRequest = Assert.IsType<BadRequestObjectResult>(result);
-        Assert.Contains(
-            "another tenant",
-            JsonSerializer.Serialize(badRequest.Value),
-            StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("unavailable", JsonSerializer.Serialize(badRequest.Value), StringComparison.OrdinalIgnoreCase);
         await using var verification = await _factory.CreateDbContextAsync();
         Assert.Empty(await verification.ProviderAccounts.ToListAsync());
     }
@@ -389,7 +359,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UpdatingAudienceRebindsEncryptedSecretToNewTenant()
+    public async Task UpdatingAudienceRebindsEncryptedSecretToNewOwner()
     {
         using var secret = JsonDocument.Parse("""{"accessToken":"global-token"}""");
         var created = Assert.IsType<CreatedAtActionResult>(await Controller(
@@ -417,11 +387,11 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
 
         using var lease = await _secretStore.OpenAsync(
             account.SecretReferenceId!.Value,
-            new SecretAccessContext(_tenantId));
+            new SecretAccessContext(_userId, $"provider-account:{account.ProviderId}:{account.Id:N}"));
         Assert.Contains("global-token", lease.ReadUtf8(), StringComparison.Ordinal);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _secretStore.OpenAsync(
             account.SecretReferenceId.Value,
-            new SecretAccessContext(null, AllowGlobal: true)));
+            new SecretAccessContext(null, $"provider-account:{account.ProviderId}:{account.Id:N}", AllowShared: true)));
     }
 
     [Fact]
@@ -431,7 +401,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         var admin = Controller(Session(_userId, administrator: true));
         var listener = Controller(Session(_otherUserId));
         var resolver = new ProviderAccountResolver(_factory);
-        var actor = new AllstarrPrincipal(_tenantId, _otherUserId, "Jellyfin", "fixture", "b", "B", false);
+        var actor = new AllstarrPrincipal(_otherUserId, "Jellyfin", "fixture", "b", "B", false);
         Assert.Null(await resolver.ResolveAsync(new(actor, "qobuz", "streaming")));
         Assert.IsType<OkObjectResult>(await admin.UpdateAudience(account.Id, new() { Scope = "Shared", ExpectedRevision = account.Revision }));
         Assert.Equal(account.Id, (await resolver.ResolveAsync(new(actor, "qobuz", "playlist")))!.Account.Id);
@@ -448,7 +418,7 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.IsType<NotFoundResult>(await listener.Revoke(account.Id));
         AssertForbidden(await listener.UpdateAudience(account.Id, new() { Scope = "Personal" }));
         Assert.IsType<ConflictObjectResult>(await admin.UpdateAudience(account.Id, new() { Scope = "Personal", ExpectedRevision = account.Revision }));
-        using (var shared = await _secretStore.OpenAsync(account.SecretReferenceId!.Value, new(null, AllowGlobal: true)))
+        using (var shared = await _secretStore.OpenAsync(account.SecretReferenceId!.Value, new(null, $"provider-account:{account.ProviderId}:{account.Id:N}", AllowShared: true)))
             Assert.Contains("secretReferenceFixture", shared.ReadUtf8(), StringComparison.Ordinal);
         Assert.IsType<OkObjectResult>(await admin.UpdateAudience(account.Id, new() { Scope = "Personal", OwnerUserId = _userId, ExpectedRevision = account.Revision + 1 }));
         Assert.Null(await resolver.ResolveAsync(new(actor, "qobuz", "streaming")));
@@ -587,7 +557,6 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         UserName = "fixture",
         IsAdministrator = administrator,
         BackendType = "Jellyfin",
-        TenantId = _tenantId,
         AllstarrUserId = userId,
         JellyfinAccessToken = "protected-in-real-session-store",
         ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
@@ -621,12 +590,14 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         return await context.ProviderAccounts.AsNoTracking().SingleAsync(item => item.Id == id);
     }
 
-    private PlatformUserRecord User(Guid id, string name) => new()
+    private UserRecord User(Guid id, string name) => new()
     {
         Id = id,
-        TenantId = _tenantId,
         DisplayName = name,
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "jellyfin",
+        BackendInstanceId = "fixture",
+        BackendPrincipalId = id.ToString(),
         CreatedAt = DateTimeOffset.UtcNow,
         UpdatedAt = DateTimeOffset.UtcNow
     };

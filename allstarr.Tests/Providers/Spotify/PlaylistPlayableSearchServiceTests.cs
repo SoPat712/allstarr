@@ -27,9 +27,6 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
 
         Assert.True(service.CanUseProvider("stream-extension"));
@@ -39,16 +36,14 @@ public sealed class PlaylistPlayableSearchServiceTests
     }
 
     [Fact]
-    public async Task Provider_eligibility_uses_the_tenant_snapshot()
+    public async Task Provider_eligibility_uses_the_household_snapshot()
     {
-        var tenantId = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["qobuz", "deezer"]);
         var policies = new Mock<IEffectiveProviderPolicyResolver>();
-        policies.Setup(item => item.ResolveAsync(tenantId, It.IsAny<CancellationToken>()))
+        policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync(new EffectiveProviderPolicySnapshot(
-                tenantId,
                 new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
                 {
                     [ProviderCapabilityKind.Streaming] = ["qobuz", "deezer"]
@@ -59,20 +54,16 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance,
             policies.Object);
 
-        Assert.False(await service.CanUseProviderAsync(tenantId, "qobuz"));
-        Assert.True(await service.CanUseProviderAsync(tenantId, "deezer"));
+        Assert.False(await service.CanUseProviderAsync("qobuz"));
+        Assert.True(await service.CanUseProviderAsync("deezer"));
     }
 
     [Fact]
     public async Task Automatic_search_scores_all_playable_providers_and_selects_the_best()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -105,13 +96,10 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
-        var context = Context(tenant, user);
+        var context = Context(user);
         var scope = new TrackMatchScope(
-            tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+            user, "main", Guid.CreateVersion7(), 2, 1,
             new HashSet<string>(StringComparer.Ordinal));
 
         var result = await service.MatchAsync(
@@ -132,7 +120,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task AutomaticSearchUsesConfiguredProviderPriorityWindows()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -161,17 +148,14 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
         var result = await service.MatchAsync(
-            Context(tenant, user),
+            Context(user),
             new ExternalTrackMatchSnapshot(
                 "source", "spotify", "source-track", "Window Song",
                 "The Artist", null, null, 240_000, null, null, null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                user, "main", Guid.CreateVersion7(), 2, 1,
                 new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
@@ -187,7 +171,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task Concise_search_query_keeps_full_title_scoring()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -211,13 +194,10 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
 
         var result = await service.MatchAsync(
-            Context(tenant, user),
+            Context(user),
             new ExternalTrackMatchSnapshot(
                 "source",
                 "spotify",
@@ -231,7 +211,7 @@ public sealed class PlaylistPlayableSearchServiceTests
                 null,
                 null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                user, "main", Guid.CreateVersion7(), 2, 1,
                 new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
@@ -248,7 +228,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task Cached_routes_try_the_next_provider_before_searching_again()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -272,13 +251,10 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
-        var context = Context(tenant, user);
+        var context = Context(user);
         var scope = new TrackMatchScope(
-            tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+            user, "main", Guid.CreateVersion7(), 2, 1,
             new HashSet<string>(StringComparer.Ordinal) { "music" });
         var canonical = Guid.CreateVersion7();
 
@@ -291,7 +267,6 @@ public sealed class PlaylistPlayableSearchServiceTests
             [
                 new ProviderTrackIdentityRecord
                 {
-                    TenantId = tenant,
                     CanonicalRecordingId = canonical,
                     ProviderId = "applemusic",
                     ResourceKind = ProviderResourceKind.Track,
@@ -300,7 +275,6 @@ public sealed class PlaylistPlayableSearchServiceTests
                 },
                 new ProviderTrackIdentityRecord
                 {
-                    TenantId = tenant,
                     CanonicalRecordingId = canonical,
                     ProviderId = "deezer",
                     ResourceKind = ProviderResourceKind.Track,
@@ -326,13 +300,12 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task CachedRouteUsesCurrentScoringAndLocalPriority()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
-        var scope = new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+        var scope = new TrackMatchScope(user, "main", Guid.CreateVersion7(), 2, 1,
             new HashSet<string>(StringComparer.Ordinal) { "music" });
         var source = new ExternalTrackMatchSnapshot("source", "spotify", "source-track", "Sunroof",
             "Nicky Youre, hey daisy", "Sunroof", null, 163_025, null, null, null);
-        var local = new LocalTrackMatchCandidate(Guid.CreateVersion7(), tenant, user, "main", "music",
+        var local = new LocalTrackMatchCandidate(Guid.CreateVersion7(), user, "main", "music",
             "local-track", null, "Sunroof", "Nicky Youre, dazy", "Sunroof", null, 163_025, null, null, null);
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download"]);
@@ -346,15 +319,14 @@ public sealed class PlaylistPlayableSearchServiceTests
                 Album = "Sunroof (Remixes) - EP",
                 Duration = 163
             });
-        var service = new PlaylistPlayableSearchService(gateway.Object, new TrackMatchDecisionEngine(), null!,
-            new IdentityOptions(), Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance);
+        var service = new PlaylistPlayableSearchService(gateway.Object, new TrackMatchDecisionEngine(), NullLogger<PlaylistPlayableSearchService>.Instance);
         var routes = new[] { new ProviderTrackIdentityRecord
         {
-            TenantId = tenant, CanonicalRecordingId = Guid.CreateVersion7(), ProviderId = "apple-download",
+            CanonicalRecordingId = Guid.CreateVersion7(), ProviderId = "apple-download",
             ExternalId = "cached", ResourceKind = ProviderResourceKind.Track, Verification = ProviderIdentityVerification.Verified
         } };
 
-        var result = await service.ReuseAsync(Context(tenant, user), source, scope, routes, [local], null, CancellationToken.None);
+        var result = await service.ReuseAsync(Context(user), source, scope, routes, [local], null, CancellationToken.None);
 
         Assert.NotNull(result);
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
@@ -363,12 +335,12 @@ public sealed class PlaylistPlayableSearchServiceTests
         Assert.Equal(2, result.Decision.Candidates.Count);
         Assert.All(result.Decision.Candidates, candidate => Assert.True(candidate.Confidence < 1));
 
-        var rejection = new ScopedTrackMatchOverride(tenant, user, "music", "spotify", "source-track", null,
+        var rejection = new ScopedTrackMatchOverride(user, "spotify", "source-track", null,
             new HashSet<Guid> { local.LibraryTrackId });
-        var rejectedLocal = await service.ReuseAsync(Context(tenant, user), source, scope, routes, [local], rejection, CancellationToken.None);
+        var rejectedLocal = await service.ReuseAsync(Context(user), source, scope, routes, [local], rejection, CancellationToken.None);
         Assert.Equal("cached", rejectedLocal!.SelectedExternal!.ExternalId);
 
-        var changedRecording = await service.ReuseAsync(Context(tenant, user), source with { Title = "Sunroof (Live)" },
+        var changedRecording = await service.ReuseAsync(Context(user), source with { Title = "Sunroof (Live)" },
             scope, routes, [], null, CancellationToken.None);
         Assert.Null(changedRecording);
     }
@@ -376,7 +348,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task Tentative_routes_are_freshly_searched_instead_of_reused()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -386,23 +357,19 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
 
         var result = await service.ReuseAsync(
-            Context(tenant, user),
+            Context(user),
             new ExternalTrackMatchSnapshot(
                 "source", "spotify", "source-track", "Winter Wind",
                 "Frédéric Chopin", null, null, 225_000, null, null, null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                user, "main", Guid.CreateVersion7(), 2, 1,
                 new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [
                 new ProviderTrackIdentityRecord
                 {
-                    TenantId = tenant,
                     CanonicalRecordingId = Guid.CreateVersion7(),
                     ProviderId = "deezer",
                     ResourceKind = ProviderResourceKind.Track,
@@ -423,7 +390,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task Unique_suggestion_is_used_but_keeps_review_warning()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -447,18 +413,15 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
 
         var result = await service.MatchAsync(
-            Context(tenant, user),
+            Context(user),
             new ExternalTrackMatchSnapshot(
                 "source", "spotify", "source-track", "Feels",
                 "Calvin Harris", "Funk Wav Bounces Vol. 1", null, 223_000, null, null, null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                user, "main", Guid.CreateVersion7(), 2, 1,
                 new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
@@ -477,7 +440,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task DownloadOnlyProviderEditionIsExcludedFromFallbackRoutes()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -512,13 +474,10 @@ public sealed class PlaylistPlayableSearchServiceTests
         var service = new PlaylistPlayableSearchService(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            null!,
-            new IdentityOptions(),
-            Options.Create(new JellyfinSettings()),
             NullLogger<PlaylistPlayableSearchService>.Instance);
 
         var result = await service.MatchAsync(
-            Context(tenant, user),
+            Context(user),
             new ExternalTrackMatchSnapshot(
                 "source",
                 "spotify",
@@ -532,7 +491,7 @@ public sealed class PlaylistPlayableSearchServiceTests
                 null,
                 null),
             new TrackMatchScope(
-                tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+                user, "main", Guid.CreateVersion7(), 2, 1,
                 new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [],
             null,
@@ -547,7 +506,6 @@ public sealed class PlaylistPlayableSearchServiceTests
     [Fact]
     public async Task Multiple_queries_find_Selena_Gomez_Crush_and_deduplicate_the_result()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
@@ -560,15 +518,14 @@ public sealed class PlaylistPlayableSearchServiceTests
                 Artist = "Selena Gomez & The Scene", Album = "Kiss & Tell", Duration = 199
             }]);
         var service = new PlaylistPlayableSearchService(
-            gateway.Object, new TrackMatchDecisionEngine(), null!, new IdentityOptions(),
-            Options.Create(new JellyfinSettings()), NullLogger<PlaylistPlayableSearchService>.Instance);
+            gateway.Object, new TrackMatchDecisionEngine(), NullLogger<PlaylistPlayableSearchService>.Instance);
 
         var result = await service.MatchAsync(
-            Context(tenant, user),
+            Context(user),
             new ExternalTrackMatchSnapshot(
                 "source", "spotify", "source-track", "Crush", "Selena Gomez & The Scene",
                 "Kiss & Tell", null, 199_000, null, null, null),
-            new TrackMatchScope(tenant, user, "main", "music", Guid.CreateVersion7(), 2, 1,
+            new TrackMatchScope(user, "main", Guid.CreateVersion7(), 2, 1,
                 new HashSet<string>(StringComparer.Ordinal) { "music" }),
             [], null, CancellationToken.None);
 
@@ -584,14 +541,13 @@ public sealed class PlaylistPlayableSearchServiceTests
         Assert.Single(result.Decision.Candidates);
     }
 
-    private static ProtocolExecutionContext Context(Guid tenant, Guid user) => new(
+    private static ProtocolExecutionContext Context(Guid user) => new(
         ProtocolKind.Jellyfin,
         "main",
         "principal",
         new AllstarrPrincipal(
-            tenant, user, "jellyfin", "main", "principal", "Owner", false),
+            user, "jellyfin", "main", "principal", "Owner", false),
         "playable-search-test",
         DateTimeOffset.UtcNow.AddMinutes(1),
-        CancellationToken.None,
-        libraryScopeId: "music");
+        CancellationToken.None);
 }

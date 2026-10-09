@@ -64,7 +64,6 @@ builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);
 builder.Services.AddSingleton<TrackMatchPolicy>();
-builder.Services.AddHostedService<DefaultTenantRuntimeSettingsProjector>();
 builder.Services.AddProtocolExecution(builder.Configuration);
 builder.Services.AddScoped<ProtocolExecutionContextFilter>();
 builder.Services.AddDurableJobs(builder.Configuration);

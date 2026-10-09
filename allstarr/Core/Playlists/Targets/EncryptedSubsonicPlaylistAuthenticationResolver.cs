@@ -24,7 +24,7 @@ public sealed class EncryptedSubsonicPlaylistAuthenticationResolver : IBackendPl
         if (_httpContext.HttpContext is not { } requestContext)
             return ResolveAsync(context, cancellationToken);
         if (!SubsonicSessionAuthentication.TryGetViewerReadParameters(requestContext,
-                context.BackendInstanceId, context.VerifiedPrincipalId, context.TenantId, out var parameters))
+                context.BackendInstanceId, context.VerifiedPrincipalId, out var parameters))
             throw new UnauthorizedAccessException("The signed-in viewer is unavailable for this backend read.");
         return ValueTask.FromResult(new BackendPlaylistAuthentication(new Dictionary<string, string>(), parameters));
     }
@@ -33,12 +33,12 @@ public sealed class EncryptedSubsonicPlaylistAuthenticationResolver : IBackendPl
         BackendPlaylistTargetContext context,
         CancellationToken cancellationToken)
     {
-        if (!context.TenantId.HasValue || context.CredentialReference != null &&
+        if (context.CredentialReference != null &&
             (!Guid.TryParse(context.CredentialReference, out var parsed) || parsed == Guid.Empty))
             throw new UnauthorizedAccessException("The playlist credential context is unavailable.");
         Guid? referenceId = context.CredentialReference == null ? null : Guid.Parse(context.CredentialReference);
         using var lease = await _secrets.OpenSubsonicPlaylistCredentialAsync(
-            context.TenantId.Value, context.BackendInstanceId, context.VerifiedPrincipalId,
+            context.BackendInstanceId, context.VerifiedPrincipalId,
             referenceId, cancellationToken);
         using var document = JsonDocument.Parse(lease.Value);
         var root = document.RootElement;

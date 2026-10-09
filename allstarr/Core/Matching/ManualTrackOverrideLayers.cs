@@ -16,7 +16,7 @@ public sealed record ManualTrackOverrideLayers(
 internal static class ManualTrackOverrides
 {
     public static async Task<IReadOnlyList<ManualTrackOverrideRecord>> LoadAsync(
-        AllstarrDbContext db, Guid tenantId, Guid userId,
+        AllstarrDbContext db, Guid userId,
         IReadOnlyCollection<ExternalMetadataSnapshotRecord> snapshots, CancellationToken cancellationToken,
         bool includeRevoked = false)
     {
@@ -24,7 +24,7 @@ internal static class ManualTrackOverrides
         var hashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
         var providers = snapshots.Select(item => item.ProviderId).Distinct().ToArray();
         var records = await db.ManualTrackOverrides.AsNoTracking().Where(item =>
-                item.TenantId == tenantId && (includeRevoked || item.RevokedAt == null) &&
+                (includeRevoked || item.RevokedAt == null) &&
                 (item.OwnerUserId == userId || item.OwnerUserId == null) &&
                 providers.Contains(item.SourceProviderId) && hashes.Contains(item.SourceExternalIdHash))
             .ToArrayAsync(cancellationToken);
@@ -34,8 +34,7 @@ internal static class ManualTrackOverrides
 
     public static IQueryable<ManualTrackOverrideRecord> ForSource(
         AllstarrDbContext db, ExternalMetadataSnapshotRecord snapshot) =>
-        db.ManualTrackOverrides.Where(item => item.TenantId == snapshot.TenantId &&
-            item.SourceProviderId == snapshot.ProviderId && item.SourceExternalIdHash == snapshot.ExternalIdHash);
+        db.ManualTrackOverrides.Where(item => item.SourceProviderId == snapshot.ProviderId && item.SourceExternalIdHash == snapshot.ExternalIdHash);
 
     public static async Task<ManualTrackOverrideLayers> ReadAsync(
         AllstarrDbContext db, ExternalMetadataSnapshotRecord snapshot, Guid userId,
@@ -60,11 +59,10 @@ internal static class ManualTrackOverrides
     }
 
     public static Task<HashSet<Guid>> ProtectedSnapshotIdsAsync(
-        AllstarrDbContext db, Guid tenantId, IReadOnlyCollection<Guid> snapshotIds,
+        AllstarrDbContext db, IReadOnlyCollection<Guid> snapshotIds,
         CancellationToken cancellationToken) => db.ExternalMetadataSnapshots.AsNoTracking()
-        .Where(snapshot => snapshot.TenantId == tenantId && snapshotIds.Contains(snapshot.Id) &&
-            db.ManualTrackOverrides.Any(authority => authority.TenantId == tenantId &&
-                authority.SourceProviderId == snapshot.ProviderId && authority.SourceExternalIdHash == snapshot.ExternalIdHash &&
+        .Where(snapshot => snapshotIds.Contains(snapshot.Id) &&
+            db.ManualTrackOverrides.Any(authority => authority.SourceProviderId == snapshot.ProviderId && authority.SourceExternalIdHash == snapshot.ExternalIdHash &&
                 authority.RevokedAt == null && (authority.OwnerUserId == snapshot.OwnerUserId || authority.OwnerUserId == null)))
         .Select(snapshot => snapshot.Id).ToHashSetAsync(cancellationToken);
 

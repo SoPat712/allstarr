@@ -43,7 +43,7 @@
       let queued = true;
       try {
         if (!currentTarget?.credentialReferenceId) throw new Error("Playlist access is not ready yet.");
-        await playlistLinks.enqueueLibraryIndex(currentTarget, currentTarget.credentialReferenceId);
+        await playlistLinks.enqueueLibraryIndex(currentTarget.credentialReferenceId);
       } catch {
         queued = false;
       }

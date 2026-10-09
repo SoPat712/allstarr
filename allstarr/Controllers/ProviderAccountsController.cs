@@ -55,7 +55,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var query = CanManageAllAccounts(session)
             ? context.ProviderAccounts.AsNoTracking()
-            : context.ProviderAccounts.AsNoTracking().AvailableTo(session.TenantId, session.AllstarrUserId);
+            : context.ProviderAccounts.AsNoTracking().Where(account => session.AllstarrUserId.HasValue &&
+                (account.OwnerUserId == session.AllstarrUserId || account.OwnerUserId == null));
 
         var accounts = await query
             .OrderBy(item => item.ProviderId)
@@ -81,8 +82,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 .ToDictionaryAsync(item => item.Id, item => item.DisplayName, cancellationToken);
         var audienceUsers = CanManageAllAccounts(session)
             ? await context.Users.AsNoTracking()
-                .Where(item => item.Status == PlatformUserStatus.Active &&
-                               item.TenantId == session.TenantId)
+                .Where(item => item.Enabled)
                 .OrderBy(item => item.DisplayName)
                 .Select(item => new { item.Id, item.DisplayName })
                 .ToListAsync(cancellationToken)
@@ -152,7 +152,6 @@ public sealed partial class ProviderAccountsController : ControllerBase
         var account = new ProviderAccountRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = normalized.TenantId,
             OwnerUserId = normalized.OwnerUserId,
             CreatedByUserId = session.AllstarrUserId,
             ProviderId = normalized.ProviderId,
@@ -174,7 +173,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             {
                 var secretBytes = Encoding.UTF8.GetBytes(request.Secret.Value.GetRawText());
                 storedSecret = await _secretStore.StoreAsync(
-                    account.TenantId,
+                    account.OwnerUserId,
                     $"provider-account:{account.ProviderId}:{account.Id:N}",
                     secretBytes,
                     cancellationToken: cancellationToken);
@@ -205,7 +204,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                         : new SecretReferenceRecord
                         {
                             Id = storedSecret.Id,
-                            TenantId = storedSecret.TenantId,
+                            UserId = storedSecret.UserId,
                             Purpose = storedSecret.Purpose,
                             ActiveVersion = storedSecret.ActiveVersion,
                             UpdatedAt = storedSecret.UpdatedAt,
@@ -224,8 +223,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
                     await _secretStore.RevokeAsync(
                         storedSecret.Id,
                         new SecretAccessContext(
-                            storedSecret.TenantId,
-                            storedSecret.TenantId == null),
+                            storedSecret.UserId,
+                            storedSecret.Purpose,
+                            AllowShared: storedSecret.UserId == null),
                         CancellationToken.None);
                 }
                 catch
@@ -278,7 +278,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
 
         var bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
         var secret = await _secretStore.StoreAsync(
-            account.TenantId,
+            account.OwnerUserId,
             $"provider-account:{account.ProviderId}:{account.Id:N}",
             bytes,
             account.SecretReferenceId,
@@ -411,35 +411,26 @@ public sealed partial class ProviderAccountsController : ControllerBase
         if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != account.Revision)
             return Conflict(new { error = "The provider account changed. Reload and try again." });
 
-        PlatformUserRecord? owner = null;
+        UserRecord? owner = null;
         if (scope == ProviderAccountScope.Personal)
         {
             var ownerUserId = request.OwnerUserId ?? session.AllstarrUserId;
-            var tenantId = account.TenantId ?? session.TenantId;
             owner = ownerUserId.HasValue
                 ? await context.Users.AsNoTracking().SingleOrDefaultAsync(
-                    item => item.Id == ownerUserId && item.TenantId == tenantId &&
-                            item.Status == PlatformUserStatus.Active,
+                    item => item.Id == ownerUserId && item.Enabled,
                     cancellationToken)
                 : null;
             if (owner == null) return BadRequest(new { error = "Choose an active user for this audience." });
         }
 
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
-        var targetTenantId = scope switch
-        {
-            ProviderAccountScope.Shared => null,
-            ProviderAccountScope.Personal => owner!.TenantId,
-            _ => account.TenantId ?? session.TenantId
-        };
         if (account.SecretReferenceId.HasValue)
-            await _secretStore.RebindTenantWithinTransactionAsync(
+            await _secretStore.RebindOwnerWithinTransactionAsync(
                 context,
                 account.SecretReferenceId.Value,
-                new SecretAccessContext(account.TenantId, account.TenantId == null),
-                targetTenantId,
+                SecretAccess(account),
+                owner?.Id,
                 cancellationToken);
-        account.TenantId = targetTenantId;
         account.OwnerUserId = owner?.Id;
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
@@ -513,15 +504,14 @@ public sealed partial class ProviderAccountsController : ControllerBase
             error = "Only administrators can create Shared accounts";
             return false;
         }
-        var tenantId = scope == ProviderAccountScope.Shared ? null : session.TenantId;
         var ownerUserId = scope == ProviderAccountScope.Shared ? null
             : canManageAllAccounts ? request.OwnerUserId ?? session.AllstarrUserId : session.AllstarrUserId;
-        if (scope == ProviderAccountScope.Personal && (!tenantId.HasValue || !ownerUserId.HasValue))
+        if (scope == ProviderAccountScope.Personal && !ownerUserId.HasValue)
         {
             error = "A verified user is required for a Personal account";
             return false;
         }
-        normalized = new(providerId, displayName, scope, tenantId, ownerUserId);
+        normalized = new(providerId, displayName, scope, ownerUserId);
         return true;
     }
 
@@ -536,18 +526,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         if (request.Scope == ProviderAccountScope.Shared)
         {
-            return request.TenantId == null &&
-                   request.OwnerUserId == null
+            return request.OwnerUserId == null
                 ? null
-                : "Shared accounts cannot have an owner or tenant";
-        }
-
-        if (!request.TenantId.HasValue ||
-            !await context.Tenants.AsNoTracking().AnyAsync(
-                item => item.Id == request.TenantId.Value,
-                cancellationToken))
-        {
-            return "The selected tenant does not exist";
+                : "Shared accounts cannot have an owner";
         }
 
         if (!request.OwnerUserId.HasValue)
@@ -555,21 +536,20 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return "User accounts require an owner";
         }
 
-        var ownerIsActiveInTenant = await context.Users.AsNoTracking().AnyAsync(
+        var ownerIsActive = await context.Users.AsNoTracking().AnyAsync(
             item => item.Id == request.OwnerUserId.Value &&
-                    item.TenantId == request.TenantId.Value &&
-                    item.Status == PlatformUserStatus.Active,
+                    item.Enabled,
             cancellationToken);
-        return ownerIsActiveInTenant
+        return ownerIsActive
             ? null
-            : "The selected account owner is inactive or belongs to another tenant";
+            : "The selected account owner is unavailable";
     }
 
     private static bool CanManageAllAccounts(AdminAuthSession session) => session.IsAdministrator;
 
     private static bool CanManageAccount(ProviderAccountRecord account, AdminAuthSession session) =>
         session.IsAdministrator || session.AllstarrUserId.HasValue &&
-        account.OwnerUserId == session.AllstarrUserId && account.TenantId == session.TenantId;
+        account.OwnerUserId == session.AllstarrUserId;
 
     private static bool CanChangeAudience(ProviderAccountRecord account, AdminAuthSession session) =>
         session.IsAdministrator;
@@ -577,7 +557,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
     private IActionResult? GetManagementAccessError(AdminAuthSession session)
     {
         if (!CanManageAllAccounts(session) &&
-            (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue))
+            !session.AllstarrUserId.HasValue)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new
             {
@@ -592,7 +572,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         IQueryable<ProviderAccountRecord> query,
         AdminAuthSession session) => CanManageAllAccounts(session)
             ? query
-            : query.OwnedBy(session.TenantId, session.AllstarrUserId);
+            : query.Where(account => session.AllstarrUserId.HasValue && account.OwnerUserId == session.AllstarrUserId);
 
     private IActionResult ManagementForbidden() =>
         StatusCode(StatusCodes.Status403Forbidden, new
@@ -612,7 +592,6 @@ public sealed partial class ProviderAccountsController : ControllerBase
         context.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = session.TenantId,
             ActorUserId = session.AllstarrUserId,
             Category = "provider-account",
             Action = action,
@@ -637,7 +616,6 @@ public sealed partial class ProviderAccountsController : ControllerBase
             displayName = FriendlyDisplayName(account),
             sourceDisplayName = SourceDisplayName(account, canManage ? creatorDisplayName : null),
             scope = account.Scope.ToString(),
-            account.TenantId,
             account.OwnerUserId,
             ownerDisplayName,
             createdByUserId = canManage ? account.CreatedByUserId : null,
@@ -740,9 +718,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
     }
 
     private static SecretAccessContext SecretAccess(ProviderAccountRecord account) =>
-        account.Scope == ProviderAccountScope.Shared
-            ? new SecretAccessContext(null, AllowGlobal: true)
-            : new SecretAccessContext(account.TenantId);
+        new(account.OwnerUserId, $"provider-account:{account.ProviderId}:{account.Id:N}",
+            AllowShared: account.OwnerUserId == null);
 
     private static bool HasValue(JsonElement value) =>
         value.ValueKind != JsonValueKind.Null &&
@@ -789,7 +766,6 @@ public sealed partial class ProviderAccountsController : ControllerBase
         public string? ProviderId { get; set; }
         public string? DisplayName { get; set; }
         public string Scope { get; set; } = nameof(ProviderAccountScope.Personal);
-        public Guid? TenantId { get; set; }
         public Guid? OwnerUserId { get; set; }
         public bool Enabled { get; set; } = true;
         public JsonElement? Secret { get; set; }
@@ -817,6 +793,5 @@ public sealed partial class ProviderAccountsController : ControllerBase
         string ProviderId,
         string DisplayName,
         ProviderAccountScope Scope,
-        Guid? TenantId,
         Guid? OwnerUserId);
 }

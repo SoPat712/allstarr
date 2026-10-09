@@ -14,11 +14,8 @@ namespace allstarr.Tests;
 
 public sealed class LibraryIndexControllerTests : IAsyncLifetime
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _viewerId = Guid.CreateVersion7();
     private readonly Guid _indexOwnerId = Guid.CreateVersion7();
-    private readonly Guid _viewerIdentityId = Guid.CreateVersion7();
-    private readonly Guid _indexIdentityId = Guid.CreateVersion7();
     private readonly DateTimeOffset _now = new(2026, 10, 8, 12, 0, 0, TimeSpan.Zero);
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
@@ -30,11 +27,7 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        db.Tenants.Add(new TenantRecord { Id = _tenantId, Slug = "fixture", Name = "Fixture", CreatedAt = _now });
-        db.Users.AddRange(User(_viewerId), User(_indexOwnerId));
-        db.BackendIdentities.AddRange(
-            Identity(_viewerIdentityId, _viewerId, "viewer"),
-            Identity(_indexIdentityId, _indexOwnerId, "index-owner"));
+        db.Users.AddRange(User(_viewerId, "viewer", true), User(_indexOwnerId, "index-owner"));
         await db.SaveChangesAsync();
         var options = new DurableJobOptions();
         _queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), new SystemPlatformClock());
@@ -58,13 +51,13 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
     [InlineData(null)]
     [InlineData("")]
     [InlineData("  ")]
-    public async Task EnqueueNormalizesAllLibrariesAndReusesTheSameGeneration(string? libraryScopeId)
+    public async Task EnqueueNormalizesAllLibrariesAndReusesTheSameGeneration(string? backendLibraryId)
     {
         var controller = Controller();
         var first = Assert.IsType<AcceptedResult>(await controller.Enqueue(
             new(Generation: 42), CancellationToken.None));
         var repeat = Assert.IsType<AcceptedResult>(await controller.Enqueue(
-            new(libraryScopeId, Generation: 42), CancellationToken.None));
+            new(backendLibraryId, Generation: 42), CancellationToken.None));
 
         using var firstJson = JsonDocument.Parse(JsonSerializer.Serialize(first.Value));
         using var repeatJson = JsonDocument.Parse(JsonSerializer.Serialize(repeat.Value));
@@ -73,10 +66,10 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         Assert.False(repeatJson.RootElement.GetProperty("created").GetBoolean());
         await using var db = await _factory.CreateDbContextAsync();
         var job = Assert.Single(await db.Jobs.ToListAsync());
-        Assert.Null(job.LibraryScopeId);
+        Assert.Equal(_viewerId, job.OwnerUserId);
         Assert.EndsWith(":backend:all:42", job.IdempotencyKey);
         var payload = JsonSerializer.Deserialize<LibraryIndexJobPayload>(job.PayloadJson)!;
-        Assert.Null(payload.LibraryScopeId);
+        Assert.Null(payload.BackendLibraryId);
         Assert.Equal("backend", payload.BackendInstanceId);
         Assert.Equal("viewer", payload.BackendPrincipalId);
     }
@@ -88,8 +81,8 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
 
         await using var db = await _factory.CreateDbContextAsync();
         var job = Assert.Single(await db.Jobs.ToListAsync());
-        Assert.Equal("music", job.LibraryScopeId);
-        Assert.Equal("music", JsonSerializer.Deserialize<LibraryIndexJobPayload>(job.PayloadJson)!.LibraryScopeId);
+        Assert.Equal(_viewerId, job.OwnerUserId);
+        Assert.Equal("music", JsonSerializer.Deserialize<LibraryIndexJobPayload>(job.PayloadJson)!.BackendLibraryId);
         Assert.EndsWith(":backend:library:music:42", job.IdempotencyKey);
     }
 
@@ -130,7 +123,7 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         Assert.Equal(expected, json.RootElement.GetProperty("trackCount").GetInt32());
         Assert.Equal("backend", json.RootElement.GetProperty("backendInstanceId").GetString());
         Assert.Equal(string.IsNullOrWhiteSpace(scope) ? null : scope.Trim(),
-            json.RootElement.GetProperty("libraryScopeId").GetString());
+            json.RootElement.GetProperty("backendLibraryId").GetString());
         if (expected == 0) Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("lastIndexedAt").ValueKind);
         else Assert.Equal(_now, json.RootElement.GetProperty("lastIndexedAt").GetDateTimeOffset());
     }
@@ -151,7 +144,7 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
     [Theory]
     [InlineData(null, 7)]
     [InlineData("music", 3)]
-    public async Task CountsSelectsTheLatestAuditForAllOrExplicitLibraryScope(string? scope, int seen)
+    public async Task CountsSelectsTheLatestAuditForAllOrExplicitBackendLibrary(string? scope, int seen)
     {
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -168,26 +161,24 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
     private async Task SeedTracks()
     {
         await using var db = await _factory.CreateDbContextAsync();
-        var olderCopy = Track(_viewerId, _viewerIdentityId, "music", "shared-item");
+        var olderCopy = Track(_viewerId, "music", "shared-item");
         olderCopy.IndexedAt = _now.AddMinutes(-1);
         db.LibraryTracks.AddRange(
             olderCopy,
-            Track(_indexOwnerId, _indexIdentityId, "music", "shared-item"),
-            Track(_indexOwnerId, _indexIdentityId, "secondary", "second-item"),
-            Track(_indexOwnerId, _indexIdentityId, "denied", "hidden-item"),
-            Track(_indexOwnerId, _indexIdentityId, "music", "wrong-protocol", protocol: "subsonic"),
-            Track(_indexOwnerId, _indexIdentityId, "music", "wrong-backend", backend: "other"));
+            Track(_indexOwnerId, "music", "shared-item"),
+            Track(_indexOwnerId, "secondary", "second-item"),
+            Track(_indexOwnerId, "denied", "hidden-item"),
+            Track(_indexOwnerId, "music", "wrong-protocol", protocol: "subsonic"),
+            Track(_indexOwnerId, "music", "wrong-backend", backend: "other"));
         await db.SaveChangesAsync();
     }
 
-    private LibraryTrackRecord Track(Guid owner, Guid identity, string library, string item,
+    private LibraryTrackRecord Track(Guid owner, string library, string item,
         string protocol = "jellyfin", string backend = "backend") => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             OwnerUserId = owner,
-            BackendIdentityId = identity,
-            LibraryScopeId = library,
+            BackendLibraryId = library,
             Protocol = protocol,
             BackendInstanceId = backend,
             BackendItemId = item,
@@ -202,7 +193,6 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
     private AuditEventRecord Scan(string? scope, int seen, DateTimeOffset created) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _tenantId,
         ActorUserId = _viewerId,
         Category = "library-index",
         Action = "scan.completed",
@@ -210,7 +200,7 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         CreatedAt = created,
         DetailsJson = JsonSerializer.Serialize(new
         {
-            LibraryScopeId = scope,
+            BackendLibraryId = scope,
             BackendInstanceId = "backend",
             Seen = seen,
             Indexed = seen,
@@ -227,9 +217,10 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         {
             SessionId = Guid.NewGuid().ToString("N"),
             UserId = principal,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
             UserName = "Fixture",
             IsAdministrator = admin,
-            TenantId = _tenantId,
             AllstarrUserId = _viewerId,
             JellyfinAccessToken = "protected",
             ExpiresAtUtc = _now.UtcDateTime.AddHours(1),
@@ -241,25 +232,17 @@ public sealed class LibraryIndexControllerTests : IAsyncLifetime
         };
     }
 
-    private PlatformUserRecord User(Guid id) => new()
+    private UserRecord User(Guid id, string principal, bool admin = false) => new()
     {
         Id = id,
-        TenantId = _tenantId,
         DisplayName = id.ToString("N"),
-        Status = PlatformUserStatus.Active,
-        CreatedAt = _now,
-        UpdatedAt = _now
-    };
-
-    private BackendIdentityRecord Identity(Guid id, Guid user, string principal) => new()
-    {
-        Id = id,
-        TenantId = _tenantId,
-        UserId = user,
         BackendType = "jellyfin",
         BackendInstanceId = "backend",
-        PrincipalId = principal,
+        BackendPrincipalId = principal,
+        IsAdmin = admin,
+        Enabled = true,
         CreatedAt = _now,
+        UpdatedAt = _now,
         LastSeenAt = _now
     };
 

@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using allstarr.Controllers;
 using allstarr.Core.Operations;
 using allstarr.Core.Secrets;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
@@ -21,17 +22,46 @@ public sealed partial class DurableBackupServiceTests : IAsyncLifetime
     private SecretStoreOptions _secrets = null!;
     private DurableStorageState _state = null!;
     private Guid _secretId;
+    private readonly Guid _userId = Guid.CreateVersion7();
 
     public async Task InitializeAsync()
     {
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new UserRecord
+            {
+                Id = _userId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backup-fixture",
+                BackendPrincipalId = "listener",
+                DisplayName = "Listener",
+                Enabled = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                LastSeenAt = DateTimeOffset.UtcNow
+            });
+            db.RuntimeSettings.Add(new RuntimeSettingRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _userId,
+                Key = "Playback:ShowExternalLabel",
+                ValueType = RuntimeSettingValueType.Boolean,
+                ValueJson = "false",
+                Source = "personal",
+                Revision = 1,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
         _options = _database.StorageOptions;
         _secrets = new SecretStoreOptions { KeyRingPath = Path.Combine(_options.DataDirectory, "keyring.json") };
         var provider = new FileSecretKeyRingProvider(_secrets);
         await provider.CreateIfMissingAsync(false);
         var store = new EncryptedSecretStore(_factory, provider, _secrets, new SystemPlatformClock());
-        _secretId = (await store.StoreAsync(null, "backup.fixture", Encoding.UTF8.GetBytes("backup-fixture-secret"))).Id;
+        _secretId = (await store.StoreAsync(_userId, "backup.fixture", Encoding.UTF8.GetBytes("backup-fixture-secret"))).Id;
         _state = new DurableStorageState(_options);
         _state.Set(DurableStorageReadiness.Ready);
     }
@@ -66,8 +96,15 @@ public sealed partial class DurableBackupServiceTests : IAsyncLifetime
         var restoredFactory = new TestDbContextFactory(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite(connection.ToString()).Options);
         var restoredOptions = new SecretStoreOptions { KeyRingPath = keyPath };
         var restoredStore = new EncryptedSecretStore(restoredFactory, new FileSecretKeyRingProvider(restoredOptions), restoredOptions, new SystemPlatformClock());
-        using var lease = await restoredStore.OpenAsync(_secretId, new SecretAccessContext(null, AllowGlobal: true));
+        using var lease = await restoredStore.OpenAsync(_secretId, new SecretAccessContext(_userId, "backup.fixture"));
         Assert.Equal("backup-fixture-secret", lease.ReadUtf8());
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => restoredStore.OpenAsync(_secretId,
+            new SecretAccessContext(Guid.CreateVersion7(), "backup.fixture")));
+        await using var restoredDb = await restoredFactory.CreateDbContextAsync();
+        Assert.Equal("listener", (await restoredDb.Users.SingleAsync()).BackendPrincipalId);
+        var preference = await restoredDb.RuntimeSettings.SingleAsync();
+        Assert.Equal(_userId, preference.OwnerUserId);
+        Assert.Equal("false", preference.ValueJson);
     }
 
     [Theory]

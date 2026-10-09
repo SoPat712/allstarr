@@ -140,7 +140,7 @@ public sealed class ProtocolProviderGateway(
         var effectivePolicy = effectivePolicies == null
             ? null
             : await effectivePolicies.ResolveForUserAsync(
-                actor.TenantId, userId, cancellationToken);
+                userId, cancellationToken);
         var configuredOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming);
         if (effectivePolicy != null)
             configuredOrder = effectivePolicy.ApplyProviderAvailability(
@@ -148,7 +148,6 @@ public sealed class ProtocolProviderGateway(
         return await ResolvePlayableProviderOrderAsync(
             actor,
             configuredOrder,
-            libraryScopeId: null,
             correlationId: "provider-playable-order",
             deadline: DateTimeOffset.UtcNow.AddMinutes(1),
             cancellationToken: cancellationToken);
@@ -157,15 +156,15 @@ public sealed class ProtocolProviderGateway(
     private Task<EffectiveProviderPolicySnapshot?> ResolveEffectivePolicyAsync(ProtocolExecutionContext protocol)
     {
         if (protocol.Actor is not { } actor) return Task.FromResult<EffectiveProviderPolicySnapshot?>(null);
-        if (protocol.Policy is { } policy && policy.TenantId == actor.TenantId && policy.UserId == actor.EffectiveUserId)
+        if (protocol.Policy is { } policy && policy.UserId == actor.EffectiveUserId)
             return Task.FromResult<EffectiveProviderPolicySnapshot?>(policy);
         return ResolveAsync();
 
         async Task<EffectiveProviderPolicySnapshot?> ResolveAsync() => effectivePolicies == null
             ? null
             : actor.EffectiveUserId is { } userId
-                ? await effectivePolicies.ResolveForUserAsync(actor.TenantId, userId, protocol.CancellationToken)
-                : await effectivePolicies.ResolveAsync(actor.TenantId, protocol.CancellationToken);
+                ? await effectivePolicies.ResolveForUserAsync(userId, protocol.CancellationToken)
+                : await effectivePolicies.ResolveAsync(protocol.CancellationToken);
     }
 
     public async Task<SearchResult> SearchAsync(
@@ -457,7 +456,6 @@ public sealed class ProtocolProviderGateway(
         await ResolvePlayableProviderOrderAsync(
             actor,
             configuredProviderOrder,
-            protocol.LibraryScopeId,
             protocol.CorrelationId,
             protocol.Deadline,
             protocol.CancellationToken);
@@ -465,7 +463,6 @@ public sealed class ProtocolProviderGateway(
     private async Task<IReadOnlyList<string>> ResolvePlayableProviderOrderAsync(
         ProviderActorContext actor,
         IReadOnlyList<string> configuredProviderOrder,
-        string? libraryScopeId,
         string correlationId,
         DateTimeOffset deadline,
         CancellationToken cancellationToken)
@@ -479,7 +476,6 @@ public sealed class ProtocolProviderGateway(
             sourceTrackId: null,
             correlationId: correlationId,
             deadline: deadline,
-            libraryScopeId: libraryScopeId,
             cancellationToken: cancellationToken));
         var allowed = streaming.Candidates.Select(item => item.Provider.Id)
             .Select(NormalizeProvider)
@@ -488,7 +484,7 @@ public sealed class ProtocolProviderGateway(
             .Select(item => NormalizeProvider(item.Id))
             .ToHashSet(StringComparer.Ordinal);
         var compatibility = (await ResolveAllowedCompatibilityProvidersAsync(
-                actor, ProviderCapabilityKind.Streaming, libraryScopeId, cancellationToken))
+                actor, ProviderCapabilityKind.Streaming, cancellationToken))
             .Where(providerId => !typed.Contains(providerId));
         allowed.UnionWith(compatibility);
         return configuredProviderOrder.Where(allowed.Contains).ToArray();
@@ -823,7 +819,7 @@ public sealed class ProtocolProviderGateway(
         opening.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
         protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
             protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
-            protocol.Deadline, opening.Token, protocol.Client, protocol.LibraryScopeId)
+            protocol.Deadline, opening.Token, protocol.Client)
         { Policy = protocol.Policy };
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
@@ -833,9 +829,7 @@ public sealed class ProtocolProviderGateway(
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
         }
         var exactRouteMissKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
-            actor.TenantId,
             actor.EffectiveUserId,
-            protocol.LibraryScopeId,
             providerId,
             externalId,
             quality.ToString());
@@ -924,10 +918,8 @@ public sealed class ProtocolProviderGateway(
                 fallbackReason ?? "provider-priority",
                 candidate.Context.Account?.ResolutionReason ?? "account-free");
             var cacheScope = new DownloadedSongMappingScope(
-                actor.TenantId,
-                candidate.Context.Account?.AccountId,
-                protocol.LibraryScopeId,
-                quality);
+                    candidate.Context.Account?.AccountId,
+                    quality);
             var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
                 servingTrack, cacheScope, protocol.CancellationToken);
             if (cached != null)
@@ -940,7 +932,7 @@ public sealed class ProtocolProviderGateway(
             async Task<ProviderOutcome<ProviderStreamLease>> ResolveLeaseAsync() =>
                 await candidate.Implementation.GetStreamLeaseAsync(
                     new ProviderExecutionContext(candidate.Context.Actor, candidate.Context.ProviderId,
-                        candidate.Context.Account, candidate.Context.Library, candidate.Context.Policy,
+                        candidate.Context.Account, candidate.Context.Policy,
                         candidate.Context.OperationId, candidate.Context.CorrelationId, protocol.Deadline,
                         protocol.CancellationToken, candidate.Context.IdempotencyKey),
                     leaseRequest);
@@ -1147,13 +1139,11 @@ public sealed class ProtocolProviderGateway(
         await ResolveAllowedCompatibilityProvidersAsync(
             actor,
             capabilityKind,
-            protocol.LibraryScopeId,
             protocol.CancellationToken);
 
     private async Task<HashSet<string>> ResolveAllowedCompatibilityProvidersAsync(
         ProviderActorContext actor,
         ProviderCapabilityKind capabilityKind,
-        string? libraryScopeId,
         CancellationToken cancellationToken)
     {
         var allowed = new HashSet<string>(StringComparer.Ordinal);
@@ -1178,8 +1168,7 @@ public sealed class ProtocolProviderGateway(
                         actor,
                         descriptor.Id,
                         capabilityKind,
-                        RequestedAccountId: null,
-                        libraryScopeId),
+                        RequestedAccountId: null),
                     cancellationToken);
             }
             catch (UnauthorizedAccessException)
@@ -1290,7 +1279,6 @@ public sealed class ProtocolProviderGateway(
         idempotencyKey,
         protocol.CorrelationId,
         protocol.Deadline,
-        protocol.LibraryScopeId,
         protocol.CancellationToken);
 
     private static ProviderRouteRequest Request(
@@ -1305,7 +1293,6 @@ public sealed class ProtocolProviderGateway(
         string? idempotencyKey = null,
         string correlationId = "provider-route",
         DateTimeOffset deadline = default,
-        string? libraryScopeId = null,
         CancellationToken cancellationToken = default) => new(
         capability,
         actor,
@@ -1332,9 +1319,6 @@ public sealed class ProtocolProviderGateway(
                 ProviderAudioQuality.Lossless,
                 ProviderAudioQuality.HighResolution
             ])),
-        library: libraryScopeId == null
-            ? null
-            : new ProviderLibraryContext(actor.TenantId, libraryScopeId),
         sourceTrackId: sourceTrackId,
         idempotencyKey: idempotencyKey,
         cancellationToken: cancellationToken);

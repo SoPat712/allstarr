@@ -266,12 +266,11 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
     private async Task<(ProviderExecutionContext Context, ProviderDownloadWorkspace Workspace, Guid Job)>
         SetupAsync(ProviderDownloadArtifactResolver resolver, string providerId)
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var account = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
         var context = new ProviderExecutionContext(
-            new ProviderActorContext(tenant, ProviderActorKind.User, user,
+            new ProviderActorContext(ProviderActorKind.User, user,
                 new ProviderBackendPrincipal("jellyfin", "primary", "user")),
             providerId,
             new ProviderAccountContext(
@@ -279,10 +278,8 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
                 providerId,
                 ProviderAccountScope.Personal,
                 revision: 1,
-                tenantId: tenant,
                 ownerUserId: user,
                 secretReferenceId: Guid.CreateVersion7()),
-            library: null,
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(
                     ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, allowTranscode: false),
@@ -297,7 +294,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
             CancellationToken.None,
             "direct-download-idempotency");
         var workspace = await resolver.CreateWorkspaceAsync(new(
-            tenant, user, job, providerId, account, "direct-download-idempotency"));
+            user, job, providerId, account, "direct-download-idempotency"));
         return (context, workspace, job);
     }
 
@@ -557,12 +554,11 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         }
 
         public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(
-            Guid tenantId,
             Guid jobId,
             string provider,
             CancellationToken token) =>
             Task.FromResult(Artifacts.SingleOrDefault(item =>
-                item.TenantId == tenantId && item.DurableJobId == jobId && item.ProviderId == provider));
+                item.DurableJobId == jobId && item.ProviderId == provider));
 
         public Task MarkPlacedAsync(Guid id, Guid managedId, CancellationToken token) => Task.CompletedTask;
     }

@@ -19,7 +19,6 @@ namespace allstarr.Tests;
 public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
-    private readonly Guid tenant = Guid.CreateVersion7();
     private readonly Guid user = Guid.CreateVersion7();
     private Factory factory = null!;
     private DurableJobQueue jobs = null!;
@@ -30,17 +29,14 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     {
         database = await SqliteTestDatabase.CreateAsync();
         factory = new(database.Options); await using var db = await factory.CreateDbContextAsync();
-        var now = DateTimeOffset.UtcNow; db.Tenants.Add(new() { Id = tenant, Slug = "playback", Name = "Playback", CreatedAt = now });
-        db.Users.Add(new() { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now }); await db.SaveChangesAsync();
-        var identity = Guid.CreateVersion7(); db.BackendIdentities.Add(new() { Id = identity, TenantId = tenant, UserId = user, BackendType = "jellyfin", BackendInstanceId = "backend", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now });
+        var now = DateTimeOffset.UtcNow;
+        db.Users.Add(User(user, "jellyfin", "backend", "principal", "User", now));
         db.IntelligencePolicies.Add(new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             OwnerUserId = user,
             Protocol = "jellyfin",
             BackendInstanceId = "backend",
-            LibraryScopeId = "music",
             Enabled = true,
             RetentionDays = 30,
             CreatedAt = now,
@@ -49,10 +45,8 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         db.LibraryTracks.Add(new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             OwnerUserId = user,
-            BackendIdentityId = identity,
-            LibraryScopeId = "music",
+            BackendLibraryId = "music",
             Protocol = "jellyfin",
             BackendInstanceId = "backend",
             BackendItemId = "track-1",
@@ -77,7 +71,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.False(await pipeline.RecordAsync(request));
         Assert.False(await new PlaybackSignalPipeline(jobs).RecordAsync(request));
         await using var db = await factory.CreateDbContextAsync(); var job = Assert.Single(await db.Jobs.Where(x => x.Type == PlaybackSignalPipeline.JobType).ToListAsync());
-        Assert.Equal(tenant, job.TenantId); Assert.Equal(user, job.OwnerUserId); Assert.Equal("music", job.LibraryScopeId);
+        Assert.Equal(user, job.OwnerUserId);
     }
 
     [Fact]
@@ -90,9 +84,10 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             policy.AllowedSignalTypesJson = "[\"play\"]";
             await db.SaveChangesAsync();
         }
-        var scope = new IntelligenceScope(tenant, user, "jellyfin", "backend", "music");
+        var scope = new IntelligenceScope(user, "jellyfin", "backend");
 
-        Assert.True(await new RecommendationSignalWriter(factory, clock)
+        Assert.True(await new RecommendationSignalWriter(
+                factory, clock, new TestBackendLibraryAccess(factory, "music"))
             .WriteAsync(scope, "play", "track-1", 1, clock.UtcNow));
 
         await using var verify = await factory.CreateDbContextAsync();
@@ -106,25 +101,14 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         {
             var jellyfinPolicy = await db.IntelligencePolicies.SingleAsync();
             jellyfinPolicy.AllowedSignalTypesJson = "[\"complete\",\"play\"]";
-            db.BackendIdentities.Add(new()
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenant,
-                UserId = user,
-                BackendType = "subsonic",
-                BackendInstanceId = "backend",
-                PrincipalId = "subsonic-principal",
-                CreatedAt = clock.UtcNow,
-                LastSeenAt = clock.UtcNow
-            });
+            var subsonicUser = Guid.CreateVersion7();
+            db.Users.Add(User(subsonicUser, "subsonic", "backend", "subsonic-principal", "Subsonic user", clock.UtcNow));
             db.IntelligencePolicies.Add(new()
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenant,
-                OwnerUserId = user,
+                OwnerUserId = subsonicUser,
                 Protocol = "subsonic",
                 BackendInstanceId = "backend",
-                LibraryScopeId = "music",
                 Enabled = true,
                 RetentionDays = 30,
                 AllowedSignalTypesJson = "[\"complete\",\"play\"]",
@@ -146,9 +130,12 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             new(jellyfin, PlaybackTransition.Stop, "ext-deezer-song-synthetic", "smoke-device", "jellyfin-external",
                 TimeSpan.FromSeconds(60).Ticks, clock.UtcNow.AddSeconds(70))
         };
+        await using var subsonicDb = await factory.CreateDbContextAsync();
+        var subsonicUserId = await subsonicDb.Users.Where(item => item.BackendType == "subsonic")
+            .Select(item => item.Id).SingleAsync();
         var subsonic = new ProtocolExecutionContext(ProtocolKind.Subsonic, "backend", "subsonic-principal",
-            new AllstarrPrincipal(tenant, user, "subsonic", "backend", "subsonic-principal", "User", false),
-            "smoke-subsonic", clock.UtcNow.AddMinutes(1), default, libraryScopeId: "music");
+            new AllstarrPrincipal(subsonicUserId, "subsonic", "backend", "subsonic-principal", "Subsonic user", false),
+            "smoke-subsonic", clock.UtcNow.AddMinutes(1), default);
         var parameters = new SubsonicRequestParameters("GET", null, null,
         [
             new("id", "track-1", SubsonicParameterSource.Query),
@@ -170,7 +157,8 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         [
             new BackendMetadataResolver(new("Synthetic external", "Allstarr qualification", "Smoke", null, 120))
         ]);
-        var handler = new PlaybackSignalJobHandler(new RecommendationSignalWriter(factory, clock),
+        var handler = new PlaybackSignalJobHandler(new RecommendationSignalWriter(
+                factory, clock, new TestBackendLibraryAccess(factory, "music")),
             new ScopedPlaybackScrobbleDelivery(factory, [lastFm, listenBrainz],
                 new EfPlaybackDeliveryCheckpointStore(factory), trackResolver),
             new Lyrics(), factory, trackResolver);
@@ -202,83 +190,6 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var correlations = await verify.AuditEvents.AsNoTracking().Where(item => item.Category == "scrobble")
             .Select(item => item.CorrelationId).Distinct().Order().ToListAsync();
         Assert.Equal(checkpoints.Select(item => item.SignalKey).Distinct().Order(), correlations);
-    }
-
-    [Fact]
-    public async Task MissingProtocolLibraryScope_ResolvesTheUniqueIndexedTrackScope()
-    {
-        var execution = Signal(PlaybackTransition.Start, "track-1", 0).ExecutionContext;
-        var unscoped = new ProtocolExecutionContext(
-            execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
-            execution.Principal, execution.CorrelationId, execution.Deadline, default);
-        var pipeline = new PlaybackSignalPipeline(jobs, new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "music", "other")));
-
-        Assert.True(await pipeline.RecordAsync(new(
-            unscoped, PlaybackTransition.Start, "track-1", "device", "session", 0, clock.UtcNow)));
-
-        await using var db = await factory.CreateDbContextAsync();
-        Assert.Equal("music", Assert.Single(await db.Jobs.ToListAsync()).LibraryScopeId);
-    }
-
-    [Fact]
-    public async Task MissingProtocolLibraryScope_ChoosesAccessibleLibraryDeterministically()
-    {
-        await using (var db = await factory.CreateDbContextAsync())
-        {
-            var original = await db.LibraryTracks.AsNoTracking().SingleAsync();
-            db.LibraryTracks.Add(new()
-            {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenant,
-                OwnerUserId = user,
-                BackendIdentityId = original.BackendIdentityId,
-                LibraryScopeId = "other",
-                Protocol = "jellyfin",
-                BackendInstanceId = "backend",
-                BackendItemId = "track-1",
-                FilePath = "/media/other.flac",
-                Title = "Track",
-                Artist = "Artist",
-                DurationMilliseconds = 120000,
-                ProviderIdsJson = "{}",
-                IndexedAt = clock.UtcNow,
-                SourceModifiedAt = clock.UtcNow,
-                UpdatedAt = clock.UtcNow
-            });
-            await db.SaveChangesAsync();
-        }
-        var execution = Signal(PlaybackTransition.Start, "track-1", 0).ExecutionContext;
-        var unscoped = new ProtocolExecutionContext(
-            execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
-            execution.Principal, execution.CorrelationId, execution.Deadline, default);
-
-        var resolved = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "music", "other"))
-            .ResolveAsync(unscoped, "track-1");
-        Assert.Equal("music", resolved.LibraryScopeId);
-        var restricted = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "other"))
-            .ResolveAsync(unscoped.WithLibraryScope("music"), "track-1");
-        Assert.Equal("other", restricted.LibraryScopeId);
-    }
-
-    [Fact]
-    public async Task EmptyDurableIndex_UsesOnlyViewerAccessibleLibraryScope()
-    {
-        await using (var db = await factory.CreateDbContextAsync())
-        {
-            db.LibraryTracks.RemoveRange(db.LibraryTracks);
-            await db.SaveChangesAsync();
-        }
-        var execution = Signal(PlaybackTransition.Start, "backend-track", 0).ExecutionContext;
-        var unscoped = new ProtocolExecutionContext(
-            execution.Protocol, execution.BackendInstanceId, execution.VerifiedBackendPrincipalId,
-            execution.Principal, execution.CorrelationId, execution.Deadline, default);
-        var resolved = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory, "visible-music"))
-            .ResolveAsync(unscoped, "backend-track");
-
-        Assert.Equal("visible-music", resolved.LibraryScopeId);
-        var external = await new ProtocolLibraryScopeResolver(factory, new TestBackendLibraryAccess(factory))
-            .ResolveAsync(unscoped, "ext-deezer-song-track");
-        Assert.Equal("music", external.LibraryScopeId);
     }
 
     [Theory]
@@ -314,31 +225,10 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         Guid trackId;
         await using (var db = await factory.CreateDbContextAsync())
         {
-            var identity = Guid.CreateVersion7();
-            db.Users.Add(new()
-            {
-                Id = indexOwner,
-                TenantId = tenant,
-                DisplayName = "Index owner",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = clock.UtcNow,
-                UpdatedAt = clock.UtcNow
-            });
-            db.BackendIdentities.Add(new()
-            {
-                Id = identity,
-                TenantId = tenant,
-                UserId = indexOwner,
-                BackendType = "jellyfin",
-                BackendInstanceId = "backend",
-                PrincipalId = "index-owner",
-                CreatedAt = clock.UtcNow,
-                LastSeenAt = clock.UtcNow
-            });
+            db.Users.Add(User(indexOwner, "jellyfin", "backend", "index-owner", "Index owner", clock.UtcNow));
             var track = await db.LibraryTracks.SingleAsync();
             track.OwnerUserId = indexOwner;
-            track.BackendIdentityId = identity;
-            track.LibraryScopeId = "shared-library";
+            track.BackendLibraryId = "shared-library";
             track.Title = "Shared indexed title";
             trackId = track.Id;
             await db.SaveChangesAsync();
@@ -355,7 +245,6 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var resolved = await new PlaybackTrackResolver(factory, access).ResolveAsync(payload);
 
         Assert.NotEqual(indexOwner, payload.Scope.OwnerUserId);
-        Assert.Equal("music", payload.Scope.LibraryScopeId);
         if (permission == "allowed")
         {
             Assert.NotNull(resolved);
@@ -366,17 +255,17 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData("tenant")]
+    [InlineData("owner")]
     [InlineData("backend")]
     [InlineData("protocol")]
-    public async Task PlaybackTrackMetadataRetainsExactPayloadBackendAndTenantBoundaries(string mismatch)
+    public async Task PlaybackTrackMetadataRetainsExactOwnerAndBackendBoundaries(string mismatch)
     {
         var payload = Payload();
         payload = payload with
         {
             Scope = mismatch switch
             {
-                "tenant" => payload.Scope with { TenantId = Guid.CreateVersion7() },
+                "owner" => payload.Scope with { OwnerUserId = Guid.CreateVersion7() },
                 "backend" => payload.Scope with { BackendInstanceId = "other-backend" },
                 _ => payload.Scope with { Protocol = "subsonic" }
             }
@@ -393,7 +282,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         {
             var copy = await db.LibraryTracks.AsNoTracking().SingleAsync();
             copy.Id = preferredId = Guid.CreateVersion7();
-            copy.LibraryScopeId = "a-accessible";
+            copy.BackendLibraryId = "a-accessible";
             copy.Title = "Preferred accessible copy";
             db.LibraryTracks.Add(copy);
             await db.SaveChangesAsync();
@@ -435,17 +324,40 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task HandlerRejectsCrossTenantClaimBeforeAnySideEffect()
+    public async Task HandlerRejectsCrossOwnerClaimBeforeAnySideEffect()
     {
         var writer = new Writer(); var scrobbles = new Scrobbles(); var lyrics = new Lyrics();
         var handler = new PlaybackSignalJobHandler(writer, scrobbles, lyrics, factory);
         var payload = Signal(PlaybackTransition.Start, "track-1", 0);
         await new PlaybackSignalPipeline(jobs).RecordAsync(payload);
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]); Assert.NotNull(claim);
-        var badPayload = new PlaybackSignalPayload(new(Guid.CreateVersion7(), user, "jellyfin", "backend", "music"), PlaybackTransition.Start, "track-1", "device", "session", 0, clock.UtcNow, new string('a', 64));
+        var badPayload = new PlaybackSignalPayload(
+            new(Guid.CreateVersion7(), "jellyfin", "backend"), PlaybackTransition.Start,
+            "track-1", "device", "session", 0, clock.UtcNow, new string('a', 64));
         var badClaim = claim! with { Payload = System.Text.Json.JsonSerializer.SerializeToElement(badPayload) };
         var result = await handler.ExecuteAsync(new(badClaim, EmptyServices.Instance), default);
         Assert.Equal(DurableJobCompletionKind.Failed, result.Kind); Assert.Equal(0, writer.Calls + scrobbles.Calls + lyrics.Calls);
+    }
+
+    [Fact]
+    public async Task HandlerRejectsDisabledOwnerBeforeAnySideEffect()
+    {
+        var writer = new Writer(); var scrobbles = new Scrobbles(); var lyrics = new Lyrics();
+        await new PlaybackSignalPipeline(jobs).RecordAsync(
+            Signal(PlaybackTransition.Start, "track-1", 0));
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        Assert.NotNull(claim);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(item => item.Id == user)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+
+        var result = await new PlaybackSignalJobHandler(writer, scrobbles, lyrics, factory)
+            .ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Failed, result.Kind);
+        Assert.Equal(0, writer.Calls + scrobbles.Calls + lyrics.Calls);
     }
 
     [Fact]
@@ -713,7 +625,8 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         await delivery.DeliverAsync(progress with { Transition = PlaybackTransition.Stop }, default);
 
         Assert.Equal(1, target.Successes);
-        Assert.True(activity.WasDelivered(progress.Scope.TenantId, progress.Scope.OwnerUserId, progress.ItemId, progress.DeviceId!));
+        Assert.True(activity.WasDelivered(
+            progress.Scope.OwnerUserId, progress.ItemId, progress.DeviceId!));
     }
 
     [Fact]
@@ -811,7 +724,9 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var resolver = new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music"),
             [new BackendMetadataResolver(new("External title", "External artist", "External album", null, 180))]);
         var handler = new PlaybackSignalJobHandler(
-            new RecommendationSignalWriter(factory, clock), new Scrobbles(), new Lyrics(), factory, resolver);
+            new RecommendationSignalWriter(
+                factory, clock, new TestBackendLibraryAccess(factory, "music")),
+            new Scrobbles(), new Lyrics(), factory, resolver);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded,
             (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
@@ -840,7 +755,9 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
         var scrobbles = new Scrobbles();
         var handler = new PlaybackSignalJobHandler(
-            new RecommendationSignalWriter(factory, clock), scrobbles, new Lyrics(), factory, new RejectResolver());
+            new RecommendationSignalWriter(
+                factory, clock, new TestBackendLibraryAccess(factory, "music")),
+            scrobbles, new Lyrics(), factory, new RejectResolver());
 
         Assert.Equal(DurableJobCompletionKind.Succeeded,
             (await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default)).Kind);
@@ -863,11 +780,9 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
             db.ListeningEvents.Add(new ListeningEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenant,
                 OwnerUserId = user,
                 Protocol = "jellyfin",
                 BackendInstanceId = "backend",
-                LibraryScopeId = "music",
                 OccurrenceKey = occurrenceKey,
                 State = ListeningEventState.Completed,
                 StartedAt = startedAt,
@@ -954,7 +869,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
         var execution = start.ExecutionContext;
         execution = new ProtocolExecutionContext(execution.Protocol, execution.BackendInstanceId,
             execution.VerifiedBackendPrincipalId, execution.Principal, execution.CorrelationId, execution.Deadline,
-            default, new ProtocolClientDescriptor("client", "device"), "music");
+            default, new ProtocolClientDescriptor("client", "device"));
         using var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
         var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/audio"),
             DateTimeOffset.UtcNow.AddMinutes(1), true, true, new ProviderMediaFormat("audio/flac", "flac", "flac"),
@@ -975,11 +890,30 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     private PlaybackSignalRequest Signal(PlaybackTransition transition, string item, long ticks) => new(
-        new(ProtocolKind.Jellyfin, "backend", "principal", new AllstarrPrincipal(tenant, user, "jellyfin", "backend", "principal", "User", false),
-        "correlation", clock.UtcNow.AddMinutes(1), default, libraryScopeId: "music"), transition, item, "device", "session", ticks, clock.UtcNow);
-    private PlaybackSignalPayload Payload() => new(new(tenant, user, "jellyfin", "backend", "music"), PlaybackTransition.Stop,
+        new(ProtocolKind.Jellyfin, "backend", "principal", new AllstarrPrincipal(
+            user, "jellyfin", "backend", "principal", "User", false),
+        "correlation", clock.UtcNow.AddMinutes(1), default), transition, item, "device", "session", ticks, clock.UtcNow);
+    private PlaybackSignalPayload Payload() => new(new(user, "jellyfin", "backend"), PlaybackTransition.Stop,
         "track-1", "device", "session", TimeSpan.FromSeconds(100).Ticks, clock.UtcNow, new string('a', 64));
     public async Task DisposeAsync() => await database.DisposeAsync();
+    private static UserRecord User(
+        Guid id,
+        string backendType,
+        string backendInstanceId,
+        string backendPrincipalId,
+        string displayName,
+        DateTimeOffset now) => new()
+        {
+            Id = id,
+            BackendType = backendType,
+            BackendInstanceId = backendInstanceId,
+            BackendPrincipalId = backendPrincipalId,
+            DisplayName = displayName,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
     private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext> { public AllstarrDbContext CreateDbContext() => new(options); public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken token = default) => Task.FromResult(new AllstarrDbContext(options)); }
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow { get; set; } }
     private sealed class Writer : IIdempotentRecommendationSignalWriter { private readonly HashSet<string> keys = []; public int Calls; public string? LastType; public Task<bool> WriteAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, CancellationToken c = default) { Calls++; LastType = t; return Task.FromResult(true); } public Task<bool> WriteIdempotentAsync(IntelligenceScope s, string t, string k, double v, DateTimeOffset o, string key, Guid job, CancellationToken c = default) { if (keys.Add(key)) { Calls++; LastType = t; } return Task.FromResult(true); } }
@@ -1018,9 +952,9 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     private sealed class Checkpoints : IPlaybackDeliveryCheckpointStore
     {
         private readonly HashSet<string> values = [];
-        public Task<bool> IsCompletedAsync(Guid t, Guid u, string k, string target, CancellationToken c) =>
+        public Task<bool> IsCompletedAsync(Guid u, string k, string target, CancellationToken c) =>
             Task.FromResult(values.Contains(k + target));
-        public Task RecordAsync(Guid t, Guid u, string occurrenceKey, string signalKey,
+        public Task RecordAsync(Guid u, string occurrenceKey, string signalKey,
             PlaybackScrobbleDeliveryKind kind, string target, ScopedPlaybackScrobbleResult result,
             CancellationToken c)
         {
@@ -1044,7 +978,7 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
 public sealed class PlaybackOccurrenceKeyTests
 {
     private readonly IntelligenceScope scope = new(Guid.Parse("11111111-1111-1111-1111-111111111111"),
-        Guid.Parse("22222222-2222-2222-2222-222222222222"), "jellyfin", "backend", "music");
+        "jellyfin", "backend");
 
     [Fact]
     public void SessionVariantsShareOneOccurrenceKey()

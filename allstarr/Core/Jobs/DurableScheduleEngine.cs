@@ -132,7 +132,7 @@ public sealed class DurableScheduleEngine
             if (jobType == PlaylistSyncJobType)
             {
                 link = await context.PlaylistLinks.SingleOrDefaultAsync(
-                    item => item.TenantId == schedule.TenantId && item.ScheduleId == schedule.Id,
+                    item => item.OwnerUserId == schedule.OwnerUserId && item.ScheduleId == schedule.Id,
                     cancellationToken);
                 if (link == null)
                     throw new InvalidOperationException("Enabled playlist schedules must reference exactly one scoped playlist link.");
@@ -148,7 +148,7 @@ public sealed class DurableScheduleEngine
             if (shouldEnqueue && schedule.OverlapPolicy == ScheduleOverlapPolicy.Skip)
             {
                 skippedOverlap = await context.Jobs.AnyAsync(item =>
-                    item.TenantId == schedule.TenantId && item.OwnerUserId == schedule.OwnerUserId &&
+                    item.OwnerUserId == schedule.OwnerUserId &&
                     (item.Type == jobType && item.IdempotencyKey.StartsWith(idempotencyPrefix) ||
                      jobType == RecommendationJobType && item.Type == "smart-playlist.materialize" &&
                      item.IdempotencyKey.StartsWith($"schedule:{schedule.Id:N}:materialize:")) &&
@@ -173,10 +173,8 @@ public sealed class DurableScheduleEngine
                             schedule.Revision,
                             retryReference,
                             cancellationReference),
-                        schedule.TenantId,
                         schedule.OwnerUserId,
                         ProviderAccountId: link.ProviderAccountId,
-                        LibraryScopeId: schedule.LibraryScopeId,
                         Capability: "playlist",
                         CorrelationId: $"schedule-{schedule.Id:N}-{dueAt.UtcTicks}");
                     await _queue.EnqueueInExistingTransactionAsync(context, request, cancellationToken);
@@ -220,17 +218,14 @@ public sealed class DurableScheduleEngine
         var idempotencyKey = $"{idempotencyPrefix}{dueAt.UtcTicks}";
         var job = await _queue.EnqueueInExistingTransactionAsync(context,
             new DurableJobEnqueueRequest<RecommendationRunPayload>(RecommendationJobType, idempotencyKey,
-                new(runId), schedule.TenantId, schedule.OwnerUserId,
-                LibraryScopeId: schedule.LibraryScopeId,
+                new(runId), schedule.OwnerUserId,
                 CorrelationId: $"schedule-{schedule.Id:N}-{dueAt.UtcTicks}"), cancellationToken);
         context.RecommendationRuns.Add(new()
         {
             Id = runId,
-            TenantId = schedule.TenantId,
             OwnerUserId = schedule.OwnerUserId,
             Protocol = policy.Protocol,
             BackendInstanceId = policy.BackendInstanceId,
-            LibraryScopeId = schedule.LibraryScopeId,
             JobId = job.JobId,
             IdempotencyKey = idempotencyKey,
             PolicySnapshotJson = JsonSerializer.Serialize(new RecommendationPolicySnapshot(
@@ -258,11 +253,11 @@ public sealed class DurableScheduleEngine
             template.GeneratedSetName.Length > 200)
             throw new InvalidOperationException("The recommendation schedule template is invalid.");
         var policy = await context.IntelligencePolicies.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == template.IntelligencePolicyId && item.TenantId == schedule.TenantId &&
-            item.OwnerUserId == schedule.OwnerUserId && item.LibraryScopeId == schedule.LibraryScopeId,
+            item.Id == template.IntelligencePolicyId &&
+            item.OwnerUserId == schedule.OwnerUserId,
             cancellationToken);
-        if (policy == null || !await context.BackendIdentities.AsNoTracking().AnyAsync(item =>
-                item.TenantId == schedule.TenantId && item.UserId == schedule.OwnerUserId &&
+        if (policy == null || !await context.Users.AsNoTracking().AnyAsync(item =>
+                item.Enabled && item.Id == schedule.OwnerUserId &&
                 item.BackendType == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId,
                 cancellationToken))
             throw new InvalidOperationException("The recommendation schedule backend identity is unavailable.");

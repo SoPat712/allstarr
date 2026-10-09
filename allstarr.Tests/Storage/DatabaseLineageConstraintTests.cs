@@ -11,8 +11,6 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
-    private Guid _tenantA;
-    private Guid _tenantB;
     private Guid _userA;
     private Guid _userB;
     private Guid _jobA;
@@ -27,8 +25,6 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         _factory = new TestDbContextFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
 
-        _tenantA = Guid.CreateVersion7();
-        _tenantB = Guid.CreateVersion7();
         _userA = Guid.CreateVersion7();
         _userB = Guid.CreateVersion7();
         _jobA = Guid.CreateVersion7();
@@ -38,29 +34,25 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         _accountB = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
 
-        db.Tenants.AddRange(
-            new TenantRecord { Id = _tenantA, Slug = "lineage-a", Name = "Lineage A", CreatedAt = now },
-            new TenantRecord { Id = _tenantB, Slug = "lineage-b", Name = "Lineage B", CreatedAt = now });
         db.Users.AddRange(
-            User(_userA, _tenantA, "User A", now),
-            User(_userB, _tenantB, "User B", now));
+            User(_userA, "User A", now),
+            User(_userB, "User B", now));
         db.ProviderAccounts.Add(new ProviderAccountRecord
         {
             Id = _accountB,
-            TenantId = _tenantB,
             OwnerUserId = _userB,
             ProviderId = "lineage-provider",
-            DisplayName = "Tenant B account",
+            DisplayName = "Listener B account",
             Enabled = true,
             CreatedAt = now,
             UpdatedAt = now
         });
         db.Jobs.AddRange(
-            Job(_jobA, _tenantA, _userA, "job-a", now),
-            Job(_jobB, _tenantB, _userB, "job-b", now));
+            Job(_jobA, _userA, "job-a", now),
+            Job(_jobB, _userB, "job-b", now));
         db.ManagedFiles.AddRange(
-            File(_fileA, _tenantA, _userA, _jobA, "a", now),
-            File(_fileB, _tenantB, _userB, _jobB, "b", now));
+            File(_fileA, _userA, _jobA, "a", now),
+            File(_fileB, _userB, _jobB, "b", now));
         await db.SaveChangesAsync();
     }
 
@@ -68,23 +60,22 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     public async Task SqliteBaseline_RejectsCrossScopeJobAndArtifactLineage()
     {
         await RejectAsync(db => db.Jobs.Add(Job(
-            Guid.CreateVersion7(), _tenantA, _userB, "cross-owner", DateTimeOffset.UtcNow)));
+            Guid.CreateVersion7(), Guid.CreateVersion7(), "missing-owner", DateTimeOffset.UtcNow)));
 
         await RejectAsync(db =>
         {
-            var job = Job(Guid.CreateVersion7(), _tenantA, _userA, "cross-account", DateTimeOffset.UtcNow);
+            var job = Job(Guid.CreateVersion7(), _userA, "cross-account", DateTimeOffset.UtcNow);
             job.ProviderAccountId = _accountB;
             job.ProviderCapability = "download";
             db.Jobs.Add(job);
         });
 
         await RejectAsync(db => db.ManagedFiles.Add(File(
-            Guid.CreateVersion7(), _tenantB, _userB, _jobA, "cross-job", DateTimeOffset.UtcNow)));
+            Guid.CreateVersion7(), _userB, _jobA, "cross-job", DateTimeOffset.UtcNow)));
 
         await RejectAsync(db => db.FavoriteEvents.Add(new FavoriteEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantB,
             OwnerUserId = _userB,
             Protocol = "subsonic",
             BackendInstanceId = "primary",
@@ -105,7 +96,6 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         {
             Id = Guid.CreateVersion7(),
             WorkspaceId = Guid.NewGuid().ToString("N"),
-            TenantId = _tenantB,
             OwnerUserId = _userB,
             DurableJobId = _jobA,
             ProviderId = "lineage-provider",
@@ -114,9 +104,9 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         }));
 
         await RejectAsync(db => db.MetadataEnrichmentPlans.Add(Plan(
-            _tenantB, _userB, _jobA, _fileB, "1")));
+            _userB, _jobA, _fileB, "1")));
         await RejectAsync(db => db.MetadataEnrichmentPlans.Add(Plan(
-            _tenantB, _userB, _jobB, _fileA, "2")));
+            _userB, _jobB, _fileA, "2")));
     }
 
     [Fact]
@@ -127,16 +117,16 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         await using (var db = await _factory.CreateDbContextAsync())
         {
             var now = DateTimeOffset.UtcNow.UtcTicks;
-            var scope = $"{_tenantA:N}:{_userA:N}";
+            var scope = $"{_userA:N}";
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO managed_file_references
-                    ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
-                VALUES ({first}, {_fileA}, {_tenantA}, {_userA}, {scope}, {"direct:first"}, {now}, NULL, {1})
+                    ("Id", "ManagedFileId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
+                VALUES ({first}, {_fileA}, {_userA}, {scope}, {"direct:first"}, {now}, NULL, {1})
                 """);
             await db.Database.ExecuteSqlInterpolatedAsync($"""
                 INSERT INTO managed_file_references
-                    ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
-                VALUES ({second}, {_fileA}, {_tenantA}, {_userA}, {scope}, {"direct:second"}, {now}, NULL, {1})
+                    ("Id", "ManagedFileId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
+                VALUES ({second}, {_fileA}, {_userA}, {scope}, {"direct:second"}, {now}, NULL, {1})
                 """);
             Assert.Equal(2, await db.ManagedFiles.Where(item => item.Id == _fileA)
                 .Select(item => item.ReferenceCount).SingleAsync());
@@ -172,8 +162,41 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         await using var crossed = await _factory.CreateDbContextAsync();
         await Assert.ThrowsAsync<SqliteException>(() => crossed.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO managed_file_references
-                ("Id", "ManagedFileId", "TenantId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
-            VALUES ({Guid.CreateVersion7()}, {_fileA}, {_tenantB}, {_userB}, {$"{_tenantB:N}:{_userB:N}"}, {"direct:crossed"}, {DateTimeOffset.UtcNow.UtcTicks}, NULL, {1})
+                ("Id", "ManagedFileId", "OwnerUserId", "ScopeKey", "ReferenceKey", "CreatedAt", "ReleasedAt", "Revision")
+            VALUES ({Guid.CreateVersion7()}, {_fileA}, {_userB}, {$"{_userB:N}"}, {"direct:crossed"}, {DateTimeOffset.UtcNow.UtcTicks}, NULL, {1})
+            """));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SqliteBaseline_NullOwnerCannotBypassJobLineage(bool householdJob)
+    {
+        var jobId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.Jobs.Add(Job(jobId, householdJob ? null : _userA, "nullable-owner", now));
+            await db.SaveChangesAsync();
+        }
+        await RejectAsync(db => db.ManagedFiles.Add(File(Guid.CreateVersion7(),
+            householdJob ? _userA : null, jobId, "c", now)));
+        await RejectAsync(db => db.ProviderDownloadWorkspaces.Add(new()
+        {
+            Id = Guid.CreateVersion7(),
+            WorkspaceId = Guid.NewGuid().ToString("N"),
+            OwnerUserId = householdJob ? _userA : null,
+            DurableJobId = jobId,
+            ProviderId = "lineage-provider",
+            IdempotencyKey = "nullable-workspace",
+            CreatedAt = now
+        }));
+        await using var valid = await _factory.CreateDbContextAsync();
+        valid.ManagedFiles.Add(File(Guid.CreateVersion7(), householdJob ? null : _userA, jobId, "d", now));
+        await valid.SaveChangesAsync();
+        Guid? changedOwner = householdJob ? _userA : null;
+        await Assert.ThrowsAsync<SqliteException>(() => valid.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE durable_jobs SET "OwnerUserId"={changedOwner} WHERE "Id"={jobId}
             """));
     }
 
@@ -188,9 +211,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         {
             Id = workspaceId,
             WorkspaceId = workspaceKey,
-            TenantId = _tenantA,
             OwnerUserId = _userA,
-            LibraryScopeId = "music",
             DurableJobId = _jobA,
             ProviderId = "lineage-provider",
             IdempotencyKey = Guid.NewGuid().ToString("N"),
@@ -201,9 +222,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             Id = verifiedArtifactId,
             WorkspaceRecordId = workspaceId,
             WorkspaceId = workspaceKey,
-            TenantId = _tenantA,
             OwnerUserId = _userA,
-            LibraryScopeId = "music",
             DurableJobId = _jobA,
             ProviderId = "lineage-provider",
             ProviderArtifactId = "verified",
@@ -226,9 +245,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             Id = Guid.CreateVersion7(),
             WorkspaceRecordId = workspaceId,
             WorkspaceId = Guid.NewGuid().ToString("N"),
-            TenantId = _tenantA,
             OwnerUserId = _userA,
-            LibraryScopeId = "music",
             DurableJobId = _jobA,
             ProviderId = "lineage-provider",
             ProviderArtifactId = "cross-file",
@@ -251,21 +268,22 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
 
-    private static PlatformUserRecord User(Guid id, Guid tenantId, string name, DateTimeOffset now) => new()
+    private static UserRecord User(Guid id, string name, DateTimeOffset now) => new()
     {
         Id = id,
-        TenantId = tenantId,
         DisplayName = name,
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "subsonic",
+        BackendInstanceId = "primary",
+        BackendPrincipalId = id.ToString("N"),
         CreatedAt = now,
         UpdatedAt = now
     };
 
-    internal static DurableJobRecord Job(Guid id, Guid tenantId, Guid ownerUserId, string key, DateTimeOffset now) => new()
+    internal static DurableJobRecord Job(Guid id, Guid? ownerUserId, string key, DateTimeOffset now) => new()
     {
         Id = id,
-        ScopeKey = $"{tenantId:N}:{ownerUserId:N}",
-        TenantId = tenantId,
+        ScopeKey = $"{ownerUserId:N}",
         OwnerUserId = ownerUserId,
         PolicySnapshotJson = "{}",
         RequestFingerprint = new string('a', 64),
@@ -282,7 +300,7 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
     };
 
     private static ManagedFileOwnershipEntity File(
-        Guid id, Guid tenantId, Guid ownerUserId, Guid jobId, string suffix, DateTimeOffset now) => new()
+        Guid id, Guid? ownerUserId, Guid jobId, string suffix, DateTimeOffset now) => new()
         {
             Id = id,
             RootId = Guid.CreateVersion7(),
@@ -291,20 +309,18 @@ public sealed class DatabaseLineageConstraintTests : IAsyncLifetime
             ContentSha256 = new string(suffix[0], 64),
             Length = 1,
             PlacementMethod = ManagedFilePlacementMethod.Copy,
-            TenantId = tenantId,
             OwnerUserId = ownerUserId,
             SourceJobId = jobId,
-            ScopeKey = $"{tenantId:N}:{ownerUserId:N}",
+            ScopeKey = $"{ownerUserId:N}",
             ReferenceCount = 1,
             IsManaged = true,
             CreatedAt = now
         };
 
     private static MetadataEnrichmentPlanRecord Plan(
-        Guid tenantId, Guid ownerUserId, Guid jobId, Guid fileId, string suffix) => new()
+        Guid ownerUserId, Guid jobId, Guid fileId, string suffix) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             OwnerUserId = ownerUserId,
             LineageJobId = jobId,
             ManagedArtifactId = fileId,

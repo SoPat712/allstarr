@@ -45,15 +45,14 @@ public class DownloadActivityController : ControllerBase
     public async Task<IActionResult> GetNowPlaying(CancellationToken cancellationToken)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession { TenantId: { }, AllstarrUserId: { } } session)
+            value is not AdminAuthSession { AllstarrUserId: { } } session)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
 
         var states = _playbackSources
             .SelectMany(source => source.GetActivePlaybackStates(TimeSpan.FromMinutes(5)))
-            .Where(state => state.TenantId == session.TenantId &&
-                (session.IsAdministrator || state.UserId == session.AllstarrUserId))
+            .Where(state => session.IsAdministrator || state.UserId == session.AllstarrUserId)
             .GroupBy(state => (state.UserId, DeviceId: state.DeviceId.ToUpperInvariant()))
             .Select(group => group.OrderByDescending(state => state.LastActivity).First())
             .OrderByDescending(state => state.LastActivity)
@@ -71,7 +70,7 @@ public class DownloadActivityController : ControllerBase
             var duration = metadata?.DurationSeconds;
             var position = (int)Math.Max(0, state.PositionTicks / TimeSpan.TicksPerSecond);
             deliveryState.TryGetValue(DeliveryKey(state.UserId, itemId), out var delivery);
-            var streamSource = _playbackDeliveries?.StreamFor(state.TenantId, state.UserId, state.DeviceId, itemId);
+            var streamSource = _playbackDeliveries?.StreamFor(state.UserId, state.DeviceId, itemId);
             var externalIdentity = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);
             var threshold = duration is >= 30 ? Math.Min(duration.Value / 2d, 240d) : (double?)null;
             items.Add(new NowPlayingEntry
@@ -114,7 +113,7 @@ public class DownloadActivityController : ControllerBase
                     Message = item.SafeMessage,
                     UpdatedAt = item.UpdatedAt
                 }).ToList() ?? [],
-                Scrobbled = _playbackDeliveries?.WasDelivered(state.TenantId, state.UserId, itemId, state.DeviceId) == true ||
+                Scrobbled = _playbackDeliveries?.WasDelivered(state.UserId, itemId, state.DeviceId) == true ||
                     delivery?.Checkpoints.Any(item => item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
                         item.State is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored) == true
             });
@@ -128,7 +127,7 @@ public class DownloadActivityController : ControllerBase
         IReadOnlyCollection<PlaybackActivityState> states,
         CancellationToken cancellationToken)
     {
-        if (_contextFactory == null || session.TenantId is not { } tenantId) return [];
+        if (_contextFactory == null || session.AllstarrUserId == null) return [];
         var userIds = states.Select(item => item.UserId).OfType<Guid>().Distinct().ToArray();
         if (userIds.Length == 0) return [];
         var trackReferences = states
@@ -138,7 +137,7 @@ public class DownloadActivityController : ControllerBase
         var updatedAfter = DateTimeOffset.UtcNow.AddHours(-8);
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var events = await db.ListeningEvents.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && userIds.Contains(item.OwnerUserId) &&
+            .Where(item => userIds.Contains(item.OwnerUserId) &&
                 trackReferences.Contains(item.TrackReference) && item.UpdatedAt >= updatedAfter)
             .OrderByDescending(item => item.UpdatedAt)
             .ToListAsync(cancellationToken);
@@ -149,7 +148,7 @@ public class DownloadActivityController : ControllerBase
         var checkpoints = occurrenceKeys.Length == 0
             ? []
             : await db.PlaybackDeliveryCheckpoints.AsNoTracking()
-                .Where(item => item.TenantId == tenantId && userIds.Contains(item.OwnerUserId) && item.OccurrenceKey != null &&
+                .Where(item => userIds.Contains(item.OwnerUserId) && item.OccurrenceKey != null &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
                 .OrderByDescending(item => item.Kind)
                 .ThenByDescending(item => item.UpdatedAt)
@@ -188,7 +187,7 @@ public class DownloadActivityController : ControllerBase
             AdminAuthSessionService.HttpContextSessionItemKey, out var value)
             ? value as AdminAuthSession
             : null;
-        if (session is not { TenantId: { }, AllstarrUserId: { } }) return NotFound();
+        if (session is not { AllstarrUserId: { } }) return NotFound();
         if (ExternalPlaybackMetadataResolver.ParseTrackIdentity(normalizedItemId) == null)
         {
             if (session?.AllstarrUserId is not { } viewerId) return NotFound();
@@ -205,7 +204,6 @@ public class DownloadActivityController : ControllerBase
         }
         var asset = await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                session?.TenantId,
                 session?.AllstarrUserId,
                 null,
                 ResolvePlaybackProvider(normalizedItemId),

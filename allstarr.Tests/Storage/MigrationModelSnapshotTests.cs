@@ -14,6 +14,6 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal("20261008210212_SqliteBaseline", Assert.Single(context.Database.GetMigrations()));
+        Assert.Equal("20261008235223_UsersBaseline", Assert.Single(context.Database.GetMigrations()));
     }
 }

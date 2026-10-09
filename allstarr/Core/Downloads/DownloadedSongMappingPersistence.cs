@@ -11,9 +11,7 @@ public sealed class DownloadedSongMappingEntity
 {
     public Guid Id { get; set; }
     public string ScopeKey { get; set; } = DownloadedSongMappingScope.LegacyKey;
-    public Guid? TenantId { get; set; }
     public Guid? ProviderAccountId { get; set; }
-    public string? LibraryScopeId { get; set; }
     public ProviderAudioQuality AudioQuality { get; set; }
     public string ProviderId { get; set; } = string.Empty;
     public string ExternalId { get; set; } = string.Empty;
@@ -26,17 +24,15 @@ public sealed class DownloadedSongMappingEntity
 }
 
 public sealed record DownloadedSongMappingScope(
-    Guid TenantId,
     Guid? ProviderAccountId,
-    string? LibraryScopeId,
     ProviderAudioQuality AudioQuality)
 {
-    public const string LegacyKey = "legacy";
+    public static string LegacyKey { get; } = new DownloadedSongMappingScope(
+        null,
+        ProviderAudioQuality.Any).Key;
 
     public string Key => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join('\u001f',
-        TenantId.ToString("N"),
-        ProviderAccountId?.ToString("N") ?? string.Empty,
-        LibraryScopeId?.Trim().ToLowerInvariant() ?? string.Empty,
+        ProviderAccountId?.ToString("N") ?? "anonymous",
         ((int)AudioQuality).ToString(CultureInfo.InvariantCulture)))));
 }
 
@@ -73,7 +69,6 @@ public static class DownloadedSongMappingModelConfiguration
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.ScopeKey).HasMaxLength(64).IsRequired();
-            entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
             entity.Property(item => item.ProviderId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.ExternalId).HasMaxLength(500).IsRequired();
             entity.Property(item => item.LocalPath).HasMaxLength(2000).IsRequired();
@@ -135,9 +130,7 @@ public sealed class EfDownloadedSongMappingStore(
         else
         {
             existing.LocalPath = mapping.LocalPath;
-            existing.TenantId = mapping.TenantId;
             existing.ProviderAccountId = mapping.ProviderAccountId;
-            existing.LibraryScopeId = mapping.LibraryScopeId;
             existing.AudioQuality = mapping.AudioQuality;
             existing.Title = mapping.Title;
             existing.Artist = mapping.Artist;

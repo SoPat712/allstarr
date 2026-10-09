@@ -31,18 +31,12 @@ public sealed record ProviderBackendPrincipal
 public sealed record ProviderActorContext
 {
     public ProviderActorContext(
-        Guid tenantId,
         ProviderActorKind kind,
         Guid? userId,
         ProviderBackendPrincipal? backendPrincipal = null,
         Guid? durableJobId = null,
         Guid? actingForUserId = null)
     {
-        if (tenantId == Guid.Empty)
-        {
-            throw new ArgumentException("A tenant ID is required.", nameof(tenantId));
-        }
-
         if (!Enum.IsDefined(kind))
         {
             throw new ArgumentOutOfRangeException(nameof(kind));
@@ -70,15 +64,12 @@ public sealed record ProviderActorContext
                 nameof(actingForUserId));
         }
 
-        TenantId = tenantId;
         Kind = kind;
         UserId = userId;
         BackendPrincipal = backendPrincipal;
         DurableJobId = durableJobId;
         ActingForUserId = actingForUserId;
     }
-
-    public Guid TenantId { get; }
 
     public ProviderActorKind Kind { get; }
 
@@ -101,9 +92,7 @@ public sealed record ProviderAccountContext
         ProviderAccountScope scope,
         long revision,
         bool enabled = true,
-        Guid? tenantId = null,
         Guid? ownerUserId = null,
-        string? libraryScopeId = null,
         string resolutionReason = "selected-account",
         Guid? secretReferenceId = null)
     {
@@ -122,24 +111,16 @@ public sealed record ProviderAccountContext
             throw new ArgumentOutOfRangeException(nameof(revision));
         }
 
-        libraryScopeId = ProviderContractValidation.OptionalText(
-            libraryScopeId,
-            nameof(libraryScopeId),
-            300);
         var validScope = scope switch
         {
-            ProviderAccountScope.Shared =>
-                tenantId == null && ownerUserId == null && libraryScopeId == null,
-            ProviderAccountScope.Personal =>
-                tenantId is { } tenant && tenant != Guid.Empty &&
-                ownerUserId is { } owner && owner != Guid.Empty &&
-                libraryScopeId == null,
+            ProviderAccountScope.Shared => ownerUserId == null,
+            ProviderAccountScope.Personal => ownerUserId is { } owner && owner != Guid.Empty,
             _ => false
         };
         if (!validScope)
         {
             throw new ArgumentException(
-                "Provider account tenant, owner, and library fields must match its declared scope.",
+                "Provider account ownership must match its declared scope.",
                 nameof(scope));
         }
 
@@ -148,9 +129,7 @@ public sealed record ProviderAccountContext
         Scope = scope;
         Revision = revision;
         Enabled = enabled;
-        TenantId = tenantId;
         OwnerUserId = ownerUserId;
-        LibraryScopeId = libraryScopeId;
         ResolutionReason = ProviderContractValidation.Catalog(
             resolutionReason,
             nameof(resolutionReason));
@@ -171,33 +150,11 @@ public sealed record ProviderAccountContext
 
     public bool Enabled { get; }
 
-    public Guid? TenantId { get; }
-
     public Guid? OwnerUserId { get; }
-
-    public string? LibraryScopeId { get; }
 
     public string ResolutionReason { get; }
 
     public Guid? SecretReferenceId { get; }
-}
-
-public sealed record ProviderLibraryContext
-{
-    public ProviderLibraryContext(Guid tenantId, string scopeId)
-    {
-        if (tenantId == Guid.Empty)
-        {
-            throw new ArgumentException("A tenant ID is required.", nameof(tenantId));
-        }
-
-        TenantId = tenantId;
-        ScopeId = ProviderContractValidation.RequiredText(scopeId, nameof(scopeId), 300);
-    }
-
-    public Guid TenantId { get; }
-
-    public string ScopeId { get; }
 }
 
 public enum ProviderExplicitContentPolicy
@@ -298,7 +255,6 @@ public sealed record ProviderExecutionContext
         ProviderActorContext actor,
         string providerId,
         ProviderAccountContext? account,
-        ProviderLibraryContext? library,
         ProviderExecutionPolicy policy,
         string operationId,
         string correlationId,
@@ -331,24 +287,10 @@ public sealed record ProviderExecutionContext
                 throw new UnauthorizedAccessException("The execution policy does not allow a shared account.");
             }
 
-            if (account.Scope != ProviderAccountScope.Shared && account.TenantId != actor.TenantId)
-            {
-                throw new UnauthorizedAccessException("The provider account belongs to another tenant.");
-            }
-
             if (account.Scope == ProviderAccountScope.Personal && account.OwnerUserId != actor.EffectiveUserId)
             {
                 throw new UnauthorizedAccessException("The provider account belongs to another user.");
             }
-        }
-
-        if (library != null)
-        {
-            if (library.TenantId != actor.TenantId)
-            {
-                throw new UnauthorizedAccessException("The library belongs to another tenant.");
-            }
-
         }
 
         if (deadline == default)
@@ -359,7 +301,6 @@ public sealed record ProviderExecutionContext
         Actor = actor;
         ProviderId = providerId;
         Account = account;
-        Library = library;
         Policy = policy;
         OperationId = ProviderContractValidation.RequiredText(operationId, nameof(operationId), 100);
         CorrelationId = ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100);
@@ -376,8 +317,6 @@ public sealed record ProviderExecutionContext
     public string ProviderId { get; }
 
     public ProviderAccountContext? Account { get; }
-
-    public ProviderLibraryContext? Library { get; }
 
     public ProviderExecutionPolicy Policy { get; }
 

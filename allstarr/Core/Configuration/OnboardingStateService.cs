@@ -33,26 +33,24 @@ public sealed class OnboardingStateService(
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<OnboardingStateSnapshot> GetAsync(
-        Guid tenantId,
         Guid userId,
         CancellationToken cancellationToken = default)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var state = await db.OnboardingStates.SingleOrDefaultAsync(
-            item => item.TenantId == tenantId && item.UserId == userId,
+            item => item.UserId == userId,
             cancellationToken);
-        var identityPresent = await HasIdentityAsync(db, tenantId, userId, cancellationToken);
+        var identityPresent = await HasIdentityAsync(db, userId, cancellationToken);
         return Snapshot(state, identityPresent);
     }
 
     public async Task<OnboardingStateSnapshot> CompleteAsync(
-        Guid tenantId,
         Guid userId,
         string correlationId,
         CancellationToken cancellationToken = default)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        if (!await HasIdentityAsync(db, tenantId, userId, cancellationToken))
+        if (!await HasIdentityAsync(db, userId, cancellationToken))
         {
             throw new OnboardingStateException(
                 "backend_identity_required",
@@ -63,7 +61,7 @@ public sealed class OnboardingStateService(
             IsolationLevel.ReadCommitted,
             cancellationToken);
         var state = await GetOrCreateAsync(
-            db, tenantId, userId, "setup-guide", clock.UtcNow, cancellationToken);
+            db, userId, "setup-guide", clock.UtcNow, cancellationToken);
         var alreadyCompleted = state.CompletedAt.HasValue && !state.ReopenedAt.HasValue;
         SetSteps(state, ReadSteps(state).Append(BackendIdentityStep));
         state.CompletionSource = "setup-guide";
@@ -82,7 +80,6 @@ public sealed class OnboardingStateService(
     }
 
     public async Task<OnboardingStateSnapshot> ReopenAsync(
-        Guid tenantId,
         Guid userId,
         string correlationId,
         CancellationToken cancellationToken = default)
@@ -92,7 +89,7 @@ public sealed class OnboardingStateService(
             IsolationLevel.ReadCommitted,
             cancellationToken);
         var state = await GetOrCreateAsync(
-            db, tenantId, userId, "administrator", clock.UtcNow, cancellationToken);
+            db, userId, "administrator", clock.UtcNow, cancellationToken);
         if (!state.ReopenedAt.HasValue)
         {
             state.ReopenedAt = clock.UtcNow;
@@ -105,23 +102,22 @@ public sealed class OnboardingStateService(
 
         return Snapshot(
             state,
-            await HasIdentityAsync(db, tenantId, userId, cancellationToken));
+            await HasIdentityAsync(db, userId, cancellationToken));
     }
 
     internal static async Task<OnboardingStateRecord> MarkLegacyImportAsync(
         AllstarrDbContext db,
-        Guid tenantId,
         Guid userId,
         bool backendIdentityReady,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         var state = await db.OnboardingStates.SingleOrDefaultAsync(
-            item => item.TenantId == tenantId && item.UserId == userId,
+            item => item.UserId == userId,
             cancellationToken);
         if (state == null)
         {
-            state = Create(tenantId, userId, "legacy-env-import", now);
+            state = Create(userId, "legacy-env-import", now);
             db.OnboardingStates.Add(state);
         }
 
@@ -140,14 +136,13 @@ public sealed class OnboardingStateService(
 
     private static async Task<OnboardingStateRecord> GetOrCreateAsync(
         AllstarrDbContext db,
-        Guid tenantId,
         Guid userId,
         string source,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         if (!await db.Users.AnyAsync(
-                item => item.TenantId == tenantId && item.Id == userId,
+                item => item.Id == userId,
                 cancellationToken))
         {
             throw new OnboardingStateException(
@@ -156,7 +151,7 @@ public sealed class OnboardingStateService(
         }
 
         var state = await db.OnboardingStates.SingleOrDefaultAsync(
-            item => item.TenantId == tenantId && item.UserId == userId,
+            item => item.UserId == userId,
             cancellationToken);
         if (state != null)
         {
@@ -167,28 +162,26 @@ public sealed class OnboardingStateService(
         await db.Database.ExecuteSqlInterpolatedAsync(
             $"""
              INSERT INTO onboarding_states
-                 ("Id", "TenantId", "UserId", "SchemaVersion", "CompletedStepsJson",
+                 ("Id", "UserId", "SchemaVersion", "CompletedStepsJson",
                   "CompletionSource", "CompletedAt", "ReopenedAt", "CreatedAt", "UpdatedAt", "Revision")
              VALUES
-                 ({id}, {tenantId}, {userId}, {SchemaVersion}, '[]',
+                 ({id}, {userId}, {SchemaVersion}, '[]',
                   {source}, NULL, NULL, {now.UtcTicks}, {now.UtcTicks}, 1)
-             ON CONFLICT ("TenantId", "UserId") DO NOTHING
+             ON CONFLICT ("UserId") DO NOTHING
              """,
             cancellationToken);
         return await db.OnboardingStates.SingleAsync(
-            item => item.TenantId == tenantId && item.UserId == userId,
+            item => item.UserId == userId,
             cancellationToken);
     }
 
     private static OnboardingStateRecord Create(
-        Guid tenantId,
         Guid userId,
         string source,
         DateTimeOffset now) =>
         new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             UserId = userId,
             SchemaVersion = SchemaVersion,
             CompletionSource = source,
@@ -216,11 +209,10 @@ public sealed class OnboardingStateService(
 
     private static Task<bool> HasIdentityAsync(
         AllstarrDbContext db,
-        Guid tenantId,
         Guid userId,
         CancellationToken cancellationToken) =>
-        db.BackendIdentities.AnyAsync(
-            item => item.TenantId == tenantId && item.UserId == userId,
+        db.Users.AnyAsync(
+            item => item.Id == userId && item.Enabled,
             cancellationToken);
 
     private static OnboardingStateSnapshot Snapshot(
@@ -252,7 +244,6 @@ public sealed class OnboardingStateService(
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = state.TenantId,
             ActorUserId = userId,
             Category = "onboarding",
             Action = action,

@@ -58,8 +58,7 @@ public sealed class TrackMatchesController(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == externalSnapshotId &&
-            item.TenantId == session!.TenantId &&
-            (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId),
+            (session!.IsAdministrator || item.OwnerUserId == session.AllstarrUserId),
             cancellationToken);
         if (snapshot == null) return NotFound();
         var artworkUrl = Metadata(snapshot.PayloadJson).ArtworkUrl;
@@ -71,7 +70,6 @@ public sealed class TrackMatchesController(
 
         var asset = await mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                snapshot.TenantId,
                 snapshot.OwnerUserId,
                 snapshot.ProviderAccountId,
                 snapshot.ProviderId,
@@ -109,10 +107,9 @@ public sealed class TrackMatchesController(
         backendItemId = string.IsNullOrWhiteSpace(backendItemId) ? null : backendItemId.Trim();
         if (backendItemId?.Length > 256) return BadRequest(new { error = "Backend item id is invalid" });
 
-        var tenantId = session!.TenantId!.Value;
-        var userId = session.AllstarrUserId!.Value;
+        var userId = session!.AllstarrUserId!.Value;
         var detail = await trackMatchCommands.GetDetailAsync(
-            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
+            new TrackMatchActor(userId, session.IsAdministrator),
             "spotify",
             spotifyId,
             backendItemId,
@@ -232,7 +229,7 @@ public sealed class TrackMatchesController(
                 item.Id,
                 item.CanonicalRecordingId,
                 item.BackendItemId,
-                item.LibraryScopeId,
+                item.BackendLibraryId,
                 item.Title,
                 item.Artist,
                 item.Album,
@@ -262,7 +259,7 @@ public sealed class TrackMatchesController(
 
     [HttpGet]
     public async Task<IActionResult> List(
-        [FromQuery] string? libraryScopeId = null,
+        [FromQuery] string? backendLibraryId = null,
         [FromQuery] string? state = null,
         [FromQuery] string? search = null,
         [FromQuery] Guid? externalSnapshotId = null,
@@ -285,11 +282,10 @@ public sealed class TrackMatchesController(
         if (sort is not (null or "" or "confidence_desc" or "confidence_asc"))
             return BadRequest(new { error = "Sort is not supported" });
 
-        var tenantId = session!.TenantId!.Value;
-        var userId = session.AllstarrUserId!.Value;
+        var userId = session!.AllstarrUserId!.Value;
         var review = await trackMatchCommands.GetReviewDataAsync(
-            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
-            libraryScopeId,
+            new TrackMatchActor(userId, session.IsAdministrator),
+            backendLibraryId,
             search,
             externalSnapshotId,
             cancellationToken: cancellationToken);
@@ -308,7 +304,7 @@ public sealed class TrackMatchesController(
         ProtocolExecutionContext execution;
         try
         {
-            execution = await protocolContexts.CreateAsync(session, null, HttpContext.TraceIdentifier, cancellationToken);
+            execution = await protocolContexts.CreateAsync(session!, HttpContext.TraceIdentifier, cancellationToken);
         }
         catch (UnauthorizedAccessException)
         {
@@ -320,7 +316,6 @@ public sealed class TrackMatchesController(
             .GroupBy(snapshot => new
             {
                 snapshot.OwnerUserId,
-                snapshot.LibraryScopeId,
                 SourceIdentity = $"{snapshot.ProviderId.ToLowerInvariant()}:{snapshot.ExternalIdHash}"
             })
             .Select(group =>
@@ -396,7 +391,7 @@ public sealed class TrackMatchesController(
     [HttpGet("targets/local")]
     public async Task<IActionResult> SearchLocalTargets(
         [FromQuery] string query,
-        [FromQuery] string? libraryScopeId = null,
+        [FromQuery] string? backendLibraryId = null,
         [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
@@ -406,21 +401,20 @@ public sealed class TrackMatchesController(
         if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
         limit = Math.Clamp(limit, 1, 50);
 
-        var tenantId = session!.TenantId!.Value;
-        var userId = session.AllstarrUserId!.Value;
+        var userId = session!.AllstarrUserId!.Value;
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
         var sourceCandidates = source != null &&
                                query.Equals(FuzzyMatcher.SearchQuery(source.Title), StringComparison.OrdinalIgnoreCase)
             ? source
             : null;
         var tracks = await trackMatchCommands.SearchLocalTracksAsync(
-            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
+            new TrackMatchActor(userId, session.IsAdministrator),
             query,
-            libraryScopeId,
+            backendLibraryId,
             limit,
             sourceCandidates,
             cancellationToken);
-        var effectiveMatcher = await MatchingEngineAsync(tenantId, cancellationToken);
+        var effectiveMatcher = await MatchingEngineAsync(userId, cancellationToken);
         var scores = source == null
             ? []
             : effectiveMatcher.ScoreCandidates(source, tracks.Select(ToCandidate))
@@ -447,7 +441,6 @@ public sealed class TrackMatchesController(
     public async Task<IActionResult> SearchProviderTargets(
         [FromQuery] string query,
         [FromQuery] string? provider = null,
-        [FromQuery] string? libraryScopeId = null,
         [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
@@ -459,11 +452,11 @@ public sealed class TrackMatchesController(
         if (provider.Length > 128) return BadRequest(new { error = "The playback provider is invalid" });
         limit = Math.Clamp(limit, 1, 50);
 
-        var tenantId = session!.TenantId!.Value;
+        var userId = session!.AllstarrUserId!.Value;
         var streamingOrder = await ProviderOrderAsync(
-            tenantId, ProviderCapabilityKind.Streaming, cancellationToken);
+            userId, ProviderCapabilityKind.Streaming, cancellationToken);
         var downloadOrder = await ProviderOrderAsync(
-            tenantId, ProviderCapabilityKind.Download, cancellationToken);
+            userId, ProviderCapabilityKind.Download, cancellationToken);
         var playableProviders = streamingOrder
             .Concat(downloadOrder)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -478,7 +471,7 @@ public sealed class TrackMatchesController(
         try
         {
             execution = await protocolContexts.CreateAsync(
-                session!, libraryScopeId, HttpContext.TraceIdentifier, cancellationToken);
+                session!, HttpContext.TraceIdentifier, cancellationToken);
         }
         catch (UnauthorizedAccessException)
         {
@@ -495,15 +488,13 @@ public sealed class TrackMatchesController(
             .Take(limit)
             .ToArray();
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
-        var effectiveMatcher = await MatchingEngineAsync(tenantId, cancellationToken);
+        var effectiveMatcher = await MatchingEngineAsync(userId, cancellationToken);
         var candidates = songs.Select(song => new
         {
             Song = song,
             Candidate = ToCandidate(
                 song,
-                tenantId,
-                session.AllstarrUserId!.Value,
-                libraryScopeId ?? string.Empty)
+                userId)
         }).ToArray();
         var scores = source == null
             ? []
@@ -559,8 +550,7 @@ public sealed class TrackMatchesController(
         if (!TrySession(out var session, out var error)) return error!;
         var result = await trackMatchCommands.ResolveSnapshotAsync(
             new TrackMatchActor(
-                session!.TenantId!.Value,
-                session.AllstarrUserId!.Value,
+                session!.AllstarrUserId!.Value,
                 session.IsAdministrator),
             externalSnapshotId,
             new ResolveTrackMatchCommand(
@@ -593,7 +583,7 @@ public sealed class TrackMatchesController(
         try
         {
             execution = await protocolContexts.CreateAsync(
-                session!, null, HttpContext.TraceIdentifier, cancellationToken);
+                session!, HttpContext.TraceIdentifier, cancellationToken);
         }
         catch (UnauthorizedAccessException)
         {
@@ -644,8 +634,7 @@ public sealed class TrackMatchesController(
             return BadRequest(new { error = "ExpectedRevision is required" });
         var result = await trackMatchCommands.ClearManualAuthorityAsync(
             new TrackMatchActor(
-                session!.TenantId!.Value,
-                session.AllstarrUserId!.Value,
+                session!.AllstarrUserId!.Value,
                 session.IsAdministrator),
             externalSnapshotId,
             authorityKind,
@@ -672,7 +661,7 @@ public sealed class TrackMatchesController(
         try
         {
             execution = await protocolContexts.CreateAsync(
-                session!, null, HttpContext.TraceIdentifier, cancellationToken);
+                session!, HttpContext.TraceIdentifier, cancellationToken);
         }
         catch (UnauthorizedAccessException)
         {
@@ -706,7 +695,7 @@ public sealed class TrackMatchesController(
             ? null
             : session.AllstarrUserId;
         var preview = await bulkRematches.PreviewAsync(
-            session.TenantId!.Value,
+            new TrackMatchActor(session.AllstarrUserId!.Value, session.IsAdministrator),
             scopeOwnerUserId,
             cancellationToken);
         return Ok(new
@@ -737,7 +726,7 @@ public sealed class TrackMatchesController(
             ? null
             : session.AllstarrUserId;
         var preview = await bulkRematches.PreviewAsync(
-            session.TenantId!.Value,
+            new TrackMatchActor(session.AllstarrUserId!.Value, session.IsAdministrator),
             scopeOwnerUserId,
             cancellationToken);
         if (!preview.ConfirmationId.Equals(request.ConfirmationId, StringComparison.Ordinal))
@@ -745,8 +734,7 @@ public sealed class TrackMatchesController(
         if (!preview.CanApply)
             return Conflict(new { error = "No automatic track decisions are available to rematch." });
         var queued = await bulkRematches.QueueForceAsync(
-            session.TenantId.Value,
-            session.AllstarrUserId!.Value,
+            new TrackMatchActor(session.AllstarrUserId!.Value, session.IsAdministrator),
             preview,
             cancellationToken);
         return Accepted(new
@@ -800,7 +788,6 @@ public sealed class TrackMatchesController(
     private static bool MatchesSourceIdentity(
         ExternalMetadataSnapshotRecord snapshot,
         ProviderTrackIdentityRecord identity) =>
-        identity.TenantId == snapshot.TenantId &&
         identity.ProviderId.Equals(snapshot.ProviderId, StringComparison.OrdinalIgnoreCase) &&
         (identity.ProviderAccountId == snapshot.ProviderAccountId ||
          identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue) &&
@@ -880,7 +867,6 @@ public sealed class TrackMatchesController(
             externalSnapshotId = snapshot.Id,
             providerId = snapshot.ProviderId,
             providerAccountId = snapshot.ProviderAccountId,
-            libraryScopeId = snapshot.LibraryScopeId,
             state = state.ToString().ToLowerInvariant(),
             decisionSource = manualAuthorities.Count > 0
                 ? "manual_authority"
@@ -922,6 +908,7 @@ public sealed class TrackMatchesController(
             {
                 id = track.Id,
                 backendItemId = track.BackendItemId,
+                backendLibraryId = track.BackendLibraryId,
                 title = track.Title,
                 artist = track.Artist,
                 album = track.Album,
@@ -983,18 +970,16 @@ public sealed class TrackMatchesController(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var snapshot = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == externalSnapshotId.Value &&
-            item.TenantId == session.TenantId &&
             (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId),
             cancellationToken);
         if (snapshot == null) return null;
         var identity = snapshot.ProviderTrackIdentityId.HasValue
             ? await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.Id == snapshot.ProviderTrackIdentityId.Value &&
-                item.TenantId == snapshot.TenantId,
+                item.Id == snapshot.ProviderTrackIdentityId.Value,
                 cancellationToken)
             : null;
         var canonicalId = identity?.CanonicalRecordingId ?? await db.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == snapshot.TenantId &&
+            .Where(item => item.OwnerUserId == snapshot.OwnerUserId &&
                            item.ExternalSnapshotId == snapshot.Id)
             .OrderByDescending(item => item.DecisionVersion)
             .Select(item => item.CanonicalRecordingId)
@@ -1017,10 +1002,9 @@ public sealed class TrackMatchesController(
 
     private static LocalTrackMatchCandidate ToCandidate(LibraryTrackRecord item) => new(
         item.Id,
-        item.TenantId,
         item.OwnerUserId,
         item.BackendInstanceId,
-        item.LibraryScopeId,
+        item.BackendLibraryId,
         item.BackendItemId,
         item.CanonicalRecordingId,
         item.Title,
@@ -1035,14 +1019,11 @@ public sealed class TrackMatchesController(
 
     private static LocalTrackMatchCandidate ToCandidate(
         Song song,
-        Guid tenantId,
-        Guid ownerUserId,
-        string libraryScopeId) => new(
+        Guid ownerUserId) => new(
         Guid.CreateVersion7(),
-        tenantId,
         ownerUserId,
         string.Empty,
-        libraryScopeId,
+        null,
         song.ExternalId ?? song.Id,
         null,
         song.Title,
@@ -1200,26 +1181,26 @@ public sealed class TrackMatchesController(
             : null;
 
     private async Task<IReadOnlyList<string>> ProviderOrderAsync(
-        Guid tenantId,
+        Guid userId,
         ProviderCapabilityKind capability,
         CancellationToken cancellationToken) => effectivePolicies == null
         ? providerGateway.GetProviderOrder(capability)
-        : (await effectivePolicies.ResolveAsync(tenantId, cancellationToken))
+        : (await effectivePolicies.ResolveForUserAsync(userId, cancellationToken))
             .ApplyProviderAvailability(capability, providerGateway.GetProviderOrder(capability));
 
     private async Task<TrackMatchDecisionEngine> MatchingEngineAsync(
-        Guid tenantId,
+        Guid userId,
         CancellationToken cancellationToken) => effectivePolicies == null
         ? matcher
         : matcher.WithLocalPriorityWindow(
-            (await effectivePolicies.ResolveAsync(tenantId, cancellationToken)).LocalPreferenceWindow);
+            (await effectivePolicies.ResolveForUserAsync(userId, cancellationToken)).LocalPreferenceWindow);
 
     private bool TrySession(out AdminAuthSession? session, out IActionResult? error)
     {
         session = null; error = null;
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) || value is not AdminAuthSession found)
         { error = Unauthorized(new { error = "Authentication required" }); return false; }
-        if (!found.TenantId.HasValue || !found.AllstarrUserId.HasValue)
+        if (!found.AllstarrUserId.HasValue)
         { error = StatusCode(403, new { error = "The backend identity is not linked to an Allstarr user" }); return false; }
         session = found; return true;
     }

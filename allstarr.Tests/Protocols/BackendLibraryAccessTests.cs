@@ -61,8 +61,8 @@ public sealed class BackendLibraryAccessTests
             UserName = "Listener",
             IsAdministrator = false,
             BackendType = "Subsonic",
-            TenantId = viewer.Principal!.TenantId,
-            AllstarrUserId = viewer.Principal.UserId,
+            BackendInstanceId = viewer.BackendInstanceId,
+            AllstarrUserId = viewer.Principal!.UserId,
             JellyfinAccessToken = "",
             SubsonicReadAuthentication = authentication,
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
@@ -191,7 +191,7 @@ public sealed class BackendLibraryAccessTests
         configuration ?? new ConfigurationBuilder().Build());
 
     private static ProtocolExecutionContext Context(Clock clock, ProtocolKind protocol, string user, string backend = "primary") =>
-        new(protocol, backend, user, new AllstarrPrincipal(Guid.CreateVersion7(), Guid.CreateVersion7(),
+        new(protocol, backend, user, new AllstarrPrincipal(Guid.CreateVersion7(),
             protocol.ToString().ToLowerInvariant(), backend, user, user, false),
             "library-access-test", clock.UtcNow.AddMinutes(5), default);
 

@@ -269,7 +269,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         if (context.Account is not { Scope: ProviderAccountScope.Personal, SecretReferenceId: not null } account)
             return new(ProviderErrorKind.AccountNeedsConfiguration);
         if (!account.ProviderId.Equals(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, StringComparison.Ordinal) ||
-            account.TenantId != context.Actor.TenantId || account.OwnerUserId != context.Actor.EffectiveUserId)
+            account.OwnerUserId != context.Actor.EffectiveUserId)
             return new(ProviderErrorKind.Forbidden);
         return null;
     }

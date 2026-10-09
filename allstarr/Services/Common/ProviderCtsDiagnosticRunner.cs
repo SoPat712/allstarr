@@ -40,7 +40,6 @@ public sealed class ProviderCtsDiagnosticRunner(
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = actor.TenantId,
                 ActorUserId = actor.EffectiveUserId,
                 Category = "provider-cts",
                 Action = "cold-connect.measure",
@@ -150,7 +149,7 @@ public sealed class ProviderCtsDiagnosticRunner(
 
         var automaticTrack = string.IsNullOrWhiteSpace(trackId)
             ? await trackSelector.SelectAsync(
-                actor.TenantId, providerId, providerAccountId, cancellationToken)
+                providerId, providerAccountId, cancellationToken)
             : null;
         if (string.IsNullOrWhiteSpace(trackId) && automaticTrack == null)
         {
@@ -180,7 +179,6 @@ public sealed class ProviderCtsDiagnosticRunner(
             actor,
             providerId,
             resolved?.Account,
-            null,
             policy,
             "provider-click-to-stream-diagnostic",
             ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100),

@@ -69,14 +69,13 @@ public sealed class MusicBrainzCatalogRefreshQueue(
             ? throw new ArgumentException("A correlation ID is required.", nameof(correlationId))
             : correlationId.Trim();
         var generation = clock.UtcNow.UtcTicks / MusicBrainzCatalogRefreshService.RefreshInterval.Ticks;
-        var identity = $"{jobType}|{actor.TenantId:N}|{ownerUserId:N}|{mbid}|{client.ConfiguredSourceRevision}|{generation}";
+        var identity = $"{jobType}|{ownerUserId:N}|{mbid}|{client.ConfiguredSourceRevision}|{generation}";
         var idempotencyKey = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity))).ToLowerInvariant();
         return jobs.EnqueueAsync(new DurableJobEnqueueRequest<TPayload>(
             jobType,
             idempotencyKey,
             payload(mbid),
-            actor.TenantId,
-            ownerUserId,
+            OwnerUserId: ownerUserId,
             MaxAttempts: 8,
             Capability: "metadata",
             CorrelationId: normalizedCorrelation), cancellationToken);
@@ -108,7 +107,6 @@ public sealed class MusicBrainzCatalogDiscoveryJobHandler(
         if (payload == null ||
             !Guid.TryParse(payload.RecordingMbid, out var recordingId) ||
             recordingId == Guid.Empty ||
-            !context.Claim.TenantId.HasValue ||
             !context.Claim.OwnerUserId.HasValue)
             return DurableJobCompletion.Failure(
                 "catalog_discovery_payload_invalid",
@@ -137,7 +135,6 @@ public sealed class MusicBrainzCatalogDiscoveryJobHandler(
                     "The canonical recording has an invalid release fan-out.");
 
             var actor = new ProviderActorContext(
-                context.Claim.TenantId.Value,
                 ProviderActorKind.SystemJob,
                 null,
                 durableJobId: context.Claim.JobId,

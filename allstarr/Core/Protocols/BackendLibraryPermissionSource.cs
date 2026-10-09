@@ -30,7 +30,7 @@ public sealed class BackendLibraryPermissionSource(
         if (http != null)
         {
             var current = http.GetProtocolExecutionContext();
-            if (current?.Principal?.UserId == principal.UserId && current.Principal.TenantId == principal.TenantId &&
+            if (current?.Principal?.UserId == principal.UserId &&
                 current.Protocol == context.Protocol && current.BackendInstanceId == context.BackendInstanceId &&
                 current.VerifiedBackendPrincipalId == context.VerifiedBackendPrincipalId)
             {
@@ -48,7 +48,8 @@ public sealed class BackendLibraryPermissionSource(
             if (current != null) return null;
 
             if (http.Items[AdminAuthSessionService.HttpContextSessionItemKey] is AdminAuthSession session &&
-                session.AllstarrUserId == principal.UserId && session.TenantId == principal.TenantId &&
+                session.AllstarrUserId == principal.UserId &&
+                session.BackendInstanceId == context.BackendInstanceId &&
                 session.UserId == context.VerifiedBackendPrincipalId &&
                 session.BackendType.Equals(context.Protocol.ToString(), StringComparison.OrdinalIgnoreCase))
             {
@@ -61,29 +62,25 @@ public sealed class BackendLibraryPermissionSource(
         }
 
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var identity = await (from binding in db.BackendIdentities.AsNoTracking()
-                              join user in db.Users on binding.UserId equals user.Id
-                              where binding.TenantId == principal.TenantId && binding.UserId == principal.UserId &&
-                                    binding.BackendType == principal.BackendType &&
-                                    binding.BackendInstanceId == context.BackendInstanceId &&
-                                    binding.PrincipalId == context.VerifiedBackendPrincipalId &&
-                                    user.TenantId == principal.TenantId && user.Status == PlatformUserStatus.Active
-                              select binding).SingleOrDefaultAsync(cancellationToken);
+        var identity = await db.Users.AsNoTracking().SingleOrDefaultAsync(user =>
+            user.Id == principal.UserId && user.Enabled && user.BackendType == principal.BackendType &&
+            user.BackendInstanceId == context.BackendInstanceId &&
+            user.BackendPrincipalId == context.VerifiedBackendPrincipalId, cancellationToken);
         if (identity == null) return null;
         if (context.Protocol == ProtocolKind.Jellyfin)
             return string.IsNullOrWhiteSpace(jellyfin.Value.ApiKey) ? null : Jellyfin(context, jellyfin.Value.ApiKey);
 
         var reference = await db.SecretReferences.AsNoTracking().Where(item =>
-                item.TenantId == identity.TenantId && item.BackendIdentityId == identity.Id &&
+                item.UserId == identity.Id &&
                 item.Purpose == BackendCredentialScope.SubsonicPurpose && item.RevokedAt == null)
             .OrderByDescending(item => item.UpdatedAt).ThenBy(item => item.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (reference == null) return null;
-        using var lease = await secrets.OpenAsync(reference.Id, new(identity.TenantId), cancellationToken);
+        using var lease = await secrets.OpenAsync(reference.Id, new(identity.Id, BackendCredentialScope.SubsonicPurpose), cancellationToken);
         using var credential = JsonDocument.Parse(lease.Value);
         var root = credential.RootElement;
         if (!root.TryGetProperty("username", out var username) || username.ValueKind != JsonValueKind.String ||
-            username.GetString() != identity.PrincipalId ||
+            username.GetString() != identity.BackendPrincipalId ||
             !root.TryGetProperty("password", out var password) || password.ValueKind != JsonValueKind.String ||
             string.IsNullOrWhiteSpace(password.GetString())) return null;
         return Subsonic(SubsonicRequestParameters.FromDictionary(new Dictionary<string, string>

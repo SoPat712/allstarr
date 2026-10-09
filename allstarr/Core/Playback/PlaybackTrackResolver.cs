@@ -5,6 +5,7 @@ using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace allstarr.Core.Playback;
 
@@ -48,11 +49,10 @@ public sealed class PlaybackTrackResolver(
             : payload.ItemId;
         var access = await libraryAccess.ResolveUserAsync(payload.Scope.OwnerUserId, cancellationToken);
         var tracks = await LibraryTrackAccess.Query(db, access).Where(track =>
-            track.TenantId == payload.Scope.TenantId &&
             track.Protocol == payload.Scope.Protocol &&
             track.BackendInstanceId == payload.Scope.BackendInstanceId).ToListAsync(cancellationToken);
-        var track = tracks.Where(candidate => ProtocolLibraryScopeResolver.Matches(candidate, itemId))
-            .OrderBy(candidate => candidate.LibraryScopeId, StringComparer.Ordinal)
+        var track = tracks.Where(candidate => Matches(candidate, itemId))
+            .OrderBy(candidate => candidate.BackendLibraryId, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.BackendItemId, StringComparer.Ordinal)
             .ThenBy(candidate => candidate.Id)
             .FirstOrDefault();
@@ -72,7 +72,7 @@ public sealed class PlaybackTrackResolver(
         }
 
         var viewer = access.Context;
-        if (viewer != null && (viewer.Principal?.TenantId != payload.Scope.TenantId ||
+        if (viewer != null && (viewer.Principal?.UserId != payload.Scope.OwnerUserId ||
                               viewer.BackendInstanceId != payload.Scope.BackendInstanceId ||
                               viewer.Protocol.ToString().ToLowerInvariant() != payload.Scope.Protocol))
             return null;
@@ -85,7 +85,7 @@ public sealed class PlaybackTrackResolver(
             {
                 var external = ExternalPlaybackMetadataResolver.ParseTrackIdentity(itemId);
                 var source = payload.StreamSource;
-                if (source?.Matches(payload.Scope.Protocol, payload.Scope.BackendInstanceId, payload.Scope.LibraryScopeId) != true)
+                if (source?.Matches(payload.Scope.Protocol, payload.Scope.BackendInstanceId) != true)
                     source = null;
                 if (external != null && source != null)
                     external = (source.ProviderId, source.ExternalId);
@@ -94,7 +94,7 @@ public sealed class PlaybackTrackResolver(
                 {
                     var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(external.Value.ExternalId)));
                     var candidates = await db.ProviderTrackIdentities.AsNoTracking()
-                        .Where(candidate => candidate.TenantId == payload.Scope.TenantId && candidate.ExternalIdHash == hash)
+                        .Where(candidate => candidate.ExternalIdHash == hash)
                         .ToListAsync(cancellationToken);
                     var matching = candidates.Where(candidate => candidate.ProviderId.Equals(external.Value.Provider, StringComparison.OrdinalIgnoreCase)).ToList();
                     identity = matching.FirstOrDefault(candidate => source?.AccountId != null && candidate.ProviderAccountId == source.AccountId) ??
@@ -119,5 +119,26 @@ public sealed class PlaybackTrackResolver(
         }
 
         return null;
+    }
+    internal static bool Matches(LibraryTrackRecord track, string itemId)
+    {
+        if (track.BackendItemId.Equals(itemId, StringComparison.Ordinal) ||
+            track.Id.ToString("D").Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
+            track.CanonicalRecordingId?.ToString("D").Equals(itemId, StringComparison.OrdinalIgnoreCase) == true)
+            return true;
+        try
+        {
+            var providers = JsonSerializer.Deserialize<Dictionary<string, string>>(track.ProviderIdsJson);
+            return providers?.Any(pair =>
+                pair.Value.Equals(itemId, StringComparison.Ordinal) ||
+                $"{pair.Key}:{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
+                $"external:{pair.Key}:{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
+                $"ext-{pair.Key}-song-{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase) ||
+                $"ext-{pair.Key}-{pair.Value}".Equals(itemId, StringComparison.OrdinalIgnoreCase)) == true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 }

@@ -189,7 +189,6 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
         var sample = new ProviderHealthSampleRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = account.TenantId,
             ProviderAccountId = account.Id,
             Capability = capability,
             State = state,
@@ -392,7 +391,6 @@ public sealed class DurableProviderHealthStore : IDurableProviderHealthObservati
             rollup = new ProviderHealthRollupRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = account.TenantId,
                 ProviderAccountId = account.Id,
                 Capability = capability,
                 WindowStart = windowStart,

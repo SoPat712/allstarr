@@ -50,7 +50,6 @@ public partial class SubsonicController : ControllerBase
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly ProtocolStreamingResponseAdapter? _streamingResponseAdapter;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
-    private readonly IProtocolLibraryScopeResolver? _libraryScopes;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
 
@@ -76,7 +75,6 @@ public partial class SubsonicController : ControllerBase
         IProtocolProviderGateway? providerGateway = null,
         ProtocolStreamingResponseAdapter? streamingResponseAdapter = null,
         IAudioMuseRecommendationClient? audioMuse = null,
-        IProtocolLibraryScopeResolver? libraryScopes = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         ManagedTrackCacheService? managedTrackCache = null)
     {
@@ -101,7 +99,6 @@ public partial class SubsonicController : ControllerBase
         _providerGateway = providerGateway;
         _streamingResponseAdapter = streamingResponseAdapter;
         _audioMuse = audioMuse;
-        _libraryScopes = libraryScopes;
         _intelligencePolicies = intelligencePolicies;
         _managedTrackCache = managedTrackCache;
 
@@ -644,7 +641,6 @@ public partial class SubsonicController : ControllerBase
         var actor = CurrentProtocolContext.Actor;
         return await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                actor?.TenantId,
                 actor?.EffectiveUserId,
                 null,
                 provider,

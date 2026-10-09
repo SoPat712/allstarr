@@ -15,11 +15,9 @@ public sealed class ListeningHistoryRetentionSweeper(
         var policies = await readDb.IntelligencePolicies.AsNoTracking()
             .Select(item => new
             {
-                item.TenantId,
                 item.OwnerUserId,
                 item.Protocol,
                 item.BackendInstanceId,
-                item.LibraryScopeId,
                 item.RetentionDays
             }).ToListAsync(cancellationToken);
 
@@ -29,9 +27,8 @@ public sealed class ListeningHistoryRetentionSweeper(
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
             var history = db.ListeningEvents.Where(item =>
-                item.TenantId == policy.TenantId && item.OwnerUserId == policy.OwnerUserId &&
-                item.Protocol == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId &&
-                item.LibraryScopeId == policy.LibraryScopeId);
+                item.OwnerUserId == policy.OwnerUserId &&
+                item.Protocol == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId);
 
             var abandonedBefore = now.AddHours(-8);
             await history.Where(item => item.State == ListeningEventState.Playing &&
@@ -41,22 +38,22 @@ public sealed class ListeningHistoryRetentionSweeper(
                     .SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
 
             await db.ListeningSignals.Where(item =>
-                    item.TenantId == policy.TenantId && item.OwnerUserId == policy.OwnerUserId &&
+                    item.OwnerUserId == policy.OwnerUserId &&
                     item.Protocol == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId &&
-                    item.LibraryScopeId == policy.LibraryScopeId && item.ExpiresAt <= now)
+                    item.ExpiresAt <= now)
                 .ExecuteDeleteAsync(cancellationToken);
             if (IntelligencePolicyService.RetentionCutoff(now, policy.RetentionDays) is { } expiredBefore)
             {
                 await db.ListeningProfiles.Where(item =>
-                        item.TenantId == policy.TenantId && item.OwnerUserId == policy.OwnerUserId &&
+                        item.OwnerUserId == policy.OwnerUserId &&
                         item.Protocol == policy.Protocol && item.BackendInstanceId == policy.BackendInstanceId &&
-                        item.LibraryScopeId == policy.LibraryScopeId && item.CreatedAt < expiredBefore)
+                        item.CreatedAt < expiredBefore)
                     .ExecuteDeleteAsync(cancellationToken);
                 var expired = history.Where(item =>
                     (item.ListenedAt ?? item.StartedAt ?? item.UpdatedAt) < expiredBefore);
                 var occurrenceKeys = expired.Select(item => item.OccurrenceKey);
                 await db.PlaybackDeliveryCheckpoints.Where(item =>
-                        item.TenantId == policy.TenantId && item.OwnerUserId == policy.OwnerUserId &&
+                        item.OwnerUserId == policy.OwnerUserId &&
                         item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
                     .ExecuteDeleteAsync(cancellationToken);
                 await expired.ExecuteDeleteAsync(cancellationToken);

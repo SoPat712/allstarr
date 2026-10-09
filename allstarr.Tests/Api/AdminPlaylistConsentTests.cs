@@ -26,13 +26,15 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
     private IDbContextFactory<AllstarrDbContext> _factory = null!;
     private BackendIdentityResolver _identities = null!;
     private EncryptedSecretStore _secrets = null!;
-    private readonly AdminAuthSessionService _sessions = AdminAuthSessionTestSupport.Create();
+    private AdminAuthSessionService _sessions = null!;
     private readonly Backend _backend = new();
 
     public async Task InitializeAsync()
     {
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new Factory(_database.Options);
+        _sessions = new(new MemoryAdminAuthSessionStore(), new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
+            NullLogger<AdminAuthSessionService>.Instance, contextFactory: _factory, identityOptions: new());
         var state = new DurableStorageState(_database.StorageOptions);
         state.Set(DurableStorageReadiness.Ready);
         _identities = new(_factory, state, new(), new SystemPlatformClock());
@@ -65,7 +67,7 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         Assert.Equal(consent, await _secrets.GetSubsonicPlaylistGrantAsync(principal) != null);
         if (consent)
         {
-            using var lease = await _secrets.OpenSubsonicPlaylistCredentialAsync(principal.TenantId, "primary", "alice", null);
+            using var lease = await _secrets.OpenSubsonicPlaylistCredentialAsync("primary", "alice", null);
             Assert.Contains("fixture-password", lease.ReadUtf8(), StringComparison.Ordinal);
         }
     }
@@ -77,7 +79,7 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         var bob = (await _identities.ResolveAsync(new("subsonic", "bob")))!;
         await _secrets.StoreSubsonicPlaylistGrantAsync(bob, "bob-fixture");
         var session = await _sessions.CreateSessionAsync("alice", "Alice", false, "", null,
-            backendType: "Subsonic", tenantId: alice.TenantId, allstarrUserId: alice.UserId);
+            backendType: "Subsonic", allstarrUserId: alice.UserId);
         var controller = Controller(session.SessionId);
         var initial = Assert.IsType<OkObjectResult>(await controller.GetPlaylistConsent(default));
         Assert.False(JsonSerializer.SerializeToElement(initial.Value).GetProperty("granted").GetBoolean());
@@ -98,9 +100,9 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
     {
         var principal = (await _identities.ResolveAsync(new("subsonic", "alice")))!;
         var session = await _sessions.CreateSessionAsync("alice", "Alice", false, "", null,
-            backendType: "Subsonic", tenantId: principal.TenantId, allstarrUserId: principal.UserId);
+            backendType: "Subsonic", allstarrUserId: principal.UserId);
         await using var db = await _factory.CreateDbContextAsync();
-        var identity = await db.BackendIdentities.SingleAsync(item => item.UserId == principal.UserId);
+        var identity = await db.Users.SingleAsync(item => item.Id == principal.UserId);
         var target = new Mock<IBackendPlaylistTarget>(MockBehavior.Strict);
         target.Setup(item => item.ListPageAsync(It.Is<BackendPlaylistTargetContext>(value =>
                 value.VerifiedPrincipalId == "alice" && value.CredentialReference == null),
@@ -118,9 +120,9 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         await _secrets.RevokeSubsonicPlaylistGrantAsync(principal);
         Assert.IsType<OkObjectResult>(await controller.BrowseTargetPlaylists(identity.Id, null, null));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _secrets.OpenSubsonicPlaylistCredentialAsync(
-            principal.TenantId, principal.BackendInstanceId, "alice", grant.ReferenceId));
+            principal.BackendInstanceId, "alice", grant.ReferenceId));
         var other = (await _identities.ResolveAsync(new("subsonic", "bob")))!;
-        var foreignIdentity = await db.BackendIdentities.SingleAsync(item => item.UserId == other.UserId);
+        var foreignIdentity = await db.Users.SingleAsync(item => item.Id == other.UserId);
         Assert.IsType<NotFoundResult>(await controller.BrowseTargetPlaylists(foreignIdentity.Id, null, null));
         target.VerifyAll();
     }
@@ -131,10 +133,10 @@ public sealed class AdminPlaylistConsentTests : IAsyncLifetime
         var principal = (await _identities.ResolveAsync(new("subsonic", "alice")))!;
         await _secrets.StoreSubsonicPlaylistGrantAsync(principal, "fixture-password");
         var session = await _sessions.CreateSessionAsync("alice", "Alice", false, "", null,
-            backendType: "Subsonic", tenantId: principal.TenantId, allstarrUserId: principal.UserId);
+            backendType: "Subsonic", allstarrUserId: principal.UserId);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            (await db.Users.SingleAsync(item => item.Id == principal.UserId)).Status = PlatformUserStatus.Disabled;
+            (await db.Users.SingleAsync(item => item.Id == principal.UserId)).Enabled = false;
             await db.SaveChangesAsync();
         }
         var controller = Controller(session.SessionId);

@@ -13,7 +13,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Enrichment;
 
-public sealed record BackendLibraryRefreshRequest(string LibraryScopeId, Guid? CredentialReferenceId = null);
+public sealed record BackendLibraryRefreshRequest(string BackendLibraryId, Guid? CredentialReferenceId = null);
 public sealed record BackendLibraryRefreshResult(bool Accepted, string? NativeScanId = null);
 
 public interface IBackendLibraryRefresher
@@ -36,8 +36,7 @@ public static class BackendRefreshValidation
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
-        if (context.Protocol != protocol || string.IsNullOrWhiteSpace(request.LibraryScopeId) ||
-            !string.Equals(context.LibraryScopeId, request.LibraryScopeId, StringComparison.Ordinal))
+        if (context.Protocol != protocol || context.Principal == null || string.IsNullOrWhiteSpace(request.BackendLibraryId))
             throw new ArgumentException("The backend refresh scope is invalid.", nameof(request));
     }
 }
@@ -85,9 +84,9 @@ public sealed class SubsonicLibraryRefresher : IBackendLibraryRefresher
     {
         BackendRefreshValidation.Validate(context, request, Protocol);
         if (string.IsNullOrWhiteSpace(_settings.Url) || !request.CredentialReferenceId.HasValue)
-            throw new InvalidOperationException("Subsonic library refresh requires a tenant-scoped encrypted credential reference.");
+            throw new InvalidOperationException("Subsonic library refresh requires a user-owned encrypted credential reference.");
         var authentication = await _authentication.ResolveAsync(new(context.BackendInstanceId,
-            context.VerifiedBackendPrincipalId, request.CredentialReferenceId.Value.ToString(), context.Actor!.TenantId), cancellationToken);
+            context.VerifiedBackendPrincipalId, request.CredentialReferenceId.Value.ToString()), cancellationToken);
         var form = new List<KeyValuePair<string, string>>(authentication.FormParameters) { new("f", "json") };
         using var message = new HttpRequestMessage(HttpMethod.Post,
             new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"), "rest/startScan.view"))
@@ -106,56 +105,56 @@ public sealed class SubsonicLibraryRefresher : IBackendLibraryRefresher
     }
 }
 
-public sealed record BackendLibraryRefreshJobPayload(string LibraryScopeId, string BackendInstanceId,
+public sealed record BackendLibraryRefreshJobPayload(string BackendLibraryId, string BackendInstanceId,
     string BackendPrincipalId, Guid? CredentialReferenceId = null);
 
 public sealed class BackendLibraryRefreshOrchestrator(DurableJobQueue queue)
 {
-    public Task<DurableJobEnqueueResult> EnqueueAsync(Guid tenantId, Guid ownerUserId,
+    public Task<DurableJobEnqueueResult> EnqueueAsync(Guid ownerUserId,
         BackendLibraryRefreshJobPayload payload, string lineageIdempotencyKey, string correlationId,
         CancellationToken cancellationToken = default) => queue.EnqueueAsync(new DurableJobEnqueueRequest<BackendLibraryRefreshJobPayload>(
-            "library.refresh", $"refresh:{payload.BackendInstanceId}:{payload.LibraryScopeId}:{lineageIdempotencyKey}", payload,
-            tenantId, ownerUserId, LibraryScopeId: payload.LibraryScopeId, CorrelationId: correlationId), cancellationToken);
+            "library.refresh", $"refresh:{payload.BackendInstanceId}:{payload.BackendLibraryId}:{lineageIdempotencyKey}", payload,
+            ownerUserId, CorrelationId: correlationId), cancellationToken);
 }
 
 public sealed class BackendLibraryRefreshJobHandler(IDbContextFactory<AllstarrDbContext> factory,
-    BackendLibraryRefresherResolver refreshers, IPlatformClock clock) : IDurableJobHandler
+    BackendLibraryRefresherResolver refreshers, IPlatformClock clock,
+    IBackendLibraryAccessResolver libraryAccess) : IDurableJobHandler
 {
     public string JobType => "library.refresh";
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context, CancellationToken cancellationToken)
     {
         BackendLibraryRefreshJobPayload? payload;
         try { payload = context.Claim.Payload.Deserialize<BackendLibraryRefreshJobPayload>(); } catch (JsonException) { payload = null; }
-        if (payload == null || string.IsNullOrWhiteSpace(payload.LibraryScopeId) || string.IsNullOrWhiteSpace(payload.BackendInstanceId) ||
-            string.IsNullOrWhiteSpace(payload.BackendPrincipalId) || context.Claim.TenantId == null || context.Claim.OwnerUserId == null ||
-            !string.Equals(context.Claim.LibraryScopeId, payload.LibraryScopeId, StringComparison.Ordinal))
+        if (payload == null || string.IsNullOrWhiteSpace(payload.BackendLibraryId) || string.IsNullOrWhiteSpace(payload.BackendInstanceId) ||
+            string.IsNullOrWhiteSpace(payload.BackendPrincipalId) || context.Claim.OwnerUserId == null)
             return DurableJobCompletion.Failure("library_refresh_payload_invalid", "The backend library refresh payload is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var identity = await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == context.Claim.TenantId && item.UserId == context.Claim.OwnerUserId &&
-            item.BackendInstanceId == payload.BackendInstanceId && item.PrincipalId == payload.BackendPrincipalId, cancellationToken);
-        if (identity == null)
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == context.Claim.OwnerUserId && item.Enabled &&
+            item.BackendInstanceId == payload.BackendInstanceId && item.BackendPrincipalId == payload.BackendPrincipalId, cancellationToken);
+        if (user == null || user.BackendType is not ("jellyfin" or "subsonic"))
             return DurableJobCompletion.Failure("library_refresh_identity_unavailable", "The linked backend identity is unavailable.");
-        var protocol = identity.BackendType.Equals("jellyfin", StringComparison.OrdinalIgnoreCase) ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
-        var user = await db.Users.AsNoTracking().SingleAsync(item => item.Id == identity.UserId && item.TenantId == identity.TenantId, cancellationToken);
-        var execution = new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.PrincipalId,
-            new AllstarrPrincipal(identity.TenantId, identity.UserId, identity.BackendType, identity.BackendInstanceId,
-                identity.PrincipalId, user.DisplayName, false), context.Claim.CorrelationId, clock.UtcNow.AddMinutes(10),
-            cancellationToken, libraryScopeId: payload.LibraryScopeId);
+        var protocol = user.BackendType == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
+        var execution = new ProtocolExecutionContext(protocol, user.BackendInstanceId, user.BackendPrincipalId,
+            new AllstarrPrincipal(user.Id, user.BackendType, user.BackendInstanceId,
+                user.BackendPrincipalId, user.DisplayName, user.IsAdmin), context.Claim.CorrelationId, clock.UtcNow.AddMinutes(10),
+            cancellationToken);
+        if (!(await libraryAccess.ResolveAsync(execution, cancellationToken)).Allows(payload.BackendLibraryId))
+            return DurableJobCompletion.Failure("library_refresh_access_unavailable", "The backend library is unavailable to this user.");
         try
         {
             var result = await refreshers.Resolve(protocol).RefreshAsync(execution,
-                new(payload.LibraryScopeId, payload.CredentialReferenceId), cancellationToken);
+                new(payload.BackendLibraryId, payload.CredentialReferenceId), cancellationToken);
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = identity.TenantId,
-                ActorUserId = identity.UserId,
+                ActorUserId = user.Id,
                 Category = "library-refresh",
                 Action = "scan.requested",
                 Outcome = result.Accepted ? "succeeded" : "failed",
                 CorrelationId = context.Claim.CorrelationId,
-                DetailsJson = JsonSerializer.Serialize(new { payload.LibraryScopeId, payload.BackendInstanceId, protocol, result.NativeScanId }),
+                DetailsJson = JsonSerializer.Serialize(new { payload.BackendLibraryId, payload.BackendInstanceId, protocol, result.NativeScanId }),
                 CreatedAt = clock.UtcNow
             });
             await db.SaveChangesAsync(cancellationToken);

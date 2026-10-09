@@ -26,12 +26,11 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var store = new MemoryStore();
         var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024 * 1024);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
         var workspace = await resolver.CreateWorkspaceAsync(new(
-            tenant, user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:apple-track"));
-        var context = Context(tenant, user);
+            user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:apple-track"));
+        var context = Context(user);
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "apple/track 1");
 
@@ -84,18 +83,17 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
         var streaming = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
         var workspace = await resolver.CreateWorkspaceAsync(new(
-            tenant, user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:bad-media"));
+            user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:bad-media"));
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "bad-media");
 
-        var outcome = await adapter.DownloadAsync(Context(tenant, user), new(
+        var outcome = await adapter.DownloadAsync(Context(user), new(
             track, job, workspace.Reference, ProviderAudioQuality.Any));
         var lease = (await streaming.GetStreamLeaseAsync(
-            Context(tenant, user), new(track))).RequireValue();
+            Context(user), new(track))).RequireValue();
         using var streamRequest = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
 
         Assert.False(outcome.IsSuccess);
@@ -116,12 +114,11 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             new StaticClientFactory(client), Options.Create(settings));
         var resolver = new ProviderDownloadArtifactResolver(new MemoryStore(), new() { RootPath = root });
         var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "missing-route");
 
-        var outcome = await adapter.CheckAvailabilityAsync(Context(tenant, user), new(track));
+        var outcome = await adapter.CheckAvailabilityAsync(Context(user), new(track));
 
         Assert.Equal(ProviderDownloadAvailabilityState.Unavailable, outcome.RequireValue().State);
     }
@@ -140,7 +137,6 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
         var adapter = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId,
@@ -148,7 +144,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             "apple/track 1");
 
         var lease = (await adapter.GetStreamLeaseAsync(
-            Context(tenant, user), new(track, ProviderAudioQuality.HighResolution))).RequireValue();
+            Context(user), new(track, ProviderAudioQuality.HighResolution))).RequireValue();
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
 
@@ -174,12 +170,11 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
         var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "103");
 
-        var outcome = await adapter.FetchLyricsAsync(Context(tenant, user), new(
+        var outcome = await adapter.FetchLyricsAsync(Context(user), new(
             Guid.CreateVersion7(), track, preferredFormat: ProviderLyricsFormat.LineTimed));
 
         Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
@@ -208,7 +203,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "missing");
 
         var outcome = await adapter.FetchLyricsAsync(
-            Context(Guid.CreateVersion7(), Guid.CreateVersion7()),
+            Context(Guid.CreateVersion7()),
             new(Guid.CreateVersion7(), track, preferredFormat: ProviderLyricsFormat.LineTimed));
 
         Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
@@ -218,12 +213,11 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             uri.AbsolutePath.StartsWith("/api/stream/", StringComparison.Ordinal));
     }
 
-    private static ProviderExecutionContext Context(Guid tenant, Guid user) => new(
-        new ProviderActorContext(tenant, ProviderActorKind.User, user,
+    private static ProviderExecutionContext Context(Guid user) => new(
+        new ProviderActorContext(ProviderActorKind.User, user,
             new ProviderBackendPrincipal("jellyfin", "primary", "user")),
         AppleDownloadCapabilityAdapter.StableProviderId,
         account: null,
-        library: null,
         new ProviderExecutionPolicy(
             new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
             ProviderExplicitContentPolicy.Allow,
@@ -316,9 +310,9 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             Artifacts.Add(value);
             return Task.FromResult(value);
         }
-        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid tenantId, Guid jobId, string provider, CancellationToken token) =>
+        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid jobId, string provider, CancellationToken token) =>
             Task.FromResult(Artifacts.SingleOrDefault(item =>
-                item.TenantId == tenantId && item.DurableJobId == jobId && item.ProviderId == provider));
+                item.DurableJobId == jobId && item.ProviderId == provider));
         public Task MarkPlacedAsync(Guid id, Guid managedId, CancellationToken token) => Task.CompletedTask;
     }
 }

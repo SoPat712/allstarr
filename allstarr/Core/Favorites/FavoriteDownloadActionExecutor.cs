@@ -25,19 +25,12 @@ public sealed class FavoriteDownloadActionExecutor(
             return FavoriteActionExecutionResult.Failure(
                 "favorite_download_external_id_required",
                 "The favorite item has no provider track identity for download.");
-        var libraryScopeId = favoriteEvent.LibraryScopeId;
-        if (string.IsNullOrWhiteSpace(libraryScopeId))
-            return FavoriteActionExecutionResult.Failure(
-                "favorite_download_library_missing",
-                "The favorite event has no authorized library scope for download.");
         if (await HasLocalMatchAsync(factory, libraryAccess, favoriteEvent, cancellationToken))
             return FavoriteActionExecutionResult.Success();
 
         var result = await managedDownloads.ExecuteAsync(
             new ManagedTrackDownloadCommand(
-                favoriteEvent.TenantId,
                 favoriteEvent.OwnerUserId,
-                libraryScopeId,
                 favoriteEvent.JobId,
                 external.Value.Provider,
                 external.Value.Id,
@@ -57,7 +50,6 @@ public sealed class FavoriteDownloadActionExecutor(
         var code = result.ErrorCode switch
         {
             "managed_download_external_id_required" => "favorite_download_external_id_required",
-            "managed_download_library_missing" => "favorite_download_library_missing",
             "managed_download_provider_unavailable" => "favorite_download_provider_unavailable",
             "managed_download_route_denied" => "favorite_download_route_denied",
             "managed_download_route_unavailable" => "favorite_download_route_unavailable",
@@ -104,7 +96,7 @@ public sealed class FavoriteDownloadActionExecutor(
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var access = await libraryAccess.ResolveUserAsync(favoriteEvent.OwnerUserId, cancellationToken);
         var candidates = await LibraryTrackAccess.Query(db, access).Where(item =>
-            item.TenantId == favoriteEvent.TenantId && item.Protocol == favoriteEvent.Protocol &&
+            item.Protocol == favoriteEvent.Protocol &&
             item.BackendInstanceId == favoriteEvent.BackendInstanceId).ToListAsync(cancellationToken);
         return external == null
             ? candidates.Any(item => item.BackendItemId == favoriteEvent.ItemId)

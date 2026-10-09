@@ -11,7 +11,6 @@ namespace allstarr.Tests;
 
 public sealed class DurableJobQueueTests : IAsyncLifetime
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
@@ -24,21 +23,17 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "fixture",
-            Name = "Fixture tenant",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
-        context.Users.Add(new PlatformUserRecord
+        context.Users.Add(new UserRecord
         {
             Id = _userId,
-            TenantId = _tenantId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = "fixture-user",
             DisplayName = "Fixture user",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
             CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UpdatedAt = DateTimeOffset.UtcNow,
+            LastSeenAt = DateTimeOffset.UtcNow
         });
         await context.SaveChangesAsync();
         _clock = new FakeClock(new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero));
@@ -63,7 +58,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "favorite.download",
             "favorite:track-1:on",
             new { trackId = "track-1", secretReferenceId = Guid.CreateVersion7() },
-            _tenantId,
             _userId);
 
         var first = await _queue.EnqueueAsync(request);
@@ -83,7 +77,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "favorite.download",
             "favorite:track-concurrent:on",
             new { trackId = "track-concurrent" },
-            _tenantId,
             _userId);
 
         var results = await Task.WhenAll(
@@ -96,19 +89,22 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SameTenantUsers_HaveIndependentIdempotencyScopes()
+    public async Task DifferentUsers_HaveIndependentIdempotencyScopes()
     {
         var secondUserId = Guid.CreateVersion7();
         await using (var setup = await _factory.CreateDbContextAsync())
         {
-            setup.Users.Add(new PlatformUserRecord
+            setup.Users.Add(new UserRecord
             {
                 Id = secondUserId,
-                TenantId = _tenantId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = "second-fixture-user",
                 DisplayName = "Second fixture user",
-                Status = PlatformUserStatus.Active,
+                Enabled = true,
                 CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
+                UpdatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
             });
             await setup.SaveChangesAsync();
         }
@@ -117,7 +113,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "playlist.sync",
             "same-client-key",
             new { playlistId = "shared-provider-id" },
-            _tenantId,
             _userId);
         var secondRequest = firstRequest with { OwnerUserId = secondUserId };
 
@@ -142,7 +137,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
                 "provider.probe",
                 "probe-1",
                 new { accessToken = "must-not-persist" },
-                _tenantId,
                 _userId)));
 
         Assert.Contains("secret reference", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -172,7 +166,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
                 "provider.probe",
                 $"secret-shape-{field}",
                 payload,
-                _tenantId,
                 _userId)));
 
         Assert.Contains("secret reference", exception.Message, StringComparison.OrdinalIgnoreCase);
@@ -205,7 +198,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "provider.download",
             "canonical-request",
             firstPayload,
-            _tenantId,
             _userId,
             Priority: 10,
             MaxAttempts: 4,
@@ -249,19 +241,15 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "provider.download",
             "context-snapshot",
             new { trackId = "fixture" },
-            _tenantId,
             _userId,
             ProviderAccountId: account.Id,
-            LibraryScopeId: " music-main ",
             Capability: " DOWNLOAD ",
             CorrelationId: "https://caller.invalid/request?token=must-not-persist"));
 
         await using var context = await _factory.CreateDbContextAsync();
         var job = await context.Jobs.SingleAsync(item => item.Id == enqueued.JobId);
-        Assert.Equal(_tenantId, job.TenantId);
         Assert.Equal(_userId, job.OwnerUserId);
         Assert.Equal(account.Id, job.ProviderAccountId);
-        Assert.Equal("music-main", job.LibraryScopeId);
         Assert.Equal("download", job.ProviderCapability);
         Assert.StartsWith("redacted-", job.CorrelationId, StringComparison.Ordinal);
         Assert.DoesNotContain("must-not-persist", job.CorrelationId, StringComparison.Ordinal);
@@ -271,6 +259,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Equal("deezer", snapshot.ProviderId);
         Assert.Equal("download", snapshot.Capability);
         Assert.Equal("personal_account", snapshot.AuthorizationRule);
+        Assert.Equal(account.Revision, snapshot.ProviderAccountRevision);
 
         var claim = await _queue.ClaimNextAsync("worker-a");
         Assert.NotNull(claim);
@@ -280,7 +269,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Enqueue_RequiresAnActiveInitiatorInTheExactTenant()
+    public async Task Enqueue_RequiresAnActiveInitiator()
     {
         var missingUser = Guid.CreateVersion7();
 
@@ -289,7 +278,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
                 "placement",
                 "missing-initiator",
                 new { itemId = "fixture" },
-                _tenantId,
                 missingUser)));
         await Assert.ThrowsAsync<ArgumentException>(() =>
             _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
@@ -299,7 +287,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Idempotency_RejectsProviderLibraryOrPolicyContextMismatch()
+    public async Task Idempotency_RejectsProviderOrPolicyContextMismatch()
     {
         var firstAccount = await AddProviderAccount("deezer", _userId);
         var secondAccount = await AddProviderAccount("qobuz", _userId);
@@ -307,10 +295,8 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "provider.download",
             "context-conflict",
             new { trackId = "fixture" },
-            _tenantId,
             _userId,
             ProviderAccountId: firstAccount.Id,
-            LibraryScopeId: "music-a",
             Capability: "download",
             CorrelationId: "request-one");
         await _queue.EnqueueAsync(first);
@@ -321,7 +307,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var conflicts = new[]
         {
             first with { ProviderAccountId = secondAccount.Id },
-            first with { LibraryScopeId = "music-b" },
             first with { Capability = "playlist" }
         };
         foreach (var conflict in conflicts)
@@ -456,8 +441,8 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     {
         var queued = await Enqueue("playlist.refresh", "refresh-1");
 
-        var requested = await _queue.RequestCancellationAsync(queued.JobId, _tenantId);
-        var repeated = await _queue.RequestCancellationAsync(queued.JobId, _tenantId);
+        var requested = await _queue.RequestCancellationAsync(queued.JobId, _userId);
+        var repeated = await _queue.RequestCancellationAsync(queued.JobId, _userId);
         var claim = await _queue.ClaimNextAsync("worker-a");
 
         Assert.True(requested);
@@ -475,7 +460,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "provider.download",
             "sidecar-deferral",
             new { trackId = "fixture" },
-            _tenantId,
             _userId,
             MaxAttempts: 2,
             MaxDeferrals: 1));
@@ -513,7 +497,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "placement",
             "lease-loss-budget",
             new { itemId = "fixture" },
-            _tenantId,
             _userId,
             MaxAttempts: 1));
         Assert.NotNull(await _queue.ClaimNextAsync("worker-a"));
@@ -597,7 +580,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
 
         await worker.StartAsync(CancellationToken.None);
         await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
-        Assert.True(await _queue.RequestCancellationAsync(queued.JobId, _tenantId));
+        Assert.True(await _queue.RequestCancellationAsync(queued.JobId, _userId));
 
         await handler.CancellationObserved.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await WaitForState(queued.JobId, DurableJobState.Cancelled);
@@ -621,7 +604,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             "provider.work",
             "exact-account-only",
             new { trackId = "fixture" },
-            _tenantId,
             _userId,
             ProviderAccountId: savedAccount.Id,
             Capability: "download",
@@ -665,7 +647,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             type,
             key,
             new { itemId = key },
-            _tenantId,
             _userId));
 
     [Theory]
@@ -673,10 +654,11 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     [InlineData("account")]
     [InlineData("revoked")]
     [InlineData("purpose")]
-    [InlineData("credential-scope")]
+    [InlineData("credential-owner")]
     [InlineData("capability")]
     [InlineData("provider-removed")]
     [InlineData("account-scope")]
+    [InlineData("revision")]
     public async Task Retry_RevalidatesExactInitiatorAccountCapabilityAndCredential(string change)
     {
         var account = await AddProviderAccount("deezer", _userId);
@@ -684,17 +666,22 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var otherUser = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = otherUser,
-                TenantId = _tenantId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = "other-retry-user",
                 DisplayName = "Other",
-                Status = PlatformUserStatus.Active
+                Enabled = true,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
             });
             db.SecretReferences.Add(new SecretReferenceRecord
             {
                 Id = secretId,
-                TenantId = _tenantId,
+                UserId = _userId,
                 Purpose = $"provider-account:deezer:{account.Id:N}",
                 ActiveVersion = 1,
                 CreatedAt = _clock.UtcNow,
@@ -709,18 +696,19 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var authorizer = new DurableJobContextAuthorizer(_factory, registry.Object);
         var queue = new DurableJobQueue(_factory, _options, new JobPayloadPolicy(_options), _clock, authorizer);
         var request = new DurableJobEnqueueRequest<object>("provider.download", "authorized-retry", new { track = "fixture" },
-            _tenantId, _userId, ProviderAccountId: account.Id, Capability: "download");
+            _userId, ProviderAccountId: account.Id, Capability: "download");
         await queue.EnqueueAsync(request);
         var first = (await queue.ClaimNextAsync("worker"))!;
         Assert.True((await queue.ReauthorizeAsync(first)).Authorized);
         await queue.CompleteAsync(first, DurableJobCompletion.Retry("transient", "Try again", TimeSpan.FromSeconds(1)));
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            if (change == "user") (await db.Users.SingleAsync(item => item.Id == _userId)).Status = PlatformUserStatus.Disabled;
+            if (change == "user") (await db.Users.SingleAsync(item => item.Id == _userId)).Enabled = false;
             if (change == "account") (await db.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Enabled = false;
             if (change == "revoked") (await db.SecretReferences.SingleAsync()).RevokedAt = _clock.UtcNow;
             if (change == "purpose") (await db.SecretReferences.SingleAsync()).Purpose = "backend:unrelated";
-            if (change == "credential-scope") (await db.SecretReferences.SingleAsync()).TenantId = null;
+            if (change == "credential-owner") (await db.SecretReferences.SingleAsync()).UserId = otherUser;
+            if (change == "revision") (await db.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).Revision++;
             await db.SaveChangesAsync();
         }
         if (change is "capability" or "account-scope" or "provider-removed")
@@ -734,7 +722,13 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Equal(2, retried.AttemptNumber);
         Assert.Equal(first.ProviderAccountId, retried.ProviderAccountId);
         Assert.False((await queue.ReauthorizeAsync(retried)).Authorized);
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queue.EnqueueAsync(request with { IdempotencyKey = "new-denied" }));
+        if (change == "revision")
+        {
+            var updated = await queue.EnqueueAsync(request with { IdempotencyKey = "new-revision" });
+            Assert.True(updated.Created);
+        }
+        else
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => queue.EnqueueAsync(request with { IdempotencyKey = "new-denied" }));
     }
 
     [Fact]
@@ -744,20 +738,25 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var other = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = other,
-                TenantId = _tenantId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = "foreign-account-user",
                 DisplayName = "Other",
-                Status = PlatformUserStatus.Active
+                Enabled = true,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                LastSeenAt = _clock.UtcNow
             });
             await db.SaveChangesAsync();
         }
         var authorizer = new DurableJobContextAuthorizer(_factory);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => authorizer.AuthorizeEnqueueAsync(
-            _tenantId, other, account.Id, null, "download", null));
+            other, account.Id, "download", null));
         await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("fixture", "foreign-account", new { track = "fixture" },
-            _tenantId, _userId, ProviderAccountId: account.Id, Capability: "download"));
+            _userId, ProviderAccountId: account.Id, Capability: "download"));
         var claim = (await _queue.ClaimNextAsync("worker"))!;
         Assert.False((await authorizer.ReauthorizeAsync(claim with { OwnerUserId = other })).Authorized);
     }
@@ -770,13 +769,15 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         {
             var stored = await db.ProviderAccounts.SingleAsync();
             stored.OwnerUserId = null;
-            stored.TenantId = null;
             await db.SaveChangesAsync();
         }
         var authorizer = new DurableJobContextAuthorizer(_factory);
-        Assert.Equal(_userId, (await authorizer.AuthorizeEnqueueAsync(_tenantId, _userId, account.Id, null, "download", null)).OwnerUserId);
-        await Assert.ThrowsAsync<ArgumentException>(() => authorizer.AuthorizeEnqueueAsync(_tenantId, null, account.Id, null, "download", null));
-        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => authorizer.AuthorizeEnqueueAsync(_tenantId, _userId, account.Id, null, "anything", null));
+        Assert.Equal(_userId, (await authorizer.AuthorizeEnqueueAsync(
+            _userId, account.Id, "download", null)).OwnerUserId);
+        await Assert.ThrowsAsync<ArgumentException>(() => authorizer.AuthorizeEnqueueAsync(
+            null, account.Id, "download", null));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => authorizer.AuthorizeEnqueueAsync(
+            _userId, account.Id, "anything", null));
     }
 
     private static allstarr.Core.Capabilities.ProviderDescriptor JobProvider(bool unavailable = false, bool sharedOnly = false) => new(
@@ -798,7 +799,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var account = new ProviderAccountRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
             OwnerUserId = ownerUserId,
             ProviderId = providerId,
             DisplayName = $"{providerId} fixture",

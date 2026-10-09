@@ -56,7 +56,7 @@ public sealed partial class AllstarrDbContext
                 .IsUnique().HasDatabaseName("IX_extension_permission_review_key");
             entity.HasOne<ExtensionPackageRecord>().WithMany().HasForeignKey(item => item.ExtensionPackageId)
                 .HasConstraintName("FK_extension_permission_review_package").OnDelete(DeleteBehavior.Cascade);
-            entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.ReviewedByUserId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.ReviewedByUserId).OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ExtensionLogRecord>(entity =>

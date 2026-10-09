@@ -71,17 +71,14 @@ public sealed class ProtocolExecutionContextFilter : IAsyncActionFilter
                 ProtocolKind.Subsonic,
                 subsonicPrincipal,
                 client: new ProtocolClientDescriptor(
-                    parameters?.GetValueOrDefault("c")),
-                libraryScopeId: parameters?.GetValueOrDefault("musicFolderId") is { Length: > 0 } libraryId
-                    ? libraryId
-                    : null);
+                    parameters?.GetValueOrDefault("c")));
         }
 
         if (context.HttpContext.GetProtocolExecutionContext() is { Principal: { } principal } execution)
         {
             items[ProtocolExecutionContextFactory.HttpContextItemKey] = execution with
             {
-                Policy = await _policies.ResolveForUserAsync(principal.TenantId, principal.UserId,
+                Policy = await _policies.ResolveForUserAsync(principal.UserId,
                     context.HttpContext.RequestAborted)
             };
         }

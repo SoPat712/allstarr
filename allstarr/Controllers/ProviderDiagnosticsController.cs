@@ -27,7 +27,6 @@ public sealed class ProviderDiagnosticsController(
             from sample in db.ProviderHealthSamples.AsNoTracking()
             join account in db.ProviderAccounts.AsNoTracking() on sample.ProviderAccountId equals account.Id
             where sample.Capability == "click-to-stream" &&
-                  (account.TenantId == null || account.TenantId == session.TenantId) &&
                   (account.OwnerUserId == null || account.OwnerUserId == session.AllstarrUserId)
             orderby sample.ObservedAt descending
             select new
@@ -43,7 +42,7 @@ public sealed class ProviderDiagnosticsController(
             .ToArrayAsync(cancellationToken);
         var auditRows = await db.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "provider-cts" &&
-                           item.TenantId == session.TenantId)
+                           item.ActorUserId == session.AllstarrUserId)
             .OrderByDescending(item => item.CreatedAt)
             .Take(500)
             .ToArrayAsync(cancellationToken);
@@ -82,7 +81,7 @@ public sealed class ProviderDiagnosticsController(
         CancellationToken cancellationToken)
     {
         if (!TryGetAdministrator(out var session, out var authError)) return authError!;
-        if (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue)
+        if (!session.AllstarrUserId.HasValue)
             return Conflict(new { error = "The administrator session is not linked to an Allstarr user." });
         if (request.ProviderAccountId == Guid.Empty)
             return BadRequest(new { error = "A provider account is required." });
@@ -92,19 +91,19 @@ public sealed class ProviderDiagnosticsController(
         catch (ArgumentException exception) { return BadRequest(new { error = exception.Message }); }
 
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var identity = await db.BackendIdentities.AsNoTracking()
-            .Where(item => item.TenantId == session.TenantId.Value &&
-                           item.UserId == session.AllstarrUserId.Value)
+        var identity = await db.Users.AsNoTracking()
+            .Where(item => item.Id == session.AllstarrUserId.Value && item.Enabled && item.IsAdmin &&
+                           item.BackendType == session.BackendType.ToLowerInvariant() &&
+                           item.BackendInstanceId == session.BackendInstanceId && item.BackendPrincipalId == session.UserId)
             .OrderByDescending(item => item.LastSeenAt)
             .FirstOrDefaultAsync(cancellationToken);
         if (identity == null)
             return Conflict(new { error = "No verified backend identity is available for this administrator." });
 
         var actor = new ProviderActorContext(
-            session.TenantId.Value,
             ProviderActorKind.Administrator,
             session.AllstarrUserId.Value,
-            new ProviderBackendPrincipal(identity.BackendType, identity.BackendInstanceId, identity.PrincipalId));
+            new ProviderBackendPrincipal(identity.BackendType, identity.BackendInstanceId, identity.BackendPrincipalId));
         var correlationId = HttpContext.TraceIdentifier.Length <= 100
             ? HttpContext.TraceIdentifier
             : HttpContext.TraceIdentifier[..100];
@@ -114,7 +113,7 @@ public sealed class ProviderDiagnosticsController(
             var quality = request.Quality;
             if (quality == ProviderAudioQuality.Any)
             {
-                var policy = await providerPolicy.ResolveAsync(session.TenantId.Value, cancellationToken);
+                var policy = await providerPolicy.ResolveForUserAsync(session.AllstarrUserId.Value, cancellationToken);
                 quality = AudioQualityPolicy.RequestedQuality(policy.AudioQuality);
             }
             var result = await diagnosticRunner.MeasureAsync(

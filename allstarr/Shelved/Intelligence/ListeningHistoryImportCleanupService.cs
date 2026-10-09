@@ -47,10 +47,10 @@ public sealed class ListeningHistoryImportCleanupService(
                 item.ExpiresAt <= now && item.State != ListeningHistoryImportState.Completed &&
                 item.State != ListeningHistoryImportState.Expired)
             .OrderBy(item => item.ExpiresAt).Take(100)
-            .Select(item => new { item.Id, item.TenantId, item.JobId })
+            .Select(item => new { item.Id, item.OwnerUserId, item.JobId })
             .ToListAsync(cancellationToken);
         foreach (var item in expired.Where(item => item.JobId != null))
-            await jobs.RequestCancellationAsync(item.JobId!.Value, item.TenantId, cancellationToken);
+            await jobs.RequestCancellationAsync(item.JobId!.Value, item.OwnerUserId, cancellationToken);
         if (expired.Count == 0) return;
 
         var ids = expired.Select(item => item.Id).ToArray();

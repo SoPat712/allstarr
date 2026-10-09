@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Admin;
 
-public readonly record struct AdminUpdateScope(Guid TenantId, Guid? UserId, bool IsAdministrator);
+public readonly record struct AdminUpdateScope(Guid? UserId, bool IsAdministrator);
 
 public readonly record struct AdminUpdateCursor(
     DateTimeOffset OccurredAt,
@@ -78,8 +78,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             cancellationToken);
 
         var jobs = await context.Jobs.AsNoTracking()
-            .Where(item => item.TenantId == scope.TenantId &&
-                (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+            .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
                 (item.UpdatedAt > cursor.OccurredAt ||
                  item.UpdatedAt == cursor.OccurredAt &&
                  (JobSource > cursor.Source ||
@@ -103,8 +102,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             .ToListAsync(cancellationToken);
 
         var audits = await context.AuditEvents.AsNoTracking()
-            .Where(item => item.TenantId == scope.TenantId &&
-                (scope.IsAdministrator || item.ActorUserId == scope.UserId) &&
+            .Where(item => (scope.IsAdministrator || item.ActorUserId == scope.UserId) &&
                 (item.CreatedAt > cursor.OccurredAt ||
                  item.CreatedAt == cursor.OccurredAt &&
                  (AuditSource > cursor.Source ||
@@ -127,8 +125,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
         var auditJobs = auditCorrelations.Length == 0
             ? new Dictionary<string, Guid>(StringComparer.Ordinal)
             : (await context.Jobs.AsNoTracking()
-                .Where(item => item.TenantId == scope.TenantId &&
-                    (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+                .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
                     auditCorrelations.Contains(item.CorrelationId))
                 .Select(item => new { item.CorrelationId, item.Id })
                 .ToListAsync(cancellationToken))
@@ -139,8 +136,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                     StringComparer.Ordinal);
 
         var matches = await context.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == scope.TenantId &&
-                (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+            .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
                 (item.DecidedAt > cursor.OccurredAt ||
                  item.DecidedAt == cursor.OccurredAt &&
                  (TrackMatchSource > cursor.Source ||
@@ -158,14 +154,12 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                 item.State,
                 item.Confidence,
                 item.Threshold,
-                item.DecisionVersion,
-                item.LibraryScopeId
+                item.DecisionVersion
             })
             .ToListAsync(cancellationToken);
 
         var snapshots = await context.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == scope.TenantId &&
-                (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+            .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
                 (item.RetrievedAt > cursor.OccurredAt ||
                  item.RetrievedAt == cursor.OccurredAt &&
                  (PlaylistSnapshotSource > cursor.Source ||
@@ -186,11 +180,9 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             .ToListAsync(cancellationToken);
 
         var health = await context.ProviderHealthSamples.AsNoTracking()
-            .Where(item => item.TenantId == scope.TenantId &&
-                (scope.IsAdministrator ||
+            .Where(item => (scope.IsAdministrator ||
                  context.ProviderAccounts.Any(account =>
                      account.Id == item.ProviderAccountId &&
-                     account.TenantId == scope.TenantId &&
                      account.OwnerUserId == scope.UserId)) &&
                 (item.ObservedAt > cursor.OccurredAt ||
                  item.ObservedAt == cursor.OccurredAt &&
@@ -254,8 +246,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                     state = item.State.ToString(),
                     item.Confidence,
                     item.Threshold,
-                    item.DecisionVersion,
-                    item.LibraryScopeId
+                    item.DecisionVersion
                 })))
             .Concat(snapshots.Select(item => Event(
                 PlaylistSnapshotSource,

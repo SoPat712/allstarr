@@ -51,7 +51,7 @@ public sealed class MediaAssetResolverTests
         Assert.Equal("\"etag\"", cached.ETag);
         Assert.Equal(1, metrics.Snapshot().CoalescedRequests);
         Assert.Equal(4, metrics.Snapshot().UpstreamBytesAvoided);
-        Assert.Single(cache.GetKeysByPattern("media:descriptor:v3:*"));
+        Assert.Single(cache.GetKeysByPattern("media:descriptor:v4:*"));
         Assert.Single(cache.GetKeysByPattern("artwork:payload:v1:*"));
     }
 
@@ -71,7 +71,7 @@ public sealed class MediaAssetResolverTests
             _ => Task.FromResult<MediaAssetSource?>(new(bytes, "image/jpeg")),
             1024);
 
-        Assert.Equal(2, cache.GetKeysByPattern("media:descriptor:v3:*").Count());
+        Assert.Equal(2, cache.GetKeysByPattern("media:descriptor:v4:*").Count());
         Assert.Single(cache.GetKeysByPattern("artwork:payload:v1:*"));
         Assert.DoesNotContain(cache.GetKeysByPattern("*"), key =>
             key.Contains("user-avatar-id", StringComparison.Ordinal));
@@ -102,12 +102,11 @@ public sealed class MediaAssetResolverTests
         Assert.Equal(1, resized.Height);
         Assert.Equal("image/jpeg", result.ContentType);
         Assert.True(cached!.FromCache);
-        Assert.Equal(2, cache.GetKeysByPattern("media:descriptor:v3:*").Count());
+        Assert.Equal(2, cache.GetKeysByPattern("media:descriptor:v4:*").Count());
         Assert.Equal(2, cache.GetKeysByPattern("artwork:payload:v1:*").Count());
     }
 
     private static MediaAssetIdentity Identity(Guid userId) => new(
-        Guid.Parse("11111111-1111-1111-1111-111111111111"),
         userId,
         null,
         "jellyfin",

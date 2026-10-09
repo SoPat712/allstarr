@@ -20,9 +20,7 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         Path.GetTempPath(),
         "allstarr-tests",
         $"onboarding-{Guid.NewGuid():N}");
-    private readonly Guid _firstTenantId = Guid.CreateVersion7();
     private readonly Guid _firstUserId = Guid.CreateVersion7();
-    private readonly Guid _secondTenantId = Guid.CreateVersion7();
     private readonly Guid _secondUserId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
@@ -37,12 +35,9 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         var now = DateTimeOffset.Parse("2026-07-14T12:00:00Z");
-        db.Tenants.AddRange(
-            new TenantRecord { Id = _firstTenantId, Slug = "first", Name = "First", CreatedAt = now },
-            new TenantRecord { Id = _secondTenantId, Slug = "second", Name = "Second", CreatedAt = now });
         db.Users.AddRange(
-            User(_firstTenantId, _firstUserId, "First admin", now),
-            User(_secondTenantId, _secondUserId, "Second admin", now));
+            User(_firstUserId, "first-admin", "First admin", enabled: false, now: now),
+            User(_secondUserId, "second-admin", "Second admin", enabled: true, now: now));
         await db.SaveChangesAsync();
 
         var clock = new FixedClock(now);
@@ -62,9 +57,9 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Complete_IsDurableIdempotentAndTenantScoped()
+    public async Task Complete_IsDurableIdempotentAndUserScoped()
     {
-        var first = Controller(Session(_firstTenantId, _firstUserId));
+        var first = Controller(Session(_firstUserId));
 
         var initial = Payload(Assert.IsType<OkObjectResult>(await first.GetStatus()).Value);
         Assert.False(initial.GetProperty("completed").GetBoolean());
@@ -74,7 +69,7 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         Assert.Equal(
             "backend_identity_required",
             Payload(blocked.Value).GetProperty("code").GetString());
-        await AddIdentity(_firstTenantId, _firstUserId);
+        await EnableIdentity(_firstUserId);
 
         var completed = Payload(Assert.IsType<OkObjectResult>(await first.Complete()).Value);
         Assert.True(completed.GetProperty("completed").GetBoolean());
@@ -86,24 +81,23 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         Assert.True(repeated.GetProperty("alreadyCompleted").GetBoolean());
 
         var second = Payload(Assert.IsType<OkObjectResult>(
-            await Controller(Session(_secondTenantId, _secondUserId)).GetStatus()).Value);
+            await Controller(Session(_secondUserId)).GetStatus()).Value);
         Assert.False(second.GetProperty("completed").GetBoolean());
 
         await using var db = await _factory.CreateDbContextAsync();
         var state = await db.OnboardingStates.SingleAsync();
-        Assert.Equal(_firstTenantId, state.TenantId);
         Assert.Equal(_firstUserId, state.UserId);
         Assert.Equal(OnboardingStateService.SchemaVersion, state.SchemaVersion);
         Assert.Equal(1, await db.AuditEvents.CountAsync(item => item.Action == "onboarding.complete"));
 
         var restarted = new OnboardingStateService(_factory, new FixedClock(
             DateTimeOffset.Parse("2026-07-14T13:00:00Z")));
-        var afterRestart = await restarted.GetAsync(_firstTenantId, _firstUserId);
+        var afterRestart = await restarted.GetAsync(_firstUserId);
         Assert.True(afterRestart.Completed);
     }
 
     [Fact]
-    public async Task Status_UsesTenantMigrationReceiptAsAuthority()
+    public async Task Status_UsesDeploymentMigrationReceiptAsAuthority()
     {
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -111,7 +105,6 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = auditId,
-                TenantId = _firstTenantId,
                 ActorUserId = _firstUserId,
                 Category = "configuration",
                 Action = "legacy-env.apply",
@@ -123,7 +116,6 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
             db.LegacyEnvImports.Add(new LegacyEnvImportRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _firstTenantId,
                 ActorUserId = _firstUserId,
                 AuditEventId = auditId,
                 SourceSha256 = new string('a', 64),
@@ -134,34 +126,34 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         }
 
         var first = Payload(Assert.IsType<OkObjectResult>(
-            await Controller(Session(_firstTenantId, _firstUserId)).GetStatus()).Value);
+            await Controller(Session(_firstUserId)).GetStatus()).Value);
         Assert.True(first.GetProperty("migration").GetProperty("Completed").GetBoolean());
         Assert.False(first.GetProperty("migration").GetProperty("FirstRun").GetBoolean());
 
         var second = Payload(Assert.IsType<OkObjectResult>(
-            await Controller(Session(_secondTenantId, _secondUserId)).GetStatus()).Value);
-        Assert.False(second.GetProperty("migration").GetProperty("Completed").GetBoolean());
-        Assert.True(second.GetProperty("migration").GetProperty("FirstRun").GetBoolean());
+            await Controller(Session(_secondUserId)).GetStatus()).Value);
+        Assert.True(second.GetProperty("migration").GetProperty("Completed").GetBoolean());
+        Assert.False(second.GetProperty("migration").GetProperty("FirstRun").GetBoolean());
     }
 
     [Fact]
-    public async Task Endpoints_RequireAdministratorWithLinkedTenant()
+    public async Task Endpoints_RequireAdministratorWithLinkedUser()
     {
         Assert.IsType<UnauthorizedObjectResult>(await Controller(null).GetStatus());
 
-        var user = Session(_firstTenantId, _firstUserId, administrator: false);
+        var user = Session(_firstUserId, administrator: false);
         var forbidden = Assert.IsType<ObjectResult>(await Controller(user).Complete());
         Assert.Equal(StatusCodes.Status403Forbidden, forbidden.StatusCode);
 
-        var unlinked = Session(null, null);
+        var unlinked = Session(null);
         Assert.IsType<ConflictObjectResult>(await Controller(unlinked).GetStatus());
     }
 
     [Fact]
     public async Task Reopen_IsExplicitAndDoesNotConfuseRuntimeRecoveryWithFirstSetup()
     {
-        await AddIdentity(_firstTenantId, _firstUserId);
-        var controller = Controller(Session(_firstTenantId, _firstUserId));
+        await EnableIdentity(_firstUserId);
+        var controller = Controller(Session(_firstUserId));
         Assert.IsType<OkObjectResult>(await controller.Complete());
 
         var reopened = Payload(Assert.IsType<OkObjectResult>(await controller.Reopen()).Value);
@@ -171,7 +163,8 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            db.BackendIdentities.RemoveRange(db.BackendIdentities);
+            var user = await db.Users.SingleAsync(item => item.Id == _firstUserId);
+            user.Enabled = false;
             await db.SaveChangesAsync();
         }
         var unhealthy = Payload(Assert.IsType<OkObjectResult>(await controller.GetStatus()).Value);
@@ -184,11 +177,10 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
     [Fact]
     public async Task Complete_IsIdempotentAcrossConcurrentAdministratorTabs()
     {
-        await AddIdentity(_firstTenantId, _firstUserId);
+        await EnableIdentity(_firstUserId);
 
         var states = await Task.WhenAll(Enumerable.Range(0, 4).Select(index =>
             _onboarding.CompleteAsync(
-                _firstTenantId,
                 _firstUserId,
                 $"tab-{index}")));
 
@@ -215,16 +207,16 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         };
     }
 
-    private static AdminAuthSession Session(
-        Guid? tenantId,
+    private AdminAuthSession Session(
         Guid? userId,
         bool administrator = true) => new()
         {
             SessionId = Guid.NewGuid().ToString("N"),
-            UserId = "backend-user",
+            UserId = userId == _secondUserId ? "second-admin" : "first-admin",
             UserName = "Admin",
             IsAdministrator = administrator,
-            TenantId = tenantId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
             AllstarrUserId = userId,
             JellyfinAccessToken = "fixture-token",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
@@ -250,32 +242,32 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         return path;
     }
 
-    private async Task AddIdentity(Guid tenantId, Guid userId)
+    private async Task EnableIdentity(Guid userId)
     {
         await using var db = await _factory.CreateDbContextAsync();
-        db.BackendIdentities.Add(new BackendIdentityRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
-            UserId = userId,
-            BackendType = "jellyfin",
-            BackendInstanceId = "primary",
-            PrincipalId = "backend-user",
-            CreatedAt = DateTimeOffset.Parse("2026-07-14T12:00:00Z"),
-            LastSeenAt = DateTimeOffset.Parse("2026-07-14T12:00:00Z")
-        });
+        var user = await db.Users.SingleAsync(item => item.Id == userId);
+        user.Enabled = true;
         await db.SaveChangesAsync();
     }
 
-    private static PlatformUserRecord User(Guid tenantId, Guid id, string name, DateTimeOffset now) => new()
-    {
-        Id = id,
-        TenantId = tenantId,
-        DisplayName = name,
-        Status = PlatformUserStatus.Active,
-        CreatedAt = now,
-        UpdatedAt = now
-    };
+    private static UserRecord User(
+        Guid id,
+        string backendPrincipalId,
+        string name,
+        bool enabled,
+        DateTimeOffset now) => new()
+        {
+            Id = id,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = backendPrincipalId,
+            DisplayName = name,
+            IsAdmin = true,
+            Enabled = enabled,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
 
     private static JsonElement Payload(object? value) =>
         JsonSerializer.SerializeToElement(value);

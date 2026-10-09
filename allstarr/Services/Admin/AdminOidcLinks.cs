@@ -32,27 +32,26 @@ public sealed class AdminOidcLinks(
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var identity = await db.BackendIdentities.SingleAsync(item =>
-            item.TenantId == principal.TenantId && item.UserId == principal.UserId &&
+        var user = await db.Users.SingleAsync(item => item.Enabled && item.Id == principal.UserId &&
+            item.IsAdmin == principal.IsAdministrator &&
             item.BackendType == principal.BackendType && item.BackendInstanceId == principal.BackendInstanceId &&
-            item.PrincipalId == principal.BackendPrincipalId, cancellationToken);
+            item.BackendPrincipalId == principal.BackendPrincipalId, cancellationToken);
         var existing = await db.AdminOidcLinks.SingleOrDefaultAsync(item => item.Id == key, cancellationToken);
-        if (existing != null && existing.BackendIdentityId != identity.Id ||
-            await db.AdminOidcLinks.AnyAsync(item => item.BackendIdentityId == identity.Id && item.Id != key, cancellationToken))
+        if (existing != null && existing.UserId != user.Id ||
+            await db.AdminOidcLinks.AnyAsync(item => item.UserId == user.Id && item.Id != key, cancellationToken))
             throw new UnauthorizedAccessException("An account is already linked. Disconnect it before linking another account.");
-        if (credential.Backend != identity.BackendType || credential.UserId != identity.PrincipalId ||
+        if (credential.Backend != user.BackendType || credential.UserId != user.BackendPrincipalId ||
             credential.Endpoint != backend.Endpoint) throw new UnauthorizedAccessException("Backend identity changed.");
 
         var payload = JsonSerializer.SerializeToUtf8Bytes(credential);
         try
         {
-            var secret = await secrets.StoreWithinTransactionAsync(db, identity.TenantId, SecretPurpose,
+            var secret = await secrets.StoreWithinTransactionAsync(db, user.Id, SecretPurpose,
                 payload, existing?.SecretReferenceId, cancellationToken);
-            db.SecretReferences.Local.Single(item => item.Id == secret.Id).BackendIdentityId = identity.Id;
             if (existing == null) db.AdminOidcLinks.Add(new()
             {
                 Id = key,
-                BackendIdentityId = identity.Id,
+                UserId = user.Id,
                 SecretReferenceId = secret.Id,
                 CreatedAt = DateTimeOffset.UtcNow
             });
@@ -66,27 +65,27 @@ public sealed class AdminOidcLinks(
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var binding = await (from link in db.AdminOidcLinks
-                             join identity in db.BackendIdentities on link.BackendIdentityId equals identity.Id
+                             join linkedUser in db.Users on link.UserId equals linkedUser.Id
                              join secret in db.SecretReferences on link.SecretReferenceId equals secret.Id
                              where link.Id == key && secret.RevokedAt == null &&
-                                   secret.BackendIdentityId == identity.Id && secret.TenantId == identity.TenantId &&
-                                   secret.Purpose == SecretPurpose && identity.BackendType == backend.Backend &&
-                                   identity.BackendInstanceId == identityOptions.BackendInstanceId
-                             select new { link, identity }).SingleOrDefaultAsync(cancellationToken);
+                                   secret.UserId == linkedUser.Id && secret.Purpose == SecretPurpose &&
+                                   linkedUser.Enabled && linkedUser.BackendType == backend.Backend &&
+                                   linkedUser.BackendInstanceId == identityOptions.BackendInstanceId
+                             select new { link, user = linkedUser }).SingleOrDefaultAsync(cancellationToken);
         if (binding == null) return null;
         using var lease = await secrets.OpenAsync(binding.link.SecretReferenceId,
-            new(binding.identity.TenantId), cancellationToken);
+            new SecretAccessContext(binding.user.Id, SecretPurpose), cancellationToken);
         var credential = JsonSerializer.Deserialize<AdminOidcCredential>(lease.Value.Span);
-        if (credential == null || credential.UserId != binding.identity.PrincipalId) return null;
+        if (credential == null || credential.UserId != binding.user.BackendPrincipalId) return null;
         var user = await backend.ValidateAsync(credential, cancellationToken);
         if (user == null) return null;
         var principal = await identities.ResolveAsync(new(backend.Backend, user.UserId, user.Name, user.IsAdministrator), cancellationToken);
-        if (principal == null || principal.TenantId != binding.identity.TenantId || principal.UserId != binding.identity.UserId ||
-            principal.BackendType != binding.identity.BackendType || principal.BackendInstanceId != binding.identity.BackendInstanceId ||
-            principal.BackendPrincipalId != binding.identity.PrincipalId)
+        if (principal == null || principal.UserId != binding.user.Id ||
+            principal.BackendType != binding.user.BackendType || principal.BackendInstanceId != binding.user.BackendInstanceId ||
+            principal.BackendPrincipalId != binding.user.BackendPrincipalId)
             return null;
         return await sessions.CreateSessionAsync(user.UserId, user.Name, user.IsAdministrator, user.AccessToken, null,
-            backendType: backend.Backend == "jellyfin" ? "Jellyfin" : "Subsonic", tenantId: principal.TenantId, allstarrUserId: principal.UserId,
+            backendType: backend.Backend == "jellyfin" ? "Jellyfin" : "Subsonic", allstarrUserId: principal.UserId,
             cancellationToken: cancellationToken, oidcSecretReferenceId: binding.link.SecretReferenceId,
             oidcBackendEndpoint: backend.Endpoint, oidcBackendInstanceId: identityOptions.BackendInstanceId,
             subsonicReadAuthentication: backend.Backend == "subsonic"
@@ -106,7 +105,8 @@ public sealed class AdminOidcLinks(
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         foreach (var link in await OwnedLinks(db, session).ToListAsync(cancellationToken))
         {
-            var secret = await db.SecretReferences.SingleAsync(item => item.Id == link.SecretReferenceId, cancellationToken);
+            var secret = await db.SecretReferences.SingleAsync(item => item.Id == link.SecretReferenceId &&
+                item.UserId == link.UserId && item.Purpose == SecretPurpose, cancellationToken);
             secret.RevokedAt = DateTimeOffset.UtcNow;
             db.AdminOidcLinks.Remove(link);
         }
@@ -116,9 +116,10 @@ public sealed class AdminOidcLinks(
 
     private IQueryable<AdminOidcLinkRecord> OwnedLinks(AllstarrDbContext db, AdminAuthSession session) =>
         from link in db.AdminOidcLinks
-        join identity in db.BackendIdentities on link.BackendIdentityId equals identity.Id
-        where identity.TenantId == session.TenantId && identity.UserId == session.AllstarrUserId &&
-              identity.PrincipalId == session.UserId && identity.BackendType == backend.Backend &&
-              identity.BackendInstanceId == identityOptions.BackendInstanceId
+        join user in db.Users on link.UserId equals user.Id
+        where user.Id == session.AllstarrUserId && user.Enabled &&
+              user.IsAdmin == session.IsAdministrator &&
+              user.BackendPrincipalId == session.UserId && user.BackendType == backend.Backend &&
+              user.BackendInstanceId == identityOptions.BackendInstanceId
         select link;
 }

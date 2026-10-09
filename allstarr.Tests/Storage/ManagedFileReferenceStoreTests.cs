@@ -9,7 +9,6 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
     private readonly string root = Path.Combine(Path.GetTempPath(), $"allstarr-managed-references-{Guid.NewGuid():N}");
     private SqliteTestDatabase database = null!;
     private DbContextOptions<AllstarrDbContext> options = null!;
-    private Guid tenantId;
     private Guid userId;
 
     public async Task InitializeAsync()
@@ -18,21 +17,15 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
         database = await SqliteTestDatabase.CreateAsync();
         options = database.Options;
         await using var db = new AllstarrDbContext(options);
-        tenantId = Guid.CreateVersion7();
         userId = Guid.CreateVersion7();
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = tenantId,
-            Slug = "managed-references",
-            Name = "Managed references",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
-        db.Users.Add(new PlatformUserRecord
+        db.Users.Add(new UserRecord
         {
             Id = userId,
-            TenantId = tenantId,
             DisplayName = "Managed reference user",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = userId.ToString("N"),
             CreatedAt = DateTimeOffset.UtcNow,
             UpdatedAt = DateTimeOffset.UtcNow
         });
@@ -71,7 +64,7 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
         await using var db = new AllstarrDbContext(options);
         var store = new EfManagedFileOwnershipStore(db);
         var record = Record(Guid.CreateVersion7());
-        var reference = Reference(record.Id, "favorite:wrong") with { TenantId = Guid.CreateVersion7() };
+        var reference = Reference(record.Id, "favorite:wrong") with { OwnerUserId = Guid.CreateVersion7() };
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.AddAsync(record, reference, default));
         Assert.Empty(await db.ManagedFiles.ToListAsync());
@@ -104,8 +97,8 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
     }
 
     private ManagedFileRecord Record(Guid id) => new(
-        id, Guid.CreateVersion7(), Path.Combine(root, $"{id:N}.flac"), new string('a', 64), 10,
-        ManagedFilePlacementMethod.Copy, tenantId, userId, "music", null, "tenant:user:music",
+        id, id, Path.Combine(root, $"{id:N}.flac"), new string('a', 64), 10,
+        ManagedFilePlacementMethod.Copy, userId, null, ManagedFileScopeKey.Create(userId, id),
         1, true, DateTimeOffset.UtcNow)
     {
         TargetRootPath = root,
@@ -115,7 +108,7 @@ public sealed class ManagedFileReferenceStoreTests : IAsyncLifetime
     };
 
     private ManagedFileReference Reference(Guid fileId, string key) => new(
-        Guid.CreateVersion7(), fileId, tenantId, userId, "tenant:user:music", key, DateTimeOffset.UtcNow);
+        Guid.CreateVersion7(), fileId, userId, ManagedFileScopeKey.Create(userId, fileId), key, DateTimeOffset.UtcNow);
 
     public async Task DisposeAsync()
     {

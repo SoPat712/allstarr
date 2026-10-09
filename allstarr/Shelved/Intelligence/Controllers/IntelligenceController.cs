@@ -4,6 +4,7 @@ using allstarr.Core.Configuration;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
@@ -24,6 +25,7 @@ public sealed partial class IntelligenceController(
     IRecommendationProviderStatusService readiness,
     IEnumerable<IRecommendationProvider> providers,
     IAudioMuseRecommendationClient audioMuse,
+    IBackendLibraryAccessResolver libraryAccess,
     IPlatformClock? clock = null,
     IEnumerable<IExactScopePlaybackScrobbleTarget>? scrobbleTargets = null) : ControllerBase
 {
@@ -31,6 +33,7 @@ public sealed partial class IntelligenceController(
     private readonly IDbContextFactory<AllstarrDbContext> _factory = factory;
     private readonly IPlatformClock? _clock = clock;
     private readonly IAudioMuseRecommendationClient _audioMuse = audioMuse;
+    private readonly IBackendLibraryAccessResolver _libraryAccess = libraryAccess;
     private readonly IReadOnlyDictionary<string, IRecommendationProvider> _providers = providers.ToDictionary(item => item.Id, StringComparer.Ordinal);
     private readonly IExactScopePlaybackScrobbleTarget[] _scrobbleTargets =
         scrobbleTargets?.GroupBy(item => item.ProviderId, StringComparer.Ordinal)
@@ -41,19 +44,18 @@ public sealed partial class IntelligenceController(
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        if (!await OwnsBackend(db, scope, cancellationToken)) return Ok(State("unauthorized", scope, "This backend or library is not linked to your user."));
+        if (!await OwnsBackend(db, scope, cancellationToken)) return Ok(State("unauthorized", scope, "This backend is not linked to your user."));
         try
         {
             var policy = await policies.GetAsync(scope, cancellationToken);
             var enabledProviders = ParseArray(policy?.EnabledProvidersJson);
             var enabledSignals = ParseArray(policy?.AllowedSignalTypesJson);
-            var latestRun = await db.RecommendationRuns.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
+            var latestRun = await db.RecommendationRuns.AsNoTracking().Where(item =>
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
-                item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
+                item.BackendInstanceId == scope.BackendInstanceId)
                 .OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(cancellationToken);
             var latestJob = latestRun == null ? null : await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.Id == latestRun.JobId && item.TenantId == scope.TenantId &&
-                item.OwnerUserId == scope.OwnerUserId && item.LibraryScopeId == scope.LibraryScopeId,
+                item.Id == latestRun.JobId && item.OwnerUserId == scope.OwnerUserId,
                 cancellationToken);
             var latestProgress = latestJob == null ? null : await db.AuditEvents.AsNoTracking()
                 .Where(item => item.Category == "job-progress" &&
@@ -61,38 +63,35 @@ public sealed partial class IntelligenceController(
                 .OrderByDescending(item => item.CreatedAt).Select(item => item.DetailsJson)
                 .FirstOrDefaultAsync(cancellationToken);
             var candidates = latestRun == null ? [] : await db.RecommendationCandidates.AsNoTracking()
-                .Where(item => item.RunId == latestRun.Id && item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId)
+                .Where(item => item.RunId == latestRun.Id && item.OwnerUserId == scope.OwnerUserId)
                 .OrderBy(item => item.Position).Take(100).ToListAsync(cancellationToken);
             var candidateIds = candidates.Select(item => item.Id).ToArray();
             var feedback = await db.RecommendationFeedback.AsNoTracking()
-                .Where(item => candidateIds.Contains(item.CandidateId) && item.TenantId == scope.TenantId &&
-                               item.OwnerUserId == scope.OwnerUserId)
+                .Where(item => candidateIds.Contains(item.CandidateId) && item.OwnerUserId == scope.OwnerUserId)
                 .ToDictionaryAsync(item => item.CandidateId, cancellationToken);
             var candidateIdentities = candidates.ToDictionary(item => item.Id, item => ParseIdentity(item.IdentityJson));
             var libraryTrackIds = candidateIdentities.Values.Select(item => item?.LibraryTrackId).OfType<Guid>().ToArray();
             var canonicalIds = candidates.Select(item => item.CanonicalRecordingId).OfType<Guid>().ToArray();
-            var localTracks = await db.LibraryTracks.AsNoTracking().Where(item =>
-                    item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                    item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                    item.LibraryScopeId == scope.LibraryScopeId &&
+            var localTracks = await (await LocalRecommendationCatalog.ScopedAsync(
+                    db, scope, _libraryAccess, cancellationToken)).AsNoTracking().Where(item =>
                     (libraryTrackIds.Contains(item.Id) ||
                      item.CanonicalRecordingId.HasValue && canonicalIds.Contains(item.CanonicalRecordingId.Value)))
                 .ToListAsync(cancellationToken);
-            var sets = await db.GeneratedSets.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
+            var sets = await db.GeneratedSets.AsNoTracking().Where(item =>
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
-                item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
+                item.BackendInstanceId == scope.BackendInstanceId)
                 .OrderByDescending(item => item.CreatedAt).Take(50).ToListAsync(cancellationToken);
             var setIds = sets.Select(item => item.Id).ToArray();
             var setCounts = await db.GeneratedSetEntries.AsNoTracking().Where(item => setIds.Contains(item.GeneratedSetId) &&
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId)
+                item.OwnerUserId == scope.OwnerUserId)
                 .GroupBy(item => item.GeneratedSetId).Select(group => new { Id = group.Key, Count = group.Count() })
                 .ToDictionaryAsync(item => item.Id, item => item.Count, cancellationToken);
-            var profile = await db.ListeningProfiles.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
+            var profile = await db.ListeningProfiles.AsNoTracking().Where(item =>
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
-                item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId)
+                item.BackendInstanceId == scope.BackendInstanceId)
                 .OrderByDescending(item => item.CreatedAt).FirstOrDefaultAsync(cancellationToken);
-            var scheduleRecords = await db.JobSchedules.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
-                item.OwnerUserId == scope.OwnerUserId && item.LibraryScopeId == scope.LibraryScopeId &&
+            var scheduleRecords = await db.JobSchedules.AsNoTracking().Where(item =>
+                item.OwnerUserId == scope.OwnerUserId &&
                 item.JobType == DurableScheduleEngine.RecommendationJobType).OrderBy(item => item.CreatedAt)
                 .ToListAsync(cancellationToken);
             var schedules = scheduleRecords.Select(item => (Record: item, Template: TryParseScheduleTemplate(item.PayloadTemplateJson)))
@@ -102,9 +101,8 @@ public sealed partial class IntelligenceController(
             var readinessById = providerReadiness.ToDictionary(item => item.ProviderId, StringComparer.Ordinal);
             var missingProvider = enabledProviders.Any(id => !readinessById.TryGetValue(id, out var item) || item.State != RecommendationProviderReadinessState.Ready);
             var scopedOccurrences = db.ListeningEvents.Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                item.LibraryScopeId == scope.LibraryScopeId);
+                item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId);
             var enrichmentCounts = await scopedOccurrences.AsNoTracking()
                 .GroupBy(item => item.MusicBrainzEnrichmentState)
                 .Select(group => new { State = group.Key, Count = group.Count() })
@@ -115,7 +113,7 @@ public sealed partial class IntelligenceController(
             {
                 var configured = await target.IsConfiguredAsync(scope, cancellationToken);
                 var latest = await db.PlaybackDeliveryCheckpoints.AsNoTracking().Where(item =>
-                        item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                        item.OwnerUserId == scope.OwnerUserId &&
                         item.Kind == PlaybackScrobbleDeliveryKind.Completed && item.OccurrenceKey != null &&
                         occurrenceKeys.Contains(item.OccurrenceKey) && item.TargetId == target.ProviderId)
                     .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
@@ -296,8 +294,14 @@ public sealed partial class IntelligenceController(
     {
         if (!TrySessionScope(request, out var scope, out var error)) return error!;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        if (!await OwnsBackend(db, scope, cancellationToken) ||
+            !await db.RecommendationRuns.AsNoTracking().AnyAsync(item =>
+                item.Id == request.RunId && item.OwnerUserId == scope.OwnerUserId &&
+                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId,
+                cancellationToken))
+            return NotFound();
         var candidates = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == request.RunId &&
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId).OrderBy(item => item.Position)
+            item.OwnerUserId == scope.OwnerUserId).OrderBy(item => item.Position)
             .Select(item => new
             {
                 item.TrackKey,
@@ -343,13 +347,12 @@ public sealed partial class IntelligenceController(
         var candidate = await db.RecommendationCandidates.AsNoTracking()
             .Join(db.RecommendationRuns.AsNoTracking(), item => item.RunId, run => run.Id, (item, run) => new { item, run })
             .SingleOrDefaultAsync(value => value.item.Id == candidateId &&
-                value.item.TenantId == scope.TenantId && value.item.OwnerUserId == scope.OwnerUserId &&
+                value.item.OwnerUserId == scope.OwnerUserId &&
                 value.run.Protocol == scope.Protocol && value.run.BackendInstanceId == scope.BackendInstanceId &&
-                value.run.LibraryScopeId == scope.LibraryScopeId, cancellationToken);
+                value.run.OwnerUserId == scope.OwnerUserId, cancellationToken);
         if (candidate == null) return NotFound();
         var feedback = await db.RecommendationFeedback.SingleOrDefaultAsync(item =>
-            item.CandidateId == candidateId && item.TenantId == scope.TenantId &&
-            item.OwnerUserId == scope.OwnerUserId, cancellationToken);
+            item.CandidateId == candidateId && item.OwnerUserId == scope.OwnerUserId, cancellationToken);
         if (feedback == null)
         {
             if (request.ExpectedRevision != 0) return Conflict(new { error = "recommendation_feedback_revision_conflict" });
@@ -357,11 +360,9 @@ public sealed partial class IntelligenceController(
             {
                 Id = Guid.CreateVersion7(),
                 CandidateId = candidateId,
-                TenantId = scope.TenantId,
                 OwnerUserId = scope.OwnerUserId,
                 Protocol = scope.Protocol,
                 BackendInstanceId = scope.BackendInstanceId,
-                LibraryScopeId = scope.LibraryScopeId,
                 TrackKey = candidate.item.TrackKey,
                 CreatedAt = _clock?.UtcNow ?? DateTimeOffset.UtcNow,
                 Revision = 1
@@ -397,9 +398,7 @@ public sealed partial class IntelligenceController(
         var schedule = new JobScheduleRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
-            LibraryScopeId = scope.LibraryScopeId,
             JobType = DurableScheduleEngine.RecommendationJobType,
             CronExpression = request.CronExpression.Trim(),
             TimeZoneId = request.TimeZoneId.Trim(),
@@ -433,8 +432,7 @@ public sealed partial class IntelligenceController(
             return Conflict(new { error = "intelligence_not_ready" });
         template = template with { IntelligencePolicyId = policy.Id };
         var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId &&
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.LibraryScopeId == scope.LibraryScopeId && item.JobType == DurableScheduleEngine.RecommendationJobType,
+            item.OwnerUserId == scope.OwnerUserId && item.JobType == DurableScheduleEngine.RecommendationJobType,
             cancellationToken);
         if (schedule == null) return NotFound();
         RecommendationScheduleTemplate existingTemplate;
@@ -466,8 +464,7 @@ public sealed partial class IntelligenceController(
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         if (!await OwnsBackend(db, scope, cancellationToken)) return NotFound();
         var schedule = await db.JobSchedules.SingleOrDefaultAsync(item => item.Id == scheduleId &&
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.LibraryScopeId == scope.LibraryScopeId && item.JobType == DurableScheduleEngine.RecommendationJobType,
+            item.OwnerUserId == scope.OwnerUserId && item.JobType == DurableScheduleEngine.RecommendationJobType,
             cancellationToken);
         if (schedule == null) return NotFound();
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
@@ -491,18 +488,29 @@ public sealed partial class IntelligenceController(
         scope = null!; error = null;
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) || value is not AdminAuthSession session)
         { error = Unauthorized(new { error = "Authentication required" }); return false; }
-        if (session.TenantId is not { } tenant || session.AllstarrUserId is not { } user)
+        if (session.AllstarrUserId is not { } user)
         { error = StatusCode(403, new { error = "linked_user_required" }); return false; }
         try
         {
             var protocol = request.Protocol?.Trim().ToLowerInvariant() ?? "";
-            var backend = request.BackendInstanceId?.Trim() ?? ""; var library = request.LibraryScopeId?.Trim() ?? "";
-            scope = new(tenant, user, protocol, backend, library); IntelligencePolicyService.ValidateScope(scope); return true;
+            var backend = request.BackendInstanceId?.Trim() ?? "";
+            if (protocol != NormalizeProtocol(session.BackendType) ||
+                backend != session.BackendInstanceId)
+            { error = StatusCode(403, new { error = "intelligence_scope_unauthorized" }); return false; }
+            scope = new(user, protocol, backend); IntelligencePolicyService.ValidateScope(scope); return true;
         }
         catch (ArgumentException) { error = BadRequest(new { error = "intelligence_scope_invalid" }); return false; }
     }
-    private static Task<bool> OwnsBackend(AllstarrDbContext db, IntelligenceScope scope, CancellationToken token) =>
-        IntelligencePolicyService.OwnsBackendAsync(db, scope, token);
+    private Task<bool> OwnsBackend(AllstarrDbContext db, IntelligenceScope scope, CancellationToken token)
+    {
+        if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
+            value is not AdminAuthSession session || session.AllstarrUserId != scope.OwnerUserId)
+            return Task.FromResult(false);
+        return db.Users.AsNoTracking().AnyAsync(item => item.Id == scope.OwnerUserId && item.Enabled &&
+            item.BackendType == session.BackendType.Trim().ToLowerInvariant() &&
+            item.BackendInstanceId == scope.BackendInstanceId &&
+            item.BackendPrincipalId == session.UserId && item.IsAdmin == session.IsAdministrator, token);
+    }
     private static HashSet<string> ParseArray(string? json) => (JsonSerializer.Deserialize<string[]>(json ?? "[]") ?? []).ToHashSet(StringComparer.Ordinal);
     private static IReadOnlyList<RecommendationSignal> ParseSignals(string json) => JsonSerializer.Deserialize<RecommendationSignal[]>(json) ?? [];
     private static RecommendationTrackIdentity? ParseIdentity(string json) =>
@@ -570,7 +578,13 @@ public sealed partial class IntelligenceController(
         visualization = Array.Empty<object>(),
         actions = new { canRun = false, canGenerate = false }
     };
-    private static object PublicScope(IntelligenceScope scope) => new { scope.Protocol, scope.BackendInstanceId, scope.LibraryScopeId };
+    private static object PublicScope(IntelligenceScope scope) => new { scope.Protocol, scope.BackendInstanceId };
+    private static string NormalizeProtocol(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "jellyfin" => "jellyfin",
+        "subsonic" or "navidrome" or "opensubsonic" => "subsonic",
+        _ => ""
+    };
     private static string Label(string value) => value switch
     {
         "audiomuse-ai" => "AudioMuse-AI",
@@ -610,7 +624,7 @@ public sealed partial class IntelligenceController(
     };
 }
 
-public class IntelligenceScopeRequest { public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = ""; public string LibraryScopeId { get; set; } = ""; }
+public class IntelligenceScopeRequest { public string Protocol { get; set; } = ""; public string BackendInstanceId { get; set; } = ""; }
 public sealed class IntelligencePolicyRequest : IntelligenceScopeRequest { public bool Enabled { get; set; } public int RetentionDays { get; set; } = 0; public List<string> AllowedSignalTypes { get; set; } = []; public List<string> EnabledProviders { get; set; } = []; public Guid? TargetCredentialReferenceId { get; set; } public long ExpectedRevision { get; set; } }
 public sealed class IntelligenceRunRequest : IntelligenceScopeRequest { public List<string> SeedTrackKeys { get; set; } = []; public int Limit { get; set; } = 25; public string IdempotencyKey { get; set; } = ""; }
 public sealed class IntelligenceGeneratedSetRequest : IntelligenceScopeRequest { public Guid RunId { get; set; } public string Name { get; set; } = ""; }

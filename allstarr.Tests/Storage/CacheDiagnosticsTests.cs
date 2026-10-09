@@ -44,7 +44,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     [Fact]
     public async Task CategoryPolicySuppliesDefaultExpiry()
     {
-        const string key = "playlist:discovery:v2:global:shared:00000000000000000000000000000000:1:fixture:digest";
+        const string key = "playlist:discovery:v3:shared:00000000000000000000000000000000:1:fixture:digest";
         Assert.True(await _cache.SetStringAsync(key, "{}"));
 
         _clock.UtcNow = _clock.UtcNow.AddMinutes(4);
@@ -168,7 +168,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         var referencedKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('a', 64));
         var orphanedKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('b', 64));
         var descriptorKey = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-1"));
+            null, null, "jellyfin", "playlist", "playlist-1", "revision-1"));
         Assert.True(await _cache.SetStringAsync(referencedKey, "referenced"));
         Assert.True(await _cache.SetStringAsync(orphanedKey, "orphaned"));
         Assert.True(await _cache.SetStringAsync(
@@ -191,32 +191,25 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     [Fact]
     public async Task MaintenanceRemovesStaleProviderAccountScopes()
     {
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         await using (var database = new AllstarrDbContext(_database.Options))
         {
             database.AddRange(
-                new TenantRecord
-                {
-                    Id = tenantId,
-                    Slug = "cache-scope",
-                    Name = "Cache scope",
-                    CreatedAt = _clock.UtcNow
-                },
-                new PlatformUserRecord
+                new UserRecord
                 {
                     Id = userId,
-                    TenantId = tenantId,
                     DisplayName = "Cache scope",
-                    Status = PlatformUserStatus.Active,
+                    Enabled = true,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "fixture",
+                    BackendPrincipalId = userId.ToString("N"),
                     CreatedAt = _clock.UtcNow,
                     UpdatedAt = _clock.UtcNow
                 },
                 new ProviderAccountRecord
                 {
                     Id = accountId,
-                    TenantId = tenantId,
                     OwnerUserId = userId,
                     ProviderId = "spotify",
                     DisplayName = "Cache scope",
@@ -229,9 +222,9 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
         }
 
         var current = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
-            tenantId, userId, accountId, 2, "spotify", null, null, 100);
+            userId, accountId, 2, "spotify", null, null, 100);
         var stale = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
-            tenantId, userId, accountId, 1, "spotify", null, null, 100);
+            userId, accountId, 1, "spotify", null, null, 100);
         Assert.True(await _cache.SetStringAsync(current, "current"));
         Assert.True(await _cache.SetStringAsync(stale, "stale"));
 
@@ -245,9 +238,9 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     public async Task MaintenanceRemovesOlderArtworkRevisionsDeterministically()
     {
         var first = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-1", 96, 96));
+            null, null, "jellyfin", "playlist", "playlist-1", "revision-1", 96, 96));
         var second = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            null, null, null, "jellyfin", "playlist", "playlist-1", "revision-2", 96, 96));
+            null, null, "jellyfin", "playlist", "playlist-1", "revision-2", 96, 96));
         const string descriptor = """{"PayloadKey":"artwork:payload:v1:fixture"}""";
         Assert.True(await _cache.SetStringAsync(first, descriptor, TimeSpan.FromHours(1)));
         _clock.UtcNow = _clock.UtcNow.AddSeconds(1);
@@ -264,7 +257,7 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     {
         var payload = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('c', 64));
         var descriptor = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            null, null, null, "jellyfin", "album", "album-1", "revision-1"));
+            null, null, "jellyfin", "album", "album-1", "revision-1"));
         await _cache.SetStringAsync("search:v2:restart", "metadata");
         await _cache.SetStringAsync("lyrics:v2:restart", "lyrics");
         await _cache.SetStringAsync(payload, "artwork");
@@ -288,9 +281,9 @@ public sealed class CacheDiagnosticsTests : IAsyncLifetime
     {
         var payload = CacheKeyBuilder.BuildMediaAssetPayloadKey(new string('d', 64));
         var good = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            null, null, null, "jellyfin", "album", "good", "revision-1"));
+            null, null, "jellyfin", "album", "good", "revision-1"));
         var bad = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            null, null, null, "jellyfin", "album", "bad", "revision-1"));
+            null, null, "jellyfin", "album", "bad", "revision-1"));
         await _cache.SetStringAsync(payload, "artwork");
         await _cache.SetStringAsync(good, JsonSerializer.Serialize(new { PayloadKey = payload }));
         await _cache.SetStringAsync(bad, "{broken");

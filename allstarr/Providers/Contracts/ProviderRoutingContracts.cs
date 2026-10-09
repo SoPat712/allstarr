@@ -8,7 +8,6 @@ public sealed record ProviderRouteAccountRequest(
     string ProviderId,
     ProviderCapabilityKind Capability,
     Guid? RequestedAccountId,
-    string? LibraryScopeId,
     IReadOnlyCollection<ProviderAccountScope>? AllowedScopes = null,
     bool AllowSharedAccount = true);
 
@@ -127,7 +126,6 @@ public sealed record ProviderRouteRequest
         DateTimeOffset deadline,
         IEnumerable<string> providerPriority,
         IEnumerable<ProviderRouteProviderState>? providerStates = null,
-        ProviderLibraryContext? library = null,
         ProviderExternalResourceId? sourceTrackId = null,
         string? idempotencyKey = null,
         CancellationToken cancellationToken = default)
@@ -167,7 +165,6 @@ public sealed record ProviderRouteRequest
         Deadline = deadline;
         ProviderPriority = Array.AsReadOnly(priority);
         ProviderStates = states;
-        Library = library;
         SourceTrackId = sourceTrackId;
         IdempotencyKey = ProviderContractValidation.OptionalText(idempotencyKey, nameof(idempotencyKey), 300);
         CancellationToken = cancellationToken;
@@ -188,8 +185,6 @@ public sealed record ProviderRouteRequest
     public IReadOnlyList<string> ProviderPriority { get; }
 
     public IReadOnlyDictionary<string, ProviderRouteProviderState> ProviderStates { get; }
-
-    public ProviderLibraryContext? Library { get; }
 
     public ProviderExternalResourceId? SourceTrackId { get; }
 

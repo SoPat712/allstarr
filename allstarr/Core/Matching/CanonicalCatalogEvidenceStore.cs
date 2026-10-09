@@ -219,19 +219,26 @@ public sealed class CanonicalCatalogEvidenceStore(
         DateTimeOffset observedAt,
         CancellationToken cancellationToken)
     {
-        if (identity.TenantId != actor.TenantId)
-            throw new UnauthorizedAccessException("The source identity is outside the actor tenant.");
         await ValidateActorAndTargetAsync(
             db, actor, new(CanonicalCatalogEntityKind.Recording, targetRecordingId), cancellationToken);
+        if (identity.ProviderAccountId is { } accountId)
+        {
+            var account = db.ProviderAccounts.Local.SingleOrDefault(item => item.Id == accountId) ??
+                await db.ProviderAccounts.SingleOrDefaultAsync(item => item.Id == accountId, cancellationToken);
+            if (account == null || !account.Enabled || account.ProviderId != identity.ProviderId ||
+                account.Scope == ProviderAccountScope.Personal &&
+                account.OwnerUserId != actor.EffectiveUserId)
+                throw new UnauthorizedAccessException("The source identity account is unavailable to this actor.");
+        }
         var aliasNamespace = CanonicalCatalogKeys.ProviderTrackNamespace(
             identity.ProviderId, identity.ResourceKind, identity.CatalogNamespace,
             identity.Scope, identity.ProviderAccountId);
         var hash = CanonicalCatalogKeys.Hash(identity.ExternalId);
         var alias = db.CanonicalCatalogAliases.Local.SingleOrDefault(item =>
-                item.TenantId == actor.TenantId && item.Namespace == aliasNamespace &&
+                item.Namespace == aliasNamespace &&
                 item.EntityKind == CanonicalCatalogEntityKind.Recording && item.ExternalIdHash == hash) ??
             await db.CanonicalCatalogAliases.SingleOrDefaultAsync(item =>
-                item.TenantId == actor.TenantId && item.Namespace == aliasNamespace &&
+                item.Namespace == aliasNamespace &&
                 item.EntityKind == CanonicalCatalogEntityKind.Recording && item.ExternalIdHash == hash,
                 cancellationToken);
         if (alias != null && alias.ExternalId != identity.ExternalId)
@@ -247,9 +254,9 @@ public sealed class CanonicalCatalogEvidenceStore(
             foreach (var id in previousIds)
             {
                 var previous = db.CanonicalRecordings.Local.SingleOrDefault(item =>
-                        item.TenantId == actor.TenantId && item.Id == id) ??
+                        item.Id == id) ??
                     await db.CanonicalRecordings.SingleOrDefaultAsync(item =>
-                        item.TenantId == actor.TenantId && item.Id == id, cancellationToken);
+                        item.Id == id, cancellationToken);
                 if (previous is not { IsProvisional: true, Isrc: null, MusicBrainzRecordingId: null })
                     return false;
             }
@@ -257,7 +264,6 @@ public sealed class CanonicalCatalogEvidenceStore(
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = actor.TenantId,
                 ActorUserId = actor.UserId,
                 Category = "canonical-catalog",
                 Action = "source-identity.reconcile",
@@ -327,12 +333,10 @@ public sealed class CanonicalCatalogEvidenceStore(
         {
             var hash = CanonicalCatalogKeys.Hash(alias.ExternalId);
             var existing = db.CanonicalCatalogAliases.Local.SingleOrDefault(item =>
-                    item.TenantId == actor.TenantId &&
                     item.Namespace == alias.Namespace &&
                     item.EntityKind == target.Kind &&
                     item.ExternalIdHash == hash) ??
                 await db.CanonicalCatalogAliases.SingleOrDefaultAsync(item =>
-                    item.TenantId == actor.TenantId &&
                     item.Namespace == alias.Namespace &&
                     item.EntityKind == target.Kind &&
                     item.ExternalIdHash == hash,
@@ -357,7 +361,6 @@ public sealed class CanonicalCatalogEvidenceStore(
             db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = actor.TenantId,
                 EntityKind = target.Kind,
                 CanonicalEntityId = target.Id,
                 Namespace = alias.Namespace,
@@ -374,7 +377,6 @@ public sealed class CanonicalCatalogEvidenceStore(
         foreach (var fact in NormalizeFacts(facts))
         {
             var persisted = await db.CatalogFacts.Where(item =>
-                    item.TenantId == actor.TenantId &&
                     item.EntityKind == target.Kind &&
                     item.CanonicalEntityId == target.Id &&
                     item.FieldName == fact.FieldName &&
@@ -382,7 +384,6 @@ public sealed class CanonicalCatalogEvidenceStore(
                     item.SupersededAt == null)
                 .ToListAsync(cancellationToken);
             var active = db.CatalogFacts.Local.Where(item =>
-                    item.TenantId == actor.TenantId &&
                     item.EntityKind == target.Kind &&
                     item.CanonicalEntityId == target.Id &&
                     item.FieldName == fact.FieldName &&
@@ -407,7 +408,6 @@ public sealed class CanonicalCatalogEvidenceStore(
             db.CatalogFacts.Add(new CatalogFactRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = actor.TenantId,
                 EntityKind = target.Kind,
                 CanonicalEntityId = target.Id,
                 FieldName = fact.FieldName,
@@ -425,7 +425,6 @@ public sealed class CanonicalCatalogEvidenceStore(
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
             ActorUserId = actor.UserId,
             Category = "canonical-catalog",
             Action = "evidence.record",
@@ -485,59 +484,62 @@ public sealed class CanonicalCatalogEvidenceStore(
             throw new ArgumentException("A valid canonical catalog target is required.", nameof(target));
         }
 
-        var actorExists = actor.UserId == null
-            ? db.Tenants.Local.Any(item => item.Id == actor.TenantId) ||
-              await db.Tenants.AnyAsync(item => item.Id == actor.TenantId, cancellationToken)
-            : db.Users.Local.Any(item =>
-                  item.TenantId == actor.TenantId &&
-                  item.Id == actor.UserId &&
-                  item.Status == PlatformUserStatus.Active) ||
-              await db.Users.AnyAsync(item =>
-                item.TenantId == actor.TenantId &&
-                item.Id == actor.UserId &&
-                item.Status == PlatformUserStatus.Active,
-                cancellationToken);
+        var effectiveUserId = actor.EffectiveUserId ??
+            throw new UnauthorizedAccessException("Catalog evidence requires a scoped user.");
+        var actorExists = db.Users.Local.Any(item =>
+                              item.Id == effectiveUserId && item.Enabled &&
+                              (actor.UserId == null ||
+                               item.BackendType == actor.BackendPrincipal!.BackendType &&
+                               item.BackendInstanceId == actor.BackendPrincipal.BackendInstanceId &&
+                               item.BackendPrincipalId == actor.BackendPrincipal.PrincipalId)) ||
+                          await db.Users.AnyAsync(item =>
+                              item.Id == effectiveUserId && item.Enabled &&
+                              (actor.UserId == null ||
+                               item.BackendType == actor.BackendPrincipal!.BackendType &&
+                               item.BackendInstanceId == actor.BackendPrincipal.BackendInstanceId &&
+                               item.BackendPrincipalId == actor.BackendPrincipal.PrincipalId),
+                              cancellationToken);
         if (!actorExists)
         {
-            throw new UnauthorizedAccessException("The catalog actor is not active in the requested tenant.");
+            throw new UnauthorizedAccessException("The catalog actor is not active.");
         }
 
         var trackedTargetExists = target.Kind switch
         {
             CanonicalCatalogEntityKind.Artist => db.CanonicalArtists.Local.Any(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id),
+                item => item.Id == target.Id),
             CanonicalCatalogEntityKind.ReleaseGroup => db.CanonicalReleaseGroups.Local.Any(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id),
+                item => item.Id == target.Id),
             CanonicalCatalogEntityKind.Release => db.CanonicalReleases.Local.Any(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id),
+                item => item.Id == target.Id),
             CanonicalCatalogEntityKind.ReleaseTrack => db.CanonicalReleaseTracks.Local.Any(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id),
+                item => item.Id == target.Id),
             CanonicalCatalogEntityKind.Recording => db.CanonicalRecordings.Local.Any(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id),
+                item => item.Id == target.Id),
             _ => false
         };
         var targetExists = trackedTargetExists || (target.Kind switch
         {
             CanonicalCatalogEntityKind.Artist => await db.CanonicalArtists.AnyAsync(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id,
+                item => item.Id == target.Id,
                 cancellationToken),
             CanonicalCatalogEntityKind.ReleaseGroup => await db.CanonicalReleaseGroups.AnyAsync(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id,
+                item => item.Id == target.Id,
                 cancellationToken),
             CanonicalCatalogEntityKind.Release => await db.CanonicalReleases.AnyAsync(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id,
+                item => item.Id == target.Id,
                 cancellationToken),
             CanonicalCatalogEntityKind.ReleaseTrack => await db.CanonicalReleaseTracks.AnyAsync(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id,
+                item => item.Id == target.Id,
                 cancellationToken),
             CanonicalCatalogEntityKind.Recording => await db.CanonicalRecordings.AnyAsync(
-                item => item.TenantId == actor.TenantId && item.Id == target.Id,
+                item => item.Id == target.Id,
                 cancellationToken),
             _ => false
         });
         if (!targetExists)
         {
-            throw new KeyNotFoundException("The canonical catalog target does not exist in the actor tenant.");
+            throw new KeyNotFoundException("The canonical catalog target does not exist.");
         }
     }
 

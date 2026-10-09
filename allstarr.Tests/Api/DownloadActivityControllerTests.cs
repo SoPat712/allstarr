@@ -22,7 +22,6 @@ public sealed class DownloadActivityControllerTests
     [InlineData(true)]
     public async Task NowPlaying_ProjectsUserClientSourceProgressAndScrobbleState(bool confirmed)
     {
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var source = new StubPlaybackSource(new PlaybackActivityState(
             "device-1",
@@ -33,17 +32,16 @@ public sealed class DownloadActivityControllerTests
             "backend-user-1",
             "Josh",
             "Feishin",
-            "Desktop",
-            tenantId));
+            "Desktop"));
         var resolver = new StubMetadataResolver(
             new PlaybackTrackMetadata("Rocket", "Artist", "Album", "/art", DurationSeconds: 120));
         var deliveries = new PlaybackDeliveryActivityStore();
-        deliveries.MarkDelivered(tenantId, userId, "ext-deezer-song-123", "device-1");
+        deliveries.MarkDelivered(userId, "ext-deezer-song-123", "device-1");
         using var streamResponse = new HttpResponseMessage(System.Net.HttpStatusCode.OK);
         if (confirmed)
         {
             var context = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal",
-                new AllstarrPrincipal(tenantId, userId, "jellyfin", "backend", "principal", "User", false),
+                new AllstarrPrincipal(userId, "jellyfin", "backend", "principal", "User", false),
                 "stream", DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client", "device-1"));
             var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/track"),
                 DateTimeOffset.UtcNow.AddMinutes(1), true, true, new ProviderMediaFormat("audio/flac", "flac", "flac"),
@@ -52,7 +50,7 @@ public sealed class DownloadActivityControllerTests
                 new ProtocolProviderStream(streamResponse, lease, "qobuz", "actual-track"));
         }
         var controller = CreateController([source], [resolver], deliveries);
-        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession();
 
         var result = await controller.GetNowPlaying(CancellationToken.None);
 
@@ -78,12 +76,11 @@ public sealed class DownloadActivityControllerTests
     [Fact]
     public async Task NowPlaying_IdentifiesNativeLocalPlaybackWithoutAProviderLease()
     {
-        var tenantId = Guid.CreateVersion7();
         var source = new StubPlaybackSource(new PlaybackActivityState(
-            "device-1", "local-item", 0, DateTime.UtcNow, TenantId: tenantId));
+            "device-1", "local-item", 0, DateTime.UtcNow));
         var controller = CreateController([source],
             [new StubMetadataResolver(new PlaybackTrackMetadata("Local", "Artist", null, null))]);
-        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession();
 
         var result = await controller.GetNowPlaying(CancellationToken.None);
 
@@ -101,35 +98,27 @@ public sealed class DownloadActivityControllerTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new TestDbContextFactory(database.Options);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "now-playing",
-                Name = "Now playing",
-                CreatedAt = now
-            });
-            db.Set<PlatformUserRecord>().Add(new PlatformUserRecord
+            db.Set<UserRecord>().Add(new UserRecord
             {
                 Id = userId,
-                TenantId = tenantId,
                 DisplayName = "Listener",
-                Status = PlatformUserStatus.Active,
+                Enabled = true,
+                BackendType = "jellyfin",
+                BackendInstanceId = "primary",
+                BackendPrincipalId = "backend-user-1",
                 CreatedAt = now,
                 UpdatedAt = now
             });
             db.ListeningEvents.Add(new ListeningEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
                 OwnerUserId = userId,
                 Protocol = "jellyfin",
                 BackendInstanceId = "primary",
-                LibraryScopeId = "music",
                 OccurrenceKey = new string('a', 64),
                 State = ListeningEventState.Playing,
                 StartedAt = now.AddMinutes(-1),
@@ -150,10 +139,9 @@ public sealed class DownloadActivityControllerTests
             "backend-user-1",
             "Listener",
             "Client",
-            "Device",
-            tenantId));
+            "Device"));
         var controller = CreateController([source], [], contextFactory: factory);
-        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenantId);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession();
 
         var result = await controller.GetNowPlaying(CancellationToken.None);
 
@@ -169,16 +157,15 @@ public sealed class DownloadActivityControllerTests
         var resolver = new StubMetadataResolver(
             metadata: null,
             artwork: new PlaybackArtwork([1, 2, 3], "image/jpeg"));
-        var tenant = Guid.CreateVersion7();
         var viewerId = Guid.CreateVersion7();
         var viewer = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "admin",
-            new AllstarrPrincipal(tenant, viewerId, "jellyfin", "backend", "admin", "Admin", true),
+            new AllstarrPrincipal(viewerId, "jellyfin", "backend", "admin", "Admin", true),
             "artwork", DateTimeOffset.UtcNow.AddMinutes(1), default);
         var permissions = new Mock<IBackendLibraryAccessResolver>();
         permissions.Setup(item => item.ResolveUserAsync(viewerId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BackendLibraryAccessContext(viewer, new(true, ["music"])));
         var controller = CreateController([], [resolver], libraryAccess: permissions.Object);
-        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(tenant, viewerId);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = AdministratorSession(viewerId);
 
         var result = await controller.GetPlaybackArtwork("local-item", CancellationToken.None);
 
@@ -198,16 +185,15 @@ public sealed class DownloadActivityControllerTests
     [InlineData(true)]
     public async Task NowPlaying_SameDeviceAndTrack_SeparatesListenersAndDelivery(bool administrator)
     {
-        var tenant = Guid.CreateVersion7();
         var owner = Guid.CreateVersion7();
         var other = Guid.CreateVersion7();
         const string track = "ext-deezer-song-123";
         var now = DateTime.UtcNow;
         var source = new StubPlaybackSource(
-            new("same-device", track, 0, now, owner, "owner", "Owner", TenantId: tenant),
-            new("same-device", track, 0, now.AddSeconds(1), other, "other", "Other", TenantId: tenant));
+            new("same-device", track, 0, now, owner, "owner", "Owner"),
+            new("same-device", track, 0, now.AddSeconds(1), other, "other", "Other"));
         using var deliveries = new PlaybackDeliveryActivityStore();
-        deliveries.MarkDelivered(tenant, other, track, "same-device");
+        deliveries.MarkDelivered(other, track, "same-device");
         var controller = CreateController([source], [], deliveries);
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
@@ -215,7 +201,6 @@ public sealed class DownloadActivityControllerTests
             UserId = "owner",
             UserName = "Owner",
             IsAdministrator = administrator,
-            TenantId = tenant,
             AllstarrUserId = owner,
             JellyfinAccessToken = "fixture",
             ExpiresAtUtc = now.AddHours(1)
@@ -269,13 +254,12 @@ public sealed class DownloadActivityControllerTests
         return controller;
     }
 
-    private static AdminAuthSession AdministratorSession(Guid tenantId, Guid? userId = null) => new()
+    private static AdminAuthSession AdministratorSession(Guid? userId = null) => new()
     {
         SessionId = "session",
         UserId = "admin",
         UserName = "Admin",
         IsAdministrator = true,
-        TenantId = tenantId,
         AllstarrUserId = userId ?? Guid.CreateVersion7(),
         JellyfinAccessToken = "token",
         ExpiresAtUtc = DateTime.UtcNow.AddHours(1),

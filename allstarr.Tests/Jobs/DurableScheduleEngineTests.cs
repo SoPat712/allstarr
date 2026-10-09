@@ -12,7 +12,6 @@ namespace allstarr.Tests;
 
 public sealed class DurableScheduleEngineTests : IAsyncLifetime
 {
-    private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _user = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
     private readonly Guid _schedule = Guid.CreateVersion7();
@@ -28,29 +27,26 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         _factory = new TestFactory(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
         var now = new DateTimeOffset(2026, 7, 10, 12, 0, 0, TimeSpan.Zero);
-        db.Tenants.Add(new TenantRecord { Id = _tenant, Slug = "scheduler", Name = "Scheduler", CreatedAt = now });
-        db.Users.Add(new PlatformUserRecord { Id = _user, TenantId = _tenant, DisplayName = "Owner", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
-        db.BackendIdentities.Add(new BackendIdentityRecord
+        db.Users.Add(new UserRecord
         {
-            Id = Guid.CreateVersion7(),
-            TenantId = _tenant,
-            UserId = _user,
+            Id = _user,
             BackendType = "subsonic",
             BackendInstanceId = "navidrome-main",
-            PrincipalId = "scheduled-owner",
+            BackendPrincipalId = "scheduled-owner",
+            DisplayName = "Owner",
+            Enabled = true,
             CreatedAt = now,
+            UpdatedAt = now,
             LastSeenAt = now
         });
-        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _account, TenantId = _tenant, OwnerUserId = _user, ProviderId = "spotify", DisplayName = "Source", Enabled = true, CreatedAt = now, UpdatedAt = now });
+        db.ProviderAccounts.Add(new ProviderAccountRecord { Id = _account, OwnerUserId = _user, ProviderId = "spotify", DisplayName = "Source", Enabled = true, CreatedAt = now, UpdatedAt = now });
         db.JobSchedules.Add(NewSchedule(now));
         db.PlaylistLinks.Add(new PlaylistLinkRecord
         {
             Id = _link,
-            TenantId = _tenant,
             OwnerUserId = _user,
             ProviderAccountId = _account,
             ScheduleId = _schedule,
-            LibraryScopeId = "music",
             SourceProviderId = "spotify",
             SourcePlaylistId = "stable-playlist-id",
             SourcePlaylistIdHash = new string('a', 64),
@@ -206,10 +202,8 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         Assert.Contains("durable-job:schedule:", payload.GetProperty("CancellationPolicyReference").GetString());
         Assert.DoesNotContain("token", job.PayloadJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("secret", job.PayloadJson, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal(_tenant, job.TenantId);
         Assert.Equal(_user, job.OwnerUserId);
         Assert.Equal(_account, job.ProviderAccountId);
-        Assert.Equal("music", job.LibraryScopeId);
     }
 
     [Fact]
@@ -225,8 +219,8 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         var orchestration = new CapturingOrchestration();
         var handler = new PlaylistMaterializationJobHandler(_factory, orchestration, _clock);
         var claim = new DurableJobClaim(job.Id, Guid.CreateVersion7(), 1, job.Type, payload,
-            job.TenantId, job.OwnerUserId, job.ProviderAccountId, job.LibraryScopeId,
-            job.ProviderCapability, JsonDocument.Parse(job.PolicySnapshotJson).RootElement.Clone(),
+            job.OwnerUserId, job.ProviderAccountId, job.ProviderCapability,
+            JsonDocument.Parse(job.PolicySnapshotJson).RootElement.Clone(),
             job.CorrelationId, "test-worker", _clock.UtcNow.AddMinutes(1));
         var progress = new List<DurableJobProgressUpdate>();
 
@@ -292,8 +286,7 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
             db.Jobs.Add(new DurableJobRecord
             {
                 Id = Guid.CreateVersion7(),
-                ScopeKey = $"{_tenant:N}:{_user:N}",
-                TenantId = _tenant,
+                ScopeKey = $"user:{_user:N}",
                 OwnerUserId = _user,
                 Type = "smart-playlist.materialize",
                 PayloadJson = "{}",
@@ -321,9 +314,7 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
     private JobScheduleRecord NewSchedule(DateTimeOffset now) => new()
     {
         Id = _schedule,
-        TenantId = _tenant,
         OwnerUserId = _user,
-        LibraryScopeId = "music",
         JobType = DurableScheduleEngine.PlaylistSyncJobType,
         CronExpression = "* * * * *",
         TimeZoneId = "UTC",
@@ -346,25 +337,16 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
     {
         var policyId = Guid.CreateVersion7();
         await using var db = await _factory.CreateDbContextAsync();
-        db.BackendIdentities.Add(new BackendIdentityRecord
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = _tenant,
-            UserId = _user,
-            BackendType = "jellyfin",
-            BackendInstanceId = "jellyfin-main",
-            PrincipalId = "scheduled-owner",
-            CreatedAt = _clock.UtcNow,
-            LastSeenAt = _clock.UtcNow
-        });
+        var user = await db.Users.SingleAsync(item => item.Id == _user);
+        user.BackendType = "jellyfin";
+        user.BackendInstanceId = "jellyfin-main";
+        user.UpdatedAt = _clock.UtcNow;
         db.IntelligencePolicies.Add(new IntelligencePolicyRecord
         {
             Id = policyId,
-            TenantId = _tenant,
             OwnerUserId = _user,
             Protocol = "jellyfin",
             BackendInstanceId = "jellyfin-main",
-            LibraryScopeId = "music",
             Enabled = true,
             RetentionDays = 30,
             AllowedSignalTypesJson = "[\"play\"]",

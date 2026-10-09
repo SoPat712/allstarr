@@ -27,7 +27,7 @@ public partial class JellyfinController
         {
             var context = HttpContext.RequireProtocolExecutionContext();
             var scope = await SonicProtocolScope.ResolveAsync(
-                context, itemId, _libraryScopes, _intelligencePolicies, HttpContext.RequestAborted);
+                context, _intelligencePolicies, HttpContext.RequestAborted);
             if (scope == null) return null;
 
             var seeds = kind == "song"
