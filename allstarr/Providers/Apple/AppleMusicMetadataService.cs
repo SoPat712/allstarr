@@ -1,308 +1,80 @@
-using System.Net.Http.Json;
-using System.Text.Json.Serialization;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Models.Domain;
-using allstarr.Models.Settings;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
-using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Logging;
 
 namespace allstarr.Services.AppleMusic;
 
-public class AppleMusicMetadataService : IConcreteMetadataService
+public sealed class AppleMusicMetadataService(AppleMusicKitMetadataCapabilityAdapter metadata,
+    AppleMusicKitPlaylistCapabilityAdapter playlists) : IConcreteMetadataService
 {
-    public string ProviderId => "apple-download";
+    public string ProviderId => AppleMusicClient.ProviderId;
+    private ProviderExecutionContext Context(CancellationToken token) => new(new(ProviderActorKind.PublicRead, null),
+        ProviderId, null, new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow, true, false, false, [ProviderId]), "catalog-read", "catalog-read",
+        DateTimeOffset.UtcNow.AddSeconds(30), token);
+    private ProviderExternalResourceId Id(string value, ProviderResourceKind kind) => new(ProviderId, kind, value);
 
-    private readonly HttpClient _httpClient;
-    private readonly AppleDownloadSettings _settings;
-    private readonly ILogger<AppleMusicMetadataService> _logger;
-
-    public AppleMusicMetadataService(
-        IHttpClientFactory httpClientFactory,
-        IOptions<AppleDownloadSettings> settings,
-        ILogger<AppleMusicMetadataService> logger)
+    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        (await metadata.SearchTracksAsync(Context(cancellationToken), new(query, new(limit)))).RequireValue().Items.Select(ProtocolProviderGateway.Map).ToList();
+    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        (await metadata.SearchAlbumsAsync(Context(cancellationToken), new(query, new(limit)))).RequireValue().Items.Select(ProtocolProviderGateway.Map).ToList();
+    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        (await metadata.SearchArtistsAsync(Context(cancellationToken), new(query, new(limit)))).RequireValue().Items.Select(ProtocolProviderGateway.Map).ToList();
+    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default) => new()
     {
-        _httpClient = httpClientFactory.CreateClient("AppleMusic");
-        _settings = settings.Value;
-        _logger = logger;
-
-    }
-
-    public Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
-        SearchAsync<GamdlSong, Song>(query, "song", limit, ToSong, cancellationToken);
-
-    public Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
-        SearchAsync<GamdlAlbum, Album>(query, "album", limit, ToAlbum, cancellationToken);
-
-    public Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
-        SearchAsync<GamdlArtist, Artist>(query, "artist", limit, ToArtist, cancellationToken);
-
-    public async Task<SearchResult> SearchAllAsync(string query, int songLimit = 20, int albumLimit = 20, int artistLimit = 20, CancellationToken cancellationToken = default)
-    {
-        var songsTask = SearchSongsAsync(query, songLimit, cancellationToken);
-        var albumsTask = SearchAlbumsAsync(query, albumLimit, cancellationToken);
-        var artistsTask = SearchArtistsAsync(query, artistLimit, cancellationToken);
-
-        await Task.WhenAll(songsTask, albumsTask, artistsTask);
-
-        return new SearchResult
-        {
-            Songs = songsTask.Result,
-            Albums = albumsTask.Result,
-            Artists = artistsTask.Result
-        };
-    }
-
-    public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    {
-        if (externalProvider is not ("applemusic" or "apple-download") ||
-            !TryEndpoint($"api/song/{Uri.EscapeDataString(externalId)}", out var url)) return null;
-
-        try
-        {
-            var r = await _httpClient.GetFromJsonAsync<GamdlSong>(url, cancellationToken);
-
-            if (r == null) return null;
-
-            return ToSong(r);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Apple Music song details for ID: {ExternalId}", externalId);
-            return null;
-        }
-    }
-
-    public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
-    {
-        // The sidecar has no dedicated ISRC lookup, so catalog search is the fallback.
-        var results = await SearchSongsAsync(isrc, 1, cancellationToken);
-        return results.FirstOrDefault();
-    }
-
+        Songs = await SearchSongsAsync(query, songLimit, cancellationToken),
+        Albums = await SearchAlbumsAsync(query, albumLimit, cancellationToken),
+        Artists = await SearchArtistsAsync(query, artistLimit, cancellationToken)
+    };
+    public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+        Track(await metadata.GetTrackAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Track))));
+    public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default) =>
+        Track(await metadata.LookupByIsrcAsync(Context(cancellationToken), new(isrc)));
     public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        if (!IsSupportedProvider(externalProvider) ||
-            !TryEndpoint($"api/album/{Uri.EscapeDataString(externalId)}", out var url)) return null;
-
-        try
-        {
-            var album = await _httpClient.GetFromJsonAsync<GamdlAlbum>(url, cancellationToken);
-            return album == null ? null : ToAlbum(album);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Apple Music album for ID: {ExternalId}", externalId);
-            return null;
-        }
+        var result = await metadata.GetAlbumAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Album)));
+        return result.IsSuccess ? ProtocolProviderGateway.Map(result.RequireValue()) : null;
     }
-
     public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        if (!IsSupportedProvider(externalProvider) ||
-            !TryEndpoint($"api/artist/{Uri.EscapeDataString(externalId)}", out var url)) return null;
-
-        try
-        {
-            var artist = await _httpClient.GetFromJsonAsync<GamdlArtist>(url, cancellationToken);
-            return artist == null ? null : ToArtist(artist);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Apple Music artist for ID: {ExternalId}", externalId);
-            return null;
-        }
+        var result = await metadata.GetArtistAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Artist)));
+        return result.IsSuccess ? ProtocolProviderGateway.Map(result.RequireValue()) : null;
     }
-
     public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        if (!IsSupportedProvider(externalProvider) ||
-            !TryEndpoint($"api/artist/{Uri.EscapeDataString(externalId)}/albums", out var url)) return [];
-
-        try
+        var result = new List<Album>();
+        string? cursor = null;
+        do
         {
-            var albums = await _httpClient.GetFromJsonAsync<List<GamdlAlbum>>(url, cancellationToken);
-            return albums?.Select(ToAlbum).ToList() ?? [];
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Apple Music albums for artist ID: {ExternalId}", externalId);
-            return [];
-        }
+            var page = (await metadata.GetArtistAlbumsAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Artist), new(100, cursor)))).RequireValue();
+            result.AddRange(page.Items.Select(ProtocolProviderGateway.Map));
+            cursor = page.NextCursor;
+        } while (cursor != null && result.Count < 20_000);
+        return result;
     }
-
-    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
-    {
-        if (!IsSupportedProvider(externalProvider) ||
-            !TryEndpoint($"api/artist/{Uri.EscapeDataString(externalId)}/tracks", out var url)) return [];
-
-        try
-        {
-            var tracks = await _httpClient.GetFromJsonAsync<List<GamdlSong>>(url, cancellationToken);
-            return tracks?.Select(ToSong).ToList() ?? [];
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to get Apple Music tracks for artist ID: {ExternalId}", externalId);
-            return [];
-        }
-    }
-
-    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
-    {
-        return new List<ExternalPlaylist>();
-    }
-
+    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default) =>
+        (await metadata.GetArtistTracksAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Artist), new(100)))).RequireValue().Items.Select(ProtocolProviderGateway.Map).ToList();
+    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default) =>
+        (await playlists.SearchPlaylistsAsync(Context(cancellationToken), new(query, new(limit)))).RequireValue().Items.Select(ProtocolProviderGateway.Map).ToList();
     public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        return null;
+        var result = await playlists.GetPlaylistTracksAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Playlist), new(1)));
+        return result.IsSuccess ? ProtocolProviderGateway.Map(result.RequireValue().Playlist) : null;
     }
-
     public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        return new List<Song>();
-    }
-
-    private bool TryEndpoint(string relativePath, out Uri? endpoint)
-    {
-        endpoint = null;
-        if (!allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(
-                _settings.BaseUrl, out var baseUri, out _))
+        var result = new List<Song>();
+        string? cursor = null;
+        for (var index = 0; index < 1000; index++)
         {
-            return false;
+            var page = (await playlists.GetPlaylistTracksAsync(Context(cancellationToken), new(Id(externalId, ProviderResourceKind.Playlist), new(25, cursor)))).RequireValue();
+            result.AddRange(page.Tracks.Items.Where(item => item.Metadata != null).Select(item => ProtocolProviderGateway.Map(item.Metadata!)));
+            cursor = page.Tracks.NextCursor;
+            if (cursor == null) return result;
         }
-
-        endpoint = new Uri(baseUri!, relativePath);
-        return true;
+        throw new InvalidDataException("The Apple playlist exceeded its page limit.");
     }
-
-    private static bool IsSupportedProvider(string provider) => provider is "applemusic" or "apple-download";
-
-    private async Task<List<TResult>> SearchAsync<TSource, TResult>(
-        string query,
-        string type,
-        int limit,
-        Func<TSource, TResult> map,
-        CancellationToken cancellationToken)
-    {
-        if (!TryEndpoint($"api/search?q={Uri.EscapeDataString(query)}&type={type}&limit={Math.Clamp(limit, 1, 100)}", out var url)) return [];
-        try
-        {
-            var results = await _httpClient.GetFromJsonAsync<List<TSource>>(url, cancellationToken);
-            return results?.Select(map).ToList() ?? [];
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to search Apple Music {Type} for query: {Query}", type, query);
-            return [];
-        }
-    }
-
-    private static Song ToSong(GamdlSong song)
-    {
-        var artistId = string.IsNullOrWhiteSpace(song.ArtistId)
-            ? null
-            : $"ext-apple-download-artist-{song.ArtistId}";
-        return new Song
-        {
-            Id = $"ext-apple-download-song-{song.Id}",
-            Title = song.Title,
-            Artist = song.Artist,
-            ArtistId = artistId,
-            Artists = [song.Artist],
-            ArtistIds = artistId == null ? [] : [artistId],
-            Album = song.Album,
-            AlbumId = string.IsNullOrWhiteSpace(song.AlbumId)
-                ? null
-                : $"ext-apple-download-album-{song.AlbumId}",
-            Duration = song.Duration,
-            Track = song.TrackNumber,
-            DiscNumber = song.DiscNumber,
-            TotalTracks = song.TotalTracks,
-            Year = Year(song.ReleaseDate),
-            CoverArtUrl = song.CoverUrl,
-            CoverArtUrlLarge = song.CoverUrl,
-            Isrc = song.Isrc,
-            ReleaseDate = song.ReleaseDate,
-            Copyright = song.Copyright,
-            Composer = song.Composer,
-            Genre = song.Genre,
-            ExternalProvider = "apple-download",
-            ExternalId = song.Id,
-            IsLocal = false
-        };
-    }
-
-    private static Album ToAlbum(GamdlAlbum album) => new()
-    {
-        Id = $"ext-apple-download-album-{album.Id}",
-        Title = album.Title,
-        Artist = album.Artist,
-        ArtistId = string.IsNullOrWhiteSpace(album.ArtistId)
-            ? null
-            : $"ext-apple-download-artist-{album.ArtistId}",
-        Year = Year(album.ReleaseDate),
-        SongCount = album.TrackCount,
-        CoverArtUrl = album.CoverUrl,
-        Genre = album.Genre,
-        ExternalProvider = "apple-download",
-        ExternalId = album.Id,
-        IsLocal = false,
-        Songs = album.Tracks.Select(ToSong).ToList()
-    };
-
-    private static Artist ToArtist(GamdlArtist artist) => new()
-    {
-        Id = $"ext-apple-download-artist-{artist.Id}",
-        Name = artist.Name,
-        ImageUrl = artist.ImageUrl,
-        AlbumCount = artist.AlbumCount,
-        ExternalProvider = "apple-download",
-        ExternalId = artist.Id,
-        IsLocal = false
-    };
-
-    private static int? Year(string? releaseDate) =>
-        DateTimeOffset.TryParse(releaseDate, out var parsed) ? parsed.Year : null;
-
-    private class GamdlSong
-    {
-        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
-        [JsonPropertyName("title")] public string Title { get; set; } = string.Empty;
-        [JsonPropertyName("artist")] public string Artist { get; set; } = string.Empty;
-        [JsonPropertyName("artist_id")] public string ArtistId { get; set; } = string.Empty;
-        [JsonPropertyName("album")] public string Album { get; set; } = string.Empty;
-        [JsonPropertyName("album_id")] public string AlbumId { get; set; } = string.Empty;
-        [JsonPropertyName("duration")] public int Duration { get; set; }
-        [JsonPropertyName("cover_url")] public string CoverUrl { get; set; } = string.Empty;
-        [JsonPropertyName("track_number")] public int? TrackNumber { get; set; }
-        [JsonPropertyName("disc_number")] public int? DiscNumber { get; set; }
-        [JsonPropertyName("total_tracks")] public int? TotalTracks { get; set; }
-        [JsonPropertyName("isrc")] public string? Isrc { get; set; }
-        [JsonPropertyName("release_date")] public string? ReleaseDate { get; set; }
-        [JsonPropertyName("copyright")] public string? Copyright { get; set; }
-        [JsonPropertyName("composer")] public string? Composer { get; set; }
-        [JsonPropertyName("genre")] public string? Genre { get; set; }
-    }
-
-    private class GamdlAlbum
-    {
-        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
-        [JsonPropertyName("title")] public string Title { get; set; } = string.Empty;
-        [JsonPropertyName("artist")] public string Artist { get; set; } = string.Empty;
-        [JsonPropertyName("artist_id")] public string ArtistId { get; set; } = string.Empty;
-        [JsonPropertyName("cover_url")] public string CoverUrl { get; set; } = string.Empty;
-        [JsonPropertyName("release_date")] public string? ReleaseDate { get; set; }
-        [JsonPropertyName("track_count")] public int? TrackCount { get; set; }
-        [JsonPropertyName("genre")] public string? Genre { get; set; }
-        [JsonPropertyName("tracks")] public List<GamdlSong> Tracks { get; set; } = [];
-    }
-
-    private class GamdlArtist
-    {
-        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
-        [JsonPropertyName("name")] public string Name { get; set; } = string.Empty;
-        [JsonPropertyName("image_url")] public string? ImageUrl { get; set; }
-        [JsonPropertyName("album_count")] public int? AlbumCount { get; set; }
-    }
+    private static Song? Track(ProviderOutcome<ProviderTrackMetadata> result) => result.IsSuccess ? ProtocolProviderGateway.Map(result.RequireValue()) : null;
 }

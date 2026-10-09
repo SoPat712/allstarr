@@ -5,6 +5,7 @@ using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using allstarr.Services.AppleMusic;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Operations;
 using Moq;
 using Microsoft.Extensions.Configuration;
@@ -100,7 +101,7 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public void PlaybackProviders_PreserveStreamingThenDownloadOrderWithoutDuplicates()
+    public void PlaybackProviders_RequireSelectedAccountsEvenWhenGlobalSettingsExist()
     {
         var manager = CreateManager(
             new Dictionary<string, string?>
@@ -111,7 +112,7 @@ public sealed class ProviderStatusManagerTests
             appleMusicSettings: new AppleDownloadSettings { BaseUrl = "http://apple-gateway" },
             deezerSettings: new DeezerSettings { Arl = "configured-arl" });
 
-        Assert.Equal(["apple-download"], manager.GetEnabledPlaybackProviders());
+        Assert.Empty(manager.GetEnabledPlaybackProviders());
     }
 
     [Fact]
@@ -173,8 +174,9 @@ public sealed class ProviderStatusManagerTests
 
         Assert.Contains(statuses, item => item.Provider == "deezer" && item.Capability == ProviderCapabilities.Metadata);
         Assert.Contains(statuses, item => item.Provider == "qobuz" && item.Capability == ProviderCapabilities.Metadata);
-        Assert.Contains(statuses, item => item.Provider == "apple-download" && item.Capability == ProviderCapabilities.Download);
-        Assert.DoesNotContain(statuses, item => item.Capability is ProviderCapabilities.Playlist or ProviderCapabilities.Scrobbling);
+        Assert.Contains(statuses, item => item.Provider == "apple-musickit" && item.Capability == ProviderCapabilities.Playlist);
+        Assert.DoesNotContain(statuses, item => item.Capability == ProviderCapabilities.Scrobbling);
+        Assert.DoesNotContain(statuses, item => item.Provider == "apple-musickit" && item.Capability == ProviderCapabilities.Download);
         Assert.DoesNotContain(statuses, item =>
             (item.Provider is "deezer" or "qobuz") &&
             (item.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download));
@@ -502,6 +504,67 @@ public sealed class ProviderStatusManagerTests
             manager.GetAccountFreeStatus("apple-download", ProviderCapabilities.Metadata).Health);
     }
 
+    [Fact]
+    public async Task AppleCatalog_RemainsIndependentOfOptionalMediaDiscovery()
+    {
+        var discovery = new Mock<IAppleDownloadEndpointDiscovery>();
+        discovery.Setup(item => item.DiscoverAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AppleDownloadEndpointSnapshot(AppleDownloadEndpointState.Unreachable,
+                "endpoint_unreachable", null, false, []));
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            appleMusicSettings: new AppleDownloadSettings { BaseUrl = "http://apple-gateway" },
+            appleDownloadDiscovery: discovery.Object);
+        await manager.TestManagedProviderCapabilityAsync("apple-download", ProviderCapabilities.Streaming,
+            Guid.CreateVersion7(), new Dictionary<string, string> { ["musicusertoken"] = "fixture-token" });
+        foreach (var capability in new[] { ProviderCapabilities.Metadata, ProviderCapabilities.Playlist })
+        {
+            var status = manager.GetAccountFreeStatus("apple-download", capability);
+            Assert.Equal("apple-musickit", status.Provider);
+            Assert.True(status.IsSupported);
+            Assert.Equal(ProviderConfigurationState.NotRequired, status.Configuration);
+            Assert.Equal(ProviderHealthState.Unknown, status.Health);
+            Assert.Null(status.ReasonCode);
+        }
+        discovery.Verify(item => item.DiscoverAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task AppleCatalogProbe_UsesBoundedPublicSearchWithoutPersonalCredentials()
+    {
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            Assert.Equal("/v1/catalog/us/search", request.RequestUri!.AbsolutePath);
+            Assert.Contains("types=songs&limit=1", request.RequestUri.Query);
+            Assert.False(request.Headers.Contains("Cookie"));
+            return Json(HttpStatusCode.OK, """{"results":{"songs":{"data":[]}}}""");
+        }));
+        var client = AppleProviderTestFactory.Client(http);
+        var manager = CreateManager(new Dictionary<string, string?>(), services:
+            Mock.Of<IServiceProvider>(provider => provider.GetService(typeof(AppleMusicClient)) == client));
+        var status = await manager.TestManagedProviderCapabilityAsync("apple-musickit", ProviderCapabilities.Metadata,
+            Guid.CreateVersion7(), new Dictionary<string, string> { ["musicusertoken"] = "fixture-token" });
+        Assert.Equal(ProviderHealthState.Healthy, status.Health);
+        Assert.Equal(ProviderConfigurationState.Configured, status.Configuration);
+    }
+
+    [Fact]
+    public async Task AppleWebTokenFailure_AppearsOnTheSelectedAccountStatus()
+    {
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(_ => new(HttpStatusCode.ServiceUnavailable)));
+        var tokens = new AppleWebTokenProvider(http);
+        await Assert.ThrowsAsync<AppleWebTokenUnavailableException>(() => tokens.GetAsync(default));
+        var manager = CreateManager(new Dictionary<string, string?>(), services:
+            Mock.Of<IServiceProvider>(provider => provider.GetService(typeof(AppleWebTokenProvider)) == tokens));
+        var accountId = Guid.CreateVersion7();
+        var status = manager.GetManagedStatus("apple-musickit", ProviderCapabilities.Playlist, accountId,
+            new Dictionary<string, string> { ["musicusertoken"] = "fixture-token" });
+        Assert.Equal("apple-musickit", status.Provider);
+        Assert.Equal(ProviderConfigurationState.Configured, status.Configuration);
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal("apple-web-token-unavailable", status.ReasonCode);
+        Assert.Equal(tokens.ObservedAt, status.TestedAt);
+    }
+
     private static ProviderStatusManager CreateManager(
         IReadOnlyDictionary<string, string?> values,
         IHttpClientFactory? httpClientFactory = null,
@@ -511,7 +574,8 @@ public sealed class ProviderStatusManagerTests
         QobuzSettings? qobuzSettings = null,
         IProviderRegistry? providerRegistry = null,
         IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null,
-        IPlatformClock? clock = null)
+        IPlatformClock? clock = null,
+        IServiceProvider? services = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -526,10 +590,10 @@ public sealed class ProviderStatusManagerTests
             Options.Create(deezerSettings ?? new DeezerSettings()),
             Options.Create(qobuzSettings ?? new QobuzSettings()),
             appleDownloadDiscovery: appleDownloadDiscovery,
-            services: providerRegistry == null
+            services: services ?? (providerRegistry == null
                 ? null
                 : Mock.Of<IServiceProvider>(provider =>
-                    provider.GetService(typeof(IProviderRegistry)) == providerRegistry),
+                    provider.GetService(typeof(IProviderRegistry)) == providerRegistry)),
             clock: clock);
     }
 

@@ -402,7 +402,7 @@ public sealed class ProtocolProviderGateway(
     {
         for (var index = 0; index < order.Count; index++)
         {
-            if (order[index] == provider) return index;
+            if (NormalizeProvider(order[index]) == NormalizeProvider(provider)) return index;
         }
         return int.MaxValue;
     }
@@ -1127,6 +1127,7 @@ public sealed class ProtocolProviderGateway(
         string? albumTitle = null,
         int? durationSeconds = null)
     {
+        providerId = NormalizeProvider(providerId);
         var trackId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
         var routed = await PlanExactAsync<IProviderLyricsCapability>(
             protocol,
@@ -1261,9 +1262,9 @@ public sealed class ProtocolProviderGateway(
     {
         if (string.IsNullOrWhiteSpace(providerId)) return false;
         return registry.FindByCapability(ProviderCapabilityKind.Metadata, includeNonOperational: true)
-            .Any(descriptor => descriptor.Id.Equals(providerId, StringComparison.Ordinal) &&
-                               descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Metadata)
-                                   .AccountRequirement == ProviderAccountRequirement.None);
+            .Any(descriptor => descriptor.Id.Equals(NormalizeProvider(providerId), StringComparison.Ordinal) &&
+                               (descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Metadata).AccountRequirement == ProviderAccountRequirement.None ||
+                                descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Metadata).SupportsPublicRead));
     }
 
     private bool IsPublicStreamingProvider(string? providerId)
@@ -1402,13 +1403,13 @@ public sealed class ProtocolProviderGateway(
         _ => new HttpRequestException(error.SafeMessage)
     };
 
-    private static Song Map(ProviderTrackMetadata item)
+    internal static Song Map(ProviderTrackMetadata item)
     {
         var artists = item.Artists.Select(artist => artist.Name).ToList();
         return new Song
         {
             Id = ProtocolItemId(item.Id),
-            ExternalProvider = item.Id.ProviderId,
+            ExternalProvider = PublicProviderId(item.Id),
             ExternalId = item.Id.Value,
             Title = item.Title,
             Artist = artists.FirstOrDefault() ?? string.Empty,
@@ -1549,10 +1550,10 @@ public sealed class ProtocolProviderGateway(
         return song;
     }
 
-    private static Album Map(ProviderAlbumMetadata item) => new()
+    internal static Album Map(ProviderAlbumMetadata item) => new()
     {
-        Id = $"ext-{item.Id.ProviderId}-album-{item.Id.Value}",
-        ExternalProvider = item.Id.ProviderId,
+        Id = ProtocolItemId(item.Id),
+        ExternalProvider = PublicProviderId(item.Id),
         ExternalId = item.Id.Value,
         Title = item.Title,
         Artist = item.Artists.FirstOrDefault()?.Name ?? string.Empty,
@@ -1567,18 +1568,22 @@ public sealed class ProtocolProviderGateway(
         IsLocal = false
     };
 
-    private static Artist Map(ProviderArtistMetadata item) => new()
+    internal static Artist Map(ProviderArtistMetadata item) => new()
     {
-        Id = $"ext-{item.Id.ProviderId}-artist-{item.Id.Value}",
-        ExternalProvider = item.Id.ProviderId,
+        Id = ProtocolItemId(item.Id),
+        ExternalProvider = PublicProviderId(item.Id),
         ExternalId = item.Id.Value,
         Name = item.Name,
         ImageUrl = item.Artwork?.PublicUri?.ToString(),
         IsLocal = false
     };
 
+    private static string PublicProviderId(ProviderExternalResourceId id) =>
+        id.ProviderId == "apple-musickit" && !allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter.IsLibrary(id.Value)
+            ? "apple-download" : id.ProviderId;
+
     private static string ProtocolItemId(ProviderExternalResourceId id) =>
-        $"ext-{id.ProviderId}-{id.ResourceKind switch
+        $"ext-{PublicProviderId(id)}-{id.ResourceKind switch
         {
             ProviderResourceKind.Track => "song",
             ProviderResourceKind.Album => "album",
@@ -1587,10 +1592,10 @@ public sealed class ProtocolProviderGateway(
             _ => throw new ArgumentOutOfRangeException(nameof(id), id.ResourceKind, "Unsupported protocol resource kind.")
         }}-{id.Value}";
 
-    private static ExternalPlaylist Map(ProviderPlaylistSummary item) => new()
+    internal static ExternalPlaylist Map(ProviderPlaylistSummary item) => new()
     {
-        Id = $"ext-{item.Id.ProviderId}-playlist-{item.Id.Value}",
-        Provider = item.Id.ProviderId,
+        Id = ProtocolItemId(item.Id),
+        Provider = PublicProviderId(item.Id),
         ExternalId = item.Id.Value,
         Name = item.Name,
         Description = item.Description,
@@ -1648,7 +1653,7 @@ public sealed class ProtocolProviderGateway(
 
     private static string NormalizeProvider(string? provider) => provider?.ToLowerInvariant() switch
     {
-        "applemusic" => "apple-download",
+        "applemusic" or "apple-download" => "apple-musickit",
         null or "" => "unknown",
         var value => value
     };

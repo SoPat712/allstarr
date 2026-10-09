@@ -54,23 +54,18 @@ public sealed class AppleDownloadEndpointDiscovery(
     private static readonly IReadOnlyDictionary<string, string[]> RequiredRoutes =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            [ProviderCapabilities.Metadata] = ["metadata-search-song", "metadata-song"],
             [ProviderCapabilities.Streaming] = ["stream-audio-song"],
             [ProviderCapabilities.Download] = ["download-audio-song"],
             [ProviderCapabilities.Lyrics] = ["synced-lyrics-artifact"]
         };
     private static readonly string[] GranularFeatureIds =
     [
-        "metadata-search-song", "metadata-search-album", "metadata-search-artist",
-        "metadata-song", "metadata-album", "metadata-artist",
         "stream-audio-song", "download-audio-song", "download-album", "download-playlist",
         "library-read", "stream-music-video", "synced-lyrics-artifact",
         "tagging-artwork", "codec-alac", "codec-aac"
     ];
     private static readonly HashSet<string> ImplementedFeatureIds = new(
     [
-        "metadata-search-song", "metadata-search-album", "metadata-search-artist",
-        "metadata-song", "metadata-album", "metadata-artist",
         "stream-audio-song", "download-audio-song",
         "synced-lyrics-artifact"
     ], StringComparer.OrdinalIgnoreCase);
@@ -111,7 +106,7 @@ public sealed class AppleDownloadEndpointDiscovery(
             }
 
             var apiVersion = ReadString(manifestRoot, "sidecarApiVersion", "api_version", "apiVersion");
-            if (string.IsNullOrWhiteSpace(apiVersion) || !apiVersion.StartsWith("1.", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(apiVersion) || !apiVersion.StartsWith("2.", StringComparison.Ordinal))
             {
                 return Snapshot(AppleDownloadEndpointState.Incompatible, "unsupported_api_version", apiVersion);
             }

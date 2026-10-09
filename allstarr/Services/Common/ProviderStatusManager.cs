@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.AppleMusicKit;
 using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
@@ -34,10 +35,11 @@ public class ProviderStatusManager
     [
         ("spotify", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
         ("spotify", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
-        ("apple-download", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
-        ("apple-download", ProviderCapabilities.Streaming, ProviderAccountRequirement.None),
-        ("apple-download", ProviderCapabilities.Download, ProviderAccountRequirement.None),
-        ("apple-download", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("apple-musickit", ProviderCapabilities.Metadata, ProviderAccountRequirement.Optional),
+        ("apple-musickit", ProviderCapabilities.Playlist, ProviderAccountRequirement.Optional),
+        ("apple-musickit", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
+        ("apple-musickit", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
+        ("apple-musickit", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
         ("deezer", ProviderCapabilities.Metadata, ProviderAccountRequirement.None),
         ("deezer", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
         ("deezer", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
@@ -262,6 +264,9 @@ public class ProviderStatusManager
         ProviderRuntimeStatusKey key,
         ProviderRuntimeStatus baseline)
     {
+        if (key.Provider == AppleMusicClient.ProviderId &&
+            _services?.GetService<AppleWebTokenProvider>() is { FailureCode: not null } tokens)
+            return baseline with { Health = ProviderHealthState.Degraded, ReasonCode = tokens.FailureCode, TestedAt = tokens.ObservedAt };
         PruneExpiredObservations();
         if (!_observations.TryGetValue(key, out var observation))
         {
@@ -385,11 +390,14 @@ public class ProviderStatusManager
                 key.Capability,
                 accountSecrets,
                 cancellationToken);
-            if (key.Provider == "apple-download")
+            if (key.Provider == "apple-musickit")
             {
                 baseline = BuildBaselineStatus(key);
+                if (accountSecrets != null) baseline = ApplyManagedAccountConfiguration(baseline, accountSecrets);
             }
-            var failureReason = key.Provider == "apple-download" && _appleDownloadSnapshot != null
+            var failureReason = key.Provider == "apple-musickit" &&
+                key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics &&
+                _appleDownloadSnapshot != null
                 ? _appleDownloadSnapshot.Capability(key.Capability).ReasonCode ?? _appleDownloadSnapshot.ReasonCode
                 : "probe_failed";
             var latencyMilliseconds = probe.MeasuresLatency
@@ -608,7 +616,9 @@ public class ProviderStatusManager
 
         return (provider, capability) switch
         {
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
+            ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) =>
+                (ProviderConfigurationState.NotRequired, null),
+            ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
                 IsConfiguredValue(_appleMusicSettings.BaseUrl)
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_sidecar_url"),
@@ -685,6 +695,8 @@ public class ProviderStatusManager
 
         bool? configured = (baseline.Provider, baseline.Capability) switch
         {
+            ("apple-musickit", _) => IsConfiguredValue(SecretValue(secrets, "musicusertoken", "mediausertoken")) &&
+                (baseline.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist || IsConfiguredValue(_appleMusicSettings.BaseUrl)),
             ("spotify", ProviderCapabilities.Playlist) =>
                 IsConfiguredValue(SecretValue(secrets, "sessioncookie", "spdc", "cookie")),
             ("spotify", ProviderCapabilities.Lyrics) =>
@@ -729,7 +741,8 @@ public class ProviderStatusManager
             return extensionCapability!.HasUsableImplementation;
         return (provider, capability) switch
         {
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
+            ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => true,
+            ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) =>
                 _appleDownloadSnapshot?.Capability(capability).State != AppleDownloadCapabilityState.Unsupported,
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
@@ -748,7 +761,7 @@ public class ProviderStatusManager
             return extensionCapability!.HasUsableImplementation;
         return (provider, capability) switch
         {
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => true,
+            ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => true,
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
@@ -776,7 +789,8 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie,
                 cancellationToken),
             ("spotify", ProviderCapabilities.Lyrics) => await AsOutcome(TestSpotifyLyricsAsync(cancellationToken)),
-            ("apple-download", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
+            ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestAppleMusicAsync(capability, accountSecrets, cancellationToken),
+            ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestDeezerMetadataAsync(cancellationToken)),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
@@ -969,6 +983,26 @@ public class ProviderStatusManager
         {
             return false;
         }
+    }
+
+    private async Task<ProbeOutcome> TestAppleMusicAsync(string capability,
+        IReadOnlyDictionary<string, string>? accountSecrets, CancellationToken cancellationToken)
+    {
+        var client = _services?.GetService<AppleMusicClient>();
+        if (client == null) return new(false, "probe_not_available");
+        var token = SecretValue(accountSecrets, "musicusertoken", "mediausertoken");
+        var storefront = SecretValue(accountSecrets, "storefront") ?? "us";
+        var credential = token == null ? null : AppleMusicCredential.Read(JsonSerializer.SerializeToUtf8Bytes(new { MusicUserToken = token, Storefront = storefront }));
+        if (accountSecrets != null && credential == null) return new(false, "missing_provider_account_secret");
+        var personal = capability == ProviderCapabilities.Playlist && credential != null;
+        try
+        {
+            var response = await client.SendAsync(personal ? credential : null,
+                personal ? "v1/me/library/playlists?limit=1" : capability == ProviderCapabilities.Playlist
+                    ? "v1/catalog/us/search?term=music&types=playlists&limit=1" : "v1/catalog/us/search?term=music&types=songs&limit=1", cancellationToken);
+            return new(response.Outcome.IsSuccess, response.Error?.Code);
+        }
+        catch (AppleWebTokenUnavailableException) { return new(false, "apple-web-token-unavailable"); }
     }
 
     private async Task<bool> TestAppleDownloadAsync(string capability, CancellationToken cancellationToken)
@@ -1169,8 +1203,8 @@ public class ProviderStatusManager
     private static string Normalize(string value)
     {
         var normalized = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
-        return normalized is "applemusic" or "apple-music" or "apple_music"
-            ? "apple-download"
+        return normalized is "applemusic" or "apple-music" or "apple_music" or "apple-download"
+            ? "apple-musickit"
             : normalized;
     }
 }

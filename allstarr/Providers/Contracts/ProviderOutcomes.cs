@@ -55,6 +55,11 @@ public sealed record ProviderError
 
     public TimeSpan? RetryAfter { get; }
 
+    public static ProviderError AppleWebTokenUnavailable() => new(
+        ProviderErrorKind.CapabilityUnavailable,
+        "apple-web-token-unavailable",
+        "Apple's web-player token could not be fetched. Retry the Apple account test later.");
+
     public static ProviderError CompatibilityContractChanged() => new(
         ProviderErrorKind.CapabilityUnavailable,
         "provider-contract-changed",

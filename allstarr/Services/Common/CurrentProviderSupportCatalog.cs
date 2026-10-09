@@ -25,24 +25,14 @@ public static class CurrentProviderSupportCatalog
     public static IReadOnlyList<AdminUiProviderSupport> All { get; } =
     [
         Provider(
-            "apple-download",
-            "apple-download",
-            "Apple Music – GAMDL",
-            "global",
-            "URL of an optional, operator-managed GAMDL-compatible service.",
-            Capability("metadata", Partial, "The bundled gateway supports catalog song, album, and artist search and detail. Playlist and personal-library features remain separate capabilities.", "AppleMusicMetadataServiceTests; AppleDownloadEndpointDiscoveryTests; apple-gateway tests"),
-            Capability("streaming", Supported, "Manifest-gated single-track audio streams use the typed exact-provider lease; cold progressive responses do not advertise byte ranges.", "AppleDownloadCapabilityAdapterTests; ProtocolProviderStreamingGatewayTests"),
-            Capability("download", Partial, "The compatible external manifest must advertise the distinct managed track-artifact route. Album, playlist, library, standalone artwork, and video jobs remain unsupported.", "AppleDownloadCapabilityAdapterTests; AppleDownloadEndpointDiscoveryTests"),
-            Capability("lyrics", Supported, "The compatible external manifest must advertise synced lyrics artifacts for single tracks.", "AppleDownloadCapabilityAdapterTests; AppleDownloadEndpointDiscoveryTests"),
-            Capability("health", Partial, "Runtime discovery verifies the gateway API version, authentication, health, and each advertised feature without treating a raw wrapper as a gateway.", "AppleDownloadEndpointDiscoveryTests; AppleMusicControllerTests")),
-        Provider(
-            "apple-musickit",
-            "apple-musickit",
-            "Apple Music Developer API – Personal Library",
-            "user",
-            "Developer token plus a per-user Music User Token stored in the selected encrypted account secret.",
-            Capability("playlist", Supported, "Account-bound MusicKit library playlist paging, snapshots, artwork, matching, virtual reads, and backend materialization.", "AppleMusicKitPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests"),
-            Capability("metadata", Supported, "Account-bound personal-library song, album, and artist search and lookups with deterministic paging. Catalog and ISRC lookup remain outside this capability.", "AppleMusicKitMetadataCapabilityAdapterTests")),
+            "apple-musickit", "apple-musickit", "Apple Music", "user",
+            "Personal Media User Token and storefront; public catalog access requires no user token.",
+            Capability("metadata", Supported, "Public catalog search, ISRC, track/album/artist detail and paging; private library lookups use the selected account. Web-player authorization is fetched automatically.", "AppleMusicKitMetadataCapabilityAdapterTests; AppleMusicClientTests; AppleWebTokenProviderTests"),
+            Capability("playlist", Supported, "Public playlists and selected personal-library playlists, with ordered paging and bounded artwork. Source writeback is unavailable.", "AppleMusicKitPlaylistCapabilityAdapterTests; AppleMusicClientTests"),
+            Capability("streaming", Supported, "Optional gateway API 2 streams with the exact selected account. Cold progressive responses do not advertise byte ranges.", "AppleDownloadCapabilityAdapterTests; ProtocolProviderStreamingGatewayTests"),
+            Capability("download", Partial, "Optional account-bound managed track artifacts. Wrapper-backed audio requires the selected account to match the wrapper account.", "AppleDownloadCapabilityAdapterTests; apple-gateway tests"),
+            Capability("lyrics", Supported, "Optional account-bound synced lyrics artifacts for single tracks.", "AppleDownloadCapabilityAdapterTests; apple-gateway tests"),
+            Capability("health", Partial, "Public web-token failures appear on the account card. Optional gateway discovery checks API version, authentication and advertised features.", "AppleMusicClientTests; AppleDownloadEndpointDiscoveryTests")),
         Provider(
             "deezer",
             "deezer",

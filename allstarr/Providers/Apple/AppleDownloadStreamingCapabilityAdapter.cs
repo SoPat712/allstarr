@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.AppleMusicKit;
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
@@ -11,6 +12,7 @@ namespace allstarr.Core.Providers.AppleDownload;
 public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreamingCapability
 {
     private readonly HttpClient http;
+    private readonly AppleMusicClient client;
     private readonly AppleDownloadSettings settings;
     private readonly IAppleDownloadEndpointDiscovery discovery;
 
@@ -18,15 +20,16 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
     public AppleDownloadStreamingCapabilityAdapter(
         IHttpClientFactory clients,
         IOptions<AppleDownloadSettings> settings,
-        IAppleDownloadEndpointDiscovery discovery)
-        : this(clients.CreateClient(AppleDownloadCapabilityAdapter.HttpClientName), settings.Value, discovery) { }
+        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client)
+        : this(clients.CreateClient(AppleDownloadCapabilityAdapter.HttpClientName), settings.Value, discovery, client) { }
 
     public AppleDownloadStreamingCapabilityAdapter(
         HttpClient http,
         AppleDownloadSettings settings,
-        IAppleDownloadEndpointDiscovery discovery)
+        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client)
     {
         this.http = http;
+        this.client = client;
         this.settings = settings;
         this.discovery = discovery;
     }
@@ -47,9 +50,11 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
                 return ProviderOutcome<ProviderStreamLease>.Failure(new(ErrorFor(snapshot.State)));
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
                 return ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+            var resolved = await client.ResolveCatalogTrackAsync(context, request.TrackId.Value);
+            if (!resolved.IsSuccess) return ProviderOutcome<ProviderStreamLease>.Failure(resolved.Error!);
             var quality = AppleDownloadCapabilityAdapter.Quality(request.RequestedQuality, settings.Quality);
             var source = new Uri(baseUri!,
-                $"api/stream/{Uri.EscapeDataString(request.TrackId.Value)}?quality={Uri.EscapeDataString(quality)}");
+                $"api/stream/{Uri.EscapeDataString(resolved.RequireValue())}?quality={Uri.EscapeDataString(quality)}");
             return ProviderOutcome<ProviderStreamLease>.Success(new(
                 LeaseId(request.TrackId.Value, quality),
                 source,
@@ -58,7 +63,7 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
                 supportsSeeking: false,
                 Media,
                 ProviderStreamRetryBehavior.RetrySameLeaseOnce,
-                OpenAsync));
+                (outbound, token) => OpenAsync(context, source, outbound, token)));
         }
         catch (OperationCanceledException)
         {
@@ -115,6 +120,8 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
         ProviderExternalResourceId trackId)
     {
         ArgumentNullException.ThrowIfNull(context);
+        var accountError = AppleMusicClient.Validate(context, personal: true);
+        if (accountError != null) return accountError;
         try { context.RequireResourceOwner(trackId, ProviderResourceKind.Track); }
         catch (Exception exception) when (exception is ArgumentException or UnauthorizedAccessException)
         { return new(ProviderErrorKind.Forbidden); }
@@ -129,11 +136,12 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
     }
 
     private async Task<HttpResponseMessage> OpenAsync(
+        ProviderExecutionContext context, Uri expectedSource,
         HttpRequestMessage request,
         CancellationToken cancellationToken)
     {
-        var response = await http.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (request.RequestUri != expectedSource) throw new UnauthorizedAccessException("The Apple stream destination changed.");
+        var response = await client.SendSidecarAsync(context, http, request, cancellationToken);
         if (!response.IsSuccessStatusCode) return response;
         if (response.RequestMessage?.RequestUri != request.RequestUri ||
             response.Content.Headers.ContentType?.MediaType?.ToLowerInvariant()

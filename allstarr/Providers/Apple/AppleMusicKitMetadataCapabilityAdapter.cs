@@ -11,56 +11,116 @@ namespace allstarr.Core.Providers.AppleMusicKit;
 
 public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCapability
 {
-    public const string HttpClientName = "AppleMusicKitMetadataAccountBound";
-    private static readonly Uri ApiOrigin = new("https://api.music.apple.com/");
-    private readonly HttpClient _http;
-    private readonly IProviderAccountSecretAccessor _secrets;
+    private readonly AppleMusicClient _client;
 
-    [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
-    public AppleMusicKitMetadataCapabilityAdapter(IHttpClientFactory clients, IProviderAccountSecretAccessor secrets)
-        : this(clients.CreateClient(HttpClientName), secrets) { }
-
-    public AppleMusicKitMetadataCapabilityAdapter(HttpClient http, IProviderAccountSecretAccessor secrets)
-    {
-        _http = http;
-        _secrets = secrets;
-    }
+    public AppleMusicKitMetadataCapabilityAdapter(AppleMusicClient client) => _client = client;
 
     public string ProviderId => AppleMusicKitPlaylistCapabilityAdapter.StableProviderId;
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Metadata;
 
     public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> SearchTracksAsync(
         ProviderExecutionContext context, ProviderMetadataSearchRequest request) => SearchAsync(
-            context, request, "library-songs", MapTrack);
+            context, request, "songs", MapTrack);
 
     public Task<ProviderOutcome<ProviderTrackMetadata>> GetTrackAsync(
         ProviderExecutionContext context, ProviderTrackLookupRequest request) => LookupAsync(
-            context, request.Id, ProviderResourceKind.Track, "library/songs", request.ExpectedSnapshotVersion, MapTrack);
+            context, request.Id, ProviderResourceKind.Track, "songs", request.ExpectedSnapshotVersion, MapTrack);
 
     public Task<ProviderOutcome<ProviderTrackMetadata>> LookupByIsrcAsync(
-        ProviderExecutionContext context, ProviderIsrcLookupRequest request)
+        ProviderExecutionContext context, ProviderIsrcLookupRequest request) => ExecuteAsync(context, async (credential, ct) =>
     {
-        var error = ValidateContext(context);
-        return Task.FromResult(error == null
-            ? ProviderOutcome<ProviderTrackMetadata>.Failure(new(ProviderErrorKind.NotSupported))
-            : ProviderOutcome<ProviderTrackMetadata>.Failure(error));
-    }
+        var result = await SendAsync(credential, "v1/catalog/us/songs?filter[isrc]=" + Uri.EscapeDataString(request.Isrc), ct);
+        if (!result.Outcome.IsSuccess) return ProviderOutcome<ProviderTrackMetadata>.Failure(result.Outcome.Error!);
+        using var document = JsonDocument.Parse(result.Body!);
+        var item = Data(document.RootElement).FirstOrDefault();
+        return item.ValueKind == JsonValueKind.Undefined
+            ? ProviderOutcome<ProviderTrackMetadata>.Failure(new(ProviderErrorKind.NotFound))
+            : ProviderOutcome<ProviderTrackMetadata>.Success(MapTrack(item, result.ETag));
+    });
 
     public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> SearchAlbumsAsync(
         ProviderExecutionContext context, ProviderMetadataSearchRequest request) => SearchAsync(
-            context, request, "library-albums", MapAlbum);
+            context, request, "albums", MapAlbum);
 
     public Task<ProviderOutcome<ProviderAlbumMetadata>> GetAlbumAsync(
-        ProviderExecutionContext context, ProviderAlbumLookupRequest request) => LookupAsync(
-            context, request.Id, ProviderResourceKind.Album, "library/albums", request.ExpectedSnapshotVersion, MapAlbum);
+        ProviderExecutionContext context, ProviderAlbumLookupRequest request) => ExecuteAsync(context, async (credential, ct) =>
+    {
+        context.RequireResourceOwner(request.Id, ProviderResourceKind.Album);
+        var root = IsLibrary(request.Id.Value) ? "v1/me/library" : "v1/catalog/us";
+        var path = $"{root}/albums/{Uri.EscapeDataString(request.Id.Value)}";
+        var result = await SendAsync(credential, path, ct);
+        if (!result.Outcome.IsSuccess) return ProviderOutcome<ProviderAlbumMetadata>.Failure(result.Outcome.Error!);
+        if (request.ExpectedSnapshotVersion != null && request.ExpectedSnapshotVersion != result.ETag)
+            return ProviderOutcome<ProviderAlbumMetadata>.Failure(new(ProviderErrorKind.PermanentFailure));
+        using var document = JsonDocument.Parse(result.Body!);
+        var item = Data(document.RootElement).FirstOrDefault();
+        if (item.ValueKind == JsonValueKind.Undefined)
+            return ProviderOutcome<ProviderAlbumMetadata>.Failure(new(ProviderErrorKind.NotFound));
+        var album = MapAlbum(item, result.ETag);
+        var tracks = new List<ProviderTrackMetadata>();
+        for (var page = 0; page < 200; page++)
+        {
+            var response = await SendAsync(credential, $"{path}/tracks?limit=100&offset={tracks.Count}", ct);
+            if (!response.Outcome.IsSuccess) return ProviderOutcome<ProviderAlbumMetadata>.Failure(response.Outcome.Error!);
+            using var trackDocument = JsonDocument.Parse(response.Body!);
+            var entries = Data(trackDocument.RootElement).ToArray();
+            tracks.AddRange(entries.Select(track => MapTrack(track, response.ETag)));
+            if (!HasNext(trackDocument.RootElement))
+                return ProviderOutcome<ProviderAlbumMetadata>.Success(new(album.Id, album.Title, album.Artists,
+                    album.TrackCount, album.Artwork, album.SnapshotVersion, tracks: tracks));
+            if (entries.Length == 0) break;
+        }
+        return ProviderOutcome<ProviderAlbumMetadata>.Failure(ProviderError.CompatibilityContractChanged());
+    }, IsLibrary(request.Id.Value));
+
+    public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request) => ArtistItemsAsync(context, request, "albums", MapAlbum);
+
+    public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
+        ProviderExecutionContext context, ProviderArtistItemsRequest request) => ArtistItemsAsync(context, request, "view/top-songs", MapTrack);
+
+    private Task<ProviderOutcome<ProviderPage<T>>> ArtistItemsAsync<T>(ProviderExecutionContext context,
+        ProviderArtistItemsRequest request, string relationship, Func<JsonElement, string?, T> map) where T : class =>
+        ExecuteAsync(context, async (credential, ct) =>
+        {
+            context.RequireResourceOwner(request.Id, ProviderResourceKind.Artist);
+            if (!TryOffset(request.Page.Cursor, out var offset))
+                return ProviderOutcome<ProviderPage<T>>.Failure(new(ProviderErrorKind.PermanentFailure));
+            var root = IsLibrary(request.Id.Value) ? "v1/me/library" : "v1/catalog/us";
+            var result = await SendAsync(credential,
+                $"{root}/artists/{Uri.EscapeDataString(request.Id.Value)}/{relationship}?limit={Math.Clamp(request.Page.Limit, 1, 100)}&offset={offset}", ct);
+            if (!result.Outcome.IsSuccess) return ProviderOutcome<ProviderPage<T>>.Failure(result.Outcome.Error!);
+            if (request.ExpectedSnapshotVersion != null && request.ExpectedSnapshotVersion != result.ETag)
+                return ProviderOutcome<ProviderPage<T>>.Failure(new(ProviderErrorKind.PermanentFailure));
+            using var document = JsonDocument.Parse(result.Body!);
+            var entries = Data(document.RootElement).Select(item => map(item, result.ETag)).ToArray();
+            if (HasNext(document.RootElement) && entries.Length == 0)
+                return ProviderOutcome<ProviderPage<T>>.Failure(ProviderError.CompatibilityContractChanged());
+            var next = HasNext(document.RootElement) ? (offset + entries.Length).ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
+            return ProviderOutcome<ProviderPage<T>>.Success(new(ProviderId, entries, next, next != null, result.ETag));
+        }, IsLibrary(request.Id.Value));
+
+    public Task<ProviderOutcome<ProviderArtworkReference>> GetPlaylistArtworkAsync(
+        ProviderExecutionContext context, ProviderExternalResourceId playlistId) => ExecuteAsync(context, async (credential, ct) =>
+    {
+        context.RequireResourceOwner(playlistId, ProviderResourceKind.Playlist);
+        var root = IsLibrary(playlistId.Value) ? "v1/me/library" : "v1/catalog/us";
+        var response = await SendAsync(credential, $"{root}/playlists/{Uri.EscapeDataString(playlistId.Value)}", ct);
+        if (!response.Outcome.IsSuccess) return ProviderOutcome<ProviderArtworkReference>.Failure(response.Outcome.Error!);
+        using var document = JsonDocument.Parse(response.Body!);
+        var item = Data(document.RootElement).FirstOrDefault();
+        var artwork = item.ValueKind == JsonValueKind.Object ? Artwork(playlistId, RequiredObject(item, "attributes"), response.ETag) : null;
+        return artwork?.PublicUri == null ? ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.NotFound)) :
+            ProviderOutcome<ProviderArtworkReference>.Success(artwork);
+    }, IsLibrary(playlistId.Value));
 
     public Task<ProviderOutcome<ProviderPage<ProviderArtistMetadata>>> SearchArtistsAsync(
         ProviderExecutionContext context, ProviderMetadataSearchRequest request) => SearchAsync(
-            context, request, "library-artists", MapArtist);
+            context, request, "artists", MapArtist);
 
     public Task<ProviderOutcome<ProviderArtistMetadata>> GetArtistAsync(
         ProviderExecutionContext context, ProviderArtistLookupRequest request) => LookupAsync(
-            context, request.Id, ProviderResourceKind.Artist, "library/artists", request.ExpectedSnapshotVersion, MapArtist);
+            context, request.Id, ProviderResourceKind.Artist, "artists", request.ExpectedSnapshotVersion, MapArtist);
 
     private async Task<ProviderOutcome<ProviderPage<T>>> SearchAsync<T>(
         ProviderExecutionContext context,
@@ -73,9 +133,9 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
 
         return await ExecuteAsync(context, async (credential, ct) =>
         {
-            var relative = "v1/me/library/search?term=" + Uri.EscapeDataString(request.Query) +
+            var relative = "v1/catalog/us/search?term=" + Uri.EscapeDataString(request.Query) +
                            "&types=" + resourceType +
-                           "&limit=" + request.Page.Limit.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                           "&limit=" + Math.Clamp(request.Page.Limit, 1, 25).ToString(System.Globalization.CultureInfo.InvariantCulture) +
                            "&offset=" + offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
             var result = await SendAsync(credential, relative, ct);
             if (!result.Outcome.IsSuccess)
@@ -86,6 +146,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
                 using var document = JsonDocument.Parse(result.Body!);
                 var container = SearchContainer(document.RootElement, resourceType);
                 var items = Data(container).Select(item => map(item, result.ETag)).ToArray();
+                if (HasNext(container) && items.Length == 0)
+                    return ProviderOutcome<ProviderPage<T>>.Failure(ProviderError.CompatibilityContractChanged());
                 var next = HasNext(container)
                     ? (offset + items.Length).ToString(System.Globalization.CultureInfo.InvariantCulture)
                     : null;
@@ -113,7 +175,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         return await ExecuteAsync(context, async (credential, ct) =>
         {
             var result = await SendAsync(credential,
-                $"v1/me/{resourcePath}/{Uri.EscapeDataString(id.Value)}", ct);
+                $"{(IsLibrary(id.Value) ? "v1/me/library" : "v1/catalog/us")}/{resourcePath}/{Uri.EscapeDataString(id.Value)}", ct);
             if (!result.Outcome.IsSuccess) return ProviderOutcome<T>.Failure(result.Outcome.Error!);
             if (expectedSnapshotVersion != null &&
                 !string.Equals(expectedSnapshotVersion, result.ETag, StringComparison.Ordinal))
@@ -134,74 +196,27 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             {
                 return ProviderOutcome<T>.Failure(new(ProviderErrorKind.PermanentFailure));
             }
-        });
+        }, IsLibrary(id.Value));
     }
 
-    private async Task<ProviderOutcome<T>> ExecuteAsync<T>(
-        ProviderExecutionContext context,
-        Func<AppleMusicKitPlaylistCapabilityAdapter.Credential, CancellationToken, Task<ProviderOutcome<T>>> operation)
-    {
-        var error = ValidateContext(context);
-        if (error != null) return ProviderOutcome<T>.Failure(error);
-        try
-        {
-            return await _secrets.UseAsync(context.Account!, async bytes =>
-            {
-                AppleMusicKitPlaylistCapabilityAdapter.Credential? credential;
-                try
-                {
-                    credential = JsonSerializer.Deserialize<AppleMusicKitPlaylistCapabilityAdapter.Credential>(bytes.Span);
-                }
-                catch (JsonException)
-                {
-                    credential = null;
-                }
-                return credential is { IsValid: true }
-                    ? await operation(credential, context.CancellationToken)
-                    : ProviderOutcome<T>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
-            }, context.CancellationToken);
-        }
-        catch (OperationCanceledException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.Canceled)); }
-        catch (KeyNotFoundException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration)); }
-        catch { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure)); }
-    }
+    private Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context,
+        Func<AppleMusicCredential?, CancellationToken, Task<ProviderOutcome<T>>> operation, bool personal = false) =>
+        _client.ExecuteAsync(context, personal, operation);
 
-    private async Task<HttpResult> SendAsync(
-        AppleMusicKitPlaylistCapabilityAdapter.Credential credential,
-        string relative,
-        CancellationToken ct)
-    {
-        var uri = new Uri(ApiOrigin, relative);
-        if (!IsAppleApiOrigin(uri))
-            return new(ProviderOutcome<byte[]>.Failure(new(ProviderErrorKind.Forbidden)), null, null);
+    private Task<AppleMusicHttpResult> SendAsync(AppleMusicCredential? credential, string relative, CancellationToken ct) =>
+        _client.SendAsync(credential, relative, ct);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", credential.DeveloperToken);
-        request.Headers.TryAddWithoutValidation("Music-User-Token", credential.MusicUserToken);
-        try
-        {
-            using var response = await _http.SendAsync(request, ct);
-            if (response.RequestMessage?.RequestUri is { } finalUri && !IsAppleApiOrigin(finalUri))
-                return new(ProviderOutcome<byte[]>.Failure(new(ProviderErrorKind.Forbidden)), null, null);
-            if (!response.IsSuccessStatusCode)
-                return new(ProviderOutcome<byte[]>.Failure(Error(response)), null, response.Headers.ETag?.Tag);
-            return new(ProviderOutcome<byte[]>.Success([]),
-                await response.Content.ReadAsByteArrayAsync(ct), response.Headers.ETag?.Tag);
-        }
-        catch (OperationCanceledException) { throw; }
-        catch (HttpRequestException)
-        {
-            return new(ProviderOutcome<byte[]>.Failure(new(ProviderErrorKind.TransientFailure)), null, null);
-        }
-    }
+    internal static bool IsLibrary(string id) => id.StartsWith("i.", StringComparison.Ordinal) ||
+        id.StartsWith("l.", StringComparison.Ordinal) || id.StartsWith("r.", StringComparison.Ordinal) ||
+        id.StartsWith("p.", StringComparison.Ordinal);
 
-    private static ProviderTrackMetadata MapTrack(JsonElement item, string? revision)
+    internal static ProviderTrackMetadata MapTrack(JsonElement item, string? revision)
     {
         var id = Resource(item, ProviderResourceKind.Track);
         var attributes = RequiredObject(item, "attributes");
         var artistName = Required(attributes, "artistName");
         ProviderExternalResourceId? albumId = null;
-        var albumResourceId = String(attributes, "albumId");
+        var albumResourceId = RelationshipId(item, "albums") ?? String(attributes, "albumId");
         if (albumResourceId != null)
             albumId = new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, ProviderResourceKind.Album, albumResourceId);
         TimeSpan? duration = attributes.TryGetProperty("durationInMillis", out var durationValue) &&
@@ -209,10 +224,11 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             ? TimeSpan.FromMilliseconds(milliseconds)
             : null;
         var artwork = Artwork(id, attributes, revision);
-        return new(id, Required(attributes, "name"), [ArtistCredit(artistName)], albumId,
+        return new(id, Required(attributes, "name"), [ArtistCredit(artistName, RelationshipId(item, "artists"))], albumId,
             String(attributes, "albumName"), duration, String(attributes, "isrc"),
             String(attributes, "contentRating") switch { "explicit" => true, "clean" => false, _ => null },
-            artwork, revision);
+            artwork, revision, trackNumber: Number(attributes, "trackNumber"), discNumber: Number(attributes, "discNumber"),
+            releaseDate: String(attributes, "releaseDate"));
     }
 
     private static ProviderAlbumMetadata MapAlbum(JsonElement item, string? revision)
@@ -222,7 +238,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         int? trackCount = attributes.TryGetProperty("trackCount", out var count) && count.TryGetInt32(out var parsed)
             ? parsed
             : null;
-        return new(id, Required(attributes, "name"), [ArtistCredit(Required(attributes, "artistName"))],
+        return new(id, Required(attributes, "name"), [ArtistCredit(Required(attributes, "artistName"), RelationshipId(item, "artists"))],
             trackCount, Artwork(id, attributes, revision), revision);
     }
 
@@ -233,7 +249,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         return new(id, Required(attributes, "name"), Artwork(id, attributes, revision), revision);
     }
 
-    private static ProviderArtworkReference? Artwork(
+    internal static ProviderArtworkReference? Artwork(
         ProviderExternalResourceId resource, JsonElement attributes, string? revision)
     {
         if (!attributes.TryGetProperty("artwork", out var artwork) || artwork.ValueKind != JsonValueKind.Object)
@@ -254,45 +270,24 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
     private static ProviderExternalResourceId Resource(JsonElement item, ProviderResourceKind kind) =>
         new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, kind, Required(item, "id"));
 
-    private static ProviderArtistCredit ArtistCredit(string name)
+    private static ProviderArtistCredit ArtistCredit(string name, string? id = null)
     {
         var syntheticId = "credit:" + Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(name))).ToLowerInvariant();
         return new(name, new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId,
-            ProviderResourceKind.Artist, syntheticId));
+            ProviderResourceKind.Artist, id ?? syntheticId));
     }
-
-    private static ProviderError? ValidateContext(ProviderExecutionContext context)
-    {
-        if (!context.ProviderId.Equals(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, StringComparison.Ordinal))
-            return new(ProviderErrorKind.Forbidden);
-        if (context.Account is not { Scope: ProviderAccountScope.Personal, SecretReferenceId: not null } account)
-            return new(ProviderErrorKind.AccountNeedsConfiguration);
-        if (!account.ProviderId.Equals(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, StringComparison.Ordinal) ||
-            account.OwnerUserId != context.Actor.EffectiveUserId)
-            return new(ProviderErrorKind.Forbidden);
-        return null;
-    }
-
-    private static bool IsAppleApiOrigin(Uri uri) => uri.IsAbsoluteUri &&
-        uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
-        uri.Host.Equals(ApiOrigin.Host, StringComparison.OrdinalIgnoreCase) &&
-        uri.Port == 443 && string.IsNullOrEmpty(uri.UserInfo);
 
     private static bool IsAppleArtworkHost(string host) =>
         host.Equals("mzstatic.com", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".mzstatic.com", StringComparison.OrdinalIgnoreCase);
 
-    private static ProviderError Error(HttpResponseMessage response) => response.StatusCode switch
-    {
-        HttpStatusCode.Unauthorized => new(ProviderErrorKind.AccountNeedsReauthentication),
-        HttpStatusCode.Forbidden => new(ProviderErrorKind.AccountNeedsReauthentication),
-        HttpStatusCode.NotFound => new(ProviderErrorKind.NotFound),
-        HttpStatusCode.TooManyRequests => new(ProviderErrorKind.RateLimited,
-            response.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30)),
-        >= HttpStatusCode.InternalServerError => new(ProviderErrorKind.TransientFailure),
-        _ => new(ProviderErrorKind.PermanentFailure)
-    };
+    private static int? Number(JsonElement value, string name) => value.TryGetProperty(name, out var number) &&
+        number.TryGetInt32(out var parsed) ? parsed : null;
+
+    private static string? RelationshipId(JsonElement item, string name) =>
+        item.TryGetProperty("relationships", out var relationships) && relationships.TryGetProperty(name, out var relationship)
+            ? Data(relationship).Select(value => String(value, "id")).FirstOrDefault() : null;
 
     private static bool TryOffset(string? cursor, out int offset) => cursor == null
         ? (offset = 0) == 0
@@ -322,5 +317,5 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
     private static string Required(JsonElement root, string name) =>
         String(root, name) ?? throw new JsonException($"Apple Music response omitted {name}.");
 
-    private sealed record HttpResult(ProviderOutcome<byte[]> Outcome, byte[]? Body, string? ETag);
+
 }

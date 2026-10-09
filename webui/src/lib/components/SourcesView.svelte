@@ -218,10 +218,8 @@
   });
 
   function sourcePurpose(item: ProviderDefinition) {
-    if (item.id === "apple-download")
-      return "GAMDL downloads, streaming, and cached synced-lyrics artifacts.";
     if (item.id === "apple-musickit")
-      return "Optional personal-library and playlist access requiring an Apple Developer Program token and a Music User Token.";
+      return "Browse the public catalog and connect your personal library with a Media User Token and storefront. Optional downloads use the same account.";
     if (item.id === "spotiflac-apple-music")
       return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
     return item.description || "Configure this Source and its accounts here.";
@@ -375,6 +373,7 @@
     </div>
   {/if}
 
+  {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
   <div class="sources-layout" aria-busy={refreshing}>
     {#if mode === "services"}
     <section class="panel sources-panel">
@@ -385,7 +384,6 @@
           {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
         </div>
       </header>
-      {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
 
       <div class="operational-table-scroll">
         <table class="operational-table sources-table">
@@ -577,6 +575,9 @@
                 <div><dt>State</dt><dd><Badge state={selectedAccount.enabled ? "healthy" : "suggested"}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</Badge></dd></div>
                 <div><dt>Account details</dt><dd><Badge state={selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "healthy" : "needs_config"}>{selectedAccount.secret.configured && !selectedAccount.secret.revoked ? "Stored" : "Setup needed"}</Badge></dd></div>
                 <div><dt>Health</dt><dd><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge></dd></div>
+                {#if capabilities.some((item) => item.reasonCode === "apple-web-token-unavailable")}
+                  <div><dt>Apple connection</dt><dd role="status">Apple's web-player token could not be fetched. Retry this account's Test action later.</dd></div>
+                {/if}
                 <div><dt>Click to stream</dt><dd>{#if cts}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>{ctsMeasurementLabel(cts)}</Badge> · {relativeTime(cts.testedAt)}{:else if supportsPlaybackDiagnostic(capabilities)}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
             {:else if detailTab === "configuration" && detailKind === "source" && selectedSource}
@@ -592,9 +593,6 @@
                 <div class="source-detail-actions">
                   {#if administrator && !sourceNeedsAccount(selectedSource) && selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}
                     <Button variant="secondary" disabled={Boolean(action)} onclick={() => void measureSource(selectedSource!)}>Measure CTS</Button>
-                  {/if}
-                  {#if selectedSource.id === "apple-download"}
-                    <Button onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage Apple Music – GAMDL</Button>
                   {/if}
                   {#if !settings.length && selectedSource.connectionKind !== "operator_managed"}
                     <p>No account configuration is required for this extension capability.</p>
@@ -627,7 +625,14 @@
                     {#if canConnectAccounts}<Button onclick={() => { connectProviderId = selectedSource!.id; detailOpen = false; connectOpen = true; }}>{sourceAccounts.length ? "Connect another account" : "Connect account"}</Button>{/if}
                   </div>
                 {/if}
-                {#if selectedSource.connectionKind === "operator_managed" && selectedSource.configSchema?.length}
+                {#if selectedSource.id === "apple-musickit"}
+                  <h3>Optional downloads</h3>
+                  <p class="source-configuration-copy">GAMDL downloads need a configured gateway whose wrapper is signed in to the same Apple account. Catalog and playlists work without it.</p>
+                  {#if administrator}
+                    <div class="source-detail-actions"><Button onclick={() => { detailOpen = false; appleDownloadOpen = true; }}>Manage optional downloads</Button></div>
+                  {/if}
+                {/if}
+                {#if (selectedSource.connectionKind === "operator_managed" || selectedSource.id === "apple-musickit") && selectedSource.configSchema?.length}
                   {#if administrator}
                     <form class="settings-fields source-configuration-form" onsubmit={(event) => void saveSourceConfiguration(event)}>
                       {#each selectedSource.configSchema as field}

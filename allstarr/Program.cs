@@ -389,11 +389,9 @@ builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndp
 builder.Services.AddDeezerProvider();
 builder.Services.AddQobuzProvider();
 builder.Services.AddSpotifyPlaylistCapability();
-builder.Services.AddAppleMusicKitPlaylistCapability();
-builder.Services.AddAppleDownloadCapability();
+builder.Services.AddAppleMusicProvider();
 builder.Services.AddBuiltInLyricsCapabilities();
 
-builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();
 
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();

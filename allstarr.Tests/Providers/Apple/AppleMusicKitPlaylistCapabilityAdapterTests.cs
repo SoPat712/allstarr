@@ -15,8 +15,8 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     public async Task Selected_user_account_preserves_source_order_duplicates_and_stable_artwork()
     {
         var handler = new AppleHandler();
-        var secrets = new SecretAccessor(new("developer-secret", "user-secret"));
-        var adapter = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler), secrets);
+        var secrets = new SecretAccessor(new("user-secret", "us"));
+        var adapter = AppleProviderTestFactory.Playlist(new HttpClient(handler), secrets);
         var playlist = new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Playlist, "p.opaque");
 
         var result = await adapter.GetPlaylistTracksAsync(Context(), new(playlist, new ProviderPageRequest(2, "4")));
@@ -26,12 +26,12 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         Assert.Equal("2026-01-01T00:00:00Z", page.Playlist.SourceRevision);
         Assert.Equal("A description", page.Playlist.Description);
         Assert.Equal(playlist, page.Playlist.Artwork!.ResourceId);
-        Assert.Null(page.Playlist.Artwork.PublicUri);
+        Assert.Equal("https://is1-ssl.mzstatic.com/1024x1024.jpg", page.Playlist.Artwork.PublicUri!.ToString());
         Assert.Equal([4, 5], page.Tracks.Items.Select(item => item.Position));
         Assert.Equal(["song.1", "song.1"], page.Tracks.Items.Select(item => item.TrackId.Value));
         Assert.Equal("6", page.Tracks.NextCursor);
         Assert.Equal(Context().Account!.AccountId, Assert.Single(secrets.AccountIds));
-        Assert.All(handler.Authorization, value => Assert.Equal("Bearer developer-secret", value));
+        Assert.All(handler.Authorization, value => Assert.Equal("Bearer " + AppleProviderTestFactory.Bearer, value));
         Assert.All(handler.UserTokens, value => Assert.Equal("user-secret", value));
         Assert.Contains(handler.Paths, path => path.Contains("limit=2&offset=4", StringComparison.Ordinal));
 
@@ -45,8 +45,8 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     public async Task Paging_and_search_are_advertised_for_the_selected_user_account()
     {
         var handler = new AppleHandler();
-        var adapter = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler),
-            new SecretAccessor(new("developer", "user")));
+        var adapter = AppleProviderTestFactory.Playlist(new HttpClient(handler),
+            new SecretAccessor(new("user", "us")));
 
         var playlists = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest(1, "7")));
         var searched = await adapter.SearchPlaylistsAsync(Context(), new("mix", new ProviderPageRequest()));
@@ -56,24 +56,43 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         Assert.True(searched.IsSuccess, searched.Error?.ToString());
         var registration = ProviderRegistrationValidator.Validate(AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(adapter));
         var capability = Assert.Single(registration.Descriptor.Capabilities);
-        Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "mutatePlaylist", "resolveArtwork", "searchPlaylists"], capability.Hooks);
+        Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "resolveArtwork", "searchPlaylists"], capability.Hooks);
         Assert.Equal([ProviderAccountScope.Personal], capability.AllowedAccountScopes);
         Assert.Same(adapter, Assert.Single(registration.Implementations));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
+    public async Task EmptyPersonalPages_CannotRepeatTheSameCursor()
+    {
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(_ => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(
+            new
+            {
+                data = Array.Empty<object>(),
+                next = "/next",
+                results = new Dictionary<string, object>
+                { ["library-playlists"] = new { data = Array.Empty<object>(), next = "/next" } }
+            }))
+        }));
+        var adapter = AppleProviderTestFactory.Playlist(http, new SecretAccessor(new("user", "us")));
+        Assert.False((await adapter.GetUserPlaylistsAsync(Context(), new(new()))).IsSuccess);
+        Assert.False((await adapter.SearchPlaylistsAsync(Context(), new("mix", new()))).IsSuccess);
+    }
+
+    [Fact]
     public async Task Missing_malformed_or_non_user_credentials_never_fall_back()
     {
         var handler = new AppleHandler();
-        var valid = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler), new SecretAccessor(new("d", "u")));
-        var playlist = new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Playlist, "p");
+        var valid = AppleProviderTestFactory.Playlist(new HttpClient(handler), new SecretAccessor(new("u", "us")));
+        var playlist = new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Playlist, "p.private");
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
             (await valid.GetPlaylistTracksAsync(Context(includeSecret: false), new(playlist, new()))).Error!.Kind);
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
             (await valid.GetPlaylistTracksAsync(Context(scope: ProviderAccountScope.Shared), new(playlist, new()))).Error!.Kind);
 
-        var malformed = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler), new RawSecretAccessor("not-json"));
+        var malformed = AppleProviderTestFactory.Playlist(new HttpClient(handler), new RawSecretAccessor("not-json"));
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
             (await malformed.GetPlaylistTracksAsync(Context(), new(playlist, new()))).Error!.Kind);
         Assert.Empty(handler.Paths);
@@ -83,8 +102,8 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     public async Task Artwork_template_is_resolved_with_selected_user_credentials_and_bytes_are_bounded()
     {
         var handler = new AppleHandler();
-        var adapter = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler),
-            new SecretAccessor(new("developer", "user")));
+        var adapter = AppleProviderTestFactory.Playlist(new HttpClient(handler),
+            new SecretAccessor(new("user", "us")));
         var reference = new ProviderArtworkReference(
             new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Playlist, "p.opaque"),
             revision: "2026-01-01T00:00:00Z");
@@ -108,68 +127,15 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task Mutation_creates_an_ordered_playlist_and_refuses_unsupported_existing_reconcile()
+    public async Task Source_writeback_is_inert_and_never_opens_a_connection()
     {
         var handler = new AppleHandler();
-        var adapter = new AppleMusicKitPlaylistCapabilityAdapter(
-            new HttpClient(handler),
-            new SecretAccessor(new("developer", "user")));
-        Assert.True(adapter.MutationSupport.CanCreate);
+        var adapter = AppleProviderTestFactory.Playlist(new HttpClient(handler), new SecretAccessor(new("user", "us")));
+        Assert.False(adapter.MutationSupport.CanCreate);
         Assert.False(adapter.MutationSupport.CanReplaceExisting);
-        var tracks = new[]
-        {
-            new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "i.song-1"),
-            new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "i.song-1"),
-            new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Track, "catalog-song")
-        };
-
-        var created = await adapter.MutatePlaylistAsync(
-            Context(),
-            new ProviderPlaylistMutationRequest(
-                "apple-musickit",
-                "Road trip",
-                tracks,
-                ProviderPlaylistConflictBehavior.Reconcile,
-                description: "Drive"));
-
-        Assert.True(created.IsSuccess, created.Error?.ToString());
-        Assert.Equal("p.created", created.RequireValue().PlaylistId.Value);
-        Assert.Equal("2026-08-02T00:00:00Z", created.RequireValue().Revision);
-        Assert.Equal(3, created.RequireValue().TrackCount);
-        Assert.Equal("POST /v1/me/library/playlists", Assert.Single(handler.MutationRequests));
-        using var body = JsonDocument.Parse(Assert.Single(handler.MutationBodies));
-        var data = body.RootElement.GetProperty("relationships").GetProperty("tracks").GetProperty("data");
-        Assert.Equal(["i.song-1", "i.song-1", "catalog-song"],
-            data.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
-        Assert.Equal(["library-songs", "library-songs", "songs"],
-            data.EnumerateArray().Select(item => item.GetProperty("type").GetString()));
-
-        var unsupported = await adapter.MutatePlaylistAsync(
-            Context(),
-            new ProviderPlaylistMutationRequest(
-                "apple-musickit",
-                "Road trip",
-                tracks,
-                ProviderPlaylistConflictBehavior.Reconcile,
-                new("apple-musickit", ProviderResourceKind.Playlist, "p.existing"),
-                "revision"));
-        Assert.Equal(ProviderErrorKind.NotSupported, unsupported.Error!.Kind);
-        Assert.Single(handler.MutationRequests);
-
-        var recreated = await adapter.MutatePlaylistAsync(
-            Context(),
-            new ProviderPlaylistMutationRequest(
-                "apple-musickit",
-                "Road trip copy",
-                tracks,
-                ProviderPlaylistConflictBehavior.Recreate,
-                new("apple-musickit", ProviderResourceKind.Playlist, "p.existing"),
-                "revision"));
-        Assert.True(recreated.IsSuccess, recreated.Error?.ToString());
-        Assert.True(recreated.RequireValue().Applied);
-        Assert.Contains("created a new playlist", Assert.Single(recreated.RequireValue().Warnings),
-            StringComparison.Ordinal);
-        Assert.Equal(2, handler.MutationRequests.Count);
+        var result = await adapter.MutatePlaylistAsync(Context(), new("apple-musickit", "Fixture", [], ProviderPlaylistConflictBehavior.Reconcile));
+        Assert.Equal(ProviderErrorKind.NotSupported, result.Error!.Kind);
+        Assert.Empty(handler.Paths);
     }
 
     [Theory]
@@ -181,7 +147,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
     public async Task Failures_are_typed_without_leaking_provider_bodies(HttpStatusCode status, ProviderErrorKind expected)
     {
         var handler = new AppleHandler { Failure = status };
-        var adapter = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(handler), new SecretAccessor(new("d", "u")));
+        var adapter = AppleProviderTestFactory.Playlist(new HttpClient(handler), new SecretAccessor(new("u", "us")));
         var result = await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest()));
         Assert.Equal(expected, result.Error!.Kind);
         if (status == HttpStatusCode.TooManyRequests) Assert.Equal(TimeSpan.FromSeconds(17), result.Error.RetryAfter);
@@ -199,7 +165,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
                 true, true, false, ["apple-musickit"]), "playlist-read", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);
     }
 
-    private sealed class SecretAccessor(AppleMusicKitPlaylistCapabilityAdapter.Credential credential) : IProviderAccountSecretAccessor
+    private sealed class SecretAccessor(AppleMusicCredential credential) : IProviderAccountSecretAccessor
     {
         public List<Guid> AccountIds { get; } = [];
         public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation, CancellationToken cancellationToken)
@@ -243,7 +209,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
                     }
                 });
             Authorization.Add(request.Headers.Authorization!.ToString());
-            UserTokens.Add(request.Headers.GetValues("Music-User-Token").Single());
+            UserTokens.Add(request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single().Replace("media-user-token=", "") : "");
             if (Failure is { } failure)
             {
                 var response = Json(failure, new { errors = new[] { new { detail = "secret-body" } } });

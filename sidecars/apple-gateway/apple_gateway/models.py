@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from dataclasses import dataclass, field
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -18,14 +18,8 @@ class Login2faRequest(StrictModel):
     code: str = Field(pattern=r"^[0-9]{4,8}$")
 
 
-class DownloadJobRequest(StrictModel):
-    url: str = Field(min_length=1, max_length=2048)
-    quality: str = Field(default="alac", pattern=r"^(alac|aac|aac-web|aac-he|aac-he-web)$")
-
-
-class DownloadJobView(StrictModel):
-    id: str
-    state: Literal["queued", "running", "succeeded", "failed"]
-    media_kind: str
-    artifact_count: int = 0
-    error_code: str | None = None
+@dataclass(frozen=True, slots=True)
+class MediaAccount:
+    token: str = field(repr=False)
+    storefront: str
+    scope: str

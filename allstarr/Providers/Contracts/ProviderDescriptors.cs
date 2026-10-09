@@ -225,7 +225,8 @@ public sealed record ProviderCapabilityDescriptor
         string compatibilityVersion,
         IEnumerable<string>? hooks = null,
         IEnumerable<ProviderAccountScope>? allowedAccountScopes = null,
-        string? sidecarDependency = null)
+        string? sidecarDependency = null,
+        bool supportsPublicRead = false)
     {
         if (!Enum.IsDefined(capability))
         {
@@ -267,6 +268,10 @@ public sealed record ProviderCapabilityDescriptor
                 nameof(allowedAccountScopes));
         }
 
+        if (supportsPublicRead && (capability is not (ProviderCapabilityKind.Metadata or ProviderCapabilityKind.Playlist) ||
+            accountRequirement == ProviderAccountRequirement.Required))
+            throw new ArgumentException("Public reads require optional or account-free metadata or playlists.", nameof(supportsPublicRead));
+        SupportsPublicRead = supportsPublicRead;
         Capability = capability;
         SupportState = supportState;
         AccountRequirement = accountRequirement;
@@ -286,6 +291,8 @@ public sealed record ProviderCapabilityDescriptor
     public ProviderCapabilitySupportState SupportState { get; }
 
     public ProviderAccountRequirement AccountRequirement { get; }
+
+    public bool SupportsPublicRead { get; }
 
     public string CompatibilityVersion { get; }
 

@@ -112,6 +112,24 @@ describe("mapping review presentation", () => {
     )).toBeNull();
   });
 
+  it("recognizes legacy Apple playback identities without rewriting them or matching the same source", () => {
+    const playable = playableProviderIds([
+      { id: "apple-musickit", name: "Apple Music", categories: ["streaming"] },
+    ]);
+    const candidate = {
+      isLocal: false,
+      libraryTrackId: "legacy-synthetic-id",
+      providerTrackIds: { "apple-download": "apple-track" },
+    };
+    expect(candidateResolution(candidate, "spotify", playable)).toEqual({
+      targetType: "provider",
+      externalProvider: "apple-download",
+      externalId: "apple-track",
+    });
+    expect(candidateResolution(candidate, "apple-musickit", playable)).toBeNull();
+    expect(candidateResolution(candidate, "applemusic", playable)).toBeNull();
+  });
+
   it("derives selectable providers only from playback capabilities", () => {
     expect([...playableProviderIds([
       { id: "musicbrainz", name: "MusicBrainz", categories: ["metadata"] },

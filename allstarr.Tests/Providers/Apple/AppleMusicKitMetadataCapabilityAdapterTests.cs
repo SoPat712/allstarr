@@ -13,11 +13,11 @@ namespace allstarr.Tests;
 public sealed class AppleMusicKitMetadataCapabilityAdapterTests
 {
     [Fact]
-    public async Task Personal_library_search_and_lookups_map_all_entity_types_and_page_deterministically()
+    public async Task Public_catalog_search_and_personal_lookups_map_all_entity_types_and_page_deterministically()
     {
         var handler = new AppleMetadataHandler();
-        var secrets = new SecretAccessor(new("developer-token", "music-user-token"));
-        var adapter = new AppleMusicKitMetadataCapabilityAdapter(new HttpClient(handler), secrets);
+        var secrets = new SecretAccessor(new("music-user-token", "us"));
+        var adapter = AppleProviderTestFactory.Metadata(new HttpClient(handler), secrets);
         var search = new ProviderMetadataSearchRequest("road mix", new(2, "4"));
 
         var tracks = await adapter.SearchTracksAsync(Context(), search);
@@ -46,10 +46,11 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal("https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
             album.RequireValue().Artwork?.PublicUri?.ToString());
         Assert.Equal("\"revision-1\"", track.RequireValue().SnapshotVersion);
-        Assert.Equal(6, secrets.AccountIds.Count);
-        Assert.All(handler.Authorization, value => Assert.Equal("Bearer developer-token", value));
-        Assert.All(handler.UserTokens, value => Assert.Equal("music-user-token", value));
-        Assert.Contains(handler.Paths, value => value.Contains("term=road%20mix&types=library-songs&limit=2&offset=4", StringComparison.Ordinal));
+        Assert.Equal(3, secrets.AccountIds.Count);
+        Assert.All(handler.Authorization, value => Assert.Equal("Bearer " + AppleProviderTestFactory.Bearer, value));
+        Assert.All(handler.UserTokens.Take(3), value => Assert.Equal("", value));
+        Assert.All(handler.UserTokens.Skip(3), value => Assert.Equal("music-user-token", value));
+        Assert.Contains(handler.Paths, value => value.Contains("term=road%20mix&types=songs&limit=2&offset=4", StringComparison.Ordinal));
         Assert.Contains(handler.Paths, value => value == "/v1/me/library/albums/i.album");
         Assert.DoesNotContain("developer-token", JsonSerializer.Serialize(track.RequireValue()), StringComparison.Ordinal);
         Assert.DoesNotContain("music-user-token", JsonSerializer.Serialize(track.RequireValue()), StringComparison.Ordinal);
@@ -58,9 +59,9 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
     [Fact]
     public async Task Combined_registration_advertises_one_account_scoped_provider_with_both_capabilities()
     {
-        var secrets = new SecretAccessor(new("developer", "user"));
-        var playlist = new AppleMusicKitPlaylistCapabilityAdapter(new HttpClient(new AppleMetadataHandler()), secrets);
-        var metadata = new AppleMusicKitMetadataCapabilityAdapter(new HttpClient(new AppleMetadataHandler()), secrets);
+        var secrets = new SecretAccessor(new("user", "us"));
+        var playlist = AppleProviderTestFactory.Playlist(new HttpClient(new AppleMetadataHandler()), secrets);
+        var metadata = AppleProviderTestFactory.Metadata(new HttpClient(new AppleMetadataHandler()), secrets);
 
         var registration = ProviderRegistrationValidator.Validate(
             AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(playlist, metadata));
@@ -79,28 +80,26 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
     public async Task Unauthorized_malformed_and_invalid_cursor_fail_with_typed_errors()
     {
         var unauthorizedHandler = new AppleMetadataHandler { Failure = HttpStatusCode.Unauthorized };
-        var unauthorized = new AppleMusicKitMetadataCapabilityAdapter(
-            new HttpClient(unauthorizedHandler), new SecretAccessor(new("d", "u")));
-        var authenticationError = (await unauthorized.SearchTracksAsync(Context(), Search())).Error!;
+        var unauthorized = AppleProviderTestFactory.Metadata(
+            new HttpClient(unauthorizedHandler), new SecretAccessor(new("u", "us")));
+        var authenticationError = (await unauthorized.GetTrackAsync(Context(), new(Id(ProviderResourceKind.Track, "i.song")))).Error!;
         Assert.Equal(ProviderErrorKind.AccountNeedsReauthentication, authenticationError.Kind);
         Assert.Equal("account-needs-reauthentication", authenticationError.Code);
         Assert.Contains("Reconnect", authenticationError.SafeMessage, StringComparison.Ordinal);
 
         var malformedHandler = new AppleMetadataHandler { Malformed = true };
-        var malformed = new AppleMusicKitMetadataCapabilityAdapter(
-            new HttpClient(malformedHandler), new SecretAccessor(new("d", "u")));
+        var malformed = AppleProviderTestFactory.Metadata(
+            new HttpClient(malformedHandler), new SecretAccessor(new("u", "us")));
         Assert.Equal(ProviderErrorKind.PermanentFailure,
             (await malformed.SearchTracksAsync(Context(), Search())).Error!.Kind);
         Assert.Equal(ProviderErrorKind.PermanentFailure,
             (await malformed.GetTrackAsync(Context(), new(Id(ProviderResourceKind.Track, "i.song")))).Error!.Kind);
 
         var handler = new AppleMetadataHandler();
-        var adapter = new AppleMusicKitMetadataCapabilityAdapter(
-            new HttpClient(handler), new SecretAccessor(new("d", "u")));
+        var adapter = AppleProviderTestFactory.Metadata(
+            new HttpClient(handler), new SecretAccessor(new("u", "us")));
         Assert.Equal(ProviderErrorKind.PermanentFailure,
             (await adapter.SearchTracksAsync(Context(), new("query", new(5, "not-an-offset")))).Error!.Kind);
-        Assert.Equal(ProviderErrorKind.NotSupported,
-            (await adapter.LookupByIsrcAsync(Context(), new("USABC1234567"))).Error!.Kind);
         Assert.Empty(handler.Paths);
     }
 
@@ -108,8 +107,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
     public async Task Cross_user_account_and_non_Apple_final_origin_are_rejected_without_leaking_credentials()
     {
         var handler = new AppleMetadataHandler();
-        var secrets = new SecretAccessor(new("developer-secret", "user-secret"));
-        var adapter = new AppleMusicKitMetadataCapabilityAdapter(new HttpClient(handler), secrets);
+        var secrets = new SecretAccessor(new("user-secret", "us"));
+        var adapter = AppleProviderTestFactory.Metadata(new HttpClient(handler), secrets);
 
         Assert.Throws<UnauthorizedAccessException>(() => Context(crossUser: true));
         Assert.Empty(secrets.AccountIds);
@@ -141,7 +140,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
             "metadata-read", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);
     }
 
-    private sealed class SecretAccessor(AppleMusicKitPlaylistCapabilityAdapter.Credential credential)
+    private sealed class SecretAccessor(AppleMusicCredential credential)
         : IProviderAccountSecretAccessor
     {
         public List<Guid> AccountIds { get; } = [];
@@ -175,13 +174,15 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         {
             Paths.Add(request.RequestUri!.PathAndQuery);
             Authorization.Add(request.Headers.Authorization!.ToString());
-            UserTokens.Add(request.Headers.GetValues("Music-User-Token").Single());
+            UserTokens.Add(request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single().Replace("media-user-token=", "") : "");
 
             HttpResponseMessage response;
             if (Failure is { } failure)
                 response = Json(failure, new { errors = new[] { new { detail = "private-provider-body" } } });
             else if (Malformed)
                 response = Json(HttpStatusCode.OK, new { results = new { library_songs = new { data = new[] { new { id = "broken" } } } } });
+            else if (request.RequestUri.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal))
+                response = Json(HttpStatusCode.OK, new { data = new[] { Entity("songs", "i.song") } });
             else if (request.RequestUri.AbsolutePath.EndsWith("/search", StringComparison.Ordinal))
             {
                 var type = QueryValue(request.RequestUri.Query, "types");
@@ -218,7 +219,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
 
         private static object Entity(string type, string id) => type switch
         {
-            "library-albums" => new
+            "library-albums" or "albums" => new
             {
                 id,
                 type,
@@ -230,7 +231,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
                     artwork = new { url = "https://is1-ssl.mzstatic.com/image/thumb/library/{w}x{h}bb.jpg" }
                 }
             },
-            "library-artists" => new
+            "library-artists" or "artists" => new
             {
                 id,
                 type,

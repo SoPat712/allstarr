@@ -184,6 +184,7 @@ export function providerColor(providerId: string) {
     applemusic: "#fa243c",
     "apple-music": "#fa243c",
     "apple-download": "#fa243c",
+    "apple-musickit": "#fa243c",
     deezer: "#ff0092",
     qobuz: "#0070ef",
     soundcloud: "#ff5500",

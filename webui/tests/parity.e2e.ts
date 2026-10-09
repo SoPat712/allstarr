@@ -128,8 +128,11 @@ const schema = {
     },
     { id: "listenbrainz", name: "ListenBrainz", categories: ["scrobbling"] },
     {
-      id: "apple-download", name: "Apple Music – GAMDL", categories: ["metadata", "streaming", "download"],
-      connectionKind: "operator_managed",
+      id: "apple-musickit", name: "Apple Music", categories: ["metadata", "playlists", "streaming", "download", "lyrics"],
+      accountSettings: [
+        { key: "musicUserToken", label: "Media user token", type: "password", sensitive: true, required: true },
+        { key: "storefront", label: "Storefront", type: "text", required: true, defaultValueJson: '"us"' },
+      ],
       configSchema: [
         { key: "APPLE_DOWNLOAD_URL", label: "External provider URL", type: "url", valuePath: "appleDownload.baseUrl" },
       ],
@@ -2711,7 +2714,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel("Search local library and playable providers")).toHaveValue("Test song");
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
-  await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music – GAMDL" })).toBeVisible();
+  await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);
   await expect(dialog.locator(".candidate-card .mapping-art > span").first()).toBeVisible();
   await expect(
@@ -2748,7 +2751,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(dialog.locator(".candidate-card").first().getByText("Candidate ID")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Artist overlap")).toBeVisible();
   await expect(dialog.locator(".candidate-card").first().getByText("Duration difference")).toBeVisible();
-  await expect(dialog.locator(".candidate-card").first().getByText("Apple Music – GAMDL track ID")).toBeVisible();
+  await expect(dialog.locator(".candidate-card").first().getByText("Apple Music track ID")).toBeVisible();
   await dialog.locator(".candidate-card").last().getByText("Full scoring evidence").click();
   await expect(dialog.locator(".candidate-card").last().getByRole("term")
     .filter({ hasText: "Routing preference" }))
@@ -3561,6 +3564,40 @@ test("Intelligence cards, table columns, and compact actions stay aligned", asyn
   expect(Math.abs(scope!.x + scope!.width - action!.x - action!.width)).toBeLessThanOrEqual(1);
 });
 
+test("Apple accounts explain public web-token failures without asking for a developer token", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockApi(page);
+  const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };
+  await page.route("**/api/admin/provider-accounts", (route) => route.fulfill({ json: {
+    listenersCanConnectOwnAccounts: true, audienceUsers: [], accounts: [{ ...fixture.accounts[0],
+      providerId: "apple-musickit", displayName: "Personal Apple", sourceDisplayName: "Apple Music",
+      configuration: { storefront: "us" }, configuredFields: ["musicUserToken", "storefront"],
+    }],
+  } }));
+  await page.route("**/api/admin/providers/status", (route) => route.fulfill({ json: [{
+    provider: "apple-musickit", providerAccountId: "account", capability: "playlists", accountScope: "personal",
+    supported: true, enabled: true, configuration: "configured", health: "degraded", ready: false,
+    canAttempt: true, canTest: true, reasonCode: "apple-web-token-unavailable",
+  }] }));
+  let appleCtsRequest: unknown;
+  await page.route("**/api/admin/provider-diagnostics/deep-stream", async (route) => {
+    appleCtsRequest = route.request().postDataJSON();
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ succeeded: true, providerId: "apple-musickit", clickToStreamMilliseconds: 42 }),
+    });
+  });
+  await page.goto("#/integrations/accounts");
+  await page.getByRole("button", { name: /Apple Music Account details stored/ }).click();
+  await expect(page.getByText("Apple's web-player token could not be fetched. Retry this account's Test action later.")).toBeVisible();
+  await expect(page.getByLabel(/Developer token/i)).toHaveCount(0);
+  await expectContainedMobileGeometry(page);
+  await page.getByRole("tab", { name: "Configuration" }).click();
+  await page.getByRole("button", { name: "Measure CTS" }).click();
+  await expect(page.getByText("Apple Music click-to-stream measured.")).toBeVisible();
+  expect(appleCtsRequest).toEqual({ providerId: "apple-musickit", providerAccountId: "account", quality: 0 });
+});
+
 test("Integrations keep primary actions visible and report scoped degradation", async ({ page, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
@@ -3578,14 +3615,6 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await page.route("**/api/admin/apple-download/login/2fa", (route) => {
     appleState = { ...appleState, state: "ready", ready: true, logged_in: true, login_state: "authenticated" };
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(appleState) });
-  });
-  let appleCtsRequest: unknown;
-  await page.route("**/api/admin/provider-diagnostics/deep-stream", async (route) => {
-    appleCtsRequest = route.request().postDataJSON();
-    return route.fulfill({
-      contentType: "application/json",
-      body: JSON.stringify({ succeeded: true, providerId: "apple-download", clickToStreamMilliseconds: 42 }),
-    });
   });
   await page.route("**/api/admin/ui/schema", (route) => route.fulfill({
     status: 200,
@@ -3624,12 +3653,12 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(disabledStatus).toHaveText("Disabled");
   await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
   await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
-  await page.getByRole("button", { name: /Apple Music – GAMDL/ }).click();
+  await page.locator(".sources-table tr").filter({ hasText: "Apple Music" }).getByRole("button").first().click();
   await page.getByRole("tab", { name: "Configuration" }).click();
-  await page.getByRole("button", { name: "Measure CTS" }).click();
-  await expect(page.getByText("Apple Music – GAMDL click-to-stream measured.")).toBeVisible();
-  expect(appleCtsRequest).toEqual({ providerId: "apple-download", quality: 0 });
-  await page.getByRole("button", { name: "Manage Apple Music – GAMDL" }).click();
+  await expect(page.getByRole("button", { name: "Measure CTS" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Optional downloads" })).toBeVisible();
+  await expect(page.getByLabel("External provider URL")).toBeVisible();
+  await page.getByRole("button", { name: "Manage optional downloads" }).click();
   const appleManager = page.getByRole("dialog", { name: "Apple Music – GAMDL" });
   await appleManager.getByLabel("Apple ID").fill("tester@example.test");
   await appleManager.getByLabel("Password").fill("password");
@@ -3652,7 +3681,7 @@ test("Integrations keep primary actions visible and report scoped degradation", 
     .evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
   expect(appleActionHeights.every((height) => height >= 44)).toBe(true);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
-    .toHaveAttribute("href", "#/integrations/services?source=apple-download&section=configuration");
+    .toHaveAttribute("href", "#/integrations/services?source=apple-musickit&section=configuration");
   await page.keyboard.press("Escape");
   await page.goto("#/integrations/accounts");
   await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();

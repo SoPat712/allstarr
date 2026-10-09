@@ -22,7 +22,7 @@ public sealed class MultiProviderDownloadServiceTests
     }
 
     [Fact]
-    public async Task StreamingUsesAccountFreeAffinityAndDeniesAccountRequiredFallback()
+    public async Task StreamingDeniesLegacyAppleAndDeezerWithoutSelectedAccounts()
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -54,9 +54,9 @@ public sealed class MultiProviderDownloadServiceTests
                 Mock.Of<IApplicationCache>()),
             NullLogger<MultiProviderDownloadService>.Instance);
 
-        await using var stream = await service.DownloadAndStreamAsync("apple-download", "track-1");
+        await Assert.ThrowsAsync<NotSupportedException>(() => service.DownloadAndStreamAsync("apple-download", "track-1"));
 
-        Assert.Equal(("apple-download", "track-1"), apple.Call);
+        Assert.Null(apple.Call);
         metadata.Verify(
             item => item.GetSongAsync(
                 It.IsAny<string>(),

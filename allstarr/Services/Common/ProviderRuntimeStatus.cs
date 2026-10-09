@@ -51,8 +51,8 @@ public readonly record struct ProviderRuntimeStatusKey(
     private static string Normalize(string value)
     {
         var normalized = string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToLowerInvariant();
-        return normalized is "applemusic" or "apple-music" or "apple_music"
-            ? "apple-download"
+        return normalized is "applemusic" or "apple-music" or "apple_music" or "apple-download"
+            ? "apple-musickit"
             : normalized;
     }
 }

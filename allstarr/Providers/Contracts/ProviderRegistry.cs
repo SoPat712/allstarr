@@ -6,6 +6,8 @@ public interface IProviderRegistry
 
     bool TryGet(string providerId, out ProviderDescriptor? descriptor);
 
+    string ResolveProviderId(string providerId) => TryGet(providerId, out var descriptor) ? descriptor!.Id : providerId;
+
     ProviderDescriptor GetRequired(string providerId);
 
     IReadOnlyList<ProviderDescriptor> FindByCapability(
@@ -34,15 +36,23 @@ public sealed record ProviderRegistration
 {
     public ProviderRegistration(
         ProviderDescriptor descriptor,
-        IEnumerable<IProviderCapability>? implementations = null)
+        IEnumerable<IProviderCapability>? implementations = null,
+        IEnumerable<string>? aliases = null)
     {
         Descriptor = descriptor ?? throw new ArgumentNullException(nameof(descriptor));
         Implementations = ProviderContractValidation.Copy(implementations);
+        Aliases = ProviderContractValidation.Copy((aliases ?? []).Select(value => ProviderContractValidation.ProviderId(value, nameof(aliases))));
+        if (Aliases.Count != Aliases.Distinct(StringComparer.Ordinal).Count() || Aliases.Contains(descriptor.Id))
+            throw new ArgumentException("Provider aliases must be distinct from each other and the canonical provider ID.", nameof(aliases));
+        if (Aliases.Count > 0 && descriptor.Origin != ProviderOrigin.BuiltIn)
+            throw new ArgumentException("Only built-in providers may declare compatibility aliases.", nameof(aliases));
     }
 
     public ProviderDescriptor Descriptor { get; }
 
     public IReadOnlyList<IProviderCapability> Implementations { get; }
+
+    public IReadOnlyList<string> Aliases { get; }
 }
 
 public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegistry
@@ -85,6 +95,10 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
             .ToDictionary(item => item.Key, item => item.Implementation);
 
         var sortedProviders = Array.AsReadOnly(providers.Values.OrderBy(item => item.Id, StringComparer.Ordinal).ToArray());
+        foreach (var registration in values)
+            foreach (var alias in registration.Aliases)
+                if (!providers.TryAdd(alias, registration.Descriptor))
+                    throw new InvalidOperationException("A compatibility alias conflicts with a registered provider ID.");
 
         return new RegistrySnapshot(
             values.ToDictionary(item => item.Descriptor.Id, StringComparer.Ordinal), providers, sortedProviders, implementations);
@@ -155,7 +169,8 @@ public sealed class ProviderRegistry : IProviderRegistry, IDynamicProviderRegist
         out TCapability? implementation)
         where TCapability : class, IProviderCapability
     {
-        var id = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
+        var validated = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
+        var id = TryGet(validated, out var descriptor) ? descriptor!.Id : validated;
         if (Volatile.Read(ref _snapshot).Implementations.TryGetValue((id, capability), out var registered) &&
             registered is TCapability typed)
         {
@@ -425,8 +440,11 @@ public static class ProviderManifestValidator
         ProviderOrigin origin,
         ProviderCapabilityDescriptor descriptor)
     {
+        if (descriptor.SupportsPublicRead && origin != ProviderOrigin.BuiltIn)
+            throw new InvalidOperationException("Explicit public-read capabilities are reserved for built-in providers.");
         if (descriptor.Capability == ProviderCapabilityKind.Playlist &&
-            descriptor.AccountRequirement != ProviderAccountRequirement.Required)
+            descriptor.AccountRequirement != ProviderAccountRequirement.Required &&
+            !(origin == ProviderOrigin.BuiltIn && descriptor.SupportsPublicRead))
         {
             throw new InvalidOperationException(
                 $"Playlist capability on provider '{providerId}' requires an explicit provider account.");

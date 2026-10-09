@@ -10,13 +10,10 @@ namespace allstarr.Tests;
 public sealed class AppleMusicMetadataServiceTests
 {
     [Fact]
-    public async Task SearchUsesGatewayLimitAndStableProviderId()
+    public async Task SearchUsesCatalogLimitAndStablePublicProviderId()
     {
         var handler = new Handler();
-        var service = new AppleMusicMetadataService(
-            new Factory(new HttpClient(handler)),
-            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway:8000/" }),
-            NullLogger<AppleMusicMetadataService>.Instance);
+        var service = Create(new HttpClient(handler));
 
         var songs = await service.SearchSongsAsync("Choosin' Texas", 200);
 
@@ -26,17 +23,14 @@ public sealed class AppleMusicMetadataServiceTests
         Assert.Equal("ext-apple-download-artist-201", song.ArtistId);
         Assert.Equal(["ext-apple-download-artist-201"], song.ArtistIds);
         Assert.Equal("ext-apple-download-album-301", song.AlbumId);
-        Assert.Contains("limit=100", handler.RequestUri!.Query);
+        Assert.Contains("limit=25", handler.RequestUri!.Query);
     }
 
     [Fact]
     public async Task ArtistAndAlbumRelationshipsAreOpenable()
     {
         var handler = new Handler();
-        var service = new AppleMusicMetadataService(
-            new Factory(new HttpClient(handler)),
-            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway:8000/" }),
-            NullLogger<AppleMusicMetadataService>.Instance);
+        var service = Create(new HttpClient(handler));
 
         var artist = await service.GetArtistAsync("apple-download", "201");
         var albums = await service.GetArtistAlbumsAsync("apple-download", "201");
@@ -54,10 +48,7 @@ public sealed class AppleMusicMetadataServiceTests
     [Fact]
     public async Task SearchMapsOpenableAlbumsAndArtists()
     {
-        var service = new AppleMusicMetadataService(
-            new Factory(new HttpClient(new Handler())),
-            Options.Create(new AppleDownloadSettings { BaseUrl = "http://apple-gateway:8000/" }),
-            NullLogger<AppleMusicMetadataService>.Instance);
+        var service = Create(new HttpClient(new Handler()));
 
         var album = Assert.Single(await service.SearchAlbumsAsync("Dandelion"));
         var artist = Assert.Single(await service.SearchArtistsAsync("Ella Langley"));
@@ -68,42 +59,35 @@ public sealed class AppleMusicMetadataServiceTests
         Assert.Equal("apple-download", artist.ExternalProvider);
     }
 
-    private sealed class Factory(HttpClient client) : IHttpClientFactory
+    private static AppleMusicMetadataService Create(HttpClient http)
     {
-        public HttpClient CreateClient(string name) => client;
+        var client = AppleProviderTestFactory.Client(http);
+        return new(new(client), new(client, http));
     }
 
     private sealed class Handler : HttpMessageHandler
     {
         public Uri? RequestUri { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestUri = request.RequestUri;
-            var body = request.RequestUri!.AbsolutePath switch
+            Assert.Equal("amp-api.music.apple.com", RequestUri!.Host);
+            Assert.False(request.Headers.Contains("Cookie"));
+            var song = new { id = "101", attributes = new { name = "Choosin' Texas", artistName = "Ella Langley", albumName = "Dandelion", durationInMillis = 231000 }, relationships = new { artists = new { data = new[] { new { id = "201" } } }, albums = new { data = new[] { new { id = "301" } } } } };
+            var album = new { id = "301", attributes = new { name = "Dandelion", artistName = "Ella Langley", trackCount = 1 }, relationships = new { artists = new { data = new[] { new { id = "201" } } } } };
+            var artist = new { id = "201", attributes = new { name = "Ella Langley" } };
+            var path = RequestUri.AbsolutePath;
+            object body = path switch
             {
-                "/api/artist/201" =>
-                    """{"id":"201","name":"Ella Langley","image_url":"https://example.test/art.jpg"}""",
-                "/api/artist/201/albums" =>
-                    """[{"id":"301","title":"Dandelion","artist":"Ella Langley","artist_id":"201","cover_url":"https://example.test/art.jpg","release_date":"2026-01-01","track_count":1}]""",
-                "/api/album/301" =>
-                    """{"id":"301","title":"Dandelion","artist":"Ella Langley","artist_id":"201","cover_url":"https://example.test/art.jpg","release_date":"2026-01-01","track_count":1,"tracks":[{"id":"101","title":"Choosin' Texas","artist":"Ella Langley","artist_id":"201","album":"Dandelion","album_id":"301","duration":231,"cover_url":"https://example.test/art.jpg"}]}""",
-                "/api/search" when request.RequestUri.Query.Contains("type=album", StringComparison.Ordinal) =>
-                    """[{"id":"301","title":"Dandelion","artist":"Ella Langley","artist_id":"201","cover_url":"https://example.test/art.jpg","release_date":"2026-01-01","track_count":1}]""",
-                "/api/search" when request.RequestUri.Query.Contains("type=artist", StringComparison.Ordinal) =>
-                    """[{"id":"201","name":"Ella Langley","image_url":"https://example.test/art.jpg"}]""",
-                _ =>
-                    """[{"id":"101","title":"Choosin' Texas","artist":"Ella Langley","artist_id":"201","album":"Dandelion","album_id":"301","duration":231,"cover_url":"https://example.test/art.jpg"}]"""
+                "/v1/catalog/us/search" when RequestUri.Query.Contains("types=albums") => new { results = new { albums = new { data = new[] { album } } } },
+                "/v1/catalog/us/search" when RequestUri.Query.Contains("types=artists") => new { results = new { artists = new { data = new[] { artist } } } },
+                "/v1/catalog/us/search" => new { results = new { songs = new { data = new[] { song } } } },
+                "/v1/catalog/us/artists/201" => new { data = new[] { artist } },
+                "/v1/catalog/us/artists/201/albums" or "/v1/catalog/us/albums/301" => new { data = new[] { album } },
+                _ => new { data = new[] { song } }
             };
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(
-                    body,
-                    Encoding.UTF8,
-                    "application/json")
-            });
+            { Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(body), Encoding.UTF8, "application/json") });
         }
     }
 }

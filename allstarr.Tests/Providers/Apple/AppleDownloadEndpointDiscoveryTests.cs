@@ -10,7 +10,7 @@ namespace allstarr.Tests;
 public sealed class AppleDownloadEndpointDiscoveryTests
 {
     private const string FullManifest = """
-        {"sidecarApiVersion":"1.0.0","capabilities":[
+        {"sidecarApiVersion":"2.0.0","capabilities":[
           {"id":"metadata-search-song","state":"supported"},
           {"id":"metadata-search-album","state":"supported"},
           {"id":"metadata-search-artist","state":"supported"},
@@ -50,7 +50,7 @@ public sealed class AppleDownloadEndpointDiscoveryTests
     public async Task IncompatibleApiVersion_IsRejectedBeforeHealthOrAuth()
     {
         var handler = new StubHandler(_ => Json(HttpStatusCode.OK,
-            "{\"sidecarApiVersion\":\"2.0.0\",\"capabilities\":[]}"));
+            "{\"sidecarApiVersion\":\"3.0.0\",\"capabilities\":[]}"));
 
         var snapshot = await Create("http://apple-provider.lan", handler).DiscoverAsync();
 
@@ -82,15 +82,14 @@ public sealed class AppleDownloadEndpointDiscoveryTests
     public async Task PartialManifest_ReportsUnsupportedFeaturesWithoutInventingRoutes()
     {
         const string partial = """
-            {"sidecarApiVersion":"1.0.0","capabilities":[
-              {"id":"metadata-search-song","state":"supported"},
-              {"id":"metadata-song","state":"supported"}
+            {"sidecarApiVersion":"2.0.0","capabilities":[
+              {"id":"synced-lyrics-artifact","state":"supported"}
             ]}
             """;
         var snapshot = await Create("http://apple-provider.lan", HealthyHandler(partial)).DiscoverAsync();
 
         Assert.Equal(AppleDownloadEndpointState.Available, snapshot.State);
-        Assert.Equal(AppleDownloadCapabilityState.Available,
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability(ProviderCapabilities.Metadata).State);
         Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability("metadata-album").State);
@@ -112,15 +111,15 @@ public sealed class AppleDownloadEndpointDiscoveryTests
 
         Assert.Equal(AppleDownloadEndpointState.Available, snapshot.State);
         Assert.True(snapshot.Authenticated);
-        Assert.Equal(AppleDownloadCapabilityState.Available,
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability(ProviderCapabilities.Metadata).State);
-        Assert.Equal(AppleDownloadCapabilityState.Available,
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability("metadata-album").State);
-        Assert.Equal(AppleDownloadCapabilityState.Available,
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability("metadata-artist").State);
-        Assert.Equal(AppleDownloadCapabilityState.Available,
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability("metadata-search-album").State);
-        Assert.Equal(AppleDownloadCapabilityState.Available,
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported,
             snapshot.Capability("metadata-search-artist").State);
         Assert.Equal(AppleDownloadCapabilityState.Available,
             snapshot.Capability(ProviderCapabilities.Streaming).State);
@@ -140,7 +139,7 @@ public sealed class AppleDownloadEndpointDiscoveryTests
     public async Task AdvertisedButUnimplementedFeatures_RemainUnsupported()
     {
         const string manifest = """
-            {"sidecarApiVersion":"1.0.0","capabilities":[
+            {"sidecarApiVersion":"2.0.0","capabilities":[
               {"id":"metadata-search-song","state":"supported"},
               {"id":"metadata-song","state":"supported"},
               {"id":"stream-audio-song","state":"supported"},

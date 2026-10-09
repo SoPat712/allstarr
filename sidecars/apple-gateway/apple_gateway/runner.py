@@ -5,12 +5,14 @@ import json
 import math
 import os
 import signal
+import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import AsyncIterator
 
 from .config import Settings
-from .security import safe_files
+from .security import safe_files, valid_media_token
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +48,17 @@ class BoundedProcessRunner:
             try:
                 await asyncio.wait_for(process.wait(), timeout=self._settings.subprocess_timeout_seconds)
             except (TimeoutError, asyncio.TimeoutError) as exc:
-                os.killpg(process.pid, signal.SIGKILL)
+                if process.returncode is None:
+                    os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
                 await asyncio.gather(stdout_task, stderr_task)
                 raise ProcessFailure("process_timeout") from exc
+            except asyncio.CancelledError:
+                if process.returncode is None:
+                    os.killpg(process.pid, signal.SIGKILL)
+                await process.wait()
+                await asyncio.gather(stdout_task, stderr_task)
+                raise
             stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
             return ProcessResult(process.returncode or 0, stdout, stderr)
 
@@ -63,11 +72,15 @@ class BoundedProcessRunner:
                 retained.extend(chunk[:remaining])
         return retained.decode("utf-8", errors="replace")
 
-    async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
-        return await self._download(url, quality, output, temporary, lyrics_only=False)
+    async def download(
+        self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str
+    ) -> list[Path]:
+        return await self._download(url, quality, output, temporary, media_user_token, lyrics_only=False)
 
-    async def download_lyrics(self, url: str, output: Path, temporary: Path) -> list[Path]:
-        return await self._download(url, "aac-he", output, temporary, lyrics_only=True)
+    async def download_lyrics(
+        self, url: str, output: Path, temporary: Path, *, media_user_token: str
+    ) -> list[Path]:
+        return await self._download(url, "aac-he", output, temporary, media_user_token, lyrics_only=True)
 
     async def _download(
         self,
@@ -75,13 +88,20 @@ class BoundedProcessRunner:
         quality: str,
         output: Path,
         temporary: Path,
+        media_user_token: str,
         lyrics_only: bool,
     ) -> list[Path]:
+        # Revalidate before serializing the value into a Netscape cookie line.
+        if not valid_media_token(media_user_token):
+            raise ValueError("account_context_required")
         output.mkdir(parents=True, exist_ok=False, mode=0o750)
         temporary.mkdir(parents=True, exist_ok=False, mode=0o750)
+        cookie_fd, cookie_name = tempfile.mkstemp(prefix="account-", suffix=".cookies", dir=temporary)
+        cookie_path = Path(cookie_name)
         argv = [
-            self._settings.gamdl_path,
+            sys.executable, "-m", "apple_gateway.account_cli",
             "--no-config-file",
+            "--config-path", str(temporary / "unused-config.ini"),
             "--no-exceptions",
             "--use-wrapper",
             "--wrapper-url", self._settings.wrapper_url,
@@ -91,13 +111,23 @@ class BoundedProcessRunner:
             "--temp-path", str(temporary),
             "--song-codec-priority", quality,
             "--artist-auto-select", "all-albums",
+            "--cookies-path", str(cookie_path),
         ]
-        if self._settings.cookies_path:
-            argv.extend(["--cookies-path", str(self._settings.cookies_path)])
         if lyrics_only:
             argv.append("--synced-lyrics-only")
         argv.append(url)
-        result = await self.execute(argv, temporary)
+        try:
+            with os.fdopen(cookie_fd, "w", encoding="utf-8") as cookie:
+                os.fchmod(cookie.fileno(), 0o600)
+                cookie.write("# Netscape HTTP Cookie File\n")
+                cookie.write(f".music.apple.com\tTRUE\t/\tTRUE\t0\tmedia-user-token\t{media_user_token}\n")
+            result = await self.execute(argv, temporary)
+        finally:
+            cookie_path.unlink(missing_ok=True)
+        if result.return_code == 78:
+            raise ProcessFailure("account_mismatch")
+        if result.return_code == 79:
+            raise ProcessFailure("account_unavailable")
         if result.return_code != 0:
             raise ProcessFailure("gamdl_failed")
         artifacts = safe_files(output, {".lrc"} if lyrics_only else {

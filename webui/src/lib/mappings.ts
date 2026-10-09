@@ -1,4 +1,5 @@
 import type { MatchCandidate, MatchReviewItem, MatchTarget, ProviderDefinition } from "./api";
+import { canonicalProviderId } from "./sources";
 
 export function isAttention(state: string) {
   return ["unresolved", "suggested", "ambiguous", "rejected"].includes(state.toLowerCase());
@@ -53,7 +54,7 @@ export function playableProviderIds(providers: ProviderDefinition[]) {
       ...(provider.capabilityRoutes ?? []).flatMap((route) => route.capabilities),
     ].some((capability) =>
       ["stream", "streaming", "download", "downloads"].includes(capability.toLowerCase())))
-    .map((provider) => provider.id.toLowerCase()));
+    .map((provider) => canonicalProviderId(provider.id)));
 }
 
 export function rankedTargets(targets: MatchTarget[]) {
@@ -123,8 +124,8 @@ export function candidateResolution(
 ) {
   const provider = Object.entries(candidate?.providerTrackIds ?? {}).find(
     ([providerId]) =>
-      providerId.toLowerCase() !== sourceProviderId.toLowerCase() &&
-      playableProviders.has(providerId.toLowerCase()),
+      canonicalProviderId(providerId) !== canonicalProviderId(sourceProviderId) &&
+      playableProviders.has(canonicalProviderId(providerId)),
   );
   if (candidate?.isLocal === true && candidate.libraryTrackId)
     return { targetType: "local" as const, libraryTrackId: candidate.libraryTrackId };
