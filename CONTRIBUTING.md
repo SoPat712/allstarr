@@ -56,8 +56,9 @@ Keep responsibilities modular. Extend the existing owner instead of creating a s
 - One deployment exposes either Jellyfin or Subsonic/OpenSubsonic, never both catch-all protocol surfaces.
 - SQLite is the only durable database. Audio, artwork, cache payloads, backups, and the encryption key ring remain files.
 - Original backend library files are read-only inputs. Only explicitly owned managed, cache, download, or kept paths may be written.
-- User-owned work requires a verified backend identity and exact tenant scope.
-- Provider credentials are encrypted and resolved just in time for the exact tenant, user, library, capability, and account scope.
+- One deployment serves one household. A user is identified by the exact backend type, instance, and principal; administrator status comes from the backend.
+- Provider accounts are Personal (one owner) or Shared (no owner). Administrative management never grants playback through another user's Personal account.
+- Provider credentials are encrypted and resolved just in time for the exact user, account revision, capability, and credential purpose. Backend library access is checked separately for local items.
 - Local backend objects pass through unchanged. A matched item uses the complete original backend object; a virtual item must be internally consistent and clearly external.
 - Provider capabilities are interchangeable typed contracts. Built-ins and extensions meet at the same registry without letting extensions replace reserved built-in IDs.
 - Stateful or retryable work uses the durable job system. Do not launch detached controller tasks for downloads, matching, playlist changes, scrobbling, imports, or extension lifecycle work.
@@ -161,4 +162,4 @@ Keep commits small enough to review. Follow the existing code patterns, use clea
 
 ## Security And Bug Reports
 
-Use the repository issue templates for normal bugs and feature requests. Do not include credentials or private logs. If a report describes an exploitable secret, authentication, filesystem, package-verification, or cross-tenant problem, avoid publishing sensitive reproduction details in a public issue and use the repository's private security-reporting channel when available.
+Use the repository issue templates for normal bugs and feature requests. Do not include credentials or private logs. If a report describes an exploitable secret, authentication, filesystem, package-verification, or user-isolation problem, avoid publishing sensitive reproduction details in a public issue and use the repository's private security-reporting channel when available.

@@ -39,7 +39,7 @@ provider artist `id`, a `{ limit, cursor }` page, and an optional `expectedSnaps
 return the same typed page shape as `searchAlbums` or `searchTracks`. This lets Jellyfin clients
 open an extension-backed artist and browse its complete virtual discography.
 
-Allstarr selects the tenant, user, library, provider account, capability, deadline, and policy before invocation. Extension code cannot select a different account or impersonate another user.
+Allstarr selects the initiating user, Personal or Shared provider account, capability, deadline, and effective policy before invocation. Credential access is bound to that account's current owner, revision, and purpose. Extension code cannot select a different account or impersonate another user. Backend library permissions are checked separately when resolving local items.
 
 ## Accounts and settings
 

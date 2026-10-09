@@ -36,7 +36,9 @@ Review `.env`, choose `BACKEND_TYPE`, and confirm the bind addresses and mounted
 curl --fail http://127.0.0.1:5274/health/ready
 ```
 
-Open the dashboard at `http://localhost:5275`. Sign in with the selected backend, complete onboarding, choose the music library, and connect only the services you use. Music clients connect to `http://localhost:5274`.
+Open the dashboard at `http://localhost:5275`. Sign in with the selected backend, complete onboarding, and connect only the services you use. All music libraries are indexed by default; an administrator can select a subset. Each listener can use only the libraries their backend account permits. Music clients connect to `http://localhost:5274`.
+
+One deployment serves one household. Backend administrators manage deployment settings and Shared provider accounts; listeners manage their own playlists, Personal accounts, match choices, and listening preferences. Listener account connections are enabled by default and can be disabled by an administrator without removing existing accounts.
 
 The dashboard binds to loopback by default. LAN or reverse-proxy access requires an explicit trusted-network policy; see [configuration](docs/operations/configuration.md). Keep Allstarr behind a private network, VPN, or authenticated proxy because it can access media-server and provider accounts.
 

@@ -1,12 +1,17 @@
 using System.Text.Json;
 using allstarr.Controllers;
+using allstarr.Core.Identity;
 using allstarr.Core.Matching;
+using allstarr.Core.Operations;
 using allstarr.Core.Playlists;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Services.Admin;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Routing;
+using Microsoft.EntityFrameworkCore;
+using Moq;
 using System.Reflection;
 
 namespace allstarr.Tests;
@@ -72,6 +77,127 @@ public sealed class PlaylistLinksControllerContractTests
             .GetParameters();
         Assert.Single(parameters);
         Assert.Equal(typeof(CancellationToken), parameters[0].ParameterType);
+    }
+
+    [Theory]
+    [InlineData("active", StatusCodes.Status200OK)]
+    [InlineData("listener", StatusCodes.Status403Forbidden)]
+    [InlineData("revoked", StatusCodes.Status409Conflict)]
+    [InlineData("disabled", StatusCodes.Status409Conflict)]
+    [InlineData("wrong-instance", StatusCodes.Status409Conflict)]
+    [InlineData("wrong-purpose", StatusCodes.Status409Conflict)]
+    [InlineData("foreign-owner", StatusCodes.Status409Conflict)]
+    [InlineData("forged-principal", StatusCodes.Status403Forbidden)]
+    public async Task Update_SubsonicLinkUsesOwnersConsentOnlyForAuthorizedManagement(string scenario, int expectedStatus)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var now = DateTimeOffset.UtcNow;
+        var administrator = new UserRecord
+        {
+            Id = Guid.CreateVersion7(),
+            BackendType = "subsonic",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = "administrator-a",
+            DisplayName = "Administrator A",
+            Enabled = true,
+            IsAdmin = scenario != "listener",
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
+        var owner = new UserRecord
+        {
+            Id = Guid.CreateVersion7(),
+            BackendType = "subsonic",
+            BackendInstanceId = scenario == "wrong-instance" ? "other-backend" : "backend",
+            BackendPrincipalId = "listener-b",
+            DisplayName = "Listener B",
+            Enabled = scenario != "disabled",
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
+        var account = new ProviderAccountRecord
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = owner.Id,
+            ProviderId = "spotify",
+            DisplayName = "Owner source",
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        var grant = new SecretReferenceRecord
+        {
+            Id = Guid.CreateVersion7(),
+            UserId = scenario == "foreign-owner" ? administrator.Id : owner.Id,
+            Purpose = scenario == "wrong-purpose" ? "unrelated" : BackendCredentialScope.SubsonicPurpose,
+            ActiveVersion = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+            RevokedAt = scenario == "revoked" ? now : null
+        };
+        var link = new PlaylistLinkRecord
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = owner.Id,
+            ProviderAccountId = account.Id,
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "source-list",
+            SourcePlaylistIdHash = new string('a', 64),
+            TargetProtocol = "subsonic",
+            TargetBackendInstanceId = "backend",
+            TargetPlaylistId = "target-list",
+            Mode = PlaylistLinkMode.Materialized,
+            MaterializationMode = PlaylistMaterializationMode.Reconcile,
+            RuleVersion = "rules",
+            PolicyVersion = "policy",
+            Revision = 1,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.AddRange(administrator, owner);
+            db.ProviderAccounts.Add(account);
+            db.SecretReferences.Add(grant);
+            db.PlaylistLinks.Add(link);
+            await db.SaveChangesAsync();
+        }
+        var persistence = new Mock<IPlaylistPersistenceService>(MockBehavior.Strict);
+        persistence.Setup(service => service.UpdateLinkAsync(It.IsAny<ProtocolExecutionContext>(), link.Id,
+                It.IsAny<PlaylistLinkUpdate>(), It.IsAny<CancellationToken>()))
+            .Callback<ProtocolExecutionContext, Guid, PlaylistLinkUpdate, CancellationToken>((execution, _, update, _) =>
+            {
+                Assert.Equal(administrator.Id, execution.RequireActor().EffectiveUserId);
+                Assert.Equal(owner.Id, link.OwnerUserId);
+                Assert.Equal(grant.Id, update.TargetCredentialReferenceId);
+            })
+            .ReturnsAsync(link);
+        var clock = new SystemPlatformClock();
+        var controller = Controller(factory, persistence.Object, clock, new AdminProtocolExecutionContextFactory(factory, clock));
+        var caller = scenario == "forged-principal" ? owner : administrator;
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            AllstarrUserId = caller.Id,
+            UserId = scenario == "forged-principal" ? "forged-listener" : caller.BackendPrincipalId,
+            UserName = caller.DisplayName,
+            BackendType = "Subsonic",
+            BackendInstanceId = "backend",
+            IsAdministrator = caller.IsAdmin,
+            JellyfinAccessToken = string.Empty,
+            ExpiresAtUtc = now.UtcDateTime.AddHours(1)
+        };
+        var result = Assert.IsAssignableFrom<ObjectResult>(await controller.Update(link.Id,
+            new UpdatePlaylistLinkRequest(1, "materialized", "reconcile", null, "target-list", null,
+                false, true, true, true, true), CancellationToken.None));
+        Assert.Equal(expectedStatus, result.StatusCode);
+        persistence.Verify(service => service.UpdateLinkAsync(It.IsAny<ProtocolExecutionContext>(), link.Id,
+                It.IsAny<PlaylistLinkUpdate>(), It.IsAny<CancellationToken>()),
+            scenario == "active" ? Times.Once() : Times.Never());
+        persistence.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -231,12 +357,24 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Equal(2, source.Split("new MediaAssetIdentity(", StringSplitOptions.None).Length - 1);
     }
 
-    private static PlaylistLinksController Controller()
+    private static PlaylistLinksController Controller(
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null,
+        IPlaylistPersistenceService? playlists = null,
+        IPlatformClock? clock = null,
+        AdminProtocolExecutionContextFactory? protocolContexts = null)
     {
         var controller = new PlaylistLinksController(
-            null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!);
+            contextFactory!, playlists!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
+    }
+
+    private sealed class Factory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+
+        public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(CreateDbContext());
     }
 
 
