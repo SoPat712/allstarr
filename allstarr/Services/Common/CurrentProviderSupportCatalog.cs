@@ -60,10 +60,10 @@ public static class CurrentProviderSupportCatalog
             "Qobuz",
             "mixed",
             "A user token and user ID belong to each managed account used for stream or download work.",
-            Capability("metadata", Supported, "Catalog song, album, artist, playlist, and paged artist-track reads.", "QobuzMetadataServiceTests"),
+            Capability("metadata", Supported, "Catalog song, album, artist, playlist, and paged artist-track reads.", "QobuzProviderTests"),
             Capability("streaming", Supported, "Selected-account signed streams use an exact-provider typed lease and preserve real upstream byte ranges and media facts.", "DirectProviderDownloadCapabilityAdapterTests; ProtocolProviderStreamingGatewayTests"),
             Capability("download", Supported, "Account-bound signed downloads use a typed host-owned workspace with media facts, size, checksum, progress, cancellation, cleanup, and retry contracts.", "DirectProviderDownloadCapabilityAdapterTests; ProviderDownloadArtifactResolverTests"),
-            Capability("playlist", Partial, "Read/discovery only.", "QobuzMetadataServiceTests"),
+            Capability("playlist", Partial, "Read/discovery only.", "QobuzProviderTests"),
             Capability("health", Partial, "Account-scoped metadata, playlist, stream, and download probes with durable capability samples.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
             "spotify",

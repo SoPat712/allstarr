@@ -37,8 +37,8 @@ public class CatalogPlaylistCapability(
 
         try
         {
-            var playlists = await metadata.SearchPlaylistsAsync(
-                request.Query, request.Page.Limit, context.CancellationToken);
+            var playlists = await metadata.UseCatalogAsync(context, catalog => catalog.SearchPlaylistsAsync(
+                request.Query, request.Page.Limit, context.CancellationToken));
             context.CancellationToken.ThrowIfCancellationRequested();
             return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new(
                 ProviderId,
@@ -52,6 +52,14 @@ public class CatalogPlaylistCapability(
         catch (HttpRequestException exception)
         {
             return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(ProviderCatalogMetadata.HttpError(exception));
+        }
+        catch (KeyNotFoundException)
+        {
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.Forbidden));
         }
         catch
         {
@@ -74,10 +82,10 @@ public class CatalogPlaylistCapability(
 
         try
         {
-            var playlistTask = metadata.GetPlaylistAsync(
-                ProviderId, request.PlaylistId.Value, context.CancellationToken);
-            var tracksTask = metadata.GetPlaylistTracksAsync(
-                ProviderId, request.PlaylistId.Value, context.CancellationToken);
+            var playlistTask = metadata.UseCatalogAsync(context, catalog => catalog.GetPlaylistAsync(
+                ProviderId, request.PlaylistId.Value, context.CancellationToken));
+            var tracksTask = metadata.UseCatalogAsync(context, catalog => catalog.GetPlaylistTracksAsync(
+                ProviderId, request.PlaylistId.Value, context.CancellationToken));
             await Task.WhenAll(playlistTask, tracksTask);
             context.CancellationToken.ThrowIfCancellationRequested();
             var playlist = await playlistTask;
@@ -108,6 +116,14 @@ public class CatalogPlaylistCapability(
         catch (HttpRequestException exception)
         {
             return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(ProviderCatalogMetadata.HttpError(exception));
+        }
+        catch (KeyNotFoundException)
+        {
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.Forbidden));
         }
         catch
         {

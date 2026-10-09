@@ -46,3 +46,4 @@ Focused contract tests live in:
 - `TrackIdentityServiceTests`
 - `ProviderCatalogMetadataTests`
 - `DeezerProviderTests`
+- `QobuzProviderTests` and `QobuzProviderPagingTests`

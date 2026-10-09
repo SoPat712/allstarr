@@ -24,6 +24,9 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
     public abstract Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
     public abstract Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
 
+    internal virtual Task<T> UseCatalogAsync<T>(
+        ProviderExecutionContext context, Func<ProviderCatalogMetadata, Task<T>> operation) => operation(this);
+
     public async Task<ProviderOutcome<ProviderArtworkReference>> GetPlaylistArtworkAsync(
         ProviderExecutionContext context,
         ProviderExternalResourceId playlistId)
@@ -33,7 +36,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         playlistId.RequireOwner(ProviderId, ProviderResourceKind.Playlist);
         try
         {
-            var playlist = await GetPlaylistAsync(ProviderId, playlistId.Value, context.CancellationToken);
+            var playlist = await UseCatalogAsync(context, catalog => catalog.GetPlaylistAsync(ProviderId, playlistId.Value, context.CancellationToken));
             context.CancellationToken.ThrowIfCancellationRequested();
             var artwork = PublicArtwork(playlist?.CoverUrl);
             return artwork == null
@@ -48,6 +51,14 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         {
             return ProviderOutcome<ProviderArtworkReference>.Failure(ProviderCatalogMetadata.HttpError(exception));
         }
+        catch (KeyNotFoundException)
+        {
+            return ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.Forbidden));
+        }
         catch
         {
             return ProviderOutcome<ProviderArtworkReference>.Failure(new(ProviderErrorKind.TransientFailure));
@@ -59,7 +70,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderMetadataSearchRequest request) => ExecutePageAsync(
         context,
         request.Page,
-        token => SearchSongsAsync(request.Query, request.Page.Limit, token),
+        (catalog, token) => catalog.SearchSongsAsync(request.Query, request.Page.Limit, token),
         MapTrack);
 
     public Task<ProviderOutcome<ProviderTrackMetadata>> GetTrackAsync(
@@ -67,7 +78,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderTrackLookupRequest request) => ExecuteLookupAsync(
         context,
         request.Id,
-        token => GetSongAsync(ProviderId, request.Id.Value, token),
+        (catalog, token) => catalog.GetSongAsync(ProviderId, request.Id.Value, token),
         MapTrack);
 
     public Task<ProviderOutcome<ProviderTrackMetadata>> LookupByIsrcAsync(
@@ -75,7 +86,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderIsrcLookupRequest request) => ExecuteLookupAsync(
         context,
         expectedId: null,
-        token => FindSongByIsrcAsync(request.Isrc, token),
+        (catalog, token) => catalog.FindSongByIsrcAsync(request.Isrc, token),
         MapTrack);
 
     public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> SearchAlbumsAsync(
@@ -83,7 +94,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderMetadataSearchRequest request) => ExecutePageAsync(
         context,
         request.Page,
-        token => SearchAlbumsAsync(request.Query, request.Page.Limit, token),
+        (catalog, token) => catalog.SearchAlbumsAsync(request.Query, request.Page.Limit, token),
         MapAlbum);
 
     public Task<ProviderOutcome<ProviderAlbumMetadata>> GetAlbumAsync(
@@ -91,7 +102,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderAlbumLookupRequest request) => ExecuteLookupAsync(
         context,
         request.Id,
-        token => GetAlbumAsync(ProviderId, request.Id.Value, token),
+        (catalog, token) => catalog.GetAlbumAsync(ProviderId, request.Id.Value, token),
         MapAlbum);
 
     public Task<ProviderOutcome<ProviderPage<ProviderArtistMetadata>>> SearchArtistsAsync(
@@ -99,7 +110,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderMetadataSearchRequest request) => ExecutePageAsync(
         context,
         request.Page,
-        token => SearchArtistsAsync(request.Query, request.Page.Limit, token),
+        (catalog, token) => catalog.SearchArtistsAsync(request.Query, request.Page.Limit, token),
         MapArtist);
 
     public Task<ProviderOutcome<ProviderArtistMetadata>> GetArtistAsync(
@@ -107,7 +118,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderArtistLookupRequest request) => ExecuteLookupAsync(
         context,
         request.Id,
-        token => GetArtistAsync(ProviderId, request.Id.Value, token),
+        (catalog, token) => catalog.GetArtistAsync(ProviderId, request.Id.Value, token),
         MapArtist);
 
     public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> GetArtistAlbumsAsync(
@@ -115,7 +126,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderArtistItemsRequest request) => ExecuteCollectionPageAsync(
         context,
         request,
-        token => GetArtistAlbumsAsync(ProviderId, request.Id.Value, token),
+        (catalog, token) => catalog.GetArtistAlbumsAsync(ProviderId, request.Id.Value, token),
         MapAlbum);
 
     public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
@@ -123,13 +134,13 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         ProviderArtistItemsRequest request) => ExecuteCollectionPageAsync(
         context,
         request,
-        token => GetArtistTracksAsync(ProviderId, request.Id.Value, token),
+        (catalog, token) => catalog.GetArtistTracksAsync(ProviderId, request.Id.Value, token),
         MapTrack);
 
     private async Task<ProviderOutcome<ProviderPage<TTarget>>> ExecutePageAsync<TLegacy, TTarget>(
         ProviderExecutionContext context,
         ProviderPageRequest page,
-        Func<CancellationToken, Task<List<TLegacy>>> fetch,
+        Func<ProviderCatalogMetadata, CancellationToken, Task<List<TLegacy>>> fetch,
         Func<TLegacy, TTarget> map)
         where TTarget : class
     {
@@ -141,7 +152,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
 
         try
         {
-            var values = await fetch(context.CancellationToken);
+            var values = await UseCatalogAsync(context, catalog => fetch(catalog, context.CancellationToken));
             context.CancellationToken.ThrowIfCancellationRequested();
             return ProviderOutcome<ProviderPage<TTarget>>.Success(new(
                 ProviderId, MapValid(values, map), isPartial: values.Count >= page.Limit));
@@ -154,6 +165,14 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         {
             return ProviderOutcome<ProviderPage<TTarget>>.Failure(ProviderCatalogMetadata.HttpError(exception));
         }
+        catch (KeyNotFoundException)
+        {
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.Forbidden));
+        }
         catch
         {
             return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.TransientFailure));
@@ -163,7 +182,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
     private async Task<ProviderOutcome<TTarget>> ExecuteLookupAsync<TLegacy, TTarget>(
         ProviderExecutionContext context,
         ProviderExternalResourceId? expectedId,
-        Func<CancellationToken, Task<TLegacy?>> fetch,
+        Func<ProviderCatalogMetadata, CancellationToken, Task<TLegacy?>> fetch,
         Func<TLegacy, TTarget> map)
         where TLegacy : class
         where TTarget : class
@@ -176,7 +195,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
 
         try
         {
-            var value = await fetch(context.CancellationToken);
+            var value = await UseCatalogAsync(context, catalog => fetch(catalog, context.CancellationToken));
             context.CancellationToken.ThrowIfCancellationRequested();
             return value == null
                 ? ProviderOutcome<TTarget>.Failure(new(ProviderErrorKind.NotFound))
@@ -190,6 +209,14 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         {
             return ProviderOutcome<TTarget>.Failure(ProviderCatalogMetadata.HttpError(exception));
         }
+        catch (KeyNotFoundException)
+        {
+            return ProviderOutcome<TTarget>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ProviderOutcome<TTarget>.Failure(new(ProviderErrorKind.Forbidden));
+        }
         catch
         {
             return ProviderOutcome<TTarget>.Failure(new(ProviderErrorKind.TransientFailure));
@@ -199,7 +226,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
     private async Task<ProviderOutcome<ProviderPage<TTarget>>> ExecuteCollectionPageAsync<TLegacy, TTarget>(
         ProviderExecutionContext context,
         ProviderArtistItemsRequest request,
-        Func<CancellationToken, Task<List<TLegacy>>> fetch,
+        Func<ProviderCatalogMetadata, CancellationToken, Task<List<TLegacy>>> fetch,
         Func<TLegacy, TTarget> map)
         where TTarget : class
     {
@@ -216,7 +243,7 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
 
         try
         {
-            var values = await fetch(context.CancellationToken);
+            var values = await UseCatalogAsync(context, catalog => fetch(catalog, context.CancellationToken));
             context.CancellationToken.ThrowIfCancellationRequested();
             var pageValues = values.Skip(offset).Take(request.Page.Limit).ToArray();
             var items = MapValid(pageValues, map);
@@ -234,6 +261,14 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         catch (HttpRequestException exception)
         {
             return ProviderOutcome<ProviderPage<TTarget>>.Failure(ProviderCatalogMetadata.HttpError(exception));
+        }
+        catch (KeyNotFoundException)
+        {
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return ProviderOutcome<ProviderPage<TTarget>>.Failure(new(ProviderErrorKind.Forbidden));
         }
         catch
         {

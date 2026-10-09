@@ -10,7 +10,6 @@ using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using allstarr.Services;
 using allstarr.Services.Common;
-using allstarr.Services.Qobuz;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.Qobuz;
@@ -22,7 +21,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
 
     private readonly HttpClient http;
     private readonly IProviderAccountSecretAccessor secrets;
-    private readonly QobuzDownloadService downloads;
+    private readonly QobuzMediaClient downloads;
     private readonly ProviderDownloadArtifactResolver artifacts;
     private readonly string? configuredQuality;
     private readonly long maximumArtifactBytes;
@@ -32,7 +31,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
     public QobuzDownloadCapabilityAdapter(
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
-        QobuzDownloadService downloads,
+        QobuzMediaClient downloads,
         ProviderDownloadArtifactResolver artifacts,
         IOptions<QobuzSettings> settings,
         ProviderDownloadWorkspaceOptions workspaceOptions,
@@ -44,7 +43,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
     public QobuzDownloadCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
-        QobuzDownloadService downloads,
+        QobuzMediaClient downloads,
         ProviderDownloadArtifactResolver artifacts,
         string? configuredQuality,
         long maximumArtifactBytes,
@@ -312,7 +311,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
     }
 
     internal static bool TryMedia(
-        QobuzDownloadService.QobuzDownloadResult prepared,
+        QobuzMediaClient.QobuzDownloadResult prepared,
         out ProviderMediaFormat? media,
         out string extension)
     {
@@ -366,11 +365,3 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
         [property: JsonPropertyName("userAuthToken")] string? UserAuthToken,
         [property: JsonPropertyName("userId")] string? UserId);
 }
-
-public sealed class QobuzMetadataCapabilityAdapter(IConcreteMetadataService legacy)
-    : ConcreteMetadataCapabilityAdapter(QobuzDownloadCapabilityAdapter.StableProviderId, legacy);
-
-public sealed class QobuzPlaylistCapabilityAdapter(
-    IConcreteMetadataService legacy,
-    QobuzMetadataCapabilityAdapter metadata)
-    : ConcretePlaylistCapabilityAdapter(QobuzDownloadCapabilityAdapter.StableProviderId, legacy, metadata);

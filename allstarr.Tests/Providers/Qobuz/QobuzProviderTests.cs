@@ -1,4 +1,5 @@
-using allstarr.Services.Qobuz;
+using allstarr.Core.Providers.Qobuz;
+using allstarr.Core.Providers.Spotify;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
@@ -10,15 +11,15 @@ using System.Net;
 
 namespace allstarr.Tests;
 
-public class QobuzMetadataServiceTests
+public class QobuzProviderTests
 {
     private readonly Mock<IHttpClientFactory> _httpClientFactoryMock;
     private readonly Mock<HttpMessageHandler> _httpMessageHandlerMock;
     private readonly Mock<QobuzBundleService> _bundleServiceMock;
-    private readonly Mock<ILogger<QobuzMetadataService>> _loggerMock;
-    private readonly QobuzMetadataService _service;
+    private readonly Mock<ILogger<QobuzProvider>> _loggerMock;
+    private readonly QobuzProvider _service;
 
-    public QobuzMetadataServiceTests()
+    public QobuzProviderTests()
     {
         _httpMessageHandlerMock = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_httpMessageHandlerMock.Object);
@@ -31,25 +32,14 @@ public class QobuzMetadataServiceTests
         bundleHttpClientFactoryMock.Setup(f => f.CreateClient(It.IsAny<string>())).Returns(httpClient);
         var bundleLogger = Mock.Of<ILogger<QobuzBundleService>>();
         _bundleServiceMock = new Mock<QobuzBundleService>(bundleHttpClientFactoryMock.Object, bundleLogger) { CallBase = false };
-        _bundleServiceMock.Setup(b => b.GetAppIdAsync()).ReturnsAsync("fake-app-id-12345");
+        _bundleServiceMock.Setup(b => b.GetAppIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync("fake-app-id-12345");
         _bundleServiceMock.Setup(b => b.GetSecretsAsync()).ReturnsAsync(new List<string> { "fake-secret" });
         _bundleServiceMock.Setup(b => b.GetSecretAsync(It.IsAny<int>())).ReturnsAsync("fake-secret");
 
-        _loggerMock = new Mock<ILogger<QobuzMetadataService>>();
+        _loggerMock = new Mock<ILogger<QobuzProvider>>();
 
-        var subsonicSettings = Options.Create(new SubsonicSettings());
-        var qobuzSettings = Options.Create(new QobuzSettings
-        {
-            UserAuthToken = "fake-user-auth-token",
-            UserId = "8807208"
-        });
-
-        _service = new QobuzMetadataService(
-            _httpClientFactoryMock.Object,
-            subsonicSettings,
-            qobuzSettings,
-            _bundleServiceMock.Object,
-            _loggerMock.Object);
+        _service = new QobuzProvider(httpClient, _bundleServiceMock.Object,
+            Mock.Of<IProviderAccountSecretAccessor>(), _loggerMock.Object);
     }
 
 
@@ -127,7 +117,7 @@ public class QobuzMetadataServiceTests
     }
 
     [Fact]
-    public async Task SearchPlaylistsAsync_WhenHttpFails_ReturnsEmptyList()
+    public async Task SearchPlaylistsAsync_WhenHttpFails_PreservesProviderFailure()
     {
         var mockResponse = new HttpResponseMessage
         {
@@ -141,10 +131,8 @@ public class QobuzMetadataServiceTests
                 ItExpr.IsAny<CancellationToken>())
             .ReturnsAsync(mockResponse);
 
-        var result = await _service.SearchPlaylistsAsync("jazz", 20);
-
-        Assert.NotNull(result);
-        Assert.Empty(result);
+        var exception = await Assert.ThrowsAsync<HttpRequestException>(() => _service.SearchPlaylistsAsync("jazz", 20));
+        Assert.Equal(HttpStatusCode.InternalServerError, exception.StatusCode);
     }
 
 
@@ -689,12 +677,9 @@ public class QobuzMetadataServiceTests
         var clientFactory = new Mock<IHttpClientFactory>();
         clientFactory.Setup(factory => factory.CreateClient(It.IsAny<string>()))
             .Returns(new HttpClient(handler));
-        var service = new QobuzMetadataService(
-            clientFactory.Object,
-            Options.Create(new SubsonicSettings()),
-            Options.Create(new QobuzSettings()),
-            _bundleServiceMock.Object,
-            _loggerMock.Object);
+        var service = new QobuzProvider(
+            clientFactory.Object.CreateClient("QobuzApi"), _bundleServiceMock.Object,
+            Mock.Of<IProviderAccountSecretAccessor>(), _loggerMock.Object);
 
         var result = await service.GetArtistTracksAsync("qobuz", "101");
 

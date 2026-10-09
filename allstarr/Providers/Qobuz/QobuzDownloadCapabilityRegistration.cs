@@ -1,16 +1,31 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
-using allstarr.Services.Qobuz;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace allstarr.Core.Providers.Qobuz;
 
 public static class QobuzDownloadCapabilityRegistration
 {
-    public static IServiceCollection AddQobuzDownloadCapability(this IServiceCollection services)
+    public static IServiceCollection AddQobuzProvider(this IServiceCollection services)
     {
         services.TryAddSingleton<IProviderAccountSecretAccessor, EncryptedProviderAccountSecretAccessor>();
-        services.TryAddSingleton<QobuzDownloadService>();
+        services.TryAddSingleton<QobuzBundleService>();
+        services.AddHttpClient("QobuzApi", client => client.Timeout = TimeSpan.FromSeconds(30))
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+            {
+                AllowAutoRedirect = false,
+                UseCookies = false,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(2)
+            });
+        services.TryAddSingleton<QobuzMediaClient>(provider => new(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient("QobuzApi"),
+            provider.GetRequiredService<QobuzBundleService>(),
+            provider.GetRequiredService<ILogger<QobuzMediaClient>>()));
+        services.TryAddSingleton<QobuzProvider>(provider => new(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient("QobuzApi"),
+            provider.GetRequiredService<QobuzBundleService>(),
+            provider.GetRequiredService<IProviderAccountSecretAccessor>(),
+            provider.GetRequiredService<ILogger<QobuzProvider>>()));
         services.AddHttpClient(QobuzDownloadCapabilityAdapter.HttpClientName, client =>
                 client.Timeout = TimeSpan.FromMinutes(30))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
@@ -22,17 +37,12 @@ public static class QobuzDownloadCapabilityRegistration
             });
         services.AddSingleton<QobuzDownloadCapabilityAdapter>();
         services.AddSingleton<QobuzStreamingCapabilityAdapter>();
-        services.AddSingleton<QobuzMetadataCapabilityAdapter>(provider => new(
-            provider.GetRequiredService<QobuzMetadataService>()));
-        services.AddSingleton<QobuzPlaylistCapabilityAdapter>(provider => new(
-            provider.GetRequiredService<QobuzMetadataService>(),
-            provider.GetRequiredService<QobuzMetadataCapabilityAdapter>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             QobuzDownloadCapabilityAdapter.CreateRegistration(
                 provider.GetRequiredService<QobuzDownloadCapabilityAdapter>(),
                 provider.GetRequiredService<QobuzStreamingCapabilityAdapter>(),
-                provider.GetRequiredService<QobuzMetadataCapabilityAdapter>(),
-                provider.GetRequiredService<QobuzPlaylistCapabilityAdapter>()));
+                provider.GetRequiredService<QobuzProvider>(),
+                new CatalogPlaylistCapability("qobuz", provider.GetRequiredService<QobuzProvider>())));
         return services;
     }
 }
