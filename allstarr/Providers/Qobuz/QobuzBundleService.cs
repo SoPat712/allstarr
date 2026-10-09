@@ -1,6 +1,10 @@
+using System.Net;
+using System.Text;
 using System.Text.RegularExpressions;
 
-namespace allstarr.Services.Qobuz;
+namespace allstarr.Core.Providers.Qobuz;
+
+public sealed record QobuzSigningCredentials(string AppId, IReadOnlyList<string> Secrets);
 
 // Qobuz rotates these values; derive them from the bundle with qobuz-dl-compatible decoding.
 public class QobuzBundleService
@@ -19,15 +23,12 @@ public class QobuzBundleService
         @"production:\{api:\{appId:""(?<app_id>\d{9})"",appSecret:""\w{32}""",
         RegexOptions.Compiled);
 
-    private string? _cachedAppId;
-    private List<string>? _cachedSecrets;
+    private QobuzSigningCredentials? _cached;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
     public QobuzBundleService(IHttpClientFactory httpClientFactory, ILogger<QobuzBundleService> logger)
     {
-        _httpClient = httpClientFactory.CreateClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
+        _httpClient = httpClientFactory.CreateClient("QobuzApi");
         _logger = logger;
     }
 
@@ -35,16 +36,19 @@ public class QobuzBundleService
 
     public virtual async Task<string> GetAppIdAsync(CancellationToken cancellationToken)
     {
-        await EnsureInitializedAsync(cancellationToken);
-        return _cachedAppId!;
+        var snapshot = await EnsureInitializedAsync(cancellationToken);
+        return snapshot.AppId;
     }
 
     public virtual Task<List<string>> GetSecretsAsync() => GetSecretsAsync(CancellationToken.None);
 
+    public virtual Task<QobuzSigningCredentials> GetSigningCredentialsAsync(CancellationToken cancellationToken) =>
+        EnsureInitializedAsync(cancellationToken);
+
     public virtual async Task<List<string>> GetSecretsAsync(CancellationToken cancellationToken)
     {
-        await EnsureInitializedAsync(cancellationToken);
-        return _cachedSecrets!;
+        var snapshot = await EnsureInitializedAsync(cancellationToken);
+        return snapshot.Secrets.ToList();
     }
 
     public virtual async Task<string> GetSecretAsync(int index = 0)
@@ -58,33 +62,19 @@ public class QobuzBundleService
         return secrets[index];
     }
 
-    private async Task EnsureInitializedAsync(CancellationToken cancellationToken)
+    public virtual async Task RefreshAsync(string expectedAppId, CancellationToken cancellationToken)
     {
-        if (_cachedAppId != null && _cachedSecrets != null)
-        {
-            return;
-        }
-
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedAppId);
+        cancellationToken.ThrowIfCancellationRequested();
+        var observed = Volatile.Read(ref _cached);
         await _initLock.WaitAsync(cancellationToken);
         try
         {
-            if (_cachedAppId != null && _cachedSecrets != null)
-            {
-                return;
-            }
-
-            _logger.LogInformation("Extracting Qobuz App ID and secrets from web bundle...");
-
-            var bundleUrl = await GetBundleUrlAsync(cancellationToken);
-            _logger.LogDebug("Found bundle URL: {BundleUrl}", bundleUrl);
-
-            var bundleJs = await DownloadBundleAsync(bundleUrl, cancellationToken);
-
-            _cachedAppId = ExtractAppId(bundleJs);
-            _logger.LogDebug("Extracted App ID: {AppId}", _cachedAppId);
-
-            _cachedSecrets = ExtractSecrets(bundleJs);
-            _logger.LogDebug("Extracted {Count} secrets", _cachedSecrets.Count);
+            var current = Volatile.Read(ref _cached);
+            if (current != null && (!ReferenceEquals(current, observed) ||
+                !string.Equals(current.AppId, expectedAppId, StringComparison.Ordinal))) return;
+            var refreshed = await FetchSnapshotAsync(cancellationToken);
+            Volatile.Write(ref _cached, refreshed);
         }
         finally
         {
@@ -92,17 +82,47 @@ public class QobuzBundleService
         }
     }
 
+    private async Task<QobuzSigningCredentials> EnsureInitializedAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = Volatile.Read(ref _cached);
+        if (snapshot != null) return snapshot;
+        await _initLock.WaitAsync(cancellationToken);
+        try
+        {
+            snapshot = Volatile.Read(ref _cached);
+            if (snapshot != null) return snapshot;
+            snapshot = await FetchSnapshotAsync(cancellationToken);
+            Volatile.Write(ref _cached, snapshot);
+            return snapshot;
+        }
+        finally
+        {
+            _initLock.Release();
+        }
+    }
+
+    private async Task<QobuzSigningCredentials> FetchSnapshotAsync(CancellationToken cancellationToken)
+    {
+        var bundleUrl = await GetBundleUrlAsync(cancellationToken);
+        var bundleJs = await DownloadBundleAsync(bundleUrl, cancellationToken);
+        var appId = ExtractAppId(bundleJs);
+        var secrets = ExtractSecrets(bundleJs);
+        cancellationToken.ThrowIfCancellationRequested();
+        _logger.LogDebug("Qobuz signing bundle loaded successfully.");
+        return new QobuzSigningCredentials(appId, Array.AsReadOnly(secrets.ToArray()));
+    }
+
     private async Task<string> GetBundleUrlAsync(CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(LoginPageUrl, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var response = await GetAsync(LoginPageUrl, cancellationToken);
 
         var html = await response.Content.ReadAsStringAsync(cancellationToken);
         var match = BundleUrlRegex.Match(html);
 
         if (!match.Success)
         {
-            throw new Exception("Could not find bundle URL in Qobuz login page");
+            throw InvalidBundle();
         }
 
         return BaseUrl + match.Groups[1].Value;
@@ -110,8 +130,7 @@ public class QobuzBundleService
 
     private async Task<string> DownloadBundleAsync(string bundleUrl, CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(bundleUrl, cancellationToken);
-        response.EnsureSuccessStatusCode();
+        using var response = await GetAsync(bundleUrl, cancellationToken);
         return await response.Content.ReadAsStringAsync(cancellationToken);
     }
 
@@ -121,7 +140,7 @@ public class QobuzBundleService
 
         if (!match.Success)
         {
-            throw new Exception("Could not extract App ID from bundle");
+            throw InvalidBundle();
         }
 
         return match.Groups["app_id"].Value;
@@ -152,7 +171,7 @@ public class QobuzBundleService
 
         if (secrets.Count == 0)
         {
-            throw new Exception("Could not extract seed/timezone pairs from bundle");
+            throw InvalidBundle();
         }
 
         // qobuz-dl moves the second timezone entry first before decoding.
@@ -200,32 +219,42 @@ public class QobuzBundleService
 
         foreach (var kvp in secrets)
         {
+            if (kvp.Value.Count < 3) continue;
             var concatenated = string.Join("", kvp.Value);
-
-            if (concatenated.Length > 44)
-            {
-                concatenated = concatenated.Substring(0, concatenated.Length - 44);
-            }
+            if (concatenated.Length <= 44) continue;
+            concatenated = concatenated.Substring(0, concatenated.Length - 44);
 
             try
             {
                 var bytes = Convert.FromBase64String(concatenated);
-                var decoded = System.Text.Encoding.UTF8.GetString(bytes);
-                decodedSecrets.Add(decoded);
-                _logger.LogDebug("Decoded secret for timezone {Timezone}: {Length} chars", kvp.Key, decoded.Length);
+                var decoded = new UTF8Encoding(false, true).GetString(bytes);
+                if (!string.IsNullOrWhiteSpace(decoded)) decodedSecrets.Add(decoded);
             }
-            catch (Exception ex)
+            catch (Exception exception) when (exception is FormatException or DecoderFallbackException)
             {
-                _logger.LogError(ex, "Failed to decode secret for timezone {Timezone}", kvp.Key);
+                _logger.LogDebug("A Qobuz signing candidate could not be decoded.");
             }
         }
 
         if (decodedSecrets.Count == 0)
         {
-            throw new Exception("Could not decode any secrets from bundle");
+            throw InvalidBundle();
         }
 
         return decodedSecrets;
     }
 
+    private async Task<HttpResponseMessage> GetAsync(string url, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.UserAgent.ParseAdd("Mozilla/5.0");
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode) return response;
+        var status = response.StatusCode;
+        response.Dispose();
+        throw new HttpRequestException("Qobuz signing bundle request failed.", null, status);
+    }
+
+    private static HttpRequestException InvalidBundle() =>
+        new("Qobuz signing bundle is unavailable or invalid.", null, HttpStatusCode.BadGateway);
 }

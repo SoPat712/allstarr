@@ -13,7 +13,6 @@ using allstarr.Services;
 using allstarr.Services.Common;
 using allstarr.Services.Deezer;
 using allstarr.Services.Local;
-using allstarr.Services.Qobuz;
 using allstarr.Services.Subsonic;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -89,8 +88,8 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         { CallBase = false };
         bundle.Setup(item => item.GetAppIdAsync(It.IsAny<CancellationToken>()))
             .ReturnsAsync("123456789");
-        bundle.Setup(item => item.GetSecretsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(["fixture-signing-secret"]);
+        bundle.Setup(item => item.GetSigningCredentialsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QobuzSigningCredentials("123456789", ["fixture-signing-secret"]));
         var service = QobuzService(factory, bundle.Object);
         var store = new MemoryStore();
         var resolver = Resolver(store);
@@ -189,8 +188,8 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
             factory, NullLogger<QobuzBundleService>.Instance)
         { CallBase = false };
         bundle.Setup(item => item.GetAppIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync("123456789");
-        bundle.Setup(item => item.GetSecretsAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(["fixture-signing-secret"]);
+        bundle.Setup(item => item.GetSigningCredentialsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new QobuzSigningCredentials("123456789", ["fixture-signing-secret"]));
         var adapter = new QobuzStreamingCapabilityAdapter(
             client,
             new RawSecretAccessor("""{"userAuthToken":"selected-token","userId":"selected-user"}"""),
@@ -308,18 +307,8 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
     private static DeezerMediaClient DeezerService(HttpClient client) =>
         new(new DeezerHttpClient(client, 0), NullLogger<DeezerMediaClient>.Instance);
 
-    private QobuzDownloadService QobuzService(
-        IHttpClientFactory factory,
-        QobuzBundleService bundle) => new(
-        factory,
-        Configuration(),
-        Mock.Of<ILocalLibraryService>(),
-        Mock.Of<IMusicMetadataService>(),
-        bundle,
-        Options.Create(new SubsonicSettings()),
-        Options.Create(new QobuzSettings { Quality = "FLAC_24_LOW", MinRequestIntervalMs = 0 }),
-        Mock.Of<IServiceProvider>(),
-        NullLogger<QobuzDownloadService>.Instance);
+    private static QobuzMediaClient QobuzService(IHttpClientFactory factory, QobuzBundleService bundle) =>
+        new(factory.CreateClient("QobuzApi"), bundle, NullLogger<QobuzMediaClient>.Instance);
 
     private IConfiguration Configuration() => new ConfigurationBuilder()
         .AddInMemoryCollection(new Dictionary<string, string?>

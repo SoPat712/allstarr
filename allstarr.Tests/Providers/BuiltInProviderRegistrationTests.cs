@@ -67,9 +67,12 @@ public sealed class BuiltInProviderRegistrationTests
         var deezerStreaming = Streaming("deezer");
         var qobuzDownload = Download("qobuz");
         var qobuzStreaming = Streaming("qobuz");
-        var qobuzLegacy = new Mock<IConcreteMetadataService>(MockBehavior.Strict).Object;
-        var qobuzMetadata = new QobuzMetadataCapabilityAdapter(qobuzLegacy);
-        var qobuzPlaylists = new QobuzPlaylistCapabilityAdapter(qobuzLegacy, qobuzMetadata);
+        var qobuzMetadata = new QobuzProvider(new HttpClient(new Mock<HttpMessageHandler>().Object),
+            new QobuzBundleService(Mock.Of<IHttpClientFactory>(factory => factory.CreateClient(It.IsAny<string>()) == new HttpClient()),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<QobuzBundleService>.Instance),
+            Mock.Of<IProviderAccountSecretAccessor>(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<QobuzProvider>.Instance);
+        var qobuzPlaylists = new CatalogPlaylistCapability("qobuz", qobuzMetadata);
         var apple = new AppleMusicKitPlaylistCapabilityAdapter(
             new HttpClient(new Mock<HttpMessageHandler>().Object),
             new Mock<IProviderAccountSecretAccessor>(MockBehavior.Strict).Object);

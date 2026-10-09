@@ -538,8 +538,8 @@ public sealed class ProviderCatalogMetadataTests
     private static (IProviderMetadataCapability, IProviderPlaylistCapability) CreateQobuz(
         IConcreteMetadataService legacy)
     {
-        var metadata = new QobuzMetadataCapabilityAdapter(legacy);
-        return (metadata, new QobuzPlaylistCapabilityAdapter(legacy, metadata));
+        var metadata = new FixtureCatalog(legacy, "qobuz");
+        return (metadata, new CatalogPlaylistCapability("qobuz", metadata));
     }
 
     private static IProviderDownloadCapability Download() =>
@@ -554,8 +554,8 @@ public sealed class ProviderCatalogMetadataTests
         Mock.Of<IProviderStreamingCapability>(item =>
             item.ProviderId == "deezer" && item.Capability == ProviderCapabilityKind.Streaming);
 
-    private sealed class FixtureCatalog(IConcreteMetadataService legacy)
-        : ProviderCatalogMetadata("deezer")
+    private sealed class FixtureCatalog(IConcreteMetadataService legacy, string providerId = "deezer")
+        : ProviderCatalogMetadata(providerId)
     {
         public override Task<List<Song>> SearchSongsAsync(
             string query, int limit = 20, CancellationToken cancellationToken = default) =>

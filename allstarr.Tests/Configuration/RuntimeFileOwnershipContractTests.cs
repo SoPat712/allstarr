@@ -34,7 +34,6 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Services/Common/FileMediaApplicationCache.cs"] = "bounded media cache",
             ["Services/Common/ManagedTrackCacheService.cs"] = "managed audio cache",
             ["Services/Lyrics/KeptLyricsSidecarService.cs"] = "lyrics sidecar",
-            ["Providers/Qobuz/QobuzDownloadService.cs"] = "managed audio",
             ["Services/Subsonic/PlaylistSyncService.cs"] = "M3U target artifact"
         };
 

@@ -80,6 +80,13 @@ verified provider alternative while retaining its requested public identity. The
 alternative's own ID determines its token and decryption key. No default credential
 or shared cookie state participates in an account-scoped request.
 
+Qobuz's typed catalog and playlist reads use the selected account credential only
+for that operation; public reads carry no user token. Playlist pages preserve source
+order, repeated recordings, and global positions. Playlist and album paging are bounded and
+rejects inconsistent offsets. Streaming and downloads share signed media resolution,
+with quality fallback limited to the requested ceiling. Public bundle discovery
+publishes the app ID and signing keys together and coalesces refreshes.
+
 Account ownership is authoritative: a non-null `OwnerUserId` means Personal; null means Shared. The public scope is derived rather than stored independently. Creator identity is audit provenance and never grants access. Administrators manage account records; routing still selects only the requesting user’s Personal account or a Shared account. Eligible Personal accounts precede Shared accounts, with deterministic ordering within each audience. Library IDs do not scope accounts.
 
 Audience changes rebind the encrypted secret in the same database transaction and invalidate account discovery caches. Credential leases verify the current account owner, provider, revision, enabled state, secret reference and purpose before decrypting. The household connection toggle controls listener account creation without disabling existing owner management or use.

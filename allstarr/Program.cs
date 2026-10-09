@@ -1,6 +1,5 @@
 using allstarr.Models.Settings;
 using allstarr.Services;
-using allstarr.Services.Qobuz;
 using allstarr.Core.Providers.Qobuz;
 using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
@@ -378,26 +377,22 @@ else
     throw new InvalidOperationException($"Unsupported backend type '{backendType}'.");
 }
 
-builder.Services.AddSingleton<QobuzBundleService>();
 
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<DeezerProvider>());
-builder.Services.AddSingleton<QobuzMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
-    provider.GetRequiredService<QobuzMetadataService>());
+    provider.GetRequiredService<QobuzProvider>());
 builder.Services.AddSingleton<AppleMusicMetadataService>();
 builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
     provider.GetRequiredService<AppleMusicMetadataService>());
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddDeezerProvider();
-builder.Services.AddQobuzDownloadCapability();
+builder.Services.AddQobuzProvider();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicKitPlaylistCapability();
 builder.Services.AddAppleDownloadCapability();
 builder.Services.AddBuiltInLyricsCapabilities();
 
-builder.Services.AddSingleton<IConcreteDownloadService>(provider =>
-    provider.GetRequiredService<QobuzDownloadService>());
 builder.Services.AddSingleton<IConcreteDownloadService, AppleMusicDownloadService>();
 
 builder.Services.AddSingleton<ExtensionManager>();

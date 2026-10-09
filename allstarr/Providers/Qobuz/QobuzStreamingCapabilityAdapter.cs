@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Models.Settings;
-using allstarr.Services.Qobuz;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.Qobuz;
@@ -12,14 +11,14 @@ public sealed class QobuzStreamingCapabilityAdapter : IProviderStreamingCapabili
 {
     private readonly HttpClient http;
     private readonly IProviderAccountSecretAccessor secrets;
-    private readonly QobuzDownloadService downloads;
+    private readonly QobuzMediaClient downloads;
     private readonly string? configuredQuality;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public QobuzStreamingCapabilityAdapter(
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
-        QobuzDownloadService downloads,
+        QobuzMediaClient downloads,
         IOptions<QobuzSettings> settings)
         : this(clients.CreateClient(QobuzDownloadCapabilityAdapter.HttpClientName),
             secrets, downloads, settings.Value.Quality)
@@ -28,7 +27,7 @@ public sealed class QobuzStreamingCapabilityAdapter : IProviderStreamingCapabili
     public QobuzStreamingCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
-        QobuzDownloadService downloads,
+        QobuzMediaClient downloads,
         string? configuredQuality)
     {
         this.http = http;

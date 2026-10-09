@@ -5,50 +5,64 @@ using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.Spotify;
+using allstarr.Services;
+using System.Net;
 
-namespace allstarr.Services.Qobuz;
+namespace allstarr.Core.Providers.Qobuz;
 
-public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataService
+public sealed class QobuzProvider : ProviderCatalogMetadata, IConcreteMetadataService
 {
-    public string ProviderId => "qobuz";
-
-    private readonly HttpClient _httpClient;
-    private readonly SubsonicSettings _settings;
-    private readonly QobuzBundleService _bundleService;
-    private readonly ILogger<QobuzMetadataService> _logger;
-    private readonly string? _userAuthToken;
-    private readonly string? _userId;
-
+    public const string StableProviderId = "qobuz";
     private const string BaseUrl = "https://www.qobuz.com/api.json/0.2/";
+    private const int PageSize = 500;
+    private const int MaximumPages = 200;
+    private readonly HttpClient _httpClient;
+    private readonly QobuzBundleService _bundleService;
+    private readonly IProviderAccountSecretAccessor _secrets;
+    private readonly ILogger<QobuzProvider> _logger;
+    private readonly string? _userAuthToken;
 
-    public QobuzMetadataService(
-        IHttpClientFactory httpClientFactory,
-        IOptions<SubsonicSettings> settings,
-        IOptions<QobuzSettings> qobuzSettings,
-        QobuzBundleService bundleService,
-        ILogger<QobuzMetadataService> logger)
+    public QobuzProvider(HttpClient http, QobuzBundleService bundles,
+        IProviderAccountSecretAccessor secrets, ILogger<QobuzProvider> logger)
+        : this(http, bundles, secrets, logger, null) { }
+
+    private QobuzProvider(HttpClient http, QobuzBundleService bundles,
+        IProviderAccountSecretAccessor secrets, ILogger<QobuzProvider> logger, string? token)
+        : base(StableProviderId)
     {
-        _httpClient = httpClientFactory.CreateClient();
-        _settings = settings.Value;
-        _bundleService = bundleService;
+        _httpClient = http;
+        _bundleService = bundles;
+        _secrets = secrets;
         _logger = logger;
-
-        var qobuzConfig = qobuzSettings.Value;
-        _userAuthToken = qobuzConfig.UserAuthToken;
-        _userId = qobuzConfig.UserId;
-
-        _httpClient.DefaultRequestHeaders.Add("User-Agent",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
+        _userAuthToken = token;
     }
 
-    public Task<List<Song>> SearchSongsAsync(
+    internal override Task<T> UseCatalogAsync<T>(
+        ProviderExecutionContext context, Func<ProviderCatalogMetadata, Task<T>> operation)
+    {
+        if (context.Account == null) return operation(this);
+        return _secrets.UseAsync(context.Account, bytes =>
+        {
+            using var document = JsonDocument.Parse(bytes);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("userAuthToken", out var token) ||
+                token.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(token.GetString()) ||
+                !root.TryGetProperty("userId", out var user) ||
+                user.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(user.GetString()))
+                throw new HttpRequestException("Qobuz account credentials are incomplete.", null, HttpStatusCode.Unauthorized);
+            return operation(new QobuzProvider(_httpClient, _bundleService, _secrets, _logger, token.GetString()));
+        }, context.CancellationToken);
+    }
+
+    public override Task<List<Song>> SearchSongsAsync(
         string query,
         int limit = 20,
         CancellationToken cancellationToken = default) =>
         SearchAsync(query, limit, "track", "tracks", ParseQobuzTrack, "songs", cancellationToken);
 
-    public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
+    public override async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(isrc))
         {
@@ -61,13 +75,13 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
             song.Isrc.Equals(isrc, StringComparison.OrdinalIgnoreCase));
     }
 
-    public Task<List<Album>> SearchAlbumsAsync(
+    public override Task<List<Album>> SearchAlbumsAsync(
         string query,
         int limit = 20,
         CancellationToken cancellationToken = default) =>
         SearchAsync(query, limit, "album", "albums", ParseQobuzAlbum, "albums", cancellationToken);
 
-    public Task<List<Artist>> SearchArtistsAsync(
+    public override Task<List<Artist>> SearchArtistsAsync(
         string query,
         int limit = 20,
         CancellationToken cancellationToken = default) =>
@@ -84,9 +98,9 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
     {
         try
         {
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var url = $"{BaseUrl}{endpoint}/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
-            using var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return [];
 
             using var result = JsonDocument.Parse(
@@ -100,7 +114,7 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to search {ResultKind} for query: {Query}", resultKind, query);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return [];
         }
     }
@@ -127,16 +141,16 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         };
     }
 
-    public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
 
         try
         {
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var url = $"{BaseUrl}track/get?track_id={externalId}&app_id={appId}";
 
-            using var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -151,21 +165,21 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to get song {ExternalId}", externalId);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return null;
         }
     }
 
-    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
 
         try
         {
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var url = $"{BaseUrl}album/get?album_id={externalId}&app_id={appId}";
 
-            using var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -176,41 +190,27 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
 
             var album = ParseQobuzAlbum(albumElement);
 
-            if (albumElement.TryGetProperty("tracks", out var tracks) &&
-                tracks.TryGetProperty("items", out var tracksData))
-            {
-                foreach (var track in tracksData.EnumerateArray())
-                {
-                    var song = ParseQobuzTrack(track);
-
-                    // Embedded track objects can omit their album identity.
-                    song.Album = album.Title;
-                    song.AlbumId = album.Id;
-                    song.AlbumArtist = album.Artist;
-
-                    album.Songs.Add(song);
-                }
-            }
+            album.Songs = await GetAlbumTracksAsync(album, appId, cancellationToken, albumElement);
 
             return album;
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to get album {ExternalId}", externalId);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return null;
         }
     }
 
-    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
 
         try
         {
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}";
 
-            using var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -223,12 +223,12 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to get artist {ExternalId}", externalId);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return null;
         }
     }
 
-    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return new List<Album>();
 
@@ -236,7 +236,7 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         {
             var albums = new List<Album>();
             var seenAlbumIds = new HashSet<string>(StringComparer.Ordinal);
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             int offset = 0;
             const int limit = 500;
 
@@ -245,7 +245,7 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
             {
                 var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}&limit={limit}&offset={offset}&extra=albums";
 
-                using var response = await GetWithAuthAsync(url, cancellationToken);
+                using var response = await GetWithAuthAsync(url, appId, cancellationToken);
                 if (!response.IsSuccessStatusCode) break;
 
                 var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -277,19 +277,19 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to get artist albums for {ExternalId}", externalId);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return new List<Album>();
         }
     }
 
-    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return new List<Song>();
 
         try
         {
             var albums = await GetArtistAlbumsAsync(externalProvider, externalId, cancellationToken);
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var songs = new List<Song>();
             var seenTrackIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var album in albums)
@@ -302,69 +302,94 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to get artist tracks for {ExternalId}", externalId);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return new List<Song>();
         }
     }
 
     private async Task<List<Song>> GetAlbumTracksAsync(
-        Album listedAlbum,
-        string appId,
-        CancellationToken cancellationToken)
+        Album listedAlbum, string appId, CancellationToken cancellationToken, JsonElement? firstPage = null)
     {
         var songs = new List<Song>();
         var offset = 0;
-        const int limit = 500;
-        while (true)
+        for (var page = 0; page < MaximumPages; page++)
         {
-            var url = $"{BaseUrl}album/get?album_id={Uri.EscapeDataString(listedAlbum.ExternalId!)}&app_id={appId}&limit={limit}&offset={offset}&extra=tracks";
-            using var response = await GetWithAuthAsync(url, cancellationToken);
-            if (!response.IsSuccessStatusCode) break;
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            using var result = JsonDocument.Parse(json);
-            var root = result.RootElement;
-            if (root.TryGetProperty("error", out _) ||
-                !root.TryGetProperty("tracks", out var tracks) ||
-                !tracks.TryGetProperty("items", out var items)) break;
-
-            var album = ParseQobuzAlbum(root);
-            var largeArtwork = GetLargeCoverArtUrl(root);
-            var itemsArray = items.EnumerateArray().ToList();
-            if (itemsArray.Count == 0) break;
-            foreach (var track in itemsArray)
+            cancellationToken.ThrowIfCancellationRequested();
+            JsonDocument? document = null;
+            try
             {
-                var song = ParseQobuzTrack(track);
-                song.Album = album.Title;
-                song.AlbumId = album.Id;
-                song.AlbumArtist = album.Artist;
-                song.CoverArtUrl ??= album.CoverArtUrl;
-                song.CoverArtUrlLarge ??= largeArtwork;
-                if (string.IsNullOrWhiteSpace(song.Artist)) song.Artist = album.Artist;
-                song.ArtistId ??= album.ArtistId;
-                songs.Add(song);
+                JsonElement root;
+                if (page == 0 && firstPage.HasValue) root = firstPage.Value;
+                else
+                {
+                    var url = $"{BaseUrl}album/get?album_id={Uri.EscapeDataString(listedAlbum.ExternalId!)}&app_id={appId}&limit={PageSize}&offset={offset}&extra=tracks";
+                    using var response = await GetWithAuthAsync(url, appId, cancellationToken);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        if (offset > 0) throw InvalidPaging();
+                        return songs;
+                    }
+                    document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                    root = document.RootElement;
+                }
+                if (root.TryGetProperty("error", out _) ||
+                    !root.TryGetProperty("tracks", out var tracks) ||
+                    !tracks.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+                {
+                    if (offset > 0) throw InvalidPaging();
+                    return songs;
+                }
+                ValidateOffset(tracks, offset);
+                var count = items.GetArrayLength();
+                if (count == 0) break;
+                var album = ParseQobuzAlbum(root);
+                var largeArtwork = GetLargeCoverArtUrl(root);
+                foreach (var track in items.EnumerateArray())
+                {
+                    var song = ParseQobuzTrack(track);
+                    song.Album = album.Title;
+                    song.AlbumId = album.Id;
+                    song.AlbumArtist = album.Artist;
+                    song.CoverArtUrl ??= album.CoverArtUrl;
+                    song.CoverArtUrlLarge ??= largeArtwork;
+                    if (string.IsNullOrWhiteSpace(song.Artist)) song.Artist = album.Artist;
+                    song.ArtistId ??= album.ArtistId;
+                    songs.Add(song);
+                }
+                offset += count;
+                if (!HasNextPage(tracks, count, offset)) break;
+                if (page == MaximumPages - 1) throw InvalidPaging();
             }
-
-            offset += itemsArray.Count;
-            var total = tracks.TryGetProperty("total", out var totalElement) && totalElement.TryGetInt32(out var value)
-                ? value
-                : album.SongCount;
-            if (total.HasValue ? offset >= total : itemsArray.Count < limit) break;
+            finally { document?.Dispose(); }
         }
-        return songs
-            .OrderBy(song => song.DiscNumber ?? 1)
-            .ThenBy(song => song.Track ?? int.MaxValue)
-            .ToList();
+        return songs.OrderBy(song => song.DiscNumber ?? 1).ThenBy(song => song.Track ?? int.MaxValue).ToList();
     }
 
-    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    private static bool HasNextPage(JsonElement envelope, int count, int offset)
+    {
+        var limit = envelope.TryGetProperty("limit", out var pageLimit) && pageLimit.TryGetInt32(out var reportedLimit) &&
+                    reportedLimit > 0 ? Math.Min(reportedLimit, PageSize) : PageSize;
+        return count >= limit ||
+               (envelope.TryGetProperty("total", out var total) && total.TryGetInt32(out var value) && offset < value);
+    }
+
+    private static void ValidateOffset(JsonElement envelope, int offset)
+    {
+        if (envelope.TryGetProperty("offset", out var value) &&
+            (!value.TryGetInt32(out var actual) || actual != offset)) throw InvalidPaging();
+    }
+
+    private static HttpRequestException InvalidPaging() =>
+        new("Qobuz returned inconsistent pagination.", null, HttpStatusCode.BadGateway);
+
+    public override async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         try
         {
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var url = $"{BaseUrl}playlist/search?query={Uri.EscapeDataString(query)}&limit={limit}&app_id={appId}";
 
-            using var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return new List<ExternalPlaylist>();
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -384,21 +409,21 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to search playlists for query: {Query}", query);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return new List<ExternalPlaylist>();
         }
     }
 
-    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (externalProvider != "qobuz") return null;
 
         try
         {
-            var appId = await _bundleService.GetAppIdAsync();
+            var appId = await _bundleService.GetAppIdAsync(cancellationToken);
             var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}";
 
-            using var response = await GetWithAuthAsync(url, cancellationToken);
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
 
             var json = await response.Content.ReadAsStringAsync(cancellationToken);
@@ -411,65 +436,54 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         }
         catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
         {
-            _logger.LogError(ex, "Failed to get playlist {ExternalId}", externalId);
+            _logger.LogWarning("Qobuz catalog response could not be read.");
             return null;
         }
     }
 
-    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
-        if (externalProvider != "qobuz") return new List<Song>();
-
-        try
+        if (externalProvider != StableProviderId) return [];
+        var appId = await _bundleService.GetAppIdAsync(cancellationToken);
+        var songs = new List<Song>();
+        for (var page = 0; page < MaximumPages; page++)
         {
-            var appId = await _bundleService.GetAppIdAsync();
-            var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}&extra=tracks";
-
-            using var response = await GetWithAuthAsync(url, cancellationToken);
-            if (!response.IsSuccessStatusCode) return new List<Song>();
-
-            var json = await response.Content.ReadAsStringAsync(cancellationToken);
-            using var playlistDocument = JsonDocument.Parse(json);
-            var playlistElement = playlistDocument.RootElement;
-
-            if (playlistElement.TryGetProperty("error", out _)) return new List<Song>();
-
-            var songs = new List<Song>();
-
-            // Project the playlist as one disc so Jellyfin preserves its ordering.
-            var playlistName = playlistElement.TryGetProperty("name", out var nameEl)
-                ? nameEl.GetString() ?? "Unknown Playlist"
-                : "Unknown Playlist";
-
-            if (playlistElement.TryGetProperty("tracks", out var tracks) &&
-                tracks.TryGetProperty("items", out var tracksData))
+            cancellationToken.ThrowIfCancellationRequested();
+            var offset = songs.Count;
+            var url = $"{BaseUrl}playlist/get?playlist_id={Uri.EscapeDataString(externalId)}&app_id={appId}&extra=tracks&limit={PageSize}&offset={offset}";
+            using var response = await GetWithAuthAsync(url, appId, cancellationToken);
+            if (!response.IsSuccessStatusCode)
             {
-                int trackIndex = 1;
-                foreach (var track in tracksData.EnumerateArray())
-                {
-                    var song = ParseQobuzTrack(track);
-
-                    song.Album = playlistName;
-                    song.Track = trackIndex;
-
-                    song.DiscNumber = null;
-
-                    songs.Add(song);
-                    trackIndex++;
-                }
+                if (offset > 0) throw InvalidPaging();
+                return songs;
             }
-
-            return songs;
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            var root = document.RootElement;
+            if (root.TryGetProperty("error", out _) || !root.TryGetProperty("tracks", out var tracks) ||
+                !tracks.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array)
+            {
+                if (offset > 0) throw InvalidPaging();
+                return songs;
+            }
+            ValidateOffset(tracks, offset);
+            var count = items.GetArrayLength();
+            if (count == 0) return songs;
+            var name = root.TryGetProperty("name", out var nameElement) ? nameElement.GetString() : null;
+            foreach (var track in items.EnumerateArray())
+            {
+                var song = ParseQobuzTrack(track);
+                song.Album = name ?? "Unknown Playlist";
+                song.Track = songs.Count + 1;
+                song.DiscNumber = null;
+                songs.Add(song);
+            }
+            if (!HasNextPage(tracks, count, songs.Count)) return songs;
         }
-        catch (Exception ex) when (ShouldHandle(ex, cancellationToken))
-        {
-            _logger.LogError(ex, "Failed to get playlist tracks for {ExternalId}", externalId);
-            return new List<Song>();
-        }
+        throw InvalidPaging();
     }
 
     private static bool ShouldHandle(Exception exception, CancellationToken cancellationToken) =>
-        exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested;
+        exception is not (OperationCanceledException or HttpRequestException);
 
     private ExternalPlaylist ParseQobuzPlaylist(JsonElement playlist)
     {
@@ -509,7 +523,7 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
 
         return new ExternalPlaylist
         {
-            Id = Common.PlaylistIdHelper.CreatePlaylistId("qobuz", externalId),
+            Id = PlaylistIdHelper.CreatePlaylistId("qobuz", externalId),
             Name = playlist.TryGetProperty("name", out var name)
                 ? name.GetString() ?? ""
                 : "",
@@ -530,11 +544,10 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
         };
     }
 
-    private async Task<HttpResponseMessage> GetWithAuthAsync(string url, CancellationToken cancellationToken = default)
+    private async Task<HttpResponseMessage> GetWithAuthAsync(string url, string appId, CancellationToken cancellationToken = default)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
 
-        var appId = await _bundleService.GetAppIdAsync();
         request.Headers.Add("X-App-Id", appId);
 
         if (!string.IsNullOrEmpty(_userAuthToken))
@@ -542,7 +555,12 @@ public sealed class QobuzMetadataService : TrackParserBase, IConcreteMetadataSer
             request.Headers.Add("X-User-Auth-Token", _userAuthToken);
         }
 
-        return await _httpClient.SendAsync(request, cancellationToken);
+        request.Headers.UserAgent.ParseAdd("Mozilla/5.0");
+        var response = await _httpClient.SendAsync(request, cancellationToken);
+        if (response.IsSuccessStatusCode || response.StatusCode == HttpStatusCode.NotFound) return response;
+        var status = response.StatusCode;
+        response.Dispose();
+        throw new HttpRequestException("Qobuz catalog request failed.", null, status);
     }
 
     private Song ParseQobuzTrack(JsonElement track)
