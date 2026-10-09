@@ -28,8 +28,8 @@ public sealed class CurrentProviderSupportCatalogTests
     [Fact]
     public void Matrix_AdvertisesTypedPlaylistSourcesAndKeepsMissingLanesUnavailable()
     {
-        AssertState("apple-download", "lyrics", CurrentProviderSupportCatalog.Supported);
-        AssertState("apple-download", "streaming", CurrentProviderSupportCatalog.Supported);
+        AssertState("apple-musickit", "lyrics", CurrentProviderSupportCatalog.Supported);
+        AssertState("apple-musickit", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "playlist", CurrentProviderSupportCatalog.Supported);
         AssertState("apple-musickit", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("spotify", "playlist", CurrentProviderSupportCatalog.Supported);
@@ -55,17 +55,15 @@ public sealed class CurrentProviderSupportCatalogTests
     }
 
     [Fact]
-    public void Matrix_SeparatesMusicKitFromTheWrapperDownloadAccount()
+    public void Matrix_CombinesAppleCapabilitiesUnderThePersonalAccount()
     {
-        var download = Assert.Single(CurrentProviderSupportCatalog.All, item => item.Id == "apple-download");
-        var musicKit = Assert.Single(CurrentProviderSupportCatalog.All, item => item.Id == "apple-musickit");
-
-        Assert.Equal("global", download.AccountScope);
-        Assert.Equal("user", musicKit.AccountScope);
-        Assert.Equal("apple-download", download.RuntimeId);
-        Assert.Equal("apple-musickit", musicKit.RuntimeId);
-        Assert.Equal("Apple Music – GAMDL", download.Name);
-        Assert.Equal("Apple Music Developer API – Personal Library", musicKit.Name);
+        Assert.DoesNotContain(CurrentProviderSupportCatalog.All, item => item.Id == "apple-download");
+        var apple = Assert.Single(CurrentProviderSupportCatalog.All, item => item.Id == "apple-musickit");
+        Assert.Equal("user", apple.AccountScope);
+        Assert.Equal("apple-musickit", apple.RuntimeId);
+        Assert.Equal("Apple Music", apple.Name);
+        Assert.Contains("Media User Token", apple.Configuration);
+        Assert.DoesNotContain("Developer", apple.Configuration);
     }
 
     private static void AssertState(string providerId, string capabilityId, string expected)

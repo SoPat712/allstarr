@@ -35,6 +35,43 @@ public sealed class ProviderRouterTests
     }
 
     [Fact]
+    public async Task Explicit_public_read_opt_in_skips_all_account_resolution()
+    {
+        var accounts = new FakeAccountResolver();
+        var http = new HttpClient();
+        var client = AppleProviderTestFactory.Client();
+        var router = Router([allstarr.Core.Providers.AppleMusicKit.AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(
+            new(client, http), new(client))], accounts);
+        var actor = new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        var metadata = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata, ["apple-musickit"], actor: actor));
+        var playlist = await router.PlanAsync<IProviderPlaylistCapability>(Request(ProviderCapabilityKind.Playlist, ["apple-musickit"], actor: actor));
+        Assert.Null(Assert.Single(metadata.Candidates).Context.Account);
+        Assert.Null(Assert.Single(playlist.Candidates).Context.Account);
+        Assert.Equal(0, accounts.CallCount);
+    }
+
+    [Theory]
+    [InlineData("apple-download")]
+    [InlineData("applemusic")]
+    public async Task AppleAliases_PreserveResourceIdentityAndApplyRouteRestrictions(string alias)
+    {
+        var identity = new FakeIdentityService(ProviderIdentityVerification.Verified);
+        var client = AppleProviderTestFactory.Client();
+        var router = Router([allstarr.Core.Providers.AppleMusicKit.AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(
+            new(client, new HttpClient()), new(client))], identity: identity);
+        var allowed = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata,
+            [alias, "apple-musickit"], source: Track(alias, "123"), policy: Policy(allowedProviders: [alias])));
+        var candidate = Assert.Single(allowed.Candidates);
+        Assert.Equal("apple-musickit", candidate.Provider.Id);
+        Assert.Equal("123", candidate.TrackId!.Value);
+        Assert.Empty(identity.Translations);
+        var denied = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata,
+            [alias], source: Track(alias, "123"), states: [new(alias, capabilityEnabled: false)]));
+        Assert.Empty(denied.Candidates);
+        Assert.Equal("capability-disabled", Assert.Single(denied.Decision.Candidates).ReasonCode);
+    }
+
+    [Fact]
     public async Task PublicRead_RejectsRequestedAccountAndRevisionHints()
     {
         var accounts = new FakeAccountResolver();

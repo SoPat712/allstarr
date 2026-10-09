@@ -51,12 +51,13 @@ public sealed record EffectiveProviderPolicySnapshot(
     {
         var available = availableProviders
             .Where(item => !string.IsNullOrWhiteSpace(item))
-            .Select(item => item.Trim().ToLowerInvariant())
-            .Where(item => !DisabledProviders.Contains(item))
+            .Select(item => allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(item))
+            .Where(item => !DisabledProviders.Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).Contains(item))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var availableSet = available.ToHashSet(StringComparer.Ordinal);
         return GetProviderOrder(capability)
+            .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
             .Where(availableSet.Contains)
             .Concat(available.Order(StringComparer.Ordinal))
             .Distinct(StringComparer.Ordinal)
@@ -101,8 +102,9 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         var preferences = await settings.GetPreferencesAsync(userId, cancellationToken);
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
             item => item.Capability,
-            item => ((string[])values[item.SettingKey].Value).ToImmutableArray());
+            item => ((string[])values[item.SettingKey].Value).Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).Distinct(StringComparer.Ordinal).ToImmutableArray());
         var disabled = ((string[])values["Providers:Disabled"].Value)
+            .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
         return new EffectiveProviderPolicySnapshot(

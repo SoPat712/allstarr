@@ -1050,49 +1050,26 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
-            Id = "apple-download",
-            Name = "Apple Music – GAMDL",
-            Icon = "applemusic",
-            Status = ProviderStatus("apple-download", string.IsNullOrWhiteSpace(_appleMusicSettings.BaseUrl) ? "needs_config" : "unknown", disabledProviders),
-            Categories = ["metadata", "streaming", "download", "lyrics"],
-            ConnectionKind = "operator_managed",
-            Audience = "everyone",
-            ImplementationOrigin = "built_in",
-            RouteId = "builtin:apple-download",
-            ConfigSchema =
-            [
-                Field("APPLE_DOWNLOAD_URL", "External provider URL", "url", "appleDownload.baseUrl")
-            ]
-        },
-        new()
-        {
             Id = "apple-musickit",
-            Name = "Apple Music Developer API – Personal Library",
+            Name = "Apple Music",
             Icon = "applemusic",
             Status = "available",
-            Categories = ["playlist"],
-            Notes = ["Requires Apple Developer Program", "Personal playlists", "Lyrics use a separate provider"],
+            Categories = ["metadata", "playlist", "streaming", "download", "lyrics"],
+            Notes = ["Public catalog", "Personal library and playlists", "Optional GAMDL downloads"],
+            ConfigSchema = [Field("APPLE_DOWNLOAD_URL", "Optional download gateway URL", "url", "appleDownload.baseUrl")],
             AccountSettings =
             [
                 new AdminUiConfigField
                 {
-                    Key = "DeveloperToken",
-                    Label = "Apple developer token",
-                    Type = "password",
-                    Sensitive = true,
-                    Required = true,
-                    Ownership = "provider-account",
-                    HelpText = "The MusicKit developer token issued by your Apple developer integration. It authorizes Apple Music API access but does not replace the per-user token."
+                    Key = "musicUserToken", Label = "Media User Token", Type = "password", Sensitive = true,
+                    Required = true, Ownership = "provider-account",
+                    HelpText = "Your Apple Music media-user-token. Used only for your library, playlists and optional downloads."
                 },
                 new AdminUiConfigField
                 {
-                    Key = "MusicUserToken",
-                    Label = "Music User Token",
-                    Type = "password",
-                    Sensitive = true,
-                    Required = true,
-                    Ownership = "provider-account",
-                    HelpText = "The per-user Apple Music authorization token used only to browse and import that user's playlists. Lyrics come from a separate lyrics-capable provider."
+                    Key = "storefront", Label = "Storefront", Type = "text", Required = true,
+                    DefaultValueJson = "\"us\"", Ownership = "provider-account",
+                    HelpText = "Two-letter country code for your Apple Music account, such as us."
                 }
             ]
         },
@@ -1411,7 +1388,7 @@ public class AdminUiController : ControllerBase
         var providers = (policy?.GetProviderOrder(capability) ??
                 (_configuration[definition.BootstrapKey] ?? definition.DefaultValue)
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .Select(p => p.ToLowerInvariant())
+            .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
         if (_providerRegistry != null)

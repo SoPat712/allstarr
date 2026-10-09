@@ -9,10 +9,11 @@ an explicit `ProviderExecutionContext`, so provider code never has to discover t
 policy, deadline, cancellation token, or idempotency key from ambient HTTP state.
 
 Anonymous public artwork uses the identity-free `PublicRead` actor. Routing accepts it only for metadata
-declared `ProviderAccountRequirement.None`, without account or revision hints. It cannot resolve a provider
-account. Track, album, and artist artwork uses the existing metadata lookups; public playlist covers use the
+declared `ProviderAccountRequirement.None`, or built-in metadata/playlist capabilities that explicitly opt into public reads with an optional account. Public requests cannot carry account or revision hints or resolve a provider account. Each adapter still rejects private resource operations without its selected account. Track, album, and artist artwork uses the existing metadata lookups; public playlist covers use the
 optional `GetPlaylistArtworkAsync` metadata hook, which returns `NotSupported` by default. Private playlist
 capabilities continue to require the authenticated viewer and an eligible account.
+
+Built-in registrations may reserve explicit compatibility aliases. Routing resolves them before account selection and identity translation; extensions cannot claim those aliases. Apple keeps `apple-download` and `applemusic` readable while its one implementation uses the existing `apple-musickit` account identity. Catalog protocol IDs retain the `apple-download` prefix.
 
 External IDs keep the provider, resource kind, catalog, and opaque source value separate. They never contain
 account access. Cross-provider use needs a verified identity link supplied by the host.

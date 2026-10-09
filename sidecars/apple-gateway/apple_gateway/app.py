@@ -8,29 +8,21 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any, AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 
-import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 
-from .catalog import CatalogClient
 from .config import Settings
-from .jobs import DownloadJobManager
-from .models import DownloadJobRequest, DownloadJobView, Login2faRequest, LoginRequest
+from .models import Login2faRequest, LoginRequest, MediaAccount
 from .runner import BoundedProcessRunner, ProcessFailure
-from .security import safe_apple_url, song_url
+from .security import media_account, song_url
 from .wrapper import WrapperClient, WrapperResponse
 
-API_VERSION = "1.0.0"
+API_VERSION = "2.0.0"
 CAPABILITIES = (
-    "metadata-search-song",
-    "metadata-search-album",
-    "metadata-search-artist",
-    "metadata-song",
-    "metadata-album",
-    "metadata-artist",
     "stream-audio-song",
     "download-audio-song",
     "synced-lyrics-artifact",
@@ -84,28 +76,57 @@ def _forward(response: WrapperResponse) -> JSONResponse:
     return JSONResponse(status_code=response.status_code, content=response.payload)
 
 
+def _account(request: Request) -> MediaAccount:
+    names = ("Music-User-Token", "X-Apple-Storefront", "X-Allstarr-Account-Context")
+    values = [request.headers.getlist(name) for name in names]
+    if any(len(value) != 1 for value in values):
+        raise HTTPException(status_code=401, detail="account_context_required")
+    try:
+        return media_account(*(value[0] for value in values))
+    except ValueError:
+        raise HTTPException(status_code=401, detail="account_context_required") from None
+
+
+def _song_request(account: MediaAccount, song_id: str, quality: str) -> str:
+    try:
+        url = song_url(account.storefront, song_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="invalid_song_id") from None
+    _codec(quality)
+    return url
+
+
+def _cache_key(account: MediaAccount, song_id: str, quality: str) -> str:
+    return hashlib.sha256(f"{account.scope}\n{account.storefront}\n{song_id}\n{quality.lower()}".encode()).hexdigest()
+
+
+@dataclass(slots=True)
+class _Preparation:
+    task: asyncio.Task[Path]
+    waiters: int = 0
+
+
 def create_app(
     settings: Settings | None = None,
     wrapper: WrapperClient | None = None,
-    catalog: CatalogClient | None = None,
     runner: BoundedProcessRunner | None = None,
 ) -> FastAPI:
     config = settings or Settings.from_env()
     wrapper_client = wrapper or WrapperClient(config.wrapper_url, config.wrapper_timeout_seconds)
-    catalog_client = catalog or CatalogClient(config.storefront)
     process_runner = runner or BoundedProcessRunner(config)
-    jobs = DownloadJobManager(process_runner, config.data_root)
-    preparation_tasks: dict[str, asyncio.Task[Path]] = {}
+    preparations: dict[str, _Preparation] = {}
     preparation_lock = asyncio.Lock()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         config.prepare()
-        jobs.start()
         yield
-        await jobs.close()
+        async with preparation_lock:
+            tasks = [entry.task for entry in preparations.values()]
+            for task in tasks:
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await wrapper_client.close()
-        await catalog_client.close()
 
     application = FastAPI(
         title="Allstarr Apple download gateway",
@@ -151,111 +172,74 @@ def create_app(
     async def login_2fa(request: Login2faRequest) -> JSONResponse:
         return _forward(await wrapper_client.login_2fa(request.code))
 
-    @application.get("/api/search")
-    async def search(
-        q: str = Query(min_length=1, max_length=500),
-        type: str = Query(default="song", pattern="^(song|album|artist)$"),
-        limit: int = Query(default=20, ge=1, le=100),
-    ) -> list[dict[str, Any]]:
+    async def coalesce(key: str, prepare: Callable[[], Awaitable[Path]]) -> Path:
+        async with preparation_lock:
+            entry = preparations.get(key)
+            if entry is None:
+                entry = _Preparation(asyncio.create_task(prepare()))
+                preparations[key] = entry
+            entry.waiters += 1
         try:
-            return await catalog_client.search(q, type, limit)
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
+            return await asyncio.shield(entry.task)
+        finally:
+            canceled = None
+            async with preparation_lock:
+                entry.waiters -= 1
+                if entry.waiters == 0:
+                    preparations.pop(key, None)
+                    if not entry.task.done():
+                        entry.task.cancel()
+                        canceled = entry.task
+            if canceled is not None:
+                await asyncio.gather(canceled, return_exceptions=True)
 
-    @application.get("/api/song/{song_id}")
-    async def song(song_id: str) -> dict[str, Any]:
-        try:
-            result = await catalog_client.song(song_id)
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
-        if result is None:
-            raise HTTPException(status_code=404, detail="song_not_found")
-        return result
+    def lyrics_path(key: str) -> Path:
+        return config.data_root / "lyrics" / f"{key}.lrc"
 
-    @application.get("/api/album/{album_id}")
-    async def album(album_id: str) -> dict[str, Any]:
+    def cache_lyrics(artifact: Path, key: str) -> Path:
+        target = lyrics_path(key)
+        target.parent.mkdir(parents=True, exist_ok=True, mode=0o750)
+        partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
         try:
-            result = await catalog_client.album(album_id)
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
-        if result is None:
-            raise HTTPException(status_code=404, detail="album_not_found")
-        return result
-
-    @application.get("/api/artist/{artist_id}")
-    async def artist(artist_id: str) -> dict[str, Any]:
-        try:
-            result = await catalog_client.artist(artist_id)
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
-        if result is None:
-            raise HTTPException(status_code=404, detail="artist_not_found")
-        return result
-
-    @application.get("/api/artist/{artist_id}/albums")
-    async def artist_albums(
-        artist_id: str,
-        limit: int = Query(default=100, ge=1, le=200),
-    ) -> list[dict[str, Any]]:
-        try:
-            return await catalog_client.artist_albums(artist_id, limit)
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
-
-    @application.get("/api/artist/{artist_id}/tracks")
-    async def artist_tracks(
-        artist_id: str,
-        limit: int = Query(default=100, ge=1, le=200),
-    ) -> list[dict[str, Any]]:
-        try:
-            return await catalog_client.artist_tracks(artist_id, limit)
-        except (httpx.HTTPError, ValueError):
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
+            shutil.copyfile(artifact, partial)
+            partial.replace(target)
+        finally:
+            partial.unlink(missing_ok=True)
+        return target
 
     async def download_song_source(
+        account: MediaAccount,
         song_id: str,
         quality: str,
-        fallback_quality: str | None = None,
+        fallback_quality: str | None,
     ) -> tuple[Path, Path]:
-        try:
-            song_url(config.storefront, song_id)
-            canonical_url = await catalog_client.song_url(song_id)
-            if canonical_url is None:
-                raise HTTPException(status_code=404, detail="song_not_found")
-            url, _ = safe_apple_url(canonical_url)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="invalid_song_id") from None
-        except httpx.HTTPError:
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
-        request_id = uuid.uuid4().hex
-        root = config.data_root / "artifacts" / request_id
+        url = _song_request(account, song_id, quality)
+        root = config.data_root / "artifacts" / uuid.uuid4().hex
         try:
             try:
-                artifacts = await process_runner.download(url, _codec(quality), root / "output", root / "temporary")
+                artifacts = await process_runner.download(
+                    url, _codec(quality), root / "output", root / "temporary", media_user_token=account.token
+                )
             except ProcessFailure as exc:
                 if fallback_quality is None or exc.code not in {"artifact_missing", "gamdl_failed"}:
                     raise
                 artifacts = await process_runner.download(
-                    url,
-                    _codec(fallback_quality),
-                    root / "output-fallback",
-                    root / "temporary-fallback",
+                    url, _codec(fallback_quality), root / "output-fallback", root / "temporary-fallback",
+                    media_user_token=account.token,
                 )
             lyrics = [artifact for artifact in artifacts if artifact.suffix.lower() == ".lrc"]
             if lyrics:
-                lyrics_root = config.data_root / "lyrics"
-                lyrics_root.mkdir(exist_ok=True, mode=0o750)
-                target = lyrics_root / f"{song_id}.lrc"
-                partial = lyrics_root / f"{song_id}.lrc.partial"
-                shutil.copyfile(lyrics[0], partial)
-                partial.replace(target)
+                cache_lyrics(lyrics[0], _cache_key(account, song_id, quality))
             audio = [artifact for artifact in artifacts if artifact.suffix.lower() in {".m4a", ".flac"}]
             if not audio:
                 raise ProcessFailure("audio_artifact_missing")
             return root, audio[0]
+        except asyncio.CancelledError:
+            shutil.rmtree(root, ignore_errors=True)
+            raise
         except ProcessFailure as exc:
             shutil.rmtree(root, ignore_errors=True)
-            status = 504 if exc.code == "process_timeout" else 502
+            status = 504 if exc.code == "process_timeout" else 403 if exc.code == "account_mismatch" else 502
             raise HTTPException(status_code=status, detail=exc.code) from None
         except Exception:
             shutil.rmtree(root, ignore_errors=True)
@@ -265,7 +249,8 @@ def create_app(
         cache_root = config.data_root / "prepared"
         now = time.time()
         candidates = sorted(
-            (path for path in cache_root.glob("*") if path.is_file() and not path.name.endswith(".partial")),
+            (path for path in cache_root.glob("*")
+             if not path.is_symlink() and path.is_file() and not path.name.endswith(".partial")),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         ) if cache_root.exists() else []
@@ -279,45 +264,47 @@ def create_app(
                 return candidate
         return None
 
-    async def prepare_song(song_id: str, quality: str, fallback_quality: str | None = None) -> Path:
-        key = hashlib.sha256(f"{song_id}\n{quality}".encode()).hexdigest()
+    async def prepare_song(
+        account: MediaAccount, song_id: str, quality: str, fallback_quality: str | None = None
+    ) -> Path:
+        key = _cache_key(account, song_id, quality)
         if cached := cached_source(key):
             return cached
 
         async def prepare_and_cache() -> Path:
-            root, source = await download_song_source(song_id, quality, fallback_quality)
+            if cached := cached_source(key):
+                return cached
+            root, source = await download_song_source(account, song_id, quality, fallback_quality)
             try:
                 cache_root = config.data_root / "prepared"
-                cache_root.mkdir(exist_ok=True, mode=0o750)
+                cache_root.mkdir(parents=True, exist_ok=True, mode=0o750)
                 target = cache_root / f"{key}{source.suffix.lower()}"
-                if not target.exists():
-                    partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
+                partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
+                try:
                     shutil.copyfile(source, partial)
                     partial.replace(target)
+                finally:
+                    partial.unlink(missing_ok=True)
                 target.touch()
                 return target
             finally:
                 shutil.rmtree(root, ignore_errors=True)
 
-        async with preparation_lock:
-            task = preparation_tasks.get(key)
-            if task is None:
-                task = asyncio.create_task(prepare_and_cache())
-                preparation_tasks[key] = task
-        try:
-            return await asyncio.shield(task)
-        finally:
-            if task.done():
-                async with preparation_lock:
-                    preparation_tasks.pop(key, None)
+        return await coalesce("audio:" + key, prepare_and_cache)
 
     @application.get("/api/download/{song_id}")
-    async def download_song(song_id: str, quality: str = "alac-16-44") -> FileResponse:
-        source = await prepare_song(song_id, quality)
+    async def download_song(
+        song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account)
+    ) -> FileResponse:
+        _song_request(account, song_id, quality)
+        source = await prepare_song(account, song_id, quality)
         root = config.data_root / "artifacts" / uuid.uuid4().hex
         root.mkdir(parents=True, exist_ok=False, mode=0o750)
         try:
             artifact = await process_runner.to_flac(source, root / f"{song_id}.flac")
+        except asyncio.CancelledError:
+            shutil.rmtree(root, ignore_errors=True)
+            raise
         except ProcessFailure as exc:
             shutil.rmtree(root, ignore_errors=True)
             status = 504 if exc.code == "process_timeout" else 502
@@ -326,75 +313,68 @@ def create_app(
             shutil.rmtree(root, ignore_errors=True)
             raise HTTPException(status_code=502, detail="download_failed") from None
         return FileResponse(
-            artifact,
-            media_type="audio/flac",
-            filename=f"{song_id}.flac",
+            artifact, media_type="audio/flac", filename=f"{song_id}.flac",
             background=BackgroundTask(shutil.rmtree, root, ignore_errors=True),
         )
 
     @application.get("/api/stream/{song_id}")
-    async def stream_song(song_id: str, quality: str = "alac-16-44") -> StreamingResponse:
+    async def stream_song(
+        song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account)
+    ) -> StreamingResponse:
+        _song_request(account, song_id, quality)
+
         async def content() -> AsyncIterator[bytes]:
-            # Open the response while Apple prepares the unchanged audio. Keep the
-            # empty tag short: clients may count its bytes when seeking the cached file.
+            # Keep the existing immediate empty tag while this account prepares media.
             yield FLAC_GUIDANCE_PREFIX
-            source = await prepare_song(song_id, quality, "aac-web")
+            source = await prepare_song(account, song_id, quality, "aac-web")
             async for chunk in process_runner.stream_flac(source):
                 yield chunk
 
-        return StreamingResponse(
-            content(),
-            media_type="audio/flac",
-            headers={
-                "Content-Disposition": f'inline; filename="{song_id}.flac"',
-                "Cache-Control": "no-store",
-                "X-Accel-Buffering": "no",
-            },
-        )
+        return StreamingResponse(content(), media_type="audio/flac", headers={
+            "Content-Disposition": f'inline; filename="{song_id}.flac"',
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+        })
 
+    @application.head("/api/download/{song_id}")
     @application.head("/api/stream/{song_id}")
-    async def head_stream(song_id: str, quality: str = "alac-16-44") -> Response:
-        try:
-            song_url(config.storefront, song_id)
-            _codec(quality)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="invalid_song_id") from None
-        response = Response(
-            media_type="audio/flac",
-            headers={"Content-Disposition": f'inline; filename="{song_id}.flac"'},
-        )
+    async def head_stream(
+        song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account)
+    ) -> Response:
+        _song_request(account, song_id, quality)
+        response = Response(media_type="audio/flac", headers={
+            "Content-Disposition": f'inline; filename="{song_id}.flac"',
+        })
         del response.headers["content-length"]
         return response
 
     @application.get("/api/lyrics/{song_id}")
-    async def lyrics_song(song_id: str) -> dict[str, str]:
-        try:
-            song_url(config.storefront, song_id)
-            canonical_url = await catalog_client.song_url(song_id)
-            if canonical_url is None:
-                raise HTTPException(status_code=404, detail="song_not_found")
-            url, _ = safe_apple_url(canonical_url)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="invalid_song_id") from None
-        except httpx.HTTPError:
-            raise HTTPException(status_code=502, detail="catalog_unavailable") from None
-        cached = config.data_root / "lyrics" / f"{song_id}.lrc"
-        if not cached.is_file():
+    async def lyrics_song(
+        song_id: str, quality: str = "aac-he", account: MediaAccount = Depends(_account)
+    ) -> dict[str, str]:
+        url = _song_request(account, song_id, quality)
+        key = _cache_key(account, song_id, quality)
+        cached = lyrics_path(key)
+
+        async def prepare_lyrics() -> Path:
+            if not cached.is_symlink() and cached.is_file():
+                return cached
             root = config.data_root / "artifacts" / uuid.uuid4().hex
             try:
                 lyrics = await process_runner.download_lyrics(
-                    url, root / "output", root / "temporary")
-                cached.parent.mkdir(exist_ok=True, mode=0o750)
-                partial = cached.with_suffix(".lrc.partial")
-                shutil.copyfile(lyrics[0], partial)
-                partial.replace(cached)
+                    url, root / "output", root / "temporary", media_user_token=account.token
+                )
+                if not lyrics:
+                    raise ProcessFailure("artifact_missing")
+                return cache_lyrics(lyrics[0], key)
             except ProcessFailure as exc:
-                status = 504 if exc.code == "process_timeout" else 404
+                status = 504 if exc.code == "process_timeout" else 403 if exc.code == "account_mismatch" else 404
                 raise HTTPException(status_code=status, detail=exc.code) from None
             finally:
                 shutil.rmtree(root, ignore_errors=True)
-        if not cached.is_file():
-            raise HTTPException(status_code=404, detail="lyrics_not_found")
+
+        if cached.is_symlink() or not cached.is_file():
+            cached = await coalesce("lyrics:" + key, prepare_lyrics)
         try:
             content = cached.read_text(encoding="utf-8")
         except (OSError, UnicodeError):
@@ -403,19 +383,14 @@ def create_app(
             raise HTTPException(status_code=404, detail="lyrics_not_found")
         return {"source": "GAMDL", "format": "LineTimed", "content": content}
 
-    @application.post("/api/jobs/download", status_code=202, response_model=DownloadJobView)
-    async def enqueue_download(request: DownloadJobRequest) -> DownloadJobView:
-        try:
-            return jobs.enqueue(request.url, _codec(request.quality))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="unsupported_apple_music_url") from None
-
-    @application.get("/api/jobs/download/{job_id}", response_model=DownloadJobView)
-    async def get_download_job(job_id: str) -> DownloadJobView:
-        job = jobs.get(job_id)
-        if job is None:
-            raise HTTPException(status_code=404, detail="job_not_found")
-        return job
+    @application.head("/api/lyrics/{song_id}")
+    async def head_lyrics(
+        song_id: str, quality: str = "aac-he", account: MediaAccount = Depends(_account)
+    ) -> Response:
+        _song_request(account, song_id, quality)
+        response = Response(media_type="application/json")
+        del response.headers["content-length"]
+        return response
 
     return application
 

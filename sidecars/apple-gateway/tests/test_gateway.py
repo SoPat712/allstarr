@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import stat
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -17,10 +19,18 @@ from apple_gateway.app import (
     FLAC_GUIDANCE_PREFIX,
     create_app,
 )
-from apple_gateway.catalog import CatalogClient
 from apple_gateway.config import Settings
+from apple_gateway.security import media_account
 from apple_gateway.runner import BoundedProcessRunner, ProcessFailure
 from apple_gateway.wrapper import WrapperClient, WrapperResponse
+
+
+ACCOUNT_HEADERS = {
+    "Music-User-Token": "fixture-account-token",
+    "X-Apple-Storefront": "us",
+    "X-Allstarr-Account-Context": "a" * 64,
+}
+ACCOUNT = media_account(*ACCOUNT_HEADERS.values())
 
 
 class FakeWrapper:
@@ -45,59 +55,15 @@ class FakeWrapper:
         return WrapperResponse(200, {"auth": {"state": "authenticated"}})
 
 
-class FakeCatalog:
-    async def close(self) -> None:
-        return None
-
-    async def search(self, query: str, kind: str, limit: int) -> list[dict[str, Any]]:
-        results = {
-            "song": [song("101", query)],
-            "album": [{"id": "301", "title": query, "artist": "Artist", "artist_id": "201"}],
-            "artist": [{"id": "201", "name": query}],
-        }
-        return results[kind][:limit]
-
-    async def song(self, song_id: str) -> dict[str, Any] | None:
-        return None if song_id == "404" else song(song_id, "Fixture")
-
-    async def album(self, album_id: str) -> dict[str, Any] | None:
-        return None if album_id == "404" else {
-            "id": album_id,
-            "title": "Album",
-            "artist": "Artist",
-            "artist_id": "201",
-            "cover_url": "https://example.test/art.jpg",
-            "release_date": "2026-01-01",
-            "track_count": 1,
-            "genre": "Pop",
-            "tracks": [song("101", "Fixture")],
-        }
-
-    async def artist(self, artist_id: str) -> dict[str, Any] | None:
-        return None if artist_id == "404" else {
-            "id": artist_id,
-            "name": "Artist",
-            "image_url": "https://example.test/art.jpg",
-        }
-
-    async def artist_albums(self, artist_id: str, limit: int) -> list[dict[str, Any]]:
-        album = await self.album("301")
-        return [album][:limit] if album else []
-
-    async def artist_tracks(self, artist_id: str, limit: int) -> list[dict[str, Any]]:
-        return [song("101", "Fixture")][:limit]
-
-    async def song_url(self, song_id: str) -> str | None:
-        return None if song_id == "404" else f"https://music.apple.com/us/album/fixture/1?i={song_id}"
-
-
 class FakeRunner:
     def __init__(self):
         self.calls: list[tuple[str, str]] = []
         self.transcodes: list[str] = []
+        self.tokens: list[str] = []
 
-    async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
+    async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
         self.calls.append((url, quality))
+        self.tokens.append(media_user_token)
         output.mkdir(parents=True, exist_ok=False)
         temporary.mkdir(parents=True, exist_ok=False)
         artifact = output / "fixture.m4a"
@@ -106,8 +72,9 @@ class FakeRunner:
         lyrics.write_text("[00:01.00]Fixture lyrics\n", encoding="utf-8")
         return [artifact, lyrics]
 
-    async def download_lyrics(self, url: str, output: Path, temporary: Path) -> list[Path]:
+    async def download_lyrics(self, url: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
         self.calls.append((url, "lyrics"))
+        self.tokens.append(media_user_token)
         output.mkdir(parents=True, exist_ok=False)
         temporary.mkdir(parents=True, exist_ok=False)
         lyrics = output / "fixture.lrc"
@@ -123,26 +90,6 @@ class FakeRunner:
         self.transcodes.append("stream")
         yield b"fLaC"
         yield b"fixture"
-
-
-def song(song_id: str, title: str) -> dict[str, Any]:
-    return {
-        "id": song_id,
-        "title": title,
-        "artist": "Artist",
-        "artist_id": "201",
-        "album": "Album",
-        "album_id": "301",
-        "duration": 123,
-        "cover_url": "https://example.test/art.jpg",
-        "track_number": 1,
-        "disc_number": 1,
-        "isrc": "USAAA0000001",
-        "release_date": "2026-01-01",
-        "copyright": None,
-        "composer": None,
-        "genre": "Pop",
-    }
 
 
 @pytest.fixture
@@ -167,8 +114,8 @@ def settings(tmp_path: Path) -> Settings:
 def client(settings: Settings) -> tuple[TestClient, FakeWrapper, FakeRunner]:
     wrapper = FakeWrapper()
     runner = FakeRunner()
-    app = create_app(settings, wrapper, FakeCatalog(), runner)
-    with TestClient(app) as test_client:
+    app = create_app(settings, wrapper, runner)
+    with TestClient(app, headers=ACCOUNT_HEADERS) as test_client:
         yield test_client, wrapper, runner
 
 
@@ -178,15 +125,10 @@ def test_capabilities_are_versioned_and_truthful(client):
     assert response.json()["sidecarApiVersion"] == API_VERSION
     ids = {item["id"] for item in response.json()["capabilities"]}
     assert {
-        "metadata-search-song",
-        "metadata-search-album",
-        "metadata-search-artist",
-        "metadata-song",
-        "metadata-album",
-        "metadata-artist",
         "download-audio-song",
         "synced-lyrics-artifact",
     } <= ids
+    assert not any(item.startswith("metadata-") for item in ids)
 
 
 def test_health_reports_wrapper_and_authentication(client):
@@ -204,31 +146,21 @@ def test_login_and_2fa_preserve_pending_status_without_returning_secrets(client)
     assert client[0].post("/api/login/2fa", json={"code": "123456"}).status_code == 200
 
 
-def test_search_all_music_entities_and_missing_song_contract(client):
-    song_search = client[0].get("/api/search", params={"q": "Needle", "type": "song", "limit": 2})
-    assert song_search.status_code == 200
-    assert song_search.json()[0]["title"] == "Needle"
-    assert song_search.json()[0]["artist_id"] == "201"
-    assert song_search.json()[0]["album_id"] == "301"
-    assert client[0].get("/api/search", params={"q": "Needle", "type": "album"}).json()[0]["id"] == "301"
-    assert client[0].get("/api/search", params={"q": "Needle", "type": "artist"}).json()[0]["id"] == "201"
-    assert client[0].get("/api/search", params={"q": "Needle", "type": "video"}).status_code == 422
-    assert client[0].get("/api/song/101").json()["id"] == "101"
-    assert client[0].get("/api/song/404").status_code == 404
+@pytest.mark.parametrize("path", [
+    "/api/search?q=fixture", "/api/song/101", "/api/album/301", "/api/artist/201",
+    "/api/artist/201/albums", "/api/artist/201/tracks", "/api/jobs/download/fixture",
+])
+def test_catalog_and_job_routes_are_removed(client, path):
+    assert client[0].get(path).status_code == 404
+    assert client[2].calls == []
 
 
-def test_artist_discography_and_album_tracks_contract(client):
-    artist = client[0].get("/api/artist/201")
-    assert artist.status_code == 200
-    assert artist.json()["name"] == "Artist"
-    albums = client[0].get("/api/artist/201/albums").json()
-    assert albums[0]["artist_id"] == "201"
-    tracks = client[0].get("/api/artist/201/tracks").json()
-    assert tracks[0]["artist_id"] == "201"
-    album = client[0].get("/api/album/301").json()
-    assert album["tracks"][0]["artist_id"] == "201"
-    assert client[0].get("/api/artist/404").status_code == 404
-    assert client[0].get("/api/album/404").status_code == 404
+def test_job_creation_route_is_removed(client):
+    response = client[0].post("/api/jobs/download", json={
+        "url": "https://music.apple.com/us/song/101", "quality": "alac",
+    })
+    assert response.status_code == 404
+    assert client[2].calls == []
 
 
 def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
@@ -236,14 +168,14 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("audio/flac")
     assert response.content == b"fLaCfixture"
-    assert client[2].calls == [("https://music.apple.com/us/album/fixture/1?i=101", "alac")]
+    assert client[2].calls == [("https://music.apple.com/us/song/101", "alac")]
     assert client[2].transcodes == ["file"]
     streamed = client[0].get("/api/stream/102", params={"quality": "aac-320"})
     assert streamed.status_code == 200
     assert streamed.headers["content-type"].startswith("audio/flac")
     assert streamed.content == FLAC_GUIDANCE_PREFIX + b"fLaCfixture"
     assert client[2].transcodes == ["file", "stream"]
-    assert client[2].calls[-1] == ("https://music.apple.com/us/album/fixture/1?i=102", "aac")
+    assert client[2].calls[-1] == ("https://music.apple.com/us/song/102", "aac")
     assert client[0].get("/api/download/not-an-id").status_code == 400
 
 
@@ -263,14 +195,14 @@ def test_song_stream_head_reports_only_known_facts_without_preparing_media(clien
 @pytest.mark.asyncio
 async def test_song_stream_opens_before_preparing_configured_quality(settings: Settings):
     runner = FakeRunner()
-    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    app = create_app(settings, FakeWrapper(), runner)
     route = next(
         route
         for route in app.routes
         if getattr(route, "path", None) == "/api/stream/{song_id}"
     )
 
-    response = await route.endpoint("102", "alac-16-44")
+    response = await route.endpoint("102", "alac-16-44", ACCOUNT)
 
     assert isinstance(response, StreamingResponse)
     assert response.headers["cache-control"] == "no-store"
@@ -296,20 +228,20 @@ async def test_song_stream_sends_guidance_prefix_before_apple_preparation(settin
             self.release = asyncio.Event()
 
         async def download(
-            self, url: str, quality: str, output: Path, temporary: Path
+            self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str
         ) -> list[Path]:
             self.started.set()
             await self.release.wait()
-            return await super().download(url, quality, output, temporary)
+            return await super().download(url, quality, output, temporary, media_user_token=media_user_token)
 
     runner = BlockingRunner()
-    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    app = create_app(settings, FakeWrapper(), runner)
     route = next(
         route
         for route in app.routes
         if getattr(route, "path", None) == "/api/stream/{song_id}"
     )
-    response = await route.endpoint("102", "aac-320")
+    response = await route.endpoint("102", "aac-320", ACCOUNT)
 
     assert await anext(response.body_iterator) == FLAC_GUIDANCE_PREFIX
     assert not runner.started.is_set()
@@ -323,7 +255,7 @@ async def test_song_stream_sends_guidance_prefix_before_apple_preparation(settin
 
 def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
     class FallbackRunner(FakeRunner):
-        async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
+        async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
             self.calls.append((url, quality))
             if quality == "alac":
                 raise ProcessFailure("artifact_missing")
@@ -334,8 +266,8 @@ def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings
             return [artifact]
 
     runner = FallbackRunner()
-    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
-    with TestClient(app) as test_client:
+    app = create_app(settings, FakeWrapper(), runner)
+    with TestClient(app, headers=ACCOUNT_HEADERS) as test_client:
         response = test_client.get("/api/stream/102", params={"quality": "alac-16-44"})
 
     assert response.status_code == 200
@@ -344,8 +276,8 @@ def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings
 
 def test_song_stream_reuses_prepared_source(settings):
     runner = FakeRunner()
-    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
-    with TestClient(app) as test_client:
+    app = create_app(settings, FakeWrapper(), runner)
+    with TestClient(app, headers=ACCOUNT_HEADERS) as test_client:
         first = test_client.get("/api/stream/102", params={"quality": "aac-320"})
         second = test_client.get("/api/stream/102", params={"quality": "aac-320"})
 
@@ -357,16 +289,16 @@ def test_song_stream_reuses_prepared_source(settings):
 @pytest.mark.asyncio
 async def test_simultaneous_song_streams_share_preparation(settings):
     class BlockingRunner(FakeRunner):
-        async def download(self, url: str, quality: str, output: Path, temporary: Path) -> list[Path]:
+        async def download(self, url: str, quality: str, output: Path, temporary: Path, *, media_user_token: str) -> list[Path]:
             await asyncio.sleep(0.01)
-            return await super().download(url, quality, output, temporary)
+            return await super().download(url, quality, output, temporary, media_user_token=media_user_token)
 
     runner = BlockingRunner()
-    app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
+    app = create_app(settings, FakeWrapper(), runner)
     route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}")
     responses = await asyncio.gather(
-        route.endpoint("102", "aac-320"),
-        route.endpoint("102", "aac-320"),
+        route.endpoint("102", "aac-320", ACCOUNT),
+        route.endpoint("102", "aac-320", ACCOUNT),
     )
     prefixes = await asyncio.gather(*(anext(response.body_iterator) for response in responses))
     assert prefixes == [FLAC_GUIDANCE_PREFIX, FLAC_GUIDANCE_PREFIX]
@@ -386,7 +318,7 @@ def test_song_lyrics_use_gamdl_artifact_and_cache(client):
     calls = len(client[2].calls)
     assert client[0].get("/api/lyrics/103").status_code == 200
     assert len(client[2].calls) == calls
-    assert client[2].calls == [("https://music.apple.com/us/album/fixture/1?i=103", "lyrics")]
+    assert client[2].calls == [("https://music.apple.com/us/song/103", "lyrics")]
 
 
 @pytest.mark.asyncio
@@ -409,99 +341,12 @@ async def test_gamdl_command_targets_separate_wrapper_decrypt_socket(settings: S
         "alac",
         tmp_path / "output",
         tmp_path / "temporary",
+        media_user_token="fixture-account-token",
     )
     host_index = runner.argv.index("--wrapper-decrypt-host")
     port_index = runner.argv.index("--wrapper-decrypt-port")
     assert runner.argv[host_index + 1] == "wrapper-v2"
     assert runner.argv[port_index + 1] == "18080"
-
-
-def test_generic_catalog_and_library_download_jobs_are_bounded_to_apple_urls(client):
-    accepted = client[0].post("/api/jobs/download", json={
-        "url": "https://music.apple.com/us/album/fixture/123?i=101",
-        "quality": "aac-web",
-    })
-    assert accepted.status_code == 202
-    job_id = accepted.json()["id"]
-    for _ in range(30):
-        state = client[0].get(f"/api/jobs/download/{job_id}").json()
-        if state["state"] == "succeeded":
-            break
-        asyncio.run(asyncio.sleep(0.01))
-    assert state["artifact_count"] == 2
-
-    library = client[0].post("/api/jobs/download", json={
-        "url": "https://music.apple.com/library/playlist/p.ABC123",
-        "quality": "alac",
-    })
-    assert library.status_code == 202
-    assert client[0].post("/api/jobs/download", json={
-        "url": "https://evil.example/album/123",
-        "quality": "alac",
-    }).status_code == 400
-
-
-def test_terminal_download_job_is_persisted_and_rehydrated_after_restart(settings: Settings):
-    runner = FakeRunner()
-    first_app = create_app(settings, FakeWrapper(), FakeCatalog(), runner)
-    with TestClient(first_app) as first_client:
-        accepted = first_client.post("/api/jobs/download", json={
-            "url": "https://music.apple.com/us/playlist/fixture/pl.123",
-            "quality": "alac",
-        })
-        job_id = accepted.json()["id"]
-        for _ in range(30):
-            state = first_client.get(f"/api/jobs/download/{job_id}").json()
-            if state["state"] == "succeeded":
-                break
-            asyncio.run(asyncio.sleep(0.01))
-        assert state["state"] == "succeeded"
-
-    state_file = settings.data_root / "jobs" / job_id / "job.json"
-    persisted = json.loads(state_file.read_text(encoding="utf-8"))
-    assert persisted["state"] == "succeeded"
-    assert persisted["artifacts"] == ["artifacts/fixture.m4a", "artifacts/fixture.lrc"]
-    assert not state_file.with_name("job.json.partial").exists()
-
-    second_runner = FakeRunner()
-    second_app = create_app(settings, FakeWrapper(), FakeCatalog(), second_runner)
-    with TestClient(second_app) as second_client:
-        restored = second_client.get(f"/api/jobs/download/{job_id}")
-        assert restored.status_code == 200
-        assert restored.json() == {
-            "id": job_id,
-            "state": "succeeded",
-            "media_kind": "playlist",
-                "artifact_count": 2,
-            "error_code": None,
-        }
-    assert second_runner.calls == []
-
-
-def test_restart_ignores_nonterminal_and_invalid_persisted_jobs(settings: Settings):
-    settings.prepare()
-    jobs_root = settings.data_root / "jobs"
-    running_id = "a" * 32
-    invalid_id = "b" * 32
-    for job_id, state, artifacts in (
-        (running_id, "running", []),
-        (invalid_id, "succeeded", ["../../outside.m4a"]),
-    ):
-        root = jobs_root / job_id
-        root.mkdir()
-        (root / "job.json").write_text(json.dumps({
-            "version": 1,
-            "id": job_id,
-            "media_kind": "album",
-            "state": state,
-            "artifacts": artifacts,
-            "error_code": None,
-        }), encoding="utf-8")
-
-    app = create_app(settings, FakeWrapper(), FakeCatalog(), FakeRunner())
-    with TestClient(app) as test_client:
-        assert test_client.get(f"/api/jobs/download/{running_id}").status_code == 404
-        assert test_client.get(f"/api/jobs/download/{invalid_id}").status_code == 404
 
 
 @pytest.mark.asyncio
@@ -609,70 +454,245 @@ async def test_wrapper_client_rejects_redirects_and_redacts_nested_tokens():
     await http_client.aclose()
 
 
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("kind", ["stream", "download", "lyrics"])
+@pytest.mark.parametrize("failure", ["missing", "token", "storefront", "scope", "duplicate"])
+def test_media_requires_valid_selected_account_before_any_work(settings, method, kind, failure):
+    headers = ACCOUNT_HEADERS.copy()
+    if failure == "missing":
+        headers.pop("Music-User-Token")
+    elif failure == "token":
+        headers["Music-User-Token"] = "fixture;other=value"
+    elif failure == "storefront":
+        headers["X-Apple-Storefront"] = "US"
+    elif failure == "scope":
+        headers["X-Allstarr-Account-Context"] = "../private"
+    else:
+        headers = list(headers.items()) + [("Music-User-Token", "second-fixture-token")]
+    runner = FakeRunner()
+    with TestClient(create_app(settings, FakeWrapper(), runner)) as test_client:
+        response = test_client.request(method, f"/api/{kind}/101", headers=headers)
+    assert response.status_code == 401
+    if method == "GET":
+        assert response.json() == {"detail": "account_context_required"}
+        assert "fixture;" not in response.text
+        assert "second-fixture" not in response.text
+    assert runner.calls == []
+    assert runner.transcodes == []
+
+
+@pytest.mark.parametrize("kind", ["download", "stream", "lyrics"])
+def test_media_cache_separates_account_revision_storefront_and_quality(settings, kind):
+    runner = FakeRunner()
+    variants = [
+        (ACCOUNT_HEADERS, "aac"),
+        ({**ACCOUNT_HEADERS, "Music-User-Token": "second-account-token", "X-Allstarr-Account-Context": "b" * 64}, "aac"),
+        ({**ACCOUNT_HEADERS, "X-Allstarr-Account-Context": "c" * 64}, "aac"),
+        ({**ACCOUNT_HEADERS, "X-Apple-Storefront": "gb"}, "aac"),
+        (ACCOUNT_HEADERS, "aac-he"),
+    ]
+    with TestClient(create_app(settings, FakeWrapper(), runner)) as test_client:
+        for headers, quality in variants:
+            response = test_client.get(f"/api/{kind}/101", headers=headers, params={"quality": quality})
+            assert response.status_code == 200
+        assert len(runner.calls) == 5
+        for headers, quality in variants:
+            assert test_client.get(f"/api/{kind}/101", headers=headers, params={"quality": quality}).status_code == 200
+    assert len(runner.calls) == 5
+    assert runner.tokens == [
+        "fixture-account-token", "second-account-token", "fixture-account-token",
+        "fixture-account-token", "fixture-account-token",
+    ]
+    assert runner.calls[3][0] == "https://music.apple.com/gb/song/101"
+    cached = list((settings.data_root / ("lyrics" if kind == "lyrics" else "prepared")).glob("*"))
+    assert len(cached) == 5
+    assert all("fixture" not in path.name and "token" not in path.name for path in cached)
+
+
+@pytest.mark.parametrize("kind", ["stream", "download", "lyrics"])
+def test_head_validates_account_without_preparing_artifacts(client, kind):
+    response = client[0].head(f"/api/{kind}/101")
+    assert response.status_code == 200
+    assert "content-length" not in response.headers
+    assert client[2].calls == []
+    assert client[2].tokens == []
+
+
 @pytest.mark.asyncio
-async def test_catalog_mapping_is_deterministic():
-    async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"results": [{
-            "trackId": 101,
-            "trackName": "Fixture",
-            "artistName": "Artist",
-            "artistId": 201,
-            "collectionName": "Album",
-            "collectionId": 301,
-            "trackTimeMillis": 123900,
-            "artworkUrl100": "https://img/100x100.jpg",
-            "releaseDate": "2026-01-02T00:00:00Z",
-            "trackViewUrl": "https://music.apple.com/us/album/fixture/1?i=101",
-        }]})
+async def test_simultaneous_lyrics_for_same_account_coalesce(settings):
+    class BlockingRunner(FakeRunner):
+        async def download_lyrics(self, url, output, temporary, *, media_user_token):
+            await asyncio.sleep(0.01)
+            return await super().download_lyrics(url, output, temporary, media_user_token=media_user_token)
 
-    http_client = httpx.AsyncClient(base_url="https://itunes.apple.com/", transport=httpx.MockTransport(handler))
-    catalog = CatalogClient("us", http_client)
-    result = await catalog.search("Fixture", "song", 1)
-    album = await catalog.search("Fixture", "album", 1)
-    artist = await catalog.search("Fixture", "artist", 1)
-    assert result[0]["duration"] == 123
-    assert result[0]["cover_url"] == "https://img/1200x1200.jpg"
-    assert result[0]["artist_id"] == "201"
-    assert result[0]["album_id"] == "301"
-    assert album[0]["id"] == "301"
-    assert album[0]["artist_id"] == "201"
-    assert artist[0]["id"] == "201"
-    assert await catalog.song_url("101") == "https://music.apple.com/us/album/fixture/1?i=101"
-    await http_client.aclose()
+    runner = BlockingRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/lyrics/{song_id}" and "GET" in route.methods)
+    results = await asyncio.gather(
+        route.endpoint("101", "aac-he", ACCOUNT),
+        route.endpoint("101", "aac-he", ACCOUNT),
+    )
+    assert results[0] == results[1]
+    assert len(runner.calls) == 1
 
 
 @pytest.mark.asyncio
-async def test_catalog_maps_artist_discography_and_album_tracks():
-    artist = {"wrapperType": "artist", "artistId": 201, "artistName": "Artist"}
-    album = {
-        "wrapperType": "collection",
-        "collectionId": 301,
-        "collectionName": "Album",
-        "artistId": 201,
-        "artistName": "Artist",
-        "artworkUrl100": "https://img/100x100.jpg",
-        "releaseDate": "2026-01-02T00:00:00Z",
-        "trackCount": 1,
-        "primaryGenreName": "Pop",
-    }
-    track = {
-        "wrapperType": "track",
-        "trackId": 101,
-        "trackName": "Fixture",
-        "artistId": 201,
-        "artistName": "Artist",
-        "collectionId": 301,
-        "collectionName": "Album",
-    }
+async def test_simultaneous_accounts_do_not_share_preparation(settings):
+    entered = 0
+    both_entered = asyncio.Event()
 
-    async def handler(request: httpx.Request) -> httpx.Response:
-        entity = request.url.params.get("entity")
-        return httpx.Response(200, json={"results": [artist, album] if entity == "album" else [album, track]})
+    class BlockingRunner(FakeRunner):
+        async def download(self, url, quality, output, temporary, *, media_user_token):
+            nonlocal entered
+            entered += 1
+            if entered == 2:
+                both_entered.set()
+            await asyncio.wait_for(both_entered.wait(), 1)
+            return await super().download(url, quality, output, temporary, media_user_token=media_user_token)
 
-    http_client = httpx.AsyncClient(base_url="https://itunes.apple.com/", transport=httpx.MockTransport(handler))
-    catalog = CatalogClient("us", http_client)
-    assert (await catalog.artist("201"))["image_url"] == "https://img/1200x1200.jpg"
-    assert (await catalog.artist_albums("201", 100))[0]["id"] == "301"
-    assert (await catalog.artist_tracks("201", 100))[0]["id"] == "101"
-    assert (await catalog.album("301"))["tracks"][0]["artist_id"] == "201"
-    await http_client.aclose()
+    runner = BlockingRunner()
+    app = create_app(settings, FakeWrapper(), runner)
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}" and "GET" in route.methods)
+    other = media_account("other-account-token", "us", "b" * 64)
+    responses = [await route.endpoint("101", "aac", account) for account in (ACCOUNT, other)]
+    assert await asyncio.gather(*(anext(response.body_iterator) for response in responses)) == [FLAC_GUIDANCE_PREFIX] * 2
+    await asyncio.wait_for(asyncio.gather(*(anext(response.body_iterator) for response in responses)), 2)
+    assert set(runner.tokens) == {"fixture-account-token", "other-account-token"}
+    assert len(runner.calls) == 2
+    for response in responses:
+        await response.body_iterator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_last_canceled_stream_waiter_cancels_account_preparation(settings):
+    started = asyncio.Event()
+    canceled = asyncio.Event()
+
+    class BlockingRunner(FakeRunner):
+        async def download(self, url, quality, output, temporary, *, media_user_token):
+            started.set()
+            try:
+                await asyncio.Future()
+            finally:
+                canceled.set()
+
+    app = create_app(settings, FakeWrapper(), BlockingRunner())
+    route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}" and "GET" in route.methods)
+    response = await route.endpoint("101", "aac", ACCOUNT)
+    assert await anext(response.body_iterator) == FLAC_GUIDANCE_PREFIX
+    preparation = asyncio.create_task(anext(response.body_iterator))
+    await asyncio.wait_for(started.wait(), 1)
+    preparation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await preparation
+    assert canceled.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_code", [0, 1, 78, 79])
+async def test_runner_cookie_is_private_exact_and_removed_on_completion(settings, tmp_path, result_code):
+    from apple_gateway.runner import ProcessResult
+
+    class CapturingRunner(BoundedProcessRunner):
+        async def execute(self, argv, cwd):
+            self.cookie = Path(argv[argv.index("--cookies-path") + 1])
+            self.argv = argv
+            assert self.cookie.parent == cwd
+            assert stat.S_IMODE(self.cookie.stat().st_mode) == 0o600
+            assert self.cookie.read_text() == (
+                "# Netscape HTTP Cookie File\n"
+                ".music.apple.com\tTRUE\t/\tTRUE\t0\tmedia-user-token\tselected-fixture-token\n"
+            )
+            assert "selected-fixture-token" not in argv
+            assert "--use-wrapper" in argv
+            assert "apple_gateway.account_cli" in argv
+            output = Path(argv[argv.index("--output-path") + 1])
+            (output / "fixture.m4a").write_bytes(b"audio")
+            return ProcessResult(result_code, "", "")
+
+    shared = tmp_path / "operator.cookies"
+    shared.write_text("must-not-be-used")
+    runner = CapturingRunner(replace(settings, cookies_path=shared))
+    operation = runner.download(
+        "https://music.apple.com/us/song/101", "alac", tmp_path / "output", tmp_path / "temporary",
+        media_user_token="selected-fixture-token",
+    )
+    if result_code == 0:
+        assert len(await operation) == 1
+    else:
+        expected = {1: "gamdl_failed", 78: "account_mismatch", 79: "account_unavailable"}[result_code]
+        with pytest.raises(ProcessFailure, match=expected):
+            await operation
+    assert not runner.cookie.exists()
+    assert str(shared) not in runner.argv
+    assert shared.read_text() == "must-not-be-used"
+
+
+@pytest.mark.asyncio
+async def test_runner_removes_cookie_after_cancellation(settings, tmp_path):
+    entered = asyncio.Event()
+
+    class BlockingRunner(BoundedProcessRunner):
+        async def execute(self, argv, cwd):
+            self.cookie = Path(argv[argv.index("--cookies-path") + 1])
+            assert self.cookie.is_file()
+            entered.set()
+            await asyncio.Future()
+
+    runner = BlockingRunner(settings)
+    task = asyncio.create_task(runner.download(
+        "https://music.apple.com/us/song/101", "alac", tmp_path / "output", tmp_path / "temporary",
+        media_user_token="cancel-fixture-token",
+    ))
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not runner.cookie.exists()
+
+
+@pytest.mark.asyncio
+async def test_runner_concurrent_accounts_get_distinct_cookie_files(settings, tmp_path):
+    from apple_gateway.runner import ProcessResult
+    cookies = {}
+    both_entered = asyncio.Event()
+
+    class CapturingRunner(BoundedProcessRunner):
+        async def execute(self, argv, cwd):
+            cookie = Path(argv[argv.index("--cookies-path") + 1])
+            cookies[cookie] = cookie.read_text().splitlines()[-1].split("\t")[-1]
+            if len(cookies) == 2:
+                both_entered.set()
+            await asyncio.wait_for(both_entered.wait(), 1)
+            assert cookie.is_file()
+            output = Path(argv[argv.index("--output-path") + 1])
+            (output / "fixture.m4a").write_bytes(b"audio")
+            return ProcessResult(0, "", "")
+
+    runner = CapturingRunner(settings)
+    await asyncio.gather(*(runner.download(
+        "https://music.apple.com/us/song/101", "alac", tmp_path / f"out-{index}", tmp_path / f"tmp-{index}",
+        media_user_token=token,
+    ) for index, token in enumerate(("first-fixture-token", "second-fixture-token"))))
+    assert set(cookies.values()) == {"first-fixture-token", "second-fixture-token"}
+    assert len(cookies) == 2
+    assert all(not path.exists() for path in cookies)
+
+
+@pytest.mark.asyncio
+async def test_runner_cancellation_reaps_subprocess(settings, tmp_path):
+    pid_file = tmp_path / "child.pid"
+    program = f"import os,time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(30)"
+    runner = BoundedProcessRunner(settings)
+    task = asyncio.create_task(runner.execute([sys.executable, "-c", program], tmp_path))
+    for _ in range(100):
+        if pid_file.is_file():
+            break
+        await asyncio.sleep(0.01)
+    assert pid_file.is_file()
+    pid = int(pid_file.read_text())
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

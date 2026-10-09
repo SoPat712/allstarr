@@ -4,6 +4,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Providers.Spotify;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Models.Settings;
@@ -160,6 +161,35 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         using var saved = JsonDocument.Parse(lease.Value);
         Assert.Equal("jp", saved.RootElement.GetProperty("storefront").GetString());
         Assert.Equal("fixture-private-token", saved.RootElement.GetProperty("mediaUserToken").GetString());
+    }
+
+    [Fact]
+    public async Task AppleStorefrontEdit_PreservesTheExistingPersonalTokenAndAccount()
+    {
+        var client = AppleProviderTestFactory.Client();
+        var registry = new ProviderRegistry([AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(new(client, new HttpClient()), new(client))]);
+        var controller = Controller(Session(_userId), providerRegistry: registry);
+        using var secret = JsonDocument.Parse("""{"MusicUserToken":"fixture-private-token","Storefront":"us","DeveloperToken":"obsolete"}""");
+        var created = Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
+        { ProviderId = "apple-musickit", DisplayName = "Personal Apple", Scope = "Personal", Secret = secret.RootElement.Clone() }));
+        using var createdJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+        var id = createdJson.RootElement.GetProperty("Id").GetGuid();
+        using var listed = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
+        var account = listed.RootElement.GetProperty("accounts")[0];
+        Assert.Equal("us", account.GetProperty("configuration").GetProperty("storefront").GetString());
+        Assert.Contains(account.GetProperty("configuredFields").EnumerateArray(), item => item.GetString() == "musicUserToken");
+        Assert.DoesNotContain("fixture-private-token", listed.RootElement.GetRawText());
+        using var replacement = JsonDocument.Parse("""{"musicUserToken":"","storefront":"ca"}""");
+        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(id, new() { Secret = replacement.RootElement.Clone() }));
+        await using var db = await _factory.CreateDbContextAsync();
+        var saved = await db.ProviderAccounts.SingleAsync(item => item.Id == id);
+        using var lease = await _secretStore.OpenAsync(saved.SecretReferenceId!.Value,
+            new(_userId, $"provider-account:apple-musickit:{id:N}"));
+        var credential = AppleMusicCredential.Read(lease.Value);
+        Assert.NotNull(credential);
+        Assert.Equal("fixture-private-token", credential.MusicUserToken);
+        Assert.Equal("ca", credential.Storefront);
+        Assert.Equal(_userId, saved.OwnerUserId);
     }
 
     [Fact]

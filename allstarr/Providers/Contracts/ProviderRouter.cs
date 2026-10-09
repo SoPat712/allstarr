@@ -50,6 +50,7 @@ public sealed class ProviderRouter(
         where TCapability : class, IProviderCapability
     {
         ArgumentNullException.ThrowIfNull(request);
+        request = ResolveAliases(request);
         RequireTypedContract<TCapability>(request.Capability);
         request.CancellationToken.ThrowIfCancellationRequested();
         if (request.Deadline <= DateTimeOffset.UtcNow)
@@ -90,8 +91,8 @@ public sealed class ProviderRouter(
             }
 
             if (request.Actor.Kind == ProviderActorKind.PublicRead &&
-                (request.Capability != ProviderCapabilityKind.Metadata ||
-                 descriptor.AccountRequirement != ProviderAccountRequirement.None ||
+                (!(request.Capability == ProviderCapabilityKind.Metadata && descriptor.AccountRequirement == ProviderAccountRequirement.None ||
+                   descriptor.SupportsPublicRead) ||
                  state.RequestedAccountId.HasValue || state.ExpectedAccountRevision.HasValue))
             {
                 Reject("public-read-not-allowed");
@@ -133,7 +134,7 @@ public sealed class ProviderRouter(
             ProviderRouteAccountResolution? resolvedAccount;
             try
             {
-                resolvedAccount = descriptor.AccountRequirement == ProviderAccountRequirement.None
+                resolvedAccount = request.Actor.Kind == ProviderActorKind.PublicRead || descriptor.AccountRequirement == ProviderAccountRequirement.None
                     ? null
                     : await accounts.ResolveAsync(
                         new ProviderRouteAccountRequest(
@@ -353,6 +354,25 @@ public sealed class ProviderRouter(
             ProviderFallbackDisposition.Advance,
             $"fallback-{error.Code}",
             plan.Candidates[nextIndex]);
+    }
+
+    private ProviderRouteRequest ResolveAliases(ProviderRouteRequest request)
+    {
+        string Resolve(string value) => registry.ResolveProviderId(value);
+        if (!request.ProviderPriority.Concat(request.Policy.AllowedProviderIds).Concat(request.ProviderStates.Keys)
+                .Concat(request.SourceTrackId == null ? [] : [request.SourceTrackId.ProviderId]).Any(value => Resolve(value) != value))
+            return request;
+        var policy = request.Policy;
+        return new(request.Capability, request.Actor,
+            new(policy.Quality, policy.ExplicitContent, policy.AllowFallback, policy.AllowSharedAccount,
+                policy.AllowManagedDownloads, policy.AllowedProviderIds.Select(Resolve).Distinct(StringComparer.Ordinal)),
+            request.OperationId, request.CorrelationId, request.Deadline,
+            request.ProviderPriority.Select(Resolve).Distinct(StringComparer.Ordinal),
+            request.ProviderStates.Values.Select(state => new ProviderRouteProviderState(Resolve(state.ProviderId),
+                state.CapabilityEnabled, state.RequestedAccountId, state.ExpectedAccountRevision, state.AvailableQualities,
+                state.TrackCatalog, state.IsExplicit, state.RateLimitBudgetAvailable, state.StorageCapacityAvailable, state.ProviderTermsAllowed)),
+            request.SourceTrackId is { } source ? new(Resolve(source.ProviderId), source.ResourceKind, source.Value) : null,
+            request.IdempotencyKey, request.CancellationToken);
     }
 
     private async Task<ProviderExecutionContext?> CreateSourceContextAsync(ProviderRouteRequest request)

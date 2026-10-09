@@ -1,3 +1,5 @@
+using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Storage;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -25,14 +27,14 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             new StaticClientFactory(client), Options.Create(settings));
         var store = new MemoryStore();
         var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
-        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024 * 1024);
+        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024 * 1024, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
         var workspace = await resolver.CreateWorkspaceAsync(new(
             user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:apple-track"));
         var context = Context(user);
         var track = new ProviderExternalResourceId(
-            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "apple/track 1");
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "101");
 
         var availability = await adapter.CheckAvailabilityAsync(context, new(track));
         var outcome = await adapter.DownloadAsync(context, new(
@@ -52,7 +54,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(ProviderDownloadArtifactState.Verified, verified.State);
         Assert.Single(store.Artifacts);
         Assert.Contains(gateway.Requests, uri =>
-            uri.PathAndQuery == "/api/download/apple%2Ftrack%201?quality=alac-16-44");
+            uri.PathAndQuery == "/api/download/101?quality=alac-16-44");
     }
 
     [Theory]
@@ -81,14 +83,14 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             new StaticClientFactory(client), Options.Create(settings));
         var store = new MemoryStore();
         var resolver = new ProviderDownloadArtifactResolver(store, new() { RootPath = root });
-        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
-        var streaming = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery);
+        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024, AppleProviderTestFactory.Client());
+        var streaming = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var job = Guid.CreateVersion7();
         var workspace = await resolver.CreateWorkspaceAsync(new(
             user, job, AppleDownloadCapabilityAdapter.StableProviderId, null, "favorite:bad-media"));
         var track = new ProviderExternalResourceId(
-            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "bad-media");
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "104");
 
         var outcome = await adapter.DownloadAsync(Context(user), new(
             track, job, workspace.Reference, ProviderAudioQuality.Any));
@@ -113,7 +115,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
         var resolver = new ProviderDownloadArtifactResolver(new MemoryStore(), new() { RootPath = root });
-        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024);
+        var adapter = new AppleDownloadCapabilityAdapter(client, settings, discovery, resolver, 1024, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "missing-route");
@@ -136,12 +138,12 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var client = new HttpClient(gateway);
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
-        var adapter = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery);
+        var adapter = new AppleDownloadStreamingCapabilityAdapter(client, settings, discovery, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId,
             ProviderResourceKind.Track,
-            "apple/track 1");
+            "101");
 
         var lease = (await adapter.GetStreamLeaseAsync(
             Context(user), new(track, ProviderAudioQuality.HighResolution))).RequireValue();
@@ -158,7 +160,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal(audio, await response.Content.ReadAsByteArrayAsync());
         Assert.Contains(gateway.Requests, uri =>
-            uri.PathAndQuery == "/api/stream/apple%2Ftrack%201?quality=alac-24-96");
+            uri.PathAndQuery == "/api/stream/101?quality=alac-24-96");
     }
 
     [Fact]
@@ -169,7 +171,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var client = new HttpClient(gateway);
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
-        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery);
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery, AppleProviderTestFactory.Client());
         var user = Guid.CreateVersion7();
         var track = new ProviderExternalResourceId(
             AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "103");
@@ -198,9 +200,9 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         var client = new HttpClient(gateway);
         var discovery = new AppleDownloadEndpointDiscovery(
             new StaticClientFactory(client), Options.Create(settings));
-        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery);
+        var adapter = new AppleDownloadLyricsCapabilityAdapter(client, settings, discovery, AppleProviderTestFactory.Client());
         var track = new ProviderExternalResourceId(
-            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "missing");
+            AppleDownloadCapabilityAdapter.StableProviderId, ProviderResourceKind.Track, "404");
 
         var outcome = await adapter.FetchLyricsAsync(
             Context(Guid.CreateVersion7()),
@@ -217,7 +219,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         new ProviderActorContext(ProviderActorKind.User, user,
             new ProviderBackendPrincipal("jellyfin", "primary", "user")),
         AppleDownloadCapabilityAdapter.StableProviderId,
-        account: null,
+        account: new(Guid.Parse("11111111-1111-1111-1111-111111111111"), AppleMusicClient.ProviderId, ProviderAccountScope.Personal, 1, ownerUserId: user, secretReferenceId: Guid.NewGuid()),
         new ProviderExecutionPolicy(
             new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
             ProviderExplicitContentPolicy.Allow,
@@ -255,7 +257,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
             HttpResponseMessage response = path switch
             {
                 "/api/capabilities" => Json($$"""
-                    {"sidecarApiVersion":"1.0","capabilities":[
+                    {"sidecarApiVersion":"2.0","capabilities":[
                       {"id":"metadata-search-song","state":"supported"},
                       {"id":"metadata-song","state":"supported"},
                       {"id":"stream-audio-song","state":"supported"}

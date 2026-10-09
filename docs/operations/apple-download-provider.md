@@ -1,7 +1,7 @@
 # Apple download provider
 
 Apple downloads are optional. The `apple` profile in `docker-compose.yml` adds Allstarr's Apple gateway, GAMDL
-3.8.2, and a locally built, source-locked
+3.9.1, and a locally built, source-locked
 wrapper-v2 0.0.2 service. It does not contain or download Apple code.
 
 The URL must point to a gateway that wraps GAMDL and wrapper-v2 and implements the API contract Allstarr expects.
@@ -11,7 +11,7 @@ GAMDL search and download HTTP gateway by itself.
 ## Prepare wrapper-v2
 
 Obtain Apple Music for Android legally from a source you are permitted to use. Allstarr does not download or
-redistribute that package. Open **Integrations > Services > Apple Music – GAMDL** in the dashboard, manage the
+redistribute that package. Open **Integrations > Services > Apple Music > Manage optional downloads** in the dashboard, manage the
 Apple download setup, upload the APK/APKM, and run:
 
 ```bash
@@ -35,14 +35,12 @@ AOSP runtime, and rejects Apple or AOSP libraries that do not match wrapper-v2's
 
 The repository gateway is a narrow HTTP adapter around the official upstream projects
 [GAMDL](https://github.com/glomatico/gamdl) and
-[wrapper-v2](https://github.com/glomatico/wrapper-v2). It exposes catalog song lookup, download-backed streaming,
+[wrapper-v2](https://github.com/glomatico/wrapper-v2). It exposes download-backed streaming,
 managed song downloads, health, login, and 2FA. It runs on the private Compose network and publishes no host port.
 
-The gateway advertises only routes that Allstarr has implemented and tested: song, album, and artist metadata;
-artist discography; track streaming and managed downloads; and synced lyrics artifacts. GAMDL can do more upstream,
-but album downloads, playlist or library mutation, video, and standalone artwork-artifact lanes stay unavailable
-until their managed-artifact contracts exist. That keeps the UI honest and prevents an upstream feature name from
-becoming a false promise.
+Apple's public catalog and personal playlists run directly in Allstarr. Connect one **Personal Apple Music** account with its `media-user-token` and two-letter storefront; no developer token is required. Allstarr fetches and caches the public web-player bearer. A fetch failure appears on the Apple account status card and can be retried with **Test**.
+
+The optional gateway supplies track streaming, managed downloads, and synced lyrics. Each media request uses the selected account's encrypted credential. Cache entries are separated by account revision and storefront. Wrapper-backed audio requires the wrapper and selected account to identify the same Apple account; a mismatch fails before media access. Catalog access works without the optional gateway, and public playlists do not require a user token.
 
 Before connecting it, confirm that:
 
@@ -54,18 +52,12 @@ Before connecting it, confirm that:
 
 ### Gateway contract
 
-Allstarr first requests `GET /api/capabilities`. A compatible version 1 response looks like this:
+Allstarr first requests `GET /api/capabilities`. A compatible version 2 response looks like this:
 
 ```json
 {
-  "sidecarApiVersion": "1.0.0",
+  "sidecarApiVersion": "2.0.0",
   "capabilities": [
-    { "id": "metadata-search-song", "state": "supported" },
-    { "id": "metadata-search-album", "state": "supported" },
-    { "id": "metadata-search-artist", "state": "supported" },
-    { "id": "metadata-song", "state": "supported" },
-    { "id": "metadata-album", "state": "supported" },
-    { "id": "metadata-artist", "state": "supported" },
     { "id": "stream-audio-song", "state": "supported" },
     { "id": "download-audio-song", "state": "supported" },
     { "id": "synced-lyrics-artifact", "state": "supported" }
@@ -76,6 +68,8 @@ Allstarr first requests `GET /api/capabilities`. A compatible version 1 response
 The included gateway also advertises its verified ALAC and AAC input support. Allstarr displays absent features as
 unsupported.
 
+Gateway API 2 requires the selected Media User Token, storefront, and opaque account-revision scope in headers for every media request, including HEAD. Version 1 gateways are rejected because they cannot guarantee that boundary. Credentials never appear in URLs; request cookie files are private and removed after the subprocess exits.
+
 The current typed lanes use these routes:
 
 | Purpose | Gateway route |
@@ -84,9 +78,6 @@ The current typed lanes use these routes:
 | Runtime health | `GET /api/health` |
 | Account status | `GET /api/me` |
 | Login and 2FA | `POST /api/login`, `POST /api/login/2fa` |
-| Song, album, and artist search | `GET /api/search` |
-| Song, album, and artist detail | `GET /api/song/{id}`, `GET /api/album/{id}`, `GET /api/artist/{id}` |
-| Artist albums and tracks | `GET /api/artist/{id}/albums`, `GET /api/artist/{id}/tracks` |
 | Managed track artifact | `GET /api/download/{id}?quality={quality}` |
 | Progressive playback | `GET /api/stream/{id}?quality={quality}` |
 | Synced lyrics artifact | `GET /api/lyrics/{id}` |
@@ -118,14 +109,13 @@ Use the dashboard to check the provider state, finish login or 2FA if the compat
 and test the capabilities you intend to route. A reachable container is not enough. Allstarr should select only the
 capabilities reported by the gateway and accepted by its health and compatibility checks.
 
-Keep Apple MusicKit accounts separate. A per-user Music User Token belongs to Apple MusicKit library and playlist
-access. It is not a GAMDL or wrapper account and must not be copied into the download gateway.
+Optional media uses the selected Personal Apple Music account through a protected request. The gateway creates a temporary private cookie file and removes it after the request. Its wrapper session must belong to the same Apple account; a mismatch stops media preparation. Do not configure a global cookie fallback.
 
 ## Disable or replace the gateway
 
 Run `./allstarr.sh disable apple` followed by `./allstarr.sh up`. This removes the optional containers from the
 active profile. It does not delete SQLite records, Allstarr-managed media, the wrapper session volume, gateway
-state, or a user's Apple MusicKit account.
+state, or a user's Personal Apple Music account.
 
 To replace the gateway, validate the replacement independently, change the URL in the dashboard, and repeat the
 provider health and capability checks. Do not combine that change with a database restore or media move. Keeping

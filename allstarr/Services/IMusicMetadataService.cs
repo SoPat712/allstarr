@@ -55,7 +55,7 @@ internal static class ConcreteProviderId
 {
     public static string Normalize(string providerId) => providerId.Trim().ToLowerInvariant() switch
     {
-        "applemusic" => "apple-download",
+        "applemusic" or "apple-download" => "apple-musickit",
         var normalized => normalized
     };
 }

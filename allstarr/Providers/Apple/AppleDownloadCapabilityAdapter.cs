@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.AppleMusicKit;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -13,10 +14,11 @@ namespace allstarr.Core.Providers.AppleDownload;
 
 public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
 {
-    public const string StableProviderId = "apple-download";
+    public const string StableProviderId = AppleMusicClient.ProviderId;
     public const string HttpClientName = "AppleDownloadCapability";
 
     private readonly HttpClient http;
+    private readonly AppleMusicClient client;
     private readonly AppleDownloadSettings settings;
     private readonly IAppleDownloadEndpointDiscovery discovery;
     private readonly ProviderDownloadArtifactResolver artifacts;
@@ -28,9 +30,9 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         IOptions<AppleDownloadSettings> settings,
         IAppleDownloadEndpointDiscovery discovery,
         ProviderDownloadArtifactResolver artifacts,
-        ProviderDownloadWorkspaceOptions workspaceOptions)
+        ProviderDownloadWorkspaceOptions workspaceOptions, AppleMusicClient client)
         : this(clients.CreateClient(HttpClientName), settings.Value, discovery, artifacts,
-            workspaceOptions.MaximumArtifactBytes)
+            workspaceOptions.MaximumArtifactBytes, client)
     {
     }
 
@@ -39,9 +41,10 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         AppleDownloadSettings settings,
         IAppleDownloadEndpointDiscovery discovery,
         ProviderDownloadArtifactResolver artifacts,
-        long maximumArtifactBytes)
+        long maximumArtifactBytes, AppleMusicClient client)
     {
         this.http = http;
+        this.client = client;
         this.settings = settings;
         this.discovery = discovery;
         this.artifacts = artifacts;
@@ -100,9 +103,12 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
                 return ProviderOutcome<ProviderDownloadedArtifact>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
 
+            var resolved = await client.ResolveCatalogTrackAsync(context, request.TrackId.Value);
+            if (!resolved.IsSuccess) return ProviderOutcome<ProviderDownloadedArtifact>.Failure(resolved.Error!);
             var quality = Quality(request.RequestedQuality, settings.Quality);
-            var endpoint = new Uri(baseUri!, $"api/download/{Uri.EscapeDataString(request.TrackId.Value)}?quality={Uri.EscapeDataString(quality)}");
-            using var response = await http.GetAsync(endpoint, HttpCompletionOption.ResponseHeadersRead, context.CancellationToken);
+            var endpoint = new Uri(baseUri!, $"api/download/{Uri.EscapeDataString(resolved.RequireValue())}?quality={Uri.EscapeDataString(quality)}");
+            using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            using var response = await client.SendSidecarAsync(context, http, outbound, context.CancellationToken);
             if (response.StatusCode is >= HttpStatusCode.MultipleChoices and < HttpStatusCode.BadRequest ||
                 response.RequestMessage?.RequestUri is not { } responseUri || !SameOrigin(baseUri!, responseUri))
                 return ProviderOutcome<ProviderDownloadedArtifact>.Failure(new(ProviderErrorKind.PermanentFailure));
@@ -163,55 +169,11 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         }
     }
 
-    public static ProviderRegistration CreateRegistration(
-        AppleDownloadCapabilityAdapter adapter,
-        IProviderLyricsCapability lyrics,
-        AppleDownloadStreamingCapabilityAdapter streaming,
-        IProviderMetadataCapability metadata) => new(
-        new ProviderDescriptor(
-            StableProviderId,
-            "Apple Music – GAMDL",
-            "Optional operator-managed Apple audio downloads through a discovered compatible gateway.",
-            ProviderOrigin.BuiltIn,
-            sdkVersion: "1",
-            compatibilityVersion: "apple-download-gateway-v1",
-            capabilities:
-            [
-                new ProviderCapabilityDescriptor(
-                    ProviderCapabilityKind.Metadata,
-                    ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.None,
-                    compatibilityVersion: "1",
-                    hooks:
-                    [
-                        "searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum",
-                        "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"
-                    ]),
-                new ProviderCapabilityDescriptor(
-                    ProviderCapabilityKind.Streaming,
-                    ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.None,
-                    compatibilityVersion: "1",
-                    hooks: ["getStreamLease", "probeStream"]),
-                new ProviderCapabilityDescriptor(
-                    ProviderCapabilityKind.Download,
-                    ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.None,
-                    compatibilityVersion: "1",
-                    hooks: ["checkAvailability", "download"]),
-                new ProviderCapabilityDescriptor(
-                    ProviderCapabilityKind.Lyrics,
-                    ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.None,
-                    compatibilityVersion: "1",
-                    hooks: ["fetchLyrics"])
-            ],
-            permissions: new ProviderPermissionDescriptor()),
-        [adapter, lyrics, streaming, metadata]);
-
     private static ProviderError? Validate(ProviderExecutionContext context, ProviderExternalResourceId trackId)
     {
         ArgumentNullException.ThrowIfNull(context);
+        var accountError = AppleMusicClient.Validate(context, personal: true);
+        if (accountError != null) return accountError;
         try
         {
             context.RequireResourceOwner(trackId, ProviderResourceKind.Track);
@@ -327,6 +289,3 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
         expected.Host.Equals(actual.Host, StringComparison.OrdinalIgnoreCase) &&
         expected.Port == actual.Port;
 }
-
-public sealed class AppleDownloadMetadataCapabilityAdapter(IConcreteMetadataService legacy)
-    : ConcreteMetadataCapabilityAdapter(AppleDownloadCapabilityAdapter.StableProviderId, legacy);

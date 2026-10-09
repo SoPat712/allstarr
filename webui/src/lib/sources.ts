@@ -9,11 +9,14 @@ import type {
 
 export { humanize } from "./activity";
 
+export const canonicalProviderId = (id: string) => ["apple-download", "applemusic", "apple-music", "apple_music"].includes(id.toLowerCase())
+  ? "apple-musickit" : id.toLowerCase();
+
 export const findProviderDefinition = (
   providers: ProviderDefinition[],
   providerId?: string | null,
 ) => providerId
-  ? providers.find((provider) => provider.id.toLowerCase() === providerId.toLowerCase())
+  ? providers.find((provider) => canonicalProviderId(provider.id) === canonicalProviderId(providerId))
   : undefined;
 
 export const providerDisplayName = (

@@ -39,7 +39,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     public async Task PlayableSearch_OnlyQueriesTracksAndIsolatesProviderFailures()
     {
         var failing = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
-        failing.SetupGet(item => item.ProviderId).Returns("apple-download");
+        failing.SetupGet(item => item.ProviderId).Returns("apple-musickit");
         failing.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
         failing.Setup(item => item.SearchTracksAsync(
                 It.IsAny<ProviderExecutionContext>(),
@@ -77,7 +77,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(
                 It.Is<ProviderRouteRequest>(request =>
                     request.Capability == ProviderCapabilityKind.Metadata &&
-                    request.ProviderPriority.SequenceEqual(new[] { "apple-download", "deezer" }))))
+                    request.ProviderPriority.SequenceEqual(new[] { "apple-musickit", "deezer" }))))
             .ReturnsAsync((ProviderRouteRequest request) =>
                 MetadataPlan(request, registry, failing.Object, healthy.Object));
         var legacy = new Mock<IMusicMetadataService>();
@@ -246,7 +246,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     public async Task MetadataSearch_ProviderAndCategoryFailuresPreserveSuccessfulSongs()
     {
         var failed = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
-        failed.SetupGet(item => item.ProviderId).Returns("apple-download");
+        failed.SetupGet(item => item.ProviderId).Returns("apple-musickit");
         failed.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
         failed.Setup(item => item.SearchTracksAsync(
                 It.IsAny<ProviderExecutionContext>(),
@@ -315,7 +315,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         ProviderIdentityVerification verification, string method,
         int expectedCount, string? preferredProvider, string? streamingOrder, string? explicitFilter = null)
     {
-        var providerIds = new[] { "apple-download", "deezer", "qobuz" };
+        var providerIds = new[] { "apple-musickit", "deezer", "qobuz" };
         var metadata = providerIds.Select(providerId =>
         {
             var capability = new Mock<IProviderMetadataCapability>();
@@ -327,7 +327,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(
                     providerId, [new ProviderTrackMetadata(
                         new(providerId, ProviderResourceKind.Track, $"{providerId}-track"),
-                        "Shared title", [new("Artist")], isExplicit: providerId == "apple-download" ? true : null)])));
+                        "Shared title", [new("Artist")], isExplicit: providerId == "apple-musickit" ? true : null)])));
             capability.Setup(item => item.SearchAlbumsAsync(
                     It.IsAny<ProviderExecutionContext>(),
                     It.IsAny<ProviderMetadataSearchRequest>()))
@@ -768,7 +768,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 observedMethod = request.Method;
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK));
             });
-        var capability = Capability("apple-download", ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var capability = Capability("apple-musickit", ProviderOutcome<ProviderStreamLease>.Success(lease));
         var registry = Registry(capability.Object);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(

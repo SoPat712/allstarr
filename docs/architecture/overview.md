@@ -67,7 +67,7 @@ The product term **Source** covers anything that can supply music data or an act
 
 A **provider account** is an encrypted credential and access policy for a source. It can be Personal or Shared. A source can exist without an account when its capability is public. Routing considers the initiating user, capability, account ownership, permission, readiness, and configured priority. Backend library permissions govern local copies separately.
 
-Public external artwork uses an identity-free `PublicRead` context limited to metadata capabilities that require no account. It cannot resolve credentials or carry user, account, or job identity. Authenticated artwork uses the viewer's normal provider context; private and virtual playlist artwork remains subject to authorization.
+Public external artwork uses an identity-free `PublicRead` context limited to account-free metadata or a built-in metadata/playlist capability that explicitly supports anonymous reads. It cannot resolve credentials or carry user, account, or job identity. Authenticated artwork uses the viewer's normal provider context; private and virtual playlist artwork remains subject to authorization.
 
 One deployment serves one household. The `users` table has a stable internal ID and a unique backend type/instance/principal tuple. Successful authentication creates the user; verified backend role and name updates refresh that same row. A protocol observation without role information preserves the last verified role. Disabled users cannot start new requests or execute queued work. WebUI sessions recheck the enabled user and exact backend identity and role; a role change invalidates an older session.
 

@@ -663,7 +663,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             var configured = new List<string>();
             foreach (var setting in provider.Settings)
             {
-                if (!document.RootElement.TryGetProperty(setting.Key, out var value) || !HasValue(value)) continue;
+                if (!TryGetSettingValue(document.RootElement, setting.Key, provider.Origin, out var value) || !HasValue(value)) continue;
                 configured.Add(setting.Key);
                 if (setting.ValueKind != ProviderSettingValueKind.Secret)
                     values[setting.Key] = value.Clone();
@@ -704,11 +704,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return Encoding.UTF8.GetBytes(replacement.GetRawText());
 
         var values = replacement.EnumerateObject()
-            .ToDictionary(item => item.Name, item => item.Value.Clone(), StringComparer.Ordinal);
+            .ToDictionary(item => item.Name, item => item.Value.Clone(), provider.Origin == ProviderOrigin.BuiltIn
+                ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var key in secretKeys)
         {
             if ((!values.TryGetValue(key, out var value) || !HasValue(value)) &&
-                current.RootElement.TryGetProperty(key, out var existing))
+                TryGetSettingValue(current.RootElement, key, provider.Origin, out var existing))
             {
                 values[key] = existing.Clone();
             }
@@ -720,6 +721,20 @@ public sealed partial class ProviderAccountsController : ControllerBase
     private static SecretAccessContext SecretAccess(ProviderAccountRecord account) =>
         new(account.OwnerUserId, $"provider-account:{account.ProviderId}:{account.Id:N}",
             AllowShared: account.OwnerUserId == null);
+
+    private static bool TryGetSettingValue(JsonElement value, string key, ProviderOrigin origin, out JsonElement setting)
+    {
+        if (value.TryGetProperty(key, out setting)) return true;
+        if (origin == ProviderOrigin.BuiltIn)
+            foreach (var property in value.EnumerateObject())
+                if (property.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
+                {
+                    setting = property.Value;
+                    return true;
+                }
+        setting = default;
+        return false;
+    }
 
     private static bool HasValue(JsonElement value) =>
         value.ValueKind != JsonValueKind.Null &&

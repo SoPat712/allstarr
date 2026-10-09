@@ -213,6 +213,25 @@ public sealed class ProviderRegistryTests
         Assert.Contains("host-only", exception.Message, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void BuiltInAliases_ResolveOneOwnerAndRejectStaticAndDynamicCollisions()
+    {
+        var implementation = new FakeMetadataCapability("apple-musickit");
+        var registration = new ProviderRegistration(Descriptor("apple-musickit"), [implementation],
+            ["apple-download", "applemusic"]);
+        var registry = new ProviderRegistry([registration]);
+        Assert.Single(registry.Providers);
+        foreach (var alias in registration.Aliases)
+        {
+            Assert.Equal("apple-musickit", registry.GetRequired(alias).Id);
+            Assert.Same(implementation, registry.GetRequiredCapability<IProviderMetadataCapability>(alias, ProviderCapabilityKind.Metadata));
+            Assert.Throws<InvalidOperationException>(() => new ProviderRegistry([registration, Registration(alias)]));
+            Assert.Throws<InvalidOperationException>(() => registry.RegisterOrReplaceExtension(new(
+                BaseDescriptor(alias, origin: ProviderOrigin.Extension, entryPoint: "index.js"), [new FakeMetadataCapability(alias)])));
+        }
+        Assert.Single(registry.Providers);
+    }
+
     private static ProviderRegistration Registration(
         string id,
         ProviderCapabilitySupportState state = ProviderCapabilitySupportState.Supported,

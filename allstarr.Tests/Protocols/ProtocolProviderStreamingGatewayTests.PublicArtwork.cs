@@ -18,7 +18,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProviderResourceKind.Playlist)]
     public async Task PublicArtwork_UsesTypedAccountFreeMetadataAndPreservesAppleAlias(ProviderResourceKind kind)
     {
-        const string provider = "apple-download";
+        const string provider = "apple-musickit";
         var id = new ProviderExternalResourceId(provider, kind, "public-resource");
         var artwork = new ProviderArtworkReference(publicUri: new("https://artwork.example.invalid/cover.jpg"));
         var capability = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);

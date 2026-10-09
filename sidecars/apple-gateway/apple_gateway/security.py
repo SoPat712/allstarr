@@ -3,15 +3,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
 
+from .models import MediaAccount
 
 SECRET_KEY = re.compile(r"(authorization|cookie|password|secret|session|token)", re.IGNORECASE)
 APPLE_ID = re.compile(r"^[0-9]{1,24}$")
-SUPPORTED_APPLE_PATH = re.compile(
-    r"^/(?:[a-z]{2}/)?(?:album|song|playlist|artist|music-video|post|library)(?:/|$)",
-    re.IGNORECASE,
-)
+STOREFRONT = re.compile(r"^[a-z]{2}$")
+ACCOUNT_SCOPE = re.compile(r"^[0-9a-f]{64}$")
 
 
 def sanitize_json(value: Any) -> Any:
@@ -22,28 +20,26 @@ def sanitize_json(value: Any) -> Any:
     return value
 
 
-def safe_apple_url(raw: str) -> tuple[str, str]:
-    parsed = urlsplit(raw.strip())
-    if (
-        parsed.scheme != "https"
-        or parsed.hostname != "music.apple.com"
-        or parsed.username
-        or parsed.password
-        or parsed.fragment
-        or not SUPPORTED_APPLE_PATH.match(parsed.path)
-    ):
-        raise ValueError("unsupported_apple_music_url")
-    sanitized = urlunsplit(("https", "music.apple.com", parsed.path, parsed.query, ""))
-    segment = next((part for part in parsed.path.lower().split("/") if part in {
-        "album", "song", "playlist", "artist", "music-video", "post", "library"
-    }), "catalog")
-    return sanitized, segment
-
-
 def song_url(storefront: str, song_id: str) -> str:
-    if not APPLE_ID.fullmatch(song_id):
+    if not STOREFRONT.fullmatch(storefront) or not APPLE_ID.fullmatch(song_id):
         raise ValueError("invalid_song_id")
     return f"https://music.apple.com/{storefront}/song/{song_id}"
+
+
+def valid_media_token(token: str) -> bool:
+    return 1 <= len(token) <= 16384 and all(
+        33 <= ord(character) <= 126 and character not in ";," for character in token
+    )
+
+
+def media_account(token: str, storefront: str, scope: str) -> MediaAccount:
+    if (
+        not valid_media_token(token)
+        or not STOREFRONT.fullmatch(storefront)
+        or not ACCOUNT_SCOPE.fullmatch(scope)
+    ):
+        raise ValueError("account_context_required")
+    return MediaAccount(token, storefront, scope)
 
 
 def safe_files(root: Path, suffixes: set[str]) -> list[Path]:

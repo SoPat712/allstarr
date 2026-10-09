@@ -14,6 +14,7 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 
 ## Operator guides
 
+- [Release checklist](operations/release-checklist.md)
 - [WebUI proxy and SSO setup](operations/webui-access.md)
 - [Legacy `.env` import](operations/legacy-env-import.md)
 - [Apple download provider](operations/apple-download-provider.md)

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
 import {
   accountSettings,
+  providerDisplayName,
   audienceLabel,
   ctsMeasurementLabel,
   sourceMetrics,
@@ -29,6 +30,13 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("labels legacy Apple identities with the unified service without changing their IDs", () => {
+    const providers = [{ id: "apple-musickit", name: "Apple Music" }];
+    for (const id of ["apple-download", "applemusic", "apple-musickit"])
+      expect(providerDisplayName(providers, id)).toBe("Apple Music");
+    expect(providerDisplayName(providers, "spotiflac-apple-music")).toBe("spotiflac-apple-music");
+  });
+
   it("humanizes camel-case lifecycle labels", () => {
     expect(humanize("reviewRequired")).toBe("Review Required");
     expect(humanize("reviewrequired")).toBe("Review Required");

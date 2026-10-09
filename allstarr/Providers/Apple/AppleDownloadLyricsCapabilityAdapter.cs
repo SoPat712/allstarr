@@ -1,3 +1,4 @@
+using allstarr.Core.Providers.AppleMusicKit;
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
@@ -12,23 +13,25 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
 {
     private const int MaximumLyricsBytes = 2_000_000;
     private readonly HttpClient http;
+    private readonly AppleMusicClient client;
     private readonly AppleDownloadSettings settings;
     private readonly IAppleDownloadEndpointDiscovery discovery;
 
     public AppleDownloadLyricsCapabilityAdapter(
         IHttpClientFactory clients,
         IOptions<AppleDownloadSettings> settings,
-        IAppleDownloadEndpointDiscovery discovery)
-        : this(clients.CreateClient(AppleDownloadCapabilityAdapter.HttpClientName), settings.Value, discovery)
+        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client)
+        : this(clients.CreateClient(AppleDownloadCapabilityAdapter.HttpClientName), settings.Value, discovery, client)
     {
     }
 
     public AppleDownloadLyricsCapabilityAdapter(
         HttpClient http,
         AppleDownloadSettings settings,
-        IAppleDownloadEndpointDiscovery discovery)
+        IAppleDownloadEndpointDiscovery discovery, AppleMusicClient client)
     {
         this.http = http;
+        this.client = client;
         this.settings = settings;
         this.discovery = discovery;
     }
@@ -43,6 +46,8 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
     {
         try
         {
+            var accountError = AppleMusicClient.Validate(context, personal: true);
+            if (accountError != null) return ProviderOutcome<ProviderLyricsResult>.Failure(accountError);
             context.RequireResourceOwner(request.ProviderTrackId, ProviderResourceKind.Track);
             if (!context.ProviderId.Equals(AppleDownloadCapabilityAdapter.StableProviderId, StringComparison.Ordinal) ||
                 !context.Policy.AllowsProvider(AppleDownloadCapabilityAdapter.StableProviderId))
@@ -59,8 +64,11 @@ public sealed class AppleDownloadLyricsCapabilityAdapter : IProviderLyricsCapabi
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
                 return Failure(ProviderErrorKind.AccountNeedsConfiguration);
 
-            var endpoint = new Uri(baseUri!, $"api/lyrics/{Uri.EscapeDataString(request.ProviderTrackId.Value)}");
-            using var response = await http.GetAsync(endpoint, HttpCompletionOption.ResponseHeadersRead, context.CancellationToken);
+            var resolved = await client.ResolveCatalogTrackAsync(context, request.ProviderTrackId.Value);
+            if (!resolved.IsSuccess) return ProviderOutcome<ProviderLyricsResult>.Failure(resolved.Error!);
+            var endpoint = new Uri(baseUri!, $"api/lyrics/{Uri.EscapeDataString(resolved.RequireValue())}");
+            using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            using var response = await client.SendSidecarAsync(context, http, outbound, context.CancellationToken);
             if (response.StatusCode == HttpStatusCode.NotFound)
                 return ProviderOutcome<ProviderLyricsResult>.Success(new(
                     ProviderLyricsAvailabilityState.Unavailable, "GAMDL"));
