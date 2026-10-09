@@ -124,7 +124,7 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 1. Open **Library → Playlists** and import a playlist from your connected playlist-capable account. If no account is available, **Connect Spotify** opens a personal account flow.
 2. Choose the visible source view and destination behavior described by the form.
 3. Choose **Import once**, **Update when I ask**, or a schedule. An imported-once playlist keeps its published snapshot and never reads later source changes, even if the source account is subsequently disabled.
-4. Choose **Stream when played** or **Keep every song**. Keep-all queues owner- and library-scoped durable downloads for every resolved external song; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the playlist import.
+4. Choose **Stream when played** or **Keep every song**. Keep-all queues durable downloads using the playlist owner's authorized account for every resolved external song; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the playlist import.
 5. Open **Mappings** for ambiguous or unresolved tracks.
 
 The default **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use their eligible mapped providers in the configured streaming order, and unresolved songs remain visible with a clear not-playable status. **Original** previews the source metadata, while **Native** is only a diagnostic view of the separate playlist written into Jellyfin or Subsonic; it can omit external and unresolved entries that the backend cannot store natively.
@@ -166,9 +166,9 @@ Favorite actions do not tag files, place music in the backend library, trigger l
 
 ## Listening and scrobbling
 
-Automatic history is opt-in. Enable it under **Intelligence → Automation** for the selected library. Completed protocol plays then appear in **Overview** without a manual refresh. Listening apps can receive a private key there and may optionally forward completed listens to connected Last.fm or ListenBrainz accounts.
+Automatic history is opt-in in the development-only Intelligence workspace. Enable it under **Intelligence → Automation** for your backend account. Completed protocol plays then appear in **Overview** without a manual refresh. Listening apps can receive a private key there and may optionally forward completed listens to connected Last.fm or ListenBrainz accounts.
 
-Recommendation learning stays within the exact user, backend, and library scope. Plays, skips, favorites, playlist membership, and direct Discover feedback can influence later runs only when their signal types are enabled. A favorite raises the track's preference signal; removing the favorite cancels that contribution. Generated sets remain ephemeral in Intelligence until **Create in Jellyfin** or **Create in Subsonic** is used, while Automation can refresh and publish rotating personal sets on a schedule.
+Recommendation learning stays within your user and backend account. Local recommendations include only music libraries you can access. Plays, skips, favorites, playlist membership, and direct Discover feedback can influence later runs only when their signal types are enabled. A favorite raises the track's preference signal; removing the favorite cancels that contribution. Generated sets remain ephemeral in Intelligence until **Create in Jellyfin** or **Create in Subsonic** is used, while Automation can refresh and publish rotating personal sets on a schedule.
 
 Scrobbling is checkpointed so a provider is not sent the same completed listen twice. Home and History show what Allstarr observed; Activity shows delivery failures and retries.
 

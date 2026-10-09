@@ -31,9 +31,9 @@ First startup creates `keyring.json` with private permissions when the database 
 
 ## Durable settings
 
-Non-secret product behavior belongs in tenant-scoped SQLite settings and is edited through the dashboard surface that owns it. General playback, cache, matching, playlist, and diagnostics policy lives under **Settings**. Provider priority lives under **Integrations > Routing**.
+Non-secret product behavior belongs in household SQLite settings and is edited through the dashboard surface that owns it. General playback, cache, matching, playlist, and diagnostics policy lives under **Settings**. Provider priority lives under **Integrations > Routing**. Each user's explicit-content filter and external/explicit title labels can override the household defaults under **Preferences**; clearing an override restores the current household value.
 
-`DurableRuntimeSettingsService` owns validation, typing, revisions, and optimistic concurrency. Controllers must not add a second environment or JSON owner for these settings.
+`DurableRuntimeSettingsService` owns validation, typing, revisions, optimistic concurrency, and live option updates after a successful commit. Controllers must not add a second environment or JSON owner for these settings.
 
 ## Provider accounts
 
@@ -47,11 +47,13 @@ Extensions are package implementations, not a second account system. Their insta
 
 AudioMuse-AI is a built-in Intelligence integration rather than an extension. It is composed only when `ALLSTARR_RELEASE_PROFILE=development`; its persisted configuration and data remain intact while the core profile is active.
 
-A shared account is not automatically available to every user. Administrators must set its access policy explicitly.
+Shared accounts are eligible for household use only while enabled and authorized for the requested capability. They do not grant access to any backend library or another user's private playlist management.
 
 ## Backend setup
 
 `BACKEND_TYPE` selects Jellyfin or Subsonic/OpenSubsonic before startup. Backend URL, credentials, instance identity, library selection, and user mapping are completed through onboarding and durable configuration. An imported legacy file must not switch the active backend.
+
+`Identity:BackendInstanceId` defaults to `primary` and identifies the selected backend instance. Users are created on verified sign-in and are distinct by backend type, instance, and backend principal. Their administrator role is read from the backend. Old multi-user modes and provider account management modes are recognized only as unsupported legacy input; they do not change ownership. Indexing includes all music libraries unless the administrator selects a subset, and each request still checks the listener's backend library permissions.
 
 `ALLSTARR_RELEASE_PROFILE` defaults to `core`. The core profile omits unreleased Intelligence controllers, recommendation providers, imports, background handlers, and direct WebUI access while preserving their database records. `development` explicitly composes those surfaces for continued work. Unknown profile names stop startup instead of silently widening the release.
 

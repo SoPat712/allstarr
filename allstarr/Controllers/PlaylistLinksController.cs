@@ -1098,7 +1098,8 @@ public sealed class PlaylistLinksController(
                 secret.Purpose == BackendCredentialScope.SubsonicPurpose && secret.RevokedAt == null &&
                 db.Users.Any(user => user.Id == secret.UserId && user.Enabled &&
                     subsonicProtocols.Contains(user.BackendType) && user.BackendInstanceId == backendInstanceId &&
-                    user.BackendPrincipalId == context.VerifiedBackendPrincipalId))
+                    (ownerUserId != actor.EffectiveUserId ||
+                     user.BackendPrincipalId == context.VerifiedBackendPrincipalId)))
             .OrderByDescending(item => item.UpdatedAt).Select(item => (Guid?)item.Id)
             .FirstOrDefaultAsync(cancellationToken);
     }
