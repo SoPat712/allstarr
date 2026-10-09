@@ -5,33 +5,18 @@ using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
+using allstarr.Services;
 
-namespace allstarr.Services.Deezer;
+namespace allstarr.Core.Providers.Deezer;
 
-public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
+public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCatalogMetadata(StableProviderId), IConcreteMetadataService
 {
-    public string ProviderId => "deezer";
-
-    private readonly HttpClient _httpClient;
-    private readonly SemaphoreSlim _requestLock = new(1, 1);
-    private readonly int _minRequestIntervalMs;
-    private DateTime _lastRequestTime = DateTime.MinValue;
+    public const string StableProviderId = "deezer";
     private const string BaseUrl = "https://api.deezer.com";
     private const string DeezerApiHost = "api.deezer.com";
     private const int MetadataPageSize = 100;
 
-    public DeezerMetadataService(
-        IHttpClientFactory httpClientFactory,
-        IOptions<DeezerSettings>? deezerSettings = null)
-    {
-        _httpClient = httpClientFactory.CreateClient();
-        _minRequestIntervalMs = Math.Max(
-            0,
-            deezerSettings?.Value.MinRequestIntervalMs ?? new DeezerSettings().MinRequestIntervalMs);
-    }
-
-    public async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    public override async Task<List<Song>> SearchSongsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var normalizedLimit = NormalizeSearchLimit(limit);
         var allSongs = new List<Song>();
@@ -88,13 +73,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return songs;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return new List<Song>();
         }
     }
 
-    public async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
+    public override async Task<Song?> FindSongByIsrcAsync(string isrc, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(isrc))
         {
@@ -125,13 +110,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
                 ? song
                 : null;
         }
-        catch
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return null;
         }
     }
 
-    public async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    public override async Task<List<Album>> SearchAlbumsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var normalizedLimit = NormalizeSearchLimit(limit);
         var allAlbums = new List<Album>();
@@ -187,13 +172,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return albums;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return new List<Album>();
         }
     }
 
-    public async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    public override async Task<List<Artist>> SearchArtistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var normalizedLimit = NormalizeSearchLimit(limit);
         var allArtists = new List<Artist>();
@@ -249,7 +234,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return artists;
         }
-        catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return new List<Artist>();
         }
@@ -315,7 +300,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         };
     }
 
-    public async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<Song?> GetSongAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
@@ -383,7 +368,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
                     }
                 }
             }
-            catch
+            catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 // If we can't get the album, continue with track info only
             }
@@ -392,7 +377,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         return song;
     }
 
-    public async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<Album?> GetAlbumAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
@@ -458,7 +443,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         return album;
     }
 
-    public async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<Artist?> GetArtistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
@@ -476,7 +461,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         return ParseDeezerArtist(artist);
     }
 
-    public async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<List<Album>> GetArtistAlbumsAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return new List<Album>();
 
@@ -502,7 +487,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         return albums.Where(album => !string.IsNullOrWhiteSpace(album.Artist)).ToList();
     }
 
-    public async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<List<Song>> GetArtistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return new List<Song>();
 
@@ -757,7 +742,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
         };
     }
 
-    public async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
+    public override async Task<List<ExternalPlaylist>> SearchPlaylistsAsync(string query, int limit = 20, CancellationToken cancellationToken = default)
     {
         var normalizedLimit = NormalizeSearchLimit(limit);
         var allPlaylists = new List<ExternalPlaylist>();
@@ -813,13 +798,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return playlists;
         }
-        catch
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return new List<ExternalPlaylist>();
         }
     }
 
-    public async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return null;
 
@@ -838,13 +823,13 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return ParseDeezerPlaylist(playlistElement);
         }
-        catch
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return null;
         }
     }
 
-    public async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
+    public override async Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default)
     {
         if (!string.Equals(externalProvider, "deezer", StringComparison.OrdinalIgnoreCase)) return new List<Song>();
 
@@ -918,7 +903,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
             return songs;
         }
-        catch
+        catch (Exception exception) when (exception is not (OperationCanceledException or HttpRequestException))
         {
             return new List<Song>();
         }
@@ -967,25 +952,12 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
     private async Task<HttpResponseMessage> GetAsync(string url, CancellationToken cancellationToken)
     {
-        await _requestLock.WaitAsync(cancellationToken);
-        try
-        {
-            if (_lastRequestTime != DateTime.MinValue && _minRequestIntervalMs > 0)
-            {
-                var elapsedMs = (DateTime.UtcNow - _lastRequestTime).TotalMilliseconds;
-                if (elapsedMs < _minRequestIntervalMs)
-                {
-                    await Task.Delay((int)(_minRequestIntervalMs - elapsedMs), cancellationToken);
-                }
-            }
-
-            _lastRequestTime = DateTime.UtcNow;
-            return await _httpClient.GetAsync(url, cancellationToken);
-        }
-        finally
-        {
-            _requestLock.Release();
-        }
+        var response = await http.GetAsync(url, cancellationToken);
+        if (response.IsSuccessStatusCode || response.StatusCode == System.Net.HttpStatusCode.NotFound)
+            return response;
+        try { response.EnsureSuccessStatusCode(); }
+        finally { response.Dispose(); }
+        return response;
     }
 
     private static string BuildMetadataPageUrl(string endpoint, int index)
@@ -1066,7 +1038,7 @@ public class DeezerMetadataService : TrackParserBase, IConcreteMetadataService
 
         return new ExternalPlaylist
         {
-            Id = Common.PlaylistIdHelper.CreatePlaylistId("deezer", externalId),
+            Id = PlaylistIdHelper.CreatePlaylistId("deezer", externalId),
             Name = playlist.GetProperty("title").GetString() ?? "",
             Description = playlist.TryGetProperty("description", out var desc)
                 ? desc.GetString()

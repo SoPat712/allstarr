@@ -110,4 +110,6 @@ The complete index is in [docs/README.md](docs/README.md).
 
 ## License
 
-Allstarr is licensed under [GPL-3.0](LICENSE).
+Allstarr is licensed under [GPL-3.0](LICENSE). See the
+[upstream reuse notices](docs/architecture/reference-projects.md#deezer-implementation-notice)
+for adapted provider code.

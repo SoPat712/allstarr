@@ -20,7 +20,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
 
     private readonly HttpClient http;
     private readonly IProviderAccountSecretAccessor secrets;
-    private readonly DeezerDownloadService downloads;
+    private readonly DeezerMediaClient downloads;
     private readonly ProviderDownloadArtifactResolver artifacts;
     private readonly string? configuredQuality;
     private readonly long maximumArtifactBytes;
@@ -30,7 +30,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
     public DeezerDownloadCapabilityAdapter(
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
-        DeezerDownloadService downloads,
+        DeezerMediaClient downloads,
         ProviderDownloadArtifactResolver artifacts,
         IOptions<DeezerSettings> settings,
         ProviderDownloadWorkspaceOptions workspaceOptions,
@@ -42,7 +42,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
     public DeezerDownloadCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
-        DeezerDownloadService downloads,
+        DeezerMediaClient downloads,
         ProviderDownloadArtifactResolver artifacts,
         string? configuredQuality,
         long maximumArtifactBytes,
@@ -141,7 +141,7 @@ public sealed class DeezerDownloadCapabilityAdapter : IProviderDownloadCapabilit
                 ArtifactId(request.TrackId.Value, extension),
                 maximumArtifactBytes,
                 (output, token) => downloads.DecryptDownloadAsync(
-                    content, output, request.TrackId.Value, token))
+                    content, output, prepared.TrackId, token))
             {
                 ExpectedBytes = expectedBytes,
                 Progress = (complete, total) => progress?.Report(new(

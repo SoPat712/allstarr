@@ -33,7 +33,6 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Providers/Extensions/ExtensionManager.cs"] = "extension packages",
             ["Services/Common/FileMediaApplicationCache.cs"] = "bounded media cache",
             ["Services/Common/ManagedTrackCacheService.cs"] = "managed audio cache",
-            ["Providers/Deezer/DeezerDownloadService.cs"] = "managed audio",
             ["Services/Lyrics/KeptLyricsSidecarService.cs"] = "lyrics sidecar",
             ["Providers/Qobuz/QobuzDownloadService.cs"] = "managed audio",
             ["Services/Subsonic/PlaylistSyncService.cs"] = "M3U target artifact"

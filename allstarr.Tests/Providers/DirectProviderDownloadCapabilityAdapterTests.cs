@@ -30,12 +30,14 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
     private readonly string root = Path.Combine(
         Path.GetTempPath(), "allstarr-direct-downloads", Guid.NewGuid().ToString("N"));
 
-    [Fact]
-    public async Task Deezer_DecryptsRetriesAndReusesTheHostOwnedArtifact()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Deezer_DecryptsRetriesAndReusesTheHostOwnedArtifact(bool useAlternative)
     {
         var trackId = "42";
         var plain = Enumerable.Range(0, 4096).Select(index => (byte)(index % 251)).ToArray();
-        var handler = new DeezerHandler(EncryptDeezer(plain, trackId));
+        var handler = new DeezerHandler(EncryptDeezer(plain, useAlternative ? "84" : trackId), useAlternative: useAlternative);
         var client = new HttpClient(handler);
         var service = DeezerService(client);
         var store = new MemoryStore();
@@ -65,6 +67,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         var verified = await resolver.ResolveAsync(workspace.Reference, first);
         Assert.Equal(plain, await File.ReadAllBytesAsync(verified.SourcePath));
         Assert.Single(store.Artifacts);
+        Assert.All(handler.MediaTokens, token => Assert.Equal(useAlternative ? "alternative-token" : "track-token", token));
         Assert.Equal(3, handler.MediaRequests);
         Assert.Contains(handler.Requests, request =>
             request.Host == "www.deezer.com" && request.Cookie == "arl=selected-arl");
@@ -115,15 +118,18 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         Assert.Single(store.Artifacts);
     }
 
-    [Fact]
-    public async Task DeezerStream_DecryptsIncrementallyAndDoesNotAdvertiseRanges()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeezerStream_DecryptsIncrementallyAndDoesNotAdvertiseRanges(bool useAlternative)
     {
         const string trackId = "42";
         var plain = Enumerable.Range(0, 8192).Select(index => (byte)(index % 251)).ToArray();
         var handler = new DeezerHandler(
-            EncryptDeezer(plain, trackId),
+            EncryptDeezer(plain, useAlternative ? "84" : trackId),
             failFirstMediaRequest: false,
-            invalidFirstMediaResponse: true);
+            invalidFirstMediaResponse: true,
+            useAlternative: useAlternative);
         var client = new HttpClient(handler);
         var service = DeezerService(client);
         var adapter = new DeezerStreamingCapabilityAdapter(
@@ -169,6 +175,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         using var completeResponse = await lease.ProtectedResponseFactory!(
             completeRequest, CancellationToken.None);
         Assert.Equal(plain, await completeResponse.Content.ReadAsByteArrayAsync());
+        Assert.Equal(useAlternative ? "alternative-token" : "track-token", Assert.Single(handler.MediaTokens));
     }
 
     [Fact]
@@ -298,19 +305,8 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
         return (context, workspace, job);
     }
 
-    private DeezerDownloadService DeezerService(HttpClient client)
-    {
-        var configuration = Configuration();
-        return new(
-            Factory(client),
-            configuration,
-            Mock.Of<ILocalLibraryService>(),
-            Mock.Of<IMusicMetadataService>(),
-            Options.Create(new SubsonicSettings()),
-            Options.Create(new DeezerSettings { Quality = "FLAC", MinRequestIntervalMs = 0 }),
-            Mock.Of<IServiceProvider>(),
-            NullLogger<DeezerDownloadService>.Instance);
-    }
+    private static DeezerMediaClient DeezerService(HttpClient client) =>
+        new(new DeezerHttpClient(client, 0), NullLogger<DeezerMediaClient>.Instance);
 
     private QobuzDownloadService QobuzService(
         IHttpClientFactory factory,
@@ -381,13 +377,15 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
     private sealed class DeezerHandler(
         byte[] encrypted,
         bool failFirstMediaRequest = true,
-        bool invalidFirstMediaResponse = false) : HttpMessageHandler
+        bool invalidFirstMediaResponse = false,
+        bool useAlternative = false) : HttpMessageHandler
     {
         public List<RequestSnapshot> Requests { get; } = [];
+        public List<string> MediaTokens { get; } = [];
         public int MediaRequests { get; private set; }
         public long MediaBytesRead { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
@@ -405,12 +403,16 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
             }
             else if (uri.Host == "api.deezer.com")
             {
-                response = Json("""
-                    {"track_token":"track-token","title":"Fixture","artist":{"name":"Artist"}}
-                    """);
+                response = useAlternative
+                    ? uri.AbsolutePath == "/track/42"
+                        ? Json("""{"id":42,"readable":false,"alternative":{"id":84},"title":"Fixture","artist":{"name":"Artist"}}""")
+                        : Json("""{"id":84,"readable":true,"track_token":"alternative-token","title":"Fixture","artist":{"name":"Artist"}}""")
+                    : Json("""{"track_token":"track-token","title":"Fixture","artist":{"name":"Artist"}}""");
             }
             else if (uri.Host == "media.deezer.com")
             {
+                using var body = System.Text.Json.JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                MediaTokens.Add(body.RootElement.GetProperty("track_tokens")[0].GetString()!);
                 response = Json("""
                     {"data":[{"media":[{"format":"FLAC","sources":[{"url":"https://cdn.deezer.test/audio/42"}]}]}]}
                     """);
@@ -430,7 +432,7 @@ public sealed class DirectProviderDownloadCapabilityAdapterTests : IDisposable
                 response = new(HttpStatusCode.NotFound);
             }
             response.RequestMessage = request;
-            return Task.FromResult(response);
+            return response;
         }
     }
 

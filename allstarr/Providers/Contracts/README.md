@@ -44,4 +44,5 @@ Focused contract tests live in:
 - `ProviderCapabilityContractTests`
 - `ProviderRouterTests`
 - `TrackIdentityServiceTests`
-- `DeezerMetadataCapabilityAdapterTests`
+- `ProviderCatalogMetadataTests`
+- `DeezerProviderTests`

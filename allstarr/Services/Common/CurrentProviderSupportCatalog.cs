@@ -49,10 +49,10 @@ public static class CurrentProviderSupportCatalog
             "Deezer",
             "mixed",
             "Public metadata; an ARL is required on each managed account used for download or stream work.",
-            Capability("metadata", Supported, "Catalog song, album, artist, playlist, and ISRC operations.", "DeezerMetadataServiceTests"),
+            Capability("metadata", Supported, "Catalog song, album, artist, playlist, and ISRC operations.", "DeezerProviderTests"),
             Capability("streaming", Supported, "Selected-account streams use an exact-provider typed lease and incremental 2 KiB decryption without buffering the full track or advertising ranges.", "DirectProviderDownloadCapabilityAdapterTests; ProtocolProviderStreamingGatewayTests"),
             Capability("download", Supported, "Account-bound encrypted transfer and decryption use a typed host-owned workspace with size, checksum, progress, cancellation, cleanup, and retry contracts.", "DirectProviderDownloadCapabilityAdapterTests; ProviderDownloadArtifactResolverTests"),
-            Capability("playlist", Supported, "Read/discovery only; no provider-neutral write contract.", "DeezerMetadataServiceTests"),
+            Capability("playlist", Supported, "Read/discovery only; no provider-neutral write contract.", "DeezerProviderTests"),
             Capability("health", Partial, "Account-scoped metadata, playlist, stream, and download probes with durable capability samples.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
             "qobuz",

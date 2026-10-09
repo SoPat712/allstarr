@@ -12,14 +12,14 @@ public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapabil
 {
     private readonly HttpClient http;
     private readonly IProviderAccountSecretAccessor secrets;
-    private readonly DeezerDownloadService downloads;
+    private readonly DeezerMediaClient downloads;
     private readonly string? configuredQuality;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
     public DeezerStreamingCapabilityAdapter(
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
-        DeezerDownloadService downloads,
+        DeezerMediaClient downloads,
         IOptions<DeezerSettings> settings)
         : this(clients.CreateClient(DeezerDownloadCapabilityAdapter.HttpClientName),
             secrets, downloads, settings.Value.Quality)
@@ -28,7 +28,7 @@ public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapabil
     public DeezerStreamingCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
-        DeezerDownloadService downloads,
+        DeezerMediaClient downloads,
         string? configuredQuality)
     {
         this.http = http;
@@ -60,7 +60,7 @@ public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapabil
                 resolved.Value.Media,
                 ProviderStreamRetryBehavior.RefreshLease,
                 (outbound, token) => OpenAsync(
-                    outbound, request.TrackId.Value, resolved.Value.Media, token)));
+                    outbound, resolved.Value.TrackId, resolved.Value.Media, token)));
         }
         catch (OperationCanceledException)
         {
@@ -122,7 +122,7 @@ public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapabil
         }
     }
 
-    private async Task<(Uri Source, ProviderMediaFormat Media)?> ResolveAsync(
+    private async Task<(Uri Source, ProviderMediaFormat Media, string TrackId)?> ResolveAsync(
         ProviderExecutionContext context,
         ProviderStreamLeaseRequest request)
     {
@@ -140,7 +140,7 @@ public sealed class DeezerStreamingCapabilityAdapter : IProviderStreamingCapabil
             !DeezerDownloadCapabilityAdapter.TryProviderUri(
                 prepared.DownloadUrl, out var source))
             throw new InvalidDataException("The Deezer stream response is incompatible.");
-        return (source, media!);
+        return (source, media!, prepared.TrackId);
     }
 
     private async Task<HttpResponseMessage> OpenAsync(
