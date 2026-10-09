@@ -492,7 +492,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
                 System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0.07)
             { Preferences = new(filter, false, false) };
             var context = Context(protocol) with { Policy = policy };
-            var expected = filter == "All" ? 4 : 3;
+            var expected = filter == "CleanOnly" ? 3 : 4;
             string[] titles;
             if (protocol == ProtocolKind.Jellyfin)
             {
@@ -521,7 +521,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             Assert.Contains("Second", titles);
             Assert.Contains("Unknown", titles);
             Assert.Equal(filter != "CleanOnly", titles.Contains("Explicit"));
-            Assert.Equal(filter != "ExplicitOnly", titles.Contains("Clean"));
+            Assert.Contains("Clean", titles);
             Assert.DoesNotContain(titles, title => title.Contains("[A]", StringComparison.Ordinal) || title.Contains("[E]", StringComparison.Ordinal));
         }
         Assert.Equal(4, model.Tracks.Count);

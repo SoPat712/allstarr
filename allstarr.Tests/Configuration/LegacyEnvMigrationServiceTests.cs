@@ -6,6 +6,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
@@ -97,6 +98,26 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Empty(await db.ProviderAccounts.ToListAsync());
         Assert.Empty(await db.SecretReferences.ToListAsync());
         Assert.Empty(await db.AuditEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Apply_V2ExplicitOnlyDefaultKeepsNaturallyCleanSongs()
+    {
+        var migration = CreateService();
+        var preview = await migration.PreviewAsync(Source("EXPLICIT_FILTER=ExplicitOnly"), Actor());
+        Assert.True(preview.CanApply);
+
+        var result = await migration.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+        Assert.Equal(1, result.SettingsImported);
+
+        var settings = new DurableRuntimeSettingsService(_factory, new ConfigurationBuilder().Build(),
+            new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
+        var preferences = await settings.GetPreferencesAsync(_userId);
+        Assert.True(preferences.UsesHouseholdDefaults);
+        Assert.Equal("ExplicitOnly", preferences.Values.ExplicitFilter);
+        var filter = Enum.Parse<ExplicitFilter>(preferences.Values.ExplicitFilter);
+        Assert.True(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 0 }, filter));
+        Assert.False(ExplicitContentFilter.ShouldIncludeSong(new Song { ExplicitContentLyrics = 3 }, filter));
     }
 
     [Fact]

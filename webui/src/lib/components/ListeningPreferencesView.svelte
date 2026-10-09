@@ -13,7 +13,7 @@
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
-    { value: "ExplicitOnly", label: "Explicit only", description: "Show releases marked explicit." },
+    { value: "ExplicitOnly", label: "Hide clean/edited versions", description: "Keep naturally clean, explicit, and unrated releases." },
     { value: "CleanOnly", label: "Clean only", description: "Hide releases marked explicit." },
   ];
 
@@ -187,7 +187,7 @@
 
       <footer class="preferences-actions">
         <p>
-          Household default: {snapshot.householdDefaults.explicitFilter === "ExplicitOnly" ? "Explicit only" : snapshot.householdDefaults.explicitFilter === "CleanOnly" ? "Clean only" : snapshot.householdDefaults.explicitFilter}
+          Household default: {snapshot.householdDefaults.explicitFilter === "ExplicitOnly" ? "Hide clean/edited versions" : snapshot.householdDefaults.explicitFilter === "CleanOnly" ? "Clean only" : snapshot.householdDefaults.explicitFilter}
           · [A] {snapshot.householdDefaults.showExternalLabel ? "on" : "off"}
           · [E] {snapshot.householdDefaults.showExplicitLabel ? "on" : "off"}
         </p>
