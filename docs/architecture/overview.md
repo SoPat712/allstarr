@@ -39,7 +39,7 @@ Jellyfin or Subsonic protocol controller
              +--> filesystem --> cache, downloads, kept files
 ```
 
-The public protocol controllers preserve client compatibility. Provider metadata and streams pass through the required `IProtocolProviderGateway`; controllers do not select legacy provider services. New application behavior belongs in the typed core, not in protocol-specific controller branches.
+The public protocol controllers preserve client compatibility. Provider metadata and streams pass through the required `IProtocolProviderGateway`; controllers and playback metadata do not select legacy provider services. Public activity metadata and unlinked-principal catalog reads use the same typed router with a public-read actor and cannot resolve account credentials. Only executable typed streaming routes make a provider eligible for playable search. New application behavior belongs in the typed core, not in protocol-specific controller branches.
 
 ## Code ownership
 

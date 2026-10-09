@@ -61,7 +61,7 @@ public static class CurrentProviderSupportCatalog
             "Spotify",
             "user",
             "A selected managed account cookie is resolved from its encrypted provider-account secret.",
-            Capability("metadata", Unavailable, "No generic IConcreteMetadataService is registered.", "none (unsupported)"),
+            Capability("metadata", Unavailable, "No metadata capability is registered.", "none (unsupported)"),
             Capability("playlist", Supported, "Account-bound source paging, snapshots, artwork, provider-neutral matching, virtual reads, and manual/scheduled Jellyfin or Navidrome materialization.", "SpotifyPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests; VirtualPlaylistProtocolAdapterTests"),
             Capability("lyrics", Supported, "Typed optional Spotify lyrics sidecar preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests"),
             Capability("health", Partial, "Playlist and optional lyrics probes remain independently sampled, so one lane does not mask the other.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),

@@ -1,13 +1,15 @@
 using System.Net;
 using System.Text;
 using allstarr.Models.Settings;
-using allstarr.Services.AppleMusic;
+using allstarr.Core.Providers.AppleMusicKit;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Tests;
 
-public sealed class AppleMusicMetadataServiceTests
+public sealed class AppleMusicProtocolProjectionTests
 {
     [Fact]
     public async Task SearchUsesCatalogLimitAndStablePublicProviderId()
@@ -15,7 +17,8 @@ public sealed class AppleMusicMetadataServiceTests
         var handler = new Handler();
         var service = Create(new HttpClient(handler));
 
-        var songs = await service.SearchSongsAsync("Choosin' Texas", 200);
+        var songs = (await service.SearchTracksAsync(Context(), new("Choosin' Texas", new(200))))
+            .RequireValue().Items.Select(ProtocolProviderGateway.Map);
 
         var song = Assert.Single(songs);
         Assert.Equal("apple-download", song.ExternalProvider);
@@ -32,10 +35,10 @@ public sealed class AppleMusicMetadataServiceTests
         var handler = new Handler();
         var service = Create(new HttpClient(handler));
 
-        var artist = await service.GetArtistAsync("apple-download", "201");
-        var albums = await service.GetArtistAlbumsAsync("apple-download", "201");
-        var tracks = await service.GetArtistTracksAsync("apple-download", "201");
-        var album = await service.GetAlbumAsync("apple-download", "301");
+        var artist = ProtocolProviderGateway.Map((await service.GetArtistAsync(Context(), new(Id(ProviderResourceKind.Artist, "201")))).RequireValue());
+        var albums = (await service.GetArtistAlbumsAsync(Context(), new(Id(ProviderResourceKind.Artist, "201"), new(100)))).RequireValue().Items.Select(ProtocolProviderGateway.Map).ToList();
+        var tracks = (await service.GetArtistTracksAsync(Context(), new(Id(ProviderResourceKind.Artist, "201"), new(100)))).RequireValue().Items.Select(ProtocolProviderGateway.Map);
+        var album = ProtocolProviderGateway.Map((await service.GetAlbumAsync(Context(), new(Id(ProviderResourceKind.Album, "301")))).RequireValue());
 
         Assert.Equal("ext-apple-download-artist-201", artist!.Id);
         Assert.Equal("ext-apple-download-album-301", Assert.Single(albums).Id);
@@ -50,8 +53,8 @@ public sealed class AppleMusicMetadataServiceTests
     {
         var service = Create(new HttpClient(new Handler()));
 
-        var album = Assert.Single(await service.SearchAlbumsAsync("Dandelion"));
-        var artist = Assert.Single(await service.SearchArtistsAsync("Ella Langley"));
+        var album = ProtocolProviderGateway.Map(Assert.Single((await service.SearchAlbumsAsync(Context(), new("Dandelion", new(20)))).RequireValue().Items));
+        var artist = ProtocolProviderGateway.Map(Assert.Single((await service.SearchArtistsAsync(Context(), new("Ella Langley", new(20)))).RequireValue().Items));
 
         Assert.Equal("ext-apple-download-album-301", album.Id);
         Assert.Equal("ext-apple-download-artist-201", album.ArtistId);
@@ -59,11 +62,12 @@ public sealed class AppleMusicMetadataServiceTests
         Assert.Equal("apple-download", artist.ExternalProvider);
     }
 
-    private static AppleMusicMetadataService Create(HttpClient http)
-    {
-        var client = AppleProviderTestFactory.Client(http);
-        return new(new(client), new(client, http));
-    }
+    private static AppleMusicKitMetadataCapabilityAdapter Create(HttpClient http) => new(AppleProviderTestFactory.Client(http));
+    private static ProviderExternalResourceId Id(ProviderResourceKind kind, string id) => new("apple-musickit", kind, id);
+    private static ProviderExecutionContext Context() => new(new(ProviderActorKind.PublicRead, null),
+        "apple-musickit", null, new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, false),
+            ProviderExplicitContentPolicy.Allow, false, false, false, ["apple-musickit"]),
+        "public-metadata", "public-metadata", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
     private sealed class Handler : HttpMessageHandler
     {

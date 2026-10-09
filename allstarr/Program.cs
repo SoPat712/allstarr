@@ -378,13 +378,6 @@ else
 }
 
 
-builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
-    provider.GetRequiredService<DeezerProvider>());
-builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
-    provider.GetRequiredService<QobuzProvider>());
-builder.Services.AddSingleton<AppleMusicMetadataService>();
-builder.Services.AddSingleton<IConcreteMetadataService>(provider =>
-    provider.GetRequiredService<AppleMusicMetadataService>());
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddDeezerProvider();
 builder.Services.AddQobuzProvider();
@@ -395,12 +388,9 @@ builder.Services.AddBuiltInLyricsCapabilities();
 
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
-builder.Services.AddSingleton<IMusicMetadataService, MultiProviderMetadataService>();
 builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadataResolver>();
-builder.Services.AddSingleton<IDownloadService, MultiProviderDownloadService>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 
-builder.Services.AddSingleton<PlaylistSyncService>();
 
 if (backendType == BackendType.Jellyfin)
 {

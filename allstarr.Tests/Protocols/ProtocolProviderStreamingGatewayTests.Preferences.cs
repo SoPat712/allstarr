@@ -58,7 +58,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 PreferenceRevision = user == userA ? modeA : "unchanged"
             });
         var gateway = new ProtocolProviderGateway(router.Object, registry,
-            Mock.Of<IProviderRouteAccountResolver>(), Mock.Of<IMusicMetadataService>(MockBehavior.Strict),
             new HttpClientFactory(), effectivePolicies: policies.Object);
 
         foreach (var user in new[] { userA, userB, userA })

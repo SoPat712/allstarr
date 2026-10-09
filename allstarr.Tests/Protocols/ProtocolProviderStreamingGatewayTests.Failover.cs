@@ -320,8 +320,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<IProviderStreamingCapability>(request, [],
                 new ProviderRouteDecisionRecord(request.CorrelationId, ProviderCapabilityKind.Streaming, null, null,
                     [new ProviderRouteCandidateDecision("deezer", null, ProviderRouteDecisionStatus.Rejected, "account-scope-denied", 0)])));
-        var gateway = new ProtocolProviderGateway(router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(MockBehavior.Strict), new HttpClientFactory(), managedTrackCache: cache);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), managedTrackCache: cache);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.OpenStreamAsync(Context(), "deezer", "source-track",
             ProviderAudioQuality.Any, null));
         local.VerifyNoOtherCalls();
@@ -443,8 +442,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     0.07));
             policies = resolver.Object;
         }
-        return (new ProtocolProviderGateway(router.Object, registry, Mock.Of<IProviderRouteAccountResolver>(),
-            Mock.Of<IMusicMetadataService>(MockBehavior.Strict), new HttpClientFactory(), configuration,
+        return (new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration,
             managedTrackCache: managedTrackCache, playbackActivity: activity, effectivePolicies: policies), router);
     }
 

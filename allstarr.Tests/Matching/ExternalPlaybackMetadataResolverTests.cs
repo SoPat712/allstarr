@@ -1,7 +1,8 @@
 using allstarr.Models.Domain;
 using allstarr.Core.Operations;
-using allstarr.Services;
+using allstarr.Core.Protocols;
 using allstarr.Services.Common;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using System.Net;
@@ -13,8 +14,8 @@ public sealed class ExternalPlaybackMetadataResolverTests
     [Fact]
     public async Task ResolvesAppleDownloadPlayerMetadata()
     {
-        var service = new Mock<IMusicMetadataService>();
-        service.Setup(item => item.GetSongAsync("apple-download", "1573475841", It.IsAny<CancellationToken>()))
+        var service = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        service.Setup(item => item.GetPublicSongAsync("apple-download", "1573475841", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Song
             {
                 Title = "Sunflower",
@@ -35,13 +36,15 @@ public sealed class ExternalPlaybackMetadataResolverTests
         Assert.Equal("Sunflower", result.Title);
         Assert.Equal(158, result.DurationSeconds);
         Assert.Equal("https://artwork.example/sunflower.jpg", result.CoverArtUrl);
+        service.VerifyAll();
+        service.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task ResolvesOnlyBoundedImageArtwork()
     {
-        var service = new Mock<IMusicMetadataService>();
-        service.Setup(item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
+        var service = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        service.Setup(item => item.GetPublicSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
             .ReturnsAsync(new Song { CoverArtUrl = "https://cdn.example/cover.png" });
         var resolver = new ExternalPlaybackMetadataResolver(
             service.Object,
@@ -56,13 +59,15 @@ public sealed class ExternalPlaybackMetadataResolverTests
         Assert.NotNull(result);
         Assert.Equal("image/png", result.ContentType);
         Assert.Equal([1, 2, 3], result.Content);
+        service.VerifyAll();
+        service.VerifyNoOtherCalls();
     }
 
     [Fact]
     public async Task MetadataMissesUseTheNegativeCache()
     {
-        var service = new Mock<IMusicMetadataService>();
-        service.Setup(item => item.GetSongAsync("deezer", "404", It.IsAny<CancellationToken>()))
+        var service = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        service.Setup(item => item.GetPublicSongAsync("deezer", "404", It.IsAny<CancellationToken>()))
             .ReturnsAsync((Song?)null);
         var cache = new TestMemoryApplicationCache();
         var resolver = new ExternalPlaybackMetadataResolver(
@@ -76,8 +81,9 @@ public sealed class ExternalPlaybackMetadataResolverTests
         Assert.Null(await resolver.ResolveAsync("ext-deezer-song-404", CancellationToken.None));
 
         service.Verify(
-            item => item.GetSongAsync("deezer", "404", It.IsAny<CancellationToken>()),
+            item => item.GetPublicSongAsync("deezer", "404", It.IsAny<CancellationToken>()),
             Times.Once);
+        service.VerifyNoOtherCalls();
         Assert.Contains(
             CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("deezer", "404"),
             cache.GetKeysByPattern("negative:*"));
@@ -88,8 +94,8 @@ public sealed class ExternalPlaybackMetadataResolverTests
     {
         var release = new TaskCompletionSource<Song?>(
             TaskCreationOptions.RunContinuationsAsynchronously);
-        var service = new Mock<IMusicMetadataService>();
-        service.Setup(item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
+        var service = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        service.Setup(item => item.GetPublicSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
             .Returns(release.Task);
         var resolver = new ExternalPlaybackMetadataResolver(
             service.Object,
@@ -105,8 +111,9 @@ public sealed class ExternalPlaybackMetadataResolverTests
         var results = await Task.WhenAll(first, second);
         Assert.All(results, result => Assert.Equal("Shared", result!.Title));
         service.Verify(
-            item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()),
+            item => item.GetPublicSongAsync("deezer", "42", It.IsAny<CancellationToken>()),
             Times.Once);
+        service.VerifyNoOtherCalls();
     }
 
     [Fact]
@@ -120,8 +127,8 @@ public sealed class ExternalPlaybackMetadataResolverTests
             TaskCreationOptions.RunContinuationsAsynchronously);
         var metrics = new ApplicationCacheActivityMetrics();
         var calls = 0;
-        var service = new Mock<IMusicMetadataService>();
-        service.Setup(item => item.GetSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
+        var service = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        service.Setup(item => item.GetPublicSongAsync("deezer", "42", It.IsAny<CancellationToken>()))
             .Returns(() =>
             {
                 if (Interlocked.Increment(ref calls) == 1)
@@ -149,7 +156,53 @@ public sealed class ExternalPlaybackMetadataResolverTests
         Assert.Equal("Stale", stale!.Title);
         Assert.Equal(2, calls);
         Assert.Equal(1, metrics.Snapshot().StaleServes);
+        service.Verify(item => item.GetPublicSongAsync("deezer", "42", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        service.VerifyNoOtherCalls();
         refreshRelease.SetResult(new Song { Title = "Fresh", Artist = "Artist" });
+    }
+
+    [Fact]
+    public async Task PublicLookupFailureCannotFallBackToAccountMetadataOrExposeProviderDetails()
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetPublicSongAsync("fixture", "private-id", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new UnauthorizedAccessException("fixture-secret provider payload"));
+        var http = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var logger = new RecordingLogger();
+        var resolver = new ExternalPlaybackMetadataResolver(
+            gateway.Object,
+            new TestMemoryApplicationCache(),
+            http.Object,
+            new SystemPlatformClock(),
+            logger);
+
+        Assert.Null(await resolver.ResolveAsync("ext-fixture-song-private-id", CancellationToken.None));
+        Assert.Null(await resolver.ResolveAsync("ext-fixture-song-private-id", CancellationToken.None));
+        Assert.Null(await resolver.ResolveArtworkAsync("ext-fixture-song-private-id", CancellationToken.None));
+
+        gateway.Verify(item => item.GetPublicSongAsync("fixture", "private-id", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        gateway.VerifyNoOtherCalls();
+        http.VerifyNoOtherCalls();
+        Assert.Equal(
+            ["Unable to resolve public playback metadata.", "Unable to resolve public playback artwork."],
+            logger.Messages);
+        Assert.All(logger.Exceptions, Assert.Null);
+    }
+
+    private sealed class RecordingLogger : ILogger<ExternalPlaybackMetadataResolver>
+    {
+        public List<string> Messages { get; } = [];
+        public List<Exception?> Exceptions { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            Messages.Add(formatter(state, exception));
+            Exceptions.Add(exception);
+        }
     }
 
     private sealed class StubHttpClientFactory(HttpClient client) : IHttpClientFactory
