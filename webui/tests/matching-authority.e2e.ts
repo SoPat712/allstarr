@@ -10,7 +10,6 @@ function matchFixture(administrator: boolean) {
   return {
     externalSnapshotId: "displayed-snapshot",
     providerId: "spotify",
-    libraryScopeId: "music",
     state: "ambiguous",
     decisionSource: "manual_authority",
     confidence: .92,
@@ -143,6 +142,20 @@ test("listener uses personal authority and cannot choose or edit household", asy
     expectedAuthority: { id: "personal-row", revision: 7 },
   });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("matching sends an actual local library filter as backendLibraryId", async ({ page }) => {
+  await mockMatching(page, { administrator: true });
+  await page.goto("#/library/mappings");
+  await page.getByLabel("Library scope").fill("music-library");
+  const filtered = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/admin/track-matches" &&
+      url.searchParams.get("backendLibraryId") === "music-library";
+  });
+  await page.getByRole("button", { name: "Apply" }).click();
+  const query = new URL((await filtered).url()).searchParams;
+  expect(query.has("libraryScopeId")).toBe(false);
 });
 
 test("administrator household save binds the household row while personal is effective", async ({ page }) => {

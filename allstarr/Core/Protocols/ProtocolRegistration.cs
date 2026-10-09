@@ -14,7 +14,6 @@ public static class ProtocolRegistration
         services.AddHttpClient(BackendLibraryAccessResolver.HttpClientName);
         services.AddSingleton<IBackendLibraryPermissionSource, BackendLibraryPermissionSource>();
         services.AddSingleton<IBackendLibraryAccessResolver, BackendLibraryAccessResolver>();
-        services.AddSingleton<IProtocolLibraryScopeResolver, ProtocolLibraryScopeResolver>();
         return services;
     }
 }

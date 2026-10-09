@@ -13,7 +13,7 @@ public sealed class AdminAuthSession
     public required string UserName { get; init; }
     public required bool IsAdministrator { get; init; }
     public string BackendType { get; init; } = "Jellyfin";
-    public Guid? TenantId { get; init; }
+    public string BackendInstanceId { get; init; } = string.Empty;
     public Guid? AllstarrUserId { get; init; }
     public Guid? OidcSecretReferenceId { get; init; }
     public string? OidcBackendEndpoint { get; init; }
@@ -104,7 +104,6 @@ public sealed class AdminAuthSessionService(
         string? jellyfinServerId,
         bool isPersistent = false,
         string backendType = "Jellyfin",
-        Guid? tenantId = null,
         Guid? allstarrUserId = null,
         CancellationToken cancellationToken = default,
         Guid? oidcSecretReferenceId = null,
@@ -120,7 +119,7 @@ public sealed class AdminAuthSessionService(
             UserName = userName,
             IsAdministrator = isAdministrator,
             BackendType = backendType,
-            TenantId = tenantId,
+            BackendInstanceId = identityOptions?.BackendInstanceId ?? string.Empty,
             AllstarrUserId = allstarrUserId,
             OidcSecretReferenceId = oidcSecretReferenceId,
             OidcBackendEndpoint = oidcBackendEndpoint,
@@ -177,16 +176,20 @@ public sealed class AdminAuthSessionService(
             }
 
             var now = DateTime.UtcNow;
-            if (contextFactory != null)
+            if (contextFactory == null || identityOptions == null || session.AllstarrUserId is not { } userId)
             {
-                await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-                var backendType = session.BackendType.ToLowerInvariant();
-                if (session.AllstarrUserId is not { } userId || session.TenantId is not { } tenantId ||
-                    !await db.Users.AsNoTracking().AnyAsync(item => item.Id == userId &&
-                        item.TenantId == tenantId && item.Status == PlatformUserStatus.Active, cancellationToken) ||
-                    !await db.BackendIdentities.AsNoTracking().AnyAsync(item => item.UserId == userId &&
-                        item.TenantId == tenantId && item.BackendType == backendType && item.PrincipalId == session.UserId &&
-                        (identityOptions == null || item.BackendInstanceId == identityOptions.BackendInstanceId), cancellationToken))
+                await store.RemoveAsync(sessionId, cancellationToken);
+                return null;
+            }
+            await using (var db = await contextFactory.CreateDbContextAsync(cancellationToken))
+            {
+                var backendType = session.BackendType.Trim().ToLowerInvariant();
+                var current = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
+                    item.Id == userId && item.Enabled && item.BackendType == backendType &&
+                    item.BackendInstanceId == session.BackendInstanceId &&
+                    item.BackendPrincipalId == session.UserId, cancellationToken);
+                if (session.BackendInstanceId != identityOptions.BackendInstanceId ||
+                    current == null || current.IsAdmin != session.IsAdministrator)
                 {
                     await store.RemoveAsync(sessionId, cancellationToken);
                     return null;
@@ -194,19 +197,25 @@ public sealed class AdminAuthSessionService(
             }
             if (session.OidcSecretReferenceId is { } secretId)
             {
-                if (oidcOptions?.Enabled != true || contextFactory == null || oidcBackend == null ||
+                if (oidcOptions?.Enabled != true || oidcBackend == null ||
                     !session.BackendType.Equals(oidcBackend.Backend, StringComparison.OrdinalIgnoreCase) || session.OidcBackendEndpoint != oidcBackend.Endpoint ||
-                    session.OidcBackendInstanceId != identityOptions?.BackendInstanceId) return null;
+                    session.OidcBackendInstanceId != identityOptions.BackendInstanceId)
+                {
+                    await store.RemoveAsync(sessionId, cancellationToken);
+                    return null;
+                }
                 await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
                 if (!await (from link in db.AdminOidcLinks
-                            join identity in db.BackendIdentities on link.BackendIdentityId equals identity.Id
+                            join user in db.Users on link.UserId equals user.Id
                             join secret in db.SecretReferences on link.SecretReferenceId equals secret.Id
                             where secret.Id == secretId && secret.RevokedAt == null &&
-                                  secret.BackendIdentityId == identity.Id && secret.TenantId == session.TenantId &&
+                                  secret.UserId == user.Id &&
                                   secret.Purpose == AdminOidcLinkRecord.SecretPurpose &&
-                                  identity.TenantId == session.TenantId && identity.UserId == session.AllstarrUserId &&
-                                  identity.BackendType == oidcBackend.Backend && identity.BackendInstanceId == session.OidcBackendInstanceId &&
-                                  identity.PrincipalId == session.UserId
+                                  user.Id == session.AllstarrUserId && user.Enabled &&
+                                  user.BackendType == oidcBackend.Backend &&
+                                  user.BackendInstanceId == session.OidcBackendInstanceId &&
+                                  user.BackendPrincipalId == session.UserId &&
+                                  user.IsAdmin == session.IsAdministrator
                             select link).AnyAsync(cancellationToken))
                 {
                     await store.RemoveAsync(sessionId, cancellationToken);

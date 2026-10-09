@@ -9,15 +9,14 @@ public sealed class DurableProviderRouteSelectorTests
     [Fact]
     public void Select_UsesConfiguredPlayableVerifiedCanonicalRoutes()
     {
-        var tenant = Guid.CreateVersion7();
         var canonical = Guid.CreateVersion7();
-        var source = Identity(tenant, canonical, "spotify", "source");
-        var qobuz = Identity(tenant, canonical, "qobuz", "qobuz");
-        var deezer = Identity(tenant, canonical, "deezer", "deezer");
+        var source = Identity(canonical, "spotify", "source");
+        var qobuz = Identity(canonical, "qobuz", "qobuz");
+        var deezer = Identity(canonical, "deezer", "deezer");
         deezer.Verification = ProviderIdentityVerification.Pinned;
-        var unknown = Identity(tenant, canonical, "qobuz", "unknown");
+        var unknown = Identity(canonical, "qobuz", "unknown");
         unknown.Verification = ProviderIdentityVerification.Unknown;
-        var otherAccount = Identity(tenant, canonical, "qobuz", "other-account");
+        var otherAccount = Identity(canonical, "qobuz", "other-account");
         otherAccount.Scope = ProviderIdentityScope.Account;
         otherAccount.ProviderAccountId = Guid.CreateVersion7();
 
@@ -28,9 +27,9 @@ public sealed class DurableProviderRouteSelectorTests
             qobuz,
             unknown,
             otherAccount,
-            Identity(tenant, canonical, "tidal", "not-playable"),
-            Identity(tenant, Guid.CreateVersion7(), "qobuz", "other-recording"),
-            Identity(Guid.CreateVersion7(), canonical, "qobuz", "other-tenant")
+            Identity(canonical, "tidal", "not-playable"),
+            Identity(Guid.CreateVersion7(), "qobuz", "other-recording"),
+            new ProviderTrackIdentityRecord { CanonicalRecordingId = canonical, ProviderId = "qobuz", ResourceKind = ProviderResourceKind.Album, ExternalId = "wrong-kind", Verification = ProviderIdentityVerification.Verified }
         ], ["qobuz", "deezer", "tidal"]);
 
         Assert.Equal(["qobuz", "deezer"], routes.Select(item => item.ProviderId));
@@ -39,13 +38,11 @@ public sealed class DurableProviderRouteSelectorTests
     }
 
     private static ProviderTrackIdentityRecord Identity(
-        Guid tenant,
         Guid canonical,
         string provider,
         string externalId) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             CanonicalRecordingId = canonical,
             ProviderId = provider,
             ResourceKind = ProviderResourceKind.Track,

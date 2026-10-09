@@ -75,9 +75,7 @@ public sealed class ManagedTrackCacheService(
         var actor = protocol.Actor;
         if (actor == null) return;
         var scope = new DownloadedSongMappingScope(
-            actor.TenantId,
             stream.ServingAccountId,
-            protocol.LibraryScopeId,
             stream.EffectiveQuality);
 
         // Older callers without a resolved identity must never cache fallback bytes as the requested track.

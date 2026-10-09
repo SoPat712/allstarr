@@ -14,18 +14,17 @@ public sealed class ListeningPreferencesControllerTests
     [InlineData(true)]
     public async Task ReadSaveAndResetUseOnlyTheSignedInUser(bool administrator)
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var snapshot = new PersonalListeningPreferences(new(), new(), true, "current");
         var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
-        settings.Setup(s => s.GetPreferencesAsync(tenant, user, It.IsAny<CancellationToken>()))
+        settings.Setup(s => s.GetPreferencesAsync(user, It.IsAny<CancellationToken>()))
             .ReturnsAsync(snapshot);
-        settings.Setup(s => s.UpdatePreferencesAsync(tenant, user,
+        settings.Setup(s => s.UpdatePreferencesAsync(user,
                 new ListeningPreferences("CleanOnly", false, true), "current", It.IsAny<CancellationToken>()))
             .ReturnsAsync(snapshot with { Revision = "updated" });
-        settings.Setup(s => s.UpdatePreferencesAsync(tenant, user, null, "updated", It.IsAny<CancellationToken>()))
+        settings.Setup(s => s.UpdatePreferencesAsync(user, null, "updated", It.IsAny<CancellationToken>()))
             .ReturnsAsync(snapshot);
-        var controller = Controller(settings.Object, tenant, user, administrator);
+        var controller = Controller(settings.Object, user, administrator);
 
         Assert.IsType<OkObjectResult>(await controller.Get(default));
         Assert.IsType<OkObjectResult>(await controller.Update(new("CleanOnly", false, true, "current"), default));
@@ -38,7 +37,7 @@ public sealed class ListeningPreferencesControllerTests
     public async Task MissingOrUnlinkedSessionsCannotReadOrWrite()
     {
         var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
-        var controller = Controller(settings.Object, null, null, false);
+        var controller = Controller(settings.Object, null, false);
         Assert.Equal(403, Assert.IsType<ObjectResult>(await controller.Get(default)).StatusCode);
         controller.HttpContext.Items.Clear();
         Assert.IsType<UnauthorizedResult>(await controller.Update(new("All", true, true, "revision"), default));
@@ -48,14 +47,13 @@ public sealed class ListeningPreferencesControllerTests
     [Fact]
     public async Task StaleAndDisabledSessionsReturnSafeErrors()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
-        settings.Setup(s => s.UpdatePreferencesAsync(tenant, user, null, "stale", It.IsAny<CancellationToken>()))
+        settings.Setup(s => s.UpdatePreferencesAsync(user, null, "stale", It.IsAny<CancellationToken>()))
             .ThrowsAsync(new RuntimeSettingConflictException("private storage detail"));
-        settings.Setup(s => s.GetPreferencesAsync(tenant, user, It.IsAny<CancellationToken>()))
+        settings.Setup(s => s.GetPreferencesAsync(user, It.IsAny<CancellationToken>()))
             .ThrowsAsync(new UnauthorizedAccessException("private user detail"));
-        var controller = Controller(settings.Object, tenant, user, false);
+        var controller = Controller(settings.Object, user, false);
         var conflict = Assert.IsType<ConflictObjectResult>(await controller.Reset(new("stale"), default));
         Assert.DoesNotContain("private", System.Text.Json.JsonSerializer.Serialize(conflict.Value));
         var forbidden = Assert.IsType<ObjectResult>(await controller.Get(default));
@@ -64,7 +62,7 @@ public sealed class ListeningPreferencesControllerTests
     }
 
     private static ListeningPreferencesController Controller(IDurableRuntimeSettings settings,
-        Guid? tenant, Guid? user, bool administrator)
+        Guid? user, bool administrator)
     {
         var http = new DefaultHttpContext();
         http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
@@ -73,7 +71,6 @@ public sealed class ListeningPreferencesControllerTests
             UserId = "backend-user",
             UserName = "Listener",
             IsAdministrator = administrator,
-            TenantId = tenant,
             AllstarrUserId = user,
             JellyfinAccessToken = "fixture-token",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1)

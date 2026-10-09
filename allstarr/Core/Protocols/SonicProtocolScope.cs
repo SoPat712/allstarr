@@ -7,37 +7,16 @@ internal static class SonicProtocolScope
 {
     public static async Task<IntelligenceScope?> ResolveAsync(
         ProtocolExecutionContext context,
-        string itemId,
-        IProtocolLibraryScopeResolver? libraryScopes,
         IIntelligencePolicyService? policies,
         CancellationToken cancellationToken)
     {
-        if (!context.CanRunUserScopedWork || libraryScopes == null || policies == null)
+        if (!context.CanRunUserScopedWork || policies == null)
             return null;
 
-        ProtocolExecutionContext resolved;
-        try
-        {
-            resolved = await libraryScopes.ResolveAsync(context, itemId, cancellationToken);
-        }
-        catch (Exception exception) when (exception is ArgumentException or
-                                           UnauthorizedAccessException or
-                                           InvalidOperationException)
-        {
-            return null;
-        }
-
-        var actor = resolved.RequireActor();
-        if (actor.EffectiveUserId is not { } owner ||
-            string.IsNullOrWhiteSpace(resolved.LibraryScopeId))
-            return null;
-
-        var scope = new IntelligenceScope(
-            actor.TenantId,
-            owner,
-            resolved.Protocol.ToString().ToLowerInvariant(),
-            resolved.BackendInstanceId,
-            resolved.LibraryScopeId);
+        var actor = context.RequireActor();
+        if (actor.EffectiveUserId is not { } owner) return null;
+        var scope = new IntelligenceScope(owner,
+            context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId);
         var policy = await policies.GetAsync(scope, cancellationToken);
         if (policy?.Enabled != true) return null;
 

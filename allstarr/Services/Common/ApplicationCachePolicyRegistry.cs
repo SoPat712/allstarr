@@ -61,7 +61,7 @@ public static class ApplicationCachePolicyRegistry
         category = default;
 
         if (CacheKeyBuilder.IsMediaAssetPayloadKey(key) ||
-            StartsWithAny(key, "media:descriptor:v3:", "playlist:artwork-descriptor:v1:"))
+            StartsWithAny(key, "media:descriptor:v4:", "playlist:artwork-descriptor:v1:"))
             category = ApplicationCacheCategory.Artwork;
         if (StartsWithAny(key, "lyrics:v2:", "lyrics:id:v2:"))
             category = ApplicationCacheCategory.Lyrics;
@@ -84,7 +84,7 @@ public static class ApplicationCachePolicyRegistry
             category = ApplicationCacheCategory.CanonicalMetadata;
         if (key.StartsWith("search:v2:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.SearchResults;
-        if (key.StartsWith("playlist:discovery:v2:", StringComparison.Ordinal))
+        if (key.StartsWith("playlist:discovery:v3:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.PlaylistDiscovery;
         if (StartsWithAny(
                 key,

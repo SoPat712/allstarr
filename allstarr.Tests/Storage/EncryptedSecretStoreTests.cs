@@ -22,7 +22,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         Path.GetTempPath(),
         "allstarr-tests",
         Guid.NewGuid().ToString("N"));
-    private readonly Guid _tenantId = Guid.CreateVersion7();
+    private readonly Guid _userId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
     private string _keyRingPath = string.Empty;
     private TestDbContextFactory _factory = null!;
@@ -38,13 +38,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         });
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "fixture",
-            Name = "Fixture tenant",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
+        context.Users.Add(User(_userId, "fixture"));
         await context.SaveChangesAsync();
     }
 
@@ -57,26 +51,19 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         var accountId = Guid.CreateVersion7();
         var owner = Guid.CreateVersion7();
         var otherOwner = Guid.CreateVersion7();
-        Guid? accountTenant = shared ? null : _tenantId;
         Guid? accountOwner = shared ? null : owner;
-        var secret = await store.StoreAsync(accountTenant,
-            $"provider-account:fixture:{accountId:N}", Encoding.UTF8.GetBytes("owned-fixture"));
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            foreach (var id in new[] { owner, otherOwner })
-                db.Users.Add(new()
-                {
-                    Id = id,
-                    TenantId = _tenantId,
-                    DisplayName = "Listener",
-                    Status = PlatformUserStatus.Active,
-                    CreatedAt = DateTimeOffset.UtcNow,
-                    UpdatedAt = DateTimeOffset.UtcNow
-                });
+            db.Users.AddRange(User(owner, "owner"), User(otherOwner, "other-owner"));
+            await db.SaveChangesAsync();
+        }
+        var purpose = $"provider-account:fixture:{accountId:N}";
+        var secret = await store.StoreAsync(accountOwner, purpose, Encoding.UTF8.GetBytes("owned-fixture"));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
             db.ProviderAccounts.Add(new()
             {
                 Id = accountId,
-                TenantId = accountTenant,
                 OwnerUserId = accountOwner,
                 ProviderId = "fixture",
                 DisplayName = "Fixture",
@@ -91,7 +78,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         ProviderAccountContext Snapshot(long revision = 1, Guid? secretId = null,
             string provider = "fixture", Guid? ownerOverride = null) => new(
                 accountId, provider, shared ? ProviderAccountScope.Shared : ProviderAccountScope.Personal,
-                revision, tenantId: accountTenant, ownerUserId: ownerOverride ?? accountOwner,
+                revision, ownerUserId: ownerOverride ?? accountOwner,
                 secretReferenceId: secretId ?? secret.Id);
         using (var lease = await store.OpenProviderAccountAsync(Snapshot()))
             Assert.Equal("owned-fixture", lease.ReadUtf8());
@@ -99,7 +86,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(provider: "other")));
         if (!shared)
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(ownerOverride: otherOwner)));
-        var foreignSecret = await store.StoreAsync(accountTenant,
+        var foreignSecret = await store.StoreAsync(accountOwner,
             $"provider-account:fixture:{Guid.CreateVersion7():N}", Encoding.UTF8.GetBytes("foreign-fixture"));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(secretId: foreignSecret.Id)));
         await using (var db = await _factory.CreateDbContextAsync())
@@ -131,7 +118,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             (await db.ProviderAccounts.SingleAsync()).Enabled = true;
             await db.SaveChangesAsync();
         }
-        await store.RevokeAsync(secret.Id, new SecretAccessContext(accountTenant, AllowGlobal: shared));
+        await store.RevokeAsync(secret.Id, new SecretAccessContext(accountOwner, purpose, AllowShared: shared));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => store.OpenProviderAccountAsync(Snapshot(revision: 2)));
     }
 
@@ -142,7 +129,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         var plaintext = "provider-token-fixture-should-never-be-in-db";
 
         var info = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "deezer.account-token",
             Encoding.UTF8.GetBytes(plaintext));
 
@@ -158,20 +145,19 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             Assert.Equal(16, version.AuthenticationTag.Length);
         }
 
-        using var lease = await store.OpenAsync(info.Id, new SecretAccessContext(_tenantId));
+        using var lease = await store.OpenAsync(info.Id, new SecretAccessContext(_userId, info.Purpose));
         Assert.Equal(plaintext, lease.ReadUtf8());
     }
 
     [Theory]
     [InlineData("principal")]
     [InlineData("backend")]
-    [InlineData("tenant")]
+    [InlineData("protocol")]
     [InlineData("purpose")]
     [InlineData("revoked")]
     [InlineData("disabled")]
-    [InlineData("unbound")]
     [InlineData("owner")]
-    [InlineData("global")]
+    [InlineData("shared")]
     public async Task SubsonicPlaylistWrite_RechecksExactListenerGrantBeforeEveryExecution(string mismatch)
     {
         var owner = await PlaylistPrincipalAsync("listener-a");
@@ -180,23 +166,22 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         Assert.Null(await store.GetSubsonicPlaylistGrantAsync(owner));
         var grant = await store.StoreSubsonicPlaylistGrantAsync(owner, "playlist-password");
         var resolver = new EncryptedSubsonicPlaylistAuthenticationResolver(store, new Microsoft.AspNetCore.Http.HttpContextAccessor());
-        var target = new BackendPlaylistTargetContext("primary", "listener-a", grant.ReferenceId.ToString(), _tenantId);
+        var target = new BackendPlaylistTargetContext("primary", "listener-a", grant.ReferenceId.ToString());
         var authentication = await resolver.ResolveAsync(target, default);
         Assert.Contains(authentication.FormParameters, item => item is { Key: "u", Value: "listener-a" });
         Assert.Contains(authentication.FormParameters, item => item is { Key: "p", Value: "playlist-password" });
-        if (mismatch == "principal") target = new("primary", "listener-b", grant.ReferenceId.ToString(), _tenantId);
-        if (mismatch == "backend") target = new("other", "listener-a", grant.ReferenceId.ToString(), _tenantId);
-        if (mismatch == "tenant") target = new("primary", "listener-a", grant.ReferenceId.ToString(), Guid.CreateVersion7());
+        if (mismatch == "principal") target = new("primary", "listener-b", grant.ReferenceId.ToString());
+        if (mismatch == "backend") target = new("other", "listener-a", grant.ReferenceId.ToString());
         if (mismatch == "revoked") await store.RevokeSubsonicPlaylistGrantAsync(owner);
-        if (mismatch is "purpose" or "disabled" or "unbound" or "owner" or "global")
+        if (mismatch is "purpose" or "disabled" or "protocol" or "owner" or "shared")
         {
             await using var db = await _factory.CreateDbContextAsync();
             var reference = await db.SecretReferences.SingleAsync(item => item.Id == grant.ReferenceId);
             if (mismatch == "purpose") reference.Purpose = "admin-oidc:fixture";
-            if (mismatch == "disabled") (await db.Users.SingleAsync(item => item.Id == owner.UserId)).Status = PlatformUserStatus.Disabled;
-            if (mismatch == "unbound") reference.BackendIdentityId = null;
-            if (mismatch == "owner") reference.BackendIdentityId = await db.BackendIdentities.Where(item => item.UserId == other.UserId).Select(item => item.Id).SingleAsync();
-            if (mismatch == "global") reference.TenantId = null;
+            if (mismatch == "disabled") (await db.Users.SingleAsync(item => item.Id == owner.UserId)).Enabled = false;
+            if (mismatch == "protocol") (await db.Users.SingleAsync(item => item.Id == owner.UserId)).BackendType = "jellyfin";
+            if (mismatch == "owner") reference.UserId = other.UserId;
+            if (mismatch == "shared") reference.UserId = null;
             await db.SaveChangesAsync();
         }
         await Assert.ThrowsAsync<UnauthorizedAccessException>(async () => await resolver.ResolveAsync(target, default));
@@ -216,13 +201,13 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         var restarted = CreateStore();
         Assert.Null(await restarted.GetSubsonicPlaylistGrantAsync(a));
         Assert.NotNull(await restarted.GetSubsonicPlaylistGrantAsync(b));
-        using (var lease = await restarted.OpenSubsonicPlaylistCredentialAsync(_tenantId, "primary", "listener-b", null))
+        using (var lease = await restarted.OpenSubsonicPlaylistCredentialAsync("primary", "listener-b", null))
             Assert.Contains("b-password", lease.ReadUtf8(), StringComparison.Ordinal);
         var replacement = await restarted.StoreSubsonicPlaylistGrantAsync(a, "replacement-password");
         Assert.NotEqual(first.ReferenceId, replacement.ReferenceId);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => restarted.OpenSubsonicPlaylistCredentialAsync(
-            _tenantId, "primary", "listener-a", first.ReferenceId));
-        using var current = await restarted.OpenSubsonicPlaylistCredentialAsync(_tenantId, "primary", "listener-a", replacement.ReferenceId);
+            "primary", "listener-a", first.ReferenceId));
+        using var current = await restarted.OpenSubsonicPlaylistCredentialAsync("primary", "listener-a", replacement.ReferenceId);
         Assert.Contains("replacement-password", current.ReadUtf8(), StringComparison.Ordinal);
     }
 
@@ -230,41 +215,24 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
     {
         var userId = Guid.CreateVersion7();
         await using var db = await _factory.CreateDbContextAsync();
-        db.Users.Add(new()
-        {
-            Id = userId,
-            TenantId = _tenantId,
-            DisplayName = name,
-            Status = PlatformUserStatus.Active,
-            CreatedAt = DateTimeOffset.UtcNow,
-            UpdatedAt = DateTimeOffset.UtcNow
-        });
-        db.BackendIdentities.Add(new()
-        {
-            Id = Guid.CreateVersion7(),
-            TenantId = _tenantId,
-            UserId = userId,
-            BackendType = "subsonic",
-            BackendInstanceId = "primary",
-            PrincipalId = name,
-            CreatedAt = DateTimeOffset.UtcNow,
-            LastSeenAt = DateTimeOffset.UtcNow
-        });
+        db.Users.Add(User(userId, name, "subsonic", "primary"));
         await db.SaveChangesAsync();
-        return new(_tenantId, userId, "subsonic", "primary", name, name, false);
+        return new(userId, "subsonic", "primary", name, name, false);
     }
 
     [Fact]
-    public async Task TenantBoundary_DeniesAnotherTenant()
+    public async Task UserBoundary_DeniesAnotherUserAndWrongPurpose()
     {
         var store = CreateStore();
         var info = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "qobuz.token",
             Encoding.UTF8.GetBytes("fixture-secret"));
 
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            store.OpenAsync(info.Id, new SecretAccessContext(Guid.CreateVersion7())));
+            store.OpenAsync(info.Id, new SecretAccessContext(Guid.CreateVersion7(), "qobuz.token")));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            store.OpenAsync(info.Id, new SecretAccessContext(_userId, "lastfm.token")));
     }
 
     [Fact]
@@ -272,7 +240,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
     {
         var store = CreateStore();
         var info = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "apple.download-session",
             Encoding.UTF8.GetBytes("rotatable-fixture-secret"));
         var key1 = ReadKey("key-1");
@@ -284,7 +252,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
 
         var rotated = await store.RotateEncryptionAsync(
             info.Id,
-            new SecretAccessContext(_tenantId));
+            new SecretAccessContext(_userId, info.Purpose));
 
         Assert.Equal(2, rotated.ActiveVersion);
         Assert.Equal("key-2", rotated.KeyId);
@@ -298,7 +266,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
             Assert.Null(versions[1].RetiredAt);
         }
 
-        using var lease = await store.OpenAsync(info.Id, new SecretAccessContext(_tenantId));
+        using var lease = await store.OpenAsync(info.Id, new SecretAccessContext(_userId, info.Purpose));
         Assert.Equal("rotatable-fixture-secret", lease.ReadUtf8());
     }
 
@@ -307,18 +275,18 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
     {
         var store = CreateStore();
         var first = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "deezer.account",
             Encoding.UTF8.GetBytes("first-fixture-secret"));
         var second = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "qobuz.account",
             Encoding.UTF8.GetBytes("second-fixture-secret"));
         var revoked = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "retired.account",
             Encoding.UTF8.GetBytes("revoked-fixture-secret"));
-        await store.RevokeAsync(revoked.Id, new SecretAccessContext(_tenantId));
+        await store.RevokeAsync(revoked.Id, new SecretAccessContext(_userId, revoked.Purpose));
         var key1 = ReadKey("key-1");
         WriteKeyRing("key-2", new Dictionary<string, byte[]>
         {
@@ -353,16 +321,16 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
     {
         var store = CreateStore();
         var info = await store.StoreAsync(
-            _tenantId,
+            _userId,
             "lastfm.session",
             Encoding.UTF8.GetBytes("revoked-fixture-secret"));
 
-        await store.RevokeAsync(info.Id, new SecretAccessContext(_tenantId));
+        await store.RevokeAsync(info.Id, new SecretAccessContext(_userId, info.Purpose));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            store.OpenAsync(info.Id, new SecretAccessContext(_tenantId)));
+            store.OpenAsync(info.Id, new SecretAccessContext(_userId, info.Purpose)));
         await Assert.ThrowsAsync<InvalidOperationException>(() => store.StoreAsync(
-            _tenantId,
+            _userId,
             info.Purpose,
             Encoding.UTF8.GetBytes("replacement"),
             info.Id));
@@ -389,6 +357,19 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         Assert.Contains("group/other", exception.Message, StringComparison.Ordinal);
     }
 
+    private static UserRecord User(Guid id, string name, string backend = "jellyfin", string instance = "fixture") => new()
+    {
+        Id = id,
+        BackendType = backend,
+        BackendInstanceId = instance,
+        BackendPrincipalId = name,
+        DisplayName = name,
+        Enabled = true,
+        CreatedAt = DateTimeOffset.UtcNow,
+        UpdatedAt = DateTimeOffset.UtcNow,
+        LastSeenAt = DateTimeOffset.UtcNow
+    };
+
     private EncryptedSecretStore CreateStore()
     {
         var options = new SecretStoreOptions { KeyRingPath = _keyRingPath };
@@ -409,10 +390,10 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
         if (!OperatingSystem.IsWindows())
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(_keyRingPath));
         var saved = await File.ReadAllBytesAsync(_keyRingPath);
-        var reference = await CreateStore().StoreAsync(_tenantId, "startup.fixture", Encoding.UTF8.GetBytes("fixture"));
+        var reference = await CreateStore().StoreAsync(_userId, "startup.fixture", Encoding.UTF8.GetBytes("fixture"));
         await initializer.StartAsync(default);
         Assert.Equal(saved, await File.ReadAllBytesAsync(_keyRingPath));
-        using var secret = await CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_tenantId));
+        using var secret = await CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_userId, reference.Purpose));
         Assert.Equal("fixture", secret.ReadUtf8());
         Assert.Empty(Directory.GetFiles(_root, "*.tmp-*"));
     }
@@ -420,7 +401,7 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
     [Fact]
     public async Task MissingKeyRingWithSecrets_IsNeverRegeneratedAndStorageRemainsReady()
     {
-        var reference = await CreateStore().StoreAsync(_tenantId, "startup.fixture", Encoding.UTF8.GetBytes("fixture"));
+        var reference = await CreateStore().StoreAsync(_userId, "startup.fixture", Encoding.UTF8.GetBytes("fixture"));
         var saved = await File.ReadAllBytesAsync(_keyRingPath);
         File.Delete(_keyRingPath);
         var (initializer, storage) = CreateInitializer();
@@ -428,11 +409,11 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
 
         Assert.False(File.Exists(_keyRingPath));
         Assert.Equal(DurableStorageReadiness.Ready, storage.GetSnapshot().Readiness);
-        await Assert.ThrowsAsync<FileNotFoundException>(() => CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_tenantId)));
+        await Assert.ThrowsAsync<FileNotFoundException>(() => CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_userId, reference.Purpose)));
         await File.WriteAllBytesAsync(_keyRingPath, saved);
         if (!OperatingSystem.IsWindows())
             File.SetUnixFileMode(_keyRingPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-        using var restored = await CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_tenantId));
+        using var restored = await CreateStore().OpenAsync(reference.Id, new SecretAccessContext(_userId, reference.Purpose));
         Assert.Equal("fixture", restored.ReadUtf8());
     }
 

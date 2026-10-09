@@ -20,11 +20,9 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     private DurableStorageState _storageState = null!;
     private FakeClock _clock = null!;
     private TrackIdentityService _service = null!;
-    private Guid _tenantA;
-    private Guid _tenantB;
     private Guid _userA;
     private Guid _userB;
-    private Guid _userOtherTenant;
+    private Guid _userC;
 
     public async Task InitializeAsync()
     {
@@ -37,19 +35,14 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         _factory = new TestDbContextFactory(_database.Options);
         await using (var context = await _factory.CreateDbContextAsync())
         {
-            _tenantA = Guid.CreateVersion7();
-            _tenantB = Guid.CreateVersion7();
             _userA = Guid.CreateVersion7();
             _userB = Guid.CreateVersion7();
-            _userOtherTenant = Guid.CreateVersion7();
+            _userC = Guid.CreateVersion7();
             var now = new DateTimeOffset(2026, 7, 11, 14, 0, 0, TimeSpan.Zero);
-            context.Tenants.AddRange(
-                new TenantRecord { Id = _tenantA, Slug = "tenant-a", Name = "Tenant A", CreatedAt = now },
-                new TenantRecord { Id = _tenantB, Slug = "tenant-b", Name = "Tenant B", CreatedAt = now });
             context.Users.AddRange(
-                User(_userA, _tenantA, "User A", now),
-                User(_userB, _tenantA, "User B", now),
-                User(_userOtherTenant, _tenantB, "Other tenant", now));
+                User(_userA, "User A", now),
+                User(_userB, "User B", now),
+                User(_userC, "User C", now));
             await context.SaveChangesAsync();
         }
 
@@ -65,7 +58,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
         var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object,
             Options.Create(new MusicBrainzSettings { Enabled = false }));
-        var created = await service.CreateRecordingAsync(Actor(_tenantA, _userA), "disabled-catalog",
+        var created = await service.CreateRecordingAsync(Actor(_userA), "disabled-catalog",
             musicBrainzRecordingId: "16ba7915-2acf-42b2-8c87-ed67090dca91");
         Assert.True(created.Created);
         Assert.NotNull(created.Recording.MusicBrainzRecordingId);
@@ -75,7 +68,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task OneCanonicalRecording_LinksManyProvidersAndTranslatesExactly()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var recording = await _service.CreateRecordingAsync(
             actor,
             "multi-provider-create",
@@ -118,10 +111,10 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task BatchResolution_PrefersAuthorizedAccountScopeWithoutLeakingOtherAccounts()
     {
-        var actorA = Actor(_tenantA, _userA);
-        var actorB = Actor(_tenantA, _userB);
-        var accountA = await SeedUserAccount("deezer", _tenantA, _userA);
-        var accountB = await SeedUserAccount("deezer", _tenantA, _userB);
+        var actorA = Actor(_userA);
+        var actorB = Actor(_userB);
+        var accountA = await SeedUserAccount("deezer", _userA);
+        var accountB = await SeedUserAccount("deezer", _userB);
         var catalogRecording = (await _service.CreateRecordingAsync(actorA, "catalog-recording")).Recording.Id;
         var accountRecording = (await _service.CreateRecordingAsync(actorA, "account-recording")).Recording.Id;
         var catalogContext = Context(actorA, "deezer");
@@ -149,7 +142,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     public async Task RecordingWithMusicBrainzIdentity_QueuesIdempotentCatalogDiscovery()
     {
         const string recordingMbid = "11111111-1111-4111-8111-111111111111";
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
         queue.Setup(item => item.EnqueueRecordingAsync(
                 actor,
@@ -181,7 +174,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     {
         const string isrc = "USRC17607839";
         const string mbid = "11111111-1111-4111-8111-111111111111";
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var first = await _service.CreateRecordingAsync(actor, "initial-signal",
             isrcFirst ? isrc : null, isrcFirst ? null : mbid);
         var link = await _service.LinkAsync(Context(actor, "deezer"), new(
@@ -217,7 +210,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     {
         const string isrc = "USRC17607839";
         const string mbid = "11111111-1111-4111-8111-111111111111";
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var first = await _service.CreateRecordingAsync(actor, "first", isrc);
         var other = await _service.CreateRecordingAsync(actor, "other");
         await using (var db = await _factory.CreateDbContextAsync())
@@ -225,7 +218,6 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenantA,
                 EntityKind = CanonicalCatalogEntityKind.Recording,
                 CanonicalEntityId = other.Recording.Id,
                 Namespace = "musicbrainz",
@@ -257,7 +249,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     {
         const string isrc = "USRC17607839";
         const string mbid = "11111111-1111-4111-8111-111111111111";
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var original = existing ? await _service.CreateRecordingAsync(actor, "seed", isrc) : null;
         var options = new DbContextOptionsBuilder<AllstarrDbContext>(_database.Options)
             .AddInterceptors(new ConcurrentSaveGate()).Options;
@@ -300,7 +292,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task MissingVerifiedLink_RemainsUnresolvedAndNeverGuesses()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var recording = await _service.CreateRecordingAsync(actor, "no-guess-create");
         var spotify = Context(actor, "spotify");
         var deezer = Context(actor, "deezer");
@@ -326,7 +318,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task ExactIdentityConflict_DoesNotRemapExistingRecording()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var first = await _service.CreateRecordingAsync(actor, "conflict-first");
         var second = await _service.CreateRecordingAsync(actor, "conflict-second");
         var spotify = Context(actor, "spotify");
@@ -348,7 +340,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task RelinkingSameExactIdentity_IsIdempotent()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var recording = await _service.CreateRecordingAsync(actor, "idempotent-create");
         var context = Context(actor, "deezer");
 
@@ -365,8 +357,8 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task AccountScopedIdentity_IsPreferredButCannotCrossUserScope()
     {
-        var account = await SeedUserAccount("spotify", _tenantA, _userA);
-        var actorA = Actor(_tenantA, _userA);
+        var account = await SeedUserAccount("spotify", _userA);
+        var actorA = Actor(_userA);
         var catalogContext = Context(actorA, "spotify");
         var accountContext = Context(actorA, "spotify", account);
         var catalogRecording = await _service.CreateRecordingAsync(actorA, "catalog-recording");
@@ -405,50 +397,63 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             account.ProviderId,
             ProviderAccountScope.Personal,
             account.Revision,
-            tenantId: _tenantA,
             ownerUserId: _userB);
-        var forged = Context(Actor(_tenantA, _userB), "spotify", forgedSnapshot);
+        var forged = Context(Actor(_userB), "spotify", forgedSnapshot);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _service.ResolveAsync(forged, Track("spotify", "overlapping-id")));
     }
 
     [Fact]
-    public async Task SameExternalId_IsIsolatedByTenant()
+    public async Task ExactCatalogIdentity_IsGlobalAcrossUsers_WhileAccountAliasesRemainPrivate()
     {
-        var actorA = Actor(_tenantA, _userA);
-        var actorB = Actor(_tenantB, _userOtherTenant);
-        var recordingA = await _service.CreateRecordingAsync(actorA, "tenant-a-recording");
-        var recordingB = await _service.CreateRecordingAsync(actorB, "tenant-b-recording");
-        var contextA = Context(actorA, "qobuz");
-        var contextB = Context(actorB, "qobuz");
-        await Link(recordingA.Recording.Id, contextA, "shared-provider-id");
-        await Link(recordingB.Recording.Id, contextB, "shared-provider-id");
+        var actorA = Actor(_userA);
+        var actorC = Actor(_userC);
+        var first = await _service.CreateRecordingAsync(actorA, "user-a-recording", "USRC17607839");
+        var reused = await _service.CreateRecordingAsync(actorC, "user-c-recording", "USRC17607839");
+        Assert.False(reused.Created);
+        Assert.Equal(first.Recording.Id, reused.Recording.Id);
+        await Link(first.Recording.Id, Context(actorA, "qobuz"), "shared-provider-id");
+        Assert.Equal(first.Recording.Id,
+            (await _service.ResolveAsync(
+                Context(actorC, "qobuz"),
+                Track("qobuz", "shared-provider-id")))!.CanonicalRecordingId);
 
-        var resolvedA = await _service.ResolveAsync(contextA, Track("qobuz", "shared-provider-id"));
-        var resolvedB = await _service.ResolveAsync(contextB, Track("qobuz", "shared-provider-id"));
+        var accountA = await SeedUserAccount("qobuz", _userA);
+        var accountC = await SeedUserAccount("qobuz", _userC);
+        var privateA = await _service.CreateRecordingAsync(actorA, "user-a-private");
+        var privateC = await _service.CreateRecordingAsync(actorC, "user-c-private");
+        var contextA = Context(actorA, "qobuz", accountA);
+        var contextC = Context(actorC, "qobuz", accountC);
+        await Link(privateA.Recording.Id, contextA, "private-provider-id", ProviderIdentityScope.Account);
+        await Link(privateC.Recording.Id, contextC, "private-provider-id", ProviderIdentityScope.Account);
 
-        Assert.Equal(recordingA.Recording.Id, resolvedA!.CanonicalRecordingId);
-        Assert.Equal(recordingB.Recording.Id, resolvedB!.CanonicalRecordingId);
-        Assert.NotEqual(resolvedA.CanonicalRecordingId, resolvedB.CanonicalRecordingId);
+        Assert.Equal(privateA.Recording.Id,
+            (await _service.ResolveAsync(contextA, Track("qobuz", "private-provider-id")))!.CanonicalRecordingId);
+        Assert.Equal(privateC.Recording.Id,
+            (await _service.ResolveAsync(contextC, Track("qobuz", "private-provider-id")))!.CanonicalRecordingId);
+        Assert.Throws<UnauthorizedAccessException>(() =>
+            Context(actorC, "qobuz", new ProviderAccountContext(
+                accountA.Id,
+                accountA.ProviderId,
+                accountA.Scope,
+                accountA.Revision,
+                ownerUserId: accountA.OwnerUserId)));
     }
 
     [Fact]
-    public async Task CrossTenantCanonicalForeignKey_IsRejectedByDatabase()
+    public async Task MissingCanonicalRecordingForeignKey_IsRejectedByDatabase()
     {
-        var actor = Actor(_tenantA, _userA);
-        var recording = await _service.CreateRecordingAsync(actor, "foreign-key-recording");
         await using var context = await _factory.CreateDbContextAsync();
         context.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenantB,
-            CanonicalRecordingId = recording.Recording.Id,
+            CanonicalRecordingId = Guid.CreateVersion7(),
             ProviderId = "spotify",
             ResourceKind = ProviderResourceKind.Track,
             CatalogNamespace = "default",
             Scope = ProviderIdentityScope.Catalog,
-            ExternalId = "cross-tenant-id",
-            ExternalIdHash = Hash("cross-tenant-id"),
+            ExternalId = "missing-canonical-id",
+            ExternalIdHash = Hash("missing-canonical-id"),
             Verification = ProviderIdentityVerification.Verified,
             VerificationMethod = "fixture",
             DecisionVersion = 1,
@@ -463,7 +468,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task StoredHashCollision_IsRejectedInsteadOfAccepted()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var recording = await _service.CreateRecordingAsync(actor, "collision-recording");
         var requested = "requested-external-id";
         await using (var context = await _factory.CreateDbContextAsync())
@@ -471,7 +476,6 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             context.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = _tenantA,
                 CanonicalRecordingId = recording.Recording.Id,
                 ProviderId = "spotify",
                 ResourceKind = ProviderResourceKind.Track,
@@ -497,7 +501,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task MultipleTargetIdsInSameScope_AreReportedAsAmbiguous()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var recording = await _service.CreateRecordingAsync(actor, "ambiguous-target");
         var spotify = Context(actor, "spotify");
         var deezer = Context(actor, "deezer");
@@ -518,7 +522,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task CanonicalSignals_AreNormalizedReusedAndNeverSilentlyMerged()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         var mbid = Guid.NewGuid();
         var first = await _service.CreateRecordingAsync(
             actor,
@@ -586,10 +590,9 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task AutomatedJob_CannotCreatePinnedIdentity()
     {
-        var creator = Actor(_tenantA, _userA);
+        var creator = Actor(_userA);
         var recording = await _service.CreateRecordingAsync(creator, "pin-recording");
         var jobActor = new ProviderActorContext(
-            _tenantA,
             ProviderActorKind.SystemJob,
             userId: null,
             durableJobId: Guid.CreateVersion7());
@@ -609,7 +612,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task DurableStorageOutage_BlocksIdentityReadsAndWrites()
     {
-        var actor = Actor(_tenantA, _userA);
+        var actor = Actor(_userA);
         _storageState.Set(DurableStorageReadiness.Unavailable, errorCode: "fixture");
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
@@ -635,13 +638,11 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
 
     private async Task<ProviderAccountRecord> SeedUserAccount(
         string providerId,
-        Guid tenantId,
         Guid userId)
     {
         var account = new ProviderAccountRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             OwnerUserId = userId,
             ProviderId = providerId,
             DisplayName = $"{providerId} personal",
@@ -669,21 +670,17 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
                 account.Scope,
                 account.Revision,
                 enabled: account.Enabled,
-                tenantId: account.TenantId,
-                ownerUserId: account.OwnerUserId,
-                libraryScopeId: null));
+                ownerUserId: account.OwnerUserId));
 
     private ProviderExecutionContext Context(
         ProviderActorContext actor,
         string providerId,
         ProviderAccountContext? account)
     {
-        ProviderLibraryContext? library = null;
         return new ProviderExecutionContext(
             actor,
             providerId,
             account,
-            library,
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(
                     ProviderAudioQuality.Any,
@@ -700,8 +697,7 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
             cancellationToken: CancellationToken.None);
     }
 
-    private static ProviderActorContext Actor(Guid tenantId, Guid userId) => new(
-        tenantId,
+    private static ProviderActorContext Actor(Guid userId) => new(
         ProviderActorKind.User,
         userId,
         new ProviderBackendPrincipal("jellyfin", "fixture", userId.ToString("N")));
@@ -715,18 +711,20 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         externalId,
         catalog);
 
-    private static PlatformUserRecord User(
+    private static UserRecord User(
         Guid id,
-        Guid tenantId,
         string name,
         DateTimeOffset now) => new()
         {
             Id = id,
-            TenantId = tenantId,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = id.ToString("N"),
             DisplayName = name,
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
             CreatedAt = now,
-            UpdatedAt = now
+            UpdatedAt = now,
+            LastSeenAt = now
         };
 
     private static string Hash(string value) => Convert.ToHexString(

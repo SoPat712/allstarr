@@ -231,15 +231,11 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStrea
         var jobId = Guid.CreateVersion7();
         var idempotencyKey = $"stream-{jobId:N}";
         var workspace = artifacts.CreateTransientWorkspace(new(
-            context.Actor.TenantId,
             context.Actor.EffectiveUserId,
             jobId,
             ProviderId,
             context.Account?.AccountId,
-            idempotencyKey)
-        {
-            LibraryScopeId = context.Library?.ScopeId
-        });
+            idempotencyKey));
 
         try
         {
@@ -247,7 +243,6 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStrea
                 context.Actor,
                 context.ProviderId,
                 context.Account,
-                context.Library,
                 context.Policy,
                 "extension-download-stream",
                 context.CorrelationId,

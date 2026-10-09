@@ -21,9 +21,8 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
             await IntelligencePolicyService.ScopedProfiles(db, scope).Where(x => x.CreatedAt < profileCutoff).ExecuteDeleteAsync(cancellationToken);
         var signals = await IntelligencePolicyService.ScopedSignals(db, scope).AsNoTracking().Where(x => x.ExpiresAt > clock.UtcNow).ToListAsync(cancellationToken);
         var likedTracks = await db.RecommendationFeedback.AsNoTracking().Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                item.LibraryScopeId == scope.LibraryScopeId && item.Kind == "like")
+                item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
+                item.BackendInstanceId == scope.BackendInstanceId && item.Kind == "like")
             .OrderByDescending(item => item.UpdatedAt).Select(item => item.TrackKey).Take(100)
             .ToListAsync(cancellationToken);
         var start = signals.Count == 0 ? clock.UtcNow : signals.Min(x => x.ObservedAt);
@@ -33,8 +32,8 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
             Weight = group.Sum(signal => SignalWeight(signal.SignalType) * signal.Value *
                 Math.Pow(.5, Math.Max(0, (clock.UtcNow - signal.ObservedAt).TotalDays) / 30d))
         }).Where(x => x.Weight > 0).OrderByDescending(x => x.Weight).ThenBy(x => x.Track, StringComparer.Ordinal).Take(100).ToArray();
-        var profile = new ListeningProfile(scope.TenantId, scope.OwnerUserId, scope.BackendInstanceId,
-            scope.LibraryScopeId, signals.Count(x => x.SignalType is "play" or "complete"), signals.Count(x => x.SignalType == "skip"),
+        var profile = new ListeningProfile(scope.OwnerUserId, scope.BackendInstanceId,
+            signals.Count(x => x.SignalType is "play" or "complete"), signals.Count(x => x.SignalType == "skip"),
             Math.Max(0, (int)Math.Round(signals.Where(x => x.SignalType == "favorite").Sum(x => x.Value))),
             new Dictionary<string, double>(), start, clock.UtcNow)
         {
@@ -44,11 +43,9 @@ public sealed class ListeningProfileService(IDbContextFactory<AllstarrDbContext>
         db.ListeningProfiles.Add(new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             ProfileJson = JsonSerializer.Serialize(profile),
             WindowStart = start,
             WindowEnd = clock.UtcNow,
@@ -78,7 +75,9 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
             throw new UnauthorizedAccessException("The generated playlist backend identity is outside this scope.");
-        var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId && x.TenantId == scope.TenantId && x.OwnerUserId == scope.OwnerUserId, cancellationToken);
+        var existing = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(x => x.RunId == runId &&
+            x.OwnerUserId == scope.OwnerUserId && x.Protocol == scope.Protocol &&
+            x.BackendInstanceId == scope.BackendInstanceId, cancellationToken);
         if (existing != null) { await EnqueueMaterialization(existing, cancellationToken); return existing.Id; }
         if (!await IntelligencePolicyService.ScopedRuns(db, scope).AnyAsync(x => x.Id == runId && x.State == RecommendationRunState.Succeeded, cancellationToken)) throw new UnauthorizedAccessException("The recommendation run is outside this scope or incomplete.");
         var completedRun = await IntelligencePolicyService.ScopedRuns(db, scope).AsNoTracking().SingleAsync(x => x.Id == runId, cancellationToken);
@@ -86,11 +85,9 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         {
             Id = Guid.CreateVersion7(),
             RunId = runId,
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             Name = name,
             TargetCredentialReferenceId = completedRun.TargetCredentialReferenceId,
             ScheduleId = completedRun.ScheduleId,
@@ -123,9 +120,8 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
             var existingKeys = await db.GeneratedSetEntries.AsNoTracking()
                 .Where(item => item.GeneratedSetId == setId).OrderBy(item => item.Position)
                 .Select(item => item.TrackKey).ToArrayAsync(cancellationToken);
-            if (existing.TenantId != scope.TenantId || existing.OwnerUserId != scope.OwnerUserId ||
-                existing.Protocol != scope.Protocol || existing.BackendInstanceId != scope.BackendInstanceId ||
-                existing.LibraryScopeId != scope.LibraryScopeId || existing.Name != name ||
+            if (existing.OwnerUserId != scope.OwnerUserId || existing.Protocol != scope.Protocol ||
+                existing.BackendInstanceId != scope.BackendInstanceId || existing.Name != name ||
                 !existingKeys.SequenceEqual(candidates.Select(item => item.TrackKey), StringComparer.Ordinal))
                 throw new ArgumentException("Generated playlist request key was already used.");
             await EnqueueMaterialization(existing, cancellationToken); return existing.Id;
@@ -136,11 +132,9 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         var set = new GeneratedSetRecord
         {
             Id = setId,
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             Name = name,
             TargetCredentialReferenceId = policy.TargetCredentialReferenceId,
             MaterializationState = GeneratedSetMaterializationState.Pending,
@@ -160,7 +154,7 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
     }
     private static Guid StableSetId(IntelligenceScope scope, string idempotencyKey) => new(
         SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{idempotencyKey}"))[..16]);
+            $"{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{idempotencyKey}"))[..16]);
     private static void AddEntries(AllstarrDbContext db, GeneratedSetRecord set,
         IReadOnlyList<RecommendationCandidate> candidates)
     {
@@ -168,7 +162,6 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         {
             Id = Guid.CreateVersion7(),
             GeneratedSetId = set.Id,
-            TenantId = set.TenantId,
             OwnerUserId = set.OwnerUserId,
             Position = i,
             TrackKey = candidates[i].TrackKey,
@@ -182,8 +175,7 @@ public sealed class SmartPlaylistService(IDbContextFactory<AllstarrDbContext> fa
         jobs.EnqueueAsync(new DurableJobEnqueueRequest<GeneratedSetMaterializationPayload>(
             "smart-playlist.materialize", set.ScheduleId is { } scheduleId
                 ? $"schedule:{scheduleId:N}:materialize:{set.Id:N}"
-                : $"generated-set:{set.Id:N}", new(set.Id), set.TenantId,
-            set.OwnerUserId, LibraryScopeId: set.LibraryScopeId));
+                : $"generated-set:{set.Id:N}", new(set.Id), set.OwnerUserId));
 }
 public sealed record GeneratedSetMaterializationPayload(Guid GeneratedSetId);
 
@@ -210,15 +202,13 @@ public sealed class RecommendationRunService(IDbContextFactory<AllstarrDbContext
         await using var tx = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var runId = Guid.CreateVersion7(); var job = await jobs.EnqueueInExistingTransactionAsync(db,
             new DurableJobEnqueueRequest<RecommendationRunPayload>("recommendation.generate", idempotencyKey,
-                new(runId), scope.TenantId, scope.OwnerUserId, LibraryScopeId: scope.LibraryScopeId), cancellationToken);
+                new(runId), scope.OwnerUserId), cancellationToken);
         db.RecommendationRuns.Add(new()
         {
             Id = runId,
-            TenantId = scope.TenantId,
             OwnerUserId = scope.OwnerUserId,
             Protocol = scope.Protocol,
             BackendInstanceId = scope.BackendInstanceId,
-            LibraryScopeId = scope.LibraryScopeId,
             JobId = job.JobId,
             IdempotencyKey = idempotencyKey,
             PolicySnapshotJson = JsonSerializer.Serialize(new RecommendationPolicySnapshot(policy.Revision, enabledProviders, policy.RetentionDays, policy.TargetCredentialReferenceId)),
@@ -246,12 +236,12 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
         var payload = execution.Claim.Payload.Deserialize<RecommendationRunPayload>(); if (payload == null) return DurableJobCompletion.Failure("recommendation_payload_invalid", "The recommendation request is invalid.");
-        await using var db = await factory.CreateDbContextAsync(cancellationToken); var run = await db.RecommendationRuns.SingleOrDefaultAsync(x => x.Id == payload.RunId && x.JobId == execution.Claim.JobId && x.TenantId == execution.Claim.TenantId && x.OwnerUserId == execution.Claim.OwnerUserId, cancellationToken);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken); var run = await db.RecommendationRuns.SingleOrDefaultAsync(x => x.Id == payload.RunId && x.JobId == execution.Claim.JobId && x.OwnerUserId == execution.Claim.OwnerUserId, cancellationToken);
         if (run == null) return DurableJobCompletion.Failure("recommendation_run_missing", "The recommendation run is unavailable.");
         if (run.State == RecommendationRunState.Cancelled) return DurableJobCompletion.Cancelled();
         RecommendationPolicySnapshot snapshot; try { snapshot = JsonSerializer.Deserialize<RecommendationPolicySnapshot>(run.PolicySnapshotJson) ?? throw new JsonException(); } catch (JsonException) { return DurableJobCompletion.Failure("recommendation_policy_snapshot_invalid", "The recommendation policy snapshot is invalid."); }
         if (run.State == RecommendationRunState.Succeeded) return await EnsureScheduledSetAsync(db, run, snapshot.Automation, cancellationToken);
-        var scope = new IntelligenceScope(run.TenantId, run.OwnerUserId, run.Protocol, run.BackendInstanceId, run.LibraryScopeId);
+        var scope = new IntelligenceScope(run.OwnerUserId, run.Protocol, run.BackendInstanceId);
         var policy = await IntelligencePolicyService.Query(db, scope).AsNoTracking().SingleOrDefaultAsync(cancellationToken);
         if (policy?.Enabled != true || !await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken))
         { run.State = RecommendationRunState.Cancelled; run.CompletedAt = clock.UtcNow; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Cancelled(); }
@@ -293,9 +283,8 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
                 Provider: provider.Id), cancellationToken);
         }
         var excludedTrackKeys = await db.RecommendationFeedback.AsNoTracking().Where(item =>
-                item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId &&
-                item.Protocol == run.Protocol && item.BackendInstanceId == run.BackendInstanceId &&
-                item.LibraryScopeId == run.LibraryScopeId &&
+                item.OwnerUserId == run.OwnerUserId && item.Protocol == run.Protocol &&
+                item.BackendInstanceId == run.BackendInstanceId &&
                 (item.Kind == "dislike" || item.Kind == "dismiss"))
             .Select(item => item.TrackKey).Distinct().ToListAsync(cancellationToken);
         var excluded = excludedTrackKeys.ToHashSet(StringComparer.Ordinal);
@@ -309,7 +298,7 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
             $"Ranking {ordered.Length} candidate tracks.", 0, ordered.Length), cancellationToken);
         ordered = await ResolveProvenanceAsync(db, run, ordered, cancellationToken);
         db.RecommendationCandidates.RemoveRange(db.RecommendationCandidates.Where(x => x.RunId == run.Id));
-        for (var i = 0; i < ordered.Length; i++) db.RecommendationCandidates.Add(new() { Id = Guid.CreateVersion7(), RunId = run.Id, TenantId = run.TenantId, OwnerUserId = run.OwnerUserId, Position = i, TrackKey = ordered[i].TrackKey, Score = ordered[i].Score, Source = ordered[i].Source, SignalsJson = JsonSerializer.Serialize(ordered[i].Signals), IdentityJson = JsonSerializer.Serialize(ordered[i].Identity), CanonicalRecordingId = ordered[i].CanonicalRecordingId, ProviderAccountId = ordered[i].ProviderAccountId, SourceRevision = ordered[i].SourceRevision ?? $"run:{run.Id:N}", ExclusionsJson = JsonSerializer.Serialize(ordered[i].Exclusions), CreatedAt = clock.UtcNow, Revision = 1 });
+        for (var i = 0; i < ordered.Length; i++) db.RecommendationCandidates.Add(new() { Id = Guid.CreateVersion7(), RunId = run.Id, OwnerUserId = run.OwnerUserId, Position = i, TrackKey = ordered[i].TrackKey, Score = ordered[i].Score, Source = ordered[i].Source, SignalsJson = JsonSerializer.Serialize(ordered[i].Signals), IdentityJson = JsonSerializer.Serialize(ordered[i].Identity), CanonicalRecordingId = ordered[i].CanonicalRecordingId, ProviderAccountId = ordered[i].ProviderAccountId, SourceRevision = ordered[i].SourceRevision ?? $"run:{run.Id:N}", ExclusionsJson = JsonSerializer.Serialize(ordered[i].Exclusions), CreatedAt = clock.UtcNow, Revision = 1 });
         run.State = RecommendationRunState.Succeeded; run.CompletedAt = clock.UtcNow; run.UpdatedAt = clock.UtcNow; run.Revision++;
         await db.SaveChangesAsync(cancellationToken);
         await execution.ReportProgressAsync(new("recommendation.complete",
@@ -327,7 +316,7 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         try
         {
             var records = await db.RecommendationCandidates.AsNoTracking().Where(item => item.RunId == run.Id &&
-                    item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId).OrderBy(item => item.Position)
+                    item.OwnerUserId == run.OwnerUserId).OrderBy(item => item.Position)
                 .ToListAsync(cancellationToken);
             candidates = records.Where(item => item.ExclusionsJson == "[]").Select(item => new RecommendationCandidate(item.TrackKey, item.Score, item.Source,
                 JsonSerializer.Deserialize<RecommendationSignal[]>(item.SignalsJson) ?? [],
@@ -344,8 +333,8 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         }
         try
         {
-            await smartPlaylists.CreateGeneratedSetAsync(new(run.TenantId, run.OwnerUserId, run.Protocol,
-                run.BackendInstanceId, run.LibraryScopeId), run.Id, automation.GeneratedSetName, candidates,
+            await smartPlaylists.CreateGeneratedSetAsync(new(run.OwnerUserId, run.Protocol,
+                run.BackendInstanceId), run.Id, automation.GeneratedSetName, candidates,
                 cancellationToken);
             return DurableJobCompletion.Success();
         }
@@ -379,27 +368,25 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
     {
         var libraryIds = candidates.Select(item => item.Identity?.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
         var library = await db.LibraryTracks.AsNoTracking().Where(item => libraryIds.Contains(item.Id) &&
-                item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId &&
-                item.Protocol == run.Protocol && item.BackendInstanceId == run.BackendInstanceId &&
-                item.LibraryScopeId == run.LibraryScopeId)
+                item.OwnerUserId == run.OwnerUserId && item.Protocol == run.Protocol &&
+                item.BackendInstanceId == run.BackendInstanceId)
             .Select(item => new { item.Id, item.CanonicalRecordingId }).ToDictionaryAsync(item => item.Id, cancellationToken);
         var providerIds = candidates.Select(item => item.Identity?.ProviderId).Where(item => item != null).Distinct().ToArray();
         var externalIds = candidates.Select(item => item.Identity?.ProviderTrackId ?? item.Identity?.BackendItemId)
             .Where(item => item != null).Distinct().ToArray();
         var identities = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                item.TenantId == run.TenantId && providerIds.Contains(item.ProviderId) &&
+                providerIds.Contains(item.ProviderId) &&
                 externalIds.Contains(item.ExternalId))
             .Select(item => new { item.ProviderId, item.ExternalId, item.CanonicalRecordingId, item.ProviderAccountId })
             .ToListAsync(cancellationToken);
         var musicBrainzIds = candidates.Select(item => item.Identity?.MusicBrainzRecordingId)
             .Where(item => item != null).Distinct().ToArray();
         var isrcs = candidates.Select(item => item.Identity?.Isrc).Where(item => item != null).Distinct().ToArray();
-        var canonicals = await db.CanonicalRecordings.AsNoTracking().Where(item => item.TenantId == run.TenantId &&
-                (musicBrainzIds.Contains(item.MusicBrainzRecordingId) || isrcs.Contains(item.Isrc)))
+        var canonicals = await db.CanonicalRecordings.AsNoTracking().Where(item =>
+                musicBrainzIds.Contains(item.MusicBrainzRecordingId) || isrcs.Contains(item.Isrc))
             .Select(item => new { item.Id, item.MusicBrainzRecordingId, item.Isrc }).ToListAsync(cancellationToken);
         var validAccounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
-                (item.TenantId == run.TenantId && item.OwnerUserId == run.OwnerUserId ||
-                 item.TenantId == null && item.OwnerUserId == null))
+                (item.OwnerUserId == run.OwnerUserId || item.OwnerUserId == null))
             .Select(item => new { item.Id, item.ProviderId }).ToListAsync(cancellationToken);
 
         return candidates.Select(candidate =>
@@ -440,14 +427,13 @@ public sealed class GeneratedSetMaterializationJobHandler(IDbContextFactory<Alls
         if (payload == null) return DurableJobCompletion.Failure("generated_set_payload_invalid", "The generated playlist request is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var set = await db.GeneratedSets.SingleOrDefaultAsync(x => x.Id == payload.GeneratedSetId &&
-            x.TenantId == execution.Claim.TenantId && x.OwnerUserId == execution.Claim.OwnerUserId &&
-            x.LibraryScopeId == execution.Claim.LibraryScopeId, cancellationToken);
+            x.OwnerUserId == execution.Claim.OwnerUserId, cancellationToken);
         if (set == null) return DurableJobCompletion.Failure("generated_set_missing", "The generated playlist is unavailable.");
         var target = materializers.SingleOrDefault(x => x.Protocol.Equals(set.Protocol, StringComparison.Ordinal));
         if (target == null) { set.MaterializationState = GeneratedSetMaterializationState.Unsupported; set.LastErrorCode = "generated_set_target_unsupported"; set.UpdatedAt = Now; set.Revision++; await db.SaveChangesAsync(cancellationToken); return DurableJobCompletion.Failure("generated_set_target_unsupported", "Generated playlist materialization is unsupported for this backend."); }
         set.MaterializationState = GeneratedSetMaterializationState.Running; set.LastErrorCode = null; set.UpdatedAt = Now; set.Revision++; await db.SaveChangesAsync(cancellationToken);
         var entries = await db.GeneratedSetEntries.AsNoTracking().Where(x => x.GeneratedSetId == set.Id &&
-            x.TenantId == set.TenantId && x.OwnerUserId == set.OwnerUserId).OrderBy(x => x.Position)
+            x.OwnerUserId == set.OwnerUserId).OrderBy(x => x.Position)
             .ToListAsync(cancellationToken);
         var candidates = entries.Select(x => new RecommendationCandidate(x.TrackKey, x.Score, x.Source,
             JsonSerializer.Deserialize<RecommendationSignal[]>(x.ExplanationJson) ?? [],
@@ -457,8 +443,8 @@ public sealed class GeneratedSetMaterializationJobHandler(IDbContextFactory<Alls
         GeneratedSetMaterializationResult result;
         try
         {
-            result = await target.MaterializeAsync(new(new(set.TenantId, set.OwnerUserId, set.Protocol,
-                set.BackendInstanceId, set.LibraryScopeId), set.Id, candidates, $"generated-set:{set.Id:N}"), cancellationToken);
+            result = await target.MaterializeAsync(new(new(set.OwnerUserId, set.Protocol,
+                set.BackendInstanceId), set.Id, candidates, $"generated-set:{set.Id:N}"), cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

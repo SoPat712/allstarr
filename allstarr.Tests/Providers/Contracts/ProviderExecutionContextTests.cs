@@ -5,7 +5,6 @@ namespace allstarr.Tests;
 
 public sealed class ProviderExecutionContextTests
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
 
     [Fact]
@@ -50,26 +49,17 @@ public sealed class ProviderExecutionContextTests
     }
 
     [Fact]
-    public void ExecutionContext_RejectsAnotherTenantOrUserAccount()
+    public void ExecutionContext_RejectsAnotherUserOrDisabledAccount()
     {
         var actor = UserActor();
         var policy = Policy("deezer");
-        var anotherTenant = new ProviderAccountContext(
-            Guid.CreateVersion7(),
-            "deezer",
-            ProviderAccountScope.Personal,
-            revision: 4,
-            tenantId: Guid.CreateVersion7(),
-            ownerUserId: _userId);
         var anotherUser = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "deezer",
             ProviderAccountScope.Personal,
             revision: 4,
-            tenantId: _tenantId,
             ownerUserId: Guid.CreateVersion7());
 
-        Assert.Throws<UnauthorizedAccessException>(() => Context(actor, anotherTenant, policy));
         Assert.Throws<UnauthorizedAccessException>(() => Context(actor, anotherUser, policy));
         Assert.Throws<UnauthorizedAccessException>(() => Context(
             actor,
@@ -79,7 +69,6 @@ public sealed class ProviderExecutionContextTests
                 ProviderAccountScope.Personal,
                 revision: 4,
                 enabled: false,
-                tenantId: _tenantId,
                 ownerUserId: _userId),
             policy));
     }
@@ -89,7 +78,6 @@ public sealed class ProviderExecutionContextTests
     {
         var targetUserId = Guid.CreateVersion7();
         var administrator = new ProviderActorContext(
-            _tenantId,
             ProviderActorKind.Administrator,
             _userId,
             new ProviderBackendPrincipal("jellyfin", "primary", "administrator"),
@@ -99,7 +87,6 @@ public sealed class ProviderExecutionContextTests
             "spotify",
             ProviderAccountScope.Personal,
             revision: 3,
-            tenantId: _tenantId,
             ownerUserId: targetUserId);
 
         var context = Context(administrator, targetAccount, Policy("spotify"));
@@ -112,7 +99,6 @@ public sealed class ProviderExecutionContextTests
                 "spotify",
                 ProviderAccountScope.Personal,
                 revision: 3,
-                tenantId: _tenantId,
                 ownerUserId: Guid.CreateVersion7()),
             Policy("spotify")));
     }
@@ -134,7 +120,6 @@ public sealed class ProviderExecutionContextTests
             UserActor(),
             "qobuz",
             global,
-            library: null,
             Policy("qobuz", allowSharedAccount: true),
             operationId: "operation-17",
             correlationId: "correlation-17",
@@ -149,27 +134,46 @@ public sealed class ProviderExecutionContextTests
     }
 
     [Fact]
-    public void Accounts_RejectLibraryOwnershipAndAllowIndependentLibraryContext()
+    public void Accounts_RequireOwnershipThatMatchesTheirScope()
     {
         Assert.Throws<ArgumentException>(() => new ProviderAccountContext(
             Guid.CreateVersion7(), "spotify", ProviderAccountScope.Personal, 1,
-            tenantId: _tenantId, ownerUserId: _userId, libraryScopeId: "library-a"));
+            ownerUserId: null));
         Assert.Throws<ArgumentException>(() => new ProviderAccountContext(
             Guid.CreateVersion7(), "spotify", ProviderAccountScope.Shared, 1,
-            libraryScopeId: "library-a"));
+            ownerUserId: _userId));
         Assert.Throws<ArgumentOutOfRangeException>(() => new ProviderAccountContext(
             Guid.CreateVersion7(), "spotify", (ProviderAccountScope)99, 1));
 
         var account = new ProviderAccountContext(
             Guid.CreateVersion7(), "spotify", ProviderAccountScope.Personal, 1,
-            tenantId: _tenantId, ownerUserId: _userId);
-        foreach (var libraryId in new[] { "library-a", "library-b" })
-        {
-            var context = Context(UserActor(), account, Policy("spotify"),
-                new ProviderLibraryContext(_tenantId, libraryId));
-            Assert.Equal(libraryId, context.Library!.ScopeId);
-            Assert.Same(account, context.Account);
-        }
+            ownerUserId: _userId);
+        Assert.Same(account, Context(UserActor(), account, Policy("spotify")).Account);
+    }
+
+    [Fact]
+    public void Actors_RequireVerifiedUserIdentityAndDurableSystemJobAuthority()
+    {
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(
+            ProviderActorKind.User,
+            _userId));
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(
+            ProviderActorKind.User,
+            Guid.Empty,
+            new ProviderBackendPrincipal("jellyfin", "primary", "backend-user")));
+        Assert.Throws<ArgumentException>(() => new ProviderActorContext(
+            ProviderActorKind.SystemJob,
+            userId: null));
+
+        var durableJobId = Guid.CreateVersion7();
+        var system = new ProviderActorContext(
+            ProviderActorKind.SystemJob,
+            userId: null,
+            durableJobId: durableJobId,
+            actingForUserId: _userId);
+
+        Assert.Equal(durableJobId, system.DurableJobId);
+        Assert.Equal(_userId, system.EffectiveUserId);
     }
 
     [Fact]
@@ -199,7 +203,6 @@ public sealed class ProviderExecutionContextTests
     }
 
     private ProviderActorContext UserActor() => new(
-        _tenantId,
         ProviderActorKind.User,
         _userId,
         new ProviderBackendPrincipal("jellyfin", "primary", "backend-user"));
@@ -220,12 +223,10 @@ public sealed class ProviderExecutionContextTests
     private static ProviderExecutionContext Context(
         ProviderActorContext actor,
         ProviderAccountContext account,
-        ProviderExecutionPolicy policy,
-        ProviderLibraryContext? library = null) => new(
+        ProviderExecutionPolicy policy) => new(
         actor,
         account.ProviderId,
         account,
-        library,
         policy,
         "operation",
         "correlation",

@@ -14,46 +14,27 @@ public sealed class ConcurrentRematchDecisionTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new DbFactory(database.Options);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
-        var backendIdentityId = Guid.CreateVersion7();
         var providerAccountId = Guid.CreateVersion7();
         var libraryTrackId = Guid.CreateVersion7();
         var externalSnapshotId = Guid.CreateVersion7();
         var now = new DateTimeOffset(2026, 7, 26, 12, 0, 0, TimeSpan.Zero);
         await using (var setup = await factory.CreateDbContextAsync())
         {
-            setup.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = $"concurrent-{tenantId:N}",
-                Name = "Concurrent tenant",
-                CreatedAt = now
-            });
-            setup.Users.Add(new PlatformUserRecord
+            setup.Users.Add(new UserRecord
             {
                 Id = userId,
-                TenantId = tenantId,
                 DisplayName = "Concurrent owner",
-                Status = PlatformUserStatus.Active,
-                CreatedAt = now,
-                UpdatedAt = now
-            });
-            setup.BackendIdentities.Add(new BackendIdentityRecord
-            {
-                Id = backendIdentityId,
-                TenantId = tenantId,
-                UserId = userId,
+                Enabled = true,
                 BackendType = "jellyfin",
                 BackendInstanceId = "backend",
-                PrincipalId = "principal",
+                BackendPrincipalId = "principal",
                 CreatedAt = now,
-                LastSeenAt = now
+                UpdatedAt = now
             });
             setup.ProviderAccounts.Add(new ProviderAccountRecord
             {
                 Id = providerAccountId,
-                TenantId = tenantId,
                 OwnerUserId = userId,
                 ProviderId = "spotify",
                 DisplayName = "Spotify",
@@ -64,12 +45,10 @@ public sealed class ConcurrentRematchDecisionTests
             setup.LibraryTracks.Add(new LibraryTrackRecord
             {
                 Id = libraryTrackId,
-                TenantId = tenantId,
                 OwnerUserId = userId,
-                BackendIdentityId = backendIdentityId,
-                LibraryScopeId = "music",
                 Protocol = "jellyfin",
                 BackendInstanceId = "backend",
+                BackendLibraryId = "music",
                 BackendItemId = "local-1",
                 FilePath = "/music/concurrent.flac",
                 Title = "Concurrent track",
@@ -84,10 +63,8 @@ public sealed class ConcurrentRematchDecisionTests
             setup.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
             {
                 Id = externalSnapshotId,
-                TenantId = tenantId,
                 OwnerUserId = userId,
                 ProviderAccountId = providerAccountId,
-                LibraryScopeId = "music",
                 BackendInstanceId = "backend",
                 BackendPrincipalId = "principal",
                 Protocol = "jellyfin",
@@ -105,7 +82,7 @@ public sealed class ConcurrentRematchDecisionTests
             await setup.SaveChangesAsync();
         }
 
-        var actor = new TrackMatchActor(tenantId, userId, false);
+        var actor = new TrackMatchActor(userId, false);
         var service = CreateService(factory, now);
         using var gate = new Barrier(8);
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>

@@ -26,7 +26,6 @@ public enum TrackIdentityTranslationStatus
 
 public sealed record CanonicalRecordingIdentity(
     Guid Id,
-    Guid TenantId,
     Guid CreatedByUserId,
     string? Isrc,
     string? MusicBrainzRecordingId,
@@ -179,7 +178,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
             await ValidateActorAsync(context, actor, cancellationToken);
             var record = await FindCanonicalByExactSignalsAsync(
                 context,
-                actor.TenantId,
                 normalizedIsrc,
                 normalizedMusicBrainzId,
                 cancellationToken);
@@ -191,7 +189,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 record = new CanonicalRecordingRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = actor.TenantId,
                     CreatedByUserId = userId,
                     Isrc = normalizedIsrc,
                     MusicBrainzRecordingId = normalizedMusicBrainzId,
@@ -277,12 +274,11 @@ public sealed class TrackIdentityService : ITrackIdentityService
             executionContext,
             cancellationToken);
         var canonicalExists = await context.CanonicalRecordings.AsNoTracking().AnyAsync(
-            item => item.Id == request.CanonicalRecordingId &&
-                    item.TenantId == executionContext.Actor.TenantId,
+            item => item.Id == request.CanonicalRecordingId,
             cancellationToken);
         if (!canonicalExists)
         {
-            throw new KeyNotFoundException("The canonical recording does not exist in the actor tenant.");
+            throw new KeyNotFoundException("The canonical recording does not exist.");
         }
 
         var scopeAccountId = request.Scope == ProviderIdentityScope.Account
@@ -291,7 +287,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         var key = ExactKey(request.ExternalId);
         var existing = await FindExactLinkAsync(
             context,
-            executionContext.Actor.TenantId,
             key,
             request.Scope,
             scopeAccountId,
@@ -311,7 +306,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         var link = new ProviderTrackIdentityRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = executionContext.Actor.TenantId,
             CanonicalRecordingId = request.CanonicalRecordingId,
             ProviderAccountId = scopeAccountId,
             ProviderId = key.ProviderId,
@@ -350,7 +344,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
             context.ChangeTracker.Clear();
             existing = await FindExactLinkAsync(
                 context,
-                executionContext.Actor.TenantId,
                 key,
                 request.Scope,
                 scopeAccountId,
@@ -390,7 +383,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
             cancellationToken);
         return await ResolveCoreAsync(
             context,
-            executionContext.Actor.TenantId,
             externalId,
             account?.Id,
             cancellationToken);
@@ -429,8 +421,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
         var catalogs = keys.Select(item => item.Catalog).Distinct().ToArray();
         var hashes = keys.Select(item => item.ExternalIdHash).Distinct().ToArray();
         var candidates = await context.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId &&
-                           item.ResourceKind == ProviderResourceKind.Track &&
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
                            providers.Contains(item.ProviderId) &&
                            catalogs.Contains(item.CatalogNamespace) &&
                            hashes.Contains(item.ExternalIdHash))
@@ -505,7 +496,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
             cancellationToken);
         var source = await ResolveCoreAsync(
             context,
-            sourceContext.Actor.TenantId,
             sourceId,
             sourceAccount?.Id,
             cancellationToken);
@@ -521,7 +511,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         var catalog = target.Catalog ?? DefaultCatalog;
         var candidates = await context.ProviderTrackIdentities.AsNoTracking()
             .Where(item =>
-                item.TenantId == sourceContext.Actor.TenantId &&
                 item.CanonicalRecordingId == source.CanonicalRecordingId &&
                 item.ProviderId == target.ProviderId &&
                 item.ResourceKind == target.ResourceKind &&
@@ -595,7 +584,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
 
     private async Task<TrackIdentityResolution?> ResolveCoreAsync(
         AllstarrDbContext context,
-        Guid tenantId,
         ProviderExternalResourceId externalId,
         Guid? providerAccountId,
         CancellationToken cancellationToken)
@@ -603,7 +591,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         var key = ExactKey(externalId);
         var candidates = await context.ProviderTrackIdentities.AsNoTracking()
             .Where(item =>
-                item.TenantId == tenantId &&
                 item.ProviderId == key.ProviderId &&
                 item.ResourceKind == key.ResourceKind &&
                 item.CatalogNamespace == key.Catalog &&
@@ -630,7 +617,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
 
     private static async Task<ProviderTrackIdentityRecord?> FindExactLinkAsync(
         AllstarrDbContext context,
-        Guid tenantId,
         ExactTrackIdentityKey key,
         ProviderIdentityScope scope,
         Guid? providerAccountId,
@@ -638,7 +624,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         CancellationToken cancellationToken)
     {
         var query = context.ProviderTrackIdentities.Where(item =>
-            item.TenantId == tenantId &&
             item.ProviderId == key.ProviderId &&
             item.ResourceKind == key.ResourceKind &&
             item.CatalogNamespace == key.Catalog &&
@@ -674,9 +659,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
 
         var snapshotMatches = account.ProviderId.Equals(executionContext.ProviderId, StringComparison.Ordinal) &&
                               account.Scope == executionContext.Account.Scope &&
-                              account.TenantId == executionContext.Account.TenantId &&
                               account.OwnerUserId == executionContext.Account.OwnerUserId &&
-                              executionContext.Account.LibraryScopeId == null &&
                               account.Revision == executionContext.Account.Revision;
         if (!snapshotMatches)
         {
@@ -684,10 +667,10 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 "The provider account context is stale or outside the actor scope.");
         }
 
-        if (account.Scope != ProviderAccountScope.Shared &&
-            account.TenantId != executionContext.Actor.TenantId)
+        if (account.Scope == ProviderAccountScope.Personal &&
+            account.OwnerUserId != executionContext.Actor.EffectiveUserId)
         {
-            throw new UnauthorizedAccessException("The provider account belongs to another tenant.");
+            throw new UnauthorizedAccessException("The provider account belongs to another user.");
         }
 
         return account;
@@ -698,25 +681,27 @@ public sealed class TrackIdentityService : ITrackIdentityService
         ProviderActorContext actor,
         CancellationToken cancellationToken)
     {
-        if (actor.UserId == null)
+        var effectiveUserId = actor.EffectiveUserId;
+        if (effectiveUserId == null)
         {
             return;
         }
 
         var valid = await context.Users.AsNoTracking().AnyAsync(
-            item => item.Id == actor.UserId &&
-                    item.TenantId == actor.TenantId &&
-                    item.Status == PlatformUserStatus.Active,
+            item => item.Id == effectiveUserId && item.Enabled &&
+                    (actor.UserId == null ||
+                     item.BackendType == actor.BackendPrincipal!.BackendType &&
+                     item.BackendInstanceId == actor.BackendPrincipal.BackendInstanceId &&
+                     item.BackendPrincipalId == actor.BackendPrincipal.PrincipalId),
             cancellationToken);
         if (!valid)
         {
-            throw new UnauthorizedAccessException("The provider actor is not active in the requested tenant.");
+            throw new UnauthorizedAccessException("The provider actor is not active.");
         }
     }
 
     private static async Task<CanonicalRecordingRecord?> FindCanonicalByExactSignalsAsync(
         AllstarrDbContext context,
-        Guid tenantId,
         string? isrc,
         string? musicBrainzRecordingId,
         CancellationToken cancellationToken)
@@ -727,10 +712,9 @@ public sealed class TrackIdentityService : ITrackIdentityService
         }
 
         var candidates = await context.CanonicalRecordings
-            .Where(item => item.TenantId == tenantId &&
-                ((isrc != null && item.Isrc == isrc) ||
+            .Where(item => (isrc != null && item.Isrc == isrc) ||
                  (musicBrainzRecordingId != null &&
-                  item.MusicBrainzRecordingId == musicBrainzRecordingId)))
+                  item.MusicBrainzRecordingId == musicBrainzRecordingId))
             .ToListAsync(cancellationToken);
         return candidates.Count switch
         {
@@ -854,10 +838,11 @@ public sealed class TrackIdentityService : ITrackIdentityService
 
     private static void RequireSameActor(ProviderActorContext source, ProviderActorContext target)
     {
-        if (source.TenantId != target.TenantId ||
-            source.Kind != target.Kind ||
+        if (source.Kind != target.Kind ||
             source.UserId != target.UserId ||
-            source.DurableJobId != target.DurableJobId)
+            source.DurableJobId != target.DurableJobId ||
+            source.ActingForUserId != target.ActingForUserId ||
+            source.BackendPrincipal != target.BackendPrincipal)
         {
             throw new UnauthorizedAccessException(
                 "Source and target provider contexts must belong to the same actor.");
@@ -918,7 +903,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
 
     private static CanonicalRecordingIdentity ToIdentity(CanonicalRecordingRecord record) => new(
         record.Id,
-        record.TenantId,
         record.CreatedByUserId,
         record.Isrc,
         record.MusicBrainzRecordingId,
@@ -981,7 +965,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         context.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = actor.TenantId,
             ActorUserId = actor.UserId,
             Category = "track-identity",
             Action = action,

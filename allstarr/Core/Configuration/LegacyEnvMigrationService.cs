@@ -17,7 +17,6 @@ namespace allstarr.Core.Configuration;
 
 public sealed record LegacyEnvMigrationActor(
     string SessionId,
-    Guid? TenantId,
     Guid? ActorUserId,
     string CorrelationId);
 
@@ -96,7 +95,7 @@ public sealed class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private const int MaximumPreviewCount = 64;
-    internal const string MigrationSchemaVersion = "legacy-env-import-v2";
+    internal const string MigrationSchemaVersion = "legacy-env-import-v3";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -127,17 +126,13 @@ public sealed class LegacyEnvMigrationService
                 null));
 
     public async Task<LegacyEnvMigrationStatus> GetStatusAsync(
-        Guid? tenantId,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var completedAt = tenantId.HasValue
-            ? await db.LegacyEnvImports.AsNoTracking()
-            .Where(item => item.TenantId == tenantId.Value)
+        var completedAt = await db.LegacyEnvImports.AsNoTracking()
             .OrderByDescending(item => item.AppliedAt)
             .Select(item => (DateTimeOffset?)item.AppliedAt)
-            .FirstOrDefaultAsync(cancellationToken)
-            : null;
+            .FirstOrDefaultAsync(cancellationToken);
         return new(
             true,
             completedAt.HasValue,
@@ -154,7 +149,6 @@ public sealed class LegacyEnvMigrationService
         ValidateActor(actor);
         PurgeExpired();
         var document = LegacyEnvParser.Parse(source);
-        var tenantId = actor.TenantId;
         var durableEntries = document.Entries
             .Where(item => item.Disposition == LegacyEnvDisposition.DurableSetting && item.Value.Length > 0)
             .ToArray();
@@ -163,18 +157,17 @@ public sealed class LegacyEnvMigrationService
             new Dictionary<string, EffectiveRuntimeSetting>(StringComparer.OrdinalIgnoreCase);
         HashSet<string> existingProviders = new(StringComparer.OrdinalIgnoreCase);
         HashSet<string> existingUserProviders = new(StringComparer.OrdinalIgnoreCase);
-        IReadOnlyList<BackendIdentityRecord> existingBackendIdentities = [];
+        IReadOnlyList<UserRecord> existingBackendIdentities = [];
         IReadOnlyDictionary<string, bool> existingPlaylistTargets =
             new Dictionary<string, bool>(StringComparer.Ordinal);
-        if (tenantId.HasValue)
+        if (actor.ActorUserId.HasValue)
         {
             existingSettings = await _settings.GetManyAsync(
-                tenantId.Value,
                 durableEntries.Select(item => item.DurableKey!),
                 cancellationToken);
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
             existingProviders = (await db.ProviderAccounts.AsNoTracking()
-                    .Where(item => item.OwnerUserId == null && item.TenantId == null)
+                    .Where(item => item.OwnerUserId == null)
                     .Select(item => item.ProviderId)
                     .ToListAsync(cancellationToken))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -182,18 +175,15 @@ public sealed class LegacyEnvMigrationService
             {
                 existingUserProviders = (await db.ProviderAccounts.AsNoTracking()
                         .Where(item => item.OwnerUserId != null &&
-                                       item.TenantId == tenantId.Value &&
                                        item.OwnerUserId == actor.ActorUserId.Value)
                         .Select(item => item.ProviderId)
                         .ToListAsync(cancellationToken))
                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                existingBackendIdentities = await db.BackendIdentities.AsNoTracking()
-                    .Where(item => item.TenantId == tenantId.Value &&
-                                   item.UserId == actor.ActorUserId.Value)
+                existingBackendIdentities = await db.Users.AsNoTracking()
+                    .Where(item => item.Id == actor.ActorUserId.Value && item.Enabled)
                     .ToListAsync(cancellationToken);
                 existingPlaylistTargets = (await db.PlaylistLinks.AsNoTracking()
-                        .Where(item => item.TenantId == tenantId.Value &&
-                                       item.OwnerUserId == actor.ActorUserId.Value &&
+                        .Where(item => item.OwnerUserId == actor.ActorUserId.Value &&
                                        item.SourceProviderId == "spotify")
                         .Select(item => new
                         {
@@ -217,9 +207,9 @@ public sealed class LegacyEnvMigrationService
         }
 
         var conflicts = new List<string>();
-        if (!tenantId.HasValue)
+        if (!actor.ActorUserId.HasValue)
         {
-            conflicts.Add("The administrator session is not linked to an Allstarr tenant.");
+            conflicts.Add("The administrator session is not linked to an Allstarr user.");
         }
 
         var accountPreviews = BuildProviderPreviews(document, existingProviders, conflicts);
@@ -241,13 +231,7 @@ public sealed class LegacyEnvMigrationService
             var action = entry.Action;
             var reason = entry.Reason;
             long? existingRevision = null;
-            if (entry.Key.Equals("JELLYFIN_USER_ID", StringComparison.OrdinalIgnoreCase) &&
-                identityPlan.Create)
-            {
-                action = "import_backend_identity";
-                reason = "Create the current administrator's durable Jellyfin backend identity.";
-            }
-            else if (entry.Disposition == LegacyEnvDisposition.PlaylistHandoff)
+            if (entry.Disposition == LegacyEnvDisposition.PlaylistHandoff)
             {
                 action = document.Playlists.All(item =>
                     item.Action is "import_playlist_link" or "attach_schedule" or "conflict_existing")
@@ -264,9 +248,9 @@ public sealed class LegacyEnvMigrationService
                     action = "ignore_empty";
                     reason = "Empty values are not imported into durable settings.";
                 }
-                else if (!tenantId.HasValue)
+                else if (!actor.ActorUserId.HasValue)
                 {
-                    action = "conflict_missing_tenant";
+                    action = "conflict_missing_user";
                 }
                 else if (!IsValidRuntimeValue(entry.DurableKey!, entry.Value, out var validationError))
                 {
@@ -290,7 +274,7 @@ public sealed class LegacyEnvMigrationService
                     action = "ignore_empty";
                     reason = "Empty personal credentials are not imported.";
                 }
-                else if (!tenantId.HasValue || !actor.ActorUserId.HasValue)
+                else if (!actor.ActorUserId.HasValue)
                 {
                     action = "conflict_missing_user";
                     reason = "The administrator session is not linked to an Allstarr user.";
@@ -326,17 +310,16 @@ public sealed class LegacyEnvMigrationService
                 DuplicateScrobbleWarning(entry)));
         }
 
-        var revision = await ComputeRevisionAsync(document.SourceSha256, tenantId, actor.ActorUserId, cancellationToken);
+        var revision = await ComputeRevisionAsync(document.SourceSha256, actor.ActorUserId, cancellationToken);
         var rawToken = Base64Url(RandomNumberGenerator.GetBytes(32));
         var tokenHash = HashToken(rawToken);
         var expiresAt = _clock.UtcNow.Add(PreviewLifetime);
-        var canApply = tenantId.HasValue &&
-                       !previewItems.Any(item => item.Action is "conflict_missing_tenant" or "conflict_missing_user" or "conflict_invalid_value") &&
+        var canApply = actor.ActorUserId.HasValue &&
+                       !previewItems.Any(item => item.Action is "conflict_missing_user" or "conflict_invalid_value") &&
                        !accountPreviews.Any(item => item.Action is "conflict_incomplete" or "conflict_invalid_value");
         var state = new PreviewState(
             document,
             actor.SessionId,
-            tenantId,
             actor.ActorUserId,
             actor.CorrelationId,
             revision,
@@ -366,7 +349,7 @@ public sealed class LegacyEnvMigrationService
             conflicts,
             DuplicateAssignmentWarnings(document))
         {
-            BackendIdentityCount = identityPlan.Create ? 1 : 0,
+            BackendIdentityCount = 0,
             PlaylistLinkCount = document.Playlists.Count(item => item.Action == "import_playlist_link"),
             ScheduleCount = document.Playlists.Count(item =>
                 item.Action is "import_playlist_link" or "attach_schedule")
@@ -401,8 +384,7 @@ public sealed class LegacyEnvMigrationService
             throw new LegacyEnvMigrationException("preview_expired", "The migration preview has expired.");
         }
 
-        if (!FixedEquals(state.SessionId, actor.SessionId) || state.TenantId != actor.TenantId ||
-            state.ActorUserId != actor.ActorUserId)
+        if (!FixedEquals(state.SessionId, actor.SessionId) || state.ActorUserId != actor.ActorUserId)
         {
             throw new LegacyEnvMigrationException("preview_owner_mismatch", "The preview belongs to a different administrator session.");
         }
@@ -412,9 +394,16 @@ public sealed class LegacyEnvMigrationService
             throw new LegacyEnvMigrationException("revision_mismatch", "The submitted preview revision does not match.");
         }
 
-        if (!state.TenantId.HasValue)
+        if (!state.ActorUserId.HasValue)
         {
-            throw new LegacyEnvMigrationException("tenant_required", "The administrator session is not linked to an Allstarr tenant.");
+            throw new LegacyEnvMigrationException("user_required", "The administrator session is not linked to an Allstarr user.");
+        }
+
+        await using (var authorityDb = await _factory.CreateDbContextAsync(cancellationToken))
+        {
+            if (!await authorityDb.Users.AsNoTracking().AnyAsync(user =>
+                    user.Id == state.ActorUserId && user.Enabled && user.IsAdmin, cancellationToken))
+                throw new LegacyEnvMigrationException("user_unavailable", "An active administrator is required.");
         }
 
         if (!state.CanApply)
@@ -446,7 +435,6 @@ public sealed class LegacyEnvMigrationService
                     var replay = await FindPriorResultAsync(
                         replayDb,
                         state.Document.SourceSha256,
-                        state.TenantId.Value,
                         cancellationToken);
                     if (replay != null)
                     {
@@ -458,7 +446,6 @@ public sealed class LegacyEnvMigrationService
 
                 var currentRevision = await ComputeRevisionAsync(
                     state.Document.SourceSha256,
-                    state.TenantId,
                     state.ActorUserId,
                     cancellationToken);
                 if (!FixedEquals(currentRevision, state.Revision))
@@ -476,7 +463,6 @@ public sealed class LegacyEnvMigrationService
                 var prior = await FindPriorResultAsync(
                     db,
                     state.Document.SourceSha256,
-                    state.TenantId.Value,
                     cancellationToken);
                 if (prior != null)
                 {
@@ -498,7 +484,6 @@ public sealed class LegacyEnvMigrationService
                 {
                     stagedSettings = await _settings.StageBatchAsync(
                         db,
-                        state.TenantId.Value,
                         settingWrites,
                         "legacy-env-import",
                         state.ActorUserId,
@@ -506,38 +491,19 @@ public sealed class LegacyEnvMigrationService
                 }
 
                 var existingIdentities = state.ActorUserId.HasValue
-                    ? await db.BackendIdentities.Where(item =>
-                            item.TenantId == state.TenantId.Value &&
-                            item.UserId == state.ActorUserId.Value)
+                    ? await db.Users.Where(item =>
+                            item.Id == state.ActorUserId.Value && item.Enabled)
                         .ToListAsync(cancellationToken)
                     : [];
                 var identityPlan = BuildBackendIdentityPlan(
                     state.Document, actor, existingIdentities, _backendSelection.Type);
-                var createdIdentities = new List<BackendIdentityRecord>();
-                if (identityPlan.Create)
-                {
-                    var identity = new BackendIdentityRecord
-                    {
-                        Id = Guid.CreateVersion7(),
-                        TenantId = state.TenantId.Value,
-                        UserId = state.ActorUserId!.Value,
-                        BackendType = identityPlan.BackendType!,
-                        BackendInstanceId = identityPlan.BackendInstanceId,
-                        PrincipalId = identityPlan.PrincipalId!,
-                        CreatedAt = _clock.UtcNow,
-                        LastSeenAt = _clock.UtcNow
-                    };
-                    db.BackendIdentities.Add(identity);
-                    createdIdentities.Add(identity);
-                }
-
                 var createdProviders = new List<string>();
                 var createdProviderRecords = new List<ProviderAccountRecord>();
                 foreach (var provider in state.ProviderAccounts.Where(item =>
                              item.Action == "create_disabled_if_missing"))
                 {
                     if (await db.ProviderAccounts.AnyAsync(item =>
-                            item.OwnerUserId == null && item.TenantId == null &&
+                            item.OwnerUserId == null &&
                             item.ProviderId == provider.ProviderId, cancellationToken))
                     {
                         throw new LegacyEnvMigrationException(
@@ -548,7 +514,6 @@ public sealed class LegacyEnvMigrationService
                     var account = new ProviderAccountRecord
                     {
                         Id = Guid.CreateVersion7(),
-                        TenantId = null,
                         ProviderId = provider.ProviderId,
                         DisplayName = ImportedAccountName(provider.ProviderId, personal: false),
                         Enabled = false,
@@ -560,7 +525,7 @@ public sealed class LegacyEnvMigrationService
                     {
                         var stored = await _secrets.StoreWithinTransactionAsync(
                             db,
-                            tenantId: null,
+                            userId: null,
                             $"provider-account:{provider.ProviderId}:{account.Id:N}",
                             secretBytes,
                             cancellationToken: cancellationToken);
@@ -593,7 +558,6 @@ public sealed class LegacyEnvMigrationService
                     }
                     if (await db.ProviderAccounts.AnyAsync(item =>
                             item.OwnerUserId != null &&
-                            item.TenantId == state.TenantId.Value &&
                             item.OwnerUserId == state.ActorUserId.Value &&
                             item.ProviderId == providerId, cancellationToken))
                     {
@@ -605,7 +569,6 @@ public sealed class LegacyEnvMigrationService
                     var account = new ProviderAccountRecord
                     {
                         Id = Guid.CreateVersion7(),
-                        TenantId = state.TenantId.Value,
                         OwnerUserId = state.ActorUserId.Value,
                         ProviderId = providerId,
                         DisplayName = ImportedAccountName(providerId, personal: true),
@@ -618,7 +581,7 @@ public sealed class LegacyEnvMigrationService
                     {
                         var stored = await _secrets.StoreWithinTransactionAsync(
                             db,
-                            state.TenantId.Value,
+                            state.ActorUserId.Value,
                             $"provider-account:{providerId}:{account.Id:N}",
                             secretBytes,
                             cancellationToken: cancellationToken);
@@ -636,7 +599,7 @@ public sealed class LegacyEnvMigrationService
 
                 var spotifyAccount = createdProviderRecords.SingleOrDefault(item => item.ProviderId == "spotify") ??
                                      await db.ProviderAccounts.SingleOrDefaultAsync(item =>
-                                         item.OwnerUserId == null && item.TenantId == null &&
+                                         item.OwnerUserId == null &&
                                          item.ProviderId == "spotify", cancellationToken);
                 var createdSchedules = new List<JobScheduleRecord>();
                 var createdPlaylistLinks = new List<PlaylistLinkRecord>();
@@ -653,9 +616,7 @@ public sealed class LegacyEnvMigrationService
 
                     var sourceHash = HashToken(playlist.SourcePlaylistId);
                     var existingLink = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
-                        item.TenantId == state.TenantId.Value &&
                         item.OwnerUserId == state.ActorUserId.Value &&
-                        item.LibraryScopeId == playlist.LibraryScopeId &&
                         item.SourceProviderId == "spotify" &&
                         item.SourcePlaylistIdHash == sourceHash &&
                         item.TargetProtocol == playlist.TargetProtocol &&
@@ -676,9 +637,8 @@ public sealed class LegacyEnvMigrationService
                     var schedule = new JobScheduleRecord
                     {
                         Id = Guid.CreateVersion7(),
-                        TenantId = state.TenantId.Value,
                         OwnerUserId = state.ActorUserId.Value,
-                        LibraryScopeId = playlist.LibraryScopeId,
+
                         JobType = DurableScheduleEngine.PlaylistSyncJobType,
                         CronExpression = playlist.SyncSchedule,
                         TimeZoneId = "UTC",
@@ -708,12 +668,11 @@ public sealed class LegacyEnvMigrationService
                         link = new PlaylistLinkRecord
                         {
                             Id = Guid.CreateVersion7(),
-                            TenantId = state.TenantId.Value,
                             OwnerUserId = state.ActorUserId.Value,
                             ProviderAccountId = spotifyAccount!.Id,
                             ScheduleId = schedule.Id,
                             Enabled = true,
-                            LibraryScopeId = playlist.LibraryScopeId,
+
                             SourceProviderId = "spotify",
                             SourcePlaylistId = playlist.SourcePlaylistId,
                             SourcePlaylistIdHash = sourceHash,
@@ -747,7 +706,6 @@ public sealed class LegacyEnvMigrationService
                 {
                     onboardingState = await OnboardingStateService.MarkLegacyImportAsync(
                         db,
-                        state.TenantId.Value,
                         state.ActorUserId.Value,
                         identityPlan.Ready,
                         appliedAt,
@@ -756,7 +714,7 @@ public sealed class LegacyEnvMigrationService
                 var audit = new AuditEventRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = state.TenantId,
+
                     ActorUserId = state.ActorUserId,
                     Category = "configuration-migration",
                     Action = "legacy-env.apply",
@@ -768,7 +726,7 @@ public sealed class LegacyEnvMigrationService
                         schemaVersion = MigrationSchemaVersion,
                         settingsImported = settingWrites.Length,
                         createdProviders,
-                        backendIdentitiesCreated = createdIdentities.Count,
+                        backendIdentitiesCreated = 0,
                         playlistLinksCreated = createdPlaylistLinks.Count,
                         schedulesCreated = createdSchedules.Count,
                         playlistHandoffsPending = state.Document.Playlists.Count(IsPlaylistHandoffPending)
@@ -789,7 +747,7 @@ public sealed class LegacyEnvMigrationService
                     state.Document.SourceSha256,
                     appliedAt)
                 {
-                    BackendIdentitiesCreated = createdIdentities.Count,
+                    BackendIdentitiesCreated = 0,
                     PlaylistLinksCreated = createdPlaylistLinks.Count,
                     SchedulesCreated = createdSchedules.Count
                 };
@@ -797,7 +755,7 @@ public sealed class LegacyEnvMigrationService
                 db.LegacyEnvImports.Add(new LegacyEnvImportRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = state.TenantId.Value,
+
                     SourceSha256 = state.Document.SourceSha256,
                     SchemaVersion = MigrationSchemaVersion,
                     ActorUserId = state.ActorUserId,
@@ -815,12 +773,6 @@ public sealed class LegacyEnvMigrationService
                             recordId = item.Id,
                             item.ProviderId,
                             scope = item.Scope.ToString()
-                        }),
-                        backendIdentities = createdIdentities.Select(item => new
-                        {
-                            recordId = item.Id,
-                            item.BackendType,
-                            item.BackendInstanceId
                         }),
                         playlistLinks = createdPlaylistLinks.Select(item => new
                         {
@@ -859,7 +811,6 @@ public sealed class LegacyEnvMigrationService
             {
                 var replay = await WaitForPriorResultAsync(
                     state.Document.SourceSha256,
-                    state.TenantId.Value,
                     cancellationToken);
                 if (replay != null)
                 {
@@ -896,7 +847,6 @@ public sealed class LegacyEnvMigrationService
                 "The migration preview is invalid or expired.");
         }
         if (!FixedEquals(state.SessionId, actor.SessionId) ||
-            state.TenantId != actor.TenantId ||
             state.ActorUserId != actor.ActorUserId)
         {
             throw new LegacyEnvMigrationException(
@@ -940,16 +890,15 @@ public sealed class LegacyEnvMigrationService
 
     private async Task<string> ComputeRevisionAsync(
         string sourceSha256,
-        Guid? tenantId,
         Guid? actorUserId,
         CancellationToken cancellationToken)
     {
-        var builder = new StringBuilder(sourceSha256).Append('|').Append(tenantId?.ToString("N") ?? "none");
+        var builder = new StringBuilder(sourceSha256).Append('|').Append(actorUserId?.ToString("N") ?? "none");
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        if (tenantId.HasValue)
+        if (actorUserId.HasValue)
         {
-            var settings = await db.TenantRuntimeSettings.AsNoTracking()
-                .Where(item => item.TenantId == tenantId.Value && item.OwnerUserId == null)
+            var settings = await db.RuntimeSettings.AsNoTracking()
+                .Where(item => item.OwnerUserId == null)
                 .OrderBy(item => item.Key)
                 .Select(item => new { item.Key, item.Revision })
                 .ToListAsync(cancellationToken);
@@ -961,10 +910,10 @@ public sealed class LegacyEnvMigrationService
 
         var accounts = await db.ProviderAccounts.AsNoTracking()
             .Where(item =>
-                item.OwnerUserId == null && item.TenantId == null &&
+                item.OwnerUserId == null &&
                 (item.ProviderId == "deezer" || item.ProviderId == "qobuz" || item.ProviderId == "spotify") ||
-                tenantId.HasValue && actorUserId.HasValue && item.OwnerUserId != null &&
-                item.TenantId == tenantId.Value && item.OwnerUserId == actorUserId.Value &&
+                actorUserId.HasValue && item.OwnerUserId != null &&
+                item.OwnerUserId == actorUserId.Value &&
                 (item.ProviderId == "lastfm" || item.ProviderId == "listenbrainz"))
             .OrderBy(item => item.ProviderId).ThenBy(item => item.Id)
             .Select(item => new { item.ProviderId, item.Id, item.Revision })
@@ -974,10 +923,10 @@ public sealed class LegacyEnvMigrationService
             builder.Append('|').Append(account.ProviderId).Append(':').Append(account.Id.ToString("N"))
                 .Append(':').Append(account.Revision);
         }
-        if (tenantId.HasValue && actorUserId.HasValue)
+        if (actorUserId.HasValue)
         {
-            var identities = await db.BackendIdentities.AsNoTracking()
-                .Where(item => item.TenantId == tenantId.Value && item.UserId == actorUserId.Value)
+            var identities = await db.Users.AsNoTracking()
+                .Where(item => item.Id == actorUserId.Value && item.Enabled)
                 .OrderBy(item => item.BackendType).ThenBy(item => item.BackendInstanceId)
                 .Select(item => new { item.Id, item.BackendType, item.BackendInstanceId })
                 .ToListAsync(cancellationToken);
@@ -988,7 +937,7 @@ public sealed class LegacyEnvMigrationService
             }
 
             var links = await db.PlaylistLinks.AsNoTracking()
-                .Where(item => item.TenantId == tenantId.Value && item.OwnerUserId == actorUserId.Value)
+                .Where(item => item.OwnerUserId == actorUserId.Value)
                 .OrderBy(item => item.Id)
                 .Select(item => new { item.Id, item.Revision, item.ScheduleId })
                 .ToListAsync(cancellationToken);
@@ -1061,7 +1010,7 @@ public sealed class LegacyEnvMigrationService
     private static LegacyBackendIdentityPlan BuildBackendIdentityPlan(
         LegacyEnvDocument document,
         LegacyEnvMigrationActor actor,
-        IReadOnlyList<BackendIdentityRecord> existing,
+        IReadOnlyList<UserRecord> existing,
         BackendType deploymentBackend)
     {
         string? Value(params string[] keys) => document.Entries
@@ -1081,11 +1030,9 @@ public sealed class LegacyEnvMigrationService
         var matching = existing.SingleOrDefault(item =>
             item.BackendType.Equals(backendType, StringComparison.OrdinalIgnoreCase) &&
             item.BackendInstanceId.Equals(instanceId, StringComparison.Ordinal));
-        var principalId = matching?.PrincipalId ??
-                          (backendType == "jellyfin" ? Value("JELLYFIN_USER_ID") : null);
-        var create = matching == null && actor.TenantId.HasValue && actor.ActorUserId.HasValue &&
-                     backendType == "jellyfin" && principalId != null;
-        return new(backendType, instanceId, principalId, create, matching != null || create);
+        var principalId = matching?.BackendPrincipalId;
+        return new(backendType, instanceId, principalId, matching != null);
+
     }
 
     private static IReadOnlyList<LegacyPlaylistHandoff> PlanPlaylists(
@@ -1201,13 +1148,11 @@ public sealed class LegacyEnvMigrationService
     private static async Task<LegacyEnvMigrationApplyResult?> FindPriorResultAsync(
         AllstarrDbContext db,
         string sourceSha256,
-        Guid tenantId,
         CancellationToken cancellationToken)
     {
         var receipt = await db.LegacyEnvImports.AsNoTracking()
             .SingleOrDefaultAsync(
-                item => item.TenantId == tenantId &&
-                        item.SourceSha256 == sourceSha256 &&
+                item => item.SourceSha256 == sourceSha256 &&
                         item.SchemaVersion == MigrationSchemaVersion,
                 cancellationToken);
         if (receipt == null)
@@ -1243,13 +1188,12 @@ public sealed class LegacyEnvMigrationService
 
     private async Task<LegacyEnvMigrationApplyResult?> WaitForPriorResultAsync(
         string sourceSha256,
-        Guid tenantId,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 40; attempt++)
         {
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-            var prior = await FindPriorResultAsync(db, sourceSha256, tenantId, cancellationToken);
+            var prior = await FindPriorResultAsync(db, sourceSha256, cancellationToken);
             if (prior != null)
             {
                 return prior;
@@ -1397,13 +1341,11 @@ public sealed class LegacyEnvMigrationService
         string? BackendType,
         string BackendInstanceId,
         string? PrincipalId,
-        bool Create,
         bool Ready);
 
     private sealed class PreviewState(
         LegacyEnvDocument document,
         string sessionId,
-        Guid? tenantId,
         Guid? actorUserId,
         string correlationId,
         string revision,
@@ -1414,7 +1356,6 @@ public sealed class LegacyEnvMigrationService
     {
         public LegacyEnvDocument Document { get; private set; } = document;
         public string SessionId { get; } = sessionId;
-        public Guid? TenantId { get; } = tenantId;
         public Guid? ActorUserId { get; } = actorUserId;
         public string CorrelationId { get; } = correlationId;
         public string Revision { get; } = revision;

@@ -42,7 +42,6 @@ public sealed class ProtocolLyricsResolver(
         if (effectivePolicies != null && protocol.Actor is { } actor)
         {
             var effectivePolicy = await effectivePolicies.ResolveAsync(
-                actor.TenantId,
                 protocol.CancellationToken);
             order = effectivePolicy.ApplyProviderAvailability(
                 ProviderCapabilityKind.Lyrics,

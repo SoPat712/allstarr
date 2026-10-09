@@ -13,9 +13,7 @@ public sealed class LibraryPlaylistStorageModelTests
         await using var context = new AllstarrDbContext(database.Options);
 
         var now = DateTimeOffset.UtcNow;
-        var tenantId = Guid.NewGuid();
         var userId = Guid.NewGuid();
-        var backendIdentityId = Guid.NewGuid();
         var accountId = Guid.NewGuid();
         var recordingId = Guid.NewGuid();
         var libraryTrackId = Guid.NewGuid();
@@ -29,23 +27,19 @@ public sealed class LibraryPlaylistStorageModelTests
         const string hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 
         context.AddRange(
-            new TenantRecord { Id = tenantId, Slug = "tenant", Name = "Tenant", CreatedAt = now },
-            new PlatformUserRecord { Id = userId, TenantId = tenantId, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now },
-            new BackendIdentityRecord { Id = backendIdentityId, TenantId = tenantId, UserId = userId, BackendType = "jellyfin", BackendInstanceId = "home", PrincipalId = "principal", CreatedAt = now, LastSeenAt = now },
-            new ProviderAccountRecord { Id = accountId, TenantId = tenantId, OwnerUserId = userId, ProviderId = "spotify", DisplayName = "Mine", Enabled = true, CreatedAt = now, UpdatedAt = now },
-            new CanonicalRecordingRecord { Id = recordingId, TenantId = tenantId, CreatedByUserId = userId, CreatedAt = now, UpdatedAt = now });
+            new UserRecord { Id = userId, DisplayName = "User", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "home", BackendPrincipalId = "principal", CreatedAt = now, UpdatedAt = now },
+            new ProviderAccountRecord { Id = accountId, OwnerUserId = userId, ProviderId = "spotify", DisplayName = "Mine", Enabled = true, CreatedAt = now, UpdatedAt = now },
+            new CanonicalRecordingRecord { Id = recordingId, CreatedByUserId = userId, CreatedAt = now, UpdatedAt = now });
         await context.SaveChangesAsync();
 
         context.LibraryTracks.Add(new LibraryTrackRecord
         {
             Id = libraryTrackId,
-            TenantId = tenantId,
             OwnerUserId = userId,
-            BackendIdentityId = backendIdentityId,
             CanonicalRecordingId = recordingId,
-            LibraryScopeId = "music",
             Protocol = "jellyfin",
             BackendInstanceId = "home",
+            BackendLibraryId = "music",
             BackendItemId = "item-1",
             FilePath = "/media/Music/Artist/Song.flac",
             Title = "Song",
@@ -60,10 +54,8 @@ public sealed class LibraryPlaylistStorageModelTests
         context.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
         {
             Id = externalId,
-            TenantId = tenantId,
             OwnerUserId = userId,
             ProviderAccountId = accountId,
-            LibraryScopeId = "music",
             BackendInstanceId = "home",
             BackendPrincipalId = "principal",
             Protocol = "jellyfin",
@@ -80,9 +72,7 @@ public sealed class LibraryPlaylistStorageModelTests
         context.JobSchedules.Add(new JobScheduleRecord
         {
             Id = scheduleId,
-            TenantId = tenantId,
             OwnerUserId = userId,
-            LibraryScopeId = "music",
             JobType = "playlist-sync",
             CronExpression = "0 0 * * *",
             TimeZoneId = "UTC",
@@ -98,12 +88,10 @@ public sealed class LibraryPlaylistStorageModelTests
         context.TrackMatches.Add(new TrackMatchRecord
         {
             Id = matchId,
-            TenantId = tenantId,
             OwnerUserId = userId,
             ExternalSnapshotId = externalId,
             LibraryTrackId = libraryTrackId,
             CanonicalRecordingId = recordingId,
-            LibraryScopeId = "music",
             State = TrackMatchState.Accepted,
             Confidence = .98,
             Threshold = .85,
@@ -118,11 +106,9 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistLinks.Add(new PlaylistLinkRecord
         {
             Id = linkId,
-            TenantId = tenantId,
             OwnerUserId = userId,
             ProviderAccountId = accountId,
             ScheduleId = scheduleId,
-            LibraryScopeId = "music",
             SourceProviderId = "spotify",
             SourcePlaylistId = "playlist-1",
             SourcePlaylistIdHash = hash,
@@ -140,7 +126,6 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
         {
             Id = playlistSnapshotId,
-            TenantId = tenantId,
             OwnerUserId = userId,
             PlaylistLinkId = linkId,
             ProviderAccountId = accountId,
@@ -157,7 +142,6 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistSourceEntries.Add(new PlaylistSourceEntryRecord
         {
             Id = sourceEntryId,
-            TenantId = tenantId,
             PlaylistSourceSnapshotId = playlistSnapshotId,
             ExternalMetadataSnapshotId = externalId,
             SourcePosition = 0,
@@ -166,7 +150,6 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistSyncRuns.Add(new PlaylistSyncRunRecord
         {
             Id = runId,
-            TenantId = tenantId,
             OwnerUserId = userId,
             PlaylistLinkId = linkId,
             PlaylistSourceSnapshotId = playlistSnapshotId,
@@ -183,7 +166,6 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistSyncEntryResults.Add(new PlaylistSyncEntryResultRecord
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId,
             PlaylistSyncRunId = runId,
             PlaylistSourceEntryId = sourceEntryId,
             TrackMatchId = matchId,
@@ -195,7 +177,6 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistTargetMemberships.Add(new PlaylistTargetMembershipRecord
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId,
             PlaylistLinkId = linkId,
             LibraryTrackId = libraryTrackId,
             CreatedBySyncRunId = runId,
@@ -214,13 +195,11 @@ public sealed class LibraryPlaylistStorageModelTests
         var targetedOverride = new ManualTrackOverrideRecord
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId,
             OwnerUserId = userId,
             ExternalSnapshotId = externalId,
             SourceProviderId = (await context.ExternalMetadataSnapshots.SingleAsync()).ProviderId,
             SourceExternalIdHash = (await context.ExternalMetadataSnapshots.SingleAsync()).ExternalIdHash,
             LibraryTrackId = libraryTrackId,
-            LibraryScopeId = "music",
             Decision = ManualOverrideDecision.Reject,
             Reason = "not this rendition",
             DecisionVersion = 1,
@@ -247,7 +226,6 @@ public sealed class LibraryPlaylistStorageModelTests
         context.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId,
             OwnerUserId = userId,
             PlaylistLinkId = linkId,
             ProviderAccountId = accountId,
@@ -269,26 +247,22 @@ public sealed class LibraryPlaylistStorageModelTests
     }
 
     [Fact]
-    public async Task SqliteModel_RejectsCrossTenantMatchAndInvalidAcceptedShape()
+    public async Task SqliteModel_RejectsMissingSnapshotAndInvalidAcceptedShape()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         await using var context = new AllstarrDbContext(database.Options);
 
-        var tenant = Guid.NewGuid();
         var user = Guid.NewGuid();
         var now = DateTimeOffset.UtcNow;
         context.AddRange(
-            new TenantRecord { Id = tenant, Slug = "one", Name = "One", CreatedAt = now },
-            new PlatformUserRecord { Id = user, TenantId = tenant, DisplayName = "User", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
+            new UserRecord { Id = user, DisplayName = "User", Enabled = true, BackendType = "jellyfin", BackendInstanceId = "home", BackendPrincipalId = "principal", CreatedAt = now, UpdatedAt = now });
         await context.SaveChangesAsync();
 
         context.TrackMatches.Add(new TrackMatchRecord
         {
             Id = Guid.NewGuid(),
-            TenantId = tenant,
             OwnerUserId = user,
             ExternalSnapshotId = Guid.NewGuid(),
-            LibraryScopeId = "music",
             State = TrackMatchState.Accepted,
             Confidence = .9,
             Threshold = .8,

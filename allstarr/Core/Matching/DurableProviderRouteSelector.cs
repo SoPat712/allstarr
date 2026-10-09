@@ -26,7 +26,6 @@ public static class DurableProviderRouteSelector
         if (source == null) return manualRoute == null ? [] : [manualRoute];
         var automatic = identities
             .Where(item =>
-                item.TenantId == source.TenantId &&
                 item.CanonicalRecordingId == source.CanonicalRecordingId &&
                 item.ResourceKind == ProviderResourceKind.Track &&
                 (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id) &&

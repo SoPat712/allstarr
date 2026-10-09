@@ -264,7 +264,7 @@ const responses: Record<string, unknown> = {
     playlistLinks: [{
       id: "playlist-link", enabled: true, name: "Test playlist",
       sourceProviderId: "lumen-audio", sourcePlaylistId: "source-list",
-      providerAccountId: "lumen", libraryScopeId: "music",
+      providerAccountId: "lumen",
       targetProtocol: "jellyfin", targetBackendInstanceId: "main",
       targetCredentialReferenceId: "33333333-3333-3333-3333-333333333333",
       targetPlaylistId: "jellyfin-playlist", mode: "hybrid", projectionMode: "resolved",
@@ -299,7 +299,7 @@ const responses: Record<string, unknown> = {
   "/api/admin/media-targets": {
     targets: [{
       id: "22222222-2222-2222-2222-222222222222", protocol: "jellyfin", backendInstanceId: "main",
-      libraryScopeId: "music", displayName: "Jellyfin Music",
+      displayName: "Jellyfin Music",
       credentialReferenceId: "33333333-3333-3333-3333-333333333333",
     }],
   },
@@ -379,7 +379,7 @@ const responses: Record<string, unknown> = {
   "/api/admin/extensions/logs?limit=100": [],
   "/api/admin/intelligence": {
     state: "configured",
-    scope: { protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music" },
+    scope: { protocol: "jellyfin", backendInstanceId: "main" },
     policy: { enabled: true, retentionDays: 30, revision: 1, targetCredentialReferenceId: "33333333-3333-3333-3333-333333333333", targetCredentialConfigured: true },
     availableSignalTypes: [{ id: "play", label: "Play", enabled: true }],
     providers: [{
@@ -573,7 +573,7 @@ async function mockApi(page: Page, options: {
     if (url.pathname === "/api/admin/track-matches")
       body = {
         matches: [{
-          externalSnapshotId: "snapshot", providerId: "lumen-audio", libraryScopeId: "library",
+          externalSnapshotId: "snapshot", providerId: "lumen-audio",
           state: "suggested", decisionSource: "automatic", confidence: 0.82, threshold: 0.9,
           title: "Test song - Remix", searchQuery: "Test song", artist: "Artist", album: "Album", isrc: "US-AAA-26-00001",
           durationMilliseconds: 180_000,
@@ -762,7 +762,7 @@ async function mockApi(page: Page, options: {
         backendIdentityCount: 1, playlistLinkCount: 1, scheduleCount: 1,
         items: [{
           key: "CACHE_LYRICS_DAYS", sourceLine: 1, action: "import_if_absent",
-          reason: "Import into tenant-scoped durable runtime settings.", sensitive: false,
+          reason: "Import into household durable runtime settings.", sensitive: false,
           valuePreview: "21",
         }],
         conflicts: [], warnings: ["Imported accounts remain disabled until reviewed."],
@@ -1219,7 +1219,7 @@ for (const viewport of viewports) {
       const similarRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/similar"));
       await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
       expect((await similarRequest).postDataJSON()).toMatchObject({
-        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", seedTrackIds: ["track-1"],
+        protocol: "jellyfin", backendInstanceId: "main", seedTrackIds: ["track-1"],
       });
       await expect(soundDiscovery.getByText("Nearby Song", { exact: true })).toBeVisible();
       await soundDiscovery.getByLabel("How to explore").click();
@@ -1253,7 +1253,7 @@ for (const viewport of viewports) {
       const fingerprintRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/fingerprint"));
       await soundDiscovery.getByRole("button", { name: "Find songs" }).click();
       expect((await fingerprintRequest).postDataJSON()).toMatchObject({
-        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", periodDays: 90,
+        protocol: "jellyfin", backendInstanceId: "main", periodDays: 90,
       });
       await expect(soundDiscovery.getByText("Taste Song", { exact: true })).toBeVisible();
       await soundDiscovery.getByLabel("Playlist name").fill("Evening sounds");
@@ -1266,7 +1266,7 @@ for (const viewport of viewports) {
       const createRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/audiomuse/generated-sets"));
       await createDialog.getByRole("button", { name: "Create Jellyfin playlist" }).click();
       expect((await createRequest).postDataJSON()).toMatchObject({
-        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+        protocol: "jellyfin", backendInstanceId: "main",
         name: "Evening sounds", trackIds: ["track-5"],
       });
       await expect(soundDiscovery.getByText("Allstarr is creating Evening sounds in Jellyfin.", { exact: true })).toBeVisible();
@@ -1340,15 +1340,19 @@ for (const viewport of viewports) {
       expect(await page.locator(".status-list").evaluate((element) => element.tagName)).toBe("UL");
       expect(await page.locator(".schedule-list").evaluate((element) => element.tagName)).toBe("UL");
       const listeningApps = page.locator(".listening-apps-card");
-      await expect(listeningApps).toContainText("Allstarr will save listens from this key to music on Jellyfin.");
+      await expect(listeningApps).toContainText("Allstarr will save listens from this key to your account on Jellyfin.");
       await expect(listeningApps).toContainText("Allstarr will not send these listens to another service.");
       expect(await listeningApps.locator(".key-list").evaluate((element) => element.tagName)).toBe("UL");
       await expect(listeningApps).not.toContainText(/native playlist|hybrid|materialized|write-back|projection|backend/i);
       const keyRequest = page.waitForRequest((request) => request.url().endsWith("/api/admin/intelligence/listening-apps") && request.method() === "POST");
       await listeningApps.getByRole("button", { name: "Create private key" }).click();
-      expect((await keyRequest).postDataJSON()).toMatchObject({
-        protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", sendToConnectedServices: false,
+      const keyInput = (await keyRequest).postDataJSON();
+      expect(keyInput).toMatchObject({
+        protocol: "jellyfin", backendInstanceId: "main", sendToConnectedServices: false,
       });
+      expect(keyInput).not.toHaveProperty("libraryScopeId");
+      expect(keyInput).not.toHaveProperty("userId");
+      expect(keyInput).not.toHaveProperty("ownerUserId");
       await expect(listeningApps.getByLabel("New listening app private key")).toHaveValue(/^als_/);
       await page.getByRole("button", { name: "Turn off and clear" }).click();
       const clearDialog = page.getByRole("alertdialog", { name: "Clear private listening data for this library?" });
@@ -1559,7 +1563,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
     request.url().includes("/api/admin/intelligence/history/44444444-4444-4444-4444-444444444444"));
   await detail.getByRole("button", { name: "Save changes" }).click();
   expect((await correction).postDataJSON()).toMatchObject({
-    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    protocol: "jellyfin", backendInstanceId: "main",
     title: "Moon Song (live)", expectedRevision: 2,
   });
   await detail.getByRole("button", { name: "Close listen details" }).click();
@@ -1594,7 +1598,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
     expect.stringContaining("/66666666-6666-6666-6666-666666666666/apply"),
   ]));
   for (const request of applies) expect(request.body).toMatchObject({
-    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music", revision: "preview-revision",
+    protocol: "jellyfin", backendInstanceId: "main", revision: "preview-revision",
   });
 
   await page.getByRole("tab", { name: "Automation" }).click();
@@ -1609,7 +1613,7 @@ test("Intelligence history imports, corrections, and schedules use the selected 
     request.url().endsWith("/api/admin/intelligence/schedules"));
   await page.getByRole("button", { name: "Create schedule" }).click();
   expect((await schedule).postDataJSON()).toMatchObject({
-    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    protocol: "jellyfin", backendInstanceId: "main",
     name: "Friday discoveries", cronExpression: "0 8 * * 5", limit: 25,
   });
   await expect(page.getByText("Monday discoveries", { exact: true })).toBeVisible();
@@ -1671,7 +1675,7 @@ test("Intelligence keeps completed imports visible and explains retention", asyn
     request.url().endsWith("/api/admin/intelligence/history/imports/77777777-7777-7777-7777-777777777777"));
   await dialog.getByRole("button", { name: "Undo import" }).click();
   expect((await removal).postDataJSON()).toMatchObject({
-    protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: "music",
+    protocol: "jellyfin", backendInstanceId: "main",
     revision: "saved-revision", confirmed: true,
   });
   await expect(page.getByText(longImportFile, { exact: true })).toHaveCount(0);
@@ -1766,9 +1770,13 @@ test("Subsonic Intelligence requests explicit scoped background access before in
     contentType: "application/json",
     body: JSON.stringify({ targets: [{
       id: "subsonic-target", protocol: "subsonic", backendInstanceId: "primary",
-      libraryScopeId: indexed ? "music" : null, displayName: "Listener",
+      displayName: "Listener",
       credentialReferenceId: granted ? credentialReferenceId : null,
     }] }),
+  }));
+  await page.route("**/api/admin/library-index/counts", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify({ trackCount: indexed ? 1 : 0 }),
   }));
   await page.route("**/api/admin/auth/playlist-consent", (route) => {
     granted = true;
@@ -1802,9 +1810,7 @@ test("Subsonic Intelligence requests explicit scoped background access before in
   expect((await credentialRequest).postDataJSON()).toEqual({
     password: "test-password",
   });
-  expect((await indexRequest).postDataJSON()).toMatchObject({
-    libraryScopeId: "music", credentialReferenceId, pageSize: 200,
-  });
+  expect((await indexRequest).postDataJSON()).toEqual({ credentialReferenceId, pageSize: 200 });
   await expect(dialog).toBeHidden();
   await expect(page.locator(".library-setup-feedback")).toContainText("indexed and ready for Intelligence");
   await expect(page.locator(".scope-value")).toContainText("Subsonic · Listener");
@@ -2406,7 +2412,6 @@ test("Import playlist separates source, client view, destination, updates, and s
   await dialog.getByRole("button", { name: "Import and link" }).click();
   const input = (await create).postDataJSON();
   expect(input).toMatchObject({
-    libraryScopeId: "music",
     targetPlaylistId: "jellyfin-playlist",
     sourcePlaylistId: "playlist",
     mode: "hybrid",
@@ -2414,6 +2419,7 @@ test("Import playlist separates source, client view, destination, updates, and s
     importMode: "linked",
     trackRetention: "keepAll",
   });
+  expect(input).not.toHaveProperty("libraryScopeId");
   expect((await scheduled).postDataJSON().cronExpression).toBe("0 3 * * *");
   await expect(dialog).toBeHidden();
 });
@@ -2435,7 +2441,7 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
     body: JSON.stringify({ targets: [
       {
         id: "wrong-credential", protocol: "jellyfin", backendInstanceId: "main",
-        libraryScopeId: "music", credentialReferenceId: "wrong", displayName: "Wrong credential",
+        credentialReferenceId: "wrong", displayName: "Wrong credential",
       },
       ...(responses["/api/admin/media-targets"] as { targets: Record<string, unknown>[] }).targets,
     ] }),
@@ -2614,7 +2620,7 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
       contentType: "application/json",
       body: JSON.stringify({
         matches: visible ? [{
-          externalSnapshotId: "snapshot", providerId: "lumen-audio", libraryScopeId: "music",
+          externalSnapshotId: "snapshot", providerId: "lumen-audio",
           state: state === "manual_rejections" ? "rejected" : "pinned",
           decisionSource: "manual_authority", confidence: 1, threshold: .9,
           title: "Manual song", artist: "Artist", album: "Album", durationMilliseconds: 180_000,
@@ -4762,38 +4768,50 @@ test("Sidebar uses an integrated expander and deterministic slim breakpoint", as
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });
 
-test("Intelligence keeps the most recently selected library when responses finish out of order", async ({ page }) => {
+test("Intelligence keeps the most recently selected backend scope session-bound when responses finish out of order", async ({ page }) => {
   await mockApi(page);
-  const firstLibrary = routeRelease();
+  const firstBackend = routeRelease();
+  const requestedScopes: URLSearchParams[] = [];
   await page.route("**/api/admin/media-targets", (route) => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify({
       targets: [{
-        id: "music-target", protocol: "jellyfin", backendInstanceId: "main",
-        libraryScopeId: "music", displayName: "Jellyfin Music",
+        id: "primary-target", protocol: "jellyfin", backendInstanceId: "main",
+        displayName: "Primary listener",
       }, {
-        id: "jazz-target", protocol: "jellyfin", backendInstanceId: "main",
-        libraryScopeId: "jazz", displayName: "Jellyfin Jazz",
+        id: "secondary-target", protocol: "subsonic", backendInstanceId: "secondary",
+        displayName: "Secondary listener",
+        credentialReferenceId: "44444444-4444-4444-4444-444444444444",
       }],
     }),
   }));
   await page.route("**/api/admin/intelligence?*", async (route) => {
-    const library = new URL(route.request().url()).searchParams.get("libraryScopeId") ?? "music";
-    if (library === "music") await firstLibrary.promise;
+    const query = new URL(route.request().url()).searchParams;
+    requestedScopes.push(query);
+    const backendInstanceId = query.get("backendInstanceId") ?? "main";
+    const protocol = query.get("protocol") ?? "jellyfin";
+    if (backendInstanceId === "main") await firstBackend.promise;
     const state = structuredClone(responses["/api/admin/intelligence"]) as Record<string, unknown>;
-    state.scope = { protocol: "jellyfin", backendInstanceId: "main", libraryScopeId: library };
+    state.scope = { protocol, backendInstanceId };
     state.candidates = (state.candidates as Array<Record<string, unknown>>).map((candidate, index) =>
-      index === 0 ? { ...candidate, title: `${library} recommendation` } : candidate);
+      index === 0 ? { ...candidate, title: `${backendInstanceId} recommendation` } : candidate);
     return route.fulfill({ contentType: "application/json", body: JSON.stringify(state) });
   });
 
   await page.goto("#/intelligence?section=discover");
   await page.getByRole("button", { name: "Music library" }).click();
-  await page.getByRole("option", { name: "Jazz · Jellyfin" }).click();
-  await expect(page.getByText("jazz recommendation", { exact: true })).toBeVisible();
-  firstLibrary.release();
-  await expect(page.getByText("jazz recommendation", { exact: true })).toBeVisible();
-  await expect(page.getByText("music recommendation", { exact: true })).toHaveCount(0);
+  await page.getByRole("option", { name: "Secondary listener · Subsonic" }).click();
+  await expect(page.getByText("secondary recommendation", { exact: true })).toBeVisible();
+  firstBackend.release();
+  await expect(page.getByText("secondary recommendation", { exact: true })).toBeVisible();
+  await expect(page.getByText("main recommendation", { exact: true })).toHaveCount(0);
+  expect(requestedScopes.some((scope) =>
+    scope.get("protocol") === "subsonic" && scope.get("backendInstanceId") === "secondary")).toBe(true);
+  for (const query of requestedScopes) {
+    expect(query.has("libraryScopeId")).toBe(false);
+    expect(query.has("userId")).toBe(false);
+    expect(query.has("ownerUserId")).toBe(false);
+  }
 });
 
 test("copying a listening-app key confirms the action", async ({ page }) => {

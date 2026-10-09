@@ -19,7 +19,6 @@ public sealed class ProviderCtsTrackSelector(
     private readonly object _rotationLock = new();
 
     public async Task<ProviderCtsTrackSelection?> SelectAsync(
-        Guid tenantId,
         string providerId,
         Guid? providerAccountId,
         CancellationToken cancellationToken)
@@ -48,7 +47,6 @@ public sealed class ProviderCtsTrackSelector(
             corpus = await db.ProviderTrackIdentities
                 .AsNoTracking()
                 .Where(identity =>
-                    identity.TenantId == tenantId &&
                     identity.ProviderId == providerId &&
                     identity.ResourceKind == ProviderResourceKind.Track &&
                     identity.Scope == ProviderIdentityScope.Catalog &&

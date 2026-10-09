@@ -24,25 +24,20 @@ public static class ManagedFileOwnershipModelConfiguration
             entity.Property(item => item.FileSystemDeviceId).HasMaxLength(64);
             entity.Property(item => item.FileSystemFileId).HasMaxLength(64);
             entity.Property(item => item.PlacementMethod).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
             entity.Property(item => item.ScopeKey).HasMaxLength(1000).IsRequired();
             entity.Property(item => item.Revision).IsConcurrencyToken();
+            entity.HasIndex(item => new { item.Id, item.OwnerUserId }).IsUnique()
+                .HasDatabaseName("IX_managed_file_owner_lineage");
             entity.HasIndex(item => item.CanonicalPath).IsUnique().HasDatabaseName("IX_managed_file_path");
             entity.HasIndex(item => new { item.RootId, item.ContentSha256, item.ScopeKey })
                 .HasDatabaseName("IX_managed_file_fingerprint");
-            entity.HasIndex(item => new { item.TenantId, item.OwnerUserId }).HasDatabaseName("IX_managed_file_user");
+            entity.HasIndex(item => item.OwnerUserId).HasDatabaseName("IX_managed_file_user");
             entity.HasIndex(item => item.SourceJobId).HasDatabaseName("IX_managed_file_job");
-            entity.HasIndex(item => new { item.Id, item.TenantId, item.OwnerUserId }).IsUnique()
-                .HasDatabaseName("UX_managed_file_owner_lineage");
-            entity.HasAlternateKey(item => new { item.TenantId, item.Id });
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId).OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
-                .HasConstraintName("FK_managed_file_tenant_user").OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.OwnerUserId)
+                .HasConstraintName("FK_managed_file_user").OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<DurableJobRecord>().WithMany()
                 .HasForeignKey(item => item.SourceJobId)
-                .HasConstraintName("FK_managed_file_tenant_job").OnDelete(DeleteBehavior.Restrict);
+                .HasConstraintName("FK_managed_file_job").OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<ManagedFileReferenceEntity>(entity =>
@@ -55,16 +50,13 @@ public static class ManagedFileOwnershipModelConfiguration
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.ManagedFileId, item.ReferenceKey }).IsUnique()
                 .HasDatabaseName("IX_managed_file_reference_key");
-            entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.ReleasedAt })
+            entity.HasIndex(item => new { item.OwnerUserId, item.ReleasedAt })
                 .HasDatabaseName("IX_managed_file_reference_owner");
             entity.HasOne<ManagedFileOwnershipEntity>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.ManagedFileId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
-                .HasConstraintName("FK_managed_file_reference_tenant_file").OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
-                .HasConstraintName("FK_managed_file_reference_tenant_user").OnDelete(DeleteBehavior.Restrict);
+                .HasForeignKey(item => item.ManagedFileId)
+                .HasConstraintName("FK_managed_file_reference_file").OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.OwnerUserId)
+                .HasConstraintName("FK_managed_file_reference_user").OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

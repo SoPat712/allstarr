@@ -120,7 +120,6 @@ public class JellyfinSessionManagerTests
                 "MediaBrowser Client=\"Feishin\", Device=\"Desktop\", DeviceId=\"dev-123\", Version=\"1.0\", Token=\"abc\""
         };
 
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var ensured = await manager.EnsureSessionAsync(
             new JellyfinSessionKey("main", "backend-user-1", "dev-123"),
@@ -128,7 +127,7 @@ public class JellyfinSessionManagerTests
             "Desktop",
             "1.0",
             headers,
-            new AllstarrPrincipal(tenantId, userId, "jellyfin", "main", "backend-user-1", "Josh", false));
+            new AllstarrPrincipal(userId, "jellyfin", "main", "backend-user-1", "Josh", false));
         Assert.True(ensured);
 
         manager.UpdatePlayingItem(new JellyfinSessionKey("main", "backend-user-1", "dev-123"), "ext-deezer-song-35734823", 45 * TimeSpan.TicksPerSecond);
@@ -144,7 +143,6 @@ public class JellyfinSessionManagerTests
         Assert.Equal("Josh", state.UserName);
         Assert.Equal("Feishin", state.Client);
         Assert.Equal("Desktop", state.Device);
-        Assert.Equal(tenantId, state.TenantId);
     }
 
     [Fact]
@@ -277,12 +275,11 @@ public class JellyfinSessionManagerTests
             Options.Create(settings), NullLogger<JellyfinSessionManager>.Instance);
         var a = new JellyfinSessionKey("backend", "listener-a", "same-device");
         var b = new JellyfinSessionKey("backend", "listener-b", "same-device");
-        var tenant = Guid.CreateVersion7();
         foreach (var owner in new[] { a, b })
         {
             await manager.RegisterProxiedWebSocketAsync(owner);
             Assert.True(await manager.EnsureSessionAsync(owner, "Client", "Device", "1", CreateHeaders(),
-                new AllstarrPrincipal(tenant, Guid.CreateVersion7(), "jellyfin", owner.BackendInstanceId,
+                new AllstarrPrincipal(Guid.CreateVersion7(), "jellyfin", owner.BackendInstanceId,
                     owner.BackendPrincipalId, owner.BackendPrincipalId, false)));
             manager.UpdatePlayingItem(owner, owner.BackendPrincipalId + "-track", 0);
         }
@@ -304,7 +301,7 @@ public class JellyfinSessionManagerTests
         await manager.RunKeepAlivePassAsync();
         Assert.DoesNotContain("/Sessions/Capabilities/Full", calls);
         Assert.False(await manager.EnsureSessionAsync(a, "Client", "Device", "1", CreateHeaders(),
-            new AllstarrPrincipal(tenant, Guid.CreateVersion7(), "jellyfin", "backend", "listener-b", "Other", false)));
+            new AllstarrPrincipal(Guid.CreateVersion7(), "jellyfin", "backend", "listener-b", "Other", false)));
     }
 
     private static JellyfinSessionKey Key(string deviceId) => new("backend", "backend-user", deviceId);

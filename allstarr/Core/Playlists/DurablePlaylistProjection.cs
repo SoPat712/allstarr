@@ -134,7 +134,6 @@ public sealed class DurablePlaylistProjectionReader(
     IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
     public async Task<DurablePlaylistProjection?> ReadByNameAsync(
-        Guid tenantId,
         Guid? ownerUserId,
         string name,
         CancellationToken cancellationToken = default,
@@ -143,8 +142,7 @@ public sealed class DurablePlaylistProjectionReader(
         await using var database = await factory.CreateDbContextAsync(cancellationToken);
         var normalizedName = name.Trim().ToLowerInvariant();
         var snapshots = database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.Name.ToLower() == normalizedName &&
+            .Where(item => item.Name.ToLower() == normalizedName &&
                            item.PublishedAt.HasValue);
         if (ownerUserId.HasValue)
             snapshots = snapshots.Where(item => item.OwnerUserId == ownerUserId.Value);
@@ -154,11 +152,10 @@ public sealed class DurablePlaylistProjectionReader(
             .FirstOrDefaultAsync(cancellationToken);
         if (snapshot == null) return null;
 
-        return await ProjectAsync(database, snapshot, tenantId, viewerUserId ?? ownerUserId ?? snapshot.OwnerUserId, cancellationToken);
+        return await ProjectAsync(database, snapshot, viewerUserId ?? ownerUserId ?? snapshot.OwnerUserId, cancellationToken);
     }
 
     public async Task<DurablePlaylistProjection?> ReadByLinkIdAsync(
-        Guid tenantId,
         Guid? ownerUserId,
         Guid playlistLinkId,
         CancellationToken cancellationToken = default,
@@ -166,8 +163,7 @@ public sealed class DurablePlaylistProjectionReader(
     {
         await using var database = await factory.CreateDbContextAsync(cancellationToken);
         var snapshots = database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.PlaylistLinkId == playlistLinkId &&
+            .Where(item => item.PlaylistLinkId == playlistLinkId &&
                            item.PublishedAt.HasValue);
         if (ownerUserId.HasValue)
             snapshots = snapshots.Where(item => item.OwnerUserId == ownerUserId.Value);
@@ -177,11 +173,10 @@ public sealed class DurablePlaylistProjectionReader(
             .FirstOrDefaultAsync(cancellationToken);
         if (snapshot == null) return null;
 
-        return await ProjectAsync(database, snapshot, tenantId, viewerUserId ?? ownerUserId ?? snapshot.OwnerUserId, cancellationToken);
+        return await ProjectAsync(database, snapshot, viewerUserId ?? ownerUserId ?? snapshot.OwnerUserId, cancellationToken);
     }
 
     public async Task<IReadOnlyDictionary<Guid, DurablePlaylistProjection>> ReadByLinkIdsAsync(
-        Guid tenantId,
         Guid? ownerUserId,
         IReadOnlyCollection<Guid> playlistLinkIds,
         CancellationToken cancellationToken = default,
@@ -192,7 +187,7 @@ public sealed class DurablePlaylistProjectionReader(
         foreach (var playlistLinkId in playlistLinkIds)
         {
             var projection = await ReadByLinkIdAsync(
-                tenantId, ownerUserId, playlistLinkId, cancellationToken, viewerUserId);
+                ownerUserId, playlistLinkId, cancellationToken, viewerUserId);
             if (projection != null) result[playlistLinkId] = projection;
         }
         return result;
@@ -201,20 +196,25 @@ public sealed class DurablePlaylistProjectionReader(
     private async Task<DurablePlaylistProjection> ProjectAsync(
         AllstarrDbContext database,
         PlaylistSourceSnapshotRecord snapshot,
-        Guid tenantId,
         Guid viewerUserId,
         CancellationToken cancellationToken)
     {
         var ownerUserId = snapshot.OwnerUserId;
         var link = await database.PlaylistLinks.AsNoTracking()
-            .SingleAsync(item => item.Id == snapshot.PlaylistLinkId, cancellationToken);
+            .SingleAsync(item => item.Id == snapshot.PlaylistLinkId &&
+                                 item.OwnerUserId == ownerUserId &&
+                                 item.ProviderAccountId == snapshot.ProviderAccountId,
+                cancellationToken);
         var entries = await database.PlaylistSourceEntries.AsNoTracking()
             .Where(item => item.PlaylistSourceSnapshotId == snapshot.Id)
             .OrderBy(item => item.SourcePosition)
             .ToListAsync(cancellationToken);
         var externalIds = entries.Select(item => item.ExternalMetadataSnapshotId).ToArray();
         var external = await database.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => externalIds.Contains(item.Id))
+            .Where(item => externalIds.Contains(item.Id) &&
+                           item.OwnerUserId == ownerUserId &&
+                           item.ProviderAccountId == link.ProviderAccountId &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var identityIds = external.Values
             .Where(item => item.ProviderTrackIdentityId.HasValue)
@@ -225,8 +225,7 @@ public sealed class DurablePlaylistProjectionReader(
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var sourceIdentities = await database.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.ResourceKind == ProviderResourceKind.Track &&
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
                            (identityIds.Contains(item.Id) ||
                             externalHashes.Contains(item.ExternalIdHash)))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
@@ -287,14 +286,13 @@ public sealed class DurablePlaylistProjectionReader(
             .Distinct()
             .ToArray();
         var identities = await database.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           canonicalIds.Contains(item.CanonicalRecordingId) &&
+            .Where(item => canonicalIds.Contains(item.CanonicalRecordingId) &&
                            item.ResourceKind == ProviderResourceKind.Track &&
                            (item.Verification == ProviderIdentityVerification.Verified ||
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
         var overrideRecords = await ManualTrackOverrides.LoadAsync(
-            database, tenantId, viewerUserId, external.Values.ToArray(), cancellationToken);
+            database, viewerUserId, external.Values.ToArray(), cancellationToken);
         var overrides = ManualTrackOverrides.Index(external.Values, overrideRecords, viewerUserId);
         var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
         IReadOnlyList<string> fallbackProviderOrder = new[] { link.SourceProviderId }
@@ -307,7 +305,7 @@ public sealed class DurablePlaylistProjectionReader(
         if (providerGateway == null && effectivePolicies != null)
         {
             var effectivePolicy = await effectivePolicies.ResolveForUserAsync(
-                tenantId, viewerUserId, cancellationToken);
+                viewerUserId, cancellationToken);
             fallbackProviderOrder = effectivePolicy.ApplyProviderAvailability(
                 ProviderCapabilityKind.Streaming, fallbackProviderOrder);
         }
@@ -322,7 +320,8 @@ public sealed class DurablePlaylistProjectionReader(
             .Distinct()
             .ToArray();
         var publishedMatches = await database.TrackMatches.AsNoTracking()
-            .Where(item => publishedMatchIds.Contains(item.Id))
+            .Where(item => publishedMatchIds.Contains(item.Id) &&
+                           item.OwnerUserId == ownerUserId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var libraryIds = publishedMatches.Values
             .Where(item => item.LibraryTrackId.HasValue)
@@ -337,7 +336,7 @@ public sealed class DurablePlaylistProjectionReader(
         var library = await LibraryTrackAccess.Query(database, access)
             .Where(item => (libraryIds.Contains(item.Id) ||
                            item.CanonicalRecordingId.HasValue && matchedCanonicalIds.Contains(item.CanonicalRecordingId.Value)) &&
-                           item.TenantId == tenantId && item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
                            (link.TargetProtocol == "jellyfin"
                                ? item.Protocol == "jellyfin"
                                : item.Protocol == "subsonic" ||
@@ -346,6 +345,7 @@ public sealed class DurablePlaylistProjectionReader(
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var run = await database.PlaylistSyncRuns.AsNoTracking()
             .Where(item => item.PlaylistLinkId == link.Id &&
+                           item.OwnerUserId == ownerUserId &&
                            item.PlaylistSourceSnapshotId == snapshot.Id &&
                            item.State != PlaylistSyncState.Pending &&
                            item.State != PlaylistSyncState.Running)
@@ -353,6 +353,7 @@ public sealed class DurablePlaylistProjectionReader(
             .FirstOrDefaultAsync(cancellationToken);
         var lastSuccessfulSyncAt = await database.PlaylistSyncRuns.AsNoTracking()
             .Where(item => item.PlaylistLinkId == link.Id &&
+                           item.OwnerUserId == ownerUserId &&
                            (item.State == PlaylistSyncState.Succeeded ||
                             item.State == PlaylistSyncState.PartiallySucceeded))
             .OrderByDescending(item => item.CompletedAt)
@@ -369,14 +370,14 @@ public sealed class DurablePlaylistProjectionReader(
                 .Distinct()
                 .CountAsync(cancellationToken);
         var latestSourceSnapshotVersion = await database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.PlaylistLinkId == link.Id)
+            .Where(item => item.PlaylistLinkId == link.Id && item.OwnerUserId == ownerUserId)
             .MaxAsync(item => (int?)item.SnapshotVersion, cancellationToken)
             ?? snapshot.SnapshotVersion;
         var previousSnapshot = await database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.PlaylistLinkId == link.Id &&
+            .Where(item => item.PlaylistLinkId == link.Id &&
+                           item.OwnerUserId == ownerUserId &&
                            item.PublishedAt.HasValue &&
+                           item.ProviderAccountId == snapshot.ProviderAccountId &&
                            item.SnapshotVersion < snapshot.SnapshotVersion)
             .OrderByDescending(item => item.SnapshotVersion)
             .FirstOrDefaultAsync(cancellationToken);
@@ -393,7 +394,10 @@ public sealed class DurablePlaylistProjectionReader(
         var previousExternal = previousExternalIds.Length == 0
             ? new Dictionary<Guid, ExternalMetadataSnapshotRecord>()
             : await database.ExternalMetadataSnapshots.AsNoTracking()
-                .Where(item => previousExternalIds.Contains(item.Id))
+                .Where(item => previousExternalIds.Contains(item.Id) &&
+                               item.OwnerUserId == ownerUserId &&
+                               item.ProviderAccountId == link.ProviderAccountId &&
+                               item.BackendInstanceId == link.TargetBackendInstanceId)
                 .ToDictionaryAsync(item => item.Id, cancellationToken);
         var sourceEntries = entries.Select(entry =>
             ProjectSourceEntry(
@@ -542,7 +546,6 @@ public sealed class DurablePlaylistProjectionReader(
     private static bool MatchesSourceIdentity(
         ExternalMetadataSnapshotRecord external,
         ProviderTrackIdentityRecord identity) =>
-        identity.TenantId == external.TenantId &&
         identity.ProviderId.Equals(external.ProviderId, StringComparison.OrdinalIgnoreCase) &&
         (identity.ProviderAccountId == external.ProviderAccountId ||
          identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue) &&

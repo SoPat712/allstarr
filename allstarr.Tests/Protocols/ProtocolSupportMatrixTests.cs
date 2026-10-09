@@ -433,7 +433,7 @@ public sealed class ProtocolSupportMatrixTests
             row.GetProperty("protocol").GetString() == "subsonic" &&
             row.GetProperty("feature").GetString() == "playlist-update");
         Assert.Equal("explicit", playlistUpdate.GetProperty("currentStatus").GetString());
-        Assert.Contains("exact tenant, owner", playlistUpdate.GetProperty("authBoundary").GetString(),
+        Assert.Contains("exact owner", playlistUpdate.GetProperty("authBoundary").GetString(),
             StringComparison.Ordinal);
         Assert.Contains("SubsonicPlaylistMutationTests", playlistUpdate.GetProperty("testLocation").GetString(),
             StringComparison.Ordinal);

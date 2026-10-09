@@ -486,7 +486,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var subsonic = new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null));
         foreach (var filter in new[] { "CleanOnly", "All", "ExplicitOnly" })
         {
-            var policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(Guid.CreateVersion7(),
+            var policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
                 System.Collections.Immutable.ImmutableDictionary<allstarr.Core.Capabilities.ProviderCapabilityKind,
                     System.Collections.Immutable.ImmutableArray<string>>.Empty,
                 System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0.07)

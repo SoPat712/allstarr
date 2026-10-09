@@ -1,7 +1,7 @@
 namespace allstarr.Core.Intelligence;
 
-public sealed record IntelligenceScope(Guid TenantId, Guid OwnerUserId, string Protocol,
-    string BackendInstanceId, string LibraryScopeId);
+public sealed record IntelligenceScope(Guid OwnerUserId, string Protocol,
+    string BackendInstanceId);
 
 public sealed record RecommendationSignal(string Code, double Weight, string Explanation);
 public sealed record RecommendationTrackIdentity(string? ProviderId = null, string? ProviderTrackId = null,
@@ -16,8 +16,8 @@ public sealed record RecommendationCandidate(string TrackKey, double Score, stri
     public IReadOnlyList<string> Exclusions { get; init; } = [];
 }
 public sealed record RecommendationFeedback(string Kind, string? ReasonCode, DateTimeOffset CreatedAt);
-public sealed record ListeningProfile(Guid TenantId, Guid OwnerUserId, string BackendInstanceId,
-    string LibraryScopeId, int PlayCount, int SkipCount, int FavoriteCount,
+public sealed record ListeningProfile(Guid OwnerUserId, string BackendInstanceId,
+    int PlayCount, int SkipCount, int FavoriteCount,
     IReadOnlyDictionary<string, double> TopGenres, DateTimeOffset WindowStart, DateTimeOffset WindowEnd)
 {
     // Exact-scope internal library references, never provider credentials.

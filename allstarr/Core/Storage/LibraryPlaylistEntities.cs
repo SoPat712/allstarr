@@ -15,11 +15,9 @@ public enum ScheduleMisfirePolicy { Skip, RunOnce }
 public sealed class LibraryTrackRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
-    public Guid BackendIdentityId { get; set; }
     public Guid? CanonicalRecordingId { get; set; }
-    public string LibraryScopeId { get; set; } = string.Empty;
+    public string BackendLibraryId { get; set; } = string.Empty;
     public string Protocol { get; set; } = string.Empty;
     public string BackendInstanceId { get; set; } = string.Empty;
     public string BackendItemId { get; set; } = string.Empty;
@@ -48,12 +46,10 @@ public sealed class LibraryTrackRecord
 public sealed class ExternalMetadataSnapshotRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid ProviderAccountId { get; set; }
     public Guid? ProviderTrackIdentityId { get; set; }
     public Guid? SourceJobId { get; set; }
-    public string LibraryScopeId { get; set; } = string.Empty;
     public string BackendInstanceId { get; set; } = string.Empty;
     public string BackendPrincipalId { get; set; } = string.Empty;
     public string Protocol { get; set; } = string.Empty;
@@ -71,12 +67,10 @@ public sealed class ExternalMetadataSnapshotRecord
 public sealed class TrackMatchRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid ExternalSnapshotId { get; set; }
     public Guid? LibraryTrackId { get; set; }
     public Guid? CanonicalRecordingId { get; set; }
-    public string LibraryScopeId { get; set; } = string.Empty;
     public TrackMatchState State { get; set; }
     public double Confidence { get; set; }
     public double Threshold { get; set; }
@@ -96,7 +90,6 @@ public sealed class TrackMatchRecord
 public sealed class ManualTrackOverrideRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid? OwnerUserId { get; set; }
     public Guid ExternalSnapshotId { get; set; }
     public string SourceProviderId { get; set; } = string.Empty;
@@ -104,7 +97,6 @@ public sealed class ManualTrackOverrideRecord
     public Guid? LibraryTrackId { get; set; }
     public string? TargetProviderId { get; set; }
     public string? TargetExternalId { get; set; }
-    public string LibraryScopeId { get; set; } = string.Empty;
     public ManualOverrideDecision Decision { get; set; }
     public string Reason { get; set; } = string.Empty;
     public int DecisionVersion { get; set; }
@@ -117,9 +109,7 @@ public sealed class ManualTrackOverrideRecord
 public sealed class JobScheduleRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
-    public string LibraryScopeId { get; set; } = string.Empty;
     public string JobType { get; set; } = string.Empty;
     public string CronExpression { get; set; } = string.Empty;
     public string TimeZoneId { get; set; } = "UTC";
@@ -137,12 +127,10 @@ public sealed class JobScheduleRecord
 public sealed class PlaylistLinkRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid ProviderAccountId { get; set; }
     public Guid? ScheduleId { get; set; }
     public bool Enabled { get; set; } = true;
-    public string LibraryScopeId { get; set; } = string.Empty;
     public string SourceProviderId { get; set; } = string.Empty;
     public string SourcePlaylistId { get; set; } = string.Empty;
     public string SourcePlaylistIdHash { get; set; } = string.Empty;
@@ -170,7 +158,6 @@ public sealed class PlaylistLinkRecord
 public sealed class PlaylistSourceSnapshotRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid PlaylistLinkId { get; set; }
     public Guid ProviderAccountId { get; set; }
@@ -191,7 +178,6 @@ public sealed class PlaylistSourceSnapshotRecord
 public sealed class PlaylistSourceEntryRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid PlaylistSourceSnapshotId { get; set; }
     public Guid ExternalMetadataSnapshotId { get; set; }
     public Guid? PublishedTrackMatchId { get; set; }
@@ -202,7 +188,6 @@ public sealed class PlaylistSourceEntryRecord
 public sealed class PlaylistSyncRunRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid PlaylistLinkId { get; set; }
     public Guid PlaylistSourceSnapshotId { get; set; }
@@ -230,7 +215,6 @@ public sealed class PlaylistSyncRunRecord
 public sealed class PlaylistSyncEntryResultRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid PlaylistSyncRunId { get; set; }
     public Guid PlaylistSourceEntryId { get; set; }
     public Guid? TrackMatchId { get; set; }
@@ -245,7 +229,6 @@ public sealed class PlaylistSyncEntryResultRecord
 public sealed class PlaylistTargetMembershipRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid PlaylistLinkId { get; set; }
     public Guid LibraryTrackId { get; set; }
     public Guid CreatedBySyncRunId { get; set; }

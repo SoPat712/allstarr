@@ -53,8 +53,7 @@ public sealed class ListenBrainzIntakeController(
                 $"{correlation}-{index}",
                 now.AddSeconds(30),
                 cancellationToken,
-                new("listenbrainz-api", listen.MediaPlayer, listen.MediaPlayer),
-                grant.Scope.LibraryScopeId);
+                new("listenbrainz-api", listen.MediaPlayer, listen.MediaPlayer));
             var identity = PlaybackSignalPipeline.Hash($"{listen.RecordingMusicBrainzId}|{listen.Artist.ToUpperInvariant()}|{listen.Title.ToUpperInvariant()}|{listen.Album?.ToUpperInvariant()}");
             var itemId = $"listenbrainz:{identity}";
             var occurrence = PlaybackSignalPipeline.Hash($"{identity}|{listen.ObservedAt.ToUnixTimeSeconds()}");

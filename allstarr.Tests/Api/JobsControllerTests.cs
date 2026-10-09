@@ -12,7 +12,6 @@ namespace allstarr.Tests;
 
 public sealed class JobsControllerTests : IAsyncLifetime
 {
-    private readonly Guid _tenantId = Guid.CreateVersion7();
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
@@ -26,13 +25,6 @@ public sealed class JobsControllerTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new TestDbContextFactory(_database.Options);
         await using var context = await _factory.CreateDbContextAsync();
-        context.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "fixture",
-            Name = "Fixture",
-            CreatedAt = DateTimeOffset.UtcNow
-        });
         context.Users.AddRange(User(_userId), User(_otherUserId));
         await context.SaveChangesAsync();
         var jobOptions = new DurableJobOptions();
@@ -46,7 +38,7 @@ public sealed class JobsControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task UserList_ReturnsOnlyOwnedTenantJobs()
+    public async Task UserList_ReturnsOnlyOwnedJobs()
     {
         var controller = Controller(Session(_userId));
 
@@ -104,7 +96,6 @@ public sealed class JobsControllerTests : IAsyncLifetime
                 db.AuditEvents.Add(new AuditEventRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = _tenantId,
                     ActorUserId = owner,
                     Category = "job-progress",
                     Action = owner == _userId ? "own-progress" : "other-progress",
@@ -140,19 +131,20 @@ public sealed class JobsControllerTests : IAsyncLifetime
         UserId = userId.ToString(),
         UserName = "fixture",
         IsAdministrator = admin,
-        TenantId = _tenantId,
         AllstarrUserId = userId,
         JellyfinAccessToken = "protected",
         ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
         LastSeenUtc = DateTime.UtcNow
     };
 
-    private PlatformUserRecord User(Guid id) => new()
+    private UserRecord User(Guid id) => new()
     {
         Id = id,
-        TenantId = _tenantId,
         DisplayName = id.ToString("N"),
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "jellyfin",
+        BackendInstanceId = "fixture",
+        BackendPrincipalId = id.ToString("N"),
         CreatedAt = DateTimeOffset.UtcNow,
         UpdatedAt = DateTimeOffset.UtcNow
     };
@@ -162,7 +154,6 @@ public sealed class JobsControllerTests : IAsyncLifetime
             "fixture",
             key,
             new { itemId = key },
-            _tenantId,
             ownerId));
 
     public async Task DisposeAsync() => await _database.DisposeAsync();

@@ -128,16 +128,14 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
 
     private static ProviderExecutionContext Context(bool crossUser = false)
     {
-        var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var owner = crossUser ? Guid.Parse("99999999-9999-9999-9999-999999999999") : user;
-        return new(new ProviderActorContext(tenant, ProviderActorKind.User, user,
+        return new(new ProviderActorContext(ProviderActorKind.User, user,
                 new("jellyfin", "backend", "principal")),
             "apple-musickit",
             new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "apple-musickit",
-                ProviderAccountScope.Personal, 1, tenantId: tenant, ownerUserId: owner,
+                ProviderAccountScope.Personal, 1, ownerUserId: owner,
                 secretReferenceId: Guid.Parse("44444444-4444-4444-4444-444444444444")),
-            null,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, true, true, false, ["apple-musickit"]),
             "metadata-read", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);

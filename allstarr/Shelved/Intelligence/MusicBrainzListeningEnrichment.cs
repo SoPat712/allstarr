@@ -33,9 +33,7 @@ public sealed class MusicBrainzListeningEnrichmentQueue(
             JobType,
             PlaybackSignalPipeline.Hash($"{occurrenceKey}|{MusicBrainzService.SourceRevision}"),
             new(scope, occurrenceKey),
-            scope.TenantId,
             scope.OwnerUserId,
-            LibraryScopeId: scope.LibraryScopeId,
             CorrelationId: correlationId), cancellationToken);
     }
 
@@ -51,11 +49,9 @@ public sealed class MusicBrainzListeningEnrichmentQueue(
             throw new ArgumentException("The imported track reference is invalid.", nameof(trackReference));
         return await jobs.EnqueueAsync(new DurableJobEnqueueRequest<MusicBrainzListeningEnrichmentPayload>(
             JobType,
-            PlaybackSignalPipeline.Hash($"import|{scope.TenantId:N}|{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{scope.LibraryScopeId}|{correlationId}|{trackReference}|{MusicBrainzService.SourceRevision}"),
+            PlaybackSignalPipeline.Hash($"import|{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{correlationId}|{trackReference}|{MusicBrainzService.SourceRevision}"),
             new(scope, occurrenceKey),
-            scope.TenantId,
             scope.OwnerUserId,
-            LibraryScopeId: scope.LibraryScopeId,
             CorrelationId: correlationId), cancellationToken);
     }
 }
@@ -72,21 +68,20 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
         CancellationToken cancellationToken)
     {
         var payload = execution.Claim.Payload.Deserialize<MusicBrainzListeningEnrichmentPayload>();
-        if (payload == null || execution.Claim.TenantId != payload.Scope.TenantId ||
+        if (payload == null ||
             execution.Claim.OwnerUserId != payload.Scope.OwnerUserId ||
-            execution.Claim.LibraryScopeId != payload.Scope.LibraryScopeId ||
             payload.OccurrenceKey.Length != 64 || !payload.OccurrenceKey.All(Uri.IsHexDigit))
             return DurableJobCompletion.Failure(
                 "musicbrainz_enrichment_scope_invalid",
                 "The saved MusicBrainz enrichment scope is invalid.");
 
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, payload.Scope, cancellationToken))
+            return DurableJobCompletion.Failure("musicbrainz_enrichment_user_unavailable", "The listening user is unavailable for this backend.");
         var occurrence = await db.ListeningEvents.SingleOrDefaultAsync(item =>
-            item.TenantId == payload.Scope.TenantId &&
             item.OwnerUserId == payload.Scope.OwnerUserId &&
             item.Protocol == payload.Scope.Protocol &&
             item.BackendInstanceId == payload.Scope.BackendInstanceId &&
-            item.LibraryScopeId == payload.Scope.LibraryScopeId &&
             item.OccurrenceKey == payload.OccurrenceKey, cancellationToken);
         if (occurrence == null)
             return DurableJobCompletion.Failure(
@@ -100,9 +95,9 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
 
         var targets = occurrence.SourceKind == "import"
             ? await db.ListeningEvents.Where(item =>
-                    item.TenantId == occurrence.TenantId && item.OwnerUserId == occurrence.OwnerUserId &&
+                    item.OwnerUserId == occurrence.OwnerUserId &&
                     item.Protocol == occurrence.Protocol && item.BackendInstanceId == occurrence.BackendInstanceId &&
-                    item.LibraryScopeId == occurrence.LibraryScopeId && item.SourceKind == "import" &&
+                    item.SourceKind == "import" &&
                     item.TrackReference == occurrence.TrackReference &&
                     (item.MusicBrainzSourceRevision == null ||
                      item.MusicBrainzSourceRevision != MusicBrainzService.SourceRevision))

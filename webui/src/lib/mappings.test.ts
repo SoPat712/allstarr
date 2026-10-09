@@ -128,7 +128,6 @@ describe("mapping review presentation", () => {
     const target = currentTarget({
       externalSnapshotId: "snapshot",
       providerId: "spotify",
-      libraryScopeId: "music",
       state: "accepted",
       decisionSource: "track_match_decision",
       providerIdentities: [

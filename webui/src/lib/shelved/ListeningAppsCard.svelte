@@ -16,7 +16,7 @@
   const server = $derived(scope.protocol === "jellyfin" ? "Jellyfin" : scope.protocol === "subsonic" ? "Subsonic" : "your media server");
 
   $effect(() => {
-    const key = `${scope.protocol}\0${scope.backendInstanceId}\0${scope.libraryScopeId}\0${policyEnabled}`;
+    const key = `${scope.protocol}\0${scope.backendInstanceId}\0${policyEnabled}`;
     if (key === loadedScope) return;
     loadedScope = key;
     void load();
@@ -74,7 +74,7 @@
   <header>
     <div><p class="eyebrow">Listening apps</p><h3>Apps sending listens to Allstarr</h3></div>
   </header>
-  <p>{policyEnabled ? "Give Koito or another listening app a private key. Allstarr will save its listens to" : "Saving is off, so listening apps cannot send listens to"} <strong>{scope.libraryScopeId}</strong> on {server}.</p>
+  <p>{policyEnabled ? "Give Koito or another listening app a private key. Allstarr will save its listens to" : "Saving is off, so listening apps cannot send listens to"} your account on {server}.</p>
 
   {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
@@ -96,7 +96,7 @@
   <ul class="key-list">
     {#each items as item}
       <li><article>
-        <span><strong>Created {new Date(item.createdAt).toLocaleDateString()}</strong><small>{policyEnabled ? `Allstarr will save listens from this key to ${scope.libraryScopeId} on ${server}.` : "Allstarr is not accepting listens from this key while saving is off."} {item.relayExternally ? "Allstarr will also send completed listens to connected services." : "Allstarr will not send these listens to another service."}</small></span>
+        <span><strong>Created {new Date(item.createdAt).toLocaleDateString()}</strong><small>{policyEnabled ? `Allstarr will save listens from this key to your account on ${server}.` : "Allstarr is not accepting listens from this key while saving is off."} {item.relayExternally ? "Allstarr will also send completed listens to connected services." : "Allstarr will not send these listens to another service."}</small></span>
         <Button variant="destructive" size="sm" disabled={busy} onclick={() => void revoke(item)}>Stop accepting</Button>
       </article></li>
     {:else}<li class="muted">No apps can send listens to this library yet.</li>{/each}

@@ -14,24 +14,18 @@ public sealed class ListeningHistoryAnalyticsSqliteTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var now = DateTimeOffset.Parse("2026-08-03T12:00:00Z");
         var nowTicks = now.UtcTicks;
 
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = tenant,
-            Slug = "analytics-plan",
-            Name = "Analytics plan",
-            CreatedAt = now
-        });
-        db.Users.Add(new PlatformUserRecord
+        db.Users.Add(new UserRecord
         {
             Id = user,
-            TenantId = tenant,
             DisplayName = "Listener",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "main",
+            BackendPrincipalId = "listener",
             CreatedAt = now,
             UpdatedAt = now
         });
@@ -39,11 +33,11 @@ public sealed class ListeningHistoryAnalyticsSqliteTests
         await db.Database.ExecuteSqlInterpolatedAsync($$"""
             WITH RECURSIVE sequence(series) AS (SELECT 1 UNION ALL SELECT series + 1 FROM sequence WHERE series < 10000)
             INSERT INTO listening_events
-                ("Id", "TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId",
+                ("Id", "OwnerUserId", "Protocol", "BackendInstanceId",
                  "OccurrenceKey", "State", "ListenedAt", "UpdatedAt", "DurationMilliseconds",
                  "SourceKind", "TrackReference", "Title", "Artist", "Album", "MusicBrainzEnrichmentState", "ChosenByUser", "Revision")
-            SELECT printf('%08X-0000-0000-0000-000000000000', series), {{tenant}}, {{user}}, 'jellyfin',
-                   CASE WHEN series % 10 = 0 THEN 'main' ELSE 'decoy' END, 'music',
+            SELECT printf('%08X-0000-0000-0000-000000000000', series), {{user}}, 'jellyfin',
+                   CASE WHEN series % 10 = 0 THEN 'main' ELSE 'decoy' END,
                    printf('%064x', series), 'Completed',
                    {{nowTicks}} - (series % 365) * {{TimeSpan.TicksPerDay}},
                    {{nowTicks}}, 180000, 'protocol', 'track-' || series,
@@ -62,25 +56,25 @@ public sealed class ListeningHistoryAnalyticsSqliteTests
         var pagePlan = await ExplainAsync(connection, """
             SELECT "Id", "ListenedAt"
             FROM listening_events
-            WHERE "TenantId" = @tenant AND "OwnerUserId" = @user
+            WHERE "OwnerUserId" = @user
               AND "Protocol" = 'jellyfin' AND "BackendInstanceId" = 'main'
-              AND "LibraryScopeId" = 'music' AND "State" = 'Completed'
+              AND "State" = 'Completed'
               AND "ListenedAt" >= @from AND "ListenedAt" < @to
               AND ("ListenedAt" < @cursor OR ("ListenedAt" = @cursor AND "Id" < @cursor_id))
             ORDER BY "ListenedAt" DESC, "Id" DESC
             LIMIT 101
-            """, tenant, user, from, to, cursor, cursorId);
+            """, user, from, to, cursor, cursorId);
         var topPlan = await ExplainAsync(connection, """
             SELECT "Artist", count(*)
             FROM listening_events
-            WHERE "TenantId" = @tenant AND "OwnerUserId" = @user
+            WHERE "OwnerUserId" = @user
               AND "Protocol" = 'jellyfin' AND "BackendInstanceId" = 'main'
-              AND "LibraryScopeId" = 'music' AND "State" = 'Completed'
+              AND "State" = 'Completed'
               AND "ListenedAt" >= @from AND "ListenedAt" < @to
             GROUP BY "Artist"
             ORDER BY count(*) DESC
             LIMIT 10
-            """, tenant, user, from, to);
+            """, user, from, to);
         await using var indexCommand = connection.CreateCommand();
         indexCommand.CommandText = """
             SELECT sql FROM sqlite_master
@@ -96,7 +90,6 @@ public sealed class ListeningHistoryAnalyticsSqliteTests
     private static async Task<string> ExplainAsync(
         SqliteConnection connection,
         string query,
-        Guid tenant,
         Guid user,
         long from,
         long to,
@@ -105,7 +98,6 @@ public sealed class ListeningHistoryAnalyticsSqliteTests
     {
         await using var command = connection.CreateCommand();
         command.CommandText = "EXPLAIN QUERY PLAN " + query;
-        command.Parameters.AddWithValue("tenant", tenant);
         command.Parameters.AddWithValue("user", user);
         command.Parameters.AddWithValue("from", from);
         command.Parameters.AddWithValue("to", to);

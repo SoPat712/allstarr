@@ -19,7 +19,6 @@ public sealed class ProviderCtsDiagnosticRunnerTests
     public async Task Measure_BoundsAndRedactsTheRecordedMediaSample()
     {
         const int sampleLimit = 65_536;
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         var body = Enumerable.Range(0, 80_000).Select(value => (byte)(value % 251)).ToArray();
@@ -66,7 +65,6 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             "qobuz",
             ProviderAccountScope.Personal,
             revision: 1,
-            tenantId: tenantId,
             ownerUserId: userId);
         var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
         accounts.Setup(item => item.ResolveAsync(
@@ -91,7 +89,6 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             selector,
             health.Object);
         var actor = new ProviderActorContext(
-            tenantId,
             ProviderActorKind.User,
             userId,
             new ProviderBackendPrincipal("jellyfin", "fixture", "principal"));
@@ -173,7 +170,6 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             selector,
             Mock.Of<IDurableProviderHealthObservationStore>(MockBehavior.Strict));
         var actor = new ProviderActorContext(
-            Guid.CreateVersion7(),
             ProviderActorKind.User,
             Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "principal"));
@@ -212,7 +208,6 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             selector,
             Mock.Of<IDurableProviderHealthObservationStore>(MockBehavior.Strict));
         var actor = new ProviderActorContext(
-            Guid.CreateVersion7(),
             ProviderActorKind.User,
             Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "principal"));

@@ -62,7 +62,7 @@ public sealed record PlaylistResolvedRoute(
     string? BackendItemId = null,
     string? BackendInstanceId = null,
     string? Protocol = null,
-    string? LibraryScopeId = null,
+    string? BackendLibraryId = null,
     string? ProviderId = null,
     string? ExternalId = null,
     Guid? CanonicalRecordingId = null);

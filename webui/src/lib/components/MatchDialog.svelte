@@ -153,12 +153,10 @@
       const [local, external] = await Promise.allSettled([
         matchReview.searchLocal(
           targetQuery.trim(),
-          match.libraryScopeId,
           match.externalSnapshotId,
         ),
         matchReview.searchProviders(
           targetQuery.trim(),
-          match.libraryScopeId,
           match.externalSnapshotId,
         ),
       ]);
@@ -263,7 +261,6 @@
           <dl>
             <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
             <div><dt>Source provider</dt><dd>{match.providerId}</dd></div>
-            <div><dt>Library scope</dt><dd>{match.libraryScopeId}</dd></div>
             {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
             {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
             {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}

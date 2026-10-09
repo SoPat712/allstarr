@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
@@ -112,6 +113,108 @@ public sealed class RecommendationSourceAdapterTests
     }
 
     [Fact]
+    public async Task LocalCatalogCoalescesAccessibleIndexOwnersWithoutLosingExplicitRows()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var viewer = Guid.Parse("22222222-2222-2222-2222-222222222222");
+        var otherIndexer = Guid.Parse("33333333-3333-3333-3333-333333333333");
+        var inaccessibleOwner = Guid.Parse("44444444-4444-4444-4444-444444444444");
+        var seedFirst = Guid.Parse("10000000-0000-0000-0000-000000000001");
+        var seedRepeated = Guid.Parse("20000000-0000-0000-0000-000000000001");
+        var candidateFirst = Guid.Parse("10000000-0000-0000-0000-000000000002");
+        var candidateRepeated = Guid.Parse("20000000-0000-0000-0000-000000000002");
+        var inaccessible = Guid.Parse("30000000-0000-0000-0000-000000000003");
+        var candidateCanonical = Guid.Parse("50000000-0000-0000-0000-000000000005");
+        var now = DateTimeOffset.UtcNow;
+
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.AddRange(
+                User(viewer, "listener"),
+                User(otherIndexer, "other-indexer"),
+                User(inaccessibleOwner, "private-indexer"));
+            db.CanonicalRecordings.Add(new()
+            {
+                Id = candidateCanonical,
+                CreatedByUserId = viewer,
+                Title = "Candidate",
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1
+            });
+            db.LibraryTracks.AddRange(
+                Track(seedFirst, viewer, "music", "seed", "Shared artist"),
+                Track(seedRepeated, otherIndexer, "music", "seed", "Shared artist"),
+                Track(candidateFirst, viewer, "music", "candidate", "Shared artist", candidateCanonical),
+                Track(candidateRepeated, otherIndexer, "music", "candidate", "Shared artist", candidateCanonical),
+                Track(inaccessible, inaccessibleOwner, "private", "private-track", "Shared artist"));
+            await db.SaveChangesAsync();
+        }
+
+        var access = new TestBackendLibraryAccess(factory, "music");
+        var catalog = new LocalRecommendationCatalog(factory, access);
+        var scope = Query().Scope;
+
+        var backendItems = await catalog.ResolveBackendItemsAsync(
+            scope, ["seed", "candidate", "private-track"], default);
+        Assert.Equal(["candidate", "seed"], backendItems.Keys.Order(StringComparer.Ordinal));
+        Assert.Equal(seedFirst, backendItems["seed"].LibraryTrackId);
+        Assert.Equal(candidateFirst, backendItems["candidate"].LibraryTrackId);
+
+        Assert.Equal(["seed"], await catalog.ResolveTrackKeysAsync(
+            scope, [$"library:{seedRepeated:D}"], default));
+        Assert.Equal(["candidate"], await catalog.ResolveTrackKeysAsync(
+            scope, [candidateCanonical.ToString("D")], default));
+        Assert.Empty(await catalog.ResolveTrackKeysAsync(
+            scope, [$"library:{inaccessible:D}"], default));
+
+        var local = await catalog.FindRelatedAsync(Query(), default);
+        Assert.Equal("candidate", Assert.Single(local).TrackKey);
+
+        var musicBrainz = await new MusicBrainzLocalRecommendationProvider(factory, access)
+            .RecommendAsync(Request(true));
+        Assert.Equal(RecommendationProviderState.Succeeded, musicBrainz.State);
+        Assert.Equal("candidate", Assert.Single(musicBrainz.Candidates).TrackKey);
+
+        UserRecord User(Guid id, string principal) => new()
+        {
+            Id = id,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend-a",
+            BackendPrincipalId = principal,
+            DisplayName = principal,
+            Enabled = true,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
+
+        LibraryTrackRecord Track(Guid id, Guid owner, string library, string backendItem,
+            string artist, Guid? canonical = null) => new()
+            {
+                Id = id,
+                OwnerUserId = owner,
+                CanonicalRecordingId = canonical,
+                BackendLibraryId = library,
+                Protocol = "jellyfin",
+                BackendInstanceId = "backend-a",
+                BackendItemId = backendItem,
+                FilePath = $"/{library}/{backendItem}-{id:N}.flac",
+                Title = backendItem,
+                Artist = artist,
+                Album = "Shared album",
+                MusicBrainzRecordingId = canonical?.ToString("D"),
+                MusicBrainzArtistId = "artist-mbid",
+                MusicBrainzReleaseId = "release-mbid",
+                ProviderIdsJson = "{}",
+                IndexedAt = now,
+                SourceModifiedAt = now,
+                UpdatedAt = now
+            };
+    }
+
+    [Fact]
     public async Task CrossScopeProfileIsRejectedBeforeAnySourceCall()
     {
         var client = new FakeClient();
@@ -200,10 +303,29 @@ public sealed class RecommendationSourceAdapterTests
     [Fact]
     public async Task AudioMuseConcreteClientUsesTypedCapabilityAndPreservesIdentity()
     {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new()
+            {
+                Id = Guid.Parse("22222222-2222-2222-2222-222222222222"),
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend-a",
+                BackendPrincipalId = "listener",
+                DisplayName = "Listener",
+                IsAdmin = false,
+                Enabled = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                LastSeenAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
         var accounts = new SecretAccessor("""{"token":"protected"}""");
         var catalog = new FakeClient
         {
-            BackendIdentities = new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal)
+            BackendItems = new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal)
             {
                 ["audio-333"] = new("audiomuse-ai", Title: "Future Song", Artist: "Future Artist", BackendItemId: "audio-333"),
                 ["seed"] = new("audiomuse-ai", Title: "Seed", Artist: "Artist", BackendItemId: "seed"),
@@ -212,7 +334,8 @@ public sealed class RecommendationSourceAdapterTests
                 ["audio-end"] = new("audiomuse-ai", Title: "End", Artist: "Artist", BackendItemId: "audio-end")
             }
         };
-        var unavailable = new AudioMuseRecommendationClient(new ProviderRegistry([]), accounts, catalog);
+        var unavailable = new AudioMuseRecommendationClient(
+            new ProviderRegistry([]), accounts, catalog, factory);
         Assert.False(unavailable.IsAvailable);
 
         var capability = new IntelligenceCapability();
@@ -225,17 +348,20 @@ public sealed class RecommendationSourceAdapterTests
             new ProviderPermissionDescriptor(), entryPoint: "index.js");
         var registry = new ProviderRegistry([new ProviderRegistration(descriptor, [capability])]);
         var missingAccount = new AudioMuseRecommendationClient(
-            registry, new SecretAccessor("{}", configured: false), catalog);
+            registry, new SecretAccessor("{}", configured: false), catalog, factory);
         var missingReadiness = await new AudioMuseRecommendationProvider(missingAccount)
             .GetReadinessAsync(Query().Scope);
         Assert.Equal(RecommendationProviderReadinessState.Unconfigured, missingReadiness.State);
         Assert.Equal("audiomuse_scoped_account_missing", missingReadiness.SafeReasonCode);
 
-        var configured = new AudioMuseRecommendationClient(registry, accounts, catalog);
+        var configured = new AudioMuseRecommendationClient(registry, accounts, catalog, factory);
         var item = Assert.Single(await configured.RecommendAsync(Query(), default));
         Assert.Equal("audio-333", item.Identity!.BackendItemId);
         Assert.NotNull(item.ProviderAccountId);
         Assert.Equal("account:1", item.SourceRevision);
+        Assert.Equal(Guid.Parse("22222222-2222-2222-2222-222222222222"),
+            capability.LastContext!.Actor.UserId);
+        Assert.Equal("listener", capability.LastContext.Actor.BackendPrincipal!.PrincipalId);
         Assert.Equal(["seed"], capability.Seeds);
         Assert.Equal("audio-333", Assert.Single(await configured.FindSimilarAsync(
             Query().Scope, ["audio-start"], 10, default)).TrackKey);
@@ -256,7 +382,7 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal("job-1", analysis.JobId);
         Assert.Equal(ProviderAnalysisState.Queued, analysis.State);
         Assert.Equal("analysis-1", capability.AnalysisIdempotencyKey);
-        var restarted = new AudioMuseRecommendationClient(registry, accounts, catalog);
+        var restarted = new AudioMuseRecommendationClient(registry, accounts, catalog, factory);
         var progress = await restarted.GetAnalysisProgressAsync(Query().Scope, analysis.JobId, default);
         Assert.Equal(ProviderAnalysisState.Running, progress.State);
         Assert.Equal(5, progress.Completed);
@@ -266,6 +392,9 @@ public sealed class RecommendationSourceAdapterTests
         Assert.Equal("audio-333", Assert.Single(await configured.SearchAsync(
             Query().Scope, "future", false, 10, default)).TrackKey);
         var callsBeforeRejectedSeed = capability.CallCount;
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => configured.FindSimilarAsync(
+            Query().Scope, ["other-user-track"], 10, default));
+        Assert.Equal(callsBeforeRejectedSeed, capability.CallCount);
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => configured.BlendAsync(
             Query().Scope, ["other-user-track"], [], 10, default));
         Assert.Equal(callsBeforeRejectedSeed, capability.CallCount);
@@ -281,6 +410,16 @@ public sealed class RecommendationSourceAdapterTests
         Array.Sort(samples);
         var p95 = samples[94];
         Assert.InRange(p95, 0, 100);
+
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync()).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        var callsBeforeDisabledOwner = capability.CallCount;
+        await Assert.ThrowsAsync<NotSupportedException>(() => configured.StartAnalysisAsync(
+            Query().Scope, false, "disabled-owner", default));
+        Assert.Equal(callsBeforeDisabledOwner, capability.CallCount);
     }
 
     [Fact]
@@ -301,10 +440,9 @@ public sealed class RecommendationSourceAdapterTests
 
     private static RecommendationRequest Request(bool optedIn = true)
     {
-        var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var owner = Guid.Parse("22222222-2222-2222-2222-222222222222");
-        var scope = new IntelligenceScope(tenant, owner, "jellyfin", "backend-a", "music");
-        var profile = new ListeningProfile(tenant, owner, "backend-a", "music", 10, 1, 2,
+        var scope = new IntelligenceScope(owner, "jellyfin", "backend-a");
+        var profile = new ListeningProfile(owner, "backend-a", 10, 1, 2,
             new Dictionary<string, double> { ["rock"] = .7 }, DateTimeOffset.UtcNow.AddDays(-7), DateTimeOffset.UtcNow);
         return new(scope, Guid.CreateVersion7(), profile, ["backend:seed"], 20, "recommendation-run", optedIn, default);
     }
@@ -322,7 +460,7 @@ public sealed class RecommendationSourceAdapterTests
         public ListenBrainzDiscoveryKind? LastListenBrainzKind { get; private set; }
         public IReadOnlyList<RecommendationSourceItem> Items { get; set; } = [];
         public Exception? Failure { get; set; }
-        public IReadOnlyDictionary<string, RecommendationTrackIdentity> BackendIdentities { get; set; } =
+        public IReadOnlyDictionary<string, RecommendationTrackIdentity> BackendItems { get; set; } =
             new Dictionary<string, RecommendationTrackIdentity>(StringComparer.Ordinal);
         public IntelligenceScope? LastResolvedScope { get; private set; }
         private Task<IReadOnlyList<RecommendationSourceItem>> Call(ScopedRecommendationQuery query)
@@ -351,15 +489,15 @@ public sealed class RecommendationSourceAdapterTests
             LastResolvedScope = scope;
             return Task.FromResult<IReadOnlyList<string>>(trackKeys.Select(item =>
                     item.StartsWith("backend:", StringComparison.Ordinal) ? item[8..] : item)
-                .Where(BackendIdentities.ContainsKey).Distinct(StringComparer.Ordinal).ToArray());
+                .Where(BackendItems.ContainsKey).Distinct(StringComparer.Ordinal).ToArray());
         }
         public Task<IReadOnlyDictionary<string, RecommendationTrackIdentity>> ResolveBackendItemsAsync(
             IntelligenceScope scope, IReadOnlyList<string> backendItemIds, CancellationToken token)
         {
             LastResolvedScope = scope;
             return Task.FromResult<IReadOnlyDictionary<string, RecommendationTrackIdentity>>(backendItemIds
-                .Where(BackendIdentities.ContainsKey).Distinct(StringComparer.Ordinal)
-                .ToDictionary(item => item, item => BackendIdentities[item], StringComparer.Ordinal));
+                .Where(BackendItems.ContainsKey).Distinct(StringComparer.Ordinal)
+                .ToDictionary(item => item, item => BackendItems[item], StringComparer.Ordinal));
         }
     }
 
@@ -370,7 +508,7 @@ public sealed class RecommendationSourceAdapterTests
         public Task<ProviderAccountContext?> FindAccountAsync(IntelligenceScope scope, string providerId, CancellationToken token) =>
             Task.FromResult<ProviderAccountContext?>(configured
                 ? new(Guid.CreateVersion7(), providerId, ProviderAccountScope.Personal, 1,
-                    tenantId: scope.TenantId, ownerUserId: scope.OwnerUserId)
+                    ownerUserId: scope.OwnerUserId)
                 : null);
         public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId, Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken token)
         { using var document = JsonDocument.Parse(json); return await operation(document.RootElement, token); }
@@ -382,6 +520,7 @@ public sealed class RecommendationSourceAdapterTests
         public ProviderCapabilityKind Capability => ProviderCapabilityKind.Intelligence;
         public IReadOnlyList<string> Seeds { get; private set; } = [];
         public int CallCount { get; private set; }
+        public ProviderExecutionContext? LastContext { get; private set; }
         public string? AnalysisIdempotencyKey { get; private set; }
         public string? ProgressJobId { get; private set; }
         public ProviderPageRequest? LastMapPage { get; private set; }
@@ -389,6 +528,7 @@ public sealed class RecommendationSourceAdapterTests
             ProviderExecutionContext context, IReadOnlyList<string> seedTrackIds, int limit)
         {
             CallCount++;
+            LastContext = context;
             Seeds = seedTrackIds;
             return Task.FromResult(ProviderOutcome<IReadOnlyList<ProviderIntelligenceTrack>>.Success(
                 [new("audio-333", "Future Song", "Future Artist", .8, "Future Album"),
@@ -457,5 +597,13 @@ public sealed class RecommendationSourceAdapterTests
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
             { Content = new StringContent(responses.Dequeue(), Encoding.UTF8, "application/json") });
         }
+    }
+
+    private sealed class Factory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+        public Task<AllstarrDbContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
     }
 }

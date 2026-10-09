@@ -82,9 +82,9 @@ public sealed partial class IntelligenceController
             var from = now.AddDays(-request.PeriodDays);
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
             var history = db.ListeningEvents.AsNoTracking().Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.OwnerUserId == scope.OwnerUserId &&
                 item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                item.LibraryScopeId == scope.LibraryScopeId && item.State == ListeningEventState.Completed &&
+                item.State == ListeningEventState.Completed &&
                 item.ListenedAt >= from && item.ListenedAt <= now);
             var completedListens = await history.CountAsync(cancellationToken);
             var summaries = await history.Where(item =>
@@ -115,8 +115,8 @@ public sealed partial class IntelligenceController
                 if (seeds.Count == 20) break;
             }
 
-            var profile = new ListeningProfile(scope.TenantId, scope.OwnerUserId,
-                scope.BackendInstanceId, scope.LibraryScopeId, completedListens, 0, 0,
+            var profile = new ListeningProfile(scope.OwnerUserId,
+                scope.BackendInstanceId, completedListens, 0, 0,
                 new Dictionary<string, double>(), from, now)
             { TopTrackKeys = seeds };
             var tracks = await _audioMuse.RecommendAsync(
@@ -146,10 +146,9 @@ public sealed partial class IntelligenceController
             return Conflict(new { error = "audiomuse_not_selected" });
 
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var local = await db.LibraryTracks.AsNoTracking().Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                item.LibraryScopeId == scope.LibraryScopeId && request.TrackIds.Contains(item.BackendItemId))
+        var local = await (await LocalRecommendationCatalog.ScopedAsync(
+                db, scope, _libraryAccess, cancellationToken)).AsNoTracking()
+            .Where(item => request.TrackIds.Contains(item.BackendItemId))
             .ToDictionaryAsync(item => item.BackendItemId, StringComparer.Ordinal, cancellationToken);
         if (local.Count != request.TrackIds.Count)
             return Conflict(new { error = "audiomuse_preview_stale" });

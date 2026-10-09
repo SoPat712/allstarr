@@ -13,8 +13,6 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
     private TestFactory factory = null!;
-    private Guid tenantId;
-    private Guid otherTenantId;
     private Guid userId;
     private Guid otherUserId;
     private DateTimeOffset startedAt;
@@ -25,28 +23,22 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         factory = new TestFactory(database.Options);
         await using var context = await factory.CreateDbContextAsync();
 
-        tenantId = Guid.CreateVersion7();
-        otherTenantId = Guid.CreateVersion7();
         userId = Guid.CreateVersion7();
         otherUserId = Guid.CreateVersion7();
         startedAt = DateTimeOffset.UtcNow;
-        context.Tenants.AddRange(
-            new TenantRecord { Id = tenantId, Slug = "one", Name = "One", CreatedAt = startedAt },
-            new TenantRecord { Id = otherTenantId, Slug = "two", Name = "Two", CreatedAt = startedAt });
         context.Users.AddRange(
-            User(userId, tenantId, "Owner"),
-            User(otherUserId, tenantId, "Other"),
-            User(Guid.CreateVersion7(), otherTenantId, "Elsewhere"));
+            User(userId, "Owner"),
+            User(otherUserId, "Other"));
 
-        var ownJob = Job(tenantId, userId, "own", startedAt.AddSeconds(1));
-        var otherJob = Job(tenantId, otherUserId, "other", startedAt.AddSeconds(2));
-        var foreignJob = Job(otherTenantId, null, "foreign", startedAt.AddSeconds(3));
-        context.Jobs.AddRange(ownJob, otherJob, foreignJob);
+        var ownJob = Job(userId, "own", startedAt.AddSeconds(1));
+        var otherJob = Job(otherUserId, "other", startedAt.AddSeconds(2));
+        var householdJob = Job(null, "household", startedAt.AddSeconds(3));
+        context.Jobs.AddRange(ownJob, otherJob, householdJob);
         context.AuditEvents.AddRange(
-            Audit(tenantId, userId, "own-audit", "own", startedAt.AddSeconds(4), """{"secret":"never-stream"}"""),
-            Audit(tenantId, otherUserId, "other-audit", "other", startedAt.AddSeconds(5)),
-            Audit(tenantId, null, "job-audit", "own", startedAt.AddSeconds(6)),
-            Audit(otherTenantId, null, "foreign-audit", "foreign", startedAt.AddSeconds(7)));
+            Audit(userId, "own-audit", "own", startedAt.AddSeconds(4), """{"secret":"never-stream"}"""),
+            Audit(otherUserId, "other-audit", "other", startedAt.AddSeconds(5)),
+            Audit(null, "job-audit", "own", startedAt.AddSeconds(6)),
+            Audit(null, "household-audit", "household", startedAt.AddSeconds(7)));
         await context.SaveChangesAsync();
     }
 
@@ -56,7 +48,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     public async Task ReadAsync_FiltersUserAndNeverProjectsRawPayloads()
     {
         var events = await Feed().ReadAsync(
-            new AdminUpdateScope(tenantId, userId, false),
+            new AdminUpdateScope(userId, false),
             BeforeSeed(),
             100,
             CancellationToken.None);
@@ -64,7 +56,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         Assert.Contains(events, item => item.Resource == "job" && item.CorrelationId == "own");
         Assert.Contains(events, item => item.Resource == "audit" && item.Action == "own-audit");
         Assert.DoesNotContain(events, item => item.Action == "job-audit");
-        Assert.DoesNotContain(events, item => item.CorrelationId is "other" or "foreign");
+        Assert.DoesNotContain(events, item => item.CorrelationId is "other" or "household");
         Assert.DoesNotContain(events, item => item.Resource == "outbox");
         var json = JsonSerializer.Serialize(events);
         Assert.DoesNotContain("never-stream", json, StringComparison.Ordinal);
@@ -73,10 +65,10 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ReadAsync_AdminSeesTenantJobsAndAuditsWithoutOutboxEvents()
+    public async Task ReadAsync_AdminSeesPersonalAndHouseholdJobsAndAuditsWithoutOutboxEvents()
     {
         var events = await Feed().ReadAsync(
-            new AdminUpdateScope(tenantId, userId, true),
+            new AdminUpdateScope(userId, true),
             BeforeSeed(),
             100,
             CancellationToken.None);
@@ -86,9 +78,9 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         Assert.Contains(events, item => item.Resource == "audit" && item.Action == "own-audit");
         Assert.Contains(events, item => item.Resource == "audit" && item.Action == "other-audit");
         Assert.DoesNotContain(events, item => item.Resource == "outbox");
-        Assert.DoesNotContain(events, item => item.CorrelationId == "foreign");
+        Assert.Contains(events, item => item.CorrelationId == "household");
         var json = JsonSerializer.Serialize(events);
-        Assert.DoesNotContain("foreign-message", json, StringComparison.Ordinal);
+        Assert.Contains(events, item => item.Resource == "audit" && item.Action == "household-audit");
         Assert.DoesNotContain("never-stream", json, StringComparison.Ordinal);
         Assert.DoesNotContain("PayloadJson", json, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("DetailsJson", json, StringComparison.OrdinalIgnoreCase);
@@ -99,7 +91,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     {
         var feed = Feed();
         var first = await feed.ReadAsync(
-            new AdminUpdateScope(tenantId, userId, true),
+            new AdminUpdateScope(userId, true),
             BeforeSeed(),
             2,
             CancellationToken.None);
@@ -107,7 +99,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         Assert.True(AdminUpdateCursor.TryParse(first[^1].EventId, out var cursor));
 
         var remaining = await feed.ReadAsync(
-            new AdminUpdateScope(tenantId, userId, true),
+            new AdminUpdateScope(userId, true),
             cursor,
             100,
             CancellationToken.None);
@@ -121,7 +113,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     {
         var feed = Feed();
         var initial = await feed.ReadAsync(
-            new AdminUpdateScope(tenantId, userId, false),
+            new AdminUpdateScope(userId, false),
             BeforeSeed(),
             100,
             CancellationToken.None);
@@ -136,7 +128,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         }
 
         var updates = await feed.ReadAsync(
-            new AdminUpdateScope(tenantId, userId, false),
+            new AdminUpdateScope(userId, false),
             cursor,
             100,
             CancellationToken.None);
@@ -150,9 +142,12 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     [Fact]
     public async Task Stream_WritesStatusAndRecoverableSafeUpdates()
     {
-        var sessions = AdminAuthSessionTestSupport.Create();
-        var session = await sessions.CreateSessionAsync("backend-user", "Owner", false, "never-stream-session-token", null,
-            tenantId: tenantId, allstarrUserId: userId);
+        var sessions = new AdminAuthSessionService(new MemoryAdminAuthSessionStore(),
+            new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance,
+            contextFactory: factory, identityOptions: new() { BackendInstanceId = "fixture" });
+        var session = await sessions.CreateSessionAsync(userId.ToString("N"), "Owner", false, "never-stream-session-token", null,
+            allstarrUserId: userId);
         var controller = new AdminUpdatesController(Feed(), sessions);
         var httpContext = new DefaultHttpContext();
         httpContext.Response.Body = new MemoryStream();
@@ -177,20 +172,20 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     {
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.AuditEvents.Add(Audit(tenantId, otherUserId, "private-other", "own", startedAt.AddSeconds(8)));
+            db.AuditEvents.Add(Audit(otherUserId, "private-other", "own", startedAt.AddSeconds(8)));
             await db.SaveChangesAsync();
         }
-        var events = await Feed().ReadAsync(new(tenantId, userId, false), BeforeSeed(), 100, default);
+        var events = await Feed().ReadAsync(new(userId, false), BeforeSeed(), 100, default);
         Assert.DoesNotContain(events, item => item.Action == "private-other");
-        Assert.Empty(await Feed().ReadAsync(new(tenantId, null, false), BeforeSeed(), 100, default));
+        Assert.Empty(await Feed().ReadAsync(new(null, false), BeforeSeed(), 100, default));
     }
 
     [Fact]
     public async Task Stream_StopsAfterSessionRevocation()
     {
-        var sessions = AdminAuthSessionTestSupport.Create();
-        var session = await sessions.CreateSessionAsync("owner", "Owner", false, "fixture", null,
-            tenantId: tenantId, allstarrUserId: userId);
+        await using var auth = await AdminAuthSessionTestSupport.CreateLinkedAsync();
+        var sessions = auth.Service;
+        var session = await auth.CreateSessionAsync("owner", "Owner", false, "fixture", null);
         var http = new DefaultHttpContext();
         http.Response.Body = new MemoryStream();
         http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
@@ -217,22 +212,23 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     private AdminUpdateCursor BeforeSeed() =>
         new(startedAt.AddMinutes(-1), 0, Guid.Empty, 0);
 
-    private static PlatformUserRecord User(Guid id, Guid tenant, string name) => new()
+    private static UserRecord User(Guid id, string name) => new()
     {
         Id = id,
-        TenantId = tenant,
         DisplayName = name,
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "jellyfin",
+        BackendInstanceId = "fixture",
+        BackendPrincipalId = id.ToString("N"),
         CreatedAt = DateTimeOffset.UtcNow,
         UpdatedAt = DateTimeOffset.UtcNow
     };
 
-    private static DurableJobRecord Job(Guid tenant, Guid? owner, string correlation, DateTimeOffset at) => new()
+    private static DurableJobRecord Job(Guid? owner, string correlation, DateTimeOffset at) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = tenant,
         OwnerUserId = owner,
-        ScopeKey = $"{tenant:N}:{owner:N}",
+        ScopeKey = $"user:{owner:N}",
         RequestFingerprint = new string('a', 64),
         CorrelationId = correlation,
         Type = "test",
@@ -247,7 +243,6 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     };
 
     private static AuditEventRecord Audit(
-        Guid tenant,
         Guid? actor,
         string action,
         string correlation,
@@ -255,7 +250,6 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         string details = "{}") => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             ActorUserId = actor,
             Category = "test",
             Action = action,

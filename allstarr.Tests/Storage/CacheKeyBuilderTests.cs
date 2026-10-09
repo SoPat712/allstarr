@@ -56,23 +56,22 @@ public class CacheKeyBuilderTests
     [Fact]
     public void PlaylistDiscoveryKeys_AreScopedHashedProviderResponses()
     {
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         var key = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
-            tenantId, userId, accountId, 7, "spotify", "private mix", "signed-cursor", 100);
+            userId, accountId, 7, "spotify", "private mix", "signed-cursor", 100);
         var otherUserKey = CacheKeyBuilder.BuildProviderPlaylistDiscoveryKey(
-            tenantId, Guid.CreateVersion7(), accountId, 7, "spotify", "private mix", "signed-cursor", 100);
+            Guid.CreateVersion7(), accountId, 7, "spotify", "private mix", "signed-cursor", 100);
 
         Assert.StartsWith(
-            $"playlist:discovery:v2:{tenantId:N}:{userId:N}:{accountId:N}:7:spotify:",
+            $"playlist:discovery:v3:{userId:N}:{accountId:N}:7:spotify:",
             key,
             StringComparison.Ordinal);
         Assert.DoesNotContain("private mix", key, StringComparison.Ordinal);
         Assert.DoesNotContain("signed-cursor", key, StringComparison.Ordinal);
         Assert.NotEqual(key, otherUserKey);
         Assert.Equal(
-            $"playlist:discovery:v2:*:*:{accountId:N}:*",
+            $"playlist:discovery:v3:*:{accountId:N}:*",
             CacheKeyBuilder.BuildProviderPlaylistDiscoveryAccountPattern(accountId));
         Assert.Equal(
             ApplicationCacheCategory.PlaylistDiscovery,
@@ -85,8 +84,6 @@ public class CacheKeyBuilderTests
         var metadataKey = CacheKeyBuilder.BuildPlaybackMetadataNegativeKey("jellyfin", "track-1");
         var routeKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
             Guid.CreateVersion7(),
-            Guid.CreateVersion7(),
-            "music",
             "spotiflac-ytmusic-spotiflac",
             "private-track-id",
             "Lossless");
@@ -122,11 +119,9 @@ public class CacheKeyBuilderTests
     [Fact]
     public void MediaDescriptorKeys_ExposeOnlyStableOwnershipDimensions()
     {
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var accountId = Guid.CreateVersion7();
         var key = CacheKeyBuilder.BuildMediaAssetDescriptorKey(new(
-            tenantId,
             userId,
             accountId,
             "spotify",
@@ -137,13 +132,13 @@ public class CacheKeyBuilderTests
             96));
 
         Assert.StartsWith(
-            $"media:descriptor:v3:{tenantId:N}:{userId:N}:{accountId:N}:spotify:playlist:",
+            $"media:descriptor:v4:{userId:N}:{accountId:N}:spotify:playlist:",
             key,
             StringComparison.Ordinal);
         Assert.DoesNotContain("private-playlist-id", key, StringComparison.Ordinal);
         Assert.DoesNotContain("signed-revision", key, StringComparison.Ordinal);
         Assert.Equal(
-            $"media:descriptor:v3:*:*:{accountId:N}:*",
+            $"media:descriptor:v4:*:{accountId:N}:*",
             CacheKeyBuilder.BuildMediaAssetDescriptorAccountPattern(accountId));
     }
 }

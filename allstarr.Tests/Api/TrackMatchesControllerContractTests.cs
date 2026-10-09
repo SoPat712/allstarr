@@ -50,12 +50,10 @@ public sealed class TrackMatchesControllerContractTests
         var convert = typeof(TrackMatchesController).GetMethod(
             "ToCandidate",
             BindingFlags.Static | BindingFlags.NonPublic,
-            [typeof(Song), typeof(Guid), typeof(Guid), typeof(string)])!;
+            [typeof(Song), typeof(Guid)])!;
         var candidate = convert.Invoke(null, [
             new Song { Id = "ext-qobuz-track", ExternalProvider = "qobuz", ExternalId = "track" },
-            Guid.NewGuid(),
-            Guid.NewGuid(),
-            "music"
+            Guid.NewGuid()
         ])!;
 
         Assert.False((bool)candidate.GetType().GetProperty("IsLocal")!.GetValue(candidate)!);

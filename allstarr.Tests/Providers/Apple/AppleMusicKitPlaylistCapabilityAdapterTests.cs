@@ -190,13 +190,11 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
 
     private static ProviderExecutionContext Context(bool includeSecret = true, ProviderAccountScope scope = ProviderAccountScope.Personal)
     {
-        var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
-        return new(new ProviderActorContext(tenant, ProviderActorKind.User, user, new("jellyfin", "backend", "principal")),
+        return new(new ProviderActorContext(ProviderActorKind.User, user, new("jellyfin", "backend", "principal")),
             "apple-musickit", new(Guid.Parse("33333333-3333-3333-3333-333333333333"), "apple-musickit", scope, 1,
-                tenantId: scope == ProviderAccountScope.Shared ? null : tenant,
                 ownerUserId: scope == ProviderAccountScope.Personal ? user : null,
-                secretReferenceId: includeSecret ? Guid.Parse("44444444-4444-4444-4444-444444444444") : null), null,
+                secretReferenceId: includeSecret ? Guid.Parse("44444444-4444-4444-4444-444444444444") : null),
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 true, true, false, ["apple-musickit"]), "playlist-read", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);
     }

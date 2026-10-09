@@ -27,12 +27,10 @@ public enum FavoriteActionState
 public sealed class FavoriteEventRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = string.Empty;
     public string BackendInstanceId { get; set; } = string.Empty;
     public string BackendPrincipalId { get; set; } = string.Empty;
-    public string? LibraryScopeId { get; set; }
     public string ItemId { get; set; } = string.Empty;
     public FavoriteOperation Operation { get; set; }
     public string SourceRevision { get; set; } = string.Empty;
@@ -54,7 +52,6 @@ public sealed class FavoriteActionRecord
 {
     public Guid Id { get; set; }
     public Guid EventId { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string ActionType { get; set; } = string.Empty;
     public string IdempotencyKey { get; set; } = string.Empty;
@@ -72,7 +69,6 @@ public sealed class FavoriteActionRecord
 public sealed class FavoriteStateRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = string.Empty;
     public string BackendInstanceId { get; set; } = string.Empty;

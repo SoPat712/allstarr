@@ -8,12 +8,11 @@ public sealed class ListeningHistoryImportJobTests
     [Fact]
     public void CreateEventPreservesClassificationAndUsesResolvedLocalIdentityWhenAvailable()
     {
-        var tenantId = Guid.NewGuid();
         var userId = Guid.NewGuid();
         var importId = Guid.NewGuid();
         var canonicalId = Guid.NewGuid();
         var libraryTrackId = Guid.NewGuid();
-        var scope = new IntelligenceScope(tenantId, userId, "jellyfin", "server", "music");
+        var scope = new IntelligenceScope(userId, "jellyfin", "server");
         var payload = new ListeningHistoryImportJobPayload(importId, scope, new string('a', 64), 1);
         var listenedAt = new DateTimeOffset(2026, 7, 1, 12, 0, 0, TimeSpan.Zero);
         var row = new ListeningHistoryImportRow(
@@ -24,14 +23,12 @@ public sealed class ListeningHistoryImportJobTests
         var identity = new ProviderTrackIdentityRecord
         {
             Id = Guid.NewGuid(),
-            TenantId = tenantId,
             CanonicalRecordingId = canonicalId,
             ProviderId = "spotify"
         };
         var canonical = new CanonicalRecordingRecord
         {
             Id = canonicalId,
-            TenantId = tenantId,
             MusicBrainzRecordingId = "11111111-1111-1111-1111-111111111111",
             Isrc = "USABC1234567"
         };

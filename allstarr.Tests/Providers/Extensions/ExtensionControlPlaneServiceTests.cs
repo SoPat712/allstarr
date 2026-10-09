@@ -28,9 +28,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        var tenant = Guid.CreateVersion7();
-        db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "extensions", Name = "Extensions", CreatedAt = DateTimeOffset.UtcNow });
-        db.Users.Add(new PlatformUserRecord { Id = _reviewer, TenantId = tenant, DisplayName = "Reviewer", Status = PlatformUserStatus.Active, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+        db.Users.Add(new UserRecord { Id = _reviewer, DisplayName = "Reviewer", Enabled = true, IsAdmin = true, BackendType = "jellyfin", BackendInstanceId = "fixture", BackendPrincipalId = "reviewer", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
         await db.SaveChangesAsync();
         _configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["Extensions:Directory"] = Path.Combine(_root, "extensions") }).Build();

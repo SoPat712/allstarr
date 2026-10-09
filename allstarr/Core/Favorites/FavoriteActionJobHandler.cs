@@ -30,7 +30,7 @@ public sealed class FavoriteActionJobHandler(
         await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
         var favoriteEvent = await database.Set<FavoriteEventRecord>().SingleOrDefaultAsync(
             item => item.Id == payload.EventId && item.JobId == context.Claim.JobId &&
-                    item.TenantId == context.Claim.TenantId && item.OwnerUserId == context.Claim.OwnerUserId,
+                    item.OwnerUserId == context.Claim.OwnerUserId,
             cancellationToken);
         if (favoriteEvent == null)
             return DurableJobCompletion.Failure("favorite_event_missing", "The favorite event is unavailable.");
@@ -148,13 +148,11 @@ public sealed class FavoriteActionJobHandler(
         FavoriteEventRecord favoriteEvent,
         CancellationToken cancellationToken)
     {
-        if (recommendationSignals == null || string.IsNullOrWhiteSpace(favoriteEvent.LibraryScopeId)) return;
+        if (recommendationSignals == null) return;
         var scope = new IntelligenceScope(
-            favoriteEvent.TenantId,
             favoriteEvent.OwnerUserId,
             favoriteEvent.Protocol,
-            favoriteEvent.BackendInstanceId,
-            favoriteEvent.LibraryScopeId);
+            favoriteEvent.BackendInstanceId);
         var value = favoriteEvent.Operation == FavoriteOperation.Favorite ? 1d : -1d;
         try
         {
@@ -184,7 +182,7 @@ public sealed class FavoriteActionJobHandler(
         AllstarrDbContext database, FavoriteEventRecord favoriteEvent, CancellationToken cancellationToken)
     {
         var state = await database.Set<FavoriteStateRecord>().SingleOrDefaultAsync(item =>
-            item.TenantId == favoriteEvent.TenantId && item.OwnerUserId == favoriteEvent.OwnerUserId &&
+            item.OwnerUserId == favoriteEvent.OwnerUserId &&
             item.Protocol == favoriteEvent.Protocol && item.BackendInstanceId == favoriteEvent.BackendInstanceId &&
             item.ItemId == favoriteEvent.ItemId, cancellationToken);
         if (state == null)
@@ -192,7 +190,6 @@ public sealed class FavoriteActionJobHandler(
             state = new FavoriteStateRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = favoriteEvent.TenantId,
                 OwnerUserId = favoriteEvent.OwnerUserId,
                 Protocol = favoriteEvent.Protocol,
                 BackendInstanceId = favoriteEvent.BackendInstanceId,

@@ -15,11 +15,8 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
     private LibraryIndexService _service = null!;
-    private Guid _tenantId;
     private Guid _userA;
     private Guid _userB;
-    private Guid _identityA;
-    private Guid _identityB;
     private FakeClock _clock = null!;
     private TrackIdentityService _identities = null!;
     private readonly Mock<IMusicBrainzCatalogRefreshQueue> _catalogQueue = new(MockBehavior.Strict);
@@ -37,22 +34,9 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         var now = new DateTimeOffset(2026, 7, 12, 2, 0, 0, TimeSpan.Zero);
         await using (var db = await _factory.CreateDbContextAsync())
         {
-            _tenantId = Guid.CreateVersion7();
             _userA = Guid.CreateVersion7();
             _userB = Guid.CreateVersion7();
-            _identityA = Guid.CreateVersion7();
-            _identityB = Guid.CreateVersion7();
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = _tenantId,
-                Slug = "fixture",
-                Name = "Fixture",
-                CreatedAt = now
-            });
             db.Users.AddRange(User(_userA, "A", now), User(_userB, "B", now));
-            db.BackendIdentities.AddRange(
-                Identity(_identityA, _userA, "principal-a", now),
-                Identity(_identityB, _userB, "principal-b", now));
             await db.SaveChangesAsync();
         }
 
@@ -69,7 +53,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [Fact]
     public async Task Upsert_IsScopedIdempotentAndReturnsMatchCandidatesWithoutMediaPayloads()
     {
-        var context = Context(_userA, "principal-a", "music");
+        var context = Context(_userA, "principal-a");
         var input = Input() with
         {
             ProviderTrackIds = new Dictionary<string, string>
@@ -107,11 +91,11 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [Fact]
     public async Task IndexReads_RequireBackendLibraryAccessAndLinkedIdentity()
     {
-        await _service.UpsertAsync(Context(_userA, "principal-a", "music"), Input());
+        await _service.UpsertAsync(Context(_userA, "principal-a"), Input());
 
-        Assert.Empty(await _service.ListAsync(Context(_userB, "principal-b", "music"), "music"));
+        Assert.Empty(await _service.ListAsync(Context(_userB, "principal-b"), "music"));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            _service.ListAsync(Context(_userA, "principal-a", "other"), "music"));
+            _service.UpsertAsync(Context(_userA, "forged-principal"), Input()));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             _service.ListAsync(UnlinkedContext(), "music"));
     }
@@ -119,8 +103,8 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [Fact]
     public async Task IndexReads_UseBackendAccessInsteadOfIndexProvenanceAndFailClosed()
     {
-        var indexed = await _service.UpsertAsync(Context(_userA, "principal-a", "music"), Input());
-        var viewer = Context(_userB, "principal-b", "music");
+        var indexed = await _service.UpsertAsync(Context(_userA, "principal-a"), Input());
+        var viewer = Context(_userB, "principal-b");
         _libraryAccess.Setup(service => service.ResolveAsync(viewer, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new BackendLibraryAccess(true, ["music"]));
         Assert.Equal(indexed.Id, Assert.Single(await _service.ListAsync(viewer, "music")).Id);
@@ -140,7 +124,6 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             db.CanonicalRecordings.Add(new CanonicalRecordingRecord
             {
                 Id = canonicalId,
-                TenantId = _tenantId,
                 CreatedByUserId = _userA,
                 Title = "Song",
                 IsProvisional = true,
@@ -155,9 +138,11 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             CanonicalRecordingId = canonicalId,
             AcceptedDecisionVersion = 1
         };
-        await _service.UpsertAsync(Context(_userA, "principal-a", "music"), input);
-        await _service.UpsertAsync(Context(_userB, "principal-b", "music"), input);
-        var rescanned = await _service.UpsertAsync(Context(_userA, "principal-a", "music"), Input() with
+        await _service.UpsertAsync(Context(_userA, "principal-a"), input);
+        _libraryAccess.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccess(true, ["music"]));
+        await _service.UpsertAsync(Context(_userB, "principal-b"), input);
+        var rescanned = await _service.UpsertAsync(Context(_userA, "principal-a"), Input() with
         {
             MusicBrainzRecordingId = "16ba7915-2acf-42b2-8c87-ed67090dca91"
         });
@@ -179,7 +164,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [Fact]
     public async Task NativeAlias_RecoversAssignmentLostByLegacyRescan()
     {
-        var context = Context(_userA, "principal-a", "music");
+        var context = Context(_userA, "principal-a");
         var canonical = await _identities.CreateRecordingAsync(context.RequireActor(), "existing-native");
         var indexed = await _service.UpsertAsync(context, Input() with { CanonicalRecordingId = canonical.Recording.Id });
         await using (var db = await _factory.CreateDbContextAsync())
@@ -201,10 +186,10 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     public async Task NativeRecording_EnrichesProviderIdentityAndQueuesCatalogWithoutChangingNativeMetadata()
     {
         const string mbid = "16ba7915-2acf-42b2-8c87-ed67090dca91";
-        var context = Context(_userA, "principal-a", "music");
+        var context = Context(_userA, "principal-a");
         var original = await _identities.CreateRecordingAsync(context.RequireActor(), "provider-first", Input().Isrc);
         _catalogQueue.Setup(queue => queue.EnqueueRecordingAsync(
-                It.Is<ProviderActorContext>(actor => actor.TenantId == _tenantId && actor.UserId == _userA),
+                It.Is<ProviderActorContext>(actor => actor.UserId == _userA),
                 mbid, context.CorrelationId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
 
@@ -228,7 +213,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [Fact]
     public async Task NativeRecording_ConflictingSignalsRemainIndexedWithoutMergingOrQueuing()
     {
-        var context = Context(_userA, "principal-a", "music");
+        var context = Context(_userA, "principal-a");
         var first = await _identities.CreateRecordingAsync(context.RequireActor(), "isrc-first", Input().Isrc);
         var secondId = Guid.CreateVersion7();
         const string mbid = "16ba7915-2acf-42b2-8c87-ed67090dca91";
@@ -237,7 +222,6 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             db.CanonicalRecordings.Add(new CanonicalRecordingRecord
             {
                 Id = secondId,
-                TenantId = _tenantId,
                 CreatedByUserId = _userA,
                 MusicBrainzRecordingId = mbid,
                 CreatedAt = _clock.UtcNow,
@@ -264,7 +248,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [InlineData("00000000-0000-0000-0000-000000000000")]
     public async Task NativeRecording_WithoutValidMbidStillIndexes(string? mbid)
     {
-        var indexed = await _service.UpsertAsync(Context(_userA, "principal-a", "music"),
+        var indexed = await _service.UpsertAsync(Context(_userA, "principal-a"),
             Input() with { MusicBrainzRecordingId = mbid });
         Assert.Null(indexed.CanonicalRecordingId);
         await using var db = await _factory.CreateDbContextAsync();
@@ -276,7 +260,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     [Fact]
     public async Task IndexRejectsSignedUrlsAndSecretLikeProviderIds()
     {
-        var context = Context(_userA, "principal-a", "music");
+        var context = Context(_userA, "principal-a");
 
         await Assert.ThrowsAsync<ArgumentException>(() => _service.UpsertAsync(
             context,
@@ -306,12 +290,11 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Null(unknown.DurationRetrievedAt);
     }
 
-    private ProtocolExecutionContext Context(Guid userId, string principalId, string libraryScope) => new(
+    private ProtocolExecutionContext Context(Guid userId, string principalId) => new(
         ProtocolKind.Jellyfin,
         "backend",
         principalId,
         new AllstarrPrincipal(
-            _tenantId,
             userId,
             "jellyfin",
             "backend",
@@ -320,8 +303,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             IsAdministrator: false),
         "correlation",
         DateTimeOffset.UtcNow.AddMinutes(1),
-        CancellationToken.None,
-        libraryScopeId: libraryScope);
+        CancellationToken.None);
 
     private ProtocolExecutionContext UnlinkedContext() => new(
         ProtocolKind.Jellyfin,
@@ -330,8 +312,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         null,
         "correlation",
         DateTimeOffset.UtcNow.AddMinutes(1),
-        CancellationToken.None,
-        libraryScopeId: "music");
+        CancellationToken.None);
 
     private LibraryTrackIndexInput Input() => new(
         "music",
@@ -354,32 +335,18 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         "backend:art-1",
         new DateTimeOffset(2026, 7, 12, 1, 0, 0, TimeSpan.Zero));
 
-    private PlatformUserRecord User(Guid id, string name, DateTimeOffset now) => new()
+    private UserRecord User(Guid id, string name, DateTimeOffset now) => new()
     {
         Id = id,
-        TenantId = _tenantId,
         DisplayName = name,
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "jellyfin",
+        BackendInstanceId = "backend",
+        BackendPrincipalId = "principal-" + name.ToLowerInvariant(),
         CreatedAt = now,
-        UpdatedAt = now
+        UpdatedAt = now,
+        LastSeenAt = now
     };
-
-    private BackendIdentityRecord Identity(
-        Guid id,
-        Guid userId,
-        string principalId,
-        DateTimeOffset now) => new()
-        {
-            Id = id,
-            TenantId = _tenantId,
-            UserId = userId,
-            BackendType = "jellyfin",
-            BackendInstanceId = "backend",
-            PrincipalId = principalId,
-            DisplayName = principalId,
-            CreatedAt = now,
-            LastSeenAt = now
-        };
 
     public async Task DisposeAsync() => await _database.DisposeAsync();
 

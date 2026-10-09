@@ -431,7 +431,6 @@ public sealed class DeezerMetadataCapabilityAdapterTests
     private static ProviderExecutionContext Context(CancellationToken cancellationToken = default)
     {
         var actor = new ProviderActorContext(
-            Guid.CreateVersion7(),
             ProviderActorKind.User,
             Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "fixture-user"));
@@ -439,7 +438,6 @@ public sealed class DeezerMetadataCapabilityAdapterTests
             actor,
             "deezer",
             account: null,
-            library: null,
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(
                     ProviderAudioQuality.Any,
@@ -467,9 +465,7 @@ public sealed class DeezerMetadataCapabilityAdapterTests
                 providerId,
                 ProviderAccountScope.Personal,
                 1,
-                tenantId: context.Actor.TenantId,
                 ownerUserId: context.Actor.EffectiveUserId),
-            context.Library,
             new ProviderExecutionPolicy(
                 context.Policy.Quality,
                 context.Policy.ExplicitContent,

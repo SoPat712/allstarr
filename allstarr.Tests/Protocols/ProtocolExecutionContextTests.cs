@@ -20,12 +20,10 @@ public sealed class ProtocolExecutionContextTests
     public void ResolvedPrincipal_ProjectsOnlyVerifiedIdentityIntoProviderActor()
     {
         var now = new DateTimeOffset(2026, 7, 11, 18, 0, 0, TimeSpan.Zero);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var http = new DefaultHttpContext { TraceIdentifier = "trace-fallback" };
         http.Items[CorrelationMiddleware.HttpContextItemKey] = "correlation-17";
         http.Items[BackendIdentityResolver.HttpContextPrincipalItemKey] = new AllstarrPrincipal(
-            tenantId,
             userId,
             "jellyfin",
             "primary",
@@ -43,17 +41,15 @@ public sealed class ProtocolExecutionContextTests
             ProtocolKind.Jellyfin,
             "backend-user-17",
             "primary",
-            new ProtocolClientDescriptor("finamp", "phone-17", "Phone"),
-            "music-library");
+            new ProtocolClientDescriptor("finamp", "phone-17", "Phone"));
 
         Assert.True(context.CanRunUserScopedWork);
-        Assert.Equal(tenantId, context.RequireActor().TenantId);
+        Assert.Same(context.Actor, context.RequireActor());
         Assert.Equal(userId, context.Actor!.UserId);
         Assert.Equal(ProviderActorKind.User, context.Actor.Kind);
         Assert.Equal("backend-user-17", context.Actor.BackendPrincipal!.PrincipalId);
         Assert.Equal("correlation-17", context.CorrelationId);
         Assert.Equal(now.AddSeconds(20), context.Deadline);
-        Assert.Equal("music-library", context.LibraryScopeId);
         Assert.DoesNotContain(
             "must-not-enter-context",
             System.Text.Json.JsonSerializer.Serialize(context),
@@ -82,7 +78,6 @@ public sealed class ProtocolExecutionContextTests
     public void CanonicalPrincipalCannotBeReusedForAnotherProtocolOrBackendIdentity()
     {
         var principal = new AllstarrPrincipal(
-            Guid.CreateVersion7(),
             Guid.CreateVersion7(),
             "jellyfin",
             "primary",
@@ -173,7 +168,6 @@ public sealed class ProtocolExecutionContextTests
         Assert.Null(projected.Actor);
         Assert.Equal(protocol == ProtocolKind.Jellyfin ? "Finamp" : "Tempo", projected.Client.ClientId);
         Assert.Equal(protocol == ProtocolKind.Jellyfin ? "phone-7" : null, projected.Client.DeviceId);
-        Assert.Equal(protocol == ProtocolKind.Subsonic ? "folder-4" : null, projected.LibraryScopeId);
         Assert.DoesNotContain(
             "secret",
             System.Text.Json.JsonSerializer.Serialize(projected),

@@ -47,12 +47,13 @@ public sealed class TrackRematchAllService(
     internal const string RolloutPolicyVersion = "algorithm-rollout-v1";
 
     public async Task<TrackRematchAllPreview> PreviewAsync(
-        Guid tenantId,
+        TrackMatchActor actor,
         Guid? scopeOwnerUserId,
         CancellationToken cancellationToken = default)
     {
+        RequireScopeAuthority(actor, scopeOwnerUserId);
         var cutoff = clock.UtcNow;
-        var scope = await ReadScopeAsync(tenantId, scopeOwnerUserId, cutoff, cancellationToken);
+        var scope = await ReadScopeAsync(scopeOwnerUserId, cutoff, cancellationToken);
         var eligible = scope.Groups.Where(item => !item.ProtectedManual).ToArray();
         return new(
             scope.ConfirmationId,
@@ -71,13 +72,13 @@ public sealed class TrackRematchAllService(
     }
 
     public Task<DurableJobEnqueueResult> QueueForceAsync(
-        Guid tenantId,
-        Guid ownerUserId,
+        TrackMatchActor actor,
         TrackRematchAllPreview preview,
-        CancellationToken cancellationToken = default) =>
-        EnqueueAsync(
-            tenantId,
-            ownerUserId,
+        CancellationToken cancellationToken = default)
+    {
+        RequireScopeAuthority(actor, preview.ScopeOwnerUserId);
+        return EnqueueAsync(
+            actor.UserId,
             $"manual:{preview.ConfirmationId}",
             preview.SnapshotCutoff,
             preview.SnapshotFingerprint,
@@ -85,6 +86,7 @@ public sealed class TrackRematchAllService(
             preview.TracksToRematch,
             true,
             cancellationToken);
+    }
 
     public async Task<int> QueueAlgorithmUpgradesAsync(
         CancellationToken cancellationToken = default)
@@ -93,15 +95,15 @@ public sealed class TrackRematchAllService(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var owners = await db.ExternalMetadataSnapshots.AsNoTracking()
             .Where(item => item.ResourceKind == "track")
-            .Select(item => new { item.TenantId, item.OwnerUserId })
+            .Select(item => item.OwnerUserId)
             .Distinct()
             .ToArrayAsync(cancellationToken);
         var queued = 0;
-        foreach (var owner in owners)
+        foreach (var ownerUserId in owners)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var scope = await ReadScopeAsync(
-                owner.TenantId, owner.OwnerUserId, cutoff, cancellationToken);
+                ownerUserId, cutoff, cancellationToken);
             var targets = scope.Groups.Where(item =>
                     !item.ProtectedManual &&
                     (item.Decision == null ||
@@ -111,19 +113,17 @@ public sealed class TrackRematchAllService(
             var requestKey =
                 $"algorithm:{TrackMatchDecisionEngine.AlgorithmVersion}:{scope.SnapshotFingerprint}";
             if (await db.Jobs.AsNoTracking().AnyAsync(item =>
-                    item.TenantId == owner.TenantId &&
-                    item.OwnerUserId == owner.OwnerUserId &&
+                    item.OwnerUserId == ownerUserId &&
                     item.Type == TrackRematchAllJobHandler.Type &&
                     item.IdempotencyKey == $"track-rematch-all:{requestKey}",
                     cancellationToken))
                 continue;
             var result = await EnqueueAsync(
-                owner.TenantId,
-                owner.OwnerUserId,
+                ownerUserId,
                 requestKey,
                 scope.SnapshotCutoff,
                 scope.SnapshotFingerprint,
-                owner.OwnerUserId,
+                ownerUserId,
                 targets.Length,
                 false,
                 cancellationToken);
@@ -133,17 +133,16 @@ public sealed class TrackRematchAllService(
     }
 
     internal async Task<TrackRematchWork> ReadWorkAsync(
-        Guid tenantId,
         TrackRematchAllJobPayload payload,
         CancellationToken cancellationToken)
     {
         var scope = await ReadScopeAsync(
-            tenantId, payload.ScopeOwnerUserId, payload.SnapshotCutoff, cancellationToken);
+            payload.ScopeOwnerUserId, payload.SnapshotCutoff, cancellationToken);
         var operationCorrelation = OperationCorrelation(payload.OperationId);
         if (!scope.SnapshotFingerprint.Equals(payload.SnapshotFingerprint, StringComparison.Ordinal))
             return new([], operationCorrelation, true);
         var skippedHashes = await ReadPermanentSkipsAsync(
-            tenantId, operationCorrelation, cancellationToken);
+            operationCorrelation, cancellationToken);
         var targets = scope.Groups
             .Where(item => !item.ProtectedManual)
             .Where(item => payload.Force
@@ -161,16 +160,14 @@ public sealed class TrackRematchAllService(
     }
 
     internal async Task<HashSet<Guid>> ReadProtectedOverrideIdsAsync(
-        Guid tenantId,
         IReadOnlyCollection<Guid> snapshotIds,
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, tenantId, snapshotIds, cancellationToken);
+        return await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, snapshotIds, cancellationToken);
     }
 
     private Task<DurableJobEnqueueResult> EnqueueAsync(
-        Guid tenantId,
         Guid ownerUserId,
         string requestKey,
         DateTimeOffset snapshotCutoff,
@@ -180,7 +177,7 @@ public sealed class TrackRematchAllService(
         bool force,
         CancellationToken cancellationToken)
     {
-        var operationId = OperationId($"{tenantId:N}:{ownerUserId:N}:{requestKey}");
+        var operationId = OperationId($"{ownerUserId:N}:{requestKey}");
         return jobs.EnqueueAsync(new DurableJobEnqueueRequest<TrackRematchAllJobPayload>(
             TrackRematchAllJobHandler.Type,
             $"track-rematch-all:{requestKey}",
@@ -192,25 +189,29 @@ public sealed class TrackRematchAllService(
                 scopeOwnerUserId,
                 approvedCount,
                 force),
-            tenantId,
-            ownerUserId,
+            OwnerUserId: ownerUserId,
             MaxAttempts: 25,
             MaxDeferrals: 10_000,
             CorrelationId: OperationCorrelation(operationId)), cancellationToken);
     }
 
     private async Task<TrackRematchScope> ReadScopeAsync(
-        Guid tenantId,
         Guid? ownerUserId,
         DateTimeOffset snapshotCutoff,
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           (!ownerUserId.HasValue || item.OwnerUserId == ownerUserId.Value) &&
+            .Where(item => (!ownerUserId.HasValue || item.OwnerUserId == ownerUserId.Value) &&
                            item.ResourceKind == "track" &&
-                           item.RetrievedAt <= snapshotCutoff)
+                           item.RetrievedAt <= snapshotCutoff &&
+                           db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled &&
+                               user.BackendType == (item.Protocol == "opensubsonic" ? "subsonic" : item.Protocol) &&
+                               user.BackendInstanceId == item.BackendInstanceId &&
+                               user.BackendPrincipalId == item.BackendPrincipalId) &&
+                           db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                               account.Enabled && account.ProviderId == item.ProviderId &&
+                               (account.OwnerUserId == null || account.OwnerUserId == item.OwnerUserId)))
             .Select(item => new TrackRematchSnapshot(
                 item.Id,
                 item.OwnerUserId,
@@ -218,7 +219,6 @@ public sealed class TrackRematchAllService(
                 item.ProviderAccountId,
                 item.ProviderId,
                 item.ExternalIdHash,
-                item.LibraryScopeId,
                 item.Protocol,
                 item.BackendInstanceId,
                 item.BackendPrincipalId,
@@ -231,7 +231,6 @@ public sealed class TrackRematchAllService(
         var snapshotGroups = snapshots
             .GroupBy(item => new TrackRematchSourceKey(
                 item.OwnerUserId,
-                item.LibraryScopeId,
                 item.Protocol,
                 item.BackendInstanceId,
                 item.BackendPrincipalId,
@@ -247,7 +246,7 @@ public sealed class TrackRematchAllService(
             .ToArray();
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         var decisionQuery = db.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId));
+            .Where(item => snapshotIds.Contains(item.ExternalSnapshotId));
         var versions = decisionQuery.GroupBy(item => item.ExternalSnapshotId)
             .Select(group => new
             {
@@ -261,7 +260,7 @@ public sealed class TrackRematchAllService(
                 (item, _) => item)
             .ToArrayAsync(cancellationToken);
         var decisionsBySnapshot = decisions.ToDictionary(item => item.ExternalSnapshotId);
-        var protectedSnapshots = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, tenantId, snapshotIds, cancellationToken);
+        var protectedSnapshots = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(db, snapshotIds, cancellationToken);
         var groups = snapshotGroups.Select(group => new TrackRematchGroup(
                 group.Current,
                 group.Snapshots.Select(item => decisionsBySnapshot.GetValueOrDefault(item.Id))
@@ -283,14 +282,12 @@ public sealed class TrackRematchAllService(
     }
 
     private async Task<HashSet<string>> ReadPermanentSkipsAsync(
-        Guid tenantId,
         string correlationId,
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var details = await db.AuditEvents.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.Category == "track-rematch" &&
+            .Where(item => item.Category == "track-rematch" &&
                            item.CorrelationId == correlationId &&
                            item.Outcome.StartsWith("skipped_"))
             .Select(item => item.DetailsJson)
@@ -324,8 +321,14 @@ public sealed class TrackRematchAllService(
     internal static bool RequiresAuthorityGuard(string policyVersion) =>
         IsManagedPolicy(policyVersion);
 
+    private static void RequireScopeAuthority(TrackMatchActor actor, Guid? scopeOwnerUserId)
+    {
+        if (actor.UserId == Guid.Empty ||
+            (scopeOwnerUserId != actor.UserId && !actor.IsAdministrator))
+            throw new UnauthorizedAccessException("Only an administrator can rematch another user's tracks or all tracks.");
+    }
+
     internal static AuditEventRecord SuccessAudit(
-        Guid tenantId,
         Guid ownerUserId,
         Guid snapshotId,
         string correlationId,
@@ -333,7 +336,6 @@ public sealed class TrackRematchAllService(
         DateTimeOffset createdAt) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             ActorUserId = ownerUserId,
             Category = "track-rematch",
             Action = "automatic.review",
@@ -358,7 +360,6 @@ public sealed class TrackRematchAllService(
 
     private sealed record TrackRematchSourceKey(
         Guid OwnerUserId,
-        string LibraryScopeId,
         string Protocol,
         string BackendInstanceId,
         string BackendPrincipalId,
@@ -383,7 +384,6 @@ internal sealed record TrackRematchSnapshot(
     Guid ProviderAccountId,
     string ProviderId,
     string ExternalIdHash,
-    string LibraryScopeId,
     string Protocol,
     string BackendInstanceId,
     string BackendPrincipalId,
@@ -423,14 +423,15 @@ public sealed class TrackRematchAllJobHandler(
             payload.SnapshotFingerprint is not { Length: 64 } ||
             payload.ApprovedCount < 1 ||
             payload.TargetAlgorithmVersion != TrackMatchDecisionEngine.AlgorithmVersion ||
-            !context.Claim.TenantId.HasValue ||
             !context.Claim.OwnerUserId.HasValue)
             return DurableJobCompletion.Failure(
                 "track_rematch_payload_invalid",
                 "The rematch request is invalid or targets a retired matching algorithm.");
 
-        var tenantId = context.Claim.TenantId.Value;
-        var work = await rematches.ReadWorkAsync(tenantId, payload, cancellationToken);
+        if (!await ValidateInitiatorAsync(context.Claim.OwnerUserId.Value, payload.ScopeOwnerUserId, cancellationToken))
+            return DurableJobCompletion.Failure(
+                "track_rematch_forbidden", "The rematch initiator is disabled or no longer authorized for this scope.");
+        var work = await rematches.ReadWorkAsync(payload, cancellationToken);
         if (work.ScopeChanged)
             return DurableJobCompletion.Failure(
                 "track_rematch_scope_changed",
@@ -440,11 +441,10 @@ public sealed class TrackRematchAllJobHandler(
 
         var batch = work.Pending.Take(BatchSize).ToArray();
         var runtimes = await LoadRuntimesAsync(
-            tenantId,
             batch.Select(item => item.Snapshot.OwnerUserId).Distinct().ToArray(),
             cancellationToken);
         var protectedIds = await rematches.ReadProtectedOverrideIdsAsync(
-            tenantId, batch.Select(item => item.Snapshot.Id).ToArray(), cancellationToken);
+            batch.Select(item => item.Snapshot.Id).ToArray(), cancellationToken);
         var completed = Math.Max(0, payload.ApprovedCount - work.Pending.Count);
         var total = Math.Max(payload.ApprovedCount, completed + work.Pending.Count);
         var started = Stopwatch.GetTimestamp();
@@ -527,28 +527,32 @@ public sealed class TrackRematchAllJobHandler(
     }
 
     private async Task<IReadOnlyDictionary<Guid, RuntimeIdentity>> LoadRuntimesAsync(
-        Guid tenantId,
         IReadOnlyCollection<Guid> ownerUserIds,
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var users = await db.Users.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && ownerUserIds.Contains(item.Id))
+            .Where(item => item.Enabled && ownerUserIds.Contains(item.Id))
             .ToArrayAsync(cancellationToken);
-        var identities = await db.BackendIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && ownerUserIds.Contains(item.UserId))
-            .OrderByDescending(item => item.LastSeenAt)
-            .ToArrayAsync(cancellationToken);
-        var identitiesByUser = identities.GroupBy(item => item.UserId)
-            .ToDictionary(group => group.Key, group => group
-                .GroupBy(item => IdentityKey(
-                    item.BackendType, item.BackendInstanceId, item.PrincipalId))
-                .ToDictionary(values => values.Key, values => values.First().PrincipalId));
         return users.ToDictionary(
             user => user.Id,
             user => new RuntimeIdentity(
+                user.BackendType,
+                user.BackendInstanceId,
+                user.BackendPrincipalId,
                 user.DisplayName,
-                identitiesByUser.GetValueOrDefault(user.Id) ?? new Dictionary<string, string>()));
+                user.IsAdmin));
+    }
+
+    private async Task<bool> ValidateInitiatorAsync(
+        Guid initiatorUserId,
+        Guid? scopeOwnerUserId,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await db.Users.AsNoTracking().AnyAsync(user =>
+            user.Id == initiatorUserId && user.Enabled &&
+            (scopeOwnerUserId == initiatorUserId || user.IsAdmin), cancellationToken);
     }
 
     private ProtocolExecutionContext? CreateExecution(
@@ -564,37 +568,27 @@ public sealed class TrackRematchAllJobHandler(
             "subsonic" or "opensubsonic" => ProtocolKind.Subsonic,
             _ => (ProtocolKind?)null
         };
-        if (!protocol.HasValue ||
-            !runtime.PrincipalIds.TryGetValue(IdentityKey(
-                protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic",
-                snapshot.BackendInstanceId,
-                snapshot.BackendPrincipalId),
-                out var principalId))
+        if (!protocol.HasValue) return null;
+        var backendType = protocol.Value == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic";
+        if (runtime.BackendType != backendType ||
+            runtime.BackendInstanceId != snapshot.BackendInstanceId ||
+            runtime.BackendPrincipalId != snapshot.BackendPrincipalId)
             return null;
-        var tenantId = context.Claim.TenantId!.Value;
         return new(
             protocol.Value,
             snapshot.BackendInstanceId,
-            principalId,
+            runtime.BackendPrincipalId,
             new AllstarrPrincipal(
-                tenantId,
                 snapshot.OwnerUserId,
-                protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic",
+                backendType,
                 snapshot.BackendInstanceId,
-                principalId,
+                runtime.BackendPrincipalId,
                 runtime.DisplayName,
-                false),
+                runtime.IsAdministrator),
             context.Claim.CorrelationId,
             clock.UtcNow.AddMinutes(2),
-            cancellationToken,
-            libraryScopeId: snapshot.LibraryScopeId);
+            cancellationToken);
     }
-
-    private static string IdentityKey(
-        string backendType,
-        string backendInstanceId,
-        string principalId) =>
-        $"{backendType.Trim().ToLowerInvariant()}\n{backendInstanceId}\n{principalId}";
 
     private AuditEventRecord Audit(
         DurableJobExecutionContext context,
@@ -603,7 +597,6 @@ public sealed class TrackRematchAllJobHandler(
         int? decisionVersion) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = context.Claim.TenantId,
             ActorUserId = context.Claim.OwnerUserId,
             Category = "track-rematch",
             Action = "automatic.review",
@@ -628,8 +621,11 @@ public sealed class TrackRematchAllJobHandler(
     }
 
     private sealed record RuntimeIdentity(
+        string BackendType,
+        string BackendInstanceId,
+        string BackendPrincipalId,
         string DisplayName,
-        IReadOnlyDictionary<string, string> PrincipalIds);
+        bool IsAdministrator);
 }
 
 public sealed class TrackMatchAlgorithmRolloutService(

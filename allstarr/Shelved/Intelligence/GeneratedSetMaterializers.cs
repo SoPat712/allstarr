@@ -3,13 +3,15 @@ using allstarr.Core.Identity;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Intelligence;
 
 public abstract class BackendGeneratedSetMaterializer(
     IDbContextFactory<AllstarrDbContext> factory,
-    IBackendPlaylistTargetResolver targets) : IGeneratedSetMaterializer
+    IBackendPlaylistTargetResolver targets,
+    IBackendLibraryAccessResolver libraryAccess) : IGeneratedSetMaterializer
 {
     public abstract string Protocol { get; }
 
@@ -23,22 +25,21 @@ public abstract class BackendGeneratedSetMaterializer(
 
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var set = await db.GeneratedSets.AsNoTracking().SingleOrDefaultAsync(item => item.Id == request.GeneratedSetId &&
-            item.TenantId == request.Scope.TenantId && item.OwnerUserId == request.Scope.OwnerUserId &&
-            item.Protocol == request.Scope.Protocol && item.BackendInstanceId == request.Scope.BackendInstanceId &&
-            item.LibraryScopeId == request.Scope.LibraryScopeId, cancellationToken);
+            item.OwnerUserId == request.Scope.OwnerUserId && item.Protocol == request.Scope.Protocol &&
+            item.BackendInstanceId == request.Scope.BackendInstanceId, cancellationToken);
         if (set == null) return new(false, false, "generated_set_scope_unavailable");
-        var identity = await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == request.Scope.TenantId && item.UserId == request.Scope.OwnerUserId &&
-            item.BackendType == request.Scope.Protocol && item.BackendInstanceId == request.Scope.BackendInstanceId,
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == request.Scope.OwnerUserId && item.Enabled && item.BackendType == request.Scope.Protocol &&
+            item.BackendInstanceId == request.Scope.BackendInstanceId,
             cancellationToken);
-        if (identity == null) return new(false, false, "generated_set_backend_identity_unavailable");
+        if (user == null) return new(false, false, "generated_set_backend_identity_unavailable");
 
         string? credentialReference = null;
         if (Protocol == "subsonic")
         {
             if (set.TargetCredentialReferenceId is not { } credentialId || !await db.SecretReferences.AsNoTracking().AnyAsync(item =>
-                    item.Id == credentialId && item.TenantId == set.TenantId &&
-                    item.BackendIdentityId == identity.Id && item.Purpose == BackendCredentialScope.SubsonicPurpose &&
+                    item.Id == credentialId && item.UserId == user.Id &&
+                    item.Purpose == BackendCredentialScope.SubsonicPurpose &&
                     item.RevokedAt == null,
                     cancellationToken))
                 return new(false, false, "generated_set_subsonic_credential_unavailable");
@@ -48,7 +49,7 @@ public abstract class BackendGeneratedSetMaterializer(
             return new(false, false, "generated_set_jellyfin_credential_not_allowed");
 
         var entries = await db.GeneratedSetEntries.Where(item => item.GeneratedSetId == set.Id &&
-            item.TenantId == set.TenantId && item.OwnerUserId == set.OwnerUserId).OrderBy(item => item.Position)
+            item.OwnerUserId == set.OwnerUserId).OrderBy(item => item.Position)
             .ToListAsync(cancellationToken);
         var candidates = request.OrderedCandidates.GroupBy(item => item.TrackKey, StringComparer.Ordinal)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Score).First(), StringComparer.Ordinal);
@@ -76,16 +77,16 @@ public abstract class BackendGeneratedSetMaterializer(
         if (orderedIds.Count == 0) return new(false, false, "generated_set_has_no_local_matches");
 
         var target = targets.Resolve(Protocol);
-        var targetContext = new BackendPlaylistTargetContext(set.BackendInstanceId, identity.PrincipalId,
-            credentialReference, set.TenantId);
+        var targetContext = new BackendPlaylistTargetContext(set.BackendInstanceId, user.BackendPrincipalId,
+            credentialReference);
         var name = SafeName(set.Name, set.ScheduleId ?? set.Id);
         BackendPlaylistSnapshot? before = null;
         if (set.ScheduleId is { } scheduleId)
         {
             var previousTargetId = await db.GeneratedSets.AsNoTracking().Where(item => item.Id != set.Id &&
-                    item.ScheduleId == scheduleId && item.TenantId == set.TenantId &&
+                    item.ScheduleId == scheduleId &&
                     item.OwnerUserId == set.OwnerUserId && item.Protocol == set.Protocol &&
-                    item.BackendInstanceId == set.BackendInstanceId && item.LibraryScopeId == set.LibraryScopeId &&
+                    item.BackendInstanceId == set.BackendInstanceId &&
                     item.MaterializationState == GeneratedSetMaterializationState.Succeeded &&
                     item.BackendPlaylistId != null).OrderByDescending(item => item.MaterializedAt)
                 .Select(item => item.BackendPlaylistId).FirstOrDefaultAsync(cancellationToken);
@@ -121,15 +122,14 @@ public abstract class BackendGeneratedSetMaterializer(
             TargetRevision: write.Value.Snapshot.NativeRevision ?? write.Value.Snapshot.Fingerprint);
     }
 
-    private static async Task<LibraryTrackRecord?> ResolveLocalAsync(AllstarrDbContext db, IntelligenceScope scope,
+    private async Task<LibraryTrackRecord?> ResolveLocalAsync(AllstarrDbContext db, IntelligenceScope scope,
         RecommendationTrackIdentity? identity, CancellationToken cancellationToken)
     {
         if (identity == null) return null;
-        var local = db.LibraryTracks.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
-            item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
-            item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId);
+        var local = (await LocalRecommendationCatalog.ScopedAsync(db, scope, libraryAccess, cancellationToken)).AsNoTracking();
         if (!string.IsNullOrWhiteSpace(identity.BackendItemId))
-            return await local.SingleOrDefaultAsync(item => item.BackendItemId == identity.BackendItemId, cancellationToken);
+            return await local.Where(item => item.BackendItemId == identity.BackendItemId)
+                .OrderBy(item => item.Id).FirstOrDefaultAsync(cancellationToken);
         if (identity.LibraryTrackId is { } libraryTrackId)
             return await local.SingleOrDefaultAsync(item => item.Id == libraryTrackId, cancellationToken);
         if (!string.IsNullOrWhiteSpace(identity.MusicBrainzRecordingId))
@@ -138,9 +138,15 @@ public abstract class BackendGeneratedSetMaterializer(
             return await UniqueAsync(local.Where(item => item.Isrc == identity.Isrc), cancellationToken);
         if (!string.IsNullOrWhiteSpace(identity.ProviderId) && !string.IsNullOrWhiteSpace(identity.ProviderTrackId))
         {
-            var canonicalIds = await db.ProviderTrackIdentities.AsNoTracking().Where(item => item.TenantId == scope.TenantId &&
+            var canonicalIds = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
                 item.ProviderId == identity.ProviderId && item.ExternalId == identity.ProviderTrackId &&
-                item.Verification != ProviderIdentityVerification.Unknown).Select(item => (Guid?)item.CanonicalRecordingId)
+                item.Verification != ProviderIdentityVerification.Unknown &&
+                (item.Scope == ProviderIdentityScope.Catalog ||
+                 (item.Scope == ProviderIdentityScope.Account && item.ProviderAccountId != null &&
+                  db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                      account.ProviderId == item.ProviderId && account.Enabled &&
+                      (account.OwnerUserId == null || account.OwnerUserId == scope.OwnerUserId)))))
+                .Select(item => (Guid?)item.CanonicalRecordingId)
                 .Distinct().Take(2).ToListAsync(cancellationToken);
             if (canonicalIds.Count == 1) return await UniqueAsync(local.Where(item => item.CanonicalRecordingId == canonicalIds[0]), cancellationToken);
         }
@@ -148,7 +154,12 @@ public abstract class BackendGeneratedSetMaterializer(
     }
 
     private static async Task<LibraryTrackRecord?> UniqueAsync(IQueryable<LibraryTrackRecord> query, CancellationToken token)
-    { var values = await query.Take(2).ToListAsync(token); return values.Count == 1 ? values[0] : null; }
+    {
+        var backendItemIds = await query.Select(item => item.BackendItemId).Distinct().Take(2).ToListAsync(token);
+        if (backendItemIds.Count != 1) return null;
+        return await query.Where(item => item.BackendItemId == backendItemIds[0])
+            .OrderBy(item => item.Id).FirstOrDefaultAsync(token);
+    }
 
     private static void AddResult(GeneratedSetEntryRecord entry, string code, double weight, string explanation)
     {
@@ -182,11 +193,11 @@ public abstract class BackendGeneratedSetMaterializer(
 }
 
 public sealed class JellyfinGeneratedSetMaterializer(IDbContextFactory<AllstarrDbContext> factory,
-    IBackendPlaylistTargetResolver targets) : BackendGeneratedSetMaterializer(factory, targets)
+    IBackendPlaylistTargetResolver targets, IBackendLibraryAccessResolver libraryAccess) : BackendGeneratedSetMaterializer(factory, targets, libraryAccess)
 { public override string Protocol => "jellyfin"; }
 
 public sealed class SubsonicGeneratedSetMaterializer(IDbContextFactory<AllstarrDbContext> factory,
-    IBackendPlaylistTargetResolver targets) : BackendGeneratedSetMaterializer(factory, targets)
+    IBackendPlaylistTargetResolver targets, IBackendLibraryAccessResolver libraryAccess) : BackendGeneratedSetMaterializer(factory, targets, libraryAccess)
 { public override string Protocol => "subsonic"; }
 
 public static class GeneratedSetMaterializerRegistration

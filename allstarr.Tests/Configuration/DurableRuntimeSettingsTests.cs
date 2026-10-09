@@ -17,8 +17,9 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private TestFactory _factory = null!;
-    private Guid _tenantId;
     private Guid _userId;
+    private Guid _userB;
+    private Guid _disabledUser;
     private FakeClock _clock = null!;
 
     public async Task InitializeAsync()
@@ -26,10 +27,14 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new(_database.Options);
         await using var db = await _factory.CreateDbContextAsync();
-        _tenantId = Guid.CreateVersion7(); _userId = Guid.CreateVersion7();
+        _userId = Guid.CreateVersion7();
+        _userB = Guid.CreateVersion7();
+        _disabledUser = Guid.CreateVersion7();
         var now = DateTimeOffset.Parse("2026-07-13T12:00:00Z"); _clock = new(now);
-        db.Tenants.Add(new() { Id = _tenantId, Slug = "settings", Name = "Settings", CreatedAt = now });
-        db.Users.Add(new() { Id = _userId, TenantId = _tenantId, DisplayName = "Admin", Status = PlatformUserStatus.Active, CreatedAt = now, UpdatedAt = now });
+        db.Users.AddRange(
+            User(_userId, "settings-admin", "Admin", isAdmin: true, enabled: true, now: now),
+            User(_userB, "listener-b", "Listener B", isAdmin: false, enabled: true, now: now),
+            User(_disabledUser, "disabled", "Disabled", isAdmin: false, enabled: false, now: now));
         await db.SaveChangesAsync();
     }
 
@@ -37,12 +42,12 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     public async Task Get_ReportsBootstrapFallbackThenTypedDurableOverride()
     {
         var service = CreateService(new Dictionary<string, string?> { ["Cache:SearchResultsMinutes"] = "7" });
-        var fallback = await service.GetAsync(_tenantId, "Cache:SearchResultsMinutes");
+        var fallback = await service.GetAsync("Cache:SearchResultsMinutes");
         Assert.Equal(RuntimeSettingOrigin.Bootstrap, fallback.Origin);
         Assert.Equal(7, fallback.Value);
         Assert.Null(fallback.Revision);
 
-        var applied = await service.ApplyBatchAsync(_tenantId,
+        var applied = await service.ApplyBatchAsync(
             [new("Cache:SearchResultsMinutes", "12")], "webui", _userId);
         var persisted = Assert.Single(applied.Settings);
         Assert.Equal(RuntimeSettingOrigin.Durable, persisted.Origin);
@@ -59,30 +64,30 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     public async Task ApplyBatch_IsAtomicAndRejectsDeploymentOrSecretKeys()
     {
         var service = CreateService([]);
-        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(_tenantId,
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("Cache:LyricsDays", "20"), new("Jellyfin:ApiKey", "do-not-store")], "legacy-import"));
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
 
-        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(_tenantId,
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("Cache:LyricsDays", "0")], "webui"));
-        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(_tenantId,
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("Library:PlaylistsDirectory", "../outside")], "webui"));
-        Assert.Empty(await db.TenantRuntimeSettings.ToListAsync());
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
     }
 
     [Fact]
     public async Task ApplyBatch_UsesCreateOnlyAndOptimisticRevisionContracts()
     {
         var service = CreateService([]);
-        var created = await service.ApplyBatchAsync(_tenantId, [new("MusicBrainz:Enabled", "false")], "webui", _userId);
+        var created = await service.ApplyBatchAsync([new("MusicBrainz:Enabled", "false")], "webui", _userId);
         Assert.Equal(1, Assert.Single(created.Settings).Revision);
-        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.ApplyBatchAsync(_tenantId,
+        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.ApplyBatchAsync(
             [new("MusicBrainz:Enabled", "true")], "webui", _userId));
-        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.ApplyBatchAsync(_tenantId,
+        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.ApplyBatchAsync(
             [new("MusicBrainz:Enabled", "true", 99)], "webui", _userId));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
-        var updated = await service.ApplyBatchAsync(_tenantId,
+        var updated = await service.ApplyBatchAsync(
             [new("MusicBrainz:Enabled", "true", 1)], "webui", _userId);
         var value = Assert.Single(updated.Settings);
         Assert.Equal(2, value.Revision); Assert.Equal(true, value.Value);
@@ -93,13 +98,13 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     public async Task ProviderLists_AreNormalizedAndDuplicateIdsAreRejected()
     {
         var service = CreateService([]);
-        var result = await service.ApplyBatchAsync(_tenantId,
+        var result = await service.ApplyBatchAsync(
             [new("Providers:StreamingOrder", " Deezer, QOBUZ ")], "legacy-import");
         Assert.Equal("deezer,qobuz", Assert.Single(result.Settings).NormalizedValue);
-        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(_tenantId,
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
             [new("Providers:DownloadOrder", "deezer,DEEZER")], "legacy-import"));
 
-        var lyrics = await service.ApplyBatchAsync(_tenantId,
+        var lyrics = await service.ApplyBatchAsync(
             [new("Providers:LyricsOrder", "spotify,lyricsplus,apple-download,lrclib")], "legacy-import");
         Assert.Equal("spotify,apple-download,lrclib", Assert.Single(lyrics.Settings).NormalizedValue);
     }
@@ -115,14 +120,14 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             ["Qobuz:Quality"] = string.Empty
         });
 
-        var settings = await service.GetManyAsync(_tenantId, RuntimeSettingCatalog.Definitions.Keys);
+        var settings = await service.GetManyAsync(RuntimeSettingCatalog.Definitions.Keys);
         var bootstrap = settings["AppleDownload:BaseUrl"];
         Assert.Equal(RuntimeSettingOrigin.Bootstrap, bootstrap.Origin);
         Assert.Equal(string.Empty, bootstrap.Value);
         Assert.Equal(string.Empty, settings["Deezer:Quality"].Value);
         Assert.Equal(string.Empty, settings["Qobuz:Quality"].Value);
 
-        var applied = await service.ApplyBatchAsync(_tenantId,
+        var applied = await service.ApplyBatchAsync(
         [
             new("AppleDownload:BaseUrl", string.Empty),
             new("Deezer:Quality", string.Empty),
@@ -142,15 +147,55 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var service = CreateService([]);
         await using var db = await _factory.CreateDbContextAsync();
         await using var transaction = await db.Database.BeginTransactionAsync();
-        var staged = await service.StageBatchAsync(db, _tenantId,
+        var staged = await service.StageBatchAsync(db,
             [new("SpotifyApi:Enabled", "true")], "legacy-import", _userId);
         Assert.Single(staged);
         await db.SaveChangesAsync(); await transaction.RollbackAsync();
-        Assert.False(await db.TenantRuntimeSettings.AsNoTracking().AnyAsync());
+        Assert.False(await db.RuntimeSettings.AsNoTracking().AnyAsync());
     }
 
     [Fact]
-    public async Task DefaultTenantProjector_AppliesOperationalOptionsWithoutProjectingTenantPolicyOrSecrets()
+    public async Task HouseholdAndPersonalPreferences_RemainIsolatedByOwner()
+    {
+        var service = CreateService([]);
+        await service.ApplyBatchAsync(
+        [
+            new("Library:ExplicitFilter", "ExplicitOnly"),
+            new("Playback:ShowExternalLabel", "false"),
+            new("Playback:ShowExplicitLabel", "true")
+        ], "webui", _userId);
+        var beforeA = await service.GetPreferencesAsync(_userId);
+
+        var personalA = await service.UpdatePreferencesAsync(
+            _userId, new("CleanOnly", true, false), beforeA.Revision);
+        var household = await service.GetPreferencesAsync(null);
+        var inheritedB = await service.GetPreferencesAsync(_userB);
+
+        Assert.Equal(new ListeningPreferences("CleanOnly", true, false), personalA.Values);
+        Assert.Equal(new ListeningPreferences("ExplicitOnly", false, true), household.Values);
+        Assert.Equal(household.Values, inheritedB.Values);
+        Assert.False(personalA.UsesHouseholdDefaults);
+        Assert.True(inheritedB.UsesHouseholdDefaults);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.GetPreferencesAsync(_disabledUser));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var personalRows = await db.RuntimeSettings.AsNoTracking()
+            .Where(item => item.OwnerUserId == _userId)
+            .ToListAsync();
+        Assert.Equal(3, personalRows.Count);
+        Assert.All(personalRows, item => Assert.Contains(item.Key, new[]
+        {
+            "Library:ExplicitFilter",
+            "Playback:ShowExternalLabel",
+            "Playback:ShowExplicitLabel"
+        }));
+        Assert.DoesNotContain(await db.RuntimeSettings.AsNoTracking().ToListAsync(),
+            item => item.OwnerUserId == _userB);
+    }
+
+    [Fact]
+    public async Task Service_AppliesLiveOperationalOptionsWithoutProjectingSecretsOrBootstrapOverrides()
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -160,19 +205,6 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             ["MULTI_PROVIDER_STREAMING_ORDER"] = "qobuz"
         }).Build();
         var signal = new RuntimeSettingsChangeSignal();
-        var service = new DurableRuntimeSettingsService(_factory, configuration, _clock, signal);
-        await service.ApplyBatchAsync(_tenantId,
-        [
-            new(ProviderAccountOptions.ListenerConnectionsKey, "false"),
-            new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "FLAC"),
-            new("Providers:StreamingOrder", "deezer,qobuz"), new("Library:DownloadMode", "Album"),
-            new("AppleDownload:BaseUrl", "http://apple-gateway.lan/base"),
-            new("AppleDownload:Quality", "alac-24-96"),
-            new("Qobuz:Quality", "FLAC_24_LOW"),
-            new("Matching:LocalPreferencePercent", "11"),
-            new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
-            new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
-        ], "webui", _userId);
         var cache = new CacheSettings();
         var deezer = new DeezerSettings { Arl = "bootstrap-secret", Quality = "MP3_128" };
         var qobuz = new QobuzSettings { Quality = "MP3_320" };
@@ -184,24 +216,38 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var spotifyApi = new SpotifyApiSettings();
         var spotifyImport = new SpotifyImportSettings();
         var jellyfin = new JellyfinSettings(); var subsonic = new SubsonicSettings();
-        var identity = new IdentityOptions { DefaultTenantId = _tenantId.ToString() };
         var accounts = new ProviderAccountOptions();
-        var projector = new DefaultTenantRuntimeSettingsProjector(service, signal, identity, configuration,
+        var liveOptions = new RuntimeSettingsLiveOptions(configuration,
             Options.Create(cache), Options.Create(deezer), Options.Create(qobuz), Options.Create(apple),
             Options.Create(spotifyApi), Options.Create(spotifyImport),
             Options.Create(new MusicBrainzSettings()), Options.Create(new ScrobblingSettings()), Options.Create(jellyfin), Options.Create(subsonic),
-            NullLogger<DefaultTenantRuntimeSettingsProjector>.Instance, accounts);
-        await projector.StartAsync(CancellationToken.None);
+            accounts);
+        var service = new DurableRuntimeSettingsService(_factory, configuration, _clock, signal,
+            liveOptions, NullLogger<DurableRuntimeSettingsService>.Instance);
+        await service.ApplyBatchAsync(
+        [
+            new(ProviderAccountOptions.ListenerConnectionsKey, "false"),
+            new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "FLAC"),
+            new("Providers:StreamingOrder", "deezer,qobuz"), new("Library:DownloadMode", "Album"),
+            new("AppleDownload:BaseUrl", "http://apple-gateway.lan/base"),
+            new("AppleDownload:Quality", "alac-24-96"),
+            new("Qobuz:Quality", "FLAC_24_LOW"),
+            new("Matching:LocalPreferencePercent", "11"),
+            new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
+            new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
+        ], "webui", _userId);
         Assert.False(accounts.ListenersCanConnectOwnAccounts);
+        await service.StartAsync(CancellationToken.None);
         for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 15; attempt++) await Task.Delay(10);
-        var migrated = await service.GetAsync(_tenantId, AudioQualityPolicy.SettingKey);
+        var migrated = await service.GetAsync(AudioQualityPolicy.SettingKey);
         Assert.Equal(RuntimeSettingOrigin.Durable, migrated.Origin);
         Assert.Equal("HiResLossless", migrated.Value);
-        await service.ApplyBatchAsync(_tenantId,
+        await service.ApplyBatchAsync(
             [new(ProviderAccountOptions.ListenerConnectionsKey, "true", 1), new("Cache:SearchResultsMinutes", "22", 1), new(AudioQualityPolicy.SettingKey, "CdLossless", migrated.Revision)],
             "webui", _userId);
-        for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 22; attempt++) await Task.Delay(10);
-        await projector.StopAsync(CancellationToken.None);
+        Assert.True(accounts.ListenersCanConnectOwnAccounts);
+        Assert.Equal(22, cache.SearchResultsMinutes);
+        await service.StopAsync(CancellationToken.None);
 
         Assert.True(accounts.ListenersCanConnectOwnAccounts);
         Assert.Equal(22, cache.SearchResultsMinutes); Assert.Equal("MP3_128", deezer.Quality);
@@ -229,6 +275,26 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         return new(_factory, config, _clock, new RuntimeSettingsChangeSignal());
     }
+
+    private static UserRecord User(
+        Guid id,
+        string backendPrincipalId,
+        string displayName,
+        bool isAdmin,
+        bool enabled,
+        DateTimeOffset now) => new()
+        {
+            Id = id,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = backendPrincipalId,
+            DisplayName = displayName,
+            IsAdmin = isAdmin,
+            Enabled = enabled,
+            CreatedAt = now,
+            UpdatedAt = now,
+            LastSeenAt = now
+        };
 
     public async Task DisposeAsync()
     {

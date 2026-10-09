@@ -63,9 +63,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var occurrenceKey = payload.OccurrenceKey ?? payload.SignalKey;
         var occurrence = await db.ListeningEvents.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == payload.Scope.TenantId && item.OwnerUserId == payload.Scope.OwnerUserId &&
+            item.OwnerUserId == payload.Scope.OwnerUserId &&
             item.Protocol == payload.Scope.Protocol && item.BackendInstanceId == payload.Scope.BackendInstanceId &&
-            item.LibraryScopeId == payload.Scope.LibraryScopeId &&
             item.OccurrenceKey == occurrenceKey, cancellationToken);
         var item = occurrence == null || string.IsNullOrWhiteSpace(occurrence.Title) || string.IsNullOrWhiteSpace(occurrence.Artist)
             ? await trackResolver.ResolveAsync(payload, cancellationToken)
@@ -104,7 +103,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
             {
                 if (!await target.IsConfiguredAsync(payload.Scope, cancellationToken)) continue;
                 providerIds.Add(target.ProviderId);
-                if (await checkpoints.IsCompletedAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken))
+                if (await checkpoints.IsCompletedAsync(payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken))
                 {
                     delivered |= completion;
                     checkpointedCount++;
@@ -112,7 +111,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 }
                 var result = await target.DeliverAsync(payload.Scope, payload.Transition, track, payload.PositionTicks,
                     occurredAt, checkpointKey, cancellationToken);
-                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId,
                     occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
                 switch (result.Outcome)
                 {
@@ -149,7 +148,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 failedCount++;
                 var result = ScopedPlaybackScrobbleResult.Permanent("unauthorized",
                     "Reconnect the selected scrobble account and replace its expired or revoked credentials.", true);
-                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId,
                     occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
                 permanentFailure ??= new("playback_scrobble_unauthorized", result.SafeMessage!, false);
             }
@@ -159,7 +158,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 failedCount++;
                 var result = ScopedPlaybackScrobbleResult.Permanent("account-incomplete",
                     "The selected scrobble account needs configuration.");
-                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId,
                     occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
                 permanentFailure ??= new("playback_scrobble_account_incomplete", result.SafeMessage!, false);
             }
@@ -169,14 +168,14 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 retryingCount++;
                 var result = ScopedPlaybackScrobbleResult.Retrying("transport-failure",
                     "The scoped scrobble target could not be reached.");
-                await checkpoints.RecordAsync(payload.Scope.TenantId, payload.Scope.OwnerUserId,
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId,
                     occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
                 retryableFailure ??= new("playback_scrobble_retrying", result.SafeMessage!, true);
             }
         }
         if (delivered)
         {
-            activity?.MarkDelivered(payload.Scope.TenantId, payload.Scope.OwnerUserId, payload.ItemId, payload.DeviceId);
+            activity?.MarkDelivered(payload.Scope.OwnerUserId, payload.ItemId, payload.DeviceId);
         }
         if (providerIds.Count > 0)
         {
@@ -215,7 +214,6 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 db.AuditEvents.Add(new AuditEventRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = payload.Scope.TenantId,
                     ActorUserId = payload.Scope.OwnerUserId,
                     Category = "scrobble",
                     Action = completion ? "delivered" : "now-playing",
@@ -266,7 +264,7 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
         var inferredStart = payload.ObservedAt - TimeSpan.FromTicks(Math.Max(0, payload.PositionTicks ?? 0));
         var occurrence = payload.PlaySessionId ??
                          $"{payload.DeviceId}:{inferredStart.ToUnixTimeSeconds() / 30}";
-        var identity = $"{payload.Scope.TenantId:N}|{payload.Scope.OwnerUserId:N}|{occurrence}|{payload.ItemId}|completed";
+        var identity = $"{payload.Scope.OwnerUserId:N}|{occurrence}|{payload.ItemId}|completed";
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
     }
 

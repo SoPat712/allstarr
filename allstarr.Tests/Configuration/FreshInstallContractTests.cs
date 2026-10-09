@@ -98,7 +98,7 @@ public sealed class FreshInstallContractTests
                 .Select(File.ReadAllText));
         foreach (var durableEntity in new[]
                  {
-                     "AdminAuthSession", "ProviderAccount", "TenantRuntimeSetting",
+                     "AdminAuthSession", "ProviderAccount", "RuntimeSetting",
                      "PlaylistLink", "PlaylistSourceSnapshot", "PlaylistSyncRun",
                      "TrackMatch", "DurableJob",
                      "ProviderHealthSample", "AuditEvent", "ExtensionPackage"

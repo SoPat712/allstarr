@@ -121,7 +121,8 @@ public sealed class ManagedProviderAccountHealthWarmupService(
     {
         using var lease = await secretStore.OpenAsync(
             account.SecretReferenceId!.Value,
-            new SecretAccessContext(account.TenantId, AllowGlobal: account.TenantId == null),
+            new SecretAccessContext(account.OwnerUserId,
+                $"provider-account:{account.ProviderId}:{account.Id:N}", AllowShared: account.OwnerUserId == null),
             cancellationToken);
         using var document = JsonDocument.Parse(lease.Value);
         if (document.RootElement.ValueKind != JsonValueKind.Object)

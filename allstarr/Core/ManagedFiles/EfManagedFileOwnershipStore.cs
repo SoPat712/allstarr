@@ -165,9 +165,7 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
         FileSystemFileId = record.FileSystemFileId,
         FileSystemLinkCount = record.FileSystemLinkCount,
         PlacementMethod = record.PlacementMethod,
-        TenantId = record.TenantId ?? throw new InvalidOperationException("Managed files require tenant ownership."),
         OwnerUserId = record.OwnerUserId,
-        LibraryScopeId = record.LibraryScopeId,
         SourceJobId = record.SourceJobId,
         ScopeKey = record.ScopeKey,
         ReferenceCount = record.ReferenceCount,
@@ -180,7 +178,6 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
     {
         Id = reference.Id,
         ManagedFileId = reference.ManagedFileId,
-        TenantId = reference.TenantId,
         OwnerUserId = reference.OwnerUserId,
         ScopeKey = reference.ScopeKey,
         ReferenceKey = reference.ReferenceKey,
@@ -191,7 +188,7 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
 
     private static ManagedFileRecord? Map(ManagedFileOwnershipEntity? item) => item is null ? null : new(
         item.Id, item.RootId, item.CanonicalPath, item.ContentSha256, item.Length, item.PlacementMethod,
-        item.TenantId, item.OwnerUserId, item.LibraryScopeId, item.SourceJobId, item.ScopeKey,
+        item.OwnerUserId, item.SourceJobId, item.ScopeKey,
         item.ReferenceCount, item.IsManaged, item.CreatedAt)
     {
         TargetRootPath = item.TargetRootPath,
@@ -202,8 +199,10 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
 
     private static void ValidateReference(ManagedFileRecord record, ManagedFileReference reference)
     {
-        if (reference.ManagedFileId != record.Id || reference.TenantId != record.TenantId ||
-            reference.OwnerUserId != record.OwnerUserId ||
+        if (!StringComparer.Ordinal.Equals(
+                record.ScopeKey,
+                ManagedFileScopeKey.Create(record.OwnerUserId, record.RootId)) ||
+            reference.ManagedFileId != record.Id || reference.OwnerUserId != record.OwnerUserId ||
             !StringComparer.Ordinal.Equals(reference.ScopeKey, record.ScopeKey))
             throw new UnauthorizedAccessException("The managed-file reference is outside its ownership scope.");
         if (string.IsNullOrWhiteSpace(reference.ReferenceKey) || reference.ReferenceKey.Length > 1000)

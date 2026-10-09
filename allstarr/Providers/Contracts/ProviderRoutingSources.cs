@@ -25,7 +25,6 @@ public sealed class DurableProviderRouteAccountResolver(
 
         var backend = request.Actor.BackendPrincipal;
         var principal = new AllstarrPrincipal(
-            request.Actor.TenantId,
             userId.Value,
             backend?.BackendType ?? "system-job",
             backend?.BackendInstanceId ?? "durable-job",
@@ -38,7 +37,6 @@ public sealed class DurableProviderRouteAccountResolver(
                 request.ProviderId,
                 CapabilityName(request.Capability),
                 request.RequestedAccountId,
-                request.LibraryScopeId,
                 request.AllowedScopes,
                 request.AllowSharedAccount),
             cancellationToken);
@@ -63,9 +61,7 @@ public sealed class DurableProviderRouteAccountResolver(
                 account.Scope,
                 account.Revision,
                 account.Enabled,
-                account.TenantId,
                 account.OwnerUserId,
-                null,
                 resolved.Reason.Replace('_', '-'),
                 account.SecretReferenceId),
             account.Revision);

@@ -10,7 +10,7 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
 
     public ProviderTransientDownloadWorkspace CreateTransientWorkspace(ProviderDownloadWorkspaceRequest request)
     {
-        if (request.TenantId == Guid.Empty || request.DurableJobId == Guid.Empty ||
+        if (request.OwnerUserId == Guid.Empty || request.DurableJobId == Guid.Empty ||
             string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
             throw new ArgumentException("Download workspace lineage is incomplete.", nameof(request));
 
@@ -32,10 +32,10 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     }
     public async Task<ProviderDownloadWorkspace> CreateWorkspaceAsync(ProviderDownloadWorkspaceRequest request, CancellationToken cancellationToken = default)
     {
-        if (request.TenantId == Guid.Empty || request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
+        if (request.OwnerUserId == Guid.Empty || request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
             throw new ArgumentException("Download workspace lineage is incomplete.", nameof(request));
         var workspaceId = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            $"{request.TenantId:N}|{request.DurableJobId:N}|{request.ProviderId}|{request.ProviderAccountId:N}|{request.IdempotencyKey}"))).ToLowerInvariant();
+            $"{request.OwnerUserId:N}|{request.DurableJobId:N}|{request.ProviderId}|{request.ProviderAccountId:N}|{request.IdempotencyKey}"))).ToLowerInvariant();
         var root = WorkspaceRoot();
         var directory = Contained(root, workspaceId);
         Directory.CreateDirectory(directory);
@@ -44,10 +44,8 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         {
             Id = Guid.CreateVersion7(),
             WorkspaceId = workspaceId,
-            TenantId = request.TenantId,
             OwnerUserId = request.OwnerUserId,
             DurableJobId = request.DurableJobId,
-            LibraryScopeId = request.LibraryScopeId,
             ProviderId = request.ProviderId.Trim().ToLowerInvariant(),
             ProviderAccountId = request.ProviderAccountId,
             IdempotencyKey = request.IdempotencyKey,
@@ -164,10 +162,8 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             Id = Guid.CreateVersion7(),
             WorkspaceRecordId = persistedWorkspace.Id,
             WorkspaceId = persistedWorkspace.WorkspaceId,
-            TenantId = persistedWorkspace.TenantId,
             OwnerUserId = persistedWorkspace.OwnerUserId,
             DurableJobId = persistedWorkspace.DurableJobId,
-            LibraryScopeId = persistedWorkspace.LibraryScopeId,
             ProviderId = persistedWorkspace.ProviderId,
             ProviderAccountId = persistedWorkspace.ProviderAccountId,
             ProviderArtifactId = output.ArtifactId,
@@ -227,9 +223,9 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         Directory.Delete(directory, recursive: true);
     }
 
-    public async Task<VerifiedProviderDownloadArtifact?> FindByJobAsync(Guid tenantId, Guid jobId, string providerId, CancellationToken cancellationToken = default)
+    public async Task<VerifiedProviderDownloadArtifact?> FindByJobAsync(Guid jobId, string providerId, CancellationToken cancellationToken = default)
     {
-        var item = await store.FindByJobAsync(tenantId, jobId, providerId, cancellationToken);
+        var item = await store.FindByJobAsync(jobId, providerId, cancellationToken);
         if (item is null) return null;
         if (item.State != ProviderDownloadArtifactState.Verified)
             return Result(item, Contained(Contained(WorkspaceRoot(), item.WorkspaceId), item.RelativePath));
@@ -326,10 +322,9 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     }
 
     private static VerifiedProviderDownloadArtifact Result(ProviderDownloadArtifactEntity item, string path) => new(
-        item.Id, item.WorkspaceRecordId, path, item.ContentSha256, item.Length, item.TenantId, item.OwnerUserId,
+        item.Id, item.WorkspaceRecordId, path, item.ContentSha256, item.Length, item.OwnerUserId,
         item.DurableJobId, item.ProviderId, item.ProviderAccountId, item.State, item.ManagedFileId)
     {
-        LibraryScopeId = item.LibraryScopeId,
         MimeType = item.MimeType,
         Container = item.Container,
         Codec = item.Codec,

@@ -16,7 +16,7 @@ public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessio
     public async Task Stream(CancellationToken cancellationToken)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession { TenantId: { } tenantId } session ||
+            value is not AdminAuthSession { AllstarrUserId: not null } session ||
             (!session.IsAdministrator && !session.AllstarrUserId.HasValue))
         {
             Response.StatusCode = StatusCodes.Status403Forbidden;
@@ -65,7 +65,7 @@ public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessio
             {
                 if (await sessions.GetValidSessionAsync(session.SessionId, token) == null) break;
                 var updates = await feed.ReadAsync(
-                    new AdminUpdateScope(tenantId, session.AllstarrUserId, session.IsAdministrator),
+                    new AdminUpdateScope(session.AllstarrUserId, session.IsAdministrator),
                     cursor,
                     100,
                     token);

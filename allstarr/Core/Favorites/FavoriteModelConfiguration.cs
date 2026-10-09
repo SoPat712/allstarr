@@ -16,7 +16,6 @@ public static class FavoriteModelConfiguration
             entity.Property(item => item.Protocol).HasMaxLength(32).IsRequired();
             entity.Property(item => item.BackendInstanceId).HasMaxLength(200).IsRequired();
             entity.Property(item => item.BackendPrincipalId).HasMaxLength(300).IsRequired();
-            entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
             entity.Property(item => item.ItemId).HasMaxLength(500).IsRequired();
             entity.Property(item => item.Operation).HasConversion<string>().HasMaxLength(32);
             entity.Property(item => item.SourceRevision).HasMaxLength(300).IsRequired();
@@ -28,15 +27,14 @@ public static class FavoriteModelConfiguration
             entity.Property(item => item.LastErrorCode).HasMaxLength(100);
             entity.Property(item => item.LastErrorMessage).HasMaxLength(1000);
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasAlternateKey(item => new { item.Id, item.TenantId, item.OwnerUserId });
+            entity.HasAlternateKey(item => new { item.Id, item.OwnerUserId });
             entity.HasIndex(item => item.EventKey).IsUnique().HasDatabaseName("IX_favorite_event_key");
-            entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.CreatedAt })
+            entity.HasIndex(item => new { item.OwnerUserId, item.CreatedAt })
                 .HasDatabaseName("IX_favorite_event_owner_created");
             entity.HasIndex(item => item.JobId).HasDatabaseName("IX_favorite_event_job");
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId).OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.OwnerUserId)
+                .HasPrincipalKey(item => item.Id).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(item => item.JobId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -53,13 +51,13 @@ public static class FavoriteModelConfiguration
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.EventId, item.ActionType }).IsUnique()
                 .HasDatabaseName("IX_favorite_action_type");
-            entity.HasIndex(item => new { item.EventId, item.TenantId, item.OwnerUserId })
+            entity.HasIndex(item => new { item.EventId, item.OwnerUserId })
                 .HasDatabaseName("IX_favorite_action_event");
-            entity.HasIndex(item => new { item.TenantId, item.OwnerUserId, item.State })
+            entity.HasIndex(item => new { item.OwnerUserId, item.State })
                 .HasDatabaseName("IX_favorite_action_owner_state");
             entity.HasOne<FavoriteEventRecord>().WithMany()
-                .HasForeignKey(item => new { item.EventId, item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.Id, item.TenantId, item.OwnerUserId })
+                .HasForeignKey(item => new { item.EventId, item.OwnerUserId })
+                .HasPrincipalKey(item => new { item.Id, item.OwnerUserId })
                 .HasConstraintName("FK_favorite_action_event")
                 .OnDelete(DeleteBehavior.Cascade);
         });
@@ -75,20 +73,19 @@ public static class FavoriteModelConfiguration
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new
             {
-                item.TenantId,
                 item.OwnerUserId,
                 item.Protocol,
                 item.BackendInstanceId,
                 item.ItemId
             }).IsUnique().HasDatabaseName("IX_favorite_state_owner_target");
-            entity.HasIndex(item => new { item.LastEventId, item.TenantId, item.OwnerUserId })
+            entity.HasIndex(item => new { item.LastEventId, item.OwnerUserId })
                 .HasDatabaseName("IX_favorite_state_event");
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.OwnerUserId)
+                .HasPrincipalKey(item => item.Id).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<FavoriteEventRecord>().WithMany()
-                .HasForeignKey(item => new { item.LastEventId, item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.Id, item.TenantId, item.OwnerUserId })
+                .HasForeignKey(item => new { item.LastEventId, item.OwnerUserId })
+                .HasPrincipalKey(item => new { item.Id, item.OwnerUserId })
                 .HasConstraintName("FK_favorite_state_event")
                 .OnDelete(DeleteBehavior.Restrict);
         });

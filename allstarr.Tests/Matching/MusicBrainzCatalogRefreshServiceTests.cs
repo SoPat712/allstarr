@@ -130,8 +130,6 @@ public sealed class MusicBrainzCatalogRefreshServiceTests
             MusicBrainzCatalogRefreshJobHandler.Type,
             JsonSerializer.SerializeToElement(new MusicBrainzCatalogRefreshJobPayload(releaseId)),
             Guid.CreateVersion7(),
-            Guid.CreateVersion7(),
-            null,
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
@@ -240,8 +238,6 @@ public sealed class MusicBrainzCatalogRefreshServiceTests
         type,
         JsonSerializer.SerializeToElement(payload),
         Guid.CreateVersion7(),
-        Guid.CreateVersion7(),
-        null,
         null,
         null,
         JsonSerializer.SerializeToElement(new { }),
@@ -250,7 +246,6 @@ public sealed class MusicBrainzCatalogRefreshServiceTests
         DateTimeOffset.UtcNow.AddMinutes(1));
 
     private static ProviderActorContext Actor() => new(
-        Guid.CreateVersion7(),
         ProviderActorKind.User,
         Guid.CreateVersion7(),
         new ProviderBackendPrincipal("jellyfin", "fixture", "listener"));

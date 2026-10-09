@@ -28,7 +28,6 @@ public static class ProviderOrderPolicyCatalog
 }
 
 public sealed record EffectiveProviderPolicySnapshot(
-    Guid TenantId,
     ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>> ProviderOrders,
     ImmutableHashSet<string> DisabledProviders,
     string AudioQuality,
@@ -68,11 +67,10 @@ public sealed record EffectiveProviderPolicySnapshot(
 public interface IEffectiveProviderPolicyResolver
 {
     Task<EffectiveProviderPolicySnapshot> ResolveAsync(
-        Guid tenantId,
         CancellationToken cancellationToken = default);
 
     Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(
-        Guid tenantId, Guid userId, CancellationToken cancellationToken = default);
+        Guid userId, CancellationToken cancellationToken = default);
 }
 
 public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings settings)
@@ -87,21 +85,20 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
     ];
 
     public async Task<EffectiveProviderPolicySnapshot> ResolveAsync(
-        Guid tenantId,
-        CancellationToken cancellationToken = default) => await ResolveCoreAsync(tenantId, null, cancellationToken);
+        CancellationToken cancellationToken = default) => await ResolveCoreAsync(null, cancellationToken);
 
     public Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(
-        Guid tenantId, Guid userId, CancellationToken cancellationToken = default) =>
-        ResolveCoreAsync(tenantId, userId, cancellationToken);
+        Guid userId, CancellationToken cancellationToken = default) =>
+        ResolveCoreAsync(userId, cancellationToken);
 
     private async Task<EffectiveProviderPolicySnapshot> ResolveCoreAsync(
-        Guid tenantId, Guid? userId, CancellationToken cancellationToken)
+        Guid? userId, CancellationToken cancellationToken)
     {
-        if (tenantId == Guid.Empty)
-            throw new ArgumentException("A tenant is required.", nameof(tenantId));
+        if (userId == Guid.Empty)
+            throw new ArgumentException("A user is required.", nameof(userId));
 
-        var values = await settings.GetManyAsync(tenantId, Keys, cancellationToken);
-        var preferences = await settings.GetPreferencesAsync(tenantId, userId, cancellationToken);
+        var values = await settings.GetManyAsync(Keys, cancellationToken);
+        var preferences = await settings.GetPreferencesAsync(userId, cancellationToken);
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
             item => item.Capability,
             item => ((string[])values[item.SettingKey].Value).ToImmutableArray());
@@ -109,7 +106,6 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
 
         return new EffectiveProviderPolicySnapshot(
-            tenantId,
             orders,
             disabled,
             (string)values[AudioQualityPolicy.SettingKey].Value,

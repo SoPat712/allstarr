@@ -12,24 +12,17 @@ public sealed class AdminProtocolExecutionContextFactory(
 {
     public async Task<ProtocolExecutionContext> CreateAsync(
         AdminAuthSession session,
-        string? libraryScopeId,
         string correlationId,
         CancellationToken cancellationToken)
     {
-        var tenantId = session.TenantId ?? throw new UnauthorizedAccessException();
         var userId = session.AllstarrUserId ?? throw new UnauthorizedAccessException();
         var backendType = session.BackendType.Trim().ToLowerInvariant();
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var identity = await db.BackendIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId &&
-                           item.UserId == userId &&
-                           item.BackendType == backendType &&
-                           item.PrincipalId == session.UserId &&
-                           db.Users.Any(user => user.Id == userId && user.TenantId == tenantId &&
-                               user.Status == PlatformUserStatus.Active))
-            .OrderByDescending(item => item.LastSeenAt)
-            .FirstOrDefaultAsync(cancellationToken)
-            ?? throw new UnauthorizedAccessException("The linked backend identity is unavailable.");
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == userId && item.Enabled && item.BackendType == backendType &&
+            item.BackendInstanceId == session.BackendInstanceId &&
+            item.BackendPrincipalId == session.UserId && item.IsAdmin == session.IsAdministrator,
+            cancellationToken) ?? throw new UnauthorizedAccessException("The linked backend identity is unavailable.");
         var protocol = backendType switch
         {
             "jellyfin" => ProtocolKind.Jellyfin,
@@ -37,21 +30,19 @@ public sealed class AdminProtocolExecutionContextFactory(
             _ => throw new UnauthorizedAccessException("Unsupported backend identity.")
         };
         var principal = new AllstarrPrincipal(
-            tenantId,
             userId,
             protocol.ToString().ToLowerInvariant(),
-            identity.BackendInstanceId,
-            identity.PrincipalId,
-            session.UserName,
-            session.IsAdministrator);
+            user.BackendInstanceId,
+            user.BackendPrincipalId,
+            user.DisplayName,
+            user.IsAdmin);
         return new ProtocolExecutionContext(
             protocol,
-            identity.BackendInstanceId,
-            identity.PrincipalId,
+            user.BackendInstanceId,
+            user.BackendPrincipalId,
             principal,
             correlationId.Length <= 100 ? correlationId : correlationId[..100],
             clock.UtcNow.AddMinutes(5),
-            cancellationToken,
-            libraryScopeId: string.IsNullOrWhiteSpace(libraryScopeId) ? null : libraryScopeId.Trim());
+            cancellationToken);
     }
 }

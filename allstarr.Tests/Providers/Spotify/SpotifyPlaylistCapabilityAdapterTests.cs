@@ -380,22 +380,19 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
 
     private static ProviderExecutionContext Context(bool includeSecretReference = true)
     {
-        var tenant = Guid.Parse("11111111-1111-1111-1111-111111111111");
         var user = Guid.Parse("22222222-2222-2222-2222-222222222222");
         var account = new ProviderAccountContext(
             Guid.Parse("33333333-3333-3333-3333-333333333333"),
             "spotify",
             ProviderAccountScope.Personal,
             1,
-            tenantId: tenant,
             ownerUserId: user,
             secretReferenceId: includeSecretReference ? Guid.Parse("44444444-4444-4444-4444-444444444444") : null);
         return new(
-            new ProviderActorContext(tenant, ProviderActorKind.User, user,
+            new ProviderActorContext(ProviderActorKind.User, user,
                 new ProviderBackendPrincipal("jellyfin", "backend", "principal")),
             "spotify",
             account,
-            null,
             new ProviderExecutionPolicy(
                 new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow,

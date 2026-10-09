@@ -43,19 +43,16 @@ public sealed record BackendPlaylistTargetContext
     public BackendPlaylistTargetContext(
         string backendInstanceId,
         string verifiedPrincipalId,
-        string? credentialReference = null,
-        Guid? tenantId = null)
+        string? credentialReference = null)
     {
         BackendInstanceId = Required(backendInstanceId, nameof(backendInstanceId));
         VerifiedPrincipalId = Required(verifiedPrincipalId, nameof(verifiedPrincipalId));
         CredentialReference = string.IsNullOrWhiteSpace(credentialReference) ? null : credentialReference.Trim();
-        TenantId = tenantId;
     }
 
     public string BackendInstanceId { get; }
     public string VerifiedPrincipalId { get; }
     public string? CredentialReference { get; }
-    public Guid? TenantId { get; }
 
     private static string Required(string value, string parameterName) =>
         string.IsNullOrWhiteSpace(value)

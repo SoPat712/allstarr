@@ -42,14 +42,13 @@ public sealed record FavoriteEventStatus(
 public interface IFavoriteActionPipeline
 {
     Task<FavoriteEventReceipt> RecordAsync(FavoriteMutationRequest request, CancellationToken cancellationToken = default);
-    Task<FavoriteEventStatus?> GetStatusAsync(Guid tenantId, Guid userId, Guid eventId, CancellationToken cancellationToken = default);
+    Task<FavoriteEventStatus?> GetStatusAsync(Guid userId, Guid eventId, CancellationToken cancellationToken = default);
 }
 
 public sealed class FavoriteActionPipeline(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableJobQueue jobs,
-    IPlatformClock clock,
-    IProtocolLibraryScopeResolver? libraryScopes = null) : IFavoriteActionPipeline
+    IPlatformClock clock) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
@@ -59,20 +58,18 @@ public sealed class FavoriteActionPipeline(
     {
         ArgumentNullException.ThrowIfNull(request);
         var execution = request.ExecutionContext;
-        if (string.IsNullOrWhiteSpace(execution.LibraryScopeId) && libraryScopes != null)
-            execution = await libraryScopes.ResolveAsync(execution, request.ItemId, cancellationToken);
         var actor = execution.RequireActor();
         var userId = actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A canonical user is required.");
         var itemId = Required(request.ItemId, nameof(request.ItemId), 500);
         var sourceRevision = Required(request.SourceRevision, nameof(request.SourceRevision), 300);
         var protocol = execution.Protocol.ToString().ToLowerInvariant();
         var backend = execution.BackendInstanceId;
-        var eventKey = HashKey(actor.TenantId, userId, protocol, backend, itemId, request.Operation, sourceRevision);
+        var eventKey = HashKey(userId, protocol, backend, itemId, request.Operation, sourceRevision);
         var now = clock.UtcNow;
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var latest = await context.Set<FavoriteEventRecord>().AsNoTracking()
-            .Where(item => item.TenantId == actor.TenantId && item.OwnerUserId == userId &&
+            .Where(item => item.OwnerUserId == userId &&
                            item.Protocol == protocol && item.BackendInstanceId == backend && item.ItemId == itemId)
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Select(item => new { item.Id, item.JobId, item.Operation, item.SourceRevision, item.State })
@@ -86,7 +83,7 @@ public sealed class FavoriteActionPipeline(
         // Repeated notifications for the current lifecycle still collapse to one event.
         if (latest != null && latest.Operation != request.Operation)
         {
-            eventKey = HashKey(actor.TenantId, userId, protocol, backend, itemId, request.Operation,
+            eventKey = HashKey(userId, protocol, backend, itemId, request.Operation,
                 $"{sourceRevision}:after:{latest.Id:N}");
         }
         var existing = await context.Set<FavoriteEventRecord>().AsNoTracking()
@@ -108,7 +105,7 @@ public sealed class FavoriteActionPipeline(
         var eventId = Guid.CreateVersion7();
         if (request.Operation == FavoriteOperation.Unfavorite)
         {
-            await CancelPendingFavoriteWorkAsync(context, actor.TenantId, userId, protocol, backend, itemId, now, cancellationToken);
+            await CancelPendingFavoriteWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken);
         }
 
         var actionTypes = BuildActions(request.Operation, itemId);
@@ -118,19 +115,16 @@ public sealed class FavoriteActionPipeline(
                 JobType,
                 eventKey,
                 new FavoriteJobPayload(eventId),
-                actor.TenantId,
                 userId,
                 CorrelationId: execution.CorrelationId),
             cancellationToken);
         var record = new FavoriteEventRecord
         {
             Id = eventId,
-            TenantId = actor.TenantId,
             OwnerUserId = userId,
             Protocol = protocol,
             BackendInstanceId = backend,
             BackendPrincipalId = execution.VerifiedBackendPrincipalId,
-            LibraryScopeId = execution.LibraryScopeId,
             ItemId = itemId,
             Operation = request.Operation,
             SourceRevision = sourceRevision,
@@ -153,7 +147,6 @@ public sealed class FavoriteActionPipeline(
             {
                 Id = Guid.CreateVersion7(),
                 EventId = eventId,
-                TenantId = actor.TenantId,
                 OwnerUserId = userId,
                 ActionType = actionType,
                 IdempotencyKey = $"{eventKey}:{actionType}",
@@ -180,14 +173,13 @@ public sealed class FavoriteActionPipeline(
     }
 
     public async Task<FavoriteEventStatus?> GetStatusAsync(
-        Guid tenantId,
         Guid userId,
         Guid eventId,
         CancellationToken cancellationToken = default)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var item = await context.Set<FavoriteEventRecord>().AsNoTracking().SingleOrDefaultAsync(
-            candidate => candidate.Id == eventId && candidate.TenantId == tenantId && candidate.OwnerUserId == userId,
+            candidate => candidate.Id == eventId && candidate.OwnerUserId == userId,
             cancellationToken);
         if (item == null) return null;
         var actions = await context.Set<FavoriteActionRecord>().AsNoTracking()
@@ -207,11 +199,11 @@ public sealed class FavoriteActionPipeline(
             ? [VirtualLikedAction, "download"]
             : [VirtualLikedAction];
 
-    private async Task CancelPendingFavoriteWorkAsync(AllstarrDbContext context, Guid tenantId, Guid userId,
+    private async Task CancelPendingFavoriteWorkAsync(AllstarrDbContext context, Guid userId,
         string protocol, string backend, string itemId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var priorEvents = await context.Set<FavoriteEventRecord>()
-            .Where(item => item.TenantId == tenantId && item.OwnerUserId == userId && item.Protocol == protocol &&
+            .Where(item => item.OwnerUserId == userId && item.Protocol == protocol &&
                            item.BackendInstanceId == backend && item.ItemId == itemId &&
                            item.Operation == FavoriteOperation.Favorite && item.State == FavoriteEventState.Pending)
             .ToListAsync(cancellationToken);
@@ -247,10 +239,10 @@ public sealed class FavoriteActionPipeline(
         }
     }
 
-    private static string HashKey(Guid tenant, Guid user, string protocol, string backend, string item,
+    private static string HashKey(Guid user, string protocol, string backend, string item,
         FavoriteOperation operation, string revision)
     {
-        var value = string.Join('\n', tenant.ToString("N"), user.ToString("N"), protocol, backend, item,
+        var value = string.Join('\n', user.ToString("N"), protocol, backend, item,
             operation.ToString(), revision);
         return Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
     }

@@ -58,13 +58,11 @@ public sealed class BuiltInLyricsCapabilityAdapterTests
 
     private static ProviderExecutionContext Context(string providerId) => new(
         new ProviderActorContext(
-            Guid.CreateVersion7(),
             ProviderActorKind.User,
             Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "primary", "user")),
         providerId,
         account: null,
-        library: null,
         new ProviderExecutionPolicy(
             new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
             ProviderExplicitContentPolicy.Allow,

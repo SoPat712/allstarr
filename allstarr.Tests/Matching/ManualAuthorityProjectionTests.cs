@@ -17,7 +17,6 @@ public sealed class ManualAuthorityProjectionTests
         var snapshot = new ExternalMetadataSnapshotRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = Guid.CreateVersion7(),
             OwnerUserId = viewer,
             ProviderId = "spotify",
             BackendInstanceId = "backend",

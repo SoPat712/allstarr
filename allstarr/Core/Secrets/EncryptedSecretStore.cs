@@ -9,13 +9,13 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Secrets;
 
-public sealed record SecretAccessContext(Guid? TenantId, bool AllowGlobal = false);
+public sealed record SecretAccessContext(Guid? UserId, string Purpose, bool AllowShared = false);
 
 public sealed record BackendCredentialGrant(Guid ReferenceId, DateTimeOffset UpdatedAt);
 
 public sealed record SecretReferenceInfo(
     Guid Id,
-    Guid? TenantId,
+    Guid? UserId,
     string Purpose,
     int ActiveVersion,
     string KeyId,
@@ -74,7 +74,7 @@ public sealed class EncryptedSecretStore
     }
 
     public async Task<SecretReferenceInfo> StoreAsync(
-        Guid? tenantId,
+        Guid? userId,
         string purpose,
         ReadOnlyMemory<byte> plaintext,
         Guid? existingReferenceId = null,
@@ -84,7 +84,7 @@ public sealed class EncryptedSecretStore
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         var result = await StoreWithinTransactionAsync(
             context,
-            tenantId,
+            userId,
             purpose,
             plaintext,
             existingReferenceId,
@@ -100,7 +100,7 @@ public sealed class EncryptedSecretStore
     /// </summary>
     public async Task<SecretReferenceInfo> StoreWithinTransactionAsync(
         AllstarrDbContext context,
-        Guid? tenantId,
+        Guid? userId,
         string purpose,
         ReadOnlyMemory<byte> plaintext,
         Guid? existingReferenceId = null,
@@ -137,7 +137,7 @@ public sealed class EncryptedSecretStore
                                 item => item.Id == existingReferenceId.Value,
                                 cancellationToken)
                             ?? throw new KeyNotFoundException("Secret reference not found.");
-                EnsureTenantMatch(reference, new SecretAccessContext(tenantId, tenantId == null));
+                EnsureOwnerMatch(reference, new SecretAccessContext(userId, purpose.Trim(), userId == null));
                 if (reference.RevokedAt.HasValue)
                 {
                     throw new InvalidOperationException("A revoked secret reference cannot be replaced.");
@@ -153,7 +153,7 @@ public sealed class EncryptedSecretStore
                 reference = new SecretReferenceRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenantId,
+                    UserId = userId,
                     Purpose = purpose.Trim(),
                     CreatedAt = now,
                     UpdatedAt = now
@@ -210,20 +210,23 @@ public sealed class EncryptedSecretStore
             .SingleOrDefaultAsync(item => item.Id == account.AccountId, cancellationToken);
         if (current == null || !current.Enabled || !account.Enabled ||
             current.ProviderId != account.ProviderId || current.Revision != account.Revision ||
-            current.TenantId != account.TenantId || current.OwnerUserId != account.OwnerUserId ||
-            current.Scope != account.Scope || account.LibraryScopeId != null ||
+            current.OwnerUserId != account.OwnerUserId ||
+            current.Scope != account.Scope ||
             current.SecretReferenceId == null || current.SecretReferenceId != account.SecretReferenceId)
             throw new UnauthorizedAccessException("The provider account authorization is no longer current.");
 
+        if (current.OwnerUserId is { } owner && !await context.Users.AsNoTracking()
+                .AnyAsync(item => item.Id == owner && item.Enabled, cancellationToken))
+            throw new UnauthorizedAccessException("The provider account owner is unavailable.");
         var purpose = $"provider-account:{current.ProviderId}:{current.Id:N}";
         var referenceAllowed = await context.SecretReferences.AsNoTracking().AnyAsync(item =>
-            item.Id == current.SecretReferenceId && item.TenantId == current.TenantId &&
+            item.Id == current.SecretReferenceId && item.UserId == current.OwnerUserId &&
             item.Purpose == purpose && item.RevokedAt == null, cancellationToken);
         if (!referenceAllowed)
             throw new UnauthorizedAccessException("The credential does not belong to the selected provider account.");
 
         return await OpenAsync(current.SecretReferenceId.Value,
-            new SecretAccessContext(current.TenantId, AllowGlobal: current.OwnerUserId == null),
+            new SecretAccessContext(current.OwnerUserId, purpose, AllowShared: current.OwnerUserId == null),
             cancellationToken);
     }
 
@@ -232,9 +235,9 @@ public sealed class EncryptedSecretStore
     {
         if (principal.BackendType != "subsonic") throw new UnauthorizedAccessException();
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var identity = await RequireSubsonicIdentityAsync(db, principal.TenantId, principal.UserId,
+        var user = await RequireSubsonicUserAsync(db, principal.UserId,
             principal.BackendInstanceId, principal.BackendPrincipalId, cancellationToken);
-        return await PlaylistGrants(db, identity).OrderByDescending(item => item.UpdatedAt)
+        return await PlaylistGrants(db, user).OrderByDescending(item => item.UpdatedAt)
             .Select(item => new BackendCredentialGrant(item.Id, item.UpdatedAt)).FirstOrDefaultAsync(cancellationToken);
     }
 
@@ -246,16 +249,15 @@ public sealed class EncryptedSecretStore
             throw new ArgumentException("A backend password is required.", nameof(password));
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var identity = await RequireSubsonicIdentityAsync(db, principal.TenantId, principal.UserId,
+        var user = await RequireSubsonicUserAsync(db, principal.UserId,
             principal.BackendInstanceId, principal.BackendPrincipalId, cancellationToken);
-        var existing = await PlaylistGrants(db, identity).OrderByDescending(item => item.UpdatedAt)
+        var existing = await PlaylistGrants(db, user).OrderByDescending(item => item.UpdatedAt)
             .Select(item => (Guid?)item.Id).FirstOrDefaultAsync(cancellationToken);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(new { username = identity.PrincipalId, password });
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new { username = user.BackendPrincipalId, password });
         try
         {
-            var info = await StoreWithinTransactionAsync(db, identity.TenantId,
+            var info = await StoreWithinTransactionAsync(db, user.Id,
                 BackendCredentialScope.SubsonicPurpose, bytes, existing, cancellationToken);
-            db.SecretReferences.Local.Single(item => item.Id == info.Id).BackendIdentityId = identity.Id;
             await db.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new(info.Id, info.UpdatedAt);
@@ -268,9 +270,9 @@ public sealed class EncryptedSecretStore
     {
         if (principal.BackendType != "subsonic") throw new UnauthorizedAccessException();
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var identity = await RequireSubsonicIdentityAsync(db, principal.TenantId, principal.UserId,
+        var user = await RequireSubsonicUserAsync(db, principal.UserId,
             principal.BackendInstanceId, principal.BackendPrincipalId, cancellationToken);
-        var grants = await PlaylistGrants(db, identity).ToListAsync(cancellationToken);
+        var grants = await PlaylistGrants(db, user).ToListAsync(cancellationToken);
         foreach (var grant in grants)
         {
             grant.RevokedAt = _clock.UtcNow;
@@ -280,33 +282,29 @@ public sealed class EncryptedSecretStore
     }
 
     public async Task<SecretLease> OpenSubsonicPlaylistCredentialAsync(
-        Guid tenantId, string backendInstanceId, string principalId, Guid? referenceId,
+        string backendInstanceId, string principalId, Guid? referenceId,
         CancellationToken cancellationToken = default)
     {
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var identity = await RequireSubsonicIdentityAsync(db, tenantId, null,
-            backendInstanceId, principalId, cancellationToken);
-        var grants = PlaylistGrants(db, identity);
+        var user = await RequireSubsonicUserAsync(db, null, backendInstanceId, principalId, cancellationToken);
+        var grants = PlaylistGrants(db, user);
         if (referenceId.HasValue) grants = grants.Where(item => item.Id == referenceId.Value);
         var reference = await grants.OrderByDescending(item => item.UpdatedAt)
             .Select(item => (Guid?)item.Id).FirstOrDefaultAsync(cancellationToken)
             ?? throw new UnauthorizedAccessException("Playlist management consent is required for this listener.");
-        return await OpenAsync(reference, new SecretAccessContext(tenantId), cancellationToken);
+        return await OpenAsync(reference, new SecretAccessContext(user.Id, BackendCredentialScope.SubsonicPurpose), cancellationToken);
     }
 
-    private static IQueryable<SecretReferenceRecord> PlaylistGrants(AllstarrDbContext db, BackendIdentityRecord identity) =>
-        db.SecretReferences.Where(item => item.TenantId == identity.TenantId &&
-            item.BackendIdentityId == identity.Id && item.Purpose == BackendCredentialScope.SubsonicPurpose &&
+    private static IQueryable<SecretReferenceRecord> PlaylistGrants(AllstarrDbContext db, UserRecord user) =>
+        db.SecretReferences.Where(item => item.UserId == user.Id && item.Purpose == BackendCredentialScope.SubsonicPurpose &&
             item.RevokedAt == null);
 
-    private static async Task<BackendIdentityRecord> RequireSubsonicIdentityAsync(
-        AllstarrDbContext db, Guid tenantId, Guid? userId, string backendInstanceId, string principalId,
+    private static async Task<UserRecord> RequireSubsonicUserAsync(
+        AllstarrDbContext db, Guid? userId, string backendInstanceId, string principalId,
         CancellationToken cancellationToken) =>
-        await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.TenantId == tenantId && (!userId.HasValue || item.UserId == userId.Value) &&
-            item.BackendType == "subsonic" && item.BackendInstanceId == backendInstanceId &&
-            item.PrincipalId == principalId && db.Users.Any(user => user.Id == item.UserId &&
-                user.TenantId == tenantId && user.Status == PlatformUserStatus.Active), cancellationToken)
+        await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Enabled &&
+            (!userId.HasValue || item.Id == userId.Value) && item.BackendType == "subsonic" &&
+            item.BackendInstanceId == backendInstanceId && item.BackendPrincipalId == principalId, cancellationToken)
         ?? throw new UnauthorizedAccessException("The listener's backend identity is unavailable.");
 
     public async Task<SecretLease> OpenAsync(
@@ -322,7 +320,7 @@ public sealed class EncryptedSecretStore
                 .AsNoTracking()
                 .SingleOrDefaultAsync(item => item.Id == referenceId, cancellationToken)
                 ?? throw new KeyNotFoundException("Secret reference not found.");
-            EnsureTenantMatch(reference, access);
+            EnsureOwnerMatch(reference, access);
             if (reference.RevokedAt.HasValue)
             {
                 throw new InvalidOperationException("Secret reference is revoked.");
@@ -346,11 +344,11 @@ public sealed class EncryptedSecretStore
         }
     }
 
-    public async Task RebindTenantWithinTransactionAsync(
+    public async Task RebindOwnerWithinTransactionAsync(
         AllstarrDbContext context,
         Guid referenceId,
         SecretAccessContext currentAccess,
-        Guid? tenantId,
+        Guid? userId,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(context);
@@ -359,8 +357,8 @@ public sealed class EncryptedSecretStore
 
         var reference = await context.SecretReferences.SingleAsync(
             item => item.Id == referenceId, cancellationToken);
-        EnsureTenantMatch(reference, currentAccess);
-        if (reference.TenantId == tenantId) return;
+        EnsureOwnerMatch(reference, currentAccess);
+        if (reference.UserId == userId) return;
 
         var keyRing = await _keyRingProvider.LoadAsync(cancellationToken);
         byte[]? plaintext = null;
@@ -376,7 +374,7 @@ public sealed class EncryptedSecretStore
                 AssociatedData(reference, current.Version));
             var now = _clock.UtcNow;
             current.RetiredAt = now;
-            reference.TenantId = tenantId;
+            reference.UserId = userId;
             reference.ActiveVersion++;
             reference.UpdatedAt = now;
             var encrypted = Encrypt(
@@ -408,18 +406,18 @@ public sealed class EncryptedSecretStore
         CancellationToken cancellationToken = default)
     {
         string purpose;
-        Guid? tenantId;
+        Guid? userId;
         using var lease = await OpenAsync(referenceId, access, cancellationToken);
         await using (var context = await _contextFactory.CreateDbContextAsync(cancellationToken))
         {
             var reference = await context.SecretReferences.AsNoTracking()
                 .SingleAsync(item => item.Id == referenceId, cancellationToken);
             purpose = reference.Purpose;
-            tenantId = reference.TenantId;
+            userId = reference.UserId;
         }
 
         return await StoreAsync(
-            tenantId,
+            userId,
             purpose,
             lease.Value,
             referenceId,
@@ -440,7 +438,7 @@ public sealed class EncryptedSecretStore
             ClearKeyRing(keyRing);
         }
 
-        List<(Guid Id, Guid? TenantId, string KeyId)> references;
+        List<(Guid Id, Guid? UserId, string Purpose, string KeyId)> references;
         await using (var context = await _contextFactory.CreateDbContextAsync(cancellationToken))
         {
             var rows = await context.SecretReferences.AsNoTracking()
@@ -452,12 +450,13 @@ public sealed class EncryptedSecretStore
                     (reference, version) => new
                     {
                         reference.Id,
-                        reference.TenantId,
+                        reference.UserId,
+                        reference.Purpose,
                         version.KeyId
                     })
                 .ToListAsync(cancellationToken);
             references = rows
-                .Select(item => (item.Id, item.TenantId, item.KeyId))
+                .Select(item => (item.Id, item.UserId, item.Purpose, item.KeyId))
                 .ToList();
         }
 
@@ -466,7 +465,7 @@ public sealed class EncryptedSecretStore
         {
             await RotateEncryptionAsync(
                 reference.Id,
-                new SecretAccessContext(reference.TenantId, AllowGlobal: reference.TenantId == null),
+                new SecretAccessContext(reference.UserId, reference.Purpose, AllowShared: reference.UserId == null),
                 cancellationToken);
             rotated++;
         }
@@ -488,35 +487,37 @@ public sealed class EncryptedSecretStore
                             item => item.Id == referenceId,
                             cancellationToken)
                         ?? throw new KeyNotFoundException("Secret reference not found.");
-        EnsureTenantMatch(reference, access);
+        EnsureOwnerMatch(reference, access);
         reference.RevokedAt ??= _clock.UtcNow;
         reference.UpdatedAt = _clock.UtcNow;
         await context.SaveChangesAsync(cancellationToken);
     }
 
-    private static void EnsureTenantMatch(
+    private static void EnsureOwnerMatch(
         SecretReferenceRecord reference,
         SecretAccessContext access)
     {
-        if (reference.TenantId.HasValue)
+        if (!string.Equals(reference.Purpose, access.Purpose, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("Secret purpose does not match the requested operation.");
+        if (reference.UserId.HasValue)
         {
-            if (access.TenantId != reference.TenantId)
+            if (access.UserId != reference.UserId)
             {
-                throw new UnauthorizedAccessException("Secret reference is outside the caller tenant.");
+                throw new UnauthorizedAccessException("Secret reference is outside the requested user.");
             }
 
             return;
         }
 
-        if (!access.AllowGlobal)
+        if (!access.AllowShared)
         {
-            throw new UnauthorizedAccessException("Global secret access is not allowed for this caller.");
+            throw new UnauthorizedAccessException("Shared secret access is not allowed for this caller.");
         }
     }
 
     private static byte[] AssociatedData(SecretReferenceRecord reference, int version) =>
         Encoding.UTF8.GetBytes(
-            $"allstarr-secret-v1|{reference.Id:N}|{reference.TenantId?.ToString("N") ?? "global"}|" +
+            $"allstarr-secret-v2|{reference.Id:N}|{reference.UserId?.ToString("N") ?? "shared"}|" +
             $"{version}|{reference.Purpose}");
 
     private static (byte[] Nonce, byte[] Ciphertext, byte[] Tag) Encrypt(
@@ -565,7 +566,7 @@ public sealed class EncryptedSecretStore
         SecretReferenceRecord reference,
         SecretVersionRecord version) => new(
         reference.Id,
-        reference.TenantId,
+        reference.UserId,
         reference.Purpose,
         reference.ActiveVersion,
         version.KeyId,

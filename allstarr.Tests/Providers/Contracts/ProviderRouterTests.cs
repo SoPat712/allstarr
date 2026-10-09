@@ -77,10 +77,9 @@ public sealed class ProviderRouterTests
     [Fact]
     public async Task Plan_EnforcesAccountScopeEnabledAndRevisionBeforePriority()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
-        var actor = Actor(tenant, user);
-        var validAccount = Account("valid", tenant, user, revision: 3);
+        var actor = Actor(user);
+        var validAccount = Account("valid", user, revision: 3);
         var wrongScope = new ProviderAccountContext(
             Guid.CreateVersion7(),
             "wrong-scope",
@@ -93,14 +92,13 @@ public sealed class ProviderRouterTests
             ProviderAccountScope.Personal,
             1,
             enabled: false,
-            tenantId: tenant,
             ownerUserId: user);
         var accounts = new FakeAccountResolver(new Dictionary<string, ProviderRouteAccountResolution>
         {
             ["valid"] = new(validAccount, 3),
             ["wrong-scope"] = new(wrongScope, 1),
             ["disabled"] = new(disabled, 1),
-            ["stale"] = new(Account("stale", tenant, user, revision: 1), 2)
+            ["stale"] = new(Account("stale", user, revision: 1), 2)
         });
         var router = Router(
             [
@@ -115,13 +113,23 @@ public sealed class ProviderRouterTests
             ProviderCapabilityKind.Metadata,
             ["wrong-scope", "disabled", "stale", "valid"],
             actor: actor,
-            states: [new ProviderRouteProviderState("valid", expectedAccountRevision: 3)]));
+            states:
+            [
+                new ProviderRouteProviderState(
+                    "valid",
+                    requestedAccountId: validAccount.AccountId,
+                    expectedAccountRevision: 3)
+            ]));
 
         Assert.Single(plan.Candidates);
         Assert.Equal("valid", plan.Candidates[0].Provider.Id);
         Assert.Contains(plan.Decision.Candidates, item => item.ReasonCode == "account-scope-denied");
         Assert.Contains(plan.Decision.Candidates, item => item.ReasonCode == "account-disabled");
         Assert.Contains(plan.Decision.Candidates, item => item.ReasonCode == "account-stale");
+        Assert.Contains(accounts.Requests, item =>
+            item.ProviderId == "valid" &&
+            item.RequestedAccountId == validAccount.AccountId &&
+            item.Actor.UserId == user);
     }
 
     [Fact]
@@ -163,9 +171,8 @@ public sealed class ProviderRouterTests
     [Fact]
     public async Task Plan_RejectsOpenCircuitAndUnreadyDeclaredSidecar()
     {
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
-        var account = Account("circuit", tenant, user);
+        var account = Account("circuit", user);
         var accounts = new FakeAccountResolver(new Dictionary<string, ProviderRouteAccountResolution>
         {
             ["circuit"] = new(account, account.Revision)
@@ -187,7 +194,7 @@ public sealed class ProviderRouterTests
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             ProviderCapabilityKind.Metadata,
             ["circuit", "sidecar", "ready"],
-            actor: Actor(tenant, user)));
+            actor: Actor(user)));
 
         Assert.Equal("ready", Assert.Single(plan.Candidates).Provider.Id);
         Assert.Contains(plan.Decision.Candidates, item => item.ReasonCode == "circuit-open");
@@ -453,7 +460,7 @@ public sealed class ProviderRouterTests
         DateTimeOffset? deadline = null,
         string? idempotencyKey = null) => new(
         capability,
-        actor ?? Actor(Guid.CreateVersion7(), Guid.CreateVersion7()),
+        actor ?? Actor(Guid.CreateVersion7()),
         policy ?? Policy(),
         "router-test",
         "router-correlation",
@@ -474,22 +481,19 @@ public sealed class ProviderRouterTests
         allowManagedDownloads: true,
         allowedProviders);
 
-    private static ProviderActorContext Actor(Guid tenantId, Guid userId) => new(
-        tenantId,
+    private static ProviderActorContext Actor(Guid userId) => new(
         ProviderActorKind.User,
         userId,
         new ProviderBackendPrincipal("jellyfin", "main", userId.ToString("N")));
 
     private static ProviderAccountContext Account(
         string providerId,
-        Guid tenantId,
         Guid userId,
         long revision = 1) => new(
         Guid.CreateVersion7(),
         providerId,
         ProviderAccountScope.Personal,
         revision,
-        tenantId: tenantId,
         ownerUserId: userId);
 
     private static ProviderExternalResourceId Track(string providerId, string value) =>
@@ -504,11 +508,14 @@ public sealed class ProviderRouterTests
 
         public int CallCount { get; private set; }
 
+        public List<ProviderRouteAccountRequest> Requests { get; } = [];
+
         public Task<ProviderRouteAccountResolution?> ResolveAsync(
             ProviderRouteAccountRequest request,
             CancellationToken cancellationToken = default)
         {
             CallCount++;
+            Requests.Add(request);
             return Task.FromResult(_resolutions.GetValueOrDefault(request.ProviderId));
         }
     }

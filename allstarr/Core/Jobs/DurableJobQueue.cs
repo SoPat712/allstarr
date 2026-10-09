@@ -13,14 +13,12 @@ public sealed record DurableJobEnqueueRequest<T>(
     string Type,
     string IdempotencyKey,
     T Payload,
-    Guid? TenantId = null,
     Guid? OwnerUserId = null,
     int Priority = 0,
     int? MaxAttempts = null,
     DateTimeOffset? AvailableAt = null,
     int? MaxDeferrals = null,
     Guid? ProviderAccountId = null,
-    string? LibraryScopeId = null,
     string? Capability = null,
     string? CorrelationId = null);
 
@@ -32,10 +30,8 @@ public sealed record DurableJobClaim(
     int AttemptNumber,
     string Type,
     JsonElement Payload,
-    Guid? TenantId,
     Guid? OwnerUserId,
     Guid? ProviderAccountId,
-    string? LibraryScopeId,
     string? ProviderCapability,
     JsonElement PolicySnapshot,
     string CorrelationId,
@@ -113,15 +109,12 @@ public sealed class DurableJobQueue
             request.MaxDeferrals);
         var payloadJson = _payloadPolicy.SerializeAndValidate(request.Payload);
         var savedContext = await _contextAuthorizer.AuthorizeEnqueueAsync(
-            request.TenantId,
             request.OwnerUserId,
             request.ProviderAccountId,
-            request.LibraryScopeId,
             request.Capability,
             request.CorrelationId,
             cancellationToken);
         var scopeKey = CreateUserScopeKey(
-            savedContext.TenantId,
             savedContext.OwnerUserId);
         var type = request.Type.Trim().ToLowerInvariant();
         var idempotencyKey = request.IdempotencyKey.Trim();
@@ -154,10 +147,8 @@ public sealed class DurableJobQueue
         {
             Id = Guid.CreateVersion7(),
             ScopeKey = scopeKey,
-            TenantId = savedContext.TenantId,
             OwnerUserId = savedContext.OwnerUserId,
             ProviderAccountId = savedContext.ProviderAccountId,
-            LibraryScopeId = savedContext.LibraryScopeId,
             ProviderCapability = savedContext.ProviderCapability,
             PolicySnapshotJson = savedContext.PolicySnapshotJson,
             RequestFingerprint = requestFingerprint,
@@ -202,9 +193,9 @@ public sealed class DurableJobQueue
         ValidateEnqueueRequest(request.Type, request.IdempotencyKey, request.Priority, request.MaxAttempts, request.MaxDeferrals);
         var payloadJson = _payloadPolicy.SerializeAndValidate(request.Payload);
         var savedContext = await _contextAuthorizer.AuthorizeEnqueueAsync(
-            request.TenantId, request.OwnerUserId, request.ProviderAccountId, request.LibraryScopeId,
+            request.OwnerUserId, request.ProviderAccountId,
             request.Capability, request.CorrelationId, cancellationToken);
-        var scopeKey = CreateUserScopeKey(savedContext.TenantId, savedContext.OwnerUserId);
+        var scopeKey = CreateUserScopeKey(savedContext.OwnerUserId);
         var type = request.Type.Trim().ToLowerInvariant();
         var idempotencyKey = request.IdempotencyKey.Trim();
         var now = _clock.UtcNow;
@@ -225,10 +216,8 @@ public sealed class DurableJobQueue
         {
             Id = Guid.CreateVersion7(),
             ScopeKey = scopeKey,
-            TenantId = savedContext.TenantId,
             OwnerUserId = savedContext.OwnerUserId,
             ProviderAccountId = savedContext.ProviderAccountId,
-            LibraryScopeId = savedContext.LibraryScopeId,
             ProviderCapability = savedContext.ProviderCapability,
             PolicySnapshotJson = savedContext.PolicySnapshotJson,
             RequestFingerprint = requestFingerprint,
@@ -372,10 +361,8 @@ public sealed class DurableJobQueue
             attempt.AttemptNumber,
             job.Type,
             payload.RootElement.Clone(),
-            job.TenantId,
             job.OwnerUserId,
             job.ProviderAccountId,
-            job.LibraryScopeId,
             job.ProviderCapability,
             policySnapshot.RootElement.Clone(),
             job.CorrelationId,
@@ -453,7 +440,6 @@ public sealed class DurableJobQueue
         context.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = job.TenantId,
             ActorUserId = job.OwnerUserId,
             Category = "job-progress",
             Action = stage,
@@ -573,7 +559,7 @@ public sealed class DurableJobQueue
 
     public async Task<bool> RequestCancellationAsync(
         Guid jobId,
-        Guid? tenantId,
+        Guid? ownerUserId,
         CancellationToken cancellationToken = default)
     {
         var now = _clock.UtcNow;
@@ -582,7 +568,7 @@ public sealed class DurableJobQueue
             IsolationLevel.Serializable,
             cancellationToken);
         var job = await context.Jobs.SingleOrDefaultAsync(
-            item => item.Id == jobId && item.TenantId == tenantId,
+            item => item.Id == jobId && item.OwnerUserId == ownerUserId,
             cancellationToken);
         if (job == null)
         {
@@ -667,11 +653,9 @@ public sealed class DurableJobQueue
         string requestFingerprint)
     {
         // Correlation IDs identify individual requests and are intentionally not part of the semantic
-        // idempotency context. All authorization, account, library, and policy fields must match exactly.
-        if (existing.TenantId != requested.TenantId ||
-            existing.OwnerUserId != requested.OwnerUserId ||
+        // idempotency context. All authorization, account and policy fields must match exactly.
+        if (existing.OwnerUserId != requested.OwnerUserId ||
             existing.ProviderAccountId != requested.ProviderAccountId ||
-            !string.Equals(existing.LibraryScopeId, requested.LibraryScopeId, StringComparison.Ordinal) ||
             !string.Equals(existing.ProviderCapability, requested.ProviderCapability, StringComparison.Ordinal) ||
             !string.Equals(existing.PolicySnapshotJson, requested.PolicySnapshotJson, StringComparison.Ordinal))
         {
@@ -721,6 +705,6 @@ public sealed class DurableJobQueue
         return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
     }
 
-    private static string CreateUserScopeKey(Guid tenantId, Guid ownerUserId) =>
-        $"{tenantId:N}:{ownerUserId:N}";
+    private static string CreateUserScopeKey(Guid ownerUserId) =>
+        $"user:{ownerUserId:N}";
 }

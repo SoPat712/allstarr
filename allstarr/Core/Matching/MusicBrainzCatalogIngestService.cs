@@ -66,11 +66,10 @@ public sealed class MusicBrainzCatalogIngestService(
         await using var transaction = await db.Database.BeginTransactionAsync(
             IsolationLevel.Serializable, cancellationToken);
         if (!await db.Users.AnyAsync(item =>
-                item.TenantId == actor.TenantId &&
                 item.Id == ownerUserId &&
-                item.Status == PlatformUserStatus.Active,
+                item.Enabled,
                 cancellationToken))
-            throw new UnauthorizedAccessException("The catalog owner is not active in the requested tenant.");
+            throw new UnauthorizedAccessException("The catalog owner is not active.");
 
         var created = 0;
         var artistsByMbid = new Dictionary<string, CanonicalArtistRecord>(StringComparer.OrdinalIgnoreCase);
@@ -86,13 +85,12 @@ public sealed class MusicBrainzCatalogIngestService(
             if (artistsByMbid.TryGetValue(mbid, out var cached)) return cached;
             var details = suppliedArtists.GetValueOrDefault(mbid) ?? embedded;
             var existing = await db.CanonicalArtists.SingleOrDefaultAsync(item =>
-                item.TenantId == actor.TenantId && item.MusicBrainzArtistId == mbid, cancellationToken);
+                item.MusicBrainzArtistId == mbid, cancellationToken);
             if (existing == null)
             {
                 existing = new CanonicalArtistRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = actor.TenantId,
                     MusicBrainzArtistId = mbid,
                     CreatedAt = source.ObservedAt,
                     Revision = 1
@@ -116,14 +114,13 @@ public sealed class MusicBrainzCatalogIngestService(
                 await ResolveArtistAsync(credit);
 
         var releaseGroup = await db.CanonicalReleaseGroups.SingleOrDefaultAsync(item =>
-            item.TenantId == actor.TenantId && item.MusicBrainzReleaseGroupId == releaseGroupMbid,
+            item.MusicBrainzReleaseGroupId == releaseGroupMbid,
             cancellationToken);
         if (releaseGroup == null)
         {
             releaseGroup = new CanonicalReleaseGroupRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = actor.TenantId,
                 MusicBrainzReleaseGroupId = releaseGroupMbid,
                 CreatedAt = source.ObservedAt,
                 Revision = 1
@@ -134,14 +131,13 @@ public sealed class MusicBrainzCatalogIngestService(
         ApplyReleaseGroup(releaseGroup, graph.ReleaseGroup, source.ObservedAt);
 
         var release = await db.CanonicalReleases.SingleOrDefaultAsync(item =>
-            item.TenantId == actor.TenantId && item.MusicBrainzReleaseId == releaseMbid,
+            item.MusicBrainzReleaseId == releaseMbid,
             cancellationToken);
         if (release == null)
         {
             release = new CanonicalReleaseRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = actor.TenantId,
                 MusicBrainzReleaseId = releaseMbid,
                 CreatedAt = source.ObservedAt,
                 Revision = 1
@@ -160,14 +156,13 @@ public sealed class MusicBrainzCatalogIngestService(
             if (!recordings.TryGetValue(recordingMbid, out var recording))
             {
                 recording = await db.CanonicalRecordings.SingleOrDefaultAsync(item =>
-                    item.TenantId == actor.TenantId && item.MusicBrainzRecordingId == recordingMbid,
+                    item.MusicBrainzRecordingId == recordingMbid,
                     cancellationToken);
                 if (recording == null)
                 {
                     recording = new CanonicalRecordingRecord
                     {
                         Id = Guid.CreateVersion7(),
-                        TenantId = actor.TenantId,
                         CreatedByUserId = ownerUserId,
                         MusicBrainzRecordingId = recordingMbid,
                         CreatedAt = source.ObservedAt,
@@ -182,14 +177,13 @@ public sealed class MusicBrainzCatalogIngestService(
 
             var trackMbid = Mbid(track.Id, "release track");
             var releaseTrack = await db.CanonicalReleaseTracks.SingleOrDefaultAsync(item =>
-                item.TenantId == actor.TenantId && item.MusicBrainzTrackId == trackMbid,
+                item.MusicBrainzTrackId == trackMbid,
                 cancellationToken);
             if (releaseTrack == null)
             {
                 releaseTrack = new CanonicalReleaseTrackRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = actor.TenantId,
                     MusicBrainzTrackId = trackMbid,
                     CreatedAt = source.ObservedAt,
                     Revision = 1
@@ -201,7 +195,7 @@ public sealed class MusicBrainzCatalogIngestService(
             releaseTracks.Add((releaseTrack, track));
         }
 
-        await ReplaceReleaseGroupCreditsAsync(db, actor.TenantId, releaseGroup.Id, releaseCredits, artistsByMbid, cancellationToken);
+        await ReplaceReleaseGroupCreditsAsync(db, releaseGroup.Id, releaseCredits, artistsByMbid, cancellationToken);
         foreach (var pair in recordings)
         {
             var sourceRecording = releaseTracks.First(item =>
@@ -210,7 +204,6 @@ public sealed class MusicBrainzCatalogIngestService(
                 string.Equals(item.Source.Recording!.Id, pair.Key, StringComparison.OrdinalIgnoreCase)).Source;
             await ReplaceRecordingCreditsAsync(
                 db,
-                actor.TenantId,
                 pair.Value.Id,
                 Credits(track.ArtistCredit, sourceRecording.ArtistCredit, releaseCredits),
                 artistsByMbid,
@@ -274,17 +267,15 @@ public sealed class MusicBrainzCatalogIngestService(
 
     private static async Task ReplaceReleaseGroupCreditsAsync(
         AllstarrDbContext db,
-        Guid tenantId,
         Guid releaseGroupId,
         IReadOnlyList<MusicBrainzArtistCredit> credits,
         IReadOnlyDictionary<string, CanonicalArtistRecord> artists,
         CancellationToken cancellationToken)
     {
         var current = await db.CanonicalReleaseGroupArtists.Where(item =>
-            item.TenantId == tenantId && item.CanonicalReleaseGroupId == releaseGroupId).ToListAsync(cancellationToken);
+            item.CanonicalReleaseGroupId == releaseGroupId).ToListAsync(cancellationToken);
         var desired = credits.Select((credit, position) => new CanonicalReleaseGroupArtistRecord
         {
-            TenantId = tenantId,
             CanonicalReleaseGroupId = releaseGroupId,
             CanonicalArtistId = artists[Mbid(credit.Artist?.Id, "artist")].Id,
             Position = position,
@@ -301,17 +292,15 @@ public sealed class MusicBrainzCatalogIngestService(
 
     private static async Task ReplaceRecordingCreditsAsync(
         AllstarrDbContext db,
-        Guid tenantId,
         Guid recordingId,
         IReadOnlyList<MusicBrainzArtistCredit> credits,
         IReadOnlyDictionary<string, CanonicalArtistRecord> artists,
         CancellationToken cancellationToken)
     {
         var current = await db.CanonicalRecordingArtists.Where(item =>
-            item.TenantId == tenantId && item.CanonicalRecordingId == recordingId).ToListAsync(cancellationToken);
+            item.CanonicalRecordingId == recordingId).ToListAsync(cancellationToken);
         var desired = credits.Select((credit, position) => new CanonicalRecordingArtistRecord
         {
-            TenantId = tenantId,
             CanonicalRecordingId = recordingId,
             CanonicalArtistId = artists[Mbid(credit.Artist?.Id, "artist")].Id,
             Position = position,

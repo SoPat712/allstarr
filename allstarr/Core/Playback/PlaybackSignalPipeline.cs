@@ -32,29 +32,24 @@ public interface IPlaybackLyricsPrefetch
 
 public sealed class PlaybackSignalPipeline(
     DurableJobQueue jobs,
-    IProtocolLibraryScopeResolver? libraryScopes = null,
     IPlaybackDeliveryActivitySource? playbackActivity = null) : IPlaybackSignalPipeline
 {
     public const string JobType = "playback.signal.process";
     public async Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default)
     {
         var execution = request.ExecutionContext;
-        if (string.IsNullOrWhiteSpace(execution.LibraryScopeId) && libraryScopes != null)
-            execution = await libraryScopes.ResolveAsync(execution, request.ItemId, cancellationToken);
         var actor = execution.RequireActor(); var owner = actor.EffectiveUserId ?? throw new UnauthorizedAccessException();
-        if (string.IsNullOrWhiteSpace(execution.LibraryScopeId))
-            throw new InvalidOperationException("Playback work requires an exact library scope.");
         if (string.IsNullOrWhiteSpace(request.ItemId) || request.ItemId.Length > 500 || request.ObservedAt == default ||
             request.DeviceId?.Length > 200 || request.PlaySessionId?.Length > 500 || request.PositionTicks is < 0)
             throw new ArgumentException("Playback signal is invalid.");
         if (request.SourceKind is not ("protocol" or "listenbrainz-api"))
             throw new ArgumentException("Playback signal source is invalid.");
-        var scope = new IntelligenceScope(actor.TenantId, owner, execution.Protocol.ToString().ToLowerInvariant(),
-            execution.BackendInstanceId, execution.LibraryScopeId);
+        var scope = new IntelligenceScope(owner, execution.Protocol.ToString().ToLowerInvariant(),
+            execution.BackendInstanceId);
         var bucket = request.Transition == PlaybackTransition.Progress ? (request.PositionTicks ?? 0) / TimeSpan.TicksPerSecond / 10 : 0;
         var deviceId = request.DeviceId ?? execution.Client.DeviceId;
-        var streamSource = playbackActivity?.StreamFor(actor.TenantId, owner, deviceId, request.ItemId);
-        if (streamSource?.Matches(scope.Protocol, scope.BackendInstanceId, scope.LibraryScopeId) != true ||
+        var streamSource = playbackActivity?.StreamFor(owner, deviceId, request.ItemId);
+        if (streamSource?.Matches(scope.Protocol, scope.BackendInstanceId) != true ||
             streamSource?.OpenedAt > request.ObservedAt)
             streamSource = null;
         var occurrenceKey = CreateOccurrenceKey(scope, request.ItemId, deviceId, request.PlaySessionId,
@@ -65,7 +60,7 @@ public sealed class PlaybackSignalPipeline(
             new(scope, request.Transition, request.ItemId, deviceId, request.PlaySessionId, normalizedTicks,
                 request.ObservedAt, key, occurrenceKey, execution.Client.ClientId, execution.Client.DeviceName,
                 request.SubmittedTrack, request.RelayExternally, request.SourceKind, streamSource),
-            scope.TenantId, scope.OwnerUserId, LibraryScopeId: scope.LibraryScopeId,
+            scope.OwnerUserId,
             CorrelationId: execution.CorrelationId), cancellationToken);
         return result.Created;
     }
@@ -82,7 +77,7 @@ public sealed class PlaybackSignalPipeline(
         var occurrence = !string.IsNullOrWhiteSpace(playSessionId)
             ? $"session:{playSessionId}"
             : $"inferred:{inferredStart.ToUnixTimeSeconds() / 30}";
-        return Hash($"{scope.TenantId:N}|{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{scope.LibraryScopeId}|{deviceId}|{itemId}|{occurrence}");
+        return Hash($"{scope.OwnerUserId:N}|{scope.Protocol}|{scope.BackendInstanceId}|{deviceId}|{itemId}|{occurrence}");
     }
 
     internal static string Hash(string value) =>
@@ -98,9 +93,13 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
         var payload = execution.Claim.Payload.Deserialize<PlaybackSignalPayload>();
-        if (payload == null || execution.Claim.TenantId != payload.Scope.TenantId || execution.Claim.OwnerUserId != payload.Scope.OwnerUserId ||
-            execution.Claim.LibraryScopeId != payload.Scope.LibraryScopeId)
+        if (payload == null || execution.Claim.OwnerUserId != payload.Scope.OwnerUserId)
             return DurableJobCompletion.Failure("playback_signal_scope_invalid", "The playback signal scope is invalid.");
+        await using var ownerDb = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await ownerDb.Users.AsNoTracking().AnyAsync(user => user.Id == payload.Scope.OwnerUserId &&
+                user.Enabled && user.BackendType == payload.Scope.Protocol &&
+                user.BackendInstanceId == payload.Scope.BackendInstanceId, cancellationToken))
+            return DurableJobCompletion.Failure("playback_signal_scope_invalid", "The playback user is unavailable.");
         try
         {
             var retainHistory = await RetainsHistoryAsync(payload.Scope, cancellationToken);
@@ -165,18 +164,15 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         {
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             var record = await db.ListeningEvents.SingleOrDefaultAsync(item =>
-                item.TenantId == payload.Scope.TenantId &&
                 item.OwnerUserId == payload.Scope.OwnerUserId &&
                 item.OccurrenceKey == occurrenceKey, cancellationToken);
             var added = record == null;
             record ??= new ListeningEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = payload.Scope.TenantId,
                 OwnerUserId = payload.Scope.OwnerUserId,
                 Protocol = payload.Scope.Protocol,
                 BackendInstanceId = payload.Scope.BackendInstanceId,
-                LibraryScopeId = payload.Scope.LibraryScopeId,
                 OccurrenceKey = occurrenceKey,
                 SourceKind = payload.SourceKind,
                 TrackReference = payload.ItemId
@@ -229,7 +225,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.ProviderTrackIdentityId ??= track?.ProviderTrackIdentityId;
         record.ProviderTrackReference ??= Trim(track?.ProviderTrackReference, 500);
         if (latest && payload.StreamSource is { } source &&
-            source.Matches(payload.Scope.Protocol, payload.Scope.BackendInstanceId, payload.Scope.LibraryScopeId))
+            source.Matches(payload.Scope.Protocol, payload.Scope.BackendInstanceId))
         {
             record.ProviderId = source.ProviderId;
             record.ProviderAccountId = source.AccountId;

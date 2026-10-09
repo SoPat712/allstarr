@@ -397,7 +397,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
         if (!context.ProviderId.Equals(StableProviderId, StringComparison.Ordinal)) return new(ProviderErrorKind.Forbidden);
         if (context.Account is not { Scope: ProviderAccountScope.Personal, SecretReferenceId: not null } account)
             return new(ProviderErrorKind.AccountNeedsConfiguration);
-        if (account.TenantId != context.Actor.TenantId || account.OwnerUserId != context.Actor.UserId)
+        if (account.OwnerUserId != context.Actor.UserId)
             return new(ProviderErrorKind.Forbidden);
         return null;
     }

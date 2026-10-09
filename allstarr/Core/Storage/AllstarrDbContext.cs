@@ -10,9 +10,7 @@ namespace allstarr.Core.Storage;
 
 public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext> options) : DbContext(options)
 {
-    public DbSet<TenantRecord> Tenants => Set<TenantRecord>();
-    public DbSet<PlatformUserRecord> Users => Set<PlatformUserRecord>();
-    public DbSet<BackendIdentityRecord> BackendIdentities => Set<BackendIdentityRecord>();
+    public DbSet<UserRecord> Users => Set<UserRecord>();
     public DbSet<OnboardingStateRecord> OnboardingStates => Set<OnboardingStateRecord>();
     public DbSet<AdminAuthSessionRecord> AdminAuthSessions => Set<AdminAuthSessionRecord>();
     public DbSet<ProviderAccountRecord> ProviderAccounts => Set<ProviderAccountRecord>();
@@ -69,7 +67,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        ConfigureTenant(modelBuilder);
+        ConfigureUsers(modelBuilder);
         ConfigureOnboarding(modelBuilder);
         ConfigureAdminAuthSessions(modelBuilder);
         ConfigureAdminOidcLinks(modelBuilder);
@@ -96,50 +94,18 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.Model.RemoveAnnotation("Relational:MaxIdentifierLength");
     }
 
-    private static void ConfigureTenant(ModelBuilder modelBuilder)
+    private static void ConfigureUsers(ModelBuilder modelBuilder)
     {
-        modelBuilder.Entity<TenantRecord>(entity =>
-        {
-            entity.ToTable("tenants");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.Slug).HasMaxLength(100).IsRequired();
-            entity.Property(item => item.Name).HasMaxLength(200).IsRequired();
-            entity.HasIndex(item => item.Slug).IsUnique();
-        });
-
-        modelBuilder.Entity<PlatformUserRecord>(entity =>
+        modelBuilder.Entity<UserRecord>(entity =>
         {
             entity.ToTable("users");
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.DisplayName).HasMaxLength(200).IsRequired();
-            entity.Property(item => item.Status).HasConversion<string>().HasMaxLength(32);
-            entity.HasAlternateKey(item => new { item.TenantId, item.Id });
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        modelBuilder.Entity<BackendIdentityRecord>(entity =>
-        {
-            entity.ToTable("backend_identities");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.BackendType).HasMaxLength(32).IsRequired();
             entity.Property(item => item.BackendInstanceId).HasMaxLength(200).IsRequired();
-            entity.Property(item => item.PrincipalId).HasMaxLength(300).IsRequired();
-            entity.Property(item => item.DisplayName).HasMaxLength(200);
-            entity.HasIndex(item => new
-            {
-                item.BackendType,
-                item.BackendInstanceId,
-                item.PrincipalId
-            }).IsUnique();
-            entity.HasIndex(item => new { item.TenantId, item.UserId });
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.UserId)
-                .OnDelete(DeleteBehavior.Restrict);
+            entity.Property(item => item.BackendPrincipalId).HasMaxLength(300).IsRequired();
+            entity.Property(item => item.DisplayName).HasMaxLength(200).IsRequired();
+            entity.HasIndex(item => new { item.BackendType, item.BackendInstanceId, item.BackendPrincipalId }).IsUnique();
         });
     }
 
@@ -154,10 +120,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.CompletedStepsJson).IsRequired();
             entity.Property(item => item.CompletionSource).HasMaxLength(100).IsRequired();
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.TenantId, item.UserId }).IsUnique();
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.UserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+            entity.HasIndex(item => item.UserId).IsUnique();
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.UserId)
+                .HasPrincipalKey(item => item.Id)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
@@ -178,10 +144,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     {
         modelBuilder.Entity<ProviderAccountRecord>(entity =>
         {
-            entity.ToTable("provider_accounts", table => table.HasCheckConstraint(
-                "CK_provider_accounts_owner_shape",
-                "(\"OwnerUserId\" IS NULL AND \"TenantId\" IS NULL) OR " +
-                "(\"OwnerUserId\" IS NOT NULL AND \"TenantId\" IS NOT NULL)"));
+            entity.ToTable("provider_accounts");
             entity.HasKey(item => item.Id);
             entity.HasAlternateKey(item => new { item.Id, item.ProviderId });
             entity.Property(item => item.Id).ValueGeneratedNever();
@@ -189,16 +152,14 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.DisplayName).HasMaxLength(200).IsRequired();
             entity.Ignore(item => item.Scope);
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.ProviderId, item.TenantId, item.OwnerUserId });
+            entity.HasIndex(item => new { item.ProviderId, item.OwnerUserId });
             entity.HasIndex(item => item.CreatedByUserId);
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.OwnerUserId)
+                .HasPrincipalKey(item => item.Id)
+                .HasConstraintName("FK_provider_account_owner")
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
-                .HasConstraintName("FK_provider_account_tenant_owner")
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
+            entity.HasOne<UserRecord>().WithMany()
                 .HasForeignKey(item => item.CreatedByUserId)
                 .HasConstraintName("FK_provider_account_creator")
                 .OnDelete(DeleteBehavior.SetNull);
@@ -213,12 +174,9 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.HasKey(item => item.Id);
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.Purpose).HasMaxLength(200).IsRequired();
-            entity.HasIndex(item => new { item.TenantId, item.Purpose });
-            entity.HasIndex(item => item.BackendIdentityId);
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
+            entity.HasIndex(item => new { item.UserId, item.Purpose });
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<BackendIdentityRecord>().WithMany().HasForeignKey(item => item.BackendIdentityId)
-                .OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<SecretVersionRecord>(entity =>
@@ -255,7 +213,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.PayloadJson).IsRequired();
             entity.Property(item => item.PolicySnapshotJson).IsRequired();
             entity.Property(item => item.RequestFingerprint).HasMaxLength(64).IsRequired();
-            entity.Property(item => item.LibraryScopeId).HasMaxLength(300);
             entity.Property(item => item.ProviderCapability).HasMaxLength(100);
             entity.Property(item => item.CorrelationId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.IdempotencyKey).HasMaxLength(300).IsRequired();
@@ -265,22 +222,16 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.LastErrorMessage).HasMaxLength(1000);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.ScopeKey, item.Type, item.IdempotencyKey }).IsUnique();
-            // These unique indexes are the principal side of database-native lineage constraints.
-            // They remain indexes (rather than EF alternate keys) because legacy/global jobs may
-            // legitimately have nullable tenant and owner values.
-            entity.HasIndex(item => new { item.Id, item.TenantId }).IsUnique()
-                .HasDatabaseName("UX_durable_job_tenant_lineage");
-            entity.HasIndex(item => new { item.Id, item.TenantId, item.OwnerUserId }).IsUnique()
+            // The owner index supports null-safe database lineage checks.
+            entity.HasIndex(item => new { item.Id, item.OwnerUserId }).IsUnique()
                 .HasDatabaseName("UX_durable_job_owner_lineage");
             entity.HasIndex(item => new { item.State, item.AvailableAt, item.Priority });
-            entity.HasIndex(item => new { item.TenantId, item.UpdatedAt, item.Id })
+            entity.HasIndex(item => new { item.UpdatedAt, item.Id })
                 .HasDatabaseName("IX_durable_job_updates");
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.OwnerUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
-                .HasConstraintName("FK_durable_job_tenant_owner")
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.OwnerUserId)
+                .HasPrincipalKey(item => item.Id)
+                .HasConstraintName("FK_durable_job_owner")
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(item => item.ProviderAccountId)
                 .OnDelete(DeleteBehavior.Restrict);
@@ -317,7 +268,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 item.Capability,
                 item.ObservedAt
             }).HasDatabaseName("IX_provider_health_account_capability_observed");
-            entity.HasIndex(item => new { item.TenantId, item.ObservedAt, item.Id })
+            entity.HasIndex(item => new { item.ObservedAt, item.Id })
                 .HasDatabaseName("IX_provider_health_updates");
             entity.HasOne<ProviderAccountRecord>().WithMany()
                 .HasForeignKey(item => item.ProviderAccountId)
@@ -367,21 +318,18 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         {
             entity.ToTable("canonical_recordings");
             entity.HasKey(item => item.Id);
-            entity.HasAlternateKey(item => new { item.TenantId, item.Id });
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.Title).HasMaxLength(500).IsRequired();
             entity.Property(item => item.Disambiguation).HasMaxLength(500);
             entity.Property(item => item.Isrc).HasMaxLength(32);
             entity.Property(item => item.MusicBrainzRecordingId).HasMaxLength(100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.TenantId, item.Isrc }).IsUnique();
-            entity.HasIndex(item => new { item.TenantId, item.MusicBrainzRecordingId }).IsUnique();
-            entity.HasIndex(item => new { item.TenantId, item.Title, item.Id });
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.CreatedByUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+            entity.HasIndex(item => item.Isrc).IsUnique();
+            entity.HasIndex(item => item.MusicBrainzRecordingId).IsUnique();
+            entity.HasIndex(item => new { item.Title, item.Id });
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.CreatedByUserId)
+                .HasPrincipalKey(item => item.Id)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -417,10 +365,9 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Verification).HasConversion<string>().HasMaxLength(32);
             entity.Property(item => item.VerificationMethod).HasMaxLength(50).IsRequired();
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.TenantId, item.CanonicalRecordingId });
+            entity.HasIndex(item => item.CanonicalRecordingId);
             entity.HasIndex(item => new
             {
-                item.TenantId,
                 item.ProviderId,
                 item.ResourceKind,
                 item.CatalogNamespace,
@@ -430,7 +377,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 .HasDatabaseName("IX_provider_track_identity_catalog_exact");
             entity.HasIndex(item => new
             {
-                item.TenantId,
                 item.ProviderId,
                 item.ResourceKind,
                 item.CatalogNamespace,
@@ -439,11 +385,9 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             }).IsUnique()
                 .HasFilter("\"Scope\" = 'Account'")
                 .HasDatabaseName("IX_provider_track_identity_account_exact");
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<CanonicalRecordingRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.CanonicalRecordingId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+                .HasForeignKey(item => item.CanonicalRecordingId)
+                .HasPrincipalKey(item => item.Id)
                 .HasConstraintName("FK_track_identity_canonical_recording")
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<ProviderAccountRecord>().WithMany()
@@ -474,12 +418,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Outcome).HasMaxLength(100).IsRequired();
             entity.Property(item => item.CorrelationId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.DetailsJson).IsRequired();
-            entity.HasIndex(item => new { item.TenantId, item.CreatedAt, item.Id })
+            entity.HasIndex(item => new { item.CreatedAt, item.Id })
                 .HasDatabaseName("IX_audit_event_updates");
             entity.HasIndex(item => item.CorrelationId);
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(item => item.ActorUserId)
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.ActorUserId)
                 .OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -492,13 +434,11 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.SchemaVersion).HasMaxLength(100).IsRequired();
             entity.Property(item => item.ResultJson).IsRequired();
             entity.Property(item => item.ProvenanceJson).IsRequired();
-            entity.HasIndex(item => new { item.TenantId, item.SourceSha256, item.SchemaVersion }).IsUnique();
+            entity.HasIndex(item => new { item.SourceSha256, item.SchemaVersion }).IsUnique();
             entity.HasIndex(item => item.AuditEventId).IsUnique();
-            entity.HasOne<TenantRecord>().WithMany().HasForeignKey(item => item.TenantId)
-                .OnDelete(DeleteBehavior.Restrict);
-            entity.HasOne<PlatformUserRecord>().WithMany()
-                .HasForeignKey(item => new { item.TenantId, item.ActorUserId })
-                .HasPrincipalKey(item => new { item.TenantId, item.Id })
+            entity.HasOne<UserRecord>().WithMany()
+                .HasForeignKey(item => item.ActorUserId)
+                .HasPrincipalKey(item => item.Id)
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<AuditEventRecord>().WithMany().HasForeignKey(item => item.AuditEventId)
                 .OnDelete(DeleteBehavior.Restrict);

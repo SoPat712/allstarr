@@ -43,10 +43,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("LocalPath")
                         .IsRequired()
                         .HasMaxLength(2000)
@@ -67,9 +63,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<string>("ScopeKey")
                         .IsRequired()
                         .HasMaxLength(64)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("TenantId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Title")
@@ -122,10 +115,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("Length")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid?>("ManagedFileId")
                         .HasColumnType("TEXT");
 
@@ -169,9 +158,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("VerifiedAt")
                         .HasColumnType("INTEGER");
 
@@ -187,13 +173,15 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("ManagedFileId");
 
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("DurableJobId", "ProviderId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_download_artifact_job_provider");
+
                     b.HasIndex("WorkspaceRecordId", "ProviderArtifactId")
                         .IsUnique()
                         .HasDatabaseName("IX_download_artifact_identity");
-
-                    b.HasIndex("TenantId", "DurableJobId", "ProviderId")
-                        .IsUnique()
-                        .HasDatabaseName("IX_download_artifact_job_provider");
 
                     b.ToTable("provider_download_artifacts", null, t =>
                         {
@@ -222,10 +210,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid?>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -241,9 +225,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("WorkspaceId")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -251,16 +232,14 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("DurableJobId");
+                    b.HasIndex("OwnerUserId");
 
                     b.HasIndex("WorkspaceId")
                         .IsUnique();
 
                     b.HasIndex("ProviderAccountId", "ProviderId");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
-
-                    b.HasIndex("TenantId", "DurableJobId", "ProviderId", "ProviderAccountId", "IdempotencyKey")
+                    b.HasIndex("DurableJobId", "ProviderId", "ProviderAccountId", "IdempotencyKey")
                         .IsUnique()
                         .HasDatabaseName("IX_download_workspace_idempotency");
 
@@ -317,9 +296,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -329,10 +305,10 @@ namespace allstarr.Core.Storage.Migrations
                         .IsUnique()
                         .HasDatabaseName("IX_favorite_action_type");
 
-                    b.HasIndex("EventId", "TenantId", "OwnerUserId")
+                    b.HasIndex("EventId", "OwnerUserId")
                         .HasDatabaseName("IX_favorite_action_event");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "State")
+                    b.HasIndex("OwnerUserId", "State")
                         .HasDatabaseName("IX_favorite_action_owner_state");
 
                     b.ToTable("favorite_actions", (string)null);
@@ -385,10 +361,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Operation")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -423,9 +395,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("TargetCredentialReferenceId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -441,7 +410,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("TargetCredentialReferenceId")
                         .HasDatabaseName("IX_favorite_event_credential_reference");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "CreatedAt")
+                    b.HasIndex("OwnerUserId", "CreatedAt")
                         .HasDatabaseName("IX_favorite_event_owner_created");
 
                     b.ToTable("favorite_events", (string)null);
@@ -480,18 +449,15 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("LastEventId", "TenantId", "OwnerUserId")
+                    b.HasIndex("LastEventId", "OwnerUserId")
                         .HasDatabaseName("IX_favorite_state_event");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "ItemId")
+                    b.HasIndex("OwnerUserId", "Protocol", "BackendInstanceId", "ItemId")
                         .IsUnique()
                         .HasDatabaseName("IX_favorite_state_owner_target");
 
@@ -528,9 +494,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TrackKey")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -538,10 +501,10 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("GeneratedSetId", "OwnerUserId");
+
                     b.HasIndex("GeneratedSetId", "Position")
                         .IsUnique();
-
-                    b.HasIndex("GeneratedSetId", "TenantId", "OwnerUserId");
 
                     b.ToTable("generated_set_entries", (string)null);
                 });
@@ -565,11 +528,6 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<string>("LastErrorCode")
                         .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("MaterializationState")
@@ -610,13 +568,12 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
 
                     b.HasIndex("RunId")
                         .IsUnique();
@@ -627,9 +584,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("TargetCredentialReferenceId")
                         .HasDatabaseName("IX_generated_set_credential_reference");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
-
-                    b.HasIndex("RunId", "TenantId", "OwnerUserId");
+                    b.HasIndex("RunId", "OwnerUserId");
 
                     b.ToTable("generated_sets", (string)null);
                 });
@@ -658,11 +613,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -681,9 +631,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("TargetCredentialReferenceId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -692,7 +639,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("TargetCredentialReferenceId")
                         .HasDatabaseName("IX_intelligence_policy_credential_reference");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId")
+                    b.HasIndex("OwnerUserId", "Protocol", "BackendInstanceId")
                         .IsUnique()
                         .HasDatabaseName("IX_intelligence_policy_scope");
 
@@ -744,11 +691,6 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<string>("Isrc")
                         .HasMaxLength(20)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("LibraryTrackId")
@@ -826,9 +768,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
@@ -846,19 +785,19 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CanonicalRecordingId");
+
+                    b.HasIndex("LibraryTrackId");
+
                     b.HasIndex("ProviderAccountId");
 
                     b.HasIndex("ProviderTrackIdentityId");
 
-                    b.HasIndex("TenantId", "CanonicalRecordingId");
-
-                    b.HasIndex("TenantId", "LibraryTrackId");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "OccurrenceKey")
+                    b.HasIndex("OwnerUserId", "OccurrenceKey")
                         .IsUnique()
                         .HasDatabaseName("IX_listening_event_occurrence");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "State", "ListenedAt", "Id")
+                    b.HasIndex("OwnerUserId", "Protocol", "BackendInstanceId", "State", "ListenedAt", "Id")
                         .HasDatabaseName("IX_listening_event_scope_history");
 
                     b.ToTable("listening_events", null, t =>
@@ -921,11 +860,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("JobId")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("NextSequence")
                         .HasColumnType("INTEGER");
 
@@ -961,9 +895,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UnresolvedRows")
                         .HasColumnType("INTEGER");
 
@@ -975,10 +906,10 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("JobId")
                         .HasDatabaseName("IX_listening_history_import_job");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "ContentSha256")
+                    b.HasIndex("OwnerUserId", "ContentSha256")
                         .HasDatabaseName("IX_listening_history_import_content");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "CreatedAt")
+                    b.HasIndex("OwnerUserId", "Protocol", "BackendInstanceId", "CreatedAt")
                         .HasDatabaseName("IX_listening_history_import_scope");
 
                     b.ToTable("listening_history_imports", null, t =>
@@ -1004,11 +935,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -1026,16 +952,13 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("SecretReferenceId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
                     b.HasIndex("SecretReferenceId")
                         .IsUnique()
                         .HasDatabaseName("IX_listening_intake_token_secret");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "CreatedAt")
+                    b.HasIndex("OwnerUserId", "Protocol", "BackendInstanceId", "CreatedAt")
                         .HasDatabaseName("IX_listening_intake_token_scope");
 
                     b.ToTable("listening_intake_tokens", (string)null);
@@ -1054,11 +977,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -1071,9 +989,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("WindowEnd")
                         .HasColumnType("INTEGER");
 
@@ -1082,7 +997,7 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "CreatedAt");
+                    b.HasIndex("OwnerUserId", "CreatedAt");
 
                     b.ToTable("listening_profiles", (string)null);
                 });
@@ -1099,11 +1014,6 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<long>("ExpiresAt")
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
 
                     b.Property<long>("ObservedAt")
                         .HasColumnType("INTEGER");
@@ -1128,9 +1038,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("SourceJobId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TrackKeyHash")
                         .IsRequired()
                         .HasMaxLength(64)
@@ -1148,9 +1055,9 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("SourceJobId");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "ExpiresAt");
+                    b.HasIndex("OwnerUserId", "ExpiresAt");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "SignalKey")
+                    b.HasIndex("OwnerUserId", "SignalKey")
                         .IsUnique()
                         .HasDatabaseName("IX_listening_signal_idempotency")
                         .HasFilter("\"SignalKey\" IS NOT NULL");
@@ -1210,9 +1117,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TrackKey")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -1220,14 +1124,14 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CanonicalRecordingId");
+
                     b.HasIndex("ProviderAccountId");
+
+                    b.HasIndex("RunId", "OwnerUserId");
 
                     b.HasIndex("RunId", "Position")
                         .IsUnique();
-
-                    b.HasIndex("TenantId", "CanonicalRecordingId");
-
-                    b.HasIndex("RunId", "TenantId", "OwnerUserId");
 
                     b.ToTable("recommendation_candidates", (string)null);
                 });
@@ -1253,11 +1157,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(20)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -1274,9 +1173,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TrackKey")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -1287,10 +1183,10 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("CandidateId", "TenantId", "OwnerUserId")
+                    b.HasIndex("CandidateId", "OwnerUserId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Protocol", "BackendInstanceId", "LibraryScopeId", "TrackKey");
+                    b.HasIndex("OwnerUserId", "Protocol", "BackendInstanceId", "TrackKey");
 
                     b.ToTable("recommendation_feedback", (string)null);
                 });
@@ -1321,11 +1217,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("JobId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("Limit")
@@ -1365,9 +1256,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("TargetCredentialReferenceId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -1378,16 +1266,16 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("TargetCredentialReferenceId")
                         .HasDatabaseName("IX_recommendation_run_credential_reference");
 
+                    b.HasIndex("OwnerUserId", "IdempotencyKey")
+                        .IsUnique()
+                        .HasDatabaseName("IX_recommendation_run_idempotency");
+
                     b.HasIndex("ScheduleId", "ScheduledFor")
                         .IsUnique()
                         .HasDatabaseName("IX_recommendation_run_schedule_occurrence")
                         .HasFilter("\"ScheduleId\" IS NOT NULL");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "IdempotencyKey")
-                        .IsUnique()
-                        .HasDatabaseName("IX_recommendation_run_idempotency");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "ScheduleId", "ScheduledFor")
+                    b.HasIndex("OwnerUserId", "ScheduleId", "ScheduledFor")
                         .HasDatabaseName("IX_recommendation_run_schedule_history");
 
                     b.ToTable("recommendation_runs", null, t =>
@@ -1431,10 +1319,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("Length")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid?>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -1469,24 +1353,21 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(2000)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
                     b.HasIndex("CanonicalPath")
                         .IsUnique()
                         .HasDatabaseName("IX_managed_file_path");
 
+                    b.HasIndex("OwnerUserId")
+                        .HasDatabaseName("IX_managed_file_user");
+
                     b.HasIndex("SourceJobId")
                         .HasDatabaseName("IX_managed_file_job");
 
-                    b.HasIndex("TenantId", "OwnerUserId")
-                        .HasDatabaseName("IX_managed_file_user");
-
-                    b.HasIndex("Id", "TenantId", "OwnerUserId")
+                    b.HasIndex("Id", "OwnerUserId")
                         .IsUnique()
-                        .HasDatabaseName("UX_managed_file_owner_lineage");
+                        .HasDatabaseName("IX_managed_file_owner_lineage");
 
                     b.HasIndex("RootId", "ContentSha256", "ScopeKey")
                         .HasDatabaseName("IX_managed_file_fingerprint");
@@ -1532,18 +1413,13 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(1000)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
                     b.HasIndex("ManagedFileId", "ReferenceKey")
                         .IsUnique()
                         .HasDatabaseName("IX_managed_file_reference_key");
 
-                    b.HasIndex("TenantId", "ManagedFileId");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "ReleasedAt")
+                    b.HasIndex("OwnerUserId", "ReleasedAt")
                         .HasDatabaseName("IX_managed_file_reference_owner");
 
                     b.ToTable("managed_file_references", (string)null);
@@ -1599,18 +1475,15 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "OccurrenceKey", "Kind")
+                    b.HasIndex("OwnerUserId", "OccurrenceKey", "Kind")
                         .HasDatabaseName("IX_playback_delivery_occurrence_status");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "SignalKey", "TargetId")
+                    b.HasIndex("OwnerUserId", "SignalKey", "TargetId")
                         .IsUnique()
                         .HasDatabaseName("IX_playback_delivery_idempotency");
 
@@ -1620,7 +1493,7 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
-            modelBuilder.Entity("allstarr.Core.Settings.TenantRuntimeSettingRecord", b =>
+            modelBuilder.Entity("allstarr.Core.Settings.RuntimeSettingRecord", b =>
                 {
                     b.Property<Guid>("Id")
                         .HasColumnType("TEXT");
@@ -1645,9 +1518,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -1666,21 +1536,21 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "Key")
+                    b.HasIndex("Key")
                         .IsUnique()
-                        .HasDatabaseName("IX_tenant_runtime_settings_household_key")
+                        .HasDatabaseName("IX_runtime_settings_household_key")
                         .HasFilter("\"OwnerUserId\" IS NULL");
 
-                    b.HasIndex("TenantId", "UpdatedByUserId");
+                    b.HasIndex("UpdatedByUserId");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "Key")
+                    b.HasIndex("OwnerUserId", "Key")
                         .IsUnique()
-                        .HasDatabaseName("IX_tenant_runtime_settings_personal_key")
+                        .HasDatabaseName("IX_runtime_settings_personal_key")
                         .HasFilter("\"OwnerUserId\" IS NOT NULL");
 
-                    b.ToTable("tenant_runtime_settings", null, t =>
+                    b.ToTable("runtime_settings", null, t =>
                         {
-                            t.HasCheckConstraint("CK_tenant_runtime_settings_personal_keys", "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel')");
+                            t.HasCheckConstraint("CK_runtime_settings_personal_keys", "\"OwnerUserId\" IS NULL OR \"Key\" IN ('Library:ExplicitFilter', 'Playback:ShowExternalLabel', 'Playback:ShowExplicitLabel')");
                         });
                 });
 
@@ -1713,21 +1583,21 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("BackendIdentityId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
                     b.Property<Guid>("SecretReferenceId")
                         .HasColumnType("TEXT");
 
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("BackendIdentityId")
-                        .IsUnique();
-
                     b.HasIndex("SecretReferenceId");
+
+                    b.HasIndex("UserId")
+                        .IsUnique();
 
                     b.ToTable("admin_oidc_links", (string)null);
                 });
@@ -1767,67 +1637,16 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
                     b.HasIndex("ActorUserId");
 
                     b.HasIndex("CorrelationId");
 
-                    b.HasIndex("TenantId", "CreatedAt", "Id")
+                    b.HasIndex("CreatedAt", "Id")
                         .HasDatabaseName("IX_audit_event_updates");
 
                     b.ToTable("audit_events", (string)null);
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.BackendIdentityRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("BackendInstanceId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("BackendType")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("DisplayName")
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("LastSeenAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("PrincipalId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("UserId")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("UserId");
-
-                    b.HasIndex("TenantId", "UserId");
-
-                    b.HasIndex("BackendType", "BackendInstanceId", "PrincipalId")
-                        .IsUnique();
-
-                    b.ToTable("backend_identities", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalArtistRecord", b =>
@@ -1863,18 +1682,15 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "MusicBrainzArtistId")
+                    b.HasIndex("MusicBrainzArtistId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "SortName", "Id");
+                    b.HasIndex("SortName", "Id");
 
                     b.ToTable("canonical_artists", (string)null);
                 });
@@ -1913,14 +1729,11 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "EntityKind", "CanonicalEntityId");
+                    b.HasIndex("EntityKind", "CanonicalEntityId");
 
-                    b.HasIndex("TenantId", "Namespace", "EntityKind", "ExternalIdHash")
+                    b.HasIndex("Namespace", "EntityKind", "ExternalIdHash")
                         .IsUnique();
 
                     b.ToTable("canonical_catalog_aliases", null, t =>
@@ -1931,9 +1744,6 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingArtistRecord", b =>
                 {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("CanonicalRecordingId")
                         .HasColumnType("TEXT");
 
@@ -1952,9 +1762,9 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
-                    b.HasKey("TenantId", "CanonicalRecordingId", "Position");
+                    b.HasKey("CanonicalRecordingId", "Position");
 
-                    b.HasIndex("TenantId", "CanonicalArtistId", "CanonicalRecordingId");
+                    b.HasIndex("CanonicalArtistId", "CanonicalRecordingId");
 
                     b.ToTable("canonical_recording_artists", null, t =>
                         {
@@ -1998,9 +1808,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -2011,24 +1818,21 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "CreatedByUserId");
+                    b.HasIndex("CreatedByUserId");
 
-                    b.HasIndex("TenantId", "Isrc")
+                    b.HasIndex("Isrc")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "MusicBrainzRecordingId")
+                    b.HasIndex("MusicBrainzRecordingId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "Title", "Id");
+                    b.HasIndex("Title", "Id");
 
                     b.ToTable("canonical_recordings", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseGroupArtistRecord", b =>
                 {
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("CanonicalReleaseGroupId")
                         .HasColumnType("TEXT");
 
@@ -2047,9 +1851,9 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(50)
                         .HasColumnType("TEXT");
 
-                    b.HasKey("TenantId", "CanonicalReleaseGroupId", "Position");
+                    b.HasKey("CanonicalReleaseGroupId", "Position");
 
-                    b.HasIndex("TenantId", "CanonicalArtistId", "CanonicalReleaseGroupId");
+                    b.HasIndex("CanonicalArtistId", "CanonicalReleaseGroupId");
 
                     b.ToTable("canonical_release_group_artists", null, t =>
                         {
@@ -2088,9 +1892,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -2101,10 +1902,10 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "MusicBrainzReleaseGroupId")
+                    b.HasIndex("MusicBrainzReleaseGroupId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "Title", "Id");
+                    b.HasIndex("Title", "Id");
 
                     b.ToTable("canonical_release_groups", (string)null);
                 });
@@ -2151,9 +1952,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -2164,10 +1962,10 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "MusicBrainzReleaseId")
+                    b.HasIndex("MusicBrainzReleaseId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "CanonicalReleaseGroupId", "ReleaseDate");
+                    b.HasIndex("CanonicalReleaseGroupId", "ReleaseDate");
 
                     b.ToTable("canonical_releases", (string)null);
                 });
@@ -2200,9 +1998,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -2216,14 +2011,12 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("TenantId", "Id");
+                    b.HasIndex("CanonicalRecordingId");
 
-                    b.HasIndex("TenantId", "CanonicalRecordingId");
-
-                    b.HasIndex("TenantId", "MusicBrainzTrackId")
+                    b.HasIndex("MusicBrainzTrackId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "CanonicalReleaseId", "MediumPosition", "TrackPosition")
+                    b.HasIndex("CanonicalReleaseId", "MediumPosition", "TrackPosition")
                         .IsUnique();
 
                     b.ToTable("canonical_release_tracks", null, t =>
@@ -2276,18 +2069,15 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long?>("SupersededAt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("ValueJson")
                         .IsRequired()
                         .HasColumnType("jsonb");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "SourceId", "RefreshAfter");
+                    b.HasIndex("SourceId", "RefreshAfter");
 
-                    b.HasIndex("TenantId", "EntityKind", "CanonicalEntityId", "FieldName");
+                    b.HasIndex("EntityKind", "CanonicalEntityId", "FieldName");
 
                     b.ToTable("catalog_facts", null, t =>
                         {
@@ -2348,10 +2138,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<int>("MaxAttempts")
                         .HasColumnType("INTEGER");
 
@@ -2401,9 +2187,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Type")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -2414,25 +2197,21 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("OwnerUserId");
+
                     b.HasIndex("ProviderAccountId");
 
-                    b.HasIndex("Id", "TenantId")
-                        .IsUnique()
-                        .HasDatabaseName("UX_durable_job_tenant_lineage");
-
-                    b.HasIndex("TenantId", "OwnerUserId");
-
-                    b.HasIndex("Id", "TenantId", "OwnerUserId")
+                    b.HasIndex("Id", "OwnerUserId")
                         .IsUnique()
                         .HasDatabaseName("UX_durable_job_owner_lineage");
+
+                    b.HasIndex("UpdatedAt", "Id")
+                        .HasDatabaseName("IX_durable_job_updates");
 
                     b.HasIndex("ScopeKey", "Type", "IdempotencyKey")
                         .IsUnique();
 
                     b.HasIndex("State", "AvailableAt", "Priority");
-
-                    b.HasIndex("TenantId", "UpdatedAt", "Id")
-                        .HasDatabaseName("IX_durable_job_updates");
 
                     b.ToTable("durable_jobs", (string)null);
                 });
@@ -2686,11 +2465,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid>("OwnerUserId")
                         .HasColumnType("TEXT");
 
@@ -2738,9 +2512,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("SourceJobId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
                     b.HasIndex("ProviderTrackIdentityId");
@@ -2749,9 +2520,7 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("ProviderAccountId", "ProviderId");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
-
-                    b.HasIndex("TenantId", "ProviderAccountId", "ResourceKind", "ExternalIdHash", "SnapshotVersion")
+                    b.HasIndex("OwnerUserId", "ProviderAccountId", "ResourceKind", "ExternalIdHash", "SnapshotVersion")
                         .IsUnique()
                         .HasDatabaseName("IX_external_snapshot_version");
 
@@ -2828,11 +2597,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("MisfirePolicy")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -2863,9 +2627,6 @@ namespace allstarr.Core.Storage.Migrations
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TimeZoneId")
                         .IsRequired()
                         .HasMaxLength(100)
@@ -2876,9 +2637,9 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Enabled", "NextRunAt");
+                    b.HasIndex("OwnerUserId");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
+                    b.HasIndex("Enabled", "NextRunAt");
 
                     b.ToTable("job_schedules", (string)null);
                 });
@@ -2915,17 +2676,14 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
+
+                    b.HasIndex("ActorUserId");
 
                     b.HasIndex("AuditEventId")
                         .IsUnique();
 
-                    b.HasIndex("TenantId", "ActorUserId");
-
-                    b.HasIndex("TenantId", "SourceSha256", "SchemaVersion")
+                    b.HasIndex("SourceSha256", "SchemaVersion")
                         .IsUnique();
 
                     b.ToTable("legacy_env_imports", (string)null);
@@ -2952,9 +2710,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("BackendIdentityId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("BackendInstanceId")
                         .IsRequired()
                         .HasMaxLength(200)
@@ -2963,6 +2718,11 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<string>("BackendItemId")
                         .IsRequired()
                         .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendLibraryId")
+                        .IsRequired()
+                        .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
                     b.Property<Guid?>("CanonicalRecordingId")
@@ -2992,11 +2752,6 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<string>("Isrc")
                         .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("MusicBrainzArtistId")
@@ -3030,9 +2785,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("SourceModifiedAt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasMaxLength(500)
@@ -3043,17 +2795,15 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("BackendIdentityId");
+                    b.HasIndex("CanonicalRecordingId");
 
-                    b.HasIndex("TenantId", "CanonicalRecordingId");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "LibraryScopeId", "Isrc")
+                    b.HasIndex("OwnerUserId", "BackendLibraryId", "Isrc")
                         .HasDatabaseName("IX_library_track_scoped_isrc");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "LibraryScopeId", "MusicBrainzRecordingId")
+                    b.HasIndex("OwnerUserId", "BackendLibraryId", "MusicBrainzRecordingId")
                         .HasDatabaseName("IX_library_track_scoped_musicbrainz");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "LibraryScopeId", "BackendInstanceId", "BackendItemId")
+                    b.HasIndex("OwnerUserId", "BackendLibraryId", "BackendInstanceId", "BackendItemId")
                         .IsUnique()
                         .HasDatabaseName("IX_library_track_backend_item");
 
@@ -3132,11 +2882,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("ExternalSnapshotId")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid?>("LibraryTrackId")
                         .HasColumnType("TEXT");
 
@@ -3178,21 +2923,18 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "ExternalSnapshotId");
+                    b.HasIndex("ExternalSnapshotId");
 
-                    b.HasIndex("TenantId", "LibraryTrackId");
+                    b.HasIndex("LibraryTrackId");
 
-                    b.HasIndex("TenantId", "SourceProviderId", "SourceExternalIdHash")
+                    b.HasIndex("SourceProviderId", "SourceExternalIdHash")
                         .IsUnique()
                         .HasDatabaseName("IX_manual_track_override_household_active")
                         .HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NULL");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "SourceProviderId", "SourceExternalIdHash")
+                    b.HasIndex("OwnerUserId", "SourceProviderId", "SourceExternalIdHash")
                         .IsUnique()
                         .HasDatabaseName("IX_manual_track_override_personal_active")
                         .HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NOT NULL");
@@ -3249,9 +2991,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -3260,12 +2999,12 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("LineageJobId")
                         .HasDatabaseName("IX_enrichment_application_job");
 
-                    b.HasIndex("PlanId", "TenantId", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
-                        .HasDatabaseName("IX_enrichment_application_plan");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "PlanId", "ManagedArtifactId", "ArtifactContentSha256")
+                    b.HasIndex("OwnerUserId", "PlanId", "ManagedArtifactId", "ArtifactContentSha256")
                         .IsUnique()
                         .HasDatabaseName("IX_enrichment_application_hash");
+
+                    b.HasIndex("PlanId", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
+                        .HasDatabaseName("IX_enrichment_application_plan");
 
                     b.ToTable("metadata_enrichment_applications", null, t =>
                         {
@@ -3314,12 +3053,9 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
-                    b.HasAlternateKey("Id", "TenantId", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
+                    b.HasAlternateKey("Id", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
                         .HasName("AK_enrichment_plan_scope");
 
                     b.HasIndex("LineageJobId")
@@ -3328,7 +3064,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("ManagedArtifactId")
                         .HasDatabaseName("IX_enrichment_plan_file");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "ManagedArtifactId", "Fingerprint")
+                    b.HasIndex("OwnerUserId", "ManagedArtifactId", "Fingerprint")
                         .IsUnique()
                         .HasDatabaseName("IX_enrichment_plan_fingerprint");
 
@@ -3370,9 +3106,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -3381,39 +3114,10 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "UserId")
+                    b.HasIndex("UserId")
                         .IsUnique();
 
                     b.ToTable("onboarding_states", (string)null);
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.PlatformUserRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("DisplayName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(32)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("UpdatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("users", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistLinkRecord", b =>
@@ -3435,11 +3139,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT")
                         .HasDefaultValue("Linked");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
 
                     b.Property<string>("MaterializationMode")
                         .IsRequired()
@@ -3528,9 +3227,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("TrackRetention")
                         .IsRequired()
                         .ValueGeneratedOnAdd()
@@ -3543,11 +3239,11 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("ScheduleId");
+
                     b.HasIndex("ProviderAccountId", "SourceProviderId");
 
-                    b.HasIndex("TenantId", "ScheduleId");
-
-                    b.HasIndex("TenantId", "OwnerUserId", "LibraryScopeId", "SourceProviderId", "ProviderAccountId", "SourcePlaylistIdHash", "TargetProtocol", "TargetBackendInstanceId")
+                    b.HasIndex("OwnerUserId", "SourceProviderId", "ProviderAccountId", "SourcePlaylistIdHash", "TargetProtocol", "TargetBackendInstanceId")
                         .IsUnique()
                         .HasDatabaseName("IX_playlist_link_source_target");
 
@@ -3585,16 +3281,13 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<int>("SourcePosition")
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "ExternalMetadataSnapshotId");
+                    b.HasIndex("ExternalMetadataSnapshotId");
 
-                    b.HasIndex("TenantId", "PublishedTrackMatchId");
+                    b.HasIndex("PublishedTrackMatchId");
 
-                    b.HasIndex("TenantId", "PlaylistSourceSnapshotId", "SourcePosition")
+                    b.HasIndex("PlaylistSourceSnapshotId", "SourcePosition")
                         .IsUnique()
                         .HasDatabaseName("IX_playlist_source_entry_position");
 
@@ -3664,25 +3357,22 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("SourceJobId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
+
+                    b.HasIndex("OwnerUserId");
 
                     b.HasIndex("ProviderAccountId");
 
                     b.HasIndex("SourceJobId");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
-
-                    b.HasIndex("TenantId", "PlaylistLinkId", "SnapshotVersion")
+                    b.HasIndex("PlaylistLinkId", "SnapshotVersion")
                         .IsUnique()
                         .HasDatabaseName("IX_playlist_snapshot_version");
 
-                    b.HasIndex("TenantId", "RetrievedAt", "Id")
+                    b.HasIndex("RetrievedAt", "Id")
                         .HasDatabaseName("IX_playlist_snapshot_updates");
 
-                    b.HasIndex("TenantId", "PlaylistLinkId", "PublishedAt", "SnapshotVersion")
+                    b.HasIndex("PlaylistLinkId", "PublishedAt", "SnapshotVersion")
                         .HasDatabaseName("IX_playlist_snapshot_published");
 
                     b.ToTable("playlist_source_snapshots", null, t =>
@@ -3728,21 +3418,18 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<int?>("TargetPosition")
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<Guid?>("TrackMatchId")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "LibraryTrackId");
+                    b.HasIndex("LibraryTrackId");
 
-                    b.HasIndex("TenantId", "PlaylistSourceEntryId");
+                    b.HasIndex("PlaylistSourceEntryId");
 
-                    b.HasIndex("TenantId", "TrackMatchId");
+                    b.HasIndex("TrackMatchId");
 
-                    b.HasIndex("TenantId", "PlaylistSyncRunId", "SourcePosition")
+                    b.HasIndex("PlaylistSyncRunId", "SourcePosition")
                         .IsUnique()
                         .HasDatabaseName("IX_playlist_result_run_position");
 
@@ -3823,9 +3510,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("VerificationCode")
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
@@ -3843,13 +3527,13 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("JobId");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
+                    b.HasIndex("OwnerUserId");
 
-                    b.HasIndex("TenantId", "PlaylistSourceSnapshotId");
+                    b.HasIndex("PlaylistSourceSnapshotId");
 
-                    b.HasIndex("TenantId", "ScheduleId");
+                    b.HasIndex("ScheduleId");
 
-                    b.HasIndex("TenantId", "PlaylistLinkId", "IdempotencyKey")
+                    b.HasIndex("PlaylistLinkId", "IdempotencyKey")
                         .IsUnique();
 
                     b.ToTable("playlist_sync_runs", null, t =>
@@ -3894,23 +3578,20 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "CreatedBySyncRunId");
+                    b.HasIndex("CreatedBySyncRunId");
 
-                    b.HasIndex("TenantId", "LibraryTrackId");
+                    b.HasIndex("LibraryTrackId");
 
-                    b.HasIndex("TenantId", "PlaylistLinkId", "TargetEntryId")
+                    b.HasIndex("PlaylistLinkId", "TargetEntryId")
                         .IsUnique()
                         .HasDatabaseName("IX_playlist_membership_target_entry");
 
-                    b.HasIndex("TenantId", "PlaylistLinkId", "LibraryTrackId", "Active")
+                    b.HasIndex("PlaylistLinkId", "LibraryTrackId", "Active")
                         .HasDatabaseName("IX_playlist_membership_track_active");
 
                     b.ToTable("playlist_target_memberships", null, t =>
@@ -3953,9 +3634,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("SecretReferenceId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -3963,16 +3641,13 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("CreatedByUserId");
 
+                    b.HasIndex("OwnerUserId");
+
                     b.HasIndex("SecretReferenceId");
 
-                    b.HasIndex("TenantId", "OwnerUserId");
+                    b.HasIndex("ProviderId", "OwnerUserId");
 
-                    b.HasIndex("ProviderId", "TenantId", "OwnerUserId");
-
-                    b.ToTable("provider_accounts", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_provider_accounts_owner_shape", "(\"OwnerUserId\" IS NULL AND \"TenantId\" IS NULL) OR (\"OwnerUserId\" IS NOT NULL AND \"TenantId\" IS NOT NULL)");
-                        });
+                    b.ToTable("provider_accounts", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderCircuitRecord", b =>
@@ -4061,9 +3736,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<double>("SuccessRate")
                         .HasColumnType("REAL");
 
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -4116,16 +3788,13 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.HasKey("Id");
+
+                    b.HasIndex("ObservedAt", "Id")
+                        .HasDatabaseName("IX_provider_health_updates");
 
                     b.HasIndex("ProviderAccountId", "Capability", "ObservedAt")
                         .HasDatabaseName("IX_provider_health_account_capability_observed");
-
-                    b.HasIndex("TenantId", "ObservedAt", "Id")
-                        .HasDatabaseName("IX_provider_health_updates");
 
                     b.ToTable("provider_health_samples", (string)null);
                 });
@@ -4181,9 +3850,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
@@ -4202,16 +3868,16 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("CanonicalRecordingId");
+
                     b.HasIndex("ProviderAccountId", "ProviderId");
 
-                    b.HasIndex("TenantId", "CanonicalRecordingId");
-
-                    b.HasIndex("TenantId", "ProviderId", "ResourceKind", "CatalogNamespace", "ExternalIdHash")
+                    b.HasIndex("ProviderId", "ResourceKind", "CatalogNamespace", "ExternalIdHash")
                         .IsUnique()
                         .HasDatabaseName("IX_provider_track_identity_catalog_exact")
                         .HasFilter("\"Scope\" = 'Catalog'");
 
-                    b.HasIndex("TenantId", "ProviderId", "ResourceKind", "CatalogNamespace", "ProviderAccountId", "ExternalIdHash")
+                    b.HasIndex("ProviderId", "ResourceKind", "CatalogNamespace", "ProviderAccountId", "ExternalIdHash")
                         .IsUnique()
                         .HasDatabaseName("IX_provider_track_identity_account_exact")
                         .HasFilter("\"Scope\" = 'Account'");
@@ -4238,9 +3904,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<int>("ActiveVersion")
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("BackendIdentityId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
@@ -4252,17 +3915,15 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long?>("RevokedAt")
                         .HasColumnType("INTEGER");
 
-                    b.Property<Guid?>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
-                    b.HasIndex("BackendIdentityId");
-
-                    b.HasIndex("TenantId", "Purpose");
+                    b.HasIndex("UserId", "Purpose");
 
                     b.ToTable("secret_references", (string)null);
                 });
@@ -4309,32 +3970,6 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("secret_versions", (string)null);
                 });
 
-            modelBuilder.Entity("allstarr.Core.Storage.TenantRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("CreatedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Slug")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("Slug")
-                        .IsUnique();
-
-                    b.ToTable("tenants", (string)null);
-                });
-
             modelBuilder.Entity("allstarr.Core.Storage.TrackMatchRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4366,11 +4001,6 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.Property<long>("LibraryIndexRevision")
                         .HasColumnType("INTEGER");
-
-                    b.Property<string>("LibraryScopeId")
-                        .IsRequired()
-                        .HasMaxLength(300)
-                        .HasColumnType("TEXT");
 
                     b.Property<Guid?>("LibraryTrackId")
                         .HasColumnType("TEXT");
@@ -4404,9 +4034,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("TenantId")
-                        .HasColumnType("TEXT");
-
                     b.Property<double>("Threshold")
                         .HasColumnType("REAL");
 
@@ -4416,16 +4043,16 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("TenantId", "CanonicalRecordingId");
+                    b.HasIndex("CanonicalRecordingId");
 
-                    b.HasIndex("TenantId", "ExternalSnapshotId");
+                    b.HasIndex("ExternalSnapshotId");
 
-                    b.HasIndex("TenantId", "LibraryTrackId");
+                    b.HasIndex("LibraryTrackId");
 
-                    b.HasIndex("TenantId", "DecidedAt", "Id")
+                    b.HasIndex("DecidedAt", "Id")
                         .HasDatabaseName("IX_track_match_updates");
 
-                    b.HasIndex("TenantId", "OwnerUserId", "LibraryScopeId", "ExternalSnapshotId", "DecisionVersion")
+                    b.HasIndex("OwnerUserId", "ExternalSnapshotId", "DecisionVersion")
                         .IsUnique()
                         .HasDatabaseName("IX_track_match_scoped_decision");
 
@@ -4439,12 +4066,66 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.UserRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendInstanceId")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendPrincipalId")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DisplayName")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsAdmin")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("LastSeenAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BackendType", "BackendInstanceId", "BackendPrincipalId")
+                        .IsUnique();
+
+                    b.ToTable("users", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.Downloads.ProviderDownloadArtifactEntity", b =>
                 {
                     b.HasOne("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", null)
                         .WithMany()
                         .HasForeignKey("ManagedFileId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_download_artifact_user");
 
                     b.HasOne("allstarr.Core.Downloads.ProviderDownloadWorkspaceEntity", null)
                         .WithMany()
@@ -4462,11 +4143,11 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_download_workspace_job");
 
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .HasConstraintName("FK_download_workspace_user");
 
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
@@ -4474,21 +4155,14 @@ namespace allstarr.Core.Storage.Migrations
                         .HasPrincipalKey("Id", "ProviderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_download_workspace_account");
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_download_workspace_user");
                 });
 
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteActionRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Favorites.FavoriteEventRecord", null)
                         .WithMany()
-                        .HasForeignKey("EventId", "TenantId", "OwnerUserId")
-                        .HasPrincipalKey("Id", "TenantId", "OwnerUserId")
+                        .HasForeignKey("EventId", "OwnerUserId")
+                        .HasPrincipalKey("Id", "OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired()
                         .HasConstraintName("FK_favorite_action_event");
@@ -4502,33 +4176,25 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Favorites.FavoriteStateRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("allstarr.Core.Favorites.FavoriteEventRecord", null)
                         .WithMany()
-                        .HasForeignKey("LastEventId", "TenantId", "OwnerUserId")
-                        .HasPrincipalKey("Id", "TenantId", "OwnerUserId")
+                        .HasForeignKey("LastEventId", "OwnerUserId")
+                        .HasPrincipalKey("Id", "OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_favorite_state_event");
@@ -4538,57 +4204,61 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     b.HasOne("allstarr.Core.Intelligence.GeneratedSetRecord", null)
                         .WithMany()
-                        .HasForeignKey("GeneratedSetId", "TenantId", "OwnerUserId")
-                        .HasPrincipalKey("Id", "TenantId", "OwnerUserId")
+                        .HasForeignKey("GeneratedSetId", "OwnerUserId")
+                        .HasPrincipalKey("Id", "OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.GeneratedSetRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("allstarr.Core.Storage.JobScheduleRecord", null)
                         .WithMany()
                         .HasForeignKey("ScheduleId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("allstarr.Core.Intelligence.RecommendationRunRecord", null)
                         .WithMany()
-                        .HasForeignKey("RunId", "TenantId", "OwnerUserId")
-                        .HasPrincipalKey("Id", "TenantId", "OwnerUserId")
+                        .HasForeignKey("RunId", "OwnerUserId")
+                        .HasPrincipalKey("Id", "OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade);
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.IntelligencePolicyRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningEventRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalRecordingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_canonical_recording");
+
+                    b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
+                        .WithMany()
+                        .HasForeignKey("LibraryTrackId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_listening_event_library_track");
+
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
                         .HasForeignKey("ProviderAccountId")
@@ -4600,152 +4270,89 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("ProviderTrackIdentityId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_listening_event_provider_identity");
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_listening_event_canonical_recording");
-
-                    b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "LibraryTrackId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_listening_event_library_track");
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningHistoryImportRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningIntakeTokenRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("allstarr.Core.Storage.SecretReferenceRecord", null)
                         .WithMany()
                         .HasForeignKey("SecretReferenceId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_listening_intake_token_secret");
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningProfileRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.ListeningSignalRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)
                         .WithMany()
                         .HasForeignKey("SourceJobId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_listening_signal_job");
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.RecommendationCandidateRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalRecordingId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
                         .HasForeignKey("ProviderAccountId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("allstarr.Core.Intelligence.RecommendationRunRecord", null)
                         .WithMany()
-                        .HasForeignKey("RunId", "TenantId", "OwnerUserId")
-                        .HasPrincipalKey("Id", "TenantId", "OwnerUserId")
+                        .HasForeignKey("RunId", "OwnerUserId")
+                        .HasPrincipalKey("Id", "OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.RecommendationFeedbackRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("allstarr.Core.Intelligence.RecommendationCandidateRecord", null)
                         .WithOne()
-                        .HasForeignKey("allstarr.Core.Intelligence.RecommendationFeedbackRecord", "CandidateId", "TenantId", "OwnerUserId")
-                        .HasPrincipalKey("allstarr.Core.Intelligence.RecommendationCandidateRecord", "Id", "TenantId", "OwnerUserId")
+                        .HasForeignKey("allstarr.Core.Intelligence.RecommendationFeedbackRecord", "CandidateId", "OwnerUserId")
+                        .HasPrincipalKey("allstarr.Core.Intelligence.RecommendationCandidateRecord", "Id", "OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
@@ -4758,186 +4365,114 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
                     b.HasOne("allstarr.Core.Storage.JobScheduleRecord", null)
                         .WithMany()
                         .HasForeignKey("ScheduleId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_managed_file_user");
+
                     b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)
                         .WithMany()
                         .HasForeignKey("SourceJobId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_managed_file_tenant_job");
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_managed_file_tenant_user");
+                        .HasConstraintName("FK_managed_file_job");
                 });
 
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileReferenceEntity", b =>
                 {
                     b.HasOne("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "ManagedFileId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("ManagedFileId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("FK_managed_file_reference_tenant_file");
+                        .HasConstraintName("FK_managed_file_reference_file");
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_managed_file_reference_tenant_user");
+                        .HasConstraintName("FK_managed_file_reference_user");
                 });
 
             modelBuilder.Entity("allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
-            modelBuilder.Entity("allstarr.Core.Settings.TenantRuntimeSettingRecord", b =>
+            modelBuilder.Entity("allstarr.Core.Settings.RuntimeSettingRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "UpdatedByUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("UpdatedByUserId")
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.AdminOidcLinkRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.BackendIdentityRecord", null)
-                        .WithMany()
-                        .HasForeignKey("BackendIdentityId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
                     b.HasOne("allstarr.Core.Storage.SecretReferenceRecord", null)
                         .WithMany()
                         .HasForeignKey("SecretReferenceId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.AuditEventRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("ActorUserId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.BackendIdentityRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.CanonicalArtistRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.CanonicalCatalogAliasRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingArtistRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.CanonicalArtistRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalArtistId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalArtistId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalRecordingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalRecordingRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "CreatedByUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CreatedByUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
@@ -4946,94 +4481,53 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     b.HasOne("allstarr.Core.Storage.CanonicalArtistRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalArtistId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalArtistId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("allstarr.Core.Storage.CanonicalReleaseGroupRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalReleaseGroupId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalReleaseGroupId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseGroupRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("allstarr.Core.Storage.CanonicalReleaseGroupRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalReleaseGroupId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalReleaseGroupId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.CanonicalReleaseTrackRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalRecordingId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("allstarr.Core.Storage.CanonicalReleaseRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalReleaseId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalReleaseId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.CatalogFactRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.DurableJobRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_durable_job_owner");
+
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
                         .HasForeignKey("ProviderAccountId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_durable_job_tenant_owner");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.ExtensionLogRecord", b =>
@@ -5067,7 +4561,7 @@ namespace allstarr.Core.Storage.Migrations
                         .IsRequired()
                         .HasConstraintName("FK_extension_permission_review_package");
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("ReviewedByUserId")
                         .OnDelete(DeleteBehavior.Restrict);
@@ -5075,6 +4569,13 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ExternalMetadataSnapshotRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_ExternalMetadataSnapshot_User");
+
                     b.HasOne("allstarr.Core.Storage.ProviderTrackIdentityRecord", null)
                         .WithMany()
                         .HasForeignKey("ProviderTrackIdentityId")
@@ -5093,14 +4594,6 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_external_snapshot_provider_account");
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("FK_ExternalMetadataSnapshot_PlatformUser");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.JobAttemptRecord", b =>
@@ -5114,83 +4607,64 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.JobScheduleRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("FK_JobSchedule_PlatformUser");
+                        .HasConstraintName("FK_JobSchedule_User");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.LegacyEnvImportRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ActorUserId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("allstarr.Core.Storage.AuditEventRecord", null)
                         .WithMany()
                         .HasForeignKey("AuditEventId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "ActorUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.LibraryTrackRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.BackendIdentityRecord", null)
-                        .WithMany()
-                        .HasForeignKey("BackendIdentityId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalRecordingId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_library_track_canonical_recording");
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("FK_LibraryTrack_PlatformUser");
+                        .HasConstraintName("FK_LibraryTrack_User");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.ManualTrackOverrideRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.ExternalMetadataSnapshotRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "ExternalSnapshotId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("ExternalSnapshotId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_ManualTrackOverride_ExternalMetadataSnapshot");
 
                     b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "LibraryTrackId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("LibraryTrackId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_ManualTrackOverride_LibraryTrack");
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_ManualTrackOverride_PlatformUser");
+                        .HasConstraintName("FK_ManualTrackOverride_User");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.MetadataEnrichmentApplicationRecord", b =>
@@ -5201,17 +4675,16 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
                     b.HasOne("allstarr.Core.Storage.MetadataEnrichmentPlanRecord", null)
                         .WithMany()
-                        .HasForeignKey("PlanId", "TenantId", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
-                        .HasPrincipalKey("Id", "TenantId", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
+                        .HasForeignKey("PlanId", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
+                        .HasPrincipalKey("Id", "OwnerUserId", "ManagedArtifactId", "LineageJobId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_enrichment_application_plan");
@@ -5231,41 +4704,37 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
 
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.OnboardingStateRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "UserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.PlatformUserRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistLinkRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_PlaylistLink_User");
+
+                    b.HasOne("allstarr.Core.Storage.JobScheduleRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ScheduleId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_PlaylistLink_JobSchedule");
+
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
                         .HasForeignKey("ProviderAccountId", "SourceProviderId")
@@ -5273,51 +4742,47 @@ namespace allstarr.Core.Storage.Migrations
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_playlist_link_provider_account");
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("FK_PlaylistLink_PlatformUser");
-
-                    b.HasOne("allstarr.Core.Storage.JobScheduleRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "ScheduleId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_PlaylistLink_JobSchedule");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSourceEntryRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.ExternalMetadataSnapshotRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "ExternalMetadataSnapshotId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("ExternalMetadataSnapshotId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistSourceEntry_ExternalMetadataSnapshot");
 
                     b.HasOne("allstarr.Core.Storage.PlaylistSourceSnapshotRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistSourceSnapshotId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PlaylistSourceSnapshotId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistSourceEntry_PlaylistSourceSnapshot");
 
                     b.HasOne("allstarr.Core.Storage.TrackMatchRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PublishedTrackMatchId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PublishedTrackMatchId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_PlaylistSourceEntry_TrackMatch");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSourceSnapshotRecord", b =>
                 {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_PlaylistSourceSnapshot_User");
+
+                    b.HasOne("allstarr.Core.Storage.PlaylistLinkRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PlaylistLinkId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_PlaylistSourceSnapshot_PlaylistLink");
+
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
                         .HasForeignKey("ProviderAccountId")
@@ -5329,53 +4794,33 @@ namespace allstarr.Core.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("SourceJobId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("FK_PlaylistSourceSnapshot_PlatformUser");
-
-                    b.HasOne("allstarr.Core.Storage.PlaylistLinkRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistLinkId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
-                        .HasConstraintName("FK_PlaylistSourceSnapshot_PlaylistLink");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.PlaylistSyncEntryResultRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "LibraryTrackId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("LibraryTrackId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_PlaylistSyncEntryResult_LibraryTrack");
 
                     b.HasOne("allstarr.Core.Storage.PlaylistSourceEntryRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistSourceEntryId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PlaylistSourceEntryId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistSyncEntryResult_PlaylistSourceEntry");
 
                     b.HasOne("allstarr.Core.Storage.PlaylistSyncRunRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistSyncRunId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PlaylistSyncRunId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistSyncEntryResult_PlaylistSyncRun");
 
                     b.HasOne("allstarr.Core.Storage.TrackMatchRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "TrackMatchId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("TrackMatchId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_PlaylistSyncEntryResult_TrackMatch");
                 });
@@ -5387,34 +4832,30 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("JobId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("FK_PlaylistSyncRun_PlatformUser");
+                        .HasConstraintName("FK_PlaylistSyncRun_User");
 
                     b.HasOne("allstarr.Core.Storage.PlaylistLinkRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistLinkId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PlaylistLinkId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistSyncRun_PlaylistLink");
 
                     b.HasOne("allstarr.Core.Storage.PlaylistSourceSnapshotRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistSourceSnapshotId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PlaylistSourceSnapshotId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistSyncRun_PlaylistSourceSnapshot");
 
                     b.HasOne("allstarr.Core.Storage.JobScheduleRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "ScheduleId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("ScheduleId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_PlaylistSyncRun_JobSchedule");
                 });
@@ -5423,24 +4864,21 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     b.HasOne("allstarr.Core.Storage.PlaylistSyncRunRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CreatedBySyncRunId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CreatedBySyncRunId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistTargetMembership_PlaylistSyncRun");
 
                     b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "LibraryTrackId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("LibraryTrackId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistTargetMembership_LibraryTrack");
 
                     b.HasOne("allstarr.Core.Storage.PlaylistLinkRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "PlaylistLinkId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("PlaylistLinkId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_PlaylistTargetMembership_PlaylistLink");
@@ -5448,28 +4886,22 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderAccountRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
                         .HasForeignKey("CreatedByUserId")
                         .OnDelete(DeleteBehavior.SetNull)
                         .HasConstraintName("FK_provider_account_creator");
 
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_provider_account_owner");
+
                     b.HasOne("allstarr.Core.Storage.SecretReferenceRecord", null)
                         .WithMany()
                         .HasForeignKey("SecretReferenceId")
                         .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .HasConstraintName("FK_provider_account_tenant_owner");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderCircuitRecord", b =>
@@ -5501,11 +4933,12 @@ namespace allstarr.Core.Storage.Migrations
 
             modelBuilder.Entity("allstarr.Core.Storage.ProviderTrackIdentityRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
+                        .HasForeignKey("CanonicalRecordingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired()
+                        .HasConstraintName("FK_track_identity_canonical_recording");
 
                     b.HasOne("allstarr.Core.Storage.ProviderAccountRecord", null)
                         .WithMany()
@@ -5513,26 +4946,13 @@ namespace allstarr.Core.Storage.Migrations
                         .HasPrincipalKey("Id", "ProviderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_track_identity_provider_account");
-
-                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired()
-                        .HasConstraintName("FK_track_identity_canonical_recording");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.SecretReferenceRecord", b =>
                 {
-                    b.HasOne("allstarr.Core.Storage.BackendIdentityRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("BackendIdentityId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.HasOne("allstarr.Core.Storage.TenantRecord", null)
-                        .WithMany()
-                        .HasForeignKey("TenantId")
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict);
                 });
 
@@ -5549,33 +4969,29 @@ namespace allstarr.Core.Storage.Migrations
                 {
                     b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "CanonicalRecordingId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("CanonicalRecordingId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_TrackMatch_Canonicaling");
 
                     b.HasOne("allstarr.Core.Storage.ExternalMetadataSnapshotRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "ExternalSnapshotId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("ExternalSnapshotId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
                         .HasConstraintName("FK_TrackMatch_ExternalMetadataSnapshot");
 
                     b.HasOne("allstarr.Core.Storage.LibraryTrackRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "LibraryTrackId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("LibraryTrackId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_TrackMatch_LibraryTrack");
 
-                    b.HasOne("allstarr.Core.Storage.PlatformUserRecord", null)
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()
-                        .HasForeignKey("TenantId", "OwnerUserId")
-                        .HasPrincipalKey("TenantId", "Id")
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .IsRequired()
-                        .HasConstraintName("FK_TrackMatch_PlatformUser");
+                        .HasConstraintName("FK_TrackMatch_User");
                 });
 #pragma warning restore 612, 618
         }

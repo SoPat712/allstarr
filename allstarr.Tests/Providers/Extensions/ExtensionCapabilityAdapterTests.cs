@@ -414,7 +414,7 @@ public sealed class ExtensionCapabilityAdapterTests
             var context = Context("spotiflac-demo");
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(
-                context.Actor.TenantId, context.Actor.EffectiveUserId, job, "spotiflac-demo", null, "download"));
+                context.Actor.EffectiveUserId, job, "spotiflac-demo", null, "download"));
 
             string? raw;
             using (ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "spotiflac-demo", 1024, CancellationToken.None))
@@ -914,7 +914,7 @@ public sealed class ExtensionCapabilityAdapterTests
         using var foreign = DownloadFixture(Encoding.UTF8.GetBytes("audio"), 1024, "track.flac");
         var otherJob = Guid.CreateVersion7();
         var foreignWorkspace = await foreign.Resolver.CreateWorkspaceAsync(new(
-            foreign.Context.Actor.TenantId, foreign.Context.Actor.EffectiveUserId, otherJob,
+            foreign.Context.Actor.EffectiveUserId, otherJob,
             "fixture-extension", null, "foreign"));
         Assert.Equal(ProviderErrorKind.TransientFailure,
             (await foreign.Adapter.DownloadAsync(foreign.Context,
@@ -941,7 +941,7 @@ public sealed class ExtensionCapabilityAdapterTests
             var context = Context();
             var job = Guid.CreateVersion7();
             var workspace = await resolver.CreateWorkspaceAsync(new(
-                context.Actor.TenantId, context.Actor.EffectiveUserId, job, "fixture-extension", null, "claim"));
+                context.Actor.EffectiveUserId, job, "fixture-extension", null, "claim"));
 
             var outcome = await adapter.DownloadAsync(context,
                 new(Id(ProviderResourceKind.Track, "track-1"), job, workspace.Reference, ProviderAudioQuality.Any));
@@ -997,7 +997,7 @@ public sealed class ExtensionCapabilityAdapterTests
         var context = Context();
         var job = Guid.CreateVersion7();
         var workspace = resolver.CreateWorkspaceAsync(new(
-            context.Actor.TenantId, context.Actor.EffectiveUserId, job, "fixture-extension", null, "download"))
+            context.Actor.EffectiveUserId, job, "fixture-extension", null, "download"))
             .GetAwaiter().GetResult();
         return new(root, store, resolver, adapter, context, job, workspace,
             Id(ProviderResourceKind.Track, "track-1"));
@@ -1011,13 +1011,13 @@ public sealed class ExtensionCapabilityAdapterTests
         bool includeAccount = false,
         CancellationToken cancellationToken = default)
     {
-        var actor = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User, Guid.CreateVersion7(),
+        var actor = new ProviderActorContext(ProviderActorKind.User, Guid.CreateVersion7(),
             new ProviderBackendPrincipal("jellyfin", "fixture", "user"));
         var account = includeAccount
             ? new ProviderAccountContext(Guid.CreateVersion7(), providerId, ProviderAccountScope.Personal, 1,
-                tenantId: actor.TenantId, ownerUserId: actor.EffectiveUserId)
+                ownerUserId: actor.EffectiveUserId)
             : null;
-        return new ProviderExecutionContext(actor, providerId, account, null,
+        return new ProviderExecutionContext(actor, providerId, account,
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, true, false, true, [providerId]),
             "extension-test", "extension-test-correlation", DateTimeOffset.UtcNow.AddMinutes(1), cancellationToken,
@@ -1168,9 +1168,8 @@ public sealed class ExtensionCapabilityAdapterTests
             if (existing != null) return Task.FromResult(existing);
             Artifacts.Add(value); return Task.FromResult(value);
         }
-        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid tenantId, Guid jobId, string providerId, CancellationToken token) =>
-            Task.FromResult(Artifacts.SingleOrDefault(item => item.TenantId == tenantId &&
-                item.DurableJobId == jobId && item.ProviderId == providerId));
+        public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid jobId, string providerId, CancellationToken token) =>
+            Task.FromResult(Artifacts.SingleOrDefault(item => item.DurableJobId == jobId && item.ProviderId == providerId));
         public Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken token) => Task.CompletedTask;
     }
 }

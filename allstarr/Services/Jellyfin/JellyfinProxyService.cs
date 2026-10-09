@@ -833,7 +833,6 @@ public class JellyfinProxyService
         var actor = execution?.Actor;
         var asset = await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                actor?.TenantId,
                 actor?.EffectiveUserId,
                 null,
                 "jellyfin",

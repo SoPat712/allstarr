@@ -14,7 +14,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Matching;
 
-public sealed record LibraryCatalogScanRequest(string? LibraryScopeId, Guid? CredentialReferenceId = null, int PageSize = 200);
+public sealed record LibraryCatalogScanRequest(string? BackendLibraryId, Guid? CredentialReferenceId = null, int PageSize = 200);
 public sealed record LibraryCatalogScanResult(int Seen, int Indexed, int SkippedPathless, int SkippedMalformed, int Pages);
 
 public interface IBackendLibraryCatalogScanner
@@ -49,8 +49,7 @@ public abstract class JsonLibraryCatalogScanner(ILibraryIndexService index, IPla
     protected static void ValidateRequest(ProtocolExecutionContext context, LibraryCatalogScanRequest request)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (request.LibraryScopeId is not null && string.IsNullOrWhiteSpace(request.LibraryScopeId) || request.PageSize is < 1 or > 500 ||
-            context.LibraryScopeId != null && !context.LibraryScopeId.Equals(request.LibraryScopeId, StringComparison.Ordinal))
+        if (request.BackendLibraryId is not null && string.IsNullOrWhiteSpace(request.BackendLibraryId) || request.PageSize is < 1 or > 500)
             throw new ArgumentException("The library scan scope or page size is invalid.", nameof(request));
     }
 }
@@ -80,9 +79,9 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
         discoveryResponse.EnsureSuccessStatusCode();
         using var discoveryDocument = JsonDocument.Parse(await discoveryResponse.Content.ReadAsByteArrayAsync(cancellationToken));
         var libraries = BackendMusicLibraries.Select(BackendMusicLibraries.Read(Protocol, discoveryDocument.RootElement), _configuration, Protocol);
-        if (request.LibraryScopeId is not null && !libraries.Contains(request.LibraryScopeId, StringComparer.Ordinal))
+        if (request.BackendLibraryId is not null && !libraries.Contains(request.BackendLibraryId, StringComparer.Ordinal))
             throw new InvalidOperationException("The requested Jellyfin music library is unavailable or not selected.");
-        if (request.LibraryScopeId is not null) libraries = [request.LibraryScopeId];
+        if (request.BackendLibraryId is not null) libraries = [request.BackendLibraryId];
         var seen = 0; var indexed = 0; var pathless = 0; var malformed = 0; var pages = 0;
         foreach (var libraryId in libraries)
         {
@@ -116,7 +115,7 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                     var imageTag = item.TryGetProperty("ImageTags", out var tags) ? Text(tags, "Primary") : null;
                     try
                     {
-                        await Index.UpsertAsync(context.WithLibraryScope(libraryId), new(libraryId, id, path, title, string.Join(", ", artists), Text(item, "Album"),
+                        await Index.UpsertAsync(context, new(libraryId, id, path, title, string.Join(", ", artists), Text(item, "Album"),
                             Text(item, "AlbumArtist"), duration, duration.HasValue ? "jellyfin" : null,
                             duration.HasValue ? Clock.UtcNow : null, Get(providers, "isrc"),
                             Get(providers, "musicbrainzrecording") ?? Get(providers, "musicbrainztrack"),
@@ -154,9 +153,9 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
     {
         ValidateRequest(context, request);
         if (context.Protocol != ProtocolKind.Subsonic || string.IsNullOrWhiteSpace(_settings.Url) || !request.CredentialReferenceId.HasValue)
-            throw new InvalidOperationException("Subsonic library indexing requires a tenant-scoped encrypted credential reference.");
+            throw new InvalidOperationException("Subsonic library indexing requires a user-owned encrypted credential reference.");
         var authentication = await _authentication.ResolveAsync(new(context.BackendInstanceId, context.VerifiedBackendPrincipalId,
-            request.CredentialReferenceId.Value.ToString(), context.Actor!.TenantId), cancellationToken);
+            request.CredentialReferenceId.Value.ToString()), cancellationToken);
         var discoveryQuery = new List<KeyValuePair<string, string>>(authentication.FormParameters) { new("f", "json") };
         var discoveryUri = new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"), "rest/getMusicFolders.view");
         using var discovery = new HttpRequestMessage(HttpMethod.Post, discoveryUri) { Content = new FormUrlEncodedContent(discoveryQuery) };
@@ -165,9 +164,9 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
         discoveryResponse.EnsureSuccessStatusCode();
         using var discoveryDocument = JsonDocument.Parse(await discoveryResponse.Content.ReadAsByteArrayAsync(cancellationToken));
         var libraries = BackendMusicLibraries.Select(BackendMusicLibraries.Read(Protocol, discoveryDocument.RootElement), _configuration, Protocol);
-        if (request.LibraryScopeId is not null && !libraries.Contains(request.LibraryScopeId, StringComparer.Ordinal))
+        if (request.BackendLibraryId is not null && !libraries.Contains(request.BackendLibraryId, StringComparer.Ordinal))
             throw new InvalidOperationException("The requested Subsonic music library is unavailable or not selected.");
-        if (request.LibraryScopeId is not null) libraries = [request.LibraryScopeId];
+        if (request.BackendLibraryId is not null) libraries = [request.BackendLibraryId];
         var seen = 0; var indexed = 0; var pathless = 0; var malformed = 0; var pages = 0;
         foreach (var libraryId in libraries)
         {
@@ -203,7 +202,7 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                     {
                         var seconds = Number(item, "duration");
                         var duration = seconds > 0 ? checked(seconds * 1000) : null;
-                        await Index.UpsertAsync(context.WithLibraryScope(libraryId), new(libraryId, id, path, title, artist, Text(item, "album"),
+                        await Index.UpsertAsync(context, new(libraryId, id, path, title, artist, Text(item, "album"),
                             Text(item, "albumArtist"), duration, duration.HasValue ? "subsonic" : null,
                             duration.HasValue ? Clock.UtcNow : null, Text(item, "isrc"),
                             Text(item, "musicBrainzId"), Text(item, "releaseMusicBrainzId"), Text(item, "artistMusicBrainzId"),
@@ -222,7 +221,7 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
 }
 
 public sealed record LibraryIndexJobPayload(
-    string? LibraryScopeId,
+    string? BackendLibraryId,
     string BackendInstanceId,
     string BackendPrincipalId,
     Guid? CredentialReferenceId = null,
@@ -236,14 +235,14 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
     {
         LibraryIndexJobPayload? payload;
         try { payload = context.Claim.Payload.Deserialize<LibraryIndexJobPayload>(); } catch (JsonException) { payload = null; }
-        if (payload == null || payload.LibraryScopeId is not null && string.IsNullOrWhiteSpace(payload.LibraryScopeId) || string.IsNullOrWhiteSpace(payload.BackendInstanceId) ||
+        if (payload == null || payload.BackendLibraryId is not null && string.IsNullOrWhiteSpace(payload.BackendLibraryId) || string.IsNullOrWhiteSpace(payload.BackendInstanceId) ||
             string.IsNullOrWhiteSpace(payload.BackendPrincipalId) || payload.PageSize is < 1 or > 500 ||
-            context.Claim.TenantId == null || context.Claim.OwnerUserId == null)
+            context.Claim.OwnerUserId == null)
             return DurableJobCompletion.Failure("library_index_payload_invalid", "The library index payload is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var identity = await db.BackendIdentities.AsNoTracking().SingleOrDefaultAsync(item => item.TenantId == context.Claim.TenantId &&
-            item.UserId == context.Claim.OwnerUserId && item.BackendInstanceId == payload.BackendInstanceId &&
-            item.PrincipalId == payload.BackendPrincipalId, cancellationToken);
+        var identity = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Enabled &&
+            item.Id == context.Claim.OwnerUserId && item.BackendInstanceId == payload.BackendInstanceId &&
+            item.BackendPrincipalId == payload.BackendPrincipalId, cancellationToken);
         if (identity == null) return DurableJobCompletion.Failure("library_index_identity_unavailable", "The linked backend identity is unavailable.");
         var protocol = identity.BackendType.Trim().ToLowerInvariant() switch
         {
@@ -258,8 +257,7 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
             var credentialAvailable = payload.CredentialReferenceId.HasValue &&
                 await db.SecretReferences.AsNoTracking().AnyAsync(secret =>
                     secret.Id == payload.CredentialReferenceId.Value &&
-                    secret.TenantId == identity.TenantId &&
-                    secret.BackendIdentityId == identity.Id &&
+                    secret.UserId == identity.Id &&
                     secret.Purpose == BackendCredentialScope.SubsonicPurpose &&
                     secret.RevokedAt == null,
                     cancellationToken);
@@ -270,29 +268,27 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
         {
             return DurableJobCompletion.Failure("library_index_payload_invalid", "Jellyfin library indexing does not accept a credential reference.");
         }
-        var user = await db.Users.AsNoTracking().SingleAsync(item => item.Id == identity.UserId && item.TenantId == identity.TenantId, cancellationToken);
-        var execution = new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.PrincipalId,
-            new AllstarrPrincipal(identity.TenantId, identity.UserId, identity.BackendType, identity.BackendInstanceId, identity.PrincipalId, user.DisplayName, false),
-            context.Claim.CorrelationId, clock.UtcNow.AddMinutes(30), cancellationToken, libraryScopeId: payload.LibraryScopeId);
+        var execution = new ProtocolExecutionContext(protocol, identity.BackendInstanceId, identity.BackendPrincipalId,
+            new AllstarrPrincipal(identity.Id, identity.BackendType, identity.BackendInstanceId, identity.BackendPrincipalId, identity.DisplayName, identity.IsAdmin),
+            context.Claim.CorrelationId, clock.UtcNow.AddMinutes(30), cancellationToken);
         try
         {
             var result = await scanners.Resolve(protocol).ScanAsync(
                 execution,
-                new(payload.LibraryScopeId, payload.CredentialReferenceId, payload.PageSize),
+                new(payload.BackendLibraryId, payload.CredentialReferenceId, payload.PageSize),
                 cancellationToken);
             await using var summaryDb = await factory.CreateDbContextAsync(cancellationToken);
             summaryDb.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = identity.TenantId,
-                ActorUserId = identity.UserId,
+                ActorUserId = identity.Id,
                 Category = "library-index",
                 Action = "scan.completed",
                 Outcome = "succeeded",
                 CorrelationId = context.Claim.CorrelationId,
                 DetailsJson = JsonSerializer.Serialize(new
                 {
-                    payload.LibraryScopeId,
+                    payload.BackendLibraryId,
                     payload.BackendInstanceId,
                     result.Seen,
                     result.Indexed,
@@ -345,21 +341,20 @@ public sealed class LibraryIndexMaintenanceService(
     internal async Task<int> EnqueueStaleIndexesAsync(CancellationToken cancellationToken)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
-        var identities = await db.BackendIdentities.AsNoTracking()
-            .Where(identity => identity.BackendType == "jellyfin" || identity.BackendType == "subsonic")
-            .OrderBy(identity => identity.TenantId).ThenBy(identity => identity.UserId)
+        var identities = await db.Users.AsNoTracking()
+            .Where(identity => identity.Enabled && (identity.BackendType == "jellyfin" || identity.BackendType == "subsonic"))
+            .OrderBy(identity => identity.Id)
             .ToListAsync(cancellationToken);
         var subsonicIdentityIds = identities.Where(identity => identity.BackendType == "subsonic")
             .Select(identity => identity.Id).ToArray();
         var credentialRows = await db.SecretReferences.AsNoTracking()
-            .Where(secret => secret.BackendIdentityId.HasValue &&
-                subsonicIdentityIds.Contains(secret.BackendIdentityId.Value) &&
+            .Where(secret => secret.UserId.HasValue &&
+                subsonicIdentityIds.Contains(secret.UserId.Value) &&
                 secret.Purpose == BackendCredentialScope.SubsonicPurpose && secret.RevokedAt == null)
             .OrderByDescending(secret => secret.UpdatedAt)
-            .Select(secret => new { secret.Id, secret.TenantId, IdentityId = secret.BackendIdentityId!.Value })
+            .Select(secret => new { secret.Id, UserId = secret.UserId!.Value })
             .ToListAsync(cancellationToken);
-        var credentials = credentialRows.Where(secret => secret.TenantId.HasValue)
-            .GroupBy(secret => (secret.TenantId!.Value, secret.IdentityId))
+        var credentials = credentialRows.GroupBy(secret => secret.UserId)
             .ToDictionary(group => group.Key, group => group.First().Id);
         var now = clock.UtcNow;
         var enqueued = 0;
@@ -369,12 +364,12 @@ public sealed class LibraryIndexMaintenanceService(
             Guid? credentialReferenceId = null;
             if (identity.BackendType == "subsonic")
             {
-                if (!credentials.TryGetValue((identity.TenantId, identity.Id), out var credential)) continue;
+                if (!credentials.TryGetValue(identity.Id, out var credential)) continue;
                 credentialReferenceId = credential;
             }
             var lastIndexedAt = await db.LibraryTracks.AsNoTracking()
-                .Where(track => track.TenantId == identity.TenantId && track.OwnerUserId == identity.UserId &&
-                    track.BackendIdentityId == identity.Id)
+                .Where(track => track.OwnerUserId == identity.Id && track.Protocol == identity.BackendType &&
+                    track.BackendInstanceId == identity.BackendInstanceId)
                 .MaxAsync(track => (DateTimeOffset?)track.IndexedAt, cancellationToken);
             if (lastIndexedAt.HasValue && now - lastIndexedAt.Value < RefreshInterval) continue;
 
@@ -382,10 +377,8 @@ public sealed class LibraryIndexMaintenanceService(
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
                 "library.index",
                 $"library-index:auto:{identity.Id:N}:{generation}",
-                new(null, identity.BackendInstanceId, identity.PrincipalId, credentialReferenceId, 200),
-                identity.TenantId,
-                identity.UserId,
-                LibraryScopeId: null,
+                new(null, identity.BackendInstanceId, identity.BackendPrincipalId, credentialReferenceId, 200),
+                identity.Id,
                 CorrelationId: $"library-index-auto-{identity.Id:N}-{generation}"), cancellationToken);
             if (result.Created) enqueued++;
         }

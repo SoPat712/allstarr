@@ -21,7 +21,6 @@ public sealed record PlaylistRematchTarget(
     long PlaylistLinkRevision,
     Guid PlaylistSourceSnapshotId,
     string PolicyVersion,
-    string LibraryScopeId,
     string BackendInstanceId,
     string TargetProtocol);
 
@@ -55,17 +54,16 @@ public sealed class PlaylistRematchService(
         new(StringComparer.OrdinalIgnoreCase) { "ext", "external", "unknown", "legacy" };
 
     public async Task<PlaylistRematchPreview> PreviewAsync(
-        Guid tenantId,
         Guid ownerUserId,
         CancellationToken cancellationToken = default)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var links = await db.PlaylistLinks.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && item.OwnerUserId == ownerUserId)
+            .Where(item => item.OwnerUserId == ownerUserId)
             .OrderBy(item => item.Id)
             .ToListAsync(cancellationToken);
         var byLink = await projections.ReadByLinkIdsAsync(
-            tenantId, ownerUserId, links.Select(item => item.Id).ToArray(), cancellationToken);
+            ownerUserId, links.Select(item => item.Id).ToArray(), cancellationToken);
         links = links.Where(item => byLink.ContainsKey(item.Id)).ToList();
         if (links.Count == 0)
             return Empty();
@@ -77,10 +75,10 @@ public sealed class PlaylistRematchService(
             .Where(item => externalIds.Contains(item.Id))
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var latest = await LatestDecisions(db.TrackMatches.AsNoTracking()
-                .Where(item => item.TenantId == tenantId && externalIds.Contains(item.ExternalSnapshotId)))
+                .Where(item => externalIds.Contains(item.ExternalSnapshotId)))
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
         var overrideRecords = await ManualTrackOverrides.LoadAsync(
-            db, tenantId, ownerUserId, snapshots.Values.ToArray(), cancellationToken);
+            db, ownerUserId, snapshots.Values.ToArray(), cancellationToken);
         var overrides = ManualTrackOverrides.Index(snapshots.Values, overrideRecords, ownerUserId)
             .Where(item => item.Value.Effective != null).ToDictionary(item => item.Key, item => item.Value.Effective!);
         var snapshotLinks = byLink.ToDictionary(item => item.Value.SnapshotId, item => item.Key);
@@ -101,7 +99,6 @@ public sealed class PlaylistRematchService(
                 .ToHashSet());
         var access = await libraryAccess.ResolveUserAsync(ownerUserId, cancellationToken);
         var libraryTracks = await LibraryTrackAccess.Query(db, access)
-            .Where(item => item.TenantId == tenantId)
             .ToListAsync(cancellationToken);
         var libraryRevisions = links.ToDictionary(
             item => item.Id,
@@ -115,7 +112,6 @@ public sealed class PlaylistRematchService(
             {
                 item.Link.Id,
                 item.Link.PolicyVersion,
-                item.Link.LibraryScopeId,
                 item.Link.TargetBackendInstanceId
             }).Distinct().Count() > 1)
             .Select(group => group.Key)
@@ -155,7 +151,6 @@ public sealed class PlaylistRematchService(
                 row.Link.Revision,
                 byLink[row.Link.Id].SnapshotId,
                 row.Link.PolicyVersion,
-                row.Link.LibraryScopeId,
                 row.Link.TargetBackendInstanceId,
                 row.Link.TargetProtocol));
         }
@@ -180,7 +175,7 @@ public sealed class PlaylistRematchService(
             confirmationId,
             scopeFingerprint,
             links.Count,
-            links.Select(item => new { item.TargetProtocol, item.TargetBackendInstanceId, item.LibraryScopeId })
+            libraryTracks.Select(item => new { item.BackendInstanceId, item.BackendLibraryId })
                 .Distinct().Count(),
             rows.Length,
             rows.Count(item => item.Entry.RouteKind == "local"),
@@ -223,8 +218,8 @@ public sealed class PlaylistRematchService(
         IReadOnlyDictionary<string, string>? providers = null;
         try { providers = JsonSerializer.Deserialize<Dictionary<string, string>>(item.ProviderIdsJson); }
         catch (JsonException) { }
-        return new(item.Id, item.TenantId, item.OwnerUserId, item.BackendInstanceId,
-            item.LibraryScopeId, item.BackendItemId, item.CanonicalRecordingId, item.Title,
+        return new(item.Id, item.OwnerUserId, item.BackendInstanceId,
+            item.BackendLibraryId, item.BackendItemId, item.CanonicalRecordingId, item.Title,
             item.Artist, item.Album, item.AlbumArtist,
             item.DurationMilliseconds is > 0 ? item.DurationMilliseconds : null,
             item.Isrc, item.MusicBrainzRecordingId, null, providers);
@@ -263,11 +258,11 @@ public sealed class PlaylistRematchJobHandler(
         if (payload?.ConfirmationId is not { Length: 64 } ||
             payload.ScopeFingerprint is not { Length: 64 } ||
             !IsHex(payload.ConfirmationId) || !IsHex(payload.ScopeFingerprint) ||
-            !context.Claim.TenantId.HasValue || !context.Claim.OwnerUserId.HasValue)
+            !context.Claim.OwnerUserId.HasValue)
             return DurableJobCompletion.Failure("playlist_rematch_payload_invalid", "The rematch payload is invalid.");
 
         var preview = await rematches.PreviewAsync(
-            context.Claim.TenantId.Value, context.Claim.OwnerUserId.Value, cancellationToken);
+            context.Claim.OwnerUserId.Value, cancellationToken);
         if (!preview.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
             return DurableJobCompletion.Failure(
                 "playlist_rematch_scope_changed", "A playlist or library changed. Review the rematch preview again.");
@@ -284,7 +279,7 @@ public sealed class PlaylistRematchJobHandler(
         foreach (var chunk in preview.Targets.Chunk(50))
         {
             var eligible = await EligibleTargetsAsync(
-                context.Claim.TenantId.Value, context.Claim.OwnerUserId.Value, chunk, cancellationToken);
+                context.Claim.OwnerUserId.Value, chunk, cancellationToken);
             var audits = new List<AuditEventRecord>(chunk.Length);
             foreach (var target in chunk)
             {
@@ -304,7 +299,7 @@ public sealed class PlaylistRematchJobHandler(
                 }
                 var execution = CreateExecution(
                     context, runtime, target.TargetProtocol, target.BackendInstanceId,
-                    target.LibraryScopeId, cancellationToken);
+                    cancellationToken);
                 var result = await trackMatches.RematchSnapshotAsync(
                     execution,
                     target.ExternalSnapshotId,
@@ -329,7 +324,7 @@ public sealed class PlaylistRematchJobHandler(
                 cancellationToken);
         }
         var current = await rematches.PreviewAsync(
-            context.Claim.TenantId.Value, context.Claim.OwnerUserId.Value, cancellationToken);
+            context.Claim.OwnerUserId.Value, cancellationToken);
         if (!current.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
             return DurableJobCompletion.Failure(
                 "playlist_rematch_scope_changed", "A playlist or library changed. Review the rematch preview again.");
@@ -338,14 +333,13 @@ public sealed class PlaylistRematchJobHandler(
             item.PlaylistLinkId,
             item.PlaylistLinkRevision,
             item.PlaylistSourceSnapshotId,
-            item.LibraryScopeId,
             item.BackendInstanceId,
             item.TargetProtocol
         }))
         {
             var execution = CreateExecution(
                 context, runtime, publication.Key.TargetProtocol, publication.Key.BackendInstanceId,
-                publication.Key.LibraryScopeId, cancellationToken);
+                cancellationToken);
             await orchestration.PublishExistingDecisionsAsync(
                 execution,
                 publication.Key.PlaylistLinkId,
@@ -362,7 +356,6 @@ public sealed class PlaylistRematchJobHandler(
     }
 
     private async Task<HashSet<Guid>> EligibleTargetsAsync(
-        Guid tenantId,
         Guid ownerUserId,
         IReadOnlyCollection<PlaylistRematchTarget> targets,
         CancellationToken cancellationToken)
@@ -371,15 +364,15 @@ public sealed class PlaylistRematchJobHandler(
         var linkIds = targets.Select(item => item.PlaylistLinkId).Distinct().ToArray();
         var snapshotIds = targets.Select(item => item.ExternalSnapshotId).ToArray();
         var links = await db.PlaylistLinks.AsNoTracking()
-            .Where(item => linkIds.Contains(item.Id) && item.TenantId == tenantId && item.OwnerUserId == ownerUserId)
+            .Where(item => linkIds.Contains(item.Id) && item.OwnerUserId == ownerUserId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => snapshotIds.Contains(item.Id) && item.TenantId == tenantId && item.OwnerUserId == ownerUserId)
+            .Where(item => snapshotIds.Contains(item.Id) && item.OwnerUserId == ownerUserId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var protectedIds = await ManualTrackOverrides.ProtectedSnapshotIdsAsync(
-            db, tenantId, snapshotIds, cancellationToken);
+            db, snapshotIds, cancellationToken);
         var versions = await db.TrackMatches.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && snapshotIds.Contains(item.ExternalSnapshotId))
+            .Where(item => snapshotIds.Contains(item.ExternalSnapshotId))
             .GroupBy(item => item.ExternalSnapshotId)
             .ToDictionaryAsync(group => group.Key, group => group.Max(item => item.DecisionVersion), cancellationToken);
         return targets.Where(target =>
@@ -396,17 +389,11 @@ public sealed class PlaylistRematchJobHandler(
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var tenantId = context.Claim.TenantId!.Value;
         var ownerUserId = context.Claim.OwnerUserId!.Value;
         var user = await db.Users.AsNoTracking().SingleAsync(item =>
-            item.Id == ownerUserId && item.TenantId == tenantId, cancellationToken);
-        var identities = await db.BackendIdentities.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && item.UserId == ownerUserId)
-            .ToDictionaryAsync(
-                item => $"{item.BackendType.ToLowerInvariant()}\n{item.BackendInstanceId}",
-                item => item.PrincipalId,
-                cancellationToken);
-        return new(user.DisplayName, identities);
+            item.Id == ownerUserId && item.Enabled, cancellationToken);
+        return new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId,
+            user.DisplayName, user.IsAdmin);
     }
 
     private ProtocolExecutionContext CreateExecution(
@@ -414,25 +401,22 @@ public sealed class PlaylistRematchJobHandler(
         RuntimeIdentity runtime,
         string targetProtocol,
         string backendInstanceId,
-        string libraryScopeId,
         CancellationToken cancellationToken)
     {
-        var tenantId = context.Claim.TenantId!.Value;
         var ownerUserId = context.Claim.OwnerUserId!.Value;
         var protocol = targetProtocol == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
         var backendType = protocol.ToString().ToLowerInvariant();
-        if (!runtime.PrincipalIds.TryGetValue($"{backendType}\n{backendInstanceId}", out var principalId))
+        if (runtime.BackendType != backendType || runtime.BackendInstanceId != backendInstanceId)
             throw new UnauthorizedAccessException("The target backend identity is unavailable.");
         return new(
             protocol,
             backendInstanceId,
-            principalId,
-            new AllstarrPrincipal(tenantId, ownerUserId, backendType, backendInstanceId,
-                principalId, runtime.DisplayName, false),
+            runtime.BackendPrincipalId,
+            new AllstarrPrincipal(ownerUserId, backendType, backendInstanceId,
+                runtime.BackendPrincipalId, runtime.DisplayName, runtime.IsAdministrator),
             context.Claim.CorrelationId,
             clock.UtcNow.AddMinutes(2),
-            cancellationToken,
-            libraryScopeId: libraryScopeId);
+            cancellationToken);
     }
 
     private AuditEventRecord Audit(
@@ -442,7 +426,6 @@ public sealed class PlaylistRematchJobHandler(
         int? decisionVersion) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = context.Claim.TenantId,
             ActorUserId = context.Claim.OwnerUserId,
             Category = "playlist-rematch",
             Action = "track.review",
@@ -470,6 +453,9 @@ public sealed class PlaylistRematchJobHandler(
     }
 
     private sealed record RuntimeIdentity(
+        string BackendType,
+        string BackendInstanceId,
+        string BackendPrincipalId,
         string DisplayName,
-        IReadOnlyDictionary<string, string> PrincipalIds);
+        bool IsAdministrator);
 }

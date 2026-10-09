@@ -46,12 +46,12 @@ public sealed class SourceIdentityReconciliationTests
     }
 
     [Fact]
-    public async Task Reconciliation_DeniesForeignTenantWithoutWrites()
+    public async Task Reconciliation_DeniesUnknownUserWithoutWrites()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         await using var db = new AllstarrDbContext(database.Options);
         var seed = await SeedAsync(db, "provisional", false);
-        var foreign = new ProviderActorContext(Guid.CreateVersion7(), ProviderActorKind.User,
+        var foreign = new ProviderActorContext(ProviderActorKind.User,
             Guid.CreateVersion7(), new ProviderBackendPrincipal("jellyfin", "backend", "other"));
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             CanonicalCatalogEvidenceStore.ReconcileSourceIdentityAsync(
@@ -64,24 +64,23 @@ public sealed class SourceIdentityReconciliationTests
         SeedAsync(AllstarrDbContext db, string evidence, bool alreadyMoved)
     {
         var now = DateTimeOffset.UtcNow;
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         var origin = Guid.CreateVersion7();
         var target = Guid.CreateVersion7();
-        db.Tenants.Add(new TenantRecord { Id = tenant, Slug = $"reconcile-{tenant:N}", Name = "Reconcile", CreatedAt = now });
-        db.Users.Add(new PlatformUserRecord
+        db.Users.Add(new UserRecord
         {
             Id = user,
-            TenantId = tenant,
             DisplayName = "Owner",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "backend",
+            BackendPrincipalId = "owner",
             CreatedAt = now,
             UpdatedAt = now
         });
         db.CanonicalRecordings.AddRange(new CanonicalRecordingRecord
         {
             Id = origin,
-            TenantId = tenant,
             CreatedByUserId = user,
             IsProvisional = evidence != "confirmed",
             Isrc = evidence == "isrc" ? "USRC17607839" : null,
@@ -91,7 +90,6 @@ public sealed class SourceIdentityReconciliationTests
         }, new CanonicalRecordingRecord
         {
             Id = target,
-            TenantId = tenant,
             CreatedByUserId = user,
             CreatedAt = now,
             UpdatedAt = now
@@ -99,7 +97,6 @@ public sealed class SourceIdentityReconciliationTests
         var identity = new ProviderTrackIdentityRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             CanonicalRecordingId = alreadyMoved ? target : origin,
             ProviderId = "fixture",
             ResourceKind = ProviderResourceKind.Track,
@@ -123,7 +120,6 @@ public sealed class SourceIdentityReconciliationTests
         db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenant,
             EntityKind = CanonicalCatalogEntityKind.Recording,
             CanonicalEntityId = origin,
             Namespace = CanonicalCatalogKeys.ProviderTrackNamespace("fixture", ProviderResourceKind.Track, "default", ProviderIdentityScope.Catalog, null),
@@ -133,7 +129,7 @@ public sealed class SourceIdentityReconciliationTests
             LastSeenAt = now
         });
         await db.SaveChangesAsync();
-        return (new ProviderActorContext(tenant, ProviderActorKind.User, user,
+        return (new ProviderActorContext(ProviderActorKind.User, user,
             new ProviderBackendPrincipal("jellyfin", "backend", "owner")), identity, origin, target);
     }
 }

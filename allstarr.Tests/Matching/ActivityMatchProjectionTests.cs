@@ -11,13 +11,12 @@ public sealed class ActivityMatchProjectionTests
     [Fact]
     public void AcceptedProviderDecision_ProjectsThePlayableCanonicalRoute()
     {
-        var tenantId = Guid.CreateVersion7();
         var ownerId = Guid.CreateVersion7();
         var canonicalId = Guid.CreateVersion7();
-        var source = Identity(tenantId, canonicalId, "spotify", "source-track");
-        var target = Identity(tenantId, canonicalId, "qobuz", "target-track");
-        var lowerPriority = Identity(tenantId, canonicalId, "deezer", "other-track");
-        var snapshot = Snapshot(tenantId, ownerId, source.Id);
+        var source = Identity(canonicalId, "spotify", "source-track");
+        var target = Identity(canonicalId, "qobuz", "target-track");
+        var lowerPriority = Identity(canonicalId, "deezer", "other-track");
+        var snapshot = Snapshot(ownerId, source.Id);
         var decision = Decision(snapshot.Id, canonicalId, JsonSerializer.Serialize(new[]
         {
             new TrackMatchCandidateScore(
@@ -51,20 +50,18 @@ public sealed class ActivityMatchProjectionTests
     [Fact]
     public void AcceptedCanonicalDecision_ProjectsTheScopedLocalFallback()
     {
-        var tenantId = Guid.CreateVersion7();
         var ownerId = Guid.CreateVersion7();
         var canonicalId = Guid.CreateVersion7();
-        var source = Identity(tenantId, canonicalId, "spotify", "source-track");
-        var snapshot = Snapshot(tenantId, ownerId, source.Id);
+        var source = Identity(canonicalId, "spotify", "source-track");
+        var snapshot = Snapshot(ownerId, source.Id);
         var decision = Decision(snapshot.Id, canonicalId, "[]");
         var local = new LibraryTrackRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             OwnerUserId = ownerId,
             CanonicalRecordingId = canonicalId,
             BackendInstanceId = snapshot.BackendInstanceId,
-            LibraryScopeId = snapshot.LibraryScopeId,
+            BackendLibraryId = "music",
             BackendItemId = "local-track",
             Title = "Enough Now",
             Artist = "Emerson Azarian"
@@ -83,13 +80,11 @@ public sealed class ActivityMatchProjectionTests
     }
 
     private static ProviderTrackIdentityRecord Identity(
-        Guid tenantId,
         Guid canonicalId,
         string providerId,
         string externalId) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             CanonicalRecordingId = canonicalId,
             ProviderId = providerId,
             ResourceKind = ProviderResourceKind.Track,
@@ -104,17 +99,14 @@ public sealed class ActivityMatchProjectionTests
         };
 
     private static ExternalMetadataSnapshotRecord Snapshot(
-        Guid tenantId,
         Guid ownerId,
         Guid sourceIdentityId) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = tenantId,
             OwnerUserId = ownerId,
             ProviderTrackIdentityId = sourceIdentityId,
             ProviderId = "spotify",
             BackendInstanceId = "server",
-            LibraryScopeId = "music",
             PayloadJson = """{"title":"Enough Now","artist":"Emerson Azarian","album":"Enough Now"}"""
         };
 

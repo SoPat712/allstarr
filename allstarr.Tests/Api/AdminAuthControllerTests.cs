@@ -15,8 +15,15 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
 
-public class AdminAuthControllerTests
+public class AdminAuthControllerTests : IAsyncLifetime
 {
+    private AdminAuthSessionFixture _auth = null!;
+
+    public async Task InitializeAsync() =>
+        _auth = await AdminAuthSessionTestSupport.CreateLinkedAsync();
+
+    public Task DisposeAsync() => _auth.DisposeAsync().AsTask();
+
     [Fact]
     public async Task Login_WithValidNonAdminJellyfinUser_CreatesSessionAndCookie()
     {
@@ -44,7 +51,7 @@ public class AdminAuthControllerTests
             };
         });
 
-        var sessionService = AdminAuthSessionTestSupport.Create();
+        var sessionService = _auth.Service;
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Scheme = "https";
 
@@ -100,7 +107,7 @@ public class AdminAuthControllerTests
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized)));
 
-        var sessionService = AdminAuthSessionTestSupport.Create();
+        var sessionService = _auth.Service;
         var httpContext = new DefaultHttpContext();
         var controller = CreateController(handler, sessionService, httpContext);
 
@@ -137,7 +144,7 @@ public class AdminAuthControllerTests
                     """)
             };
         });
-        var sessionService = AdminAuthSessionTestSupport.Create();
+        var sessionService = _auth.Service;
         var httpContext = new DefaultHttpContext();
         var controller = CreateController(
             handler,
@@ -183,7 +190,7 @@ public class AdminAuthControllerTests
             }));
         var controller = CreateController(
             handler,
-            AdminAuthSessionTestSupport.Create(),
+            _auth.Service,
             new DefaultHttpContext(),
             BackendType.Subsonic);
 
@@ -208,7 +215,7 @@ public class AdminAuthControllerTests
             }));
         var controller = CreateController(
             handler,
-            AdminAuthSessionTestSupport.Create(),
+            _auth.Service,
             new DefaultHttpContext(),
             backend);
 
@@ -235,7 +242,7 @@ public class AdminAuthControllerTests
             Task.FromCanceled<HttpResponseMessage>(token));
         var controller = CreateController(
             handler,
-            AdminAuthSessionTestSupport.Create(),
+            _auth.Service,
             context,
             backend);
 
@@ -254,7 +261,7 @@ public class AdminAuthControllerTests
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        var sessionService = AdminAuthSessionTestSupport.Create();
+        var sessionService = _auth.Service;
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Cookie = $"{AdminAuthSessionService.SessionCookieName}=missing-session";
 
@@ -282,7 +289,7 @@ public class AdminAuthControllerTests
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
         var controller = CreateController(
             handler,
-            AdminAuthSessionTestSupport.Create(),
+            _auth.Service,
             new DefaultHttpContext(),
             allowConnections: allowConnections);
 
@@ -303,8 +310,8 @@ public class AdminAuthControllerTests
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
 
-        var sessionService = AdminAuthSessionTestSupport.Create();
-        var session = await sessionService.CreateSessionAsync(
+        var sessionService = _auth.Service;
+        var session = await _auth.CreateSessionAsync(
             userId: "user-42",
             userName: "alice",
             isAdministrator: true,
@@ -347,15 +354,14 @@ public class AdminAuthControllerTests
             response.Headers.ETag = new("\"avatar-v1\"");
             return Task.FromResult(response);
         });
-        var sessionService = AdminAuthSessionTestSupport.Create();
-        var session = await sessionService.CreateSessionAsync(
+        var sessionService = _auth.Service;
+        var session = await _auth.CreateSessionAsync(
             userId: "user-42",
             userName: "alice",
             isAdministrator: true,
             jellyfinAccessToken: "token",
             jellyfinServerId: "server",
-            tenantId: Guid.CreateVersion7(),
-            allstarrUserId: Guid.CreateVersion7());
+            backendType: "Jellyfin");
         var httpContext = new DefaultHttpContext();
         httpContext.Request.Headers.Cookie =
             $"{AdminAuthSessionService.SessionCookieName}={session.SessionId}";
@@ -378,8 +384,8 @@ public class AdminAuthControllerTests
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
-        var sessionService = AdminAuthSessionTestSupport.Create();
-        var session = await sessionService.CreateSessionAsync(
+        var sessionService = _auth.Service;
+        var session = await _auth.CreateSessionAsync(
             userId: "legacy-user",
             userName: "legacy",
             isAdministrator: true,
@@ -398,7 +404,7 @@ public class AdminAuthControllerTests
         Assert.Contains("path=/", migratedCookie, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static AdminAuthController CreateController(
+    private AdminAuthController CreateController(
         HttpMessageHandler handler,
         AdminAuthSessionService sessionService,
         HttpContext httpContext,
@@ -430,7 +436,7 @@ public class AdminAuthControllerTests
             new MediaAssetResolver(
                 new TestMemoryApplicationCache(),
                 NullLogger<MediaAssetResolver>.Instance),
-            identityResolver: null,
+            identityResolver: _auth.Identities,
             providerAccountManagementOptions: new ProviderAccountOptions
             {
                 ListenersCanConnectOwnAccounts = allowConnections

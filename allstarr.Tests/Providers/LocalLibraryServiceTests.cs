@@ -131,10 +131,9 @@ public class LocalLibraryServiceTests : IDisposable
     [Fact]
     public async Task ScopedDownloadedSong_IsVisibleOnlyToTheExactPlaybackScope()
     {
-        var tenant = Guid.CreateVersion7();
         var account = Guid.CreateVersion7();
         var scope = new DownloadedSongMappingScope(
-            tenant, account, "music", ProviderAudioQuality.Lossless);
+            account, ProviderAudioQuality.Lossless);
         var song = new Song
         {
             Id = "ext-deezer-song-private",
@@ -152,7 +151,7 @@ public class LocalLibraryServiceTests : IDisposable
         Assert.Equal(localPath, await _service.GetLocalPathForExternalSongAsync(
             scope, "deezer", "private"));
         Assert.Null(await _service.GetLocalPathForExternalSongAsync(
-            scope with { TenantId = Guid.CreateVersion7() }, "deezer", "private"));
+            scope with { ProviderAccountId = null }, "deezer", "private"));
         Assert.Null(await _service.GetLocalPathForExternalSongAsync(
             scope with { ProviderAccountId = Guid.CreateVersion7() }, "deezer", "private"));
         Assert.Null(await _service.GetLocalPathForExternalSongAsync(

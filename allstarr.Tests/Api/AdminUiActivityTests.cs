@@ -27,7 +27,6 @@ public sealed class AdminUiActivityTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new Factory(database.Options);
-        var tenant = Guid.CreateVersion7();
         var owner = Guid.CreateVersion7();
         var other = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
@@ -35,22 +34,22 @@ public sealed class AdminUiActivityTests
         var foreign = new List<string>();
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "activity", Name = "Activity" });
             foreach (var user in new[] { owner, other })
             {
                 var at = user == owner ? now : now.AddMinutes(1);
                 var ids = user == owner ? expected : foreign;
-                db.Users.Add(new PlatformUserRecord
+                db.Users.Add(new UserRecord
                 {
                     Id = user,
-                    TenantId = tenant,
                     DisplayName = user == owner ? "Owner" : "Other",
-                    Status = PlatformUserStatus.Active
+                    Enabled = true,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "backend",
+                    BackendPrincipalId = user.ToString("N")
                 });
                 var account = new ProviderAccountRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenant,
                     OwnerUserId = user,
                     ProviderId = "deezer",
                     DisplayName = "Fixture",
@@ -60,7 +59,6 @@ public sealed class AdminUiActivityTests
                 var job = new DurableJobRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenant,
                     OwnerUserId = user,
                     ScopeKey = user.ToString("N"),
                     IdempotencyKey = "activity",
@@ -79,7 +77,6 @@ public sealed class AdminUiActivityTests
                 var audit = new AuditEventRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenant,
                     ActorUserId = user,
                     Category = "playlist",
                     Action = "updated",
@@ -93,7 +90,6 @@ public sealed class AdminUiActivityTests
                 {
                     Id = Guid.CreateVersion7(),
                     WorkspaceId = user.ToString("N"),
-                    TenantId = tenant,
                     OwnerUserId = user,
                     DurableJobId = job.Id,
                     ProviderId = "deezer",
@@ -107,7 +103,6 @@ public sealed class AdminUiActivityTests
                     Id = Guid.CreateVersion7(),
                     WorkspaceRecordId = workspace.Id,
                     WorkspaceId = workspace.WorkspaceId,
-                    TenantId = tenant,
                     OwnerUserId = user,
                     DurableJobId = job.Id,
                     ProviderId = "deezer",
@@ -125,12 +120,10 @@ public sealed class AdminUiActivityTests
                 var snapshot = new ExternalMetadataSnapshotRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenant,
                     OwnerUserId = user,
                     ProviderAccountId = account.Id,
                     ProviderId = "deezer",
                     ResourceKind = "track",
-                    LibraryScopeId = "music",
                     BackendInstanceId = "backend",
                     BackendPrincipalId = user.ToString("N"),
                     Protocol = "jellyfin",
@@ -145,10 +138,8 @@ public sealed class AdminUiActivityTests
                 var match = new TrackMatchRecord
                 {
                     Id = Guid.CreateVersion7(),
-                    TenantId = tenant,
                     OwnerUserId = user,
                     ExternalSnapshotId = snapshot.Id,
-                    LibraryScopeId = "music",
                     State = TrackMatchState.Unresolved,
                     DecisionVersion = 1,
                     SourceSnapshotVersion = 1,
@@ -178,7 +169,6 @@ public sealed class AdminUiActivityTests
             UserId = "owner",
             UserName = "Owner",
             IsAdministrator = administrator,
-            TenantId = tenant,
             AllstarrUserId = owner,
             JellyfinAccessToken = "fixture",
             ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
@@ -191,7 +181,7 @@ public sealed class AdminUiActivityTests
         Assert.All(expected, id => Assert.Contains(id, actual));
         if (administrator) Assert.All(foreign, id => Assert.Contains(id, actual));
         else Assert.All(foreign, id => Assert.DoesNotContain(id, actual));
-        var page = await matches.GetActivityDataAsync(new(tenant, owner, false), limit: 1);
+        var page = await matches.GetActivityDataAsync(new(owner, false), limit: 1);
         Assert.Equal(owner, Assert.Single(page.Decisions).OwnerUserId);
         Assert.Equal(owner, Assert.Single(page.Snapshots).OwnerUserId);
         controller.HttpContext.Items.Clear();

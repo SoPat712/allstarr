@@ -140,9 +140,7 @@ public class LocalLibraryService : ILocalLibraryService
         {
             Id = Guid.CreateVersion7(),
             ScopeKey = scope.Key,
-            TenantId = scope.TenantId,
             ProviderAccountId = scope.ProviderAccountId,
-            LibraryScopeId = scope.LibraryScopeId,
             AudioQuality = scope.AudioQuality,
             ProviderId = NormalizeProvider(song.ExternalProvider),
             ExternalId = song.ExternalId.Trim(),

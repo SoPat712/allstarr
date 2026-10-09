@@ -6,7 +6,6 @@ namespace allstarr.Core.Playback;
 public sealed class PlaybackDeliveryCheckpointEntity
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string? OccurrenceKey { get; set; }
     public string SignalKey { get; set; } = string.Empty;
@@ -22,22 +21,22 @@ public sealed class PlaybackDeliveryCheckpointEntity
 }
 public interface IPlaybackDeliveryCheckpointStore
 {
-    Task<bool> IsCompletedAsync(Guid tenantId, Guid ownerUserId, string signalKey, string targetId, CancellationToken token);
-    Task RecordAsync(Guid tenantId, Guid ownerUserId, string occurrenceKey, string signalKey,
+    Task<bool> IsCompletedAsync(Guid ownerUserId, string signalKey, string targetId, CancellationToken token);
+    Task RecordAsync(Guid ownerUserId, string occurrenceKey, string signalKey,
         PlaybackScrobbleDeliveryKind kind, string targetId, ScopedPlaybackScrobbleResult result,
         CancellationToken token);
 }
 public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<AllstarrDbContext> factory) : IPlaybackDeliveryCheckpointStore
 {
-    public async Task<bool> IsCompletedAsync(Guid tenantId, Guid ownerUserId, string signalKey, string targetId, CancellationToken token)
+    public async Task<bool> IsCompletedAsync(Guid ownerUserId, string signalKey, string targetId, CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
         return await db.Set<PlaybackDeliveryCheckpointEntity>().AsNoTracking().AnyAsync(x =>
-            x.TenantId == tenantId && x.OwnerUserId == ownerUserId && x.SignalKey == signalKey &&
+            x.OwnerUserId == ownerUserId && x.SignalKey == signalKey &&
             x.TargetId == targetId && (x.State == ScopedPlaybackScrobbleOutcome.Delivered ||
                                       x.State == ScopedPlaybackScrobbleOutcome.Ignored), token);
     }
-    public async Task RecordAsync(Guid tenantId, Guid ownerUserId, string occurrenceKey, string signalKey,
+    public async Task RecordAsync(Guid ownerUserId, string occurrenceKey, string signalKey,
         PlaybackScrobbleDeliveryKind kind, string targetId, ScopedPlaybackScrobbleResult result,
         CancellationToken token)
     {
@@ -45,13 +44,12 @@ public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<Allstarr
         {
             await using var db = await factory.CreateDbContextAsync(token);
             var checkpoint = await db.Set<PlaybackDeliveryCheckpointEntity>().SingleOrDefaultAsync(x =>
-                x.TenantId == tenantId && x.OwnerUserId == ownerUserId && x.SignalKey == signalKey &&
+                x.OwnerUserId == ownerUserId && x.SignalKey == signalKey &&
                 x.TargetId == targetId, token);
             var added = checkpoint == null;
             checkpoint ??= new PlaybackDeliveryCheckpointEntity
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
                 OwnerUserId = ownerUserId,
                 SignalKey = signalKey,
                 TargetId = targetId
@@ -94,11 +92,11 @@ public static class PlaybackDeliveryCheckpointModelConfiguration
             entity.Property(x => x.ProviderCode).HasMaxLength(100);
             entity.Property(x => x.SafeMessage).HasMaxLength(500);
             entity.Property(x => x.DetailsJson).IsRequired();
-            entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.SignalKey, x.TargetId }).IsUnique().HasDatabaseName("IX_playback_delivery_idempotency");
-            entity.HasIndex(x => new { x.TenantId, x.OwnerUserId, x.OccurrenceKey, x.Kind })
+            entity.HasIndex(x => new { x.OwnerUserId, x.SignalKey, x.TargetId }).IsUnique().HasDatabaseName("IX_playback_delivery_idempotency");
+            entity.HasIndex(x => new { x.OwnerUserId, x.OccurrenceKey, x.Kind })
                 .HasDatabaseName("IX_playback_delivery_occurrence_status");
-            entity.HasOne<PlatformUserRecord>().WithMany().HasForeignKey(x => new { x.TenantId, x.OwnerUserId })
-                .HasPrincipalKey(x => new { x.TenantId, x.Id }).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(x => x.OwnerUserId)
+                .HasPrincipalKey(x => x.Id).OnDelete(DeleteBehavior.Restrict);
         });
     }
 }

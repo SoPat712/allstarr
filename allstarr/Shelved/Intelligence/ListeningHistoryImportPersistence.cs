@@ -25,11 +25,9 @@ public enum ListeningHistoryImportState
 public sealed class ListeningHistoryImportRecord
 {
     public Guid Id { get; set; }
-    public Guid TenantId { get; set; }
     public Guid OwnerUserId { get; set; }
     public string Protocol { get; set; } = "";
     public string BackendInstanceId { get; set; } = "";
-    public string LibraryScopeId { get; set; } = "";
     public string DisplayFileName { get; set; } = "";
     public string Format { get; set; } = "";
     public string ContentSha256 { get; set; } = "";
@@ -279,6 +277,10 @@ public sealed class ListeningHistoryImportService(
         CancellationToken cancellationToken)
     {
         options.Validate();
+        IntelligencePolicyService.ValidateScope(scope);
+        await using (var ownerDb = await factory.CreateDbContextAsync(cancellationToken))
+            if (!await IntelligencePolicyService.OwnsBackendAsync(ownerDb, scope, cancellationToken))
+                throw new UnauthorizedAccessException("The history import user is unavailable for this backend.");
         displayFileName = Path.GetFileName(displayFileName).Trim();
         if (displayFileName.Length is < 1 or > 255 || displayFileName.Any(char.IsControl))
             throw new ListeningHistoryImportException("history_import_filename_invalid", "The selected filename is invalid.");
@@ -340,11 +342,9 @@ public sealed class ListeningHistoryImportService(
             db.ListeningHistoryImports.Add(new()
             {
                 Id = importId,
-                TenantId = scope.TenantId,
                 OwnerUserId = scope.OwnerUserId,
                 Protocol = scope.Protocol,
                 BackendInstanceId = scope.BackendInstanceId,
-                LibraryScopeId = scope.LibraryScopeId,
                 DisplayFileName = displayFileName,
                 Format = scan.Format,
                 ContentSha256 = artifact.ContentSha256,
@@ -360,7 +360,6 @@ public sealed class ListeningHistoryImportService(
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = scope.TenantId,
                 ActorUserId = scope.OwnerUserId,
                 Category = "listening-history-import",
                 Action = "previewed",
@@ -501,7 +500,7 @@ public sealed class ListeningHistoryImportService(
         var cancelled = record.JobId == null;
         if (record.JobId is { } jobId)
         {
-            await jobs.RequestCancellationAsync(jobId, scope.TenantId, cancellationToken);
+            await jobs.RequestCancellationAsync(jobId, scope.OwnerUserId, cancellationToken);
             cancelled = await db.Jobs.AsNoTracking().Where(item => item.Id == jobId)
                 .Select(item => item.State == DurableJobState.Cancelled)
                 .SingleOrDefaultAsync(cancellationToken);
@@ -542,7 +541,7 @@ public sealed class ListeningHistoryImportService(
             item.ImportProvenance.StartsWith(provenance));
         var occurrenceKeys = importedEvents.Select(item => item.OccurrenceKey);
         await db.Set<PlaybackDeliveryCheckpointEntity>().Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.OwnerUserId == scope.OwnerUserId &&
                 item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
             .ExecuteDeleteAsync(cancellationToken);
         var removedListens = await importedEvents.ExecuteDeleteAsync(cancellationToken);
@@ -608,9 +607,7 @@ public sealed class ListeningHistoryImportService(
                 ListeningHistoryImportJobHandler.JobTypeName,
                 Hash($"{record.Id:N}\u001f{record.PreviewRevision}\u001f{generation}"),
                 new(record.Id, scope, record.PreviewRevision, generation),
-                scope.TenantId,
                 scope.OwnerUserId,
-                LibraryScopeId: scope.LibraryScopeId,
                 CorrelationId: $"history-import:{record.Id:N}"),
             cancellationToken);
         var now = clock.UtcNow;
@@ -628,7 +625,7 @@ public sealed class ListeningHistoryImportService(
     }
 
     internal static string OccurrenceKey(IntelligenceScope scope, ListeningHistoryImportRow row) =>
-        Hash($"{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001fimport\u001f{row.SourceService}\u001f{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
+        Hash($"{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001fimport\u001f{row.SourceService}\u001f{row.SourceUserKey}\u001f{row.ListenedAt.ToUnixTimeMilliseconds()}\u001f{row.SourceItemKey}");
 
     internal static string? ProviderIdentityHash(ListeningHistoryImportRow row)
     {
@@ -645,7 +642,7 @@ public sealed class ListeningHistoryImportService(
         string importerRevision,
         string contentSha256,
         string previewJson) =>
-        Hash($"{format}\u001f{importerRevision}\u001f{scope.TenantId:N}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{scope.LibraryScopeId}\u001f{contentSha256}\u001f{previewJson}");
+        Hash($"{format}\u001f{importerRevision}\u001f{scope.OwnerUserId:N}\u001f{scope.Protocol}\u001f{scope.BackendInstanceId}\u001f{contentSha256}\u001f{previewJson}");
 
     internal static string Hash(string value) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
@@ -660,17 +657,17 @@ public sealed class ListeningHistoryImportService(
         AllstarrDbContext db,
         IntelligenceScope scope) =>
         db.ListeningHistoryImports.Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.OwnerUserId == scope.OwnerUserId &&
             item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.LibraryScopeId == scope.LibraryScopeId);
+            db.Users.Any(user => user.Id == scope.OwnerUserId && user.Enabled &&
+                user.BackendType == scope.Protocol && user.BackendInstanceId == scope.BackendInstanceId));
 
     private static IQueryable<ListeningEventRecord> ScopedListeningEvents(
         AllstarrDbContext db,
         IntelligenceScope scope) =>
         db.ListeningEvents.Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-            item.LibraryScopeId == scope.LibraryScopeId);
+            item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId);
 
     private static void RequireRevision(ListeningHistoryImportRecord record, string expectedRevision)
     {
@@ -691,7 +688,6 @@ public sealed class ListeningHistoryImportService(
         DateTimeOffset now) => new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = record.TenantId,
             ActorUserId = record.OwnerUserId,
             Category = "listening-history-import",
             Action = action,
@@ -743,7 +739,7 @@ public sealed class ListeningHistoryImportService(
             await using var db = await factory.CreateDbContextAsync(cancellationToken);
             var occurrenceKeys = _rows.Select(item => item.OccurrenceKey).ToArray();
             var existing = await db.ListeningEvents.AsNoTracking().Where(item =>
-                    item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                    item.OwnerUserId == scope.OwnerUserId &&
                     occurrenceKeys.Contains(item.OccurrenceKey))
                 .Select(item => item.OccurrenceKey).ToHashSetAsync(cancellationToken);
             var newRows = _rows.Where(item => !existing.Contains(item.OccurrenceKey)).ToArray();
@@ -751,7 +747,7 @@ public sealed class ListeningHistoryImportService(
             var resolved = identityHashes.Length == 0
                 ? []
                 : await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
-                        item.TenantId == scope.TenantId && item.ProviderId == "spotify" &&
+                        item.ProviderId == "spotify" &&
                         item.ResourceKind == ProviderResourceKind.Track &&
                         item.Scope == ProviderIdentityScope.Catalog && identityHashes.Contains(item.ExternalIdHash))
                     .Select(item => item.ExternalIdHash).ToHashSetAsync(cancellationToken);
@@ -759,7 +755,7 @@ public sealed class ListeningHistoryImportService(
             var resolvedMbids = recordingMbids.Length == 0
                 ? []
                 : await db.CanonicalRecordings.AsNoTracking().Where(item =>
-                        item.TenantId == scope.TenantId && item.MusicBrainzRecordingId != null &&
+                        item.MusicBrainzRecordingId != null &&
                         recordingMbids.Contains(item.MusicBrainzRecordingId))
                     .Select(item => item.MusicBrainzRecordingId!).ToHashSetAsync(cancellationToken);
             DuplicateRows += existing.Count;

@@ -1027,16 +1027,15 @@ public sealed class HybridApplicationCache(
         var ids = scoped.Select(item => item.Id!.Value).Distinct().ToArray();
         await using var database = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await database.ProviderAccounts.AsNoTracking().Where(item => ids.Contains(item.Id))
-            .Select(item => new { item.Id, item.TenantId, item.OwnerUserId, item.ProviderId, item.Revision, item.Enabled })
+            .Select(item => new { item.Id, item.OwnerUserId, item.ProviderId, item.Revision, item.Enabled })
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         foreach (var item in scoped)
         {
             var parts = item.Key.Split(':');
             if (!accounts.TryGetValue(item.Id!.Value, out var account) || !account.Enabled ||
-                !parts[3].Equals(account.TenantId?.ToString("N") ?? "global", StringComparison.Ordinal) ||
-                !parts[4].Equals(account.OwnerUserId?.ToString("N") ?? "shared", StringComparison.Ordinal) ||
-                !parts[parts.Length == 9 ? 7 : 6].Equals(account.ProviderId, StringComparison.OrdinalIgnoreCase) ||
-                (parts.Length == 9 && (!long.TryParse(parts[6], out var revision) || revision != account.Revision)))
+                (account.OwnerUserId is { } owner && !parts[3].Equals(owner.ToString("N"), StringComparison.Ordinal)) ||
+                !parts[parts.Length == 8 ? 6 : 5].Equals(account.ProviderId, StringComparison.OrdinalIgnoreCase) ||
+                (parts.Length == 8 && (!long.TryParse(parts[5], out var revision) || revision != account.Revision)))
                 stale.Add(item.Key);
         }
         return stale;
@@ -1047,8 +1046,8 @@ public sealed class HybridApplicationCache(
         var parts = key.Split(':');
         var account = parts.Length switch
         {
-            9 when key.StartsWith("playlist:discovery:v2:", StringComparison.Ordinal) => parts[5],
-            11 when CacheKeyBuilder.IsMediaAssetDescriptorKey(key) => parts[5],
+            8 when key.StartsWith("playlist:discovery:v3:", StringComparison.Ordinal) => parts[4],
+            10 when CacheKeyBuilder.IsMediaAssetDescriptorKey(key) => parts[4],
             _ => null
         };
         return Guid.TryParseExact(account, "N", out var id) ? id : null;

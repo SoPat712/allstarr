@@ -132,7 +132,6 @@ public sealed class ProviderRouter(
                             provider.Id,
                             request.Capability,
                             state.RequestedAccountId,
-                            request.Library?.ScopeId,
                             descriptor.AllowedAccountScopes,
                             request.Policy.AllowSharedAccount),
                         request.CancellationToken);
@@ -361,7 +360,6 @@ public sealed class ProviderRouter(
                     source.ProviderId,
                     request.Capability,
                     state.RequestedAccountId,
-                    request.Library?.ScopeId,
                     AllowSharedAccount: request.Policy.AllowSharedAccount),
                 request.CancellationToken);
         }
@@ -396,7 +394,6 @@ public sealed class ProviderRouter(
         request.Actor,
         providerId,
         account,
-        request.Library,
         request.Policy,
         request.OperationId,
         request.CorrelationId,

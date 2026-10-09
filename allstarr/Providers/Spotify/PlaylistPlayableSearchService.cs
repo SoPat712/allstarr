@@ -13,45 +13,13 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Spotify;
 
-// Use the protocol gateway so background matching keeps tenant and user credential scoping.
+// Use the protocol gateway so background matching keeps the initiating user credential scope.
 public sealed class PlaylistPlayableSearchService(
     IProtocolProviderGateway gateway,
     TrackMatchDecisionEngine matcher,
-    BackendIdentityResolver identities,
-    IdentityOptions identityOptions,
-    IOptions<JellyfinSettings> jellyfinSettings,
     ILogger<PlaylistPlayableSearchService> logger,
     IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
-    private readonly SemaphoreSlim _principalLock = new(1, 1);
-    private AllstarrPrincipal? _principal;
-
-    public async Task<IReadOnlyList<Song>?> SearchAsync(
-        string query,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        var principal = await ResolvePrincipalAsync(cancellationToken);
-        if (principal == null)
-        {
-            return null;
-        }
-
-        var context = new ProtocolExecutionContext(
-            ProtocolKind.Jellyfin,
-            principal.BackendInstanceId,
-            principal.BackendPrincipalId,
-            principal,
-            $"playlist-match-{Guid.NewGuid():N}",
-            DateTimeOffset.UtcNow.AddSeconds(30),
-            cancellationToken);
-        var providerOrder = await ProviderOrderAsync(principal.TenantId, cancellationToken);
-        return (await gateway.SearchPlayableSongsAsync(context, query, limit))
-            .Where(song => IsPlayable(song, providerOrder))
-            .Take(limit)
-            .ToList();
-    }
-
     public async Task<PlayableTrackMatch> MatchAsync(
         ProtocolExecutionContext context,
         ExternalTrackMatchSnapshot source,
@@ -74,7 +42,7 @@ public sealed class PlaylistPlayableSearchService(
             .Select(query => query!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(scope.TenantId, cancellationToken);
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(cancellationToken);
         var songs = (await Task.WhenAll(queries.Select(SearchAsync)))
             .SelectMany(result => result)
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
@@ -104,7 +72,7 @@ public sealed class PlaylistPlayableSearchService(
         ScopedTrackMatchOverride? manualOverride,
         CancellationToken cancellationToken)
     {
-        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(scope.TenantId, cancellationToken);
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(cancellationToken);
         var order = ProviderRanks(providerOrder);
         var cachedRoutes = identities
             .Where(identity => identity.VerificationMethod != "automatic-suggestion")
@@ -170,13 +138,12 @@ public sealed class PlaylistPlayableSearchService(
     }
 
     public async Task<bool> CanUseProviderAsync(
-        Guid tenantId,
         string? providerId,
         CancellationToken cancellationToken = default)
     {
         var normalized = ExternalTrackPlaybackPolicy.Normalize(providerId);
         return normalized.Length > 0 &&
-               (await ProviderOrderAsync(tenantId, cancellationToken))
+               (await ProviderOrderAsync(cancellationToken))
                .Any(provider => ExternalTrackPlaybackPolicy.Normalize(provider) == normalized);
     }
 
@@ -200,10 +167,9 @@ public sealed class PlaylistPlayableSearchService(
 
     private LocalTrackMatchCandidate ToCandidate(Song song, TrackMatchScope scope) => new(
         CandidateId(song.ExternalProvider!, song.ExternalId!),
-        scope.TenantId,
         scope.UserId,
         scope.BackendInstanceId,
-        scope.LibraryScopeId,
+        null,
         song.ExternalId!,
         null,
         song.Title,
@@ -263,21 +229,19 @@ public sealed class PlaylistPlayableSearchService(
             .ToDictionary(group => group.Key, group => group.Min(item => item.Index), StringComparer.Ordinal);
 
     private async Task<IReadOnlyList<string>> ProviderOrderAsync(
-        Guid tenantId,
         CancellationToken cancellationToken) => effectivePolicies == null
         ? gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)
-        : (await effectivePolicies.ResolveAsync(tenantId, cancellationToken))
+        : (await effectivePolicies.ResolveAsync(cancellationToken))
             .ApplyProviderAvailability(
                 ProviderCapabilityKind.Streaming,
                 gateway.GetProviderOrder(ProviderCapabilityKind.Streaming));
 
     private async Task<(IReadOnlyList<string> ProviderOrder, TrackMatchDecisionEngine Matcher)> MatchingPolicyAsync(
-        Guid tenantId,
         CancellationToken cancellationToken)
     {
         if (effectivePolicies == null)
             return (gateway.GetProviderOrder(ProviderCapabilityKind.Streaming), matcher);
-        var policy = await effectivePolicies.ResolveAsync(tenantId, cancellationToken);
+        var policy = await effectivePolicies.ResolveAsync(cancellationToken);
         return (
             policy.ApplyProviderAvailability(
                 ProviderCapabilityKind.Streaming,
@@ -285,43 +249,7 @@ public sealed class PlaylistPlayableSearchService(
             matcher.WithLocalPriorityWindow(policy.LocalPreferenceWindow));
     }
 
-    private async Task<AllstarrPrincipal?> ResolvePrincipalAsync(CancellationToken cancellationToken)
-    {
-        if (_principal != null)
-        {
-            return _principal;
-        }
 
-        var principalId = jellyfinSettings.Value.UserId;
-        if (string.IsNullOrWhiteSpace(principalId))
-        {
-            return null;
-        }
-
-        await _principalLock.WaitAsync(cancellationToken);
-        try
-        {
-            if (_principal != null)
-            {
-                return _principal;
-            }
-
-            _principal = await identities.ResolveAsync(new BackendIdentityDescriptor(
-                "jellyfin",
-                principalId,
-                BackendInstanceId: identityOptions.BackendInstanceId), cancellationToken);
-            if (_principal == null)
-            {
-                logger.LogWarning(
-                    "Playlist matching could not resolve the Jellyfin user; falling back to deployment-level providers");
-            }
-            return _principal;
-        }
-        finally
-        {
-            _principalLock.Release();
-        }
-    }
 }
 
 public sealed record PlayableTrackMatch(

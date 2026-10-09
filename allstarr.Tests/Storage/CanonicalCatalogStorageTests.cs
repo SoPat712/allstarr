@@ -18,7 +18,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
     public async Task CanonicalGraph_PersistsRecordingCreditsEditionTrackAliasAndProvenance()
     {
         var now = new DateTimeOffset(2026, 9, 14, 20, 0, 0, TimeSpan.Zero);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var artistId = Guid.CreateVersion7();
         var recordingId = Guid.CreateVersion7();
@@ -28,26 +27,20 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
 
         await using (var db = new AllstarrDbContext(_database.Options))
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "catalog-graph",
-                Name = "Catalog graph",
-                CreatedAt = now
-            });
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = userId,
-                TenantId = tenantId,
                 DisplayName = "Catalog owner",
-                Status = PlatformUserStatus.Active,
+                Enabled = true,
+                BackendType = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = userId.ToString("N"),
                 CreatedAt = now,
                 UpdatedAt = now
             });
             db.CanonicalArtists.Add(new CanonicalArtistRecord
             {
                 Id = artistId,
-                TenantId = tenantId,
                 Name = "Example Artist",
                 SortName = "Example Artist",
                 MusicBrainzArtistId = "11111111-1111-1111-1111-111111111111",
@@ -57,7 +50,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             db.CanonicalRecordings.Add(new CanonicalRecordingRecord
             {
                 Id = recordingId,
-                TenantId = tenantId,
                 CreatedByUserId = userId,
                 Title = "Example Recording",
                 DurationMilliseconds = 183_000,
@@ -68,7 +60,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             db.CanonicalReleaseGroups.Add(new CanonicalReleaseGroupRecord
             {
                 Id = releaseGroupId,
-                TenantId = tenantId,
                 Title = "Example Album",
                 PrimaryType = "Album",
                 MusicBrainzReleaseGroupId = "33333333-3333-3333-3333-333333333333",
@@ -78,7 +69,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             db.CanonicalReleases.Add(new CanonicalReleaseRecord
             {
                 Id = releaseId,
-                TenantId = tenantId,
                 CanonicalReleaseGroupId = releaseGroupId,
                 Title = "Example Album",
                 CountryCode = "US",
@@ -90,7 +80,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             db.CanonicalReleaseTracks.Add(new CanonicalReleaseTrackRecord
             {
                 Id = releaseTrackId,
-                TenantId = tenantId,
                 CanonicalReleaseId = releaseId,
                 CanonicalRecordingId = recordingId,
                 MediumPosition = 1,
@@ -103,14 +92,12 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             });
             db.CanonicalRecordingArtists.Add(new CanonicalRecordingArtistRecord
             {
-                TenantId = tenantId,
                 CanonicalRecordingId = recordingId,
                 CanonicalArtistId = artistId,
                 Position = 0
             });
             db.CanonicalReleaseGroupArtists.Add(new CanonicalReleaseGroupArtistRecord
             {
-                TenantId = tenantId,
                 CanonicalReleaseGroupId = releaseGroupId,
                 CanonicalArtistId = artistId,
                 Position = 0
@@ -118,7 +105,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
                 EntityKind = CanonicalCatalogEntityKind.Recording,
                 CanonicalEntityId = recordingId,
                 Namespace = "legacy-protocol-id",
@@ -130,7 +116,6 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             db.CatalogFacts.Add(new CatalogFactRecord
             {
                 Id = Guid.CreateVersion7(),
-                TenantId = tenantId,
                 EntityKind = CanonicalCatalogEntityKind.Recording,
                 CanonicalEntityId = recordingId,
                 FieldName = "title",
@@ -163,31 +148,25 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
     public async Task EvidenceStore_IsIdempotentSupersedesFactsAndRejectsAliasRemapping()
     {
         var now = new DateTimeOffset(2026, 9, 14, 21, 0, 0, TimeSpan.Zero);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
         var recordingId = Guid.CreateVersion7();
         var otherRecordingId = Guid.CreateVersion7();
         await using (var db = new AllstarrDbContext(_database.Options))
         {
-            db.Tenants.Add(new TenantRecord
-            {
-                Id = tenantId,
-                Slug = "catalog-evidence",
-                Name = "Catalog evidence",
-                CreatedAt = now
-            });
-            db.Users.Add(new PlatformUserRecord
+            db.Users.Add(new UserRecord
             {
                 Id = userId,
-                TenantId = tenantId,
                 DisplayName = "Catalog owner",
-                Status = PlatformUserStatus.Active,
+                Enabled = true,
+                BackendType = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = userId.ToString("N"),
                 CreatedAt = now,
                 UpdatedAt = now
             });
             db.CanonicalRecordings.AddRange(
-                Recording(recordingId, tenantId, userId, "First", now),
-                Recording(otherRecordingId, tenantId, userId, "Second", now));
+                Recording(recordingId, userId, "First", now),
+                Recording(otherRecordingId, userId, "Second", now));
             await db.SaveChangesAsync();
         }
 
@@ -202,10 +181,9 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
             new TestDbContextFactory(_database.Options),
             storageState);
         var actor = new ProviderActorContext(
-            tenantId,
             ProviderActorKind.User,
             userId,
-            new ProviderBackendPrincipal("jellyfin", "fixture", "catalog-user"));
+            new ProviderBackendPrincipal("jellyfin", "fixture", userId.ToString("N")));
         var target = new CanonicalCatalogEntityReference(
             CanonicalCatalogEntityKind.Recording,
             recordingId);
@@ -268,13 +246,12 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
     public async Task BrainzMashGraphIngest_IsAtomicIdempotentAndPreservesEditionIdentity(bool enrichExisting)
     {
         var now = new DateTimeOffset(2026, 9, 15, 12, 0, 0, TimeSpan.Zero);
-        var tenantId = Guid.CreateVersion7();
         var userId = Guid.CreateVersion7();
-        await SeedActorAsync(tenantId, userId, "brainzmash-ingest", now);
+        await SeedActorAsync(userId, "brainzmash-ingest", now);
         var service = new MusicBrainzCatalogIngestService(
             new TestDbContextFactory(_database.Options),
             ReadyStorage());
-        var actor = Actor(tenantId, userId);
+        var actor = Actor(userId);
         var artist = new MusicBrainzArtist
         {
             Id = "11111111-1111-4111-8111-111111111111",
@@ -358,15 +335,15 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
 
         await using (var verification = new AllstarrDbContext(_database.Options))
         {
-            Assert.Single(await verification.CanonicalArtists.Where(item => item.TenantId == tenantId).ToListAsync());
-            Assert.Single(await verification.CanonicalReleaseGroups.Where(item => item.TenantId == tenantId).ToListAsync());
-            Assert.Single(await verification.CanonicalReleases.Where(item => item.TenantId == tenantId).ToListAsync());
-            Assert.Equal(2, await verification.CanonicalRecordings.CountAsync(item => item.TenantId == tenantId));
-            Assert.Equal(2, await verification.CanonicalReleaseTracks.CountAsync(item => item.TenantId == tenantId));
-            Assert.Equal(enrichExisting ? 8 : 7, await verification.CanonicalCatalogAliases.CountAsync(item => item.TenantId == tenantId));
-            Assert.Equal(7, await verification.CatalogFacts.CountAsync(item => item.TenantId == tenantId));
+            Assert.Single(await verification.CanonicalArtists.ToListAsync());
+            Assert.Single(await verification.CanonicalReleaseGroups.ToListAsync());
+            Assert.Single(await verification.CanonicalReleases.ToListAsync());
+            Assert.Equal(2, await verification.CanonicalRecordings.CountAsync());
+            Assert.Equal(2, await verification.CanonicalReleaseTracks.CountAsync());
+            Assert.Equal(enrichExisting ? 8 : 7, await verification.CanonicalCatalogAliases.CountAsync());
+            Assert.Equal(7, await verification.CatalogFacts.CountAsync());
             Assert.All(
-                await verification.CanonicalRecordings.Where(item => item.TenantId == tenantId).ToListAsync(),
+                await verification.CanonicalRecordings.ToListAsync(),
                 item => Assert.False(item.IsProvisional));
             if (originalRecordingId.HasValue)
             {
@@ -375,23 +352,22 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
                 Assert.Equal("USRC17607839", preserved.Isrc);
                 Assert.Equal(163_000, preserved.DurationMilliseconds);
                 Assert.Equal(originalRecordingId.Value, (await verification.CanonicalReleaseTracks.SingleAsync(item =>
-                    item.TenantId == tenantId && item.MusicBrainzTrackId == "44444444-4444-4444-8444-444444444444")).CanonicalRecordingId);
+                    item.MusicBrainzTrackId == "44444444-4444-4444-8444-444444444444")).CanonicalRecordingId);
             }
         }
 
-        var invalidTenantId = Guid.CreateVersion7();
+        await using var invalidDatabase = await SqliteTestDatabase.CreateAsync();
         var invalidUserId = Guid.CreateVersion7();
-        await SeedActorAsync(invalidTenantId, invalidUserId, "brainzmash-invalid", now);
+        await SeedActorAsync(invalidUserId, "brainzmash-invalid", now, invalidDatabase.Options);
+        var invalidService = new MusicBrainzCatalogIngestService(
+            new TestDbContextFactory(invalidDatabase.Options), ReadyStorage());
         release.Media![0].Tracks![1].Position = 1;
-        await Assert.ThrowsAsync<ArgumentException>(() => service.IngestAsync(
-            Actor(invalidTenantId, invalidUserId), graph, source));
-        await using var atomicVerification = new AllstarrDbContext(_database.Options);
-        Assert.Equal(0, await atomicVerification.CanonicalReleaseGroups.CountAsync(
-            item => item.TenantId == invalidTenantId));
-        Assert.Equal(0, await atomicVerification.CanonicalRecordings.CountAsync(
-            item => item.TenantId == invalidTenantId));
-        Assert.Equal(0, await atomicVerification.CatalogFacts.CountAsync(
-            item => item.TenantId == invalidTenantId));
+        await Assert.ThrowsAsync<ArgumentException>(() => invalidService.IngestAsync(
+            Actor(invalidUserId), graph, source));
+        await using var atomicVerification = new AllstarrDbContext(invalidDatabase.Options);
+        Assert.Empty(await atomicVerification.CanonicalReleaseGroups.ToListAsync());
+        Assert.Empty(await atomicVerification.CanonicalRecordings.ToListAsync());
+        Assert.Empty(await atomicVerification.CatalogFacts.ToListAsync());
     }
 
     private static MusicBrainzReleaseTrack Track(
@@ -417,36 +393,30 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
         };
 
     private async Task SeedActorAsync(
-        Guid tenantId,
         Guid userId,
         string slug,
-        DateTimeOffset now)
+        DateTimeOffset now,
+        DbContextOptions<AllstarrDbContext>? options = null)
     {
-        await using var db = new AllstarrDbContext(_database.Options);
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = tenantId,
-            Slug = slug,
-            Name = slug,
-            CreatedAt = now
-        });
-        db.Users.Add(new PlatformUserRecord
+        await using var db = new AllstarrDbContext(options ?? _database.Options);
+        db.Users.Add(new UserRecord
         {
             Id = userId,
-            TenantId = tenantId,
             DisplayName = "Catalog owner",
-            Status = PlatformUserStatus.Active,
+            Enabled = true,
+            BackendType = "jellyfin",
+            BackendInstanceId = "fixture",
+            BackendPrincipalId = userId.ToString("N"),
             CreatedAt = now,
             UpdatedAt = now
         });
         await db.SaveChangesAsync();
     }
 
-    private static ProviderActorContext Actor(Guid tenantId, Guid userId) => new(
-        tenantId,
+    private static ProviderActorContext Actor(Guid userId) => new(
         ProviderActorKind.User,
         userId,
-        new ProviderBackendPrincipal("jellyfin", "fixture", "catalog-user"));
+        new ProviderBackendPrincipal("jellyfin", "fixture", userId.ToString("N")));
 
     private DurableStorageState ReadyStorage()
     {
@@ -461,13 +431,11 @@ public sealed class CanonicalCatalogStorageTests : IAsyncLifetime
 
     private static CanonicalRecordingRecord Recording(
         Guid id,
-        Guid tenantId,
         Guid userId,
         string title,
         DateTimeOffset now) => new()
         {
             Id = id,
-            TenantId = tenantId,
             CreatedByUserId = userId,
             Title = title,
             IsProvisional = true,

@@ -14,9 +14,7 @@ public sealed class ManagedTrackPlacementOptions
 }
 
 public sealed record ManagedTrackDownloadCommand(
-    Guid TenantId,
     Guid OwnerUserId,
-    string LibraryScopeId,
     Guid DurableJobId,
     string ProviderId,
     string ExternalTrackId,
@@ -65,13 +63,6 @@ public sealed class ManagedTrackDownloadService(
                 "The managed download command has no provider track identity.");
         }
 
-        if (string.IsNullOrWhiteSpace(command.LibraryScopeId))
-        {
-            return ManagedTrackDownloadResult.Failure(
-                "managed_download_library_missing",
-                "The managed download command has no authorized library scope.");
-        }
-
         var track = new ProviderExternalResourceId(
             command.ProviderId,
             ProviderResourceKind.Track,
@@ -83,7 +74,7 @@ public sealed class ManagedTrackDownloadService(
             .ToArray();
         var effectivePolicy = effectivePolicies == null
             ? null
-            : await effectivePolicies.ResolveAsync(command.TenantId, cancellationToken);
+            : await effectivePolicies.ResolveForUserAsync(command.OwnerUserId, cancellationToken);
         var priority = effectivePolicy?.ApplyProviderAvailability(
                            ProviderCapabilityKind.Download,
                            availableProviders)
@@ -96,7 +87,6 @@ public sealed class ManagedTrackDownloadService(
         }
 
         var actor = new ProviderActorContext(
-            command.TenantId,
             ProviderActorKind.SystemJob,
             null,
             durableJobId: command.DurableJobId,
@@ -127,7 +117,6 @@ public sealed class ManagedTrackDownloadService(
                 clock.UtcNow.AddMinutes(30),
                 priority,
                 priority.Select(id => new ProviderRouteProviderState(id, availableQualities: quality)),
-                new ProviderLibraryContext(command.TenantId, command.LibraryScopeId),
                 track,
                 command.IdempotencyKey,
                 cancellationToken));
@@ -164,7 +153,6 @@ public sealed class ManagedTrackDownloadService(
         {
             var candidate = plan.Candidates[index];
             var prior = await artifacts.FindByJobAsync(
-                command.TenantId,
                 command.DurableJobId,
                 candidate.Provider.Id,
                 cancellationToken);
@@ -182,15 +170,11 @@ public sealed class ManagedTrackDownloadService(
             }
 
             var workspace = await artifacts.CreateWorkspaceAsync(new ProviderDownloadWorkspaceRequest(
-                command.TenantId,
                 command.OwnerUserId,
                 command.DurableJobId,
                 candidate.Provider.Id,
                 candidate.Context.Account?.AccountId,
-                command.IdempotencyKey)
-            {
-                LibraryScopeId = command.LibraryScopeId
-            }, cancellationToken);
+                command.IdempotencyKey), cancellationToken);
             var candidateTrack = candidate.TrackId ?? new ProviderExternalResourceId(
                 candidate.Provider.Id,
                 ProviderResourceKind.Track,
@@ -300,8 +284,6 @@ public sealed class ManagedTrackDownloadService(
 
     private static void ValidateScope(ManagedTrackDownloadCommand command)
     {
-        if (command.TenantId == Guid.Empty)
-            throw new ArgumentException("A tenant ID is required.", nameof(command));
         if (command.OwnerUserId == Guid.Empty)
             throw new ArgumentException("An owner user ID is required.", nameof(command));
         if (command.DurableJobId == Guid.Empty)

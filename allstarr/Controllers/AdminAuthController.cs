@@ -257,7 +257,6 @@ public sealed class AdminAuthController : ControllerBase
     {
         var asset = await _mediaAssets.ResolveAsync(
             new MediaAssetIdentity(
-                session.TenantId,
                 session.AllstarrUserId,
                 null,
                 "jellyfin",
@@ -418,9 +417,9 @@ public sealed class AdminAuthController : ControllerBase
             if (!response.IsSuccessStatusCode) return Unauthorized(new { error = "Backend reauthentication failed." });
             using var document = await JsonDocument.ParseAsync(
                 await response.Content.ReadAsStreamAsync(cancellationToken), cancellationToken: cancellationToken);
-            if (!AdminBackendIdentity.TryReadSubsonic(document.RootElement, session.UserId, out _))
+            if (!AdminBackendIdentity.TryReadSubsonic(document.RootElement, session.UserId, out var reauthenticated))
                 return Unauthorized(new { error = "Backend reauthentication failed." });
-            var principal = await ConsentPrincipalAsync(session, cancellationToken);
+            var principal = await ConsentPrincipalAsync(session, cancellationToken, reauthenticated);
             if (principal == null) return Unauthorized();
             return Ok(ConsentStatus(await _secrets.StoreSubsonicPlaylistGrantAsync(
                 principal, request.Password, cancellationToken)));
@@ -444,15 +443,26 @@ public sealed class AdminAuthController : ControllerBase
         return Ok(ConsentStatus(null));
     }
 
-    private async Task<AllstarrPrincipal?> ConsentPrincipalAsync(AdminAuthSession session, CancellationToken cancellationToken)
+    private async Task<AllstarrPrincipal?> ConsentPrincipalAsync(
+        AdminAuthSession session,
+        CancellationToken cancellationToken,
+        AdminOidcBackendUser? verifiedUser = null)
     {
         if (_identityResolver == null || !session.BackendType.Equals("Subsonic", StringComparison.OrdinalIgnoreCase) ||
-            !session.TenantId.HasValue || !session.AllstarrUserId.HasValue) return null;
+            !session.AllstarrUserId.HasValue) return null;
         try
         {
             var principal = await _identityResolver.ResolveAsync(
-                new BackendIdentityDescriptor("subsonic", session.UserId, session.UserName, session.IsAdministrator), cancellationToken);
-            return principal?.UserId == session.AllstarrUserId && principal.TenantId == session.TenantId ? principal : null;
+                new BackendIdentityDescriptor(
+                    "subsonic",
+                    session.UserId,
+                    verifiedUser?.Name ?? session.UserName,
+                    verifiedUser?.IsAdministrator ?? session.IsAdministrator),
+                cancellationToken);
+            return principal?.UserId == session.AllstarrUserId &&
+                   principal.IsAdministrator == session.IsAdministrator
+                ? principal
+                : null;
         }
         catch (UnauthorizedAccessException) { return null; }
     }
@@ -480,9 +490,10 @@ public sealed class AdminAuthController : ControllerBase
             : await _identityResolver.ResolveAsync(
                 new BackendIdentityDescriptor(backendName, userId, userName, isAdministrator),
                 HttpContext.RequestAborted);
+        if (principal == null)
+            return StatusCode(503, new { error = "Native account identity is unavailable. Try again." });
         if (_pendingOidcKey != null)
         {
-            if (principal == null) return StatusCode(503, new { error = "Native account identity is unavailable. SSO was not linked." });
             try
             {
                 await _oidcLinks!.LinkAsync(_pendingOidcKey, principal,
@@ -498,7 +509,7 @@ public sealed class AdminAuthController : ControllerBase
         }
         if (backend == BackendType.Subsonic && request.ManagePlaylists)
         {
-            if (principal == null || _secrets == null)
+            if (_secrets == null)
                 return StatusCode(503, new { error = "Playlist consent could not be saved. Try again." });
             await _secrets.StoreSubsonicPlaylistGrantAsync(principal, request.Password!, HttpContext.RequestAborted);
         }
@@ -510,8 +521,7 @@ public sealed class AdminAuthController : ControllerBase
             serverId,
             request.RememberMe,
             backendName,
-            principal?.TenantId,
-            principal?.UserId,
+            principal.UserId,
             HttpContext.RequestAborted,
             subsonicReadAuthentication: backend == BackendType.Subsonic
                 ? allstarr.Services.Subsonic.SubsonicSessionAuthentication.Create(userId, request.Password!)
@@ -534,7 +544,6 @@ public sealed class AdminAuthController : ControllerBase
             id = session.UserId,
             name = session.UserName,
             isAdministrator = session.IsAdministrator,
-            tenantId = session.TenantId,
             allstarrUserId = session.AllstarrUserId,
             avatarUrl = session.BackendType.Equals(
                 BackendType.Jellyfin.ToString(), StringComparison.OrdinalIgnoreCase)

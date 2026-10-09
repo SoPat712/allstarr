@@ -17,14 +17,12 @@ public static class CacheKeyBuilder
         $"negative:playback:metadata:v1:{Normalize(provider)}:{Digest(itemId.Trim())}";
 
     public static string BuildPlaybackRouteNegativeKey(
-        Guid tenantId,
         Guid? userId,
-        string? libraryScopeId,
         string provider,
         string itemId,
         string quality) =>
         $"negative:playback:route:v1:{DigestIdentity(
-            tenantId, userId, libraryScopeId, provider, itemId, quality)}";
+            userId, provider, itemId, quality)}";
 
     public static string BuildJellyfinItemTypeKey(string itemId) =>
         $"jellyfin:item-type:v2:{Digest(itemId.Trim())}";
@@ -44,7 +42,6 @@ public static class CacheKeyBuilder
         $"playlist:artwork-descriptor:v1:{Normalize(provider)}:{Digest(playlistId.Trim())}:{Digest(revision?.Trim() ?? string.Empty)}";
 
     public static string BuildProviderPlaylistDiscoveryKey(
-        Guid? tenantId,
         Guid? userId,
         Guid accountId,
         long accountRevision,
@@ -56,8 +53,7 @@ public static class CacheKeyBuilder
         return string.Join(':',
             "playlist",
             "discovery",
-            "v2",
-            tenantId?.ToString("N") ?? "global",
+            "v3",
             userId?.ToString("N") ?? "shared",
             accountId.ToString("N"),
             accountRevision.ToString(CultureInfo.InvariantCulture),
@@ -66,7 +62,7 @@ public static class CacheKeyBuilder
     }
 
     public static string BuildProviderPlaylistDiscoveryAccountPattern(Guid accountId) =>
-        $"playlist:discovery:v2:*:*:{accountId:N}:*";
+        $"playlist:discovery:v3:*:{accountId:N}:*";
 
     public static string BuildMediaAssetDescriptorKey(MediaAssetIdentity identity)
     {
@@ -78,8 +74,7 @@ public static class CacheKeyBuilder
         return string.Join(':',
             "media",
             "descriptor",
-            "v3",
-            identity.TenantId?.ToString("N") ?? "global",
+            "v4",
             identity.UserId?.ToString("N") ?? "shared",
             identity.ProviderAccountId?.ToString("N") ?? "none",
             Normalize(identity.ProviderId),
@@ -90,7 +85,7 @@ public static class CacheKeyBuilder
     }
 
     public static string BuildMediaAssetDescriptorAccountPattern(Guid accountId) =>
-        $"media:descriptor:v3:*:*:{accountId:N}:*";
+        $"media:descriptor:v4:*:{accountId:N}:*";
 
     public static string BuildMediaAssetPayloadKey(string sha256) =>
         $"artwork:payload:v1:{Normalize(sha256)}";
@@ -133,7 +128,7 @@ public static class CacheKeyBuilder
     #region Image Keys
 
     public static bool IsMediaAssetDescriptorKey(string key) =>
-        key.StartsWith("media:descriptor:v3:", StringComparison.Ordinal);
+        key.StartsWith("media:descriptor:v4:", StringComparison.Ordinal);
 
     public static bool IsMediaAssetPayloadKey(string key) =>
         key.StartsWith("artwork:payload:v1:", StringComparison.Ordinal);

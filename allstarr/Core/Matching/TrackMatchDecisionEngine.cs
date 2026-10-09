@@ -19,10 +19,8 @@ public enum TrackMatchReviewState
 }
 
 public sealed record TrackMatchScope(
-    Guid TenantId,
     Guid UserId,
     string BackendInstanceId,
-    string LibraryScopeId,
     Guid ProviderAccountId,
     int PolicyVersion,
     long SourceSnapshotVersion,
@@ -44,10 +42,9 @@ public sealed record ExternalTrackMatchSnapshot(
 
 public sealed record LocalTrackMatchCandidate(
     Guid LibraryTrackId,
-    Guid TenantId,
     Guid? OwnerUserId,
     string BackendInstanceId,
-    string LibraryScopeId,
+    string? BackendLibraryId,
     string BackendItemId,
     Guid? CanonicalRecordingId,
     string Title,
@@ -62,9 +59,7 @@ public sealed record LocalTrackMatchCandidate(
     bool IsLocal = true);
 
 public sealed record ScopedTrackMatchOverride(
-    Guid TenantId,
     Guid UserId,
-    string LibraryScopeId,
     string ProviderId,
     string ExternalId,
     Guid? PinnedLibraryTrackId,
@@ -694,23 +689,19 @@ public sealed class TrackMatchDecisionEngine
             : candidate.MusicBrainzRecordingId;
 
     private static bool IsVisible(TrackMatchScope scope, LocalTrackMatchCandidate candidate) =>
-        candidate.TenantId == scope.TenantId &&
         candidate.BackendInstanceId.Equals(scope.BackendInstanceId, StringComparison.Ordinal) &&
         (candidate.IsLocal
-            ? scope.AccessibleLibraryIds.Contains(candidate.LibraryScopeId)
-            : candidate.LibraryScopeId.Equals(scope.LibraryScopeId, StringComparison.Ordinal) &&
-              (!candidate.OwnerUserId.HasValue || candidate.OwnerUserId == scope.UserId));
+            ? candidate.BackendLibraryId != null && scope.AccessibleLibraryIds.Contains(candidate.BackendLibraryId)
+            : (!candidate.OwnerUserId.HasValue || candidate.OwnerUserId == scope.UserId));
 
     private static void ValidateScope(TrackMatchScope scope)
     {
         ArgumentNullException.ThrowIfNull(scope.AccessibleLibraryIds);
-        if (scope.TenantId == Guid.Empty ||
-            scope.UserId == Guid.Empty ||
+        if (scope.UserId == Guid.Empty ||
             scope.ProviderAccountId == Guid.Empty ||
             scope.PolicyVersion <= 0 ||
             scope.SourceSnapshotVersion <= 0 ||
-            string.IsNullOrWhiteSpace(scope.BackendInstanceId) ||
-            string.IsNullOrWhiteSpace(scope.LibraryScopeId))
+            string.IsNullOrWhiteSpace(scope.BackendInstanceId))
         {
             throw new ArgumentException("A complete scoped match context is required.", nameof(scope));
         }
@@ -734,9 +725,7 @@ public sealed class TrackMatchDecisionEngine
         ScopedTrackMatchOverride? value)
     {
         if (value != null &&
-            (value.TenantId != scope.TenantId ||
-             value.UserId != scope.UserId ||
-             !value.LibraryScopeId.Equals(scope.LibraryScopeId, StringComparison.Ordinal) ||
+            (value.UserId != scope.UserId ||
              !value.ProviderId.Equals(source.ProviderId, StringComparison.Ordinal) ||
              !value.ExternalId.Equals(source.ExternalId, StringComparison.Ordinal)))
         {

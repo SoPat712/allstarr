@@ -50,9 +50,11 @@ public sealed partial class DurableBackupServiceTests
         Assert.Equal(previousKey, await File.ReadAllBytesAsync(Path.Combine(previous, "keyring.json")));
         Assert.False(Directory.Exists(Path.Combine(previous, "applied")));
         var current = new EncryptedSecretStore(_factory, new FileSecretKeyRingProvider(_secrets), _secrets, new SystemPlatformClock());
-        using var restored = await current.OpenAsync(_secretId, new SecretAccessContext(null, true));
+        using var restored = await current.OpenAsync(_secretId, new SecretAccessContext(_userId, "backup.fixture"));
         Assert.Equal("backup-fixture-secret", restored.ReadUtf8());
         await using var context = await _factory.CreateDbContextAsync();
+        Assert.Equal(_userId, (await context.Users.SingleAsync()).Id);
+        Assert.Equal("false", (await context.RuntimeSettings.SingleAsync()).ValueJson);
         Assert.False(await context.SecretReferences.AnyAsync(item => item.Id == newerSecret));
         if (!OperatingSystem.IsWindows())
         {

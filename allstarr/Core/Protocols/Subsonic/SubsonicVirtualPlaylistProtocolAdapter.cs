@@ -49,7 +49,6 @@ public sealed class SubsonicPlaylistMutationResolver(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == linkId &&
-            item.TenantId == actor.TenantId &&
             (item.OwnerUserId == userId || item.TargetPlaylistId != null) &&
             item.TargetBackendInstanceId == context.BackendInstanceId &&
             (item.TargetProtocol == "subsonic" ||
@@ -66,7 +65,7 @@ public sealed class SubsonicPlaylistMutationResolver(
             if (targets == null) return null;
             var target = targets.Resolve(link.TargetProtocol);
             var targetContext = new BackendPlaylistTargetContext(context.BackendInstanceId,
-                context.VerifiedBackendPrincipalId, null, actor.TenantId);
+                context.VerifiedBackendPrincipalId);
             var read = await target.ReadAsync(targetContext, link.TargetPlaylistId!, cancellationToken);
             if (!read.IsSuccess || read.Value == null) return null;
             writable = writable && await target.CanWriteAsync(targetContext, link.TargetPlaylistId!, cancellationToken);

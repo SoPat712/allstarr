@@ -246,7 +246,7 @@ public sealed partial class IntelligenceController
         if (record.Revision != request.ExpectedRevision)
             return Conflict(new { error = "listening_history_revision_conflict" });
         var checkpoints = await db.Set<PlaybackDeliveryCheckpointEntity>().Where(item =>
-            item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+            item.OwnerUserId == scope.OwnerUserId &&
             item.OccurrenceKey == record.OccurrenceKey).ToListAsync(cancellationToken);
         db.RemoveRange(checkpoints);
         db.ListeningEvents.Remove(record);
@@ -508,9 +508,8 @@ public sealed partial class IntelligenceController
     private DateTimeOffset Now => _clock?.UtcNow ?? DateTimeOffset.UtcNow;
 
     private static IQueryable<ListeningEventRecord> ScopedHistory(AllstarrDbContext db, IntelligenceScope scope) =>
-        db.ListeningEvents.Where(item => item.TenantId == scope.TenantId &&
-            item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
-            item.BackendInstanceId == scope.BackendInstanceId && item.LibraryScopeId == scope.LibraryScopeId);
+        db.ListeningEvents.Where(item => item.OwnerUserId == scope.OwnerUserId &&
+            item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId);
 
     private static IQueryable<ListeningEventRecord> ScopedCompletedHistory(AllstarrDbContext db, IntelligenceScope scope) =>
         ScopedHistory(db, scope).AsNoTracking().Where(item =>
@@ -606,9 +605,9 @@ public sealed partial class IntelligenceController
                    CAST(count(*) FILTER (WHERE "SourceKind" = 'protocol') AS INTEGER) AS "PlaybackCount",
                    CAST(coalesce(sum("DurationMilliseconds"), 0) AS INTEGER) AS "DurationMilliseconds"
             FROM listening_events
-            WHERE "TenantId" = {{scope.TenantId}} AND "OwnerUserId" = {{scope.OwnerUserId}}
+            WHERE "OwnerUserId" = {{scope.OwnerUserId}}
               AND "Protocol" = {{scope.Protocol}} AND "BackendInstanceId" = {{scope.BackendInstanceId}}
-              AND "LibraryScopeId" = {{scope.LibraryScopeId}} AND "State" = 'Completed'
+              AND "State" = 'Completed'
               AND "ListenedAt" >= {{from}} AND "ListenedAt" < {{to}}
             GROUP BY 1
             ORDER BY 1
@@ -675,9 +674,9 @@ public sealed partial class IntelligenceController
             WITH scoped AS (
                 SELECT "SourceKind", "ProviderId", "ClientClass", "DurationMilliseconds"
                 FROM listening_events
-                WHERE "TenantId" = {{scope.TenantId}} AND "OwnerUserId" = {{scope.OwnerUserId}}
+                WHERE "OwnerUserId" = {{scope.OwnerUserId}}
                   AND "Protocol" = {{scope.Protocol}} AND "BackendInstanceId" = {{scope.BackendInstanceId}}
-                  AND "LibraryScopeId" = {{scope.LibraryScopeId}} AND "State" = 'Completed'
+                  AND "State" = 'Completed'
                   AND "ListenedAt" >= {{from}} AND "ListenedAt" < {{to}}
             ), grouped AS (
                 SELECT 'source' AS "Dimension", coalesce(nullif("SourceKind", ''), 'unknown') AS "Value",
@@ -705,7 +704,7 @@ public sealed partial class IntelligenceController
             rows.Where(item => item.Dimension == "client").ToArray());
     }
 
-    private static async Task<IReadOnlyList<ListeningHistoryItem>> HistoryItemsAsync(
+    private async Task<IReadOnlyList<ListeningHistoryItem>> HistoryItemsAsync(
         AllstarrDbContext db,
         IntelligenceScope scope,
         IReadOnlyCollection<ListeningEventRecord> records,
@@ -715,10 +714,9 @@ public sealed partial class IntelligenceController
         var trackIds = records.Select(item => item.LibraryTrackId).OfType<Guid>().Distinct().ToArray();
         var artwork = trackIds.Length == 0
             ? new Dictionary<Guid, string>()
-            : await db.LibraryTracks.AsNoTracking().Where(item =>
-                    item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                    item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                    item.LibraryScopeId == scope.LibraryScopeId && trackIds.Contains(item.Id))
+            : await (await LocalRecommendationCatalog.ScopedAsync(
+                    db, scope, _libraryAccess, cancellationToken)).AsNoTracking()
+                .Where(item => trackIds.Contains(item.Id))
                 .ToDictionaryAsync(item => item.Id, item => item.BackendItemId, cancellationToken);
         var statuses = await TargetStatusesAsync(db, scope, records.Select(item => item.OccurrenceKey).ToArray(), cancellationToken);
         return records.Select(item =>
@@ -783,7 +781,7 @@ public sealed partial class IntelligenceController
     {
         if (occurrenceKeys.Count == 0) return [];
         var rows = await db.Set<PlaybackDeliveryCheckpointEntity>().AsNoTracking().Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
+                item.OwnerUserId == scope.OwnerUserId &&
                 item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey) &&
                 item.Kind == PlaybackScrobbleDeliveryKind.Completed)
             .OrderBy(item => item.TargetId).ToListAsync(cancellationToken);
@@ -810,7 +808,6 @@ public sealed partial class IntelligenceController
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            TenantId = scope.TenantId,
             ActorUserId = scope.OwnerUserId,
             Category = "listening-history",
             Action = action,
@@ -1061,15 +1058,13 @@ internal sealed class ListeningHistoryExportResult(
         JsonSerializer.Serialize(writer, new
         {
             scope.Protocol,
-            scope.BackendInstanceId,
-            scope.LibraryScopeId
+            scope.BackendInstanceId
         });
         writer.WriteStartArray("events");
         var count = 0;
         var query = db.ListeningEvents.AsNoTracking().Where(item =>
-                item.TenantId == scope.TenantId && item.OwnerUserId == scope.OwnerUserId &&
-                item.Protocol == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId &&
-                item.LibraryScopeId == scope.LibraryScopeId)
+                item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&
+                item.BackendInstanceId == scope.BackendInstanceId)
             .OrderBy(item => item.ListenedAt).ThenBy(item => item.Id).AsAsyncEnumerable();
         await foreach (var item in query.WithCancellation(cancellationToken))
         {

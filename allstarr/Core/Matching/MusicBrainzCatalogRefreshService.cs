@@ -91,14 +91,12 @@ public sealed class MusicBrainzCatalogRefreshJobHandler(
         if (payload == null ||
             !Guid.TryParse(payload.ReleaseMbid, out var releaseId) ||
             releaseId == Guid.Empty ||
-            !context.Claim.TenantId.HasValue ||
             !context.Claim.OwnerUserId.HasValue)
             return DurableJobCompletion.Failure(
                 "catalog_refresh_payload_invalid",
                 "The canonical catalog refresh payload is invalid.");
 
         var actor = new ProviderActorContext(
-            context.Claim.TenantId.Value,
             ProviderActorKind.SystemJob,
             null,
             durableJobId: context.Claim.JobId,

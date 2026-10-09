@@ -40,7 +40,7 @@ public sealed class JobsController : ControllerBase
         var query = context.Jobs.AsNoTracking();
         if (!session.IsAdministrator)
         {
-            if (!session.TenantId.HasValue || !session.AllstarrUserId.HasValue)
+            if (!session.AllstarrUserId.HasValue)
             {
                 return StatusCode(StatusCodes.Status403Forbidden, new
                 {
@@ -49,7 +49,6 @@ public sealed class JobsController : ControllerBase
             }
 
             query = query.Where(item =>
-                item.TenantId == session.TenantId &&
                 item.OwnerUserId == session.AllstarrUserId);
         }
         if (!string.IsNullOrWhiteSpace(state))
@@ -75,7 +74,6 @@ public sealed class JobsController : ControllerBase
             {
                 item.Id,
                 item.CorrelationId,
-                item.TenantId,
                 item.OwnerUserId,
                 item.Type,
                 state = item.State.ToString(),
@@ -101,8 +99,7 @@ public sealed class JobsController : ControllerBase
             .ToDictionary(group => group.Key, group => group.First().Id);
         var progress = await context.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "job-progress" &&
-                           (session.IsAdministrator || item.TenantId == session.TenantId &&
-                               item.ActorUserId == session.AllstarrUserId) &&
+                           (session.IsAdministrator || item.ActorUserId == session.AllstarrUserId) &&
                            correlationIds.Contains(item.CorrelationId))
             .OrderByDescending(item => item.CreatedAt)
             .Take(Math.Min(2500, limit * 25))
@@ -144,9 +141,7 @@ public sealed class JobsController : ControllerBase
         if (!session.IsAdministrator)
         {
             query = query.Where(item =>
-                session.TenantId.HasValue &&
                 session.AllstarrUserId.HasValue &&
-                item.TenantId == session.TenantId &&
                 item.OwnerUserId == session.AllstarrUserId);
         }
 
@@ -172,7 +167,7 @@ public sealed class JobsController : ControllerBase
             .ToListAsync(cancellationToken);
         var progress = await context.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "job-progress" &&
-                           item.TenantId == job.TenantId && item.ActorUserId == job.OwnerUserId &&
+                           item.ActorUserId == job.OwnerUserId &&
                            item.CorrelationId == job.CorrelationId)
             .OrderByDescending(item => item.CreatedAt)
             .Take(100)
@@ -190,7 +185,6 @@ public sealed class JobsController : ControllerBase
             job = new
             {
                 job.Id,
-                job.TenantId,
                 job.OwnerUserId,
                 job.Type,
                 state = job.State.ToString(),
@@ -226,20 +220,18 @@ public sealed class JobsController : ControllerBase
         if (!session.IsAdministrator)
         {
             query = query.Where(item =>
-                session.TenantId.HasValue &&
                 session.AllstarrUserId.HasValue &&
-                item.TenantId == session.TenantId &&
                 item.OwnerUserId == session.AllstarrUserId);
         }
 
-        var job = await query.Select(item => new { item.Id, item.TenantId })
+        var job = await query.Select(item => new { item.Id, item.OwnerUserId })
             .SingleOrDefaultAsync(cancellationToken);
         if (job == null)
         {
             return NotFound();
         }
 
-        var requested = await _queue.RequestCancellationAsync(job.Id, job.TenantId, cancellationToken);
+        var requested = await _queue.RequestCancellationAsync(job.Id, job.OwnerUserId, cancellationToken);
         return requested
             ? Accepted(new { jobId, state = "cancellation_requested" })
             : Conflict(new { error = "Job is missing or already terminal" });

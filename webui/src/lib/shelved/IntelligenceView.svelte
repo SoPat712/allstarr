@@ -41,7 +41,6 @@
   } = $props();
   let protocol = $state("jellyfin");
   let backendInstanceId = $state("");
-  let libraryScopeId = $state("");
   let data = $state<IntelligenceState | null>(null);
   let loading = $state(false);
   let action = $state("");
@@ -81,14 +80,14 @@
   );
   const sectionIntro = $derived({
     overview: { title: "Your listening, explained.", description: "See what you play, what Allstarr learned, and what is ready for discovery." },
-    history: { title: "Your listening history.", description: "Search, correct, and export the activity saved for this account and library." },
+    history: { title: "Your listening history.", description: "Search, correct, and export the activity saved for this account." },
     imports: { title: "Bring your history with you.", description: "Upload Spotify Extended Streaming History or exports from your other listening services." },
     discover: { title: "Turn listening into discovery.", description: "Review recommendations and create playlists without sending your history to Allstarr." },
     playlists: { title: "Recommendations you can play anywhere.", description: "Turn live intelligence into personal playlists in this Jellyfin or Subsonic library." },
     automation: { title: "Choose what Allstarr remembers.", description: "Control private history, recommendation inputs, listening services, and schedules." },
   }[activeSection]);
   const historySection = $derived(activeSection === "imports" ? "imports" : activeSection === "history" ? "history" : "overview");
-  const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId, libraryScopeId });
+  const scope = $derived<IntelligenceScope>({ protocol, backendInstanceId });
   const activeScope = $derived(loadedScope ?? scope);
   const visibleCandidates = $derived(data?.candidates.filter((item) => !item.exclusions.length) ?? []);
   const audioMuseReady = $derived(data?.providers.some((item) => item.id === "audiomuse-ai" && item.enabled && item.available && item.state === "ready") ?? false);
@@ -104,13 +103,13 @@
   const runStatus = $derived(runState === "succeeded" ? "Ready" : ["pending", "running", "retry scheduled"].includes(runState ?? "") ? "Refreshing" : runState);
   const materializationActive = $derived(data?.generatedSets.some((item) => ["pending", "running"].includes(item.state)) ?? false);
   const readyRecommendationSources = $derived(data?.providers.filter((item) => item.enabled && item.available && item.state === "ready").length ?? 0);
-  const scopedTargets = $derived(mediaTargets.filter((item) => Boolean(item.libraryScopeId)));
   const connectableSubsonicTarget = $derived(mediaTargets.find((item) => item.protocol === "subsonic") ?? null);
-  const selectedTarget = $derived(scopedTargets.find((item) => item.id === selectedTargetId) ?? scopedTargets[0]);
-  const targetOptions = $derived(scopedTargets.map((item) => ({ value: item.id, label: targetLabel(item) })));
+  const accessibleTargets = $derived(mediaTargets.filter((item) => item.protocol !== "subsonic" || item.credentialReferenceId));
+  const selectedTarget = $derived(accessibleTargets.find((item) => item.id === selectedTargetId) ?? accessibleTargets[0]);
+  const targetOptions = $derived(accessibleTargets.map((item) => ({ value: item.id, label: targetLabel(item) })));
   const credentialOptions = $derived(mediaTargets
     .filter((item) => item.protocol === activeScope.protocol && item.backendInstanceId === activeScope.backendInstanceId &&
-      (!item.libraryScopeId || item.libraryScopeId === activeScope.libraryScopeId) && item.credentialReferenceId)
+      item.credentialReferenceId)
     .map((item) => ({ value: item.credentialReferenceId!, label: item.displayName })));
   const nextSchedule = $derived(data?.schedules.filter((item) => item.enabled && item.nextRunAt)
     .sort((left, right) => new Date(left.nextRunAt!).getTime() - new Date(right.nextRunAt!).getTime())[0]);
@@ -188,12 +187,8 @@
     return value === "jellyfin" ? "Jellyfin" : value === "subsonic" ? "Subsonic" : "Media server";
   }
 
-  function libraryLabel(value: string) {
-    return value.replaceAll("-", " ").replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-  }
-
   function targetLabel(target: MediaTarget) {
-    return `${libraryLabel(target.libraryScopeId ?? "Music")} · ${serverLabel(target.protocol)}`;
+    return `${target.displayName} · ${serverLabel(target.protocol)}`;
   }
 
   async function discoverTargets() {
@@ -202,7 +197,7 @@
     try {
       const response = await playlistLinks.targets();
       mediaTargets = response.targets;
-      const target = response.targets.find((item) => Boolean(item.libraryScopeId));
+      const target = response.targets.find((item) => item.protocol !== "subsonic" || item.credentialReferenceId);
       if (target) {
         targetsLoading = false;
         await openTarget(target.id);
@@ -219,8 +214,9 @@
     try {
       const response = await playlistLinks.targets();
       mediaTargets = response.targets;
-      const ready = response.targets.find((item) => item.id === indexingTargetId && item.libraryScopeId);
-      if (ready) {
+      const ready = response.targets.find((item) => item.id === indexingTargetId);
+      const counts = await playlistLinks.libraryIndexCounts();
+      if (ready && counts.trackCount > 0) {
         indexingTargetId = "";
         librarySetupFeedback = "Your Subsonic library is indexed and ready for Intelligence.";
         await openTarget(ready.id);
@@ -239,7 +235,7 @@
     if (!target.credentialReferenceId || indexingTargetId) return;
     error = "";
     try {
-      await playlistLinks.enqueueLibraryIndex(target, target.credentialReferenceId);
+      await playlistLinks.enqueueLibraryIndex(target.credentialReferenceId);
       await libraryAccessConnected("Library indexing started.", target.id);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Library indexing could not be started.";
@@ -254,17 +250,16 @@
   }
 
   async function openTarget(targetId: string) {
-    const target = mediaTargets.find((item) => item.id === targetId && item.libraryScopeId);
-    if (!target?.libraryScopeId) return;
+    const target = mediaTargets.find((item) => item.id === targetId);
+    if (!target) return;
     selectedTargetId = target.id;
     protocol = target.protocol;
     backendInstanceId = target.backendInstanceId;
-    libraryScopeId = target.libraryScopeId;
-    await load({ protocol: target.protocol, backendInstanceId: target.backendInstanceId, libraryScopeId: target.libraryScopeId });
+    await load({ protocol: target.protocol, backendInstanceId: target.backendInstanceId });
   }
 
   async function load(requestedScope: IntelligenceScope = { ...scope }) {
-    if (!requestedScope.backendInstanceId.trim() || !requestedScope.libraryScopeId.trim()) return;
+    if (!requestedScope.backendInstanceId.trim()) return;
     const request = ++loadRequest;
     loading = true;
     error = "";
@@ -367,9 +362,9 @@
     <div class="heading-tools" aria-busy={targetsLoading || loading}>
       {#if targetsLoading}
         <span class="scope-value" role="status"><small>Library</small><strong>Finding your music…</strong></span>
-      {:else if selectedTarget && scopedTargets.length === 1}
-        <span class="scope-value"><small>Library</small><strong>{libraryLabel(selectedTarget.libraryScopeId ?? "Music")}</strong><span>{serverLabel(selectedTarget.protocol)} · {selectedTarget.displayName}</span></span>
-      {:else if scopedTargets.length > 1}
+      {:else if selectedTarget && accessibleTargets.length === 1}
+        <span class="scope-value"><small>Library</small><strong>Music</strong><span>{serverLabel(selectedTarget.protocol)} · {selectedTarget.displayName}</span></span>
+      {:else if accessibleTargets.length > 1}
         <label class="field library-picker"><span>Library</span><SelectField value={selectedTargetId} label="Music library" options={targetOptions} onchange={(value) => void openTarget(value)} /></label>
       {:else}
         <span class="scope-value">

@@ -170,11 +170,11 @@ public class AdminUiController : ControllerBase
     {
         if (_effectivePolicies == null ||
             !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession { TenantId: { } tenantId })
+            value is not AdminAuthSession { AllstarrUserId: not null })
             return null;
         try
         {
-            return await _effectivePolicies.ResolveAsync(tenantId, cancellationToken);
+            return await _effectivePolicies.ResolveAsync(cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -186,7 +186,7 @@ public class AdminUiController : ControllerBase
     public async Task<IActionResult> GetProviderSummaries(CancellationToken cancellationToken = default)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
-            sessionValue is not AdminAuthSession { IsAdministrator: true, TenantId: { } tenantId })
+            sessionValue is not AdminAuthSession { IsAdministrator: true, AllstarrUserId: not null })
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "Administrator permissions required" });
         }
@@ -194,7 +194,6 @@ public class AdminUiController : ControllerBase
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
-            .Where(item => item.TenantId == null || item.TenantId == tenantId)
             .ToListAsync(cancellationToken);
         var accountIds = accounts.Select(item => item.Id).ToArray();
         var rollups = await context.ProviderHealthRollups.AsNoTracking()
@@ -245,7 +244,7 @@ public class AdminUiController : ControllerBase
     public async Task<IActionResult> GetHome(CancellationToken cancellationToken = default)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession { TenantId: { } tenantId } session ||
+            value is not AdminAuthSession { AllstarrUserId: not null } session ||
             !session.IsAdministrator && session.AllstarrUserId is null)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
@@ -256,9 +255,9 @@ public class AdminUiController : ControllerBase
         var services = HttpContext.RequestServices;
         var contextFactory = services.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var linksQuery = context.PlaylistLinks.AsNoTracking().Where(item => item.TenantId == tenantId);
-        var jobsQuery = context.Jobs.AsNoTracking().Where(item => item.TenantId == tenantId);
-        var listensQuery = context.ListeningEvents.AsNoTracking().Where(item => item.TenantId == tenantId);
+        var linksQuery = context.PlaylistLinks.AsNoTracking();
+        var jobsQuery = context.Jobs.AsNoTracking();
+        var listensQuery = context.ListeningEvents.AsNoTracking();
         if (!session.IsAdministrator && session.AllstarrUserId is { } ownerUserId)
         {
             linksQuery = linksQuery.Where(item => item.OwnerUserId == ownerUserId);
@@ -268,7 +267,7 @@ public class AdminUiController : ControllerBase
 
         var linkIds = await linksQuery.Select(item => item.Id).ToArrayAsync(cancellationToken);
         var projections = await services.GetRequiredService<DurablePlaylistProjectionReader>()
-            .ReadByLinkIdsAsync(tenantId, session.IsAdministrator ? null : session.AllstarrUserId,
+            .ReadByLinkIdsAsync(session.IsAdministrator ? null : session.AllstarrUserId,
                 linkIds, cancellationToken, session.AllstarrUserId);
         var activeJobs = await jobsQuery.CountAsync(item =>
             item.State != DurableJobState.Succeeded && item.State != DurableJobState.Failed &&
@@ -287,7 +286,7 @@ public class AdminUiController : ControllerBase
             .ThenBy(item => item.name)
             .FirstOrDefaultAsync(cancellationToken);
         var scrobbleDeliveries = await context.PlaybackDeliveryCheckpoints.AsNoTracking().CountAsync(item =>
-                item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId) &&
+                (session.IsAdministrator || item.OwnerUserId == session.AllstarrUserId) &&
                 item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
                 item.UpdatedAt >= lastDay &&
                 (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
@@ -393,7 +392,7 @@ public class AdminUiController : ControllerBase
         CancellationToken cancellationToken = default)
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
-            sessionValue is not AdminAuthSession { TenantId: { } tenantId, AllstarrUserId: { } userId } session)
+            sessionValue is not AdminAuthSession { AllstarrUserId: { } userId } session)
         {
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
@@ -403,11 +402,11 @@ public class AdminUiController : ControllerBase
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
-            .Where(item => session.IsAdministrator || item.TenantId == tenantId && item.OwnerUserId == userId)
+            .Where(item => session.IsAdministrator || item.OwnerUserId == userId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var accountIds = accounts.Keys.ToArray();
         var jobs = await context.Jobs.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == userId) &&
+            .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
@@ -420,7 +419,7 @@ public class AdminUiController : ControllerBase
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == userId) &&
+            .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
                 (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
                 ((item.CompletedAt ?? item.StartedAt) == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CompletedAt ?? item.StartedAt).ThenByDescending(item => item.Id)
@@ -444,7 +443,7 @@ public class AdminUiController : ControllerBase
                 .ToListAsync(cancellationToken))
                 .ToDictionary(item => item.PlaylistLinkId);
         var matchActivity = await _trackMatches.GetActivityDataAsync(
-            new TrackMatchActor(tenantId, userId, session.IsAdministrator),
+            new TrackMatchActor(userId, session.IsAdministrator),
             before,
             beforeId,
             scanLimit,
@@ -461,7 +460,7 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         var audits = await context.AuditEvents.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.ActorUserId == userId) &&
+            .Where(item => (session.IsAdministrator || item.ActorUserId == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
@@ -474,7 +473,7 @@ public class AdminUiController : ControllerBase
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var downloadArtifacts = await context.ProviderDownloadArtifacts.AsNoTracking()
-            .Where(item => item.TenantId == tenantId && (session.IsAdministrator || item.OwnerUserId == userId) &&
+            .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.VerifiedAt < before.Value ||
                 (item.VerifiedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.VerifiedAt).ThenByDescending(item => item.Id)
@@ -533,7 +532,7 @@ public class AdminUiController : ControllerBase
         }));
         var effectivePolicy = _effectivePolicies == null
             ? null
-            : await _effectivePolicies.ResolveAsync(tenantId, cancellationToken);
+            : await _effectivePolicies.ResolveAsync(cancellationToken);
         var routeProviderPriority = _providerGateway == null
             ? null
             : ProviderOrder(ProviderCapabilityKind.Streaming)
@@ -767,7 +766,6 @@ public class AdminUiController : ControllerBase
     private static bool MatchesActivitySourceIdentity(
         ExternalMetadataSnapshotRecord snapshot,
         ProviderTrackIdentityRecord identity) =>
-        identity.TenantId == snapshot.TenantId &&
         identity.ProviderId.Equals(snapshot.ProviderId, StringComparison.OrdinalIgnoreCase) &&
         (identity.ProviderAccountId == snapshot.ProviderAccountId ||
          identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue) &&

@@ -101,18 +101,18 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void TenantLocalPreferenceCreatesAnIndependentMatcher()
+    public void PersonalLocalPreferenceCreatesAnIndependentMatcher()
     {
         var scope = Scope();
         var source = Source();
         var local = Candidate(scope);
         var shared = new TrackMatchDecisionEngine();
-        var tenant = shared.WithLocalPriorityWindow(0.20);
+        var personal = shared.WithLocalPriorityWindow(0.20);
 
-        var tenantWindow = tenant.ScoreCandidates(source, [local]).Single().Components!["priorityWindow"];
+        var personalWindow = personal.ScoreCandidates(source, [local]).Single().Components!["priorityWindow"];
         var sharedWindow = shared.ScoreCandidates(source, [local]).Single().Components!["priorityWindow"];
 
-        Assert.Equal(0.20, tenantWindow);
+        Assert.Equal(0.20, personalWindow);
         Assert.Equal(0.07, sharedWindow);
     }
 
@@ -990,20 +990,18 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void ScopedManualPinWinsButCannotCrossTenantOrInvisibleLibrary()
+    public void ScopedManualPinWinsButCannotCrossUserOrInvisibleLibrary()
     {
         var scope = Scope();
         var visible = Candidate(scope);
         var pin = new ScopedTrackMatchOverride(
-            scope.TenantId,
             scope.UserId,
-            scope.LibraryScopeId,
             "spotify",
             "source-track",
             visible.LibraryTrackId);
 
         var pinned = new TrackMatchDecisionEngine().Decide(scope, Source(), [visible], pin);
-        var foreignPin = pin with { TenantId = Guid.CreateVersion7() };
+        var foreignPin = pin with { UserId = Guid.CreateVersion7() };
 
         Assert.Equal(TrackMatchReviewState.Pinned, pinned.State);
         Assert.Equal(visible.LibraryTrackId, pinned.SelectedLibraryTrackId);
@@ -1011,10 +1009,10 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
             new TrackMatchDecisionEngine().Decide(scope, Source(), [visible], foreignPin));
         Assert.Throws<UnauthorizedAccessException>(() =>
             new TrackMatchDecisionEngine().Decide(scope, Source(), [visible],
-                pin with { LibraryScopeId = "other-source-library" }));
+                pin with { ExternalId = "other-source-track" }));
 
         var inaccessibleTarget = new TrackMatchDecisionEngine().Decide(
-            scope, Source(), [visible with { LibraryScopeId = "denied-library" }], pin);
+            scope, Source(), [visible with { BackendLibraryId = "denied-library" }], pin);
 
         Assert.Equal(TrackMatchReviewState.Unresolved, inaccessibleTarget.State);
         Assert.Null(inaccessibleTarget.SelectedLibraryTrackId);
@@ -1027,9 +1025,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var scope = Scope();
         var visible = Candidate(scope);
         var rejection = new ScopedTrackMatchOverride(
-            scope.TenantId,
             scope.UserId,
-            scope.LibraryScopeId,
             "spotify",
             "source-track",
             PinnedLibraryTrackId: null,
@@ -1056,9 +1052,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
             BackendItemId = "alternate"
         };
         var manual = new ScopedTrackMatchOverride(
-            scope.TenantId,
             scope.UserId,
-            scope.LibraryScopeId,
             "spotify",
             "source-track",
             null,
@@ -1079,13 +1073,12 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void CandidateVisibility_ExcludesDeniedLibrariesBackendsAndTenants()
+    public void CandidateVisibility_ExcludesDeniedLibrariesAndBackends()
     {
         var scope = Scope();
         var candidates = new[]
         {
-            Candidate(scope) with { TenantId = Guid.CreateVersion7() },
-            Candidate(scope) with { LibraryScopeId = "other-library" },
+            Candidate(scope) with { BackendLibraryId = "other-library" },
             Candidate(scope) with { BackendInstanceId = "other-backend" }
         };
 
@@ -1106,7 +1099,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var candidate = Candidate(scope) with
         {
             OwnerUserId = Guid.CreateVersion7(),
-            LibraryScopeId = "shared-library"
+            BackendLibraryId = "shared-library"
         };
 
         var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [candidate]);
@@ -1144,7 +1137,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         {
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "accessible-copy",
-            LibraryScopeId = "accessible-library",
+            BackendLibraryId = "accessible-library",
             OwnerUserId = Guid.CreateVersion7()
         };
 
@@ -1164,10 +1157,10 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         };
         var local = Candidate(scope);
         var external = ProviderCandidate(scope, "deezer", 240_000);
-        var outsideSourceLibrary = external with
+        var outsideBackend = external with
         {
             LibraryTrackId = Guid.CreateVersion7(),
-            LibraryScopeId = "other-library"
+            BackendInstanceId = "other-backend"
         };
         var otherUser = external with
         {
@@ -1177,7 +1170,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         var engine = new TrackMatchDecisionEngine();
 
         var localDecision = engine.Decide(scope, Source(), [local]);
-        var externalDecision = engine.Decide(scope, Source(), [local, outsideSourceLibrary, otherUser, external]);
+        var externalDecision = engine.Decide(scope, Source(), [local, outsideBackend, otherUser, external]);
 
         Assert.Equal(TrackMatchReviewState.Unresolved, localDecision.State);
         Assert.Empty(localDecision.Candidates);
@@ -1359,9 +1352,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 
     private static TrackMatchScope Scope() => new(
         Guid.CreateVersion7(),
-        Guid.CreateVersion7(),
         "backend",
-        "music",
         Guid.CreateVersion7(),
         PolicyVersion: 3,
         SourceSnapshotVersion: 1,
@@ -1400,10 +1391,9 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 
     private static LocalTrackMatchCandidate Candidate(TrackMatchScope scope) => new(
         Guid.CreateVersion7(),
-        scope.TenantId,
         scope.UserId,
         scope.BackendInstanceId,
-        scope.LibraryScopeId,
+        "music",
         "local-1",
         Guid.CreateVersion7(),
         "A Song",

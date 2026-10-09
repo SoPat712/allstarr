@@ -15,14 +15,12 @@ namespace allstarr.Tests;
 public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
 {
     private readonly DateTimeOffset _now = new(2026, 8, 3, 4, 0, 0, TimeSpan.Zero);
-    private readonly Guid _tenant = Guid.CreateVersion7();
     private readonly Guid _owner = Guid.CreateVersion7();
     private readonly Guid _otherOwner = Guid.CreateVersion7();
     private readonly Guid _account = Guid.CreateVersion7();
     private readonly Guid _sharedAccount = Guid.CreateVersion7();
     private readonly Guid _otherAccount = Guid.CreateVersion7();
     private readonly Guid _link = Guid.CreateVersion7();
-    private readonly Guid _backendIdentity = Guid.CreateVersion7();
     private readonly Guid _canonicalA = Guid.CreateVersion7();
     private readonly Guid _canonicalB = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;
@@ -41,39 +39,21 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         _target = new();
         var registry = new ProviderRegistry([Registration(_provider)]);
         _router = new(registry, AccountContext(
-            _account, ProviderAccountScope.Personal, _tenant, _owner, null));
+            _account, ProviderAccountScope.Personal, _owner));
         _clock = new(_now);
         _service = new(
             _factory,
             registry,
             _router,
             new TargetResolver(_target),
-            _clock);
+            _clock, new TestBackendLibraryAccess(_factory, "music"));
 
         await using var db = await _factory.CreateDbContextAsync();
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = _tenant,
-            Slug = "provider-playlist-update",
-            Name = "Provider playlist update",
-            CreatedAt = _now
-        });
         db.Users.AddRange(User(_owner, "Owner"), User(_otherOwner, "Other owner"));
-        db.BackendIdentities.Add(new BackendIdentityRecord
-        {
-            Id = _backendIdentity,
-            TenantId = _tenant,
-            UserId = _owner,
-            BackendType = "jellyfin",
-            BackendInstanceId = "backend",
-            PrincipalId = "principal",
-            CreatedAt = _now,
-            LastSeenAt = _now
-        });
         db.ProviderAccounts.AddRange(
-            Account(_account, ProviderAccountScope.Personal, _tenant, _owner, null),
-            Account(_otherAccount, ProviderAccountScope.Personal, _tenant, _otherOwner, null),
-            Account(_sharedAccount, ProviderAccountScope.Shared, null, null, null));
+            Account(_account, ProviderAccountScope.Personal, _owner),
+            Account(_otherAccount, ProviderAccountScope.Personal, _otherOwner),
+            Account(_sharedAccount, ProviderAccountScope.Shared, null));
         db.CanonicalRecordings.AddRange(
             Canonical(_canonicalA),
             Canonical(_canonicalB));
@@ -91,14 +71,12 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     public async Task Preview_scope_denials_and_cross_provider_route_make_no_external_calls()
     {
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(Guid.CreateVersion7(), _owner), _link, "music", "foreign", default),
+            () => _service.PreviewAsync(Actor(_owner), Guid.CreateVersion7(), "foreign", default),
             typeof(KeyNotFoundException));
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _otherOwner), _link, "music", "owner", default),
+            () => _service.PreviewAsync(Actor(_otherOwner), _link, "owner", default),
             typeof(ProviderPlaylistUpdateException), "playlist-owner-required");
-        await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "other", "library", default),
-            typeof(ProviderPlaylistUpdateException), "playlist-library-denied");
+
 
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -107,7 +85,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "account-scope", default),
+            () => _service.PreviewAsync(Actor(_owner), _link, "account-scope", default),
             typeof(ProviderPlaylistUpdateException), "provider-account-unavailable");
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -118,7 +96,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             await db.SaveChangesAsync();
         }
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "foreign-account", default),
+            () => _service.PreviewAsync(Actor(_owner), _link, "foreign-account", default),
             typeof(ProviderPlaylistUpdateException), "provider-account-unavailable");
         await using (var db = await _factory.CreateDbContextAsync())
         {
@@ -128,22 +106,36 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         }
 
         _router.Account = AccountContext(
-            _account, ProviderAccountScope.Personal, _tenant, _owner, null, revision: 1);
+            _account, ProviderAccountScope.Personal, _owner, revision: 1);
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "stale-route-account", default),
+            () => _service.PreviewAsync(Actor(_owner), _link, "stale-route-account", default),
             typeof(ProviderPlaylistUpdateException), "provider-route-unavailable");
         _router.Account = AccountContext(
-            _account, ProviderAccountScope.Personal, _tenant, _owner, null);
+            _account, ProviderAccountScope.Personal, _owner);
 
-        _router.LibraryScopeOverride = "other-library";
+        _router.ActorOverride = Actor(_otherOwner);
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "route-library", default),
-            typeof(ProviderPlaylistUpdateException), "provider-route-unavailable");
-        _router.LibraryScopeOverride = null;
+            () => _service.PreviewAsync(Actor(_owner), _link, "route-owner", default),
+            typeof(UnauthorizedAccessException), null);
+        _router.ActorOverride = null;
+
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(user => user.Id == _owner)).Enabled = false;
+            await db.SaveChangesAsync();
+        }
+        await AssertDeniedAsync(
+            () => _service.PreviewAsync(Actor(_owner), _link, "disabled-owner", default),
+            typeof(ProviderPlaylistUpdateException), "backend-identity-unavailable");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.Users.SingleAsync(user => user.Id == _owner)).Enabled = true;
+            await db.SaveChangesAsync();
+        }
 
         _router.CrossProviderCandidate = true;
         await AssertDeniedAsync(
-            () => _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", "cross-provider", default),
+            () => _service.PreviewAsync(Actor(_owner), _link, "cross-provider", default),
             typeof(ProviderPlaylistUpdateException), "provider-route-unavailable");
         _router.CrossProviderCandidate = false;
     }
@@ -154,7 +146,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         await SetLinkAccountAsync(_sharedAccount);
 
         var plan = await _service.PreviewAsync(
-            Actor(_tenant, _owner), _link, "music", "shared-account", default);
+            Actor(_owner), _link, "shared-account", default);
         var result = await _service.ApplyAsync(plan, default);
 
         Assert.True(result.Applied);
@@ -164,7 +156,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         _provider.ResetSource();
         await SetLinkAccountAsync(_account);
         plan = await _service.PreviewAsync(
-            Actor(_tenant, _owner), _link, "music", "personal-account", default);
+            Actor(_owner), _link, "personal-account", default);
         result = await _service.ApplyAsync(plan, default);
         Assert.True(result.Applied);
         Assert.Equal(2, _provider.MutationCalls);
@@ -325,7 +317,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     }
 
     private async Task<ProviderPlaylistUpdatePlan> PreviewAsync(string correlation) =>
-        await _service.PreviewAsync(Actor(_tenant, _owner), _link, "music", correlation, default);
+        await _service.PreviewAsync(Actor(_owner), _link, correlation, default);
 
     private async Task SetLinkAccountAsync(Guid accountId)
     {
@@ -337,9 +329,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         _router.Account = AccountContext(
             account.Id,
             account.Scope,
-            account.TenantId,
             account.OwnerUserId,
-            null,
             account.Revision);
     }
 
@@ -370,18 +360,15 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         1,
         "playlist.provider-source-update",
         JsonSerializer.SerializeToElement(payload),
-        _tenant,
         _owner,
         _account,
-        "music",
         "playlist",
         JsonSerializer.SerializeToElement(new { }),
         "provider-playlist-update",
         "test-worker",
         _now.AddMinutes(5));
 
-    private ProviderActorContext Actor(Guid tenant, Guid user) => new(
-        tenant,
+    private ProviderActorContext Actor(Guid user) => new(
         ProviderActorKind.User,
         user,
         new ProviderBackendPrincipal("jellyfin", "backend", "principal"));
@@ -389,10 +376,8 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private PlaylistLinkRecord Link() => new()
     {
         Id = _link,
-        TenantId = _tenant,
         OwnerUserId = _owner,
         ProviderAccountId = _account,
-        LibraryScopeId = "music",
         SourceProviderId = "fixture",
         SourcePlaylistId = "playlist",
         SourcePlaylistIdHash = Hash("playlist"),
@@ -414,12 +399,9 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private ProviderAccountRecord Account(
         Guid id,
         ProviderAccountScope scope,
-        Guid? tenant,
-        Guid? owner,
-        string? library) => new()
+        Guid? owner) => new()
         {
             Id = id,
-            TenantId = tenant,
             OwnerUserId = owner,
             ProviderId = "fixture",
             DisplayName = scope.ToString(),
@@ -431,24 +413,22 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private ProviderAccountContext AccountContext(
         Guid id,
         ProviderAccountScope scope,
-        Guid? tenant,
         Guid? owner,
-        string? library,
         long revision = 0) => new(
         id,
         "fixture",
         scope,
         revision,
-        tenantId: tenant,
-        ownerUserId: owner,
-        libraryScopeId: library);
+        ownerUserId: owner);
 
-    private PlatformUserRecord User(Guid id, string name) => new()
+    private UserRecord User(Guid id, string name) => new()
     {
         Id = id,
-        TenantId = _tenant,
         DisplayName = name,
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "jellyfin",
+        BackendInstanceId = "backend",
+        BackendPrincipalId = id == _owner ? "principal" : "other-principal",
         CreatedAt = _now,
         UpdatedAt = _now
     };
@@ -456,7 +436,6 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private CanonicalRecordingRecord Canonical(Guid id) => new()
     {
         Id = id,
-        TenantId = _tenant,
         CreatedByUserId = _owner,
         CreatedAt = _now,
         UpdatedAt = _now
@@ -468,7 +447,6 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         return new()
         {
             Id = Guid.CreateVersion7(),
-            TenantId = _tenant,
             CanonicalRecordingId = canonical,
             ProviderId = "fixture",
             ResourceKind = ProviderResourceKind.Track,
@@ -488,13 +466,11 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     private LibraryTrackRecord LocalTrack(string backendItem, string title, Guid canonical) => new()
     {
         Id = Guid.CreateVersion7(),
-        TenantId = _tenant,
         OwnerUserId = _owner,
-        BackendIdentityId = _backendIdentity,
         CanonicalRecordingId = canonical,
-        LibraryScopeId = "music",
         Protocol = "jellyfin",
         BackendInstanceId = "backend",
+        BackendLibraryId = "music",
         BackendItemId = backendItem,
         FilePath = $"/music/{backendItem}.flac",
         Title = title,
@@ -750,7 +726,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
     {
         public ProviderAccountContext Account { get; set; } = account;
         public bool CrossProviderCandidate { get; set; }
-        public string? LibraryScopeOverride { get; set; }
+        public ProviderActorContext? ActorOverride { get; set; }
 
         public Task<ProviderRoutePlan<TCapability>> PlanAsync<TCapability>(ProviderRouteRequest request)
             where TCapability : class, IProviderCapability
@@ -761,12 +737,9 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
             var implementation = registry.GetRequiredCapability<IProviderPlaylistCapability>(
                 provider.Id, ProviderCapabilityKind.Playlist);
             var context = new ProviderExecutionContext(
-                request.Actor,
+                ActorOverride ?? request.Actor,
                 provider.Id,
                 Account,
-                LibraryScopeOverride == null
-                    ? request.Library
-                    : new ProviderLibraryContext(request.Library!.TenantId, LibraryScopeOverride),
                 request.Policy,
                 request.OperationId,
                 request.CorrelationId,

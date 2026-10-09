@@ -298,18 +298,16 @@ public sealed class ScrobblingAdminController : ControllerBase
         try
         {
             if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-                value is not AdminAuthSession session || session.TenantId is not { } tenantId)
+                value is not AdminAuthSession session || session.AllstarrUserId == null)
             {
-                return Unauthorized(new { error = "An authenticated tenant session is required." });
+                return Unauthorized(new { error = "An authenticated user session is required." });
             }
 
             var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
             var current = await settings.GetAsync(
-                tenantId,
                 "Scrobbling:LocalTracksEnabled",
                 HttpContext.RequestAborted);
             await settings.ApplyBatchAsync(
-                tenantId,
                 [new RuntimeSettingWrite(
                     "Scrobbling:LocalTracksEnabled",
                     request.Enabled.ToString(),
@@ -455,14 +453,14 @@ public sealed class ScrobblingAdminController : ControllerBase
     {
         if (_contextFactory == null || _accountSecrets == null ||
             !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession session || session.TenantId is not { } tenant ||
+            value is not AdminAuthSession session ||
             session.AllstarrUserId is not { } user)
         {
             return null;
         }
 
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user)
+        var account = await db.ProviderAccounts.AsNoTracking().Where(account => account.OwnerUserId == user)
             .Where(item => item.ProviderId == providerId && item.Enabled && item.SecretReferenceId != null)
             .OrderByDescending(item => item.OwnerUserId != null)
             .ThenBy(item => item.UpdatedAt)
@@ -478,9 +476,7 @@ public sealed class ScrobblingAdminController : ControllerBase
             account.Scope,
             account.Revision,
             account.Enabled,
-            account.TenantId,
             account.OwnerUserId,
-            null,
             "scrobbling-admin",
             account.SecretReferenceId);
         return await _accountSecrets.UseAsync(
@@ -499,7 +495,7 @@ public sealed class ScrobblingAdminController : ControllerBase
     {
         if (_contextFactory == null || _accountSecrets == null ||
             !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession session || session.TenantId is not { } tenant ||
+            value is not AdminAuthSession session ||
             session.AllstarrUserId is not { } user)
         {
             return null;
@@ -508,7 +504,7 @@ public sealed class ScrobblingAdminController : ControllerBase
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var manageable = session.IsAdministrator
             ? db.ProviderAccounts.AsNoTracking()
-            : db.ProviderAccounts.AsNoTracking().OwnedBy(tenant, user);
+            : db.ProviderAccounts.AsNoTracking().Where(account => account.OwnerUserId == user);
         var account = await manageable.SingleOrDefaultAsync(item =>
             item.Id == accountId && item.ProviderId == "lastfm" &&
             item.SecretReferenceId != null,
@@ -521,9 +517,7 @@ public sealed class ScrobblingAdminController : ControllerBase
             account.Scope,
             account.Revision,
             account.Enabled,
-            account.TenantId,
             account.OwnerUserId,
-            null,
             "lastfm-authentication",
             account.SecretReferenceId);
         var secrets = await _accountSecrets.UseAsync(
@@ -554,7 +548,7 @@ public sealed class ScrobblingAdminController : ControllerBase
         try
         {
             await _secretStore.StoreAsync(
-                managed.Account.TenantId,
+                managed.Account.OwnerUserId,
                 $"provider-account:lastfm:{managed.Account.Id:N}",
                 payload,
                 managed.Account.SecretReferenceId,

@@ -14,7 +14,8 @@ namespace allstarr.Services.Recommendations;
 public sealed class AudioMuseRecommendationClient(
     IProviderRegistry providers,
     IScopedRecommendationAccountAccessor accounts,
-    ILocalRecommendationCatalog catalog) : IAudioMuseRecommendationClient
+    ILocalRecommendationCatalog catalog,
+    IDbContextFactory<AllstarrDbContext> factory) : IAudioMuseRecommendationClient
 {
     private const string ProviderId = "audiomuse-ai";
     public bool IsAvailable => providers.TryGetCapability<IProviderIntelligenceCapability>(
@@ -242,9 +243,14 @@ public sealed class AudioMuseRecommendationClient(
     {
         var account = await accounts.FindAccountAsync(scope, ProviderId, cancellationToken);
         if (account == null) return null;
-        var actor = new ProviderActorContext(scope.TenantId, ProviderActorKind.User, scope.OwnerUserId,
-            new(scope.Protocol, scope.BackendInstanceId, scope.OwnerUserId.ToString("D")));
-        return new(actor, ProviderId, account, new(scope.TenantId, scope.LibraryScopeId),
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == scope.OwnerUserId &&
+            item.Enabled && item.BackendType == scope.Protocol && item.BackendInstanceId == scope.BackendInstanceId,
+            cancellationToken);
+        if (user == null) return null;
+        var actor = new ProviderActorContext(user.IsAdmin ? ProviderActorKind.Administrator : ProviderActorKind.User, scope.OwnerUserId,
+            new(scope.Protocol, scope.BackendInstanceId, user.BackendPrincipalId));
+        return new(actor, ProviderId, account,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, false, false, false, [ProviderId]),
             operation, idempotencyKey ?? Guid.CreateVersion7().ToString("N"),

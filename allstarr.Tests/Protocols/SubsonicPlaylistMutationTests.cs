@@ -17,7 +17,6 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private Factory _factory = null!;
-    private Guid _tenantId;
     private Guid _ownerId;
     private Guid _otherUserId;
     private Guid _accountId;
@@ -26,27 +25,18 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     {
         _database = await SqliteTestDatabase.CreateAsync();
         _factory = new Factory(_database.Options);
-        _tenantId = Guid.CreateVersion7();
         _ownerId = Guid.CreateVersion7();
         _otherUserId = Guid.CreateVersion7();
         _accountId = Guid.CreateVersion7();
         var now = DateTimeOffset.UtcNow;
 
         await using var db = await _factory.CreateDbContextAsync();
-        db.Tenants.Add(new TenantRecord
-        {
-            Id = _tenantId,
-            Slug = "subsonic-playlist-mutation",
-            Name = "Subsonic playlist mutation",
-            CreatedAt = now
-        });
         db.Users.AddRange(
             User(_ownerId, "Owner", now),
             User(_otherUserId, "Other", now));
         db.ProviderAccounts.Add(new ProviderAccountRecord
         {
             Id = _accountId,
-            TenantId = _tenantId,
             OwnerUserId = _ownerId,
             ProviderId = "spotify",
             DisplayName = "Source",
@@ -102,9 +92,8 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Assert.Equal("backend-playlist", route.TargetPlaylistId);
         Assert.Null(await resolver.ResolveAsync(Context(userId: _otherUserId), ProtocolId(materialized)));
         Assert.Null(await resolver.ResolveAsync(Context(backend: "other-backend"), ProtocolId(materialized)));
-        Assert.True((await resolver.ResolveAsync(Context(library: "other-library"), ProtocolId(materialized)))!.Writable);
         Assert.Null(await resolver.ResolveAsync(
-            Context(tenantId: Guid.CreateVersion7()), ProtocolId(materialized)));
+            Context(userId: Guid.CreateVersion7()), ProtocolId(materialized)));
     }
 
     [Theory]
@@ -171,9 +160,9 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         Assert.Null(await resolver.ResolveAsync(
             Context(protocol: ProtocolKind.Jellyfin, backend: "other-backend"),
             ProtocolId(linkId)));
-        Assert.True((await resolver.ResolveAsync(
-            Context(protocol: ProtocolKind.Jellyfin, library: "other-library"),
-            ProtocolId(linkId)))!.Writable);
+        Assert.Null(await resolver.ResolveAsync(
+            Context(protocol: ProtocolKind.Jellyfin, userId: Guid.CreateVersion7()),
+            ProtocolId(linkId)));
     }
 
     [Theory]
@@ -272,10 +261,8 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
         db.PlaylistLinks.Add(new PlaylistLinkRecord
         {
             Id = id,
-            TenantId = _tenantId,
             OwnerUserId = _ownerId,
             ProviderAccountId = _accountId,
-            LibraryScopeId = "music",
             SourceProviderId = "spotify",
             SourcePlaylistId = $"source-{id:N}",
             SourcePlaylistIdHash = Hash(id.ToString("N")),
@@ -299,13 +286,10 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
     }
 
     private ProtocolExecutionContext Context(
-        Guid? tenantId = null,
         Guid? userId = null,
         string backend = "backend",
-        string library = "music",
         ProtocolKind protocol = ProtocolKind.Subsonic)
     {
-        var tenant = tenantId ?? _tenantId;
         var user = userId ?? _ownerId;
         var principal = user == _ownerId ? "principal" : "other-principal";
         return new ProtocolExecutionContext(
@@ -313,7 +297,6 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
             backend,
             principal,
             new AllstarrPrincipal(
-                tenant,
                 user,
                 protocol.ToString().ToLowerInvariant(),
                 backend,
@@ -322,16 +305,17 @@ public sealed class SubsonicPlaylistMutationTests : IAsyncLifetime
                 false),
             "correlation",
             DateTimeOffset.UtcNow.AddMinutes(1),
-            CancellationToken.None,
-            libraryScopeId: library);
+            CancellationToken.None);
     }
 
-    private PlatformUserRecord User(Guid id, string name, DateTimeOffset now) => new()
+    private UserRecord User(Guid id, string name, DateTimeOffset now) => new()
     {
         Id = id,
-        TenantId = _tenantId,
         DisplayName = name,
-        Status = PlatformUserStatus.Active,
+        Enabled = true,
+        BackendType = "subsonic",
+        BackendInstanceId = "backend",
+        BackendPrincipalId = id == _ownerId ? "principal" : "other-principal",
         CreatedAt = now,
         UpdatedAt = now
     };

@@ -69,11 +69,7 @@
   const orderedAccounts = $derived(orderPlaylistSources(accounts, providerOrder));
   const providerIds = $derived([...new Set(orderedAccounts.map((item) => item.providerId))]);
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
-  const compatibleTargets = $derived(targets.filter((item) =>
-    !selectedAccount?.libraryScopeId || !item.libraryScopeId ||
-    item.libraryScopeId === selectedAccount.libraryScopeId));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
-  const selectedLibraryScope = $derived(selectedAccount?.libraryScopeId || selectedTarget?.libraryScopeId);
   const sourceName = $derived(selectedAccount?.displayName ?? "the source service");
   const sourcePlaylistName = $derived(
     sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ?? "this playlist",
@@ -224,11 +220,8 @@
     sourceQuery = "";
     sourcePlaylists = [];
     sourceCursor = "";
-    const libraryScopeId = accounts.find((item) => item.id === id)?.libraryScopeId;
-    const compatible = targets.filter((item) =>
-      !libraryScopeId || !item.libraryScopeId || item.libraryScopeId === libraryScopeId);
-    if (!compatible.some((item) => item.id === targetId)) {
-      targetId = compatible[0]?.id ?? "";
+    if (!targets.some((item) => item.id === targetId)) {
+      targetId = targets[0]?.id ?? "";
       targetPlaylistId = "";
       targetPlaylists = [];
     }
@@ -266,7 +259,7 @@
   }
 
   async function save() {
-    if (!selectedAccount || !selectedTarget || !selectedLibraryScope || !sourcePlaylistId ||
+    if (!selectedAccount || !selectedTarget || !sourcePlaylistId ||
         (needsTargetPlaylist && !targetPlaylistId) || saving) return;
     saving = true;
     error = "";
@@ -275,7 +268,6 @@
         providerAccountId: selectedAccount.id,
         sourceProviderId: selectedAccount.providerId,
         sourcePlaylistId,
-        libraryScopeId: selectedLibraryScope,
         targetProtocol: selectedTarget.protocol,
         targetBackendInstanceId: selectedTarget.backendInstanceId,
         targetCredentialReferenceId: selectedTarget.credentialReferenceId,
@@ -375,11 +367,11 @@
             </fieldset>
             <fieldset class="audience-options playlist-targets">
               <legend>Media server</legend>
-              {#each compatibleTargets as target}
+              {#each targets as target}
                 <label class:active={targetId === target.id}>
                   <input type="radio" name="playlist-target" value={target.id} checked={targetId === target.id} onchange={() => void chooseTarget(target.id)} />
                   <ProviderMark id={target.protocol} definition={definition(target.protocol)} />
-                  <span><strong>{target.displayName}</strong><small>{target.protocol} · {target.libraryScopeId || "music library"}</small></span>
+                  <span><strong>{target.displayName}</strong><small>{target.protocol}</small></span>
                 </label>
               {:else}<p class="notice-error">No media server is connected to this music library.</p>{/each}
             </fieldset>
@@ -517,7 +509,7 @@
         {#if step < 4}
           <Button disabled={!stepReady || loading} onclick={() => void next()}>Continue</Button>
         {:else}
-          <Button disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || !selectedLibraryScope || saving} onclick={() => void save()}>{saving ? "Starting import…" : importMode === "oneTime" ? "Import playlist" : "Import and link"}</Button>
+          <Button disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : importMode === "oneTime" ? "Import playlist" : "Import and link"}</Button>
         {/if}
       </footer>
     </Dialog.Content>

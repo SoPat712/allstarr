@@ -13,29 +13,25 @@ public sealed class AdminAuthSessionServiceTests
     {
         var store = new MemoryAdminAuthSessionStore();
         var dataProtection = new EphemeralDataProtectionProvider();
-        var first = AdminAuthSessionTestSupport.Create(store, dataProtection);
-        var tenantId = Guid.CreateVersion7();
-        var allstarrUserId = Guid.CreateVersion7();
+        await using var auth = await AdminAuthSessionTestSupport.CreateLinkedAsync(
+            store, dataProtection);
         var authentication = allstarr.Services.Subsonic.SubsonicSessionAuthentication.Create("alice", "session-password");
-        var created = await first.CreateSessionAsync(
+        var created = await auth.CreateSessionAsync(
             userId: "alice",
             userName: "alice",
             isAdministrator: true,
             jellyfinAccessToken: string.Empty,
             jellyfinServerId: null,
             backendType: "Subsonic",
-            tenantId: tenantId,
-            allstarrUserId: allstarrUserId,
             subsonicReadAuthentication: authentication);
 
-        var restored = await AdminAuthSessionTestSupport.Create(store, dataProtection)
+        var restored = await auth.CreateService()
             .GetValidSessionAsync(created.SessionId);
 
         Assert.NotNull(restored);
         Assert.Equal("Subsonic", restored.BackendType);
         Assert.Equal(string.Empty, restored.JellyfinAccessToken);
-        Assert.Equal(tenantId, restored.TenantId);
-        Assert.Equal(allstarrUserId, restored.AllstarrUserId);
+        Assert.NotNull(restored.AllstarrUserId);
         Assert.Equal(authentication, restored.SubsonicReadAuthentication);
         Assert.DoesNotContain("p", restored.SubsonicReadAuthentication!.Keys);
         Assert.DoesNotContain("session-password", System.Text.Json.JsonSerializer.Serialize(restored), StringComparison.Ordinal);
@@ -86,16 +82,37 @@ public sealed class AdminAuthSessionServiceTests
 
         var factory = new Factory(database.Options);
         var dataProtection = new EphemeralDataProtectionProvider();
+        var identityOptions = new allstarr.Core.Identity.IdentityOptions { BackendInstanceId = "backend" };
+        var userId = Guid.CreateVersion7();
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new UserRecord
+            {
+                Id = userId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "backend",
+                BackendPrincipalId = "id",
+                DisplayName = "alice",
+                IsAdmin = true,
+                Enabled = true
+            });
+            await db.SaveChangesAsync();
+        }
         var created = await new AdminAuthSessionService(
                 new EfAdminAuthSessionStore(factory),
                 dataProtection,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance)
-            .CreateSessionAsync("id", "alice", true, "secret-token", "server");
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance,
+                contextFactory: factory,
+                identityOptions: identityOptions)
+            .CreateSessionAsync("id", "alice", true, "secret-token", "server",
+                allstarrUserId: userId);
 
         var restored = await new AdminAuthSessionService(
                 new EfAdminAuthSessionStore(factory),
                 dataProtection,
-                Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance)
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance,
+                contextFactory: factory,
+                identityOptions: identityOptions)
             .GetValidSessionAsync(created.SessionId);
 
         Assert.NotNull(restored);
@@ -111,25 +128,23 @@ public sealed class AdminAuthSessionServiceTests
     [InlineData("principal")]
     [InlineData("backend")]
     [InlineData("instance")]
+    [InlineData("role")]
     [InlineData("unlinked")]
     public async Task NativeSession_RechecksActiveUserAndExactBackendIdentity(string change)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new Factory(database.Options);
-        var tenant = Guid.CreateVersion7();
         var user = Guid.CreateVersion7();
         await using (var db = await factory.CreateDbContextAsync())
         {
-            db.Tenants.Add(new TenantRecord { Id = tenant, Slug = "session", Name = "Session" });
-            db.Users.Add(new PlatformUserRecord { Id = user, TenantId = tenant, DisplayName = "Listener", Status = PlatformUserStatus.Active });
-            db.BackendIdentities.Add(new BackendIdentityRecord
+            db.Users.Add(new UserRecord
             {
-                Id = Guid.CreateVersion7(),
-                TenantId = tenant,
-                UserId = user,
+                Id = user,
+                Enabled = true,
+                DisplayName = "Listener",
                 BackendType = "jellyfin",
                 BackendInstanceId = "backend",
-                PrincipalId = "listener"
+                BackendPrincipalId = "listener"
             });
             await db.SaveChangesAsync();
         }
@@ -138,16 +153,17 @@ public sealed class AdminAuthSessionServiceTests
             Microsoft.Extensions.Logging.Abstractions.NullLogger<AdminAuthSessionService>.Instance,
             contextFactory: factory, identityOptions: new allstarr.Core.Identity.IdentityOptions { BackendInstanceId = "backend" });
         var session = await service.CreateSessionAsync("listener", "Listener", false, "fixture", null,
-            tenantId: tenant, allstarrUserId: user);
+            allstarrUserId: user);
         Assert.NotNull(await service.GetValidSessionAsync(session.SessionId));
         await using (var db = await factory.CreateDbContextAsync())
         {
-            var identity = await db.BackendIdentities.SingleAsync();
-            if (change == "disabled") (await db.Users.SingleAsync()).Status = PlatformUserStatus.Disabled;
-            if (change == "principal") identity.PrincipalId = "other";
+            var identity = await db.Users.SingleAsync();
+            if (change == "disabled") identity.Enabled = false;
+            if (change == "principal") identity.BackendPrincipalId = "other";
             if (change == "backend") identity.BackendType = "subsonic";
             if (change == "instance") identity.BackendInstanceId = "other";
-            if (change == "unlinked") db.BackendIdentities.Remove(identity);
+            if (change == "role") identity.IsAdmin = true;
+            if (change == "unlinked") db.Users.Remove(identity);
             await db.SaveChangesAsync();
         }
         Assert.Null(await service.GetValidSessionAsync(session.SessionId));

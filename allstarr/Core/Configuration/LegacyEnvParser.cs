@@ -39,8 +39,7 @@ public sealed record LegacyPlaylistHandoff(
     string Action = "requires_target_selection",
     string? Reason = null,
     string? TargetProtocol = null,
-    string? TargetBackendInstanceId = null,
-    string LibraryScopeId = "music");
+    string? TargetBackendInstanceId = null);
 
 public sealed record LegacyEnvDocument(
     string SourceSha256,
@@ -338,7 +337,7 @@ public static class LegacyEnvParser
         if (DurableAliases.TryGetValue(key, out var durableKey))
         {
             return new(key, value, line, LegacyEnvDisposition.DurableSetting, "import_if_absent",
-                "Import into tenant-scoped durable runtime settings.", false, durableKey);
+                "Import into household durable runtime settings.", false, durableKey);
         }
 
         return new(key, value, line, LegacyEnvDisposition.Unknown, "manual_review",
