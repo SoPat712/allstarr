@@ -15,7 +15,8 @@ public sealed class MigrationModelSnapshotTests
 
         Assert.False(context.Database.HasPendingModelChanges());
         Assert.Equal(["20261008235223_UsersBaseline", "20261009043555_VolatileProviderHealth",
-            "20261010035223_ProviderAccountSettings", "20261010061013_RecordingIdentifiers"],
+            "20261010035223_ProviderAccountSettings", "20261010061013_RecordingIdentifiers",
+            "20261010083000_CancelLegacyRematchJobs"],
             context.Database.GetMigrations());
     }
 }

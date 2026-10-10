@@ -217,7 +217,7 @@ public sealed class TrackRematchAllIntegrationTests
             receipt.JobId,
             Guid.CreateVersion7(),
             1,
-            TrackRematchAllJobHandler.Type,
+            TrackRematchJobHandler.Type,
             JsonSerializer.SerializeToElement(payload),
             userId,
             null,
@@ -268,11 +268,14 @@ public sealed class TrackRematchAllIntegrationTests
         }
 
         Assert.Equal(1, await rematches.QueueAlgorithmUpgradesAsync());
+        // A restart re-runs the scan; the durable job already records this version, so nothing is queued twice.
+        Assert.Equal(0, await rematches.QueueAlgorithmUpgradesAsync());
         await using var queued = await factory.CreateDbContextAsync();
         var rollout = JsonSerializer.Deserialize<TrackRematchAllJobPayload>(
-            (await queued.Jobs.SingleAsync(item => item.Type == TrackRematchAllJobHandler.Type &&
+            (await queued.Jobs.SingleAsync(item => item.Type == TrackRematchJobHandler.Type &&
                                                    item.Id != receipt.JobId)).PayloadJson)!;
         Assert.False(rollout.Force);
+        Assert.Equal(TrackRematchScopes.Algorithm, rollout.Scope);
         Assert.Equal(1, rollout.ApprovedCount);
     }
 

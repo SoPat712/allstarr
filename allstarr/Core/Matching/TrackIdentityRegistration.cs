@@ -16,8 +16,9 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<TrackRematchAllService>();
         services.TryAddSingleton<ITrackMatchRepository>(provider =>
             provider.GetRequiredService<TrackMatchCommandService>());
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, PlaylistRematchJobHandler>());
-        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, TrackRematchAllJobHandler>());
+        services.TryAddSingleton<PlaylistRematchJobHandler>();
+        services.TryAddSingleton<TrackRematchAllJobHandler>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, TrackRematchJobHandler>());
         services.AddHostedService<TrackMatchAlgorithmRolloutService>();
         services.TryAddSingleton<Playlists.IPlaylistPersistenceService, Playlists.PlaylistPersistenceService>();
         return services;

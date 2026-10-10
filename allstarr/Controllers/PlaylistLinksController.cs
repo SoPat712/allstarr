@@ -737,13 +737,16 @@ public sealed class PlaylistLinksController(
     }
 
     [HttpGet("rematch/preview")]
-    public async Task<IActionResult> PreviewRematch(CancellationToken cancellationToken)
+    public async Task<IActionResult> PreviewRematch(
+        [FromQuery] Guid? playlistLinkId = null,
+        CancellationToken cancellationToken = default)
     {
         return await Execute(async session =>
         {
             var preview = await rematches.PreviewAsync(
                 session.AllstarrUserId!.Value,
-                cancellationToken);
+                cancellationToken,
+                playlistLinkId);
             return Ok(ToRematchPreviewDto(preview));
         });
     }
@@ -760,15 +763,16 @@ public sealed class PlaylistLinksController(
                 return BadRequest(new { error = "Review the rematch preview again before applying it." });
             var preview = await rematches.PreviewAsync(
                 session.AllstarrUserId!.Value,
-                cancellationToken);
+                cancellationToken,
+                request.PlaylistLinkId);
             if (!preview.ConfirmationId.Equals(request.ConfirmationId, StringComparison.Ordinal))
                 return Conflict(new { error = "The playlist or match state changed. Review the rematch preview again." });
             if (!preview.CanApply)
                 return Conflict(new { error = "No missing or stale track decisions need rematching." });
             var queued = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistRematchJobPayload>(
-                PlaylistRematchJobHandler.Type,
+                TrackRematchJobHandler.Type,
                 $"playlist-rematch:{session.AllstarrUserId:N}:{preview.ConfirmationId}",
-                new(preview.ConfirmationId, preview.ScopeFingerprint, preview.Targets),
+                new(preview.ConfirmationId, preview.ScopeFingerprint, preview.Targets, request.PlaylistLinkId),
                 session.AllstarrUserId,
                 CorrelationId: HttpContext.TraceIdentifier), cancellationToken);
             return Accepted(new { jobId = queued.JobId, created = queued.Created });
@@ -1552,7 +1556,7 @@ public sealed record DeletePlaylistLinkRequest(long ExpectedRevision);
 public sealed record SetPlaylistLinkStateRequest(long ExpectedRevision, bool Enabled);
 public sealed record RunPlaylistLinkRequest(long? Generation = null, Guid? SnapshotId = null);
 public sealed record ApplyProviderPlaylistUpdateRequest(long ExpectedRevision, string ConfirmationId);
-public sealed record ApplyPlaylistRematchRequest(string ConfirmationId);
+public sealed record ApplyPlaylistRematchRequest(string ConfirmationId, Guid? PlaylistLinkId = null);
 public sealed record SetMatchOverrideRequest(string Decision, Guid? LibraryTrackId, string Reason, ManualAuthorityRevision? ExpectedAuthority = null);
 public sealed record ClearMatchOverrideRequest(long ExpectedRevision);
 public sealed record ScheduleRequest(string CronExpression, string TimeZoneId, string OverlapPolicy,

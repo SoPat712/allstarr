@@ -41,7 +41,7 @@ public sealed class RecordingIdentifiersMigrationTests
             INSERT INTO durable_jobs (Id,ScopeKey,OwnerUserId,PolicySnapshotJson,RequestFingerprint,CorrelationId,Type,PayloadJson,IdempotencyKey,State,Priority,AttemptCount,FailureCount,DeferralCount,MaxAttempts,MaxDeferrals,AvailableAt,CreatedAt,UpdatedAt,Revision)
             VALUES ({job},'catalog',{user},{emptyJson},{catalogFingerprint},'catalog-job','catalog.musicbrainz.refresh',{emptyJson},'catalog-job','Pending',0,0,0,0,3,3,{now.UtcTicks},{now.UtcTicks},{now.UtcTicks},1);
             INSERT INTO durable_jobs (Id,ScopeKey,OwnerUserId,PolicySnapshotJson,RequestFingerprint,CorrelationId,Type,PayloadJson,IdempotencyKey,State,Priority,AttemptCount,FailureCount,DeferralCount,MaxAttempts,MaxDeferrals,AvailableAt,CreatedAt,UpdatedAt,Revision)
-            VALUES ({keepJob},'playlist',{user},{emptyJson},{keepFingerprint},'keep-job','playlist.rematch',{emptyJson},'keep-job','Pending',0,0,0,0,3,3,{now.UtcTicks},{now.UtcTicks},{now.UtcTicks},1);
+            VALUES ({keepJob},'playlist',{user},{emptyJson},{keepFingerprint},'keep-job','playlist.materialize',{emptyJson},'keep-job','Pending',0,0,0,0,3,3,{now.UtcTicks},{now.UtcTicks},{now.UtcTicks},1);
             """);
 
         await db.Database.MigrateAsync();
