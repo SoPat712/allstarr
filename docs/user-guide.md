@@ -53,7 +53,7 @@ When the development Intelligence workspace requests background access, Subsonic
 
 - **Services** lists every built-in or extension-backed capability and its readiness.
 - **Accounts** stores encrypted personal or shared credentials and audience policy.
-- **Extensions** installs, updates, reviews permissions, disables, and removes provider packages.
+- **Extensions** installs, updates, reviews permissions, disables, and removes provider packages. Packages that need a verified sign-in show a **Sign-in** section with the steps; see [signed sessions](extensions/sdk-v1.md#signed-sessions).
 - **Routing** orders the eligible fallback services for metadata, streaming, download, lyrics, playlists, scrobbling, and other typed capabilities.
 
 A Service is an implementation. An Account is a credential and access policy for that Service. An Extension is an optional package that can add Services. Routing decides which ready Service/account pair is tried for a capability. These are related but not interchangeable settings.

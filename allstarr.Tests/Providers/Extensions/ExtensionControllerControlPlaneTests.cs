@@ -10,6 +10,7 @@ using allstarr.Services.Common;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
@@ -151,6 +152,29 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
         Assert.IsType<UnauthorizedObjectResult>(await controller.RevokePermissionGrants(
             Guid.CreateVersion7(), new RevisionRequest(), default));
     }
+
+    [Fact]
+    public async Task SignedSessionEndpoints_AreAdministratorOnly()
+    {
+        var package = Guid.CreateVersion7();
+        foreach (var (controller, status) in new[]
+                 {
+                     (Controller(), StatusCodes.Status401Unauthorized),
+                     (Controller(Session(administrator: false)), StatusCodes.Status403Forbidden)
+                 })
+        {
+            Assert.Equal(status, StatusOf(controller.SignedSessionStatus(package)));
+            Assert.Equal(status, StatusOf(await controller.StartSignedSession(package, new RevisionRequest(), default)));
+            Assert.Equal(status, StatusOf(await controller.CompleteSignedSession(
+                package, new SignedSessionGrantRequest { Grant = "grant" }, default)));
+            Assert.Equal(status, StatusOf(await controller.ClearSignedSession(package, new RevisionRequest(), default)));
+        }
+
+        var unavailable = Controller(Session(administrator: true));
+        Assert.IsType<ConflictObjectResult>(await unavailable.StartSignedSession(package, new RevisionRequest(), default));
+    }
+
+    private static int? StatusOf(IActionResult result) => (result as IStatusCodeActionResult)?.StatusCode;
 
     [Fact]
     public async Task Install_AllowsTrustedLanAndRejectsUntrustedRemoteClientByDefault()

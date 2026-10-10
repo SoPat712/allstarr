@@ -17,10 +17,25 @@ public sealed record ExtensionSignedSessionStatus(
     string? AuthUrl = null,
     string? Error = null);
 
+public sealed record ExtensionSessionView(
+    string State,
+    string? ExpiresAt,
+    string? VerificationUrl,
+    string? ReasonCode);
+
+public static class ExtensionSessionStates
+{
+    public const string SignedOut = "signed_out";
+    public const string VerificationPending = "verification_pending";
+    public const string SignedIn = "signed_in";
+    public const string Expired = "expired";
+}
+
 internal sealed class ExtensionSignedSessionClient
 {
     private const int MaximumResponseBytes = 4 * 1024 * 1024;
     private static readonly TimeSpan RefreshSkew = TimeSpan.FromHours(1);
+    private static readonly TimeSpan AdministratorRequestLimit = TimeSpan.FromSeconds(30);
     private readonly ExtensionSignedSessionConfig _config;
     private readonly IHttpClientFactory _clients;
     private readonly IDataProtector _protector;
@@ -59,65 +74,142 @@ internal sealed class ExtensionSignedSessionClient
         }
     }
 
+    public ExtensionSessionView View()
+    {
+        lock (_gate) return ViewOf(Load(), null);
+    }
+
     public object Clear()
     {
         lock (_gate)
         {
-            var record = Load();
-            Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
-            _pendingAuthUrl = null;
+            ClearRecord();
             return new { success = true };
+        }
+    }
+
+    public ExtensionSessionView ClearView()
+    {
+        lock (_gate)
+        {
+            ClearRecord();
+            return ViewOf(Load(), null);
         }
     }
 
     public object CompleteGrant(string? grant)
     {
-        var normalized = NormalizeGrant(grant, out var grantError);
-        if (normalized == null) return new { success = false, error = grantError };
         lock (_gate)
         {
-            try
-            {
-                var record = Load();
-                var payload = JsonSerializer.Serialize(new
-                {
-                    grant = normalized,
-                    install_id = record.InstallId,
-                    app_version = _config.AppVersion,
-                    platform = _config.Platform
-                });
-                var response = SendUnsigned(HttpMethod.Post, Resolve(_config.Endpoints.Exchange), payload);
-                if (!response.IsSuccessStatusCode)
-                    return new { success = false, error = $"session exchange failed: HTTP {(int)response.StatusCode}" };
-                var exchanged = JsonSerializer.Deserialize<SessionExchange>(response.Body,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (string.IsNullOrWhiteSpace(exchanged?.SessionId) ||
-                    string.IsNullOrWhiteSpace(exchanged.SessionSecret) ||
-                    string.IsNullOrWhiteSpace(exchanged.ExpiresAt))
-                    return new { success = false, error = "session exchange response missing session fields" };
-                Save(record with
-                {
-                    SessionId = exchanged.SessionId,
-                    SessionSecret = exchanged.SessionSecret,
-                    ExpiresAt = exchanged.ExpiresAt
-                });
-                _pendingAuthUrl = null;
-                return new { success = true };
-            }
-            catch (Exception exception)
-            {
-                return new { success = false, error = exception.Message };
-            }
+            var result = ExchangeGrant(grant, CancellationToken.None);
+            return result.ReasonCode == null ? new { success = true } : new { success = false, error = result.Detail };
         }
     }
 
-    private string? NormalizeGrant(string? value, out string error)
+    public ExtensionSessionView CompleteGrantView(string? grant, CancellationToken cancellationToken)
+    {
+        using var limit = AdministratorLimit(cancellationToken);
+        lock (_gate)
+        {
+            var result = ExchangeGrant(grant, limit.Token, cancellationToken);
+            return ViewOf(Load(), result.ReasonCode);
+        }
+    }
+
+    public object StartVerification()
+    {
+        lock (_gate) return HostResponse(BeginVerification(CancellationToken.None));
+    }
+
+    public ExtensionSessionView StartVerificationView(CancellationToken cancellationToken)
+    {
+        using var limit = AdministratorLimit(cancellationToken);
+        lock (_gate)
+        {
+            var result = BeginVerification(limit.Token, cancellationToken);
+            return ViewOf(Load(), result.ReasonCode);
+        }
+    }
+
+    private static CancellationTokenSource AdministratorLimit(CancellationToken cancellationToken)
+    {
+        var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        limit.CancelAfter(AdministratorRequestLimit);
+        return limit;
+    }
+
+    private void ClearRecord()
+    {
+        var record = Load();
+        Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
+        _pendingAuthUrl = null;
+    }
+
+    private ExtensionSessionView ViewOf(SessionRecord record, string? reasonCode)
+    {
+        if (HasUsableSession(record))
+            return new(ExtensionSessionStates.SignedIn, record.ExpiresAt, null, reasonCode);
+        if (_pendingAuthUrl != null)
+            return new(ExtensionSessionStates.VerificationPending, null, _pendingAuthUrl, reasonCode);
+        var expired = !string.IsNullOrWhiteSpace(record.SessionId) && !string.IsNullOrWhiteSpace(record.SessionSecret);
+        return expired
+            ? new(ExtensionSessionStates.Expired, record.ExpiresAt, null, reasonCode)
+            : new(ExtensionSessionStates.SignedOut, null, null, reasonCode);
+    }
+
+    private SessionResult ExchangeGrant(string? grant, CancellationToken cancellationToken,
+        CancellationToken callerToken = default)
+    {
+        var normalized = NormalizeGrant(grant, out var grantError, out var grantReason);
+        if (normalized == null) return SessionResult.Failed(grantReason, grantError);
+        try
+        {
+            var record = Load();
+            var payload = JsonSerializer.Serialize(new
+            {
+                grant = normalized,
+                install_id = record.InstallId,
+                app_version = _config.AppVersion,
+                platform = _config.Platform
+            });
+            var response = SendUnsigned(HttpMethod.Post, Resolve(_config.Endpoints.Exchange), payload, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return SessionResult.Failed(ResponseReason(response.StatusCode, "grant_rejected"),
+                    $"session exchange failed: HTTP {(int)response.StatusCode}");
+            var exchanged = JsonSerializer.Deserialize<SessionExchange>(response.Body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (string.IsNullOrWhiteSpace(exchanged?.SessionId) ||
+                string.IsNullOrWhiteSpace(exchanged.SessionSecret) ||
+                string.IsNullOrWhiteSpace(exchanged.ExpiresAt))
+                return SessionResult.Failed("unexpected_response", "session exchange response missing session fields");
+            Save(record with
+            {
+                SessionId = exchanged.SessionId,
+                SessionSecret = exchanged.SessionSecret,
+                ExpiresAt = exchanged.ExpiresAt
+            });
+            _pendingAuthUrl = null;
+            return SessionResult.Succeeded;
+        }
+        catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return SessionResult.Failed(ExceptionReason(exception), exception.Message);
+        }
+    }
+
+    private string? NormalizeGrant(string? value, out string error, out string reasonCode)
     {
         error = "A session grant is required.";
+        reasonCode = "grant_required";
         var candidate = value?.Trim();
         if (string.IsNullOrWhiteSpace(candidate)) return null;
 
         if (!candidate.Contains("://", StringComparison.Ordinal)) return candidate;
+        reasonCode = "grant_invalid";
         if (!Uri.TryCreate(candidate, UriKind.Absolute, out var callback))
         {
             error = "The session callback URL is invalid.";
@@ -139,6 +231,7 @@ internal sealed class ExtensionSignedSessionClient
             !string.Equals(state, _extensionId, StringComparison.OrdinalIgnoreCase))
         {
             error = "This session callback belongs to a different extension.";
+            reasonCode = "grant_wrong_extension";
             return null;
         }
         if (!parameters.TryGetValue("grant", out var parsedGrant) || string.IsNullOrWhiteSpace(parsedGrant))
@@ -150,42 +243,72 @@ internal sealed class ExtensionSignedSessionClient
         return parsedGrant.Trim();
     }
 
-    public object StartVerification()
+    private SessionResult BeginVerification(CancellationToken cancellationToken,
+        CancellationToken callerToken = default)
     {
-        lock (_gate)
+        try
         {
-            try
+            var record = Load();
+            var bootstrap = Resolve(_config.Endpoints.Bootstrap);
+            var builder = new UriBuilder(bootstrap);
+            var separator = string.IsNullOrEmpty(builder.Query) ? "" : builder.Query.TrimStart('?') + "&";
+            builder.Query = $"{separator}app_version={Uri.EscapeDataString(_config.AppVersion)}&install_id={Uri.EscapeDataString(record.InstallId)}";
+            var response = SendUnsigned(HttpMethod.Get, builder.Uri, null, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return SessionResult.Failed(ResponseReason(response.StatusCode, "session_rejected"),
+                    $"session bootstrap failed: HTTP {(int)response.StatusCode}");
+            var boot = JsonSerializer.Deserialize<SessionExchange>(response.Body,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (!string.IsNullOrWhiteSpace(boot?.SessionId) && !string.IsNullOrWhiteSpace(boot.SessionSecret) &&
+                !string.IsNullOrWhiteSpace(boot.ExpiresAt))
             {
-                var record = Load();
-                var bootstrap = Resolve(_config.Endpoints.Bootstrap);
-                var builder = new UriBuilder(bootstrap);
-                var separator = string.IsNullOrEmpty(builder.Query) ? "" : builder.Query.TrimStart('?') + "&";
-                builder.Query = $"{separator}app_version={Uri.EscapeDataString(_config.AppVersion)}&install_id={Uri.EscapeDataString(record.InstallId)}";
-                var response = SendUnsigned(HttpMethod.Get, builder.Uri, null);
-                if (!response.IsSuccessStatusCode)
-                    return new { success = false, error = $"session bootstrap failed: HTTP {(int)response.StatusCode}" };
-                var boot = JsonSerializer.Deserialize<SessionExchange>(response.Body,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (!string.IsNullOrWhiteSpace(boot?.SessionId) && !string.IsNullOrWhiteSpace(boot.SessionSecret) &&
-                    !string.IsNullOrWhiteSpace(boot.ExpiresAt))
-                {
-                    Save(record with { SessionId = boot.SessionId, SessionSecret = boot.SessionSecret, ExpiresAt = boot.ExpiresAt });
-                    _pendingAuthUrl = null;
-                    return new { success = true, authenticated = true };
-                }
-                var authUrl = boot?.AuthUrl ?? boot?.ChallengeUrl;
-                if (string.IsNullOrWhiteSpace(authUrl) && !string.IsNullOrWhiteSpace(boot?.ChallengeId))
-                    authUrl = BuildChallengeUrl(boot.ChallengeId);
-                if (string.IsNullOrWhiteSpace(authUrl))
-                    return new { success = false, error = "session bootstrap did not return a challenge" };
-                _pendingAuthUrl = authUrl;
-                return VerificationRequired(authUrl);
+                Save(record with { SessionId = boot.SessionId, SessionSecret = boot.SessionSecret, ExpiresAt = boot.ExpiresAt });
+                _pendingAuthUrl = null;
+                return SessionResult.Authenticated;
             }
-            catch (Exception exception)
-            {
-                return new { success = false, error = exception.Message };
-            }
+            var authUrl = boot?.AuthUrl ?? boot?.ChallengeUrl;
+            if (string.IsNullOrWhiteSpace(authUrl) && !string.IsNullOrWhiteSpace(boot?.ChallengeId))
+                authUrl = BuildChallengeUrl(boot.ChallengeId);
+            if (string.IsNullOrWhiteSpace(authUrl))
+                return SessionResult.Failed("unexpected_response", "session bootstrap did not return a challenge");
+            if (!Uri.TryCreate(authUrl, UriKind.Absolute, out var verification) || verification.Scheme != Uri.UriSchemeHttps)
+                return SessionResult.Failed("unexpected_response", "session bootstrap returned an unsafe verification link");
+            _pendingAuthUrl = verification.AbsoluteUri;
+            return SessionResult.Pending(_pendingAuthUrl);
         }
+        catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            return SessionResult.Failed(ExceptionReason(exception), exception.Message);
+        }
+    }
+
+    private object HostResponse(SessionResult result) =>
+        result.VerificationUrl != null ? VerificationRequired(result.VerificationUrl)
+        : result.ReasonCode == null ? new { success = true, authenticated = true }
+        : new { success = false, error = result.Detail };
+
+    private static string ResponseReason(HttpStatusCode status, string rejected) =>
+        (int)status >= 500 || status is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests
+            ? "provider_unavailable"
+            : rejected;
+
+    private static string ExceptionReason(Exception exception) => exception switch
+    {
+        UnauthorizedAccessException => "origin_not_approved",
+        HttpRequestException or OperationCanceledException or IOException => "provider_unavailable",
+        _ => "unexpected_response"
+    };
+
+    private sealed record SessionResult(string? VerificationUrl, string? ReasonCode, string? Detail)
+    {
+        public static readonly SessionResult Succeeded = new(null, null, null);
+        public static readonly SessionResult Authenticated = Succeeded;
+        public static SessionResult Pending(string url) => new(url, null, null);
+        public static SessionResult Failed(string reasonCode, string detail) => new(null, reasonCode, detail);
     }
 
     public object SignedFetch(string method, string path, string? body, object? headers)
@@ -193,7 +316,7 @@ internal sealed class ExtensionSignedSessionClient
         lock (_gate)
         {
             var record = Load();
-            if (!HasUsableSession(record)) return StartVerification();
+            if (!HasUsableSession(record)) return HostResponse(BeginVerification(CancellationToken.None));
             if (TryExpiry(record, out var expiry) && expiry - DateTimeOffset.UtcNow <= RefreshSkew &&
                 !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
                 record = TryRefresh(record);
@@ -206,7 +329,7 @@ internal sealed class ExtensionSignedSessionClient
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired)
             {
                 Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
-                return StartVerification();
+                return HostResponse(BeginVerification(CancellationToken.None));
             }
             return response.ToHostResponse();
         }
@@ -280,10 +403,11 @@ internal sealed class ExtensionSignedSessionClient
         auth_url = authUrl
     };
 
-    private ResponseData SendUnsigned(HttpMethod method, Uri target, string? body) =>
-        Send(method.Method, target, body ?? string.Empty, new Dictionary<string, string>());
+    private ResponseData SendUnsigned(HttpMethod method, Uri target, string? body, CancellationToken cancellationToken) =>
+        Send(method.Method, target, body ?? string.Empty, new Dictionary<string, string>(), cancellationToken);
 
-    private ResponseData Send(string method, Uri target, string body, IReadOnlyDictionary<string, string> headers)
+    private ResponseData Send(string method, Uri target, string body, IReadOnlyDictionary<string, string> headers,
+        CancellationToken cancellationToken = default)
     {
         EnsureAllowed(target);
         using var client = _clients.CreateClient("ExtensionSdkV1");
@@ -299,11 +423,11 @@ internal sealed class ExtensionSignedSessionClient
                 request.Content.Headers.TryAddWithoutValidation(key, value);
             else request.Headers.TryAddWithoutValidation(key, value);
         }
-        using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead)
+        using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
             .GetAwaiter().GetResult();
         if (response.RequestMessage?.RequestUri is not { } finalUri) throw new HttpRequestException("Signed session response URL is unavailable.");
         EnsureAllowed(finalUri);
-        using var stream = response.Content.ReadAsStream();
+        using var stream = response.Content.ReadAsStream(cancellationToken);
         using var output = new MemoryStream();
         var buffer = new byte[64 * 1024];
         int read;

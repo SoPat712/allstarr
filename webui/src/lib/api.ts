@@ -1623,9 +1623,19 @@ export type ExtensionPackage = {
   iconUrl?: string | null;
   capabilities?: string[];
   compatibility?: string | null;
+  usesSignedSession?: boolean;
   failureCode?: string | null;
   stagedAt?: string | null;
   revision: number;
+};
+
+export type ExtensionSessionState = "signed_out" | "verification_pending" | "signed_in" | "expired";
+
+export type ExtensionSession = {
+  state: ExtensionSessionState;
+  expiresAt?: string | null;
+  verificationUrl?: string | null;
+  reasonCode?: string | null;
 };
 
 export type ExtensionStoreItem = {
@@ -1709,6 +1719,21 @@ export const extensions = {
     json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/permissions/revoke`, revisionBody(item.revision)),
   uninstall: (item: ExtensionPackage) =>
     json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}`, {
+      ...revisionBody(item.revision),
+      method: "DELETE",
+    }),
+  session: (item: ExtensionPackage) =>
+    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session`),
+  startSession: (item: ExtensionPackage) =>
+    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session/start`, revisionBody(item.revision)),
+  completeSession: (item: ExtensionPackage, grant: string) =>
+    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session/grant`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ grant, expectedRevision: item.revision }),
+    }),
+  clearSession: (item: ExtensionPackage) =>
+    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session`, {
       ...revisionBody(item.revision),
       method: "DELETE",
     }),

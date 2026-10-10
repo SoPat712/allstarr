@@ -851,10 +851,12 @@ public class ExtensionSandbox
             return _hostBridge.StorageUsage();
         }
     }
-    public object SignedSessionStatus() => _hostBridge.SessionStatus();
-    public object StartSignedSessionVerification() => _hostBridge.SessionStartVerification();
-    public object CompleteSignedSessionGrant(string grant) => _hostBridge.SessionCompleteGrant(grant);
-    public object ClearSignedSession() => _hostBridge.SessionClear();
+    public ExtensionSessionView SignedSessionStatus() => _hostBridge.SessionView();
+    public ExtensionSessionView StartSignedSessionVerification(CancellationToken cancellationToken = default) =>
+        _hostBridge.SessionBeginView(cancellationToken);
+    public ExtensionSessionView CompleteSignedSessionGrant(string grant, CancellationToken cancellationToken = default) =>
+        _hostBridge.SessionCompleteView(grant, cancellationToken);
+    public ExtensionSessionView ClearSignedSession() => _hostBridge.SessionClearView();
 
     private bool IsCallable(string hook)
     {
@@ -1150,6 +1152,12 @@ public class ExtensionHostBridge
     public object SessionStartVerification() => RequireSignedSession().StartVerification();
     public object SessionCompleteGrant(string? grant) => RequireSignedSession().CompleteGrant(grant);
     public object SessionClear() => RequireSignedSession().Clear();
+    internal ExtensionSessionView SessionView() => RequireSignedSession().View();
+    internal ExtensionSessionView SessionBeginView(CancellationToken cancellationToken) =>
+        RequireSignedSession().StartVerificationView(cancellationToken);
+    internal ExtensionSessionView SessionCompleteView(string? grant, CancellationToken cancellationToken) =>
+        RequireSignedSession().CompleteGrantView(grant, cancellationToken);
+    internal ExtensionSessionView SessionClearView() => RequireSignedSession().ClearView();
     public object SessionSignedFetch(string method, string path, string? body, object? headers) =>
         RequireSignedSession().SignedFetch(method, path, body, headers);
 

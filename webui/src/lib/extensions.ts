@@ -1,4 +1,74 @@
-import type { ExtensionPackage, ExtensionStoreItem } from "$lib/api";
+import type { ExtensionPackage, ExtensionSession, ExtensionStoreItem } from "$lib/api";
+
+export type SessionSummary = {
+  label: string;
+  badge: "healthy" | "degraded" | "suggested";
+  detail: string;
+};
+
+export function sessionSummary(session: ExtensionSession, locale?: string): SessionSummary {
+  switch (session.state) {
+    case "signed_in":
+      return {
+        label: "Signed in",
+        badge: "healthy",
+        detail: session.expiresAt
+          ? `Session valid until ${formatSessionTime(session.expiresAt, locale)}.`
+          : "The extension can use its service.",
+      };
+    case "verification_pending":
+      return {
+        label: "Verification needed",
+        badge: "suggested",
+        detail: "Open the verification page, finish there, then paste the link or code it shows you.",
+      };
+    case "expired":
+      return {
+        label: "Sign-in expired",
+        badge: "degraded",
+        detail: "Reconnect to keep using this extension's service.",
+      };
+    default:
+      return {
+        label: "Not signed in",
+        badge: "suggested",
+        detail: "This extension needs a one-time verification before it can use its service.",
+      };
+  }
+}
+
+const sessionReasons: Record<string, string> = {
+  grant_required: "Paste the link or code shown after verification.",
+  grant_invalid: "That isn't a sign-in link. Copy the full link or code shown after verification.",
+  grant_wrong_extension: "That sign-in link belongs to a different extension. Start verification here and use the new link.",
+  grant_rejected: "The service rejected this code. It may have expired or already been used. Start verification again.",
+  session_rejected: "The service refused to start a sign-in for this extension version. Check for an extension update.",
+  provider_unavailable: "The sign-in service is unavailable right now. Try again in a few minutes.",
+  origin_not_approved: "The sign-in service isn't in this extension's approved network access. Use Review access to allow it, then try again.",
+  unexpected_response: "The sign-in service returned an unexpected response. Try again, or check for an extension update.",
+};
+
+export function sessionReasonText(reasonCode?: string | null) {
+  if (!reasonCode) return "";
+  return sessionReasons[reasonCode] ?? "Sign-in didn't complete. Try again.";
+}
+
+export function verificationHost(url?: string | null) {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" ? parsed.host : "";
+  } catch {
+    return "";
+  }
+}
+
+function formatSessionTime(value: string, locale?: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "at an unknown time"
+    : date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+}
 
 export function compareVersions(left: string, right: string) {
   const parts = (value: string) => value.replace(/^v/i, "").split(/[.+-]/)

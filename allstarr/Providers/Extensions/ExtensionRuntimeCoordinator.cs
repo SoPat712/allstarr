@@ -273,10 +273,51 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         "sessionGrant@1"
     };
 
-    public object SignedSessionStatus(Guid packageId) => RequireSandbox(packageId).SignedSessionStatus();
-    public object StartSignedSessionVerification(Guid packageId) => RequireSandbox(packageId).StartSignedSessionVerification();
-    public object CompleteSignedSessionGrant(Guid packageId, string grant) => RequireSandbox(packageId).CompleteSignedSessionGrant(grant);
-    public object ClearSignedSession(Guid packageId) => RequireSandbox(packageId).ClearSignedSession();
+    public ExtensionSessionView SignedSessionStatus(Guid packageId) => RequireSandbox(packageId).SignedSessionStatus();
+
+    public async Task<ExtensionSessionView> StartSignedSessionVerificationAsync(
+        Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
+    {
+        var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
+        var view = sandbox.StartSignedSessionVerification(cancellationToken);
+        await LogSessionAsync(packageId, view, view.State == ExtensionSessionStates.SignedIn
+            ? "Sign-in restored without verification."
+            : "Sign-in verification started.", "session.started");
+        return view;
+    }
+
+    public async Task<ExtensionSessionView> CompleteSignedSessionGrantAsync(
+        Guid packageId, long expectedRevision, string grant, CancellationToken cancellationToken = default)
+    {
+        var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
+        var view = sandbox.CompleteSignedSessionGrant(grant, cancellationToken);
+        await LogSessionAsync(packageId, view, "Sign-in completed.", "session.granted");
+        return view;
+    }
+
+    public async Task<ExtensionSessionView> ClearSignedSessionAsync(
+        Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
+    {
+        var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
+        var view = sandbox.ClearSignedSession();
+        await LogSessionAsync(packageId, view, "Sign-in cleared.", "session.cleared");
+        return view;
+    }
+
+    private async Task<ExtensionSandbox> RequireCurrentSandboxAsync(
+        Guid packageId, long expectedRevision, CancellationToken cancellationToken)
+    {
+        var package = await GetPackageAsync(packageId, cancellationToken);
+        if (package.Revision != expectedRevision || package.State != ExtensionPackageState.Active)
+            throw new DbUpdateConcurrencyException("The extension package changed before this session update.");
+        return RequireSandbox(packageId);
+    }
+
+    private Task LogSessionAsync(Guid packageId, ExtensionSessionView view, string success, string eventCode) =>
+        view.ReasonCode == null
+            ? _controlPlane.WriteLogAsync(packageId, "information", eventCode, success, "extension-session")
+            : _controlPlane.WriteLogAsync(packageId, "warning", "session.failed",
+                $"Sign-in did not complete ({view.ReasonCode}).", "extension-session");
 
     public ExtensionStorageUsageSnapshot GetStorageUsage()
     {
