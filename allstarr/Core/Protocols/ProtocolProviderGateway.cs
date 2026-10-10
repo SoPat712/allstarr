@@ -362,45 +362,82 @@ public sealed class ProtocolProviderGateway(
         IReadOnlyList<string> providerOrder,
         CancellationToken cancellationToken)
     {
-        if (identities == null || trackLookups.Select(item => item.Lookup.Context.ProviderId).Distinct().Count() < 2)
+        if (songs.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
         {
             return songs;
         }
 
-        IReadOnlyList<TrackIdentityResolution?> resolved;
-        try
+        var verified = Array.Empty<(Song Song, TrackIdentityResolution? Identity)>();
+        if (identities != null)
         {
-            resolved = await identities.ResolveManyAsync(
-                trackLookups.Select(item => item.Lookup).ToArray(), cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception)
-        {
-            logger?.LogDebug("Verified search identity lookup failed; preserving provider results");
-            return songs;
+            try
+            {
+                var resolved = await identities.ResolveManyAsync(
+                    trackLookups.Select(item => item.Lookup).ToArray(), cancellationToken);
+                verified = trackLookups.Select((entry, index) => (entry.Song, Identity: resolved[index]))
+                    .Where(item => item.Identity?.Verification == ProviderIdentityVerification.Verified &&
+                                   item.Identity.VerificationMethod is not (
+                                       "automatic-suggestion" or
+                                       ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
+                                       ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod))
+                    .ToArray();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception)
+            {
+                logger?.LogDebug("Verified search identity lookup failed; grouping only by ISRC");
+            }
         }
 
-        var verified = trackLookups.Select((entry, index) => (entry.Song, Identity: resolved[index]))
-            .Where(item => item.Identity?.Verification == ProviderIdentityVerification.Verified &&
-                           item.Identity.VerificationMethod is not (
-                               "automatic-suggestion" or
-                               ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
-                               ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod))
-            .ToArray();
-        var bestByRecording = verified
-            .GroupBy(item => item.Identity!.CanonicalRecordingId)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderBy(item =>
-                    ProviderPriority(providerOrder, item.Song.ExternalProvider)).First().Song);
-        var selected = new HashSet<Song>(bestByRecording.Values);
-        var eligible = new HashSet<Song>(verified.Select(item => item.Song));
-        return songs
-            .Where(song => !eligible.Contains(song) || selected.Contains(song))
-            .ToArray();
+        // One row per proven recording: an accepted identity link proves it, and so does the same ISRC
+        // from two different providers in this response. Nothing is looked up or written here.
+        var groupBySong = new Dictionary<Song, string>(ReferenceEqualityComparer.Instance);
+        var groupByIsrc = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var (song, identity) in verified)
+        {
+            var group = $"recording:{identity!.CanonicalRecordingId:N}";
+            groupBySong[song] = group;
+            if (NormalizeIsrc(song.Isrc) is { } isrc) groupByIsrc.TryAdd(isrc, group);
+        }
+        foreach (var song in songs)
+        {
+            if (groupBySong.ContainsKey(song) || NormalizeIsrc(song.Isrc) is not { } isrc) continue;
+            if (!groupByIsrc.TryGetValue(isrc, out var group))
+            {
+                group = $"isrc:{isrc}";
+                groupByIsrc[isrc] = group;
+            }
+            groupBySong[song] = group;
+        }
+
+        var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
+        foreach (var group in songs.Where(groupBySong.ContainsKey).GroupBy(song => groupBySong[song]))
+        {
+            var members = group.ToArray();
+            var best = members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
+            var linked = group.Key.StartsWith("recording:", StringComparison.Ordinal);
+            // An ISRC alone only merges across providers; same-provider duplicates (album and single,
+            // for example) stay separate rows unless an accepted link already proves they're one recording.
+            if (!linked && members.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
+                continue;
+            foreach (var song in members)
+            {
+                if (ReferenceEquals(song, best)) continue;
+                if (linked || NormalizeProvider(song.ExternalProvider) != NormalizeProvider(best.ExternalProvider))
+                    hidden.Add(song);
+            }
+        }
+        return songs.Where(song => !hidden.Contains(song)).ToArray();
+    }
+
+    private static string? NormalizeIsrc(string? isrc)
+    {
+        if (string.IsNullOrWhiteSpace(isrc)) return null;
+        var normalized = new string(isrc.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+        return normalized.Length == 12 ? normalized : null;
     }
 
     private static int ProviderPriority(IReadOnlyList<string> order, string? provider)
