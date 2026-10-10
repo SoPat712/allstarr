@@ -264,13 +264,14 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             sandbox);
     }
 
-    private static readonly HashSet<string> SupportedRuntimeFeatures = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly IReadOnlySet<string> SupportedRuntimeFeatures = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         "fetch@1",
         "file@1",
         "storage@1",
         "signedSession@1",
-        "sessionGrant@1"
+        "sessionGrant@1",
+        "preparedContext@1"
     };
 
     public ExtensionSessionView SignedSessionStatus(Guid packageId) => RequireSandbox(packageId).SignedSessionStatus();
