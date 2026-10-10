@@ -1100,9 +1100,6 @@ public class ExtensionHostBridge
     private static readonly TimeSpan HttpInitialCooldown = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan HttpMaximumCooldown = TimeSpan.FromHours(1);
     private static readonly TimeSpan RuntimeLogDeduplicationWindow = TimeSpan.FromMinutes(5);
-    private static readonly Regex SensitiveLogPattern = new(
-        "(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
     private static readonly Dictionary<string, ExtensionRuntimeLogState> RuntimeLogStates =
         new(StringComparer.Ordinal);
     private static readonly object RuntimeLogLock = new();
@@ -1166,7 +1163,7 @@ public class ExtensionHostBridge
 
     public void Log(string level, string message)
     {
-        message = SensitiveLogPattern.Replace(message ?? string.Empty, "$1=[redacted]").Trim();
+        message = ExtensionControlPlaneService.SecretPattern().Replace(message ?? string.Empty, "$1=[redacted]").Trim();
         if (level.Equals("error", StringComparison.OrdinalIgnoreCase) &&
             DateTimeOffset.UtcNow - _lastSyntheticCooldownResponseAt < TimeSpan.FromSeconds(5) &&
             message.Contains("503", StringComparison.Ordinal))

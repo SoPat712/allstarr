@@ -552,8 +552,8 @@ public sealed partial class ExtensionControlPlaneService
         return value.Length <= maximum ? value : value[..maximum];
     }
 
-    [GeneratedRegex("(?i)(authorization|password|secret|token|cookie|api[-_]?key)\\s*[=:]\\s*[^\\s,;]+")]
-    private static partial Regex SecretPattern();
+    [GeneratedRegex("(?i)(authorization|password|secret|token|cookie|api[-_]?key|install[-_]?id|session[-_]?id)[\"']?\\s*[=:]\\s*[\"']?(?:(?:bearer|basic)\\s+)?[^\\s,;\"'}&]+")]
+    internal static partial Regex SecretPattern();
 }
 
 public static class ExtensionControlPlaneRegistration

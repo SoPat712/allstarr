@@ -133,6 +133,7 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
     [Theory]
     [InlineData("javascript:alert(1)")]
     [InlineData("http://api.example.test/verify")]
+    [InlineData("https://api.example.test@other.example.test/verify")]
     public void UnsafeVerificationLinks_AreNeverOffered(string authUrl)
     {
         var handler = new SessionHandler { BootstrapBody = JsonSerializer.Serialize(new { auth_url = authUrl }) };
