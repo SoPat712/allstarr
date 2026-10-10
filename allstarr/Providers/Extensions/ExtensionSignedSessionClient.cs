@@ -36,13 +36,15 @@ internal sealed class ExtensionSignedSessionClient
     private const int MaximumResponseBytes = 4 * 1024 * 1024;
     private static readonly TimeSpan RefreshSkew = TimeSpan.FromHours(1);
     private static readonly TimeSpan AdministratorRequestLimit = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ScriptRequestLimit = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(35);
     private readonly ExtensionSignedSessionConfig _config;
     private readonly IHttpClientFactory _clients;
     private readonly IDataProtector _protector;
     private readonly IReadOnlySet<string> _allowedOrigins;
     private readonly string _statePath;
     private readonly string _extensionId;
-    private readonly object _gate = new();
+    private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _pendingAuthUrl;
 
     public ExtensionSignedSessionClient(
@@ -51,7 +53,8 @@ internal sealed class ExtensionSignedSessionClient
         IDataProtector protector,
         IReadOnlySet<string> allowedOrigins,
         string runtimeStateDirectory,
-        string extensionId)
+        string extensionId,
+        string? legacyStateDirectory = null)
     {
         _config = config;
         _clients = clients;
@@ -60,82 +63,91 @@ internal sealed class ExtensionSignedSessionClient
         _extensionId = extensionId;
         var scope = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{config.Namespace}\n{config.BaseUrl}\n{config.AppVersion}\n{config.Platform}"))).ToLowerInvariant()[..16];
-        _statePath = Path.Combine(runtimeStateDirectory, $"signed-session-{scope}.protected");
+        var fileName = $"signed-session-{scope}.protected";
+        _statePath = Path.Combine(runtimeStateDirectory, fileName);
+        if (legacyStateDirectory != null) AdoptLegacyState(legacyStateDirectory, fileName);
     }
 
-    public ExtensionSignedSessionStatus Status()
+    private void AdoptLegacyState(string legacyStateDirectory, string fileName)
     {
-        lock (_gate)
+        if (!Directory.Exists(legacyStateDirectory)) return;
+        foreach (var legacyPath in Directory.EnumerateFiles(legacyStateDirectory, "signed-session-*.protected"))
         {
-            var record = Load();
-            var authenticated = HasUsableSession(record);
-            return new(authenticated, record.ExpiresAt, record.InstallId,
-                authenticated ? record.SessionId : null, _config.AppVersion, _config.Platform, _pendingAuthUrl);
+            var target = Path.Combine(Path.GetDirectoryName(_statePath)!, Path.GetFileName(legacyPath));
+            if (string.Equals(Path.GetFullPath(legacyPath), Path.GetFullPath(target), StringComparison.Ordinal))
+                continue;
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            if (File.Exists(target) || File.Exists(_statePath) && !Path.GetFileName(legacyPath).Equals(fileName, StringComparison.Ordinal))
+                File.Delete(legacyPath);
+            else
+                File.Move(legacyPath, target);
         }
     }
 
-    public ExtensionSessionView View()
+    public ExtensionSignedSessionStatus Status() => RunScript(_ =>
     {
-        lock (_gate) return ViewOf(Load(), null);
-    }
+        var record = Load();
+        var authenticated = HasUsableSession(record);
+        return Task.FromResult(new ExtensionSignedSessionStatus(authenticated, record.ExpiresAt, record.InstallId,
+            authenticated ? record.SessionId : null, _config.AppVersion, _config.Platform, _pendingAuthUrl));
+    });
 
-    public object Clear()
+    public Task<ExtensionSessionView> ViewAsync(CancellationToken cancellationToken) =>
+        RunAdministratorAsync(_ => Task.FromResult(ViewOf(Load(), null)), cancellationToken);
+
+    public object Clear() => RunScript(_ =>
     {
-        lock (_gate)
+        ClearRecord();
+        return Task.FromResult<object>(new { success = true });
+    });
+
+    public Task<ExtensionSessionView> ClearViewAsync(CancellationToken cancellationToken) =>
+        RunAdministratorAsync(_ =>
         {
             ClearRecord();
-            return new { success = true };
-        }
-    }
+            return Task.FromResult(ViewOf(Load(), null));
+        }, cancellationToken);
 
-    public ExtensionSessionView ClearView()
+    public object CompleteGrant(string? grant) => RunScript<object>(async limit =>
     {
-        lock (_gate)
-        {
-            ClearRecord();
-            return ViewOf(Load(), null);
-        }
-    }
+        var result = await ExchangeGrantAsync(grant, limit);
+        return result.ReasonCode == null ? new { success = true } : new { success = false, error = result.Detail };
+    });
 
-    public object CompleteGrant(string? grant)
-    {
-        lock (_gate)
+    public Task<ExtensionSessionView> CompleteGrantViewAsync(string? grant, CancellationToken cancellationToken) =>
+        RunAdministratorAsync(async limit =>
         {
-            var result = ExchangeGrant(grant, CancellationToken.None);
-            return result.ReasonCode == null ? new { success = true } : new { success = false, error = result.Detail };
-        }
-    }
-
-    public ExtensionSessionView CompleteGrantView(string? grant, CancellationToken cancellationToken)
-    {
-        using var limit = AdministratorLimit(cancellationToken);
-        lock (_gate)
-        {
-            var result = ExchangeGrant(grant, limit.Token, cancellationToken);
+            var result = await ExchangeGrantAsync(grant, limit, cancellationToken);
             return ViewOf(Load(), result.ReasonCode);
-        }
-    }
+        }, cancellationToken);
 
-    public object StartVerification()
-    {
-        lock (_gate) return HostResponse(BeginVerification(CancellationToken.None));
-    }
+    public object StartVerification() =>
+        RunScript(async limit => HostResponse(await BeginVerificationAsync(limit)));
 
-    public ExtensionSessionView StartVerificationView(CancellationToken cancellationToken)
-    {
-        using var limit = AdministratorLimit(cancellationToken);
-        lock (_gate)
+    public Task<ExtensionSessionView> StartVerificationViewAsync(CancellationToken cancellationToken) =>
+        RunAdministratorAsync(async limit =>
         {
-            var result = BeginVerification(limit.Token, cancellationToken);
+            var result = await BeginVerificationAsync(limit, cancellationToken);
             return ViewOf(Load(), result.ReasonCode);
-        }
+        }, cancellationToken);
+
+    private T RunScript<T>(Func<CancellationToken, Task<T>> operation)
+    {
+        using var limit = new CancellationTokenSource(ScriptRequestLimit);
+        if (!_gate.Wait(GateWait)) throw new TimeoutException("The extension session is busy.");
+        try { return operation(limit.Token).GetAwaiter().GetResult(); }
+        finally { _gate.Release(); }
     }
 
-    private static CancellationTokenSource AdministratorLimit(CancellationToken cancellationToken)
+    private async Task<T> RunAdministratorAsync<T>(
+        Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
     {
-        var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         limit.CancelAfter(AdministratorRequestLimit);
-        return limit;
+        if (!await _gate.WaitAsync(GateWait, cancellationToken))
+            throw new TimeoutException("The extension session is busy.");
+        try { return await operation(limit.Token); }
+        finally { _gate.Release(); }
     }
 
     private void ClearRecord()
@@ -157,7 +169,7 @@ internal sealed class ExtensionSignedSessionClient
             : new(ExtensionSessionStates.SignedOut, null, null, reasonCode);
     }
 
-    private SessionResult ExchangeGrant(string? grant, CancellationToken cancellationToken,
+    private async Task<SessionResult> ExchangeGrantAsync(string? grant, CancellationToken cancellationToken,
         CancellationToken callerToken = default)
     {
         var normalized = NormalizeGrant(grant, out var grantError, out var grantReason);
@@ -172,7 +184,7 @@ internal sealed class ExtensionSignedSessionClient
                 app_version = _config.AppVersion,
                 platform = _config.Platform
             });
-            var response = SendUnsigned(HttpMethod.Post, Resolve(_config.Endpoints.Exchange), payload, cancellationToken);
+            var response = await SendUnsignedAsync(HttpMethod.Post, Resolve(_config.Endpoints.Exchange), payload, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 return SessionResult.Failed(ResponseReason(response.StatusCode, "grant_rejected"),
                     $"session exchange failed: HTTP {(int)response.StatusCode}");
@@ -243,7 +255,7 @@ internal sealed class ExtensionSignedSessionClient
         return parsedGrant.Trim();
     }
 
-    private SessionResult BeginVerification(CancellationToken cancellationToken,
+    private async Task<SessionResult> BeginVerificationAsync(CancellationToken cancellationToken,
         CancellationToken callerToken = default)
     {
         try
@@ -253,7 +265,7 @@ internal sealed class ExtensionSignedSessionClient
             var builder = new UriBuilder(bootstrap);
             var separator = string.IsNullOrEmpty(builder.Query) ? "" : builder.Query.TrimStart('?') + "&";
             builder.Query = $"{separator}app_version={Uri.EscapeDataString(_config.AppVersion)}&install_id={Uri.EscapeDataString(record.InstallId)}";
-            var response = SendUnsigned(HttpMethod.Get, builder.Uri, null, cancellationToken);
+            var response = await SendUnsignedAsync(HttpMethod.Get, builder.Uri, null, cancellationToken);
             if (!response.IsSuccessStatusCode)
                 return SessionResult.Failed(ResponseReason(response.StatusCode, "session_rejected"),
                     $"session bootstrap failed: HTTP {(int)response.StatusCode}");
@@ -314,30 +326,37 @@ internal sealed class ExtensionSignedSessionClient
 
     public object SignedFetch(string method, string path, string? body, object? headers)
     {
-        lock (_gate)
+        var payload = body ?? string.Empty;
+        var extraHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (headers is Jint.Native.Object.ObjectInstance headerObject)
+            foreach (var entry in headerObject.GetOwnProperties())
+                extraHeaders[entry.Key.ToString()] = headerObject.Get(entry.Key).ToString();
+        try
         {
-            var record = Load();
-            if (!HasUsableSession(record)) return HostResponse(BeginVerification(CancellationToken.None));
-            if (TryExpiry(record, out var expiry) && expiry - DateTimeOffset.UtcNow <= RefreshSkew &&
-                !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
-                record = TryRefresh(record);
-            var payload = body ?? string.Empty;
-            var extraHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            if (headers is Jint.Native.Object.ObjectInstance headerObject)
-                foreach (var entry in headerObject.GetOwnProperties())
-                    extraHeaders[entry.Key.ToString()] = headerObject.Get(entry.Key).ToString();
-            var response = SendSigned(record, method, path, payload, extraHeaders);
-            if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired)
+            return RunScript(async limit =>
             {
-                Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
-                return HostResponse(BeginVerification(CancellationToken.None));
-            }
-            return response.ToHostResponse();
+                var record = Load();
+                if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit));
+                if (TryExpiry(record, out var expiry) && expiry - DateTimeOffset.UtcNow <= RefreshSkew &&
+                    !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
+                    record = await TryRefreshAsync(record, limit);
+                var response = await SendSignedAsync(record, method, path, payload, extraHeaders, limit);
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired)
+                {
+                    Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
+                    return HostResponse(await BeginVerificationAsync(limit));
+                }
+                return response.ToHostResponse();
+            });
+        }
+        catch (TimeoutException)
+        {
+            return new { ok = false, statusCode = 0, status = 0, error = "SESSION_BUSY" };
         }
     }
 
-    private SignedResponse SendSigned(SessionRecord record, string method, string path, string payload,
-        IReadOnlyDictionary<string, string>? extraHeaders)
+    private async Task<SignedResponse> SendSignedAsync(SessionRecord record, string method, string path, string payload,
+        IReadOnlyDictionary<string, string>? extraHeaders, CancellationToken cancellationToken)
     {
         var target = Resolve(path);
         var requestMethod = method.Trim().ToUpperInvariant();
@@ -361,16 +380,16 @@ internal sealed class ExtensionSignedSessionClient
         };
         if (extraHeaders != null)
             foreach (var (key, value) in extraHeaders) signedHeaders[key] = value;
-        var response = Send(requestMethod, target, payload, signedHeaders);
+        var response = await SendAsync(requestMethod, target, payload, signedHeaders, cancellationToken);
         return new(target, response);
     }
 
-    private SessionRecord TryRefresh(SessionRecord record)
+    private async Task<SessionRecord> TryRefreshAsync(SessionRecord record, CancellationToken cancellationToken)
     {
         try
         {
             var body = JsonSerializer.Serialize(new { install_id = record.InstallId });
-            var result = SendSigned(record, "POST", _config.Endpoints.Refresh!, body, null);
+            var result = await SendSignedAsync(record, "POST", _config.Endpoints.Refresh!, body, null, cancellationToken);
             if (!result.Response.IsSuccessStatusCode) return record;
             var refreshed = JsonSerializer.Deserialize<SessionExchange>(result.Response.Body,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
@@ -404,11 +423,11 @@ internal sealed class ExtensionSignedSessionClient
         auth_url = authUrl
     };
 
-    private ResponseData SendUnsigned(HttpMethod method, Uri target, string? body, CancellationToken cancellationToken) =>
-        Send(method.Method, target, body ?? string.Empty, new Dictionary<string, string>(), cancellationToken);
+    private Task<ResponseData> SendUnsignedAsync(HttpMethod method, Uri target, string? body, CancellationToken cancellationToken) =>
+        SendAsync(method.Method, target, body ?? string.Empty, new Dictionary<string, string>(), cancellationToken);
 
-    private ResponseData Send(string method, Uri target, string body, IReadOnlyDictionary<string, string> headers,
-        CancellationToken cancellationToken = default)
+    private async Task<ResponseData> SendAsync(string method, Uri target, string body, IReadOnlyDictionary<string, string> headers,
+        CancellationToken cancellationToken)
     {
         EnsureAllowed(target);
         using var client = _clients.CreateClient("ExtensionSdkV1");
@@ -424,15 +443,14 @@ internal sealed class ExtensionSignedSessionClient
                 request.Content.Headers.TryAddWithoutValidation(key, value);
             else request.Headers.TryAddWithoutValidation(key, value);
         }
-        using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken)
-            .GetAwaiter().GetResult();
+        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.RequestMessage?.RequestUri is not { } finalUri) throw new HttpRequestException("Signed session response URL is unavailable.");
         EnsureAllowed(finalUri);
-        using var stream = response.Content.ReadAsStream(cancellationToken);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var output = new MemoryStream();
         var buffer = new byte[64 * 1024];
         int read;
-        while ((read = stream.Read(buffer)) > 0)
+        while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
         {
             if (output.Length + read > MaximumResponseBytes) throw new InvalidDataException("Signed session response exceeds 4 MiB.");
             output.Write(buffer, 0, read);

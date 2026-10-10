@@ -17,7 +17,7 @@ public sealed record AppleMusicCredential(string MusicUserToken, string Storefro
             using var document = JsonDocument.Parse(bytes);
             if (document.RootElement.ValueKind != JsonValueKind.Object) return null;
             string? token = null;
-            var storefront = "us";
+            string? storefront = DefaultStorefront;
             foreach (var property in document.RootElement.EnumerateObject())
             {
                 if (property.Value.ValueKind != JsonValueKind.String) continue;
@@ -26,19 +26,28 @@ public sealed record AppleMusicCredential(string MusicUserToken, string Storefro
                     property.Name.Equals("mediaUserToken", StringComparison.OrdinalIgnoreCase))
                     token = property.Value.GetString();
                 if (property.Name.Equals("Storefront", StringComparison.OrdinalIgnoreCase))
-                    storefront = property.Value.GetString()?.Trim().ToLowerInvariant() ?? "";
+                    storefront = NormalizeStorefront(property.Value.GetString());
             }
             return string.IsNullOrWhiteSpace(token) || token.Length > 16_384 ||
                    token.Any(character => char.IsControl(character) || character is ';' or ',') ||
-                   storefront.Length != 2 || storefront.Any(character => character is < 'a' or > 'z')
+                   storefront == null
                 ? null : new(token.Trim(), storefront);
         }
         catch (JsonException) { return null; }
     }
+
+    public const string DefaultStorefront = "us";
+
+    public static string? NormalizeStorefront(string? value)
+    {
+        var storefront = value?.Trim().ToLowerInvariant() ?? "";
+        return storefront.Length == 2 && storefront.All(character => character is >= 'a' and <= 'z')
+            ? storefront : null;
+    }
 }
 
 public sealed class AppleMusicClient(HttpClient http, AppleWebTokenProvider tokens,
-    IProviderAccountSecretAccessor secrets)
+    IProviderAccountSecretAccessor secrets, IProviderAccountSettingsReader? settings = null)
 {
     public const string HttpClientName = "AppleMusicApi";
     public const string ProviderId = "apple-musickit";
@@ -65,8 +74,12 @@ public sealed class AppleMusicClient(HttpClient http, AppleWebTokenProvider toke
             ? new(ProviderErrorKind.Forbidden) : null;
     }
 
+    public Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context, bool personal,
+        Func<AppleMusicCredential?, CancellationToken, Task<ProviderOutcome<T>>> operation) =>
+        ExecuteAsync(context, personal, (credential, _, cancellationToken) => operation(credential, cancellationToken));
+
     public async Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context, bool personal,
-        Func<AppleMusicCredential?, CancellationToken, Task<ProviderOutcome<T>>> operation)
+        Func<AppleMusicCredential?, string, CancellationToken, Task<ProviderOutcome<T>>> operation)
     {
         var error = Validate(context, personal);
         if (error != null) return ProviderOutcome<T>.Failure(error);
@@ -74,13 +87,13 @@ public sealed class AppleMusicClient(HttpClient http, AppleWebTokenProvider toke
         {
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
             deadline.CancelAfter(context.Deadline - DateTimeOffset.UtcNow);
-            if (!personal) return await operation(null, deadline.Token);
+            if (!personal) return await operation(null, await CatalogStorefrontAsync(context, deadline.Token), deadline.Token);
             return await secrets.UseAsync(context.Account!, async bytes =>
             {
                 var credential = AppleMusicCredential.Read(bytes);
                 return credential == null
                     ? ProviderOutcome<T>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration))
-                    : await operation(credential, deadline.Token);
+                    : await operation(credential, credential.Storefront, deadline.Token);
             }, deadline.Token);
         }
         catch (OperationCanceledException) { return ProviderOutcome<T>.Failure(new(ProviderErrorKind.Canceled)); }
@@ -165,6 +178,14 @@ public sealed class AppleMusicClient(HttpClient http, AppleWebTokenProvider toke
                 return ProviderOutcome<string>.Success(catalogId);
             return ProviderOutcome<string>.Failure(new(ProviderErrorKind.NotSupported));
         });
+
+    private async Task<string> CatalogStorefrontAsync(ProviderExecutionContext context, CancellationToken cancellationToken)
+    {
+        if (settings == null || context.Account is not { ProviderId: ProviderId } account)
+            return AppleMusicCredential.DefaultStorefront;
+        return AppleMusicCredential.NormalizeStorefront(
+            await settings.GetTextAsync(account, "storefront", cancellationToken)) ?? AppleMusicCredential.DefaultStorefront;
+    }
 
     private static bool IsApiOrigin(Uri uri) => uri.Scheme == "https" && uri.Host == ApiOrigin.Host &&
         uri.Port == 443 && string.IsNullOrEmpty(uri.UserInfo);

@@ -216,12 +216,11 @@ public sealed class ExtensionController(
     }
 
     [HttpGet("packages/{packageId:guid}/session")]
-    public IActionResult SignedSessionStatus(Guid packageId)
+    public async Task<IActionResult> SignedSessionStatus(Guid packageId, CancellationToken cancellationToken = default)
     {
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
-        try { return Ok(_runtime.SignedSessionStatus(packageId)); }
-        catch (Exception exception) when (IsControlPlaneException(exception)) { return ControlPlaneError(exception); }
+        return await ControlPlaneAsync(async () => Ok(await _runtime.SignedSessionStatusAsync(packageId, cancellationToken)));
     }
 
     [HttpPost("packages/{packageId:guid}/session/start")]
@@ -399,7 +398,8 @@ public sealed class ExtensionController(
         UnauthorizedAccessException or
         ArgumentException or
         InvalidOperationException or
-        ExtensionSdkValidationException;
+        ExtensionSdkValidationException or
+        TimeoutException;
 
     private bool TryGetAdministrator(out AdminAuthSession session, out IActionResult? error)
     {
@@ -438,6 +438,8 @@ public sealed class ExtensionController(
             })
         }),
         UnauthorizedAccessException => StatusCode(StatusCodes.Status403Forbidden, new { error = exception.Message }),
+        TimeoutException => StatusCode(StatusCodes.Status503ServiceUnavailable,
+            new { error = "The extension session is busy. Try again shortly." }),
         ArgumentException or InvalidOperationException or ExtensionSdkValidationException =>
             BadRequest(new { error = exception.Message }),
         _ => throw exception

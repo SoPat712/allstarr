@@ -161,6 +161,8 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         using var saved = JsonDocument.Parse(lease.Value);
         Assert.Equal("jp", saved.RootElement.GetProperty("storefront").GetString());
         Assert.Equal("fixture-private-token", saved.RootElement.GetProperty("mediaUserToken").GetString());
+        Assert.Equal("jp", ProviderAccountSettings.ReadText(persisted.SettingsJson, "storefront"));
+        Assert.DoesNotContain("mediaUserToken", persisted.SettingsJson, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -179,10 +181,23 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Equal("us", account.GetProperty("configuration").GetProperty("storefront").GetString());
         Assert.Contains(account.GetProperty("configuredFields").EnumerateArray(), item => item.GetString() == "musicUserToken");
         Assert.DoesNotContain("fixture-private-token", listed.RootElement.GetRawText());
+        long createdRevision;
+        await using (var before = await _factory.CreateDbContextAsync())
+        {
+            var initial = await before.ProviderAccounts.SingleAsync(item => item.Id == id);
+            Assert.Equal("""{"storefront":"us"}""", initial.SettingsJson);
+            createdRevision = initial.Revision;
+        }
         using var replacement = JsonDocument.Parse("""{"musicUserToken":"","storefront":"ca"}""");
         Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(id, new() { Secret = replacement.RootElement.Clone() }));
         await using var db = await _factory.CreateDbContextAsync();
         var saved = await db.ProviderAccounts.SingleAsync(item => item.Id == id);
+        Assert.Equal("""{"storefront":"ca"}""", saved.SettingsJson);
+        var reader = new ProviderAccountSettingsReader(_factory);
+        Assert.Equal("ca", await reader.GetTextAsync(new(id, "apple-musickit", ProviderAccountScope.Personal,
+            saved.Revision, ownerUserId: _userId), "storefront", default));
+        Assert.Null(await reader.GetTextAsync(new(id, "apple-musickit", ProviderAccountScope.Personal,
+            createdRevision, ownerUserId: _userId), "storefront", default));
         using var lease = await _secretStore.OpenAsync(saved.SecretReferenceId!.Value,
             new(_userId, $"provider-account:apple-musickit:{id:N}"));
         var credential = AppleMusicCredential.Read(lease.Value);

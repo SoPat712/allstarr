@@ -40,17 +40,11 @@ public sealed class ProviderHealthMigrationTests
             UpdatedAt = now,
             LastSeenAt = now
         });
-        db.ProviderAccounts.Add(new ProviderAccountRecord
-        {
-            Id = account,
-            ProviderId = "spotify",
-            OwnerUserId = user,
-            DisplayName = "Saved account",
-            Enabled = true,
-            Revision = 9,
-            CreatedAt = now,
-            UpdatedAt = now
-        });
+        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO provider_accounts (Id,OwnerUserId,ProviderId,DisplayName,Enabled,CreatedAt,UpdatedAt,Revision)
+            VALUES ({account},{user},'spotify','Saved account',1,{now.UtcTicks},{now.UtcTicks},9);
+            """);
         db.PlaylistLinks.Add(new PlaylistLinkRecord
         {
             Id = Guid.CreateVersion7(),
@@ -87,8 +81,9 @@ public sealed class ProviderHealthMigrationTests
         var secrets = new EncryptedSecretStore(factory, ring, keys, new SystemPlatformClock());
         var purpose = $"provider-account:spotify:{account:N}";
         var secret = await secrets.StoreAsync(user, purpose, Encoding.UTF8.GetBytes("fixture-credential"));
-        (await db.ProviderAccounts.SingleAsync()).SecretReferenceId = secret.Id;
-        await db.SaveChangesAsync();
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            UPDATE provider_accounts SET SecretReferenceId = {secret.Id} WHERE Id = {account};
+            """);
         await db.Database.ExecuteSqlInterpolatedAsync($"""
             INSERT INTO provider_health_samples (Id,ProviderAccountId,Capability,State,ObservedAt,ExpiresAt)
             VALUES ({Guid.NewGuid()},{account},'playlist','Healthy',{now.UtcTicks},{now.AddMinutes(5).UtcTicks});
@@ -104,8 +99,9 @@ public sealed class ProviderHealthMigrationTests
         var oldArchive = await CreateBaselineBackup(db, keys, database.StorageOptions.DataDirectory);
 
         await db.Database.MigrateAsync();
-        Assert.Equal(beforeSchema, await Schema(db));
+        AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.Equal(beforeRows, await Rows(db));
+        Assert.Equal("{}", await db.Database.SqlQuery<string>($"SELECT SettingsJson AS Value FROM provider_accounts").SingleAsync());
         foreach (var table in Removed)
             Assert.False(await db.Database.SqlQuery<bool>($"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name={table}) AS Value").SingleAsync());
         Assert.Equal(originalKeyRing, await File.ReadAllBytesAsync(keys.KeyRingPath));
@@ -117,7 +113,7 @@ public sealed class ProviderHealthMigrationTests
         var backups = new DurableBackupService(factory, database.StorageOptions, state, keys);
         var newBackup = await backups.CreateAsync();
         Assert.Equal("verified", newBackup.Status);
-        Assert.Equal("20261009043555_VolatileProviderHealth", newBackup.SchemaVersion);
+        Assert.Equal(db.Database.GetMigrations().Last(), newBackup.SchemaVersion);
         await using (var upload = File.OpenRead(oldArchive)) await backups.StageRestoreAsync(upload);
         await db.Database.CloseConnectionAsync();
         state.Set(DurableStorageReadiness.Initializing);
@@ -125,7 +121,7 @@ public sealed class ProviderHealthMigrationTests
             NullLogger<DurableStorageInitializer>.Instance, backups).StartAsync(default);
         Assert.Equal(DurableStorageReadiness.Ready, state.GetSnapshot().Readiness);
         await using var restored = await factory.CreateDbContextAsync();
-        Assert.Equal(beforeSchema, await Schema(restored));
+        AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal(originalKeyRing, await File.ReadAllBytesAsync(keys.KeyRingPath));
         using var restoredCredential = await new EncryptedSecretStore(factory, new FileSecretKeyRingProvider(keys), keys,
@@ -137,6 +133,16 @@ public sealed class ProviderHealthMigrationTests
     {
         public AllstarrDbContext CreateDbContext() => new(options);
         public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
+    }
+
+    private static void AssertSchemaPreserved(string[] before, string[] after)
+    {
+        const string accounts = "table|provider_accounts|";
+        Assert.Equal(before.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal)),
+            after.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal)));
+        var original = before.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
+        var upgraded = after.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
+        Assert.Equal(original, upgraded.Replace(", \"SettingsJson\" TEXT NOT NULL DEFAULT '{}'", "", StringComparison.Ordinal));
     }
 
     private static async Task<string[]> Schema(AllstarrDbContext db)
@@ -166,8 +172,10 @@ public sealed class ProviderHealthMigrationTests
             await using var reader = await command.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
-                var values = new object[reader.FieldCount];
-                reader.GetValues(values);
+                var values = Enumerable.Range(0, reader.FieldCount)
+                    .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson"))
+                    .Select(reader.GetValue)
+                    .ToArray();
                 rows.Add(name + ":" + JsonSerializer.Serialize(values));
             }
         }

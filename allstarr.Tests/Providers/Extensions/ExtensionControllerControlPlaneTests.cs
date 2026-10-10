@@ -163,7 +163,7 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
                      (Controller(Session(administrator: false)), StatusCodes.Status403Forbidden)
                  })
         {
-            Assert.Equal(status, StatusOf(controller.SignedSessionStatus(package)));
+            Assert.Equal(status, StatusOf(await controller.SignedSessionStatus(package)));
             Assert.Equal(status, StatusOf(await controller.StartSignedSession(package, new RevisionRequest(), default)));
             Assert.Equal(status, StatusOf(await controller.CompleteSignedSession(
                 package, new SignedSessionGrantRequest { Grant = "grant" }, default)));

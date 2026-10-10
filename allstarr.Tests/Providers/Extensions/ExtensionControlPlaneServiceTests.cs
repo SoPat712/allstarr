@@ -264,15 +264,10 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
                     ProviderCapabilityKind.Metadata, out activeCapability));
                 previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
                 uninstall = Task.Run(() => coordinator.UninstallAsync(previous.Id, previous.Revision));
-                for (var attempt = 0; attempt < 100; attempt++)
-                {
-                    var stored = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
-                    if (stored.State == ExtensionPackageState.Uninstalled) break;
-                    await Task.Delay(10);
-                }
-                Assert.Equal(ExtensionPackageState.Uninstalled,
+                await Task.WhenAny(uninstall, Task.Delay(TimeSpan.FromMilliseconds(200)));
+                Assert.False(uninstall.IsCompleted);
+                Assert.NotEqual(ExtensionPackageState.Uninstalled,
                     (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id).State);
-                await Task.WhenAny(uninstall, Task.Delay(TimeSpan.FromSeconds(1)));
             }
             finally
             {
@@ -280,6 +275,8 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
                 package = await activation.WaitAsync(TimeSpan.FromSeconds(20));
                 if (uninstall != null) await uninstall.WaitAsync(TimeSpan.FromSeconds(20));
             }
+            Assert.Equal(ExtensionPackageState.Uninstalled,
+                (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id).State);
         }
         else
         {
@@ -343,9 +340,12 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
                 new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
             new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+        var runtimeState = Path.Combine(_root, "extensions", ".runtime", package.ExtensionId);
         package = await coordinator.ActivateAsync(package.Id, package.Revision);
 
-        Assert.Equal(ExtensionSessionStates.SignedOut, coordinator.SignedSessionStatus(package.Id).State);
+        Assert.Equal(ExtensionSessionStates.SignedOut, (await coordinator.SignedSessionStatusAsync(package.Id)).State);
+        Assert.Single(Directory.GetFiles(Path.Combine(runtimeState, "sessions", "local"), "signed-session-*.protected"));
+        Assert.Empty(Directory.GetFiles(runtimeState, "signed-session-*.protected"));
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
             coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision - 1));
         var pending = await coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision);
@@ -363,7 +363,9 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
             coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision));
-        Assert.Throws<KeyNotFoundException>(() => coordinator.SignedSessionStatus(package.Id));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => coordinator.SignedSessionStatusAsync(package.Id));
+        package = await coordinator.UninstallAsync(package.Id, package.Revision);
+        Assert.False(Directory.Exists(runtimeState));
 
         await using var db = await _factory.CreateDbContextAsync();
         var events = await db.ExtensionLogs.AsNoTracking()

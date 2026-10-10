@@ -79,6 +79,7 @@ public sealed class ProviderAccountRecord
         ? ProviderAccountScope.Personal
         : ProviderAccountScope.Shared;
     public Guid? SecretReferenceId { get; set; }
+    public string SettingsJson { get; set; } = "{}";
     public bool Enabled { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

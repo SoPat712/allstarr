@@ -146,6 +146,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.ProviderId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.DisplayName).HasMaxLength(200).IsRequired();
+            entity.Property(item => item.SettingsJson).HasMaxLength(8192).IsRequired().HasDefaultValue("{}");
             entity.Ignore(item => item.Scope);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.ProviderId, item.OwnerUserId });

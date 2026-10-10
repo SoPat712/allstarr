@@ -881,15 +881,18 @@ public class ProviderStatusManager
         var client = _services?.GetService<AppleMusicClient>();
         if (client == null) return new(false, "probe_not_available");
         var token = SecretValue(accountSecrets, "musicusertoken", "mediausertoken");
-        var storefront = SecretValue(accountSecrets, "storefront") ?? "us";
-        var credential = token == null ? null : AppleMusicCredential.Read(JsonSerializer.SerializeToUtf8Bytes(new { MusicUserToken = token, Storefront = storefront }));
+        var configuredStorefront = SecretValue(accountSecrets, "storefront") ?? AppleMusicCredential.DefaultStorefront;
+        var credential = token == null ? null : AppleMusicCredential.Read(JsonSerializer.SerializeToUtf8Bytes(new { MusicUserToken = token, Storefront = configuredStorefront }));
         if (accountSecrets != null && credential == null) return new(false, "missing_provider_account_secret");
+        var storefront = credential?.Storefront ?? AppleMusicCredential.NormalizeStorefront(configuredStorefront) ??
+                         AppleMusicCredential.DefaultStorefront;
         var personal = capability == ProviderCapabilities.Playlist && credential != null;
+        var types = capability == ProviderCapabilities.Playlist ? "playlists" : "songs";
         try
         {
             var response = await client.SendAsync(personal ? credential : null,
-                personal ? "v1/me/library/playlists?limit=1" : capability == ProviderCapabilities.Playlist
-                    ? "v1/catalog/us/search?term=music&types=playlists&limit=1" : "v1/catalog/us/search?term=music&types=songs&limit=1", cancellationToken);
+                personal ? "v1/me/library/playlists?limit=1" : $"v1/catalog/{storefront}/search?term=music&types={types}&limit=1",
+                cancellationToken);
             return new(response.Outcome.IsSuccess, response.Error?.Code);
         }
         catch (AppleWebTokenUnavailableException) { return new(false, "apple-web-token-unavailable"); }

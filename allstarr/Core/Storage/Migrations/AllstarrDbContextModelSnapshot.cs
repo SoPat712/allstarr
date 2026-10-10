@@ -3634,6 +3634,13 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid?>("SecretReferenceId")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(8192)
+                        .HasColumnType("TEXT")
+                        .HasDefaultValue("{}");
+
                     b.Property<long>("UpdatedAt")
                         .HasColumnType("INTEGER");
 

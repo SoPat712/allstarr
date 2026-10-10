@@ -188,6 +188,14 @@ public static class SpotiFlacExtensionCompatibility
 
     public const string RuntimeAdapterScript = """
         var _spotiflacExtension = _registeredExtension;
+        var _allstarrInitializedSettings = null;
+        function _allstarrInitialize(settings) {
+          var fingerprint = JSON.stringify(settings);
+          if (fingerprint === _allstarrInitializedSettings) return true;
+          var result = _spotiflacExtension.initialize(settings);
+          _allstarrInitializedSettings = fingerprint;
+          return result;
+        }
         function _allstarrPrepareInvocation() {
           if (!_spotiflacExtension || typeof _spotiflacExtension.initialize !== 'function') return;
           var settings = {};
@@ -200,7 +208,7 @@ public static class SpotiFlacExtensionCompatibility
             try { settings[keys[i]] = JSON.parse(String(value)); }
             catch (_) { settings[keys[i]] = String(value); }
           }
-          _spotiflacExtension.initialize(settings);
+          _allstarrInitialize(settings);
         }
         function _sfArray(value) {
           if (Array.isArray(value)) return value;
@@ -296,7 +304,7 @@ public static class SpotiFlacExtensionCompatibility
             trackCount: Number(value.total_tracks || (value.tracks && value.tracks.length) || 0), sourceETag: null };
         }
         _registeredExtension = {
-          initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _spotiflacExtension.initialize(settings || {}) : true; },
+          initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _allstarrInitialize(settings || {}) : true; },
           searchTracks: function(request) { return _sfSearch(request, 'tracks', _sfTrack); },
           getTrack: function(request) {
             var id = String(request.id);

@@ -29,7 +29,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     public ProviderPlaylistMutationSupport MutationSupport { get; } = new(false, false);
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
-        ProviderExecutionContext context, ProviderUserPlaylistsRequest request) => ExecuteAsync(context, async (credential, ct) =>
+        ProviderExecutionContext context, ProviderUserPlaylistsRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
     {
         if (!TryOffset(request.Page.Cursor, out var offset)) return FailurePage();
         var limit = Math.Clamp(request.Page.Limit, 1, 25);
@@ -47,13 +47,13 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     });
 
     public Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(
-        ProviderExecutionContext context, ProviderPlaylistTracksRequest request) => ExecuteAsync(context, async (credential, ct) =>
+        ProviderExecutionContext context, ProviderPlaylistTracksRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
     {
         context.RequireResourceOwner(request.PlaylistId, ProviderResourceKind.Playlist);
         if (!TryOffset(request.Page.Cursor, out var offset))
             return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(new(ProviderErrorKind.PermanentFailure));
         var id = Uri.EscapeDataString(request.PlaylistId.Value);
-        var metadata = await SendAsync(credential, $"{PlaylistRoot(request.PlaylistId.Value, credential)}/{id}", ct);
+        var metadata = await SendAsync(credential, $"{PlaylistRoot(request.PlaylistId.Value, storefront)}/{id}", ct);
         if (!metadata.Outcome.IsSuccess) return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(metadata.Outcome.Error!);
         try
         {
@@ -65,7 +65,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
 
             var limit = Math.Clamp(request.Page.Limit, 1, 25);
             var tracksResult = await SendAsync(credential,
-                $"{PlaylistRoot(request.PlaylistId.Value, credential)}/{id}/tracks?limit={limit}&offset={offset}", ct);
+                $"{PlaylistRoot(request.PlaylistId.Value, storefront)}/{id}/tracks?limit={limit}&offset={offset}", ct);
             if (!tracksResult.Outcome.IsSuccess) return ProviderOutcome<ProviderPlaylistTrackPage>.Failure(tracksResult.Outcome.Error!);
             using var tracksDocument = JsonDocument.Parse(tracksResult.Body!);
             var tracks = new List<ProviderPlaylistTrack>();
@@ -88,14 +88,14 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     }, AppleMusicKitMetadataCapabilityAdapter.IsLibrary(request.PlaylistId.Value));
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(
-        ProviderExecutionContext context, ProviderPlaylistSearchRequest request) => ExecuteAsync(context, async (credential, ct) =>
+        ProviderExecutionContext context, ProviderPlaylistSearchRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
     {
         if (string.IsNullOrWhiteSpace(request.Query) || !TryOffset(request.Page.Cursor, out var offset))
             return FailurePage();
 
         var limit = Math.Clamp(request.Page.Limit, 1, 25);
         var type = credential == null ? "playlists" : "library-playlists";
-        var relative = (credential == null ? "v1/catalog/us/search?term=" : "v1/me/library/search?term=") + Uri.EscapeDataString(request.Query.Trim()) +
+        var relative = (credential == null ? $"v1/catalog/{storefront}/search?term=" : "v1/me/library/search?term=") + Uri.EscapeDataString(request.Query.Trim()) +
                        "&types=" + type +
                        "&limit=" + limit.ToString(System.Globalization.CultureInfo.InvariantCulture) +
                        "&offset=" + offset.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -125,13 +125,13 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     }, context.Account != null);
 
     public Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
-        ProviderExecutionContext context, ProviderPlaylistArtworkRequest request) => ExecuteAsync(context, async (credential, ct) =>
+        ProviderExecutionContext context, ProviderPlaylistArtworkRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
     {
         var resource = request.Artwork.ResourceId;
         if (resource == null || resource.ProviderId != StableProviderId || resource.ResourceKind != ProviderResourceKind.Playlist)
             return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.PermanentFailure));
         var metadata = await SendAsync(credential,
-            $"{PlaylistRoot(resource.Value, credential)}/{Uri.EscapeDataString(resource.Value)}", ct);
+            $"{PlaylistRoot(resource.Value, storefront)}/{Uri.EscapeDataString(resource.Value)}", ct);
         if (!metadata.Outcome.IsSuccess)
             return ProviderOutcome<ProviderPlaylistArtwork>.Failure(metadata.Outcome.Error!);
         Uri? imageUri = null;
@@ -189,15 +189,15 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
         [ProviderAccountScope.Personal], supportsPublicRead: true);
 
     private Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context,
-        Func<AppleMusicCredential?, CancellationToken, Task<ProviderOutcome<T>>> operation, bool personal = true) =>
+        Func<AppleMusicCredential?, string, CancellationToken, Task<ProviderOutcome<T>>> operation, bool personal = true) =>
         _client.ExecuteAsync(context, personal, operation);
 
     private Task<AppleMusicHttpResult> SendAsync(AppleMusicCredential? credential, string relative, CancellationToken ct) =>
         _client.SendAsync(credential, relative, ct);
 
-    private static string PlaylistRoot(string id, AppleMusicCredential? credential) =>
+    private static string PlaylistRoot(string id, string storefront) =>
         AppleMusicKitMetadataCapabilityAdapter.IsLibrary(id) ? "v1/me/library/playlists" :
-            $"v1/catalog/{credential?.Storefront ?? "us"}/playlists";
+            $"v1/catalog/{storefront}/playlists";
 
     private async Task<ProviderOutcome<ProviderPlaylistArtwork>> DownloadArtworkAsync(Uri uri, int maximumBytes, CancellationToken ct)
     {

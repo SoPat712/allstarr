@@ -12,13 +12,14 @@ internal static class AppleProviderTestFactory
     public static readonly string Bearer = "eyJhbGciOiJFUzI1NiJ9." +
         Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(new { exp = DateTimeOffset.UtcNow.AddDays(1).ToUnixTimeSeconds() }))
             .TrimEnd('=').Replace('+', '-').Replace('/', '_') + ".c2lnbmF0dXJl";
-    public static AppleMusicClient Client(HttpClient? http = null, IProviderAccountSecretAccessor? secrets = null) => new(
+    public static AppleMusicClient Client(HttpClient? http = null, IProviderAccountSecretAccessor? secrets = null,
+        IProviderAccountSettingsReader? settings = null) => new(
         http ?? new HttpClient(new Handler(_ => throw new InvalidOperationException("Unexpected Apple API request."))),
         new AppleWebTokenProvider(new HttpClient(new Handler(request => new(HttpStatusCode.OK)
         {
             Content = new StringContent(request.RequestUri!.AbsolutePath == "/"
                 ? "<script src=\"/assets/index-test.js\"></script>" : $"const token=\"{Bearer}\";")
-        }))), secrets ?? new Secrets());
+        }))), secrets ?? new Secrets(), settings);
     public static AppleMusicKitMetadataCapabilityAdapter Metadata(HttpClient http, IProviderAccountSecretAccessor secrets) => new(Client(http, secrets));
     public static AppleMusicKitPlaylistCapabilityAdapter Playlist(HttpClient http, IProviderAccountSecretAccessor secrets) => new(Client(http, secrets), http);
     private sealed class Secrets : IProviderAccountSecretAccessor

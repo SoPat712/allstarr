@@ -14,6 +14,7 @@ public sealed class MigrationModelSnapshotTests
         using var context = new AllstarrDbContext(options);
 
         Assert.False(context.Database.HasPendingModelChanges());
-        Assert.Equal(["20261008235223_UsersBaseline", "20261009043555_VolatileProviderHealth"], context.Database.GetMigrations());
+        Assert.Equal(["20261008235223_UsersBaseline", "20261009043555_VolatileProviderHealth",
+            "20261010035223_ProviderAccountSettings"], context.Database.GetMigrations());
     }
 }
