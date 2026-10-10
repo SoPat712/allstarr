@@ -754,10 +754,11 @@ public sealed class ListeningHistoryImportService(
             var recordingMbids = newRows.Select(item => item.RecordingMbid).OfType<string>().Distinct().ToArray();
             var resolvedMbids = recordingMbids.Length == 0
                 ? []
-                : await db.CanonicalRecordings.AsNoTracking().Where(item =>
-                        item.MusicBrainzRecordingId != null &&
-                        recordingMbids.Contains(item.MusicBrainzRecordingId))
-                    .Select(item => item.MusicBrainzRecordingId!).ToHashSetAsync(cancellationToken);
+                : await db.RecordingIdentifiers.AsNoTracking()
+                    .Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz &&
+                                   recordingMbids.Contains(item.Value))
+                    .Select(item => item.Value)
+                    .ToHashSetAsync(cancellationToken);
             DuplicateRows += existing.Count;
             NewRows += newRows.Length;
             ResolvedRows += newRows.LongCount(item =>

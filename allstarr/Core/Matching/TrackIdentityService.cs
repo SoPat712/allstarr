@@ -3,9 +3,7 @@ using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
-using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Matching;
 
@@ -136,21 +134,15 @@ public sealed class TrackIdentityService : ITrackIdentityService
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
-    private readonly IMusicBrainzCatalogRefreshQueue? _catalogRefreshQueue;
-    private readonly IOptions<MusicBrainzSettings>? _catalogSettings;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
-        IPlatformClock clock,
-        IMusicBrainzCatalogRefreshQueue? catalogRefreshQueue = null,
-        IOptions<MusicBrainzSettings>? catalogSettings = null)
+        IPlatformClock clock)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
-        _catalogRefreshQueue = catalogRefreshQueue;
-        _catalogSettings = catalogSettings;
     }
 
     public async Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
@@ -182,7 +174,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 normalizedMusicBrainzId,
                 cancellationToken);
             var created = record == null;
-            var enriched = false;
             var now = _clock.UtcNow;
             if (record == null)
             {
@@ -190,40 +181,33 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 {
                     Id = Guid.CreateVersion7(),
                     CreatedByUserId = userId,
-                    Isrc = normalizedIsrc,
-                    MusicBrainzRecordingId = normalizedMusicBrainzId,
                     IsProvisional = normalizedMusicBrainzId == null,
                     CreatedAt = now,
                     UpdatedAt = now
                 };
+                record.PublicId = CanonicalCatalogKeys.DefaultPublicId(record.Id);
                 context.CanonicalRecordings.Add(record);
             }
-            else
+            EnsureSignalsCompatible(record, normalizedIsrc, normalizedMusicBrainzId);
+            var enriched = AttachIdentifier(context, record, RecordingIdentifierKinds.Isrc, normalizedIsrc, "create", now) |
+                           AttachIdentifier(context, record, RecordingIdentifierKinds.MusicBrainz, normalizedMusicBrainzId, "create", now);
+            if (enriched)
             {
-                EnsureSignalsCompatible(record, normalizedIsrc, normalizedMusicBrainzId);
-                enriched = record.Isrc == null && normalizedIsrc != null ||
-                           record.MusicBrainzRecordingId == null && normalizedMusicBrainzId != null;
-                if (enriched)
-                {
-                    record.Isrc ??= normalizedIsrc;
-                    record.MusicBrainzRecordingId ??= normalizedMusicBrainzId;
-                    record.IsProvisional = record.MusicBrainzRecordingId == null;
-                    record.UpdatedAt = now;
-                    record.Revision++;
-                }
+                record.IsProvisional = Identifier(record, RecordingIdentifierKinds.MusicBrainz) == null;
+                record.UpdatedAt = now;
+                if (!created) record.Revision++;
             }
-            await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-                context, actor, record, now, cancellationToken);
-            AddAudit(
-                context, actor, correlationId,
-                "canonical-recording.create",
-                created ? "created" : enriched ? "enriched" : "already-exists",
-                new
-                {
-                    canonicalRecordingId = record.Id,
-                    hasIsrc = normalizedIsrc != null,
-                    hasMusicBrainzRecordingId = normalizedMusicBrainzId != null
-                });
+            if (created || enriched)
+                AddAudit(
+                    context, actor, correlationId,
+                    created ? "canonical-recording.create" : "canonical-recording.enrich",
+                    created ? "created" : "enriched",
+                    new
+                    {
+                        canonicalRecordingId = record.Id,
+                        hasIsrc = normalizedIsrc != null,
+                        hasMusicBrainzRecordingId = normalizedMusicBrainzId != null
+                    });
             try
             {
                 await context.SaveChangesAsync(cancellationToken);
@@ -232,30 +216,12 @@ public sealed class TrackIdentityService : ITrackIdentityService
             {
                 continue;
             }
-            return await CompleteCreationAsync(
-                actor, correlationId, record, created, cancellationToken);
+            return new CanonicalRecordingCreationResult(ToIdentity(record), created);
         }
     }
 
     private static bool IsConcurrentRecordingWrite(DbUpdateException error) =>
         error is DbUpdateConcurrencyException || DbErrors.IsUniqueViolation(error);
-
-    private async Task<CanonicalRecordingCreationResult> CompleteCreationAsync(
-        ProviderActorContext actor,
-        string correlationId,
-        CanonicalRecordingRecord recording,
-        bool created,
-        CancellationToken cancellationToken)
-    {
-        if (_catalogRefreshQueue != null && _catalogSettings?.Value.Enabled != false &&
-            recording.MusicBrainzRecordingId is { } mbid)
-        {
-            await _catalogRefreshQueue.EnqueueRecordingAsync(
-                actor, mbid, correlationId, cancellationToken);
-        }
-
-        return new CanonicalRecordingCreationResult(ToIdentity(recording), created);
-    }
 
     public async Task<TrackIdentityLinkResult> LinkAsync(
         ProviderExecutionContext executionContext,
@@ -322,12 +288,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
             UpdatedAt = now
         };
         context.ProviderTrackIdentities.Add(link);
-        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
-            context,
-            executionContext.Actor,
-            link,
-            now,
-            cancellationToken);
         AddLinkAudit(context, executionContext, request, "created", link.Id, null);
 
         try
@@ -555,12 +515,6 @@ public sealed class TrackIdentityService : ITrackIdentityService
         bool concurrent = false)
     {
         EnsureExactExternalId(existing, request.ExternalId.Value);
-        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
-            context,
-            executionContext.Actor,
-            existing,
-            _clock.UtcNow,
-            cancellationToken);
         var sameCanonical = existing.CanonicalRecordingId == request.CanonicalRecordingId;
         var outcome = sameCanonical
             ? concurrent ? "concurrent-existing" : "already-linked"
@@ -712,9 +666,11 @@ public sealed class TrackIdentityService : ITrackIdentityService
         }
 
         var candidates = await context.CanonicalRecordings
-            .Where(item => (isrc != null && item.Isrc == isrc) ||
-                 (musicBrainzRecordingId != null &&
-                  item.MusicBrainzRecordingId == musicBrainzRecordingId))
+            .Include(item => item.Identifiers)
+            .Where(item => item.MergedIntoId == null && item.Identifiers.Any(identifier =>
+                isrc != null && identifier.Kind == RecordingIdentifierKinds.Isrc && identifier.Value == isrc ||
+                musicBrainzRecordingId != null && identifier.Kind == RecordingIdentifierKinds.MusicBrainz &&
+                identifier.Value == musicBrainzRecordingId))
             .ToListAsync(cancellationToken);
         return candidates.Count switch
         {
@@ -730,19 +686,48 @@ public sealed class TrackIdentityService : ITrackIdentityService
         string? isrc,
         string? musicBrainzRecordingId)
     {
-        if (isrc != null && existing.Isrc != null &&
-            !existing.Isrc.Equals(isrc, StringComparison.Ordinal))
+        var existingIsrc = Identifier(existing, RecordingIdentifierKinds.Isrc);
+        if (isrc != null && existingIsrc != null &&
+            !existingIsrc.Equals(isrc, StringComparison.Ordinal))
         {
             throw new InvalidOperationException("The ISRC conflicts with the existing canonical recording.");
         }
 
-        if (musicBrainzRecordingId != null && existing.MusicBrainzRecordingId != null &&
-            !existing.MusicBrainzRecordingId.Equals(musicBrainzRecordingId, StringComparison.Ordinal))
+        var existingMbid = Identifier(existing, RecordingIdentifierKinds.MusicBrainz);
+        if (musicBrainzRecordingId != null && existingMbid != null &&
+            !existingMbid.Equals(musicBrainzRecordingId, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "The MusicBrainz recording ID conflicts with the existing canonical recording.");
         }
     }
+
+    private static bool AttachIdentifier(
+        AllstarrDbContext context,
+        CanonicalRecordingRecord recording,
+        string kind,
+        string? value,
+        string source,
+        DateTimeOffset now)
+    {
+        if (value == null) return false;
+        if (recording.Identifiers.Any(item => item.Kind == kind && item.Value == value)) return false;
+        var row = new RecordingIdentifierRecord
+        {
+            Id = Guid.CreateVersion7(),
+            RecordingId = recording.Id,
+            Kind = kind,
+            Value = value,
+            Source = source,
+            CreatedAt = now
+        };
+        recording.Identifiers.Add(row);
+        context.RecordingIdentifiers.Add(row);
+        return true;
+    }
+
+    private static string? Identifier(CanonicalRecordingRecord recording, string kind) =>
+        recording.Identifiers.FirstOrDefault(item => item.Kind == kind)?.Value;
 
     private static IReadOnlyList<ProviderTrackIdentityRecord> PreferAccountScope(
         IReadOnlyList<ProviderTrackIdentityRecord> candidates,
@@ -904,8 +889,8 @@ public sealed class TrackIdentityService : ITrackIdentityService
     private static CanonicalRecordingIdentity ToIdentity(CanonicalRecordingRecord record) => new(
         record.Id,
         record.CreatedByUserId,
-        record.Isrc,
-        record.MusicBrainzRecordingId,
+        Identifier(record, RecordingIdentifierKinds.Isrc),
+        Identifier(record, RecordingIdentifierKinds.MusicBrainz),
         record.Revision);
 
     private static TrackIdentityResolution ToResolution(ProviderTrackIdentityRecord record) => new(

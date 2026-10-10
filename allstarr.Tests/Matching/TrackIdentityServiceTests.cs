@@ -1,15 +1,11 @@
 using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
-using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
-using allstarr.Models.Settings;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.Extensions.Options;
-using Moq;
 
 namespace allstarr.Tests;
 
@@ -55,14 +51,12 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     [Fact]
     public async Task DisabledCatalog_CreatesIdentityWithoutEnqueuingRemoteWork()
     {
-        var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
-        var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object,
-            Options.Create(new MusicBrainzSettings { Enabled = false }));
-        var created = await service.CreateRecordingAsync(Actor(_userA), "disabled-catalog",
+        var created = await _service.CreateRecordingAsync(Actor(_userA), "disabled-catalog",
             musicBrainzRecordingId: "16ba7915-2acf-42b2-8c87-ed67090dca91");
         Assert.True(created.Created);
-        Assert.NotNull(created.Recording.MusicBrainzRecordingId);
-        queue.VerifyNoOtherCalls();
+        Assert.Equal("16ba7915-2acf-42b2-8c87-ed67090dca91", created.Recording.MusicBrainzRecordingId);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.Jobs.ToListAsync());
     }
 
     [Fact]
@@ -95,17 +89,10 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         Assert.Equal(3, links.Count);
         Assert.All(links, link => Assert.Matches("^[0-9a-f]{64}$", link.ExternalIdHash));
         Assert.Single(await context.CanonicalRecordings.ToListAsync());
-        var aliases = await context.CanonicalCatalogAliases
-            .Where(item => item.EntityKind == CanonicalCatalogEntityKind.Recording)
-            .ToListAsync();
-        Assert.Equal(4, aliases.Count);
         Assert.Equal(
             ["3135556", "qobuz-track-9", "spotify-track-1"],
-            aliases.Where(item => item.Namespace.StartsWith("provider:", StringComparison.Ordinal))
-                .Select(item => item.ExternalId)
-                .Order()
-                .ToArray());
-        Assert.All(aliases, alias => Assert.Equal(recording.Recording.Id, alias.CanonicalEntityId));
+            links.Select(item => item.ExternalId).Order().ToArray());
+        Assert.Equal(["isrc:USRC17607839"], await IdentifierPairs(context, recording.Recording.Id));
     }
 
     [Fact]
@@ -139,32 +126,22 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task RecordingWithMusicBrainzIdentity_QueuesIdempotentCatalogDiscovery()
+    public async Task RecordingWithMusicBrainzIdentity_StoresIdentifierIdempotently()
     {
         const string recordingMbid = "11111111-1111-4111-8111-111111111111";
         var actor = Actor(_userA);
-        var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
-        queue.Setup(item => item.EnqueueRecordingAsync(
-                actor,
-                recordingMbid,
-                "catalog-discovery",
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
-        var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object);
 
-        var first = await service.CreateRecordingAsync(
+        var first = await _service.CreateRecordingAsync(
             actor, "catalog-discovery", musicBrainzRecordingId: recordingMbid);
-        var repeated = await service.CreateRecordingAsync(
+        var repeated = await _service.CreateRecordingAsync(
             actor, "catalog-discovery", musicBrainzRecordingId: recordingMbid);
 
         Assert.True(first.Created);
         Assert.False(repeated.Created);
         Assert.Equal(first.Recording.Id, repeated.Recording.Id);
-        queue.Verify(item => item.EnqueueRecordingAsync(
-            actor,
-            recordingMbid,
-            "catalog-discovery",
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(["musicbrainz:" + recordingMbid], await IdentifierPairs(db, first.Recording.Id));
+        Assert.Empty(await db.Jobs.ToListAsync());
     }
 
     [Theory]
@@ -180,13 +157,8 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         var link = await _service.LinkAsync(Context(actor, "deezer"), new(
             first.Recording.Id, Track("deezer", "pinned-track"), ProviderIdentityScope.Catalog,
             ProviderIdentityVerification.Pinned, "manual-review", 1));
-        var queue = new Mock<IMusicBrainzCatalogRefreshQueue>(MockBehavior.Strict);
-        queue.Setup(item => item.EnqueueRecordingAsync(actor, mbid, "enrich", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
-        var service = new TrackIdentityService(_factory, _storageState, _clock, queue.Object);
-
-        var enriched = await service.CreateRecordingAsync(actor, "enrich", isrc, mbid);
-        var repeated = await service.CreateRecordingAsync(actor, "enrich", isrc, mbid);
+        var enriched = await _service.CreateRecordingAsync(actor, "enrich", isrc, mbid);
+        var repeated = await _service.CreateRecordingAsync(actor, "enrich", isrc, mbid);
 
         Assert.False(enriched.Created);
         Assert.Equal(first.Recording.Id, enriched.Recording.Id);
@@ -194,14 +166,13 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         Assert.Equal(mbid, enriched.Recording.MusicBrainzRecordingId);
         Assert.Equal(first.Recording.Revision + 1, enriched.Recording.Revision);
         Assert.Equal(enriched.Recording, repeated.Recording);
-        queue.Verify(item => item.EnqueueRecordingAsync(actor, mbid, "enrich", It.IsAny<CancellationToken>()), Times.Exactly(2));
         await using var db = await _factory.CreateDbContextAsync();
         Assert.False((await db.CanonicalRecordings.SingleAsync()).IsProvisional);
         var pinned = await db.ProviderTrackIdentities.SingleAsync();
         Assert.Equal(link.LinkId, pinned.Id);
         Assert.Equal(first.Recording.Id, pinned.CanonicalRecordingId);
         Assert.Equal(ProviderIdentityVerification.Pinned, pinned.Verification);
-        Assert.Equal(3, await db.CanonicalCatalogAliases.CountAsync());
+        Assert.Equal(["isrc:" + isrc, "musicbrainz:" + mbid], await IdentifierPairs(db, first.Recording.Id));
         Assert.Single(await db.AuditEvents.Where(item => item.Outcome == "enriched").ToArrayAsync());
     }
 
@@ -212,31 +183,17 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         const string mbid = "11111111-1111-4111-8111-111111111111";
         var actor = Actor(_userA);
         var first = await _service.CreateRecordingAsync(actor, "first", isrc);
-        var other = await _service.CreateRecordingAsync(actor, "other");
-        await using (var db = await _factory.CreateDbContextAsync())
-        {
-            db.CanonicalCatalogAliases.Add(new CanonicalCatalogAliasRecord
-            {
-                Id = Guid.CreateVersion7(),
-                EntityKind = CanonicalCatalogEntityKind.Recording,
-                CanonicalEntityId = other.Recording.Id,
-                Namespace = "musicbrainz",
-                ExternalId = mbid,
-                ExternalIdHash = CanonicalCatalogKeys.Hash(mbid),
-                CreatedAt = _clock.UtcNow,
-                LastSeenAt = _clock.UtcNow
-            });
-            await db.SaveChangesAsync();
-        }
+        var other = await _service.CreateRecordingAsync(actor, "other", musicBrainzRecordingId: mbid);
 
-        await Assert.ThrowsAsync<CanonicalCatalogAliasConflictException>(() =>
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
             _service.CreateRecordingAsync(actor, "conflicting-alias", isrc, mbid));
 
         await using var verification = await _factory.CreateDbContextAsync();
         var unchanged = await verification.CanonicalRecordings.SingleAsync(item => item.Id == first.Recording.Id);
-        Assert.Null(unchanged.MusicBrainzRecordingId);
         Assert.True(unchanged.IsProvisional);
         Assert.Equal(first.Recording.Revision, unchanged.Revision);
+        Assert.Equal(["isrc:" + isrc], await IdentifierPairs(verification, first.Recording.Id));
+        Assert.Equal(["musicbrainz:" + mbid], await IdentifierPairs(verification, other.Recording.Id));
         Assert.Empty(await verification.AuditEvents.Where(item => item.Outcome == "enriched").ToArrayAsync());
     }
 
@@ -269,8 +226,8 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
         var recording = await db.CanonicalRecordings.SingleAsync();
         Assert.All(succeeded, item => Assert.Equal(recording.Id, item.Recording.Id));
         if (original != null) Assert.Equal(original.Recording.Id, recording.Id);
-        Assert.Equal(2, await db.CanonicalCatalogAliases.CountAsync());
-        Assert.All(await db.CanonicalCatalogAliases.ToArrayAsync(), item => Assert.Equal(recording.Id, item.CanonicalEntityId));
+        Assert.Equal(2, await db.RecordingIdentifiers.CountAsync());
+        Assert.All(await db.RecordingIdentifiers.ToArrayAsync(), item => Assert.Equal(recording.Id, item.RecordingId));
         Assert.Equal(existing ? 1 : 0, await db.AuditEvents.CountAsync(item => item.Outcome == "enriched"));
     }
 
@@ -382,14 +339,13 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
 
         await using (var database = await _factory.CreateDbContextAsync())
         {
-            var aliases = await database.CanonicalCatalogAliases
+            var links = await database.ProviderTrackIdentities
                 .Where(item => item.ExternalId == "overlapping-id")
-                .OrderBy(item => item.Namespace)
                 .ToListAsync();
-            Assert.Equal(2, aliases.Count);
-            Assert.Equal(2, aliases.Select(item => item.Namespace).Distinct().Count());
-            Assert.Contains(aliases, item => item.CanonicalEntityId == catalogRecording.Recording.Id);
-            Assert.Contains(aliases, item => item.CanonicalEntityId == accountRecording.Recording.Id);
+            Assert.Equal(2, links.Count);
+            Assert.Equal(2, links.Select(item => item.Scope).Distinct().Count());
+            Assert.Contains(links, item => item.CanonicalRecordingId == catalogRecording.Recording.Id);
+            Assert.Contains(links, item => item.CanonicalRecordingId == accountRecording.Recording.Id);
         }
 
         var forgedSnapshot = new ProviderAccountContext(
@@ -541,22 +497,9 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
 
         await using (var database = await _factory.CreateDbContextAsync())
         {
-            var aliases = await database.CanonicalCatalogAliases
-                .Where(item => item.CanonicalEntityId == first.Recording.Id)
-                .OrderBy(item => item.Namespace)
-                .ToListAsync();
-            Assert.Collection(
-                aliases,
-                item =>
-                {
-                    Assert.Equal("isrc", item.Namespace);
-                    Assert.Equal("USRC17607839", item.ExternalId);
-                },
-                item =>
-                {
-                    Assert.Equal("musicbrainz", item.Namespace);
-                    Assert.Equal(mbid.ToString("D"), item.ExternalId);
-                });
+            Assert.Equal(
+                ["isrc:USRC17607839", "musicbrainz:" + mbid.ToString("D")],
+                await IdentifierPairs(database, first.Recording.Id));
             Assert.False(await database.CanonicalRecordings
                 .Where(item => item.Id == first.Recording.Id)
                 .Select(item => item.IsProvisional)
@@ -729,6 +672,13 @@ public sealed class TrackIdentityServiceTests : IAsyncLifetime
 
     private static string Hash(string value) => Convert.ToHexString(
         SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
+
+    private static async Task<string[]> IdentifierPairs(AllstarrDbContext db, Guid recordingId) =>
+        await db.RecordingIdentifiers
+            .Where(item => item.RecordingId == recordingId)
+            .OrderBy(item => item.Kind)
+            .Select(item => item.Kind + ":" + item.Value)
+            .ToArrayAsync();
 
     public async Task DisposeAsync() => await _database.DisposeAsync();
 

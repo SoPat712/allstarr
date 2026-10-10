@@ -62,6 +62,11 @@ public interface ILibraryIndexService
         ProtocolExecutionContext executionContext,
         string backendLibraryId,
         CancellationToken cancellationToken = default);
+
+    Task RecordScanSummaryAsync(
+        ProtocolExecutionContext executionContext,
+        LibraryCatalogScanResult result,
+        CancellationToken cancellationToken = default);
 }
 
 public sealed class LibraryIndexService : ILibraryIndexService
@@ -123,6 +128,7 @@ public sealed class LibraryIndexService : ILibraryIndexService
             cancellationToken);
         var now = _clock.UtcNow;
         var created = record == null;
+        var previous = created ? null : TrackFingerprint(record!);
         record ??= new LibraryTrackRecord
         {
             Id = Guid.CreateVersion7(),
@@ -158,61 +164,88 @@ public sealed class LibraryIndexService : ILibraryIndexService
         }
 
         var enrichment = "unchanged";
-        if (!record.CanonicalRecordingId.HasValue)
-        {
-            var aliasNamespace = CanonicalCatalogKeys.NativeTrackNamespace(record.Protocol, record.BackendInstanceId);
-            var itemHash = CanonicalCatalogKeys.Hash(record.BackendItemId);
-            record.CanonicalRecordingId = await db.CanonicalCatalogAliases.AsNoTracking()
-                .Where(alias => alias.Namespace == aliasNamespace &&
-                    alias.EntityKind == CanonicalCatalogEntityKind.Recording &&
-                    alias.ExternalIdHash == itemHash && alias.ExternalId == record.BackendItemId)
-                .Select(alias => (Guid?)alias.CanonicalEntityId).SingleOrDefaultAsync(cancellationToken);
-        }
         if (Guid.TryParse(record.MusicBrainzRecordingId, out var mbid) && mbid != Guid.Empty &&
-            (!record.CanonicalRecordingId.HasValue || await db.CanonicalRecordings.AsNoTracking().AnyAsync(
-                item => item.Id == record.CanonicalRecordingId &&
-                    item.MusicBrainzRecordingId == mbid.ToString("D"), cancellationToken)))
+            (!record.CanonicalRecordingId.HasValue || await db.RecordingIdentifiers.AsNoTracking().AnyAsync(
+                item => item.RecordingId == record.CanonicalRecordingId &&
+                    item.Kind == RecordingIdentifierKinds.MusicBrainz &&
+                    item.Value == mbid.ToString("D"), cancellationToken)))
         {
             try
             {
                 var identity = await _identities.CreateRecordingAsync(
                     executionContext.RequireActor(), executionContext.CorrelationId,
                     record.Isrc, mbid.ToString("D"), cancellationToken);
-                record.CanonicalRecordingId ??= identity.Recording.Id;
-                enrichment = "linked";
+                if (record.CanonicalRecordingId != identity.Recording.Id)
+                {
+                    record.CanonicalRecordingId ??= identity.Recording.Id;
+                    enrichment = "linked";
+                }
             }
             catch (ArgumentException) { enrichment = "invalid-signals"; }
             catch (InvalidOperationException) { enrichment = "deferred"; }
         }
 
-        await CanonicalCatalogIdentityProjection.ProjectLibraryTrackAsync(
-            db,
-            executionContext.RequireActor(),
-            record,
-            now,
-            cancellationToken);
+        var changed = created || previous != TrackFingerprint(record) || enrichment != "unchanged";
+        if (changed)
+        {
+            db.AuditEvents.Add(new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = principal.UserId,
+                Category = "library-index",
+                Action = created ? "track.create" : "track.update",
+                Outcome = "succeeded",
+                CorrelationId = executionContext.CorrelationId,
+                DetailsJson = JsonSerializer.Serialize(new
+                {
+                    libraryTrackId = record.Id,
+                    backendLibraryId = input.BackendLibraryId,
+                    backendInstanceId = principal.BackendInstanceId,
+                    hasCanonicalRecording = record.CanonicalRecordingId.HasValue,
+                    canonicalEnrichment = enrichment
+                }),
+                CreatedAt = now
+            });
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        return Map(record);
+    }
 
+    public async Task RecordScanSummaryAsync(
+        ProtocolExecutionContext executionContext,
+        LibraryCatalogScanResult result,
+        CancellationToken cancellationToken = default)
+    {
+        if (executionContext.Principal == null || executionContext.Actor?.UserId == null)
+            throw new UnauthorizedAccessException("A linked user is required to access the library index.");
+        EnsureStorageReady();
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
-            ActorUserId = principal.UserId,
+            ActorUserId = executionContext.Actor.UserId,
             Category = "library-index",
-            Action = created ? "track.create" : "track.update",
+            Action = "scan.summary",
             Outcome = "succeeded",
             CorrelationId = executionContext.CorrelationId,
             DetailsJson = JsonSerializer.Serialize(new
             {
-                libraryTrackId = record.Id,
-                backendLibraryId = input.BackendLibraryId,
-                backendInstanceId = principal.BackendInstanceId,
-                hasCanonicalRecording = record.CanonicalRecordingId.HasValue,
-                canonicalEnrichment = enrichment
+                result.Seen,
+                result.Indexed,
+                result.SkippedPathless,
+                result.SkippedMalformed,
+                result.Pages
             }),
-            CreatedAt = now
+            CreatedAt = _clock.UtcNow
         });
         await db.SaveChangesAsync(cancellationToken);
-        return Map(record);
     }
+
+    private static string TrackFingerprint(LibraryTrackRecord record) =>
+        string.Join('\n',
+            record.FilePath, record.Title, record.Artist, record.Album, record.AlbumArtist,
+            record.DurationMilliseconds, record.Isrc, record.MusicBrainzRecordingId,
+            record.CanonicalRecordingId, record.ProviderIdsJson, record.SourceModifiedAt.UtcTicks);
 
     public async Task<IReadOnlyList<IndexedLibraryTrack>> ListAsync(
         ProtocolExecutionContext executionContext,

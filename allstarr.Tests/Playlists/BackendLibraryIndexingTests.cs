@@ -303,5 +303,8 @@ public sealed class BackendLibraryIndexingTests
 
         public Task<IReadOnlyList<LocalTrackMatchCandidate>> GetMatchCandidatesAsync(ProtocolExecutionContext executionContext, string backendLibraryId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LocalTrackMatchCandidate>>([]);
+
+        public Task RecordScanSummaryAsync(ProtocolExecutionContext executionContext, LibraryCatalogScanResult result, CancellationToken cancellationToken = default) =>
+            Task.CompletedTask;
     }
 }

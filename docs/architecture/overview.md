@@ -110,25 +110,18 @@ Authenticated search keeps successful tracks, albums, and artists when another p
 
 Playlist snapshot persistence serializes writes for each provider account with a shared process-local lock. Source collection finishes before that lock is acquired, and the database transaction starts only after acquisition. Run one Allstarr process for a deployment; the lock does not coordinate separate processes. Database conflict classification lives in `Core/Storage/DbErrors`, while each operation retains its own bounded retry policy.
 
-## Canonical catalog ingestion
+## Recording identity
 
-`MusicBrainzService` is the single bounded client for MusicBrainz-compatible
-catalog sources. Public MusicBrainz and BrainzMash use the same `/ws/2`
-contract and feed the same validation, ingestion, matching, and reconciliation
-path. A deployment selects one endpoint without changing catalog semantics;
-source IDs and revisions keep caches and provenance separate.
-`MusicBrainzCatalogIngestService` turns a validated source hierarchy into
-shared artists, release groups, editions, release tracks, recordings,
-and ordered credits in one serializable SQLite transaction.
-`CanonicalCatalogEvidenceStore` remains the only writer for external aliases and
-source-stamped facts, whether called independently or inside graph ingestion.
-Repeated source payloads preserve IDs and do not create duplicate facts.
-`MusicBrainzCatalogDiscoveryJobHandler` expands one known recording into a
-validated, deduplicated set of no more than 50 editions. It enqueues one
-idempotent release-refresh job per edition; each refresh fetches a bounded
-hierarchy and passes it to the ingester through the existing durable worker.
-Metadata discovery, refresh, and reconciliation run outside playback; a source
-outage never invalidates an already accepted route.
+`TrackIdentityService` owns canonical recordings. Each recording has a stable
+`PublicId` (`ext-allstarr-song-{guid}`) assigned at creation, optional
+`MergedIntoId`, and zero or more `recording_identifiers` rows (ISRC and
+MusicBrainz recording IDs today). Identifier writes go through that owner;
+exact signals find or enrich one recording and never silently merge two.
+Provider track links remain on `provider_track_identities`. Allstarr does not
+mirror a MusicBrainz catalog graph. `MusicBrainzService` stays the bounded
+`/ws/2` client for later background lookups; a source outage never invalidates
+an already accepted route. Library scans write one `scan.summary` audit row
+plus one row per created or changed track.
 
 ## External playback selection
 
