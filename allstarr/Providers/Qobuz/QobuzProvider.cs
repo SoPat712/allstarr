@@ -126,7 +126,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
         try
         {
             var appId = await _bundleService.GetAppIdAsync(cancellationToken);
-            var url = $"{BaseUrl}track/get?track_id={externalId}&app_id={appId}";
+            var url = $"{BaseUrl}track/get?track_id={Uri.EscapeDataString(externalId)}&app_id={appId}";
 
             using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
@@ -155,7 +155,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
         try
         {
             var appId = await _bundleService.GetAppIdAsync(cancellationToken);
-            var url = $"{BaseUrl}album/get?album_id={externalId}&app_id={appId}";
+            var url = $"{BaseUrl}album/get?album_id={Uri.EscapeDataString(externalId)}&app_id={appId}";
 
             using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
@@ -186,7 +186,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
         try
         {
             var appId = await _bundleService.GetAppIdAsync(cancellationToken);
-            var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}";
+            var url = $"{BaseUrl}artist/get?artist_id={Uri.EscapeDataString(externalId)}&app_id={appId}";
 
             using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;
@@ -221,7 +221,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             // Qobuz requires pagination for artist albums
             while (true)
             {
-                var url = $"{BaseUrl}artist/get?artist_id={externalId}&app_id={appId}&limit={limit}&offset={offset}&extra=albums";
+                var url = $"{BaseUrl}artist/get?artist_id={Uri.EscapeDataString(externalId)}&app_id={appId}&limit={limit}&offset={offset}&extra=albums";
 
                 using var response = await GetWithAuthAsync(url, appId, cancellationToken);
                 if (!response.IsSuccessStatusCode) break;
@@ -399,7 +399,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
         try
         {
             var appId = await _bundleService.GetAppIdAsync(cancellationToken);
-            var url = $"{BaseUrl}playlist/get?playlist_id={externalId}&app_id={appId}";
+            var url = $"{BaseUrl}playlist/get?playlist_id={Uri.EscapeDataString(externalId)}&app_id={appId}";
 
             using var response = await GetWithAuthAsync(url, appId, cancellationToken);
             if (!response.IsSuccessStatusCode) return null;

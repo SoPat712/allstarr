@@ -538,6 +538,25 @@ public class QobuzProviderTests
     }
 
     [Fact]
+    public async Task GetSongAsync_EscapesTheIdSoItCannotAddQueryParameters()
+    {
+        var requests = new List<string>();
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>(
+                "SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Callback<HttpRequestMessage, CancellationToken>((request, _) => requests.Add(request.RequestUri!.Query))
+            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.NotFound));
+
+        await _service.GetSongAsync("qobuz", "1&app_id=other");
+
+        var query = Assert.Single(requests);
+        Assert.Contains("track_id=1%26app_id%3Dother&", query);
+        Assert.Single(query.Split('&'), part => part.StartsWith("app_id=", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task GetSongAsync_WithWrongProvider_ReturnsNull()
     {
         var result = await _service.GetSongAsync("deezer", "123456789");
