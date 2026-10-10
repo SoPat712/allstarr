@@ -1,3 +1,4 @@
+using allstarr.Core.Storage;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -17,6 +18,8 @@ public sealed class SecretKeyUnavailableException(string keyId)
 
 public sealed class FileSecretKeyRingProvider
 {
+    // File.Move without overwrite checks then renames on Unix, so concurrent creators must be serialized.
+    private static readonly KeyedAsyncLock CreationLocks = new();
     private readonly SecretStoreOptions _options;
 
     public FileSecretKeyRingProvider(SecretStoreOptions options)
@@ -28,6 +31,8 @@ public sealed class FileSecretKeyRingProvider
     {
         _options.Validate();
         var path = Path.GetFullPath(_options.KeyRingPath);
+        if (File.Exists(path)) return false;
+        await using var creation = await CreationLocks.AcquireAsync(path, cancellationToken);
         if (File.Exists(path)) return false;
         if (hasEncryptedSecrets)
             throw new FileNotFoundException("Encrypted secrets exist; restore the original encryption key ring.", path);
