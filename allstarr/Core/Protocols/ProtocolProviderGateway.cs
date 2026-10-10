@@ -776,6 +776,7 @@ public sealed class ProtocolProviderGateway(
         if (protocol.Actor is null)
             throw new UnauthorizedAccessException("A resolved user is required for provider playlists.");
 
+        providerId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderPlaylistCapability>(
             protocol, providerId, ProviderCapabilityKind.Playlist, "protocol-playlist-get-tracks");
         if (routed.Candidate != null)
@@ -815,6 +816,7 @@ public sealed class ProtocolProviderGateway(
         if (protocol.Actor is null)
             throw new UnauthorizedAccessException("A resolved user is required for provider playlists.");
 
+        providerId = NormalizeProvider(providerId);
         var routed = await PlanExactAsync<IProviderPlaylistCapability>(
             protocol, providerId, ProviderCapabilityKind.Playlist, operationId);
         if (routed.Candidate == null)
