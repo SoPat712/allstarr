@@ -28,6 +28,26 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+")]
     private static partial System.Text.RegularExpressions.Regex WhitespaceRegex();
 
+    public static bool IdentifiersEqual(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left) &&
+        !string.IsNullOrWhiteSpace(right) &&
+        left.Replace("-", string.Empty, StringComparison.Ordinal)
+            .Equals(right.Replace("-", string.Empty, StringComparison.Ordinal), StringComparison.OrdinalIgnoreCase);
+
+    public static IReadOnlyList<string> SplitCredits(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        return System.Text.RegularExpressions.Regex.Split(
+                value,
+                @"\s*(?:,|&|;|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bwith\b)\s*",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase |
+                System.Text.RegularExpressions.RegexOptions.CultureInvariant)
+            .Select(artist => artist.Trim())
+            .Where(artist => artist.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public static string StripDecorators(string title)
     {
         if (string.IsNullOrWhiteSpace(title))

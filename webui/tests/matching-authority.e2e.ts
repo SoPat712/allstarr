@@ -58,7 +58,8 @@ function matchFixture(administrator: boolean) {
       album: "Example album",
       durationMilliseconds: 180_000,
       confidence: .92,
-      components: { title: 1, acceptanceQualified: 1, routingPriority: 0 },
+      components: { title: 1, artist: 1, album: 1, duration: 1, versionTags: 1, acceptanceQualified: 1, routingPriority: 0 },
+      reasons: ["title_exact", "artist_exact", "album_exact", "duration_close"],
     }],
   };
 }
@@ -112,6 +113,17 @@ async function mockMatching(page: Page, options: AuthorityOptions) {
   });
 }
 
+test("match dialog shows field scores at 320px in dark mode", async ({ page }) => {
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.setViewportSize({ width: 320, height: 844 });
+  await mockMatching(page, { administrator: false });
+  await page.goto("#/library/mappings");
+  await page.getByRole("button", { name: "Interactive search" }).click();
+  const dialog = page.getByRole("dialog", { name: "Layered song" });
+  await expect(dialog.locator(".score-components")).toContainText("title");
+  await expect(dialog.locator(".score-components")).toContainText("duration");
+});
+
 test("listener uses personal authority and cannot choose or edit household", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   let resolution: Record<string, unknown> | null = null;
@@ -131,6 +143,12 @@ test("listener uses personal authority and cannot choose or edit household", asy
 
   await page.getByRole("button", { name: "Interactive search" }).click();
   const dialog = page.getByRole("dialog", { name: "Layered song" });
+  await expect(dialog.locator(".score-components")).toContainText("title");
+  await expect(dialog.locator(".score-components")).toContainText("artist");
+  await expect(dialog.locator(".score-components")).toContainText("album");
+  await expect(dialog.locator(".score-components")).toContainText("duration");
+  await expect(dialog.locator(".score-components")).toContainText("versionTags");
+  await expect(dialog.locator(".candidate-reasons")).toContainText("title exact");
   await expect(dialog.getByText("Save decision for")).toHaveCount(0);
   await expect(dialog.getByRole("radio", { name: /^Household\b/ })).toHaveCount(0);
   await dialog.getByRole("button", { name: "Cancel" }).click();
