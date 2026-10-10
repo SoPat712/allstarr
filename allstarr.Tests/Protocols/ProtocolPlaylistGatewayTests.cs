@@ -87,6 +87,44 @@ public sealed class ProtocolPlaylistGatewayTests
     }
 
     [Theory]
+    [InlineData("apple-download", false)]
+    [InlineData("applemusic", false)]
+    [InlineData("apple-download", true)]
+    public async Task PlaylistRead_ResolvesPublicProviderAliasesBeforeAddressingTheAdapter(
+        string publicProviderId, bool summaryOnly)
+    {
+        var user = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var context = Context(ProtocolKind.Jellyfin, user);
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("apple-musickit");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        capability.Setup(item => item.GetPlaylistTracksAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderPlaylistTracksRequest>(request =>
+                    request.PlaylistId.ProviderId == "apple-musickit" &&
+                    request.PlaylistId.Value == "pl.catalog")))
+            .ReturnsAsync(PlaylistPage());
+        var descriptor = Descriptor(hasImplementation: true, providerId: "apple-musickit");
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(
+                request,
+                descriptor,
+                capability.Object,
+                new ProviderAccountContext(
+                    accountId, "apple-musickit", ProviderAccountScope.Personal, 1,
+                    ownerUserId: user)));
+        var gateway = Gateway(router.Object, Registry(descriptor, capability.Object));
+
+        if (summaryOnly)
+            Assert.NotNull(await gateway.GetPlaylistAsync(context, publicProviderId, "pl.catalog"));
+        else
+            Assert.Single(await gateway.GetPlaylistTracksAsync(context, publicProviderId, "pl.catalog"));
+        capability.VerifyAll();
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
     public async Task PlaylistRead_UsesExactResolvedActorAccountAndNeverLegacy(ProtocolKind protocolKind)
@@ -331,8 +369,8 @@ public sealed class ProtocolPlaylistGatewayTests
         new ProviderRegistration(descriptor, capability == null ? [] : [capability])
     ]);
 
-    private static ProviderDescriptor Descriptor(bool hasImplementation) => new(
-        "spotify",
+    private static ProviderDescriptor Descriptor(bool hasImplementation, string providerId = "spotify") => new(
+        providerId,
         "Spotify",
         "Spotify test provider",
         ProviderOrigin.BuiltIn,
