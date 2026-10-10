@@ -36,7 +36,8 @@ public sealed record TrackRematchAllJobPayload(
     string SnapshotFingerprint,
     Guid? ScopeOwnerUserId,
     int ApprovedCount,
-    bool Force);
+    bool Force,
+    string Scope = TrackRematchScopes.All);
 
 public sealed class TrackRematchAllService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -114,7 +115,7 @@ public sealed class TrackRematchAllService(
                 $"algorithm:{TrackMatchDecisionEngine.AlgorithmVersion}:{scope.SnapshotFingerprint}";
             if (await db.Jobs.AsNoTracking().AnyAsync(item =>
                     item.OwnerUserId == ownerUserId &&
-                    item.Type == TrackRematchAllJobHandler.Type &&
+                    item.Type == TrackRematchJobHandler.Type &&
                     item.IdempotencyKey == $"track-rematch-all:{requestKey}",
                     cancellationToken))
                 continue;
@@ -179,7 +180,7 @@ public sealed class TrackRematchAllService(
     {
         var operationId = OperationId($"{ownerUserId:N}:{requestKey}");
         return jobs.EnqueueAsync(new DurableJobEnqueueRequest<TrackRematchAllJobPayload>(
-            TrackRematchAllJobHandler.Type,
+            TrackRematchJobHandler.Type,
             $"track-rematch-all:{requestKey}",
             new(
                 operationId,
@@ -188,7 +189,8 @@ public sealed class TrackRematchAllService(
                 snapshotFingerprint,
                 scopeOwnerUserId,
                 approvedCount,
-                force),
+                force,
+                force ? TrackRematchScopes.All : TrackRematchScopes.Algorithm),
             OwnerUserId: ownerUserId,
             MaxAttempts: 25,
             MaxDeferrals: 10_000,
@@ -403,12 +405,9 @@ public sealed class TrackRematchAllJobHandler(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     TrackRematchAllService rematches,
     ITrackMatchRepository trackMatches,
-    IPlatformClock clock) : IDurableJobHandler
+    IPlatformClock clock)
 {
-    public const string Type = "track-match.rematch-all";
     private const int BatchSize = 25;
-
-    public string JobType => Type;
 
     public async Task<DurableJobCompletion> ExecuteAsync(
         DurableJobExecutionContext context,
@@ -647,22 +646,20 @@ public sealed class TrackMatchAlgorithmRolloutService(
                 var queued = await rematches.QueueAlgorithmUpgradesAsync(stoppingToken);
                 if (queued > 0)
                     logger.LogInformation(
-                        "Queued {Count} gradual matching algorithm rollout jobs for {AlgorithmVersion}",
+                        "Queued {Count} matching algorithm rollout jobs for {AlgorithmVersion}",
                         queued,
                         TrackMatchDecisionEngine.AlgorithmVersion);
-                return;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
-                return;
             }
             catch (Exception exception)
             {
                 logger.LogWarning(
-                    "Matching algorithm rollout scan failed ({FailureKind}); retrying",
+                    "Matching algorithm rollout scan failed ({FailureKind})",
                     exception.GetType().Name);
-                await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
             }
+            return;
         }
     }
 }
