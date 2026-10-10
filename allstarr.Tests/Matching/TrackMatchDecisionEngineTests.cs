@@ -160,6 +160,37 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public void ConflictingIsrcsDoNotAcceptTheLeftoverFieldScore()
+    {
+        var scope = Scope();
+        var candidate = Candidate(scope) with { Isrc = "USUM72000714" };
+
+        var decision = new TrackMatchDecisionEngine().Decide(
+            scope,
+            Source() with { Isrc = "GBUM71029604" },
+            [candidate]);
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.Null(decision.SelectedLibraryTrackId);
+        Assert.Contains("isrc_conflict", decision.Reasons);
+        Assert.Equal(0, decision.Confidence);
+    }
+
+    [Fact]
+    public void DurationDriftBeyondToleranceIsSuggestedInsteadOfAccepted()
+    {
+        var scope = Scope();
+        var candidate = Candidate(scope) with { DurationMilliseconds = 270_000 };
+
+        var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [candidate]);
+
+        Assert.Equal(TrackMatchReviewState.Suggested, decision.State);
+        Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
+        Assert.Contains("duration_exceeds_tolerance", decision.Candidates[0].Warnings);
+        Assert.True(decision.Candidates[0].Components!["duration"] < 0.5);
+    }
+
+    [Fact]
     public void VerifiedProviderIdentity_IsAccepted()
     {
         var scope = Scope();
@@ -366,7 +397,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
             LibraryTrackId = Guid.CreateVersion7(),
             BackendItemId = "closer",
             CanonicalRecordingId = Guid.CreateVersion7(),
-            DurationMilliseconds = 327_000,
+            DurationMilliseconds = 332_000,
             IsLocal = false
         };
         var farther = closer with

@@ -33,23 +33,15 @@
   },
   {
     "case": "blinding-lights/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.4885,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "blinding-lights/mbid-agrees",
@@ -173,7 +165,7 @@
   },
   {
     "case": "blinding-lights/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9047,
     "decisionReasons": [
@@ -299,23 +291,15 @@
   },
   {
     "case": "bohemian-rhapsody/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.5164,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "bohemian-rhapsody/mbid-agrees",
@@ -439,7 +423,7 @@
   },
   {
     "case": "bohemian-rhapsody/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9108,
     "decisionReasons": [
@@ -565,23 +549,15 @@
   },
   {
     "case": "halo/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.592,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "halo/mbid-agrees",
@@ -705,7 +681,7 @@
   },
   {
     "case": "halo/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9079,
     "decisionReasons": [
@@ -831,23 +807,15 @@
   },
   {
     "case": "dreams/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.5004,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "dreams/mbid-agrees",
@@ -971,7 +939,7 @@
   },
   {
     "case": "dreams/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9078,
     "decisionReasons": [
@@ -1097,23 +1065,15 @@
   },
   {
     "case": "levitating/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.5343,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "levitating/mbid-agrees",
@@ -1237,7 +1197,7 @@
   },
   {
     "case": "levitating/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9049,
     "decisionReasons": [
@@ -1363,23 +1323,15 @@
   },
   {
     "case": "rolling-in-the-deep/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.4716,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "rolling-in-the-deep/mbid-agrees",
@@ -1503,7 +1455,7 @@
   },
   {
     "case": "rolling-in-the-deep/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9064,
     "decisionReasons": [
@@ -1629,23 +1581,15 @@
   },
   {
     "case": "get-lucky/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.487,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "get-lucky/mbid-agrees",
@@ -1769,7 +1713,7 @@
   },
   {
     "case": "get-lucky/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9112,
     "decisionReasons": [
@@ -1895,23 +1839,15 @@
   },
   {
     "case": "sanguine-paradise/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.4749,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "sanguine-paradise/mbid-agrees",
@@ -2035,7 +1971,7 @@
   },
   {
     "case": "sanguine-paradise/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9076,
     "decisionReasons": [
@@ -2161,23 +2097,15 @@
   },
   {
     "case": "cheek-to-cheek/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.4929,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "cheek-to-cheek/mbid-agrees",
@@ -2301,7 +2229,7 @@
   },
   {
     "case": "cheek-to-cheek/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9109,
     "decisionReasons": [
@@ -2425,23 +2353,15 @@
   },
   {
     "case": "gurenge/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.4993,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "gurenge/mbid-agrees",
@@ -2565,7 +2485,7 @@
   },
   {
     "case": "gurenge/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9069,
     "decisionReasons": [
@@ -2691,23 +2611,15 @@
   },
   {
     "case": "despacito/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.5206,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "despacito/mbid-agrees",
@@ -2831,7 +2743,7 @@
   },
   {
     "case": "despacito/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9064,
     "decisionReasons": [
@@ -2957,23 +2869,15 @@
   },
   {
     "case": "smells-like-teen-spirit/isrc-conflicts",
-    "state": "Accepted",
-    "selected": "match",
-    "confidence": 1,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.5052,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_exact"
+      "duration_partial"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "smells-like-teen-spirit/mbid-agrees",
@@ -3097,7 +3001,7 @@
   },
   {
     "case": "smells-like-teen-spirit/duration-drift-30s",
-    "state": "Accepted",
+    "state": "Suggested",
     "selected": "match",
     "confidence": 0.9094,
     "decisionReasons": [

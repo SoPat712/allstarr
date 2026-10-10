@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
-using System.Text.RegularExpressions;
 
 namespace allstarr.Core.Matching;
 
@@ -133,7 +132,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v18";
+    public const string AlgorithmVersion = "accepted-routing-v19";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -282,7 +281,14 @@ public sealed class TrackMatchDecisionEngine
         decision.Candidates.FirstOrDefault() is { IsLocal: true };
 
     private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
-        score.Confidence >= _policy.AcceptThreshold && HasStrongArtistEvidence(score);
+        score.Confidence >= _policy.AcceptThreshold &&
+        HasStrongArtistEvidence(score) &&
+        HasDurationWithinTolerance(score);
+
+    private static bool HasDurationWithinTolerance(TrackMatchCandidateScore score) =>
+        score.Components == null ||
+        !score.Components.TryGetValue("duration", out var duration) ||
+        duration >= 0.5;
 
     public TrackMatchDecision Decide(
         TrackMatchScope scope,
@@ -382,7 +388,8 @@ public sealed class TrackMatchDecisionEngine
 
         var decisionScore = best.Confidence;
         var strongArtistEvidence = HasStrongArtistEvidence(best);
-        var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence
+        var durationWithinTolerance = HasDurationWithinTolerance(best);
+        var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence && durationWithinTolerance
             ? TrackMatchReviewState.Accepted
             : decisionScore >= _policy.SuggestThreshold && strongArtistEvidence
                 ? TrackMatchReviewState.Suggested
@@ -430,207 +437,9 @@ public sealed class TrackMatchDecisionEngine
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate)
     {
-        var reasons = new List<string>();
-        var warnings = new List<string>();
-        if (source.CanonicalRecordingId.HasValue &&
-            source.CanonicalRecordingId == candidate.CanonicalRecordingId)
-        {
-            return Score(source, candidate, 1, ["canonical_recording_id_exact"], warnings,
-                new Dictionary<string, double> { ["canonicalRecordingId"] = 1 });
-        }
-        if (EqualsNormalized(source.MusicBrainzRecordingId, RecordingIdentity(candidate)))
-        {
-            return Score(source, candidate, 1, ["musicbrainz_recording_id_exact"], warnings,
-                new Dictionary<string, double> { ["musicbrainzRecordingId"] = 1 });
-        }
-
-        if (EqualsNormalized(source.Isrc, candidate.Isrc))
-        {
-            return Score(source, candidate, 0.99, ["isrc_exact"], warnings,
-                new Dictionary<string, double> { ["isrc"] = 1 });
-        }
-
-        if (TryGetProviderTrackId(candidate.ProviderTrackIds, source.ProviderId, out var providerId) &&
-            providerId.Equals(source.ExternalId, StringComparison.Ordinal))
-        {
-            return Score(source, candidate, 1, ["provider_track_id_exact"], warnings,
-                new Dictionary<string, double> { ["providerTrackId"] = 1 });
-        }
-
-        var title = Similarity(source.Title, candidate.Title);
-        var artist = ArtistSimilarity(source.Artist, candidate.Artist);
-        var album = ComparableSimilarity(source.Album, candidate.Album);
-        var albumArtist = ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
-        var duration = source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
-            ? (double?)DurationScore(source.DurationMilliseconds, candidate.DurationMilliseconds)
-            : null;
-        var components = new Dictionary<string, double>
-        {
-            ["title"] = Math.Round(title, 4),
-            ["artist"] = Math.Round(artist, 4),
-            ["primaryArtist"] = Similarity(SplitArtists(source.Artist).FirstOrDefault(),
-                SplitArtists(candidate.Artist).FirstOrDefault())
-        };
-        AddReason(reasons, "title", title);
-        AddReason(reasons, "artist", artist);
-        var weightedScore = (title * 0.42) + (artist * 0.30);
-        var totalWeight = 0.72;
-        if (album.HasValue)
-        {
-            components["album"] = Math.Round(album.Value, 4);
-            AddReason(reasons, "album", album.Value);
-        }
-        if (albumArtist.HasValue)
-        {
-            components["albumArtist"] = Math.Round(albumArtist.Value, 4);
-            AddReason(reasons, "album_artist", albumArtist.Value);
-        }
-        if (duration.HasValue)
-        {
-            components["duration"] = Math.Round(duration.Value, 4);
-            weightedScore += duration.Value * 0.16;
-            totalWeight += 0.16;
-            reasons.Add(duration.Value >= 0.9 ? "duration_close" : "duration_partial");
-        }
-
-        var confidence = weightedScore / totalWeight;
-        if (album.HasValue || albumArtist.HasValue)
-        {
-            var withAlbum = (weightedScore + (Math.Max(album ?? 0, albumArtist ?? 0) * 0.12)) /
-                            (totalWeight + 0.12);
-            confidence = Math.Max(confidence, withAlbum);
-        }
-        if (title >= 0.98 && artist >= 0.88 && duration >= 0.9)
-            confidence = Math.Max(confidence, 0.9);
-        if (!FuzzyMatcher.SemanticVersionTags(source.Title)
-                .SetEquals(FuzzyMatcher.SemanticVersionTags(candidate.Title)))
-        {
-            confidence = Math.Max(0, confidence - 0.18);
-            warnings.Add("semantic_version_mismatch");
-        }
-        if (source.IsExplicit.HasValue &&
-            candidate.IsExplicit.HasValue &&
-            source.IsExplicit != candidate.IsExplicit)
-        {
-            confidence = Math.Max(0, confidence - 0.12);
-            warnings.Add("explicit_flag_mismatch");
-        }
-
-        return Score(source, candidate, Math.Round(confidence, 4), reasons, warnings, components);
+        var outcome = TrackMatchRuleSet.Evaluate(source, candidate, _policy);
+        return Score(source, candidate, outcome.Confidence, outcome.Reasons, outcome.Warnings, outcome.Components);
     }
-
-    private static bool TryGetProviderTrackId(
-        IReadOnlyDictionary<string, string>? providerTrackIds,
-        string providerId,
-        out string trackId)
-    {
-        trackId = string.Empty;
-        if (providerTrackIds == null || string.IsNullOrWhiteSpace(providerId))
-        {
-            return false;
-        }
-
-        if (providerTrackIds.TryGetValue(providerId, out var exact) &&
-            !string.IsNullOrWhiteSpace(exact))
-        {
-            trackId = exact;
-            return true;
-        }
-
-        foreach (var (candidateProviderId, candidateTrackId) in providerTrackIds)
-        {
-            if (candidateProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) &&
-                !string.IsNullOrWhiteSpace(candidateTrackId))
-            {
-                trackId = candidateTrackId;
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private double DurationScore(long? source, long? candidate)
-    {
-        if (!source.HasValue || !candidate.HasValue)
-        {
-            return 0.5;
-        }
-
-        var delta = Math.Abs(source.Value - candidate.Value) / 1000d;
-        var duration = Math.Max(source.Value, candidate.Value) / 1000d;
-        return delta == 0
-            ? 1
-            : delta <= 2
-                ? 0.95
-                : delta <= _policy.DurationToleranceSeconds
-                    ? 1 - (0.5 * delta / _policy.DurationToleranceSeconds)
-                    : Math.Max(0, 0.5 -
-                        ((delta - _policy.DurationToleranceSeconds) / Math.Max(1, duration)));
-    }
-
-    private static double Similarity(string? left, string? right) =>
-        string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
-            ? 0
-            : FuzzyMatcher.CalculateSimilarityAggressive(left, right) / 100d;
-
-    private static double? ComparableSimilarity(string? left, string? right) =>
-        string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
-            ? null
-            : Similarity(left, right);
-
-    private static double ArtistSimilarity(string? left, string? right)
-    {
-        var sourceArtists = SplitArtists(left);
-        var candidateArtists = SplitArtists(right);
-        if (sourceArtists.Count == 0 || candidateArtists.Count == 0)
-        {
-            return 0;
-        }
-
-        static double BestScore(string artist, IReadOnlyList<string> candidates) =>
-            candidates.Max(candidate =>
-                FuzzyMatcher.CalculateSimilarityAggressive(artist, candidate) / 100d);
-
-        var sourceCoverage = sourceArtists
-            .Average(artist => BestScore(artist, candidateArtists));
-        var candidatePrecision = candidateArtists
-            .Average(artist => BestScore(artist, sourceArtists));
-        var primaryArtist = FuzzyMatcher.CalculateSimilarityAggressive(
-            sourceArtists[0],
-            candidateArtists[0]) / 100d;
-
-        // Backend libraries often retain only the primary artist while source
-        // providers expose every featured artist. Treat a strong primary match as
-        // authoritative supporting evidence instead of rejecting the candidate
-        // because the credit-list lengths differ.
-        var asymmetricCreditScore = (candidatePrecision * 0.75) + (sourceCoverage * 0.25);
-        return Math.Round(
-            sourceArtists.Count > 1 && candidateArtists.Count > 1
-                ? asymmetricCreditScore
-                : Math.Max(asymmetricCreditScore, primaryArtist * 0.85),
-            4);
-    }
-
-    private static List<string> SplitArtists(string? value) =>
-        string.IsNullOrWhiteSpace(value)
-            ? []
-            : Regex.Split(
-                    value,
-                    @"\s*(?:,|&|;|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bwith\b)\s*",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
-                .Select(artist => artist.Trim())
-                .Where(artist => artist.Length > 0)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-    private static bool EqualsNormalized(string? left, string? right) =>
-        !string.IsNullOrWhiteSpace(left) &&
-        !string.IsNullOrWhiteSpace(right) &&
-        left.Replace("-", string.Empty, StringComparison.Ordinal)
-            .Equals(
-                right.Replace("-", string.Empty, StringComparison.Ordinal),
-                StringComparison.OrdinalIgnoreCase);
 
     internal static bool SameRecordingIdentity(
         LocalTrackMatchCandidate left,
@@ -640,11 +449,11 @@ public sealed class TrackMatchDecisionEngine
             left.CanonicalRecordingId == right.CanonicalRecordingId)
             return true;
 
-        var leftRecording = RecordingIdentity(left);
-        var rightRecording = RecordingIdentity(right);
+        var leftRecording = TrackMatchSignals.RecordingIdentity(left);
+        var rightRecording = TrackMatchSignals.RecordingIdentity(right);
         if (!string.IsNullOrWhiteSpace(leftRecording) &&
             !string.IsNullOrWhiteSpace(rightRecording))
-            return EqualsNormalized(leftRecording, rightRecording);
+            return FuzzyMatcher.IdentifiersEqual(leftRecording, rightRecording);
 
         if (left.CanonicalRecordingId.HasValue &&
             right.CanonicalRecordingId.HasValue &&
@@ -663,11 +472,11 @@ public sealed class TrackMatchDecisionEngine
         var rightTitle = FuzzyMatcher.NormalizeForMatching(
             FuzzyMatcher.StripDecorators(right.Title));
         var sameTitle = leftTitle.Equals(rightTitle, StringComparison.Ordinal);
-        var sameArtist = SplitArtists(left.Artist)
+        var sameArtist = FuzzyMatcher.SplitCredits(left.Artist)
             .Select(FuzzyMatcher.NormalizeForMatching)
             .ToHashSet(StringComparer.Ordinal)
             .SetEquals(
-                SplitArtists(right.Artist)
+                FuzzyMatcher.SplitCredits(right.Artist)
                     .Select(FuzzyMatcher.NormalizeForMatching)
                     .ToHashSet(StringComparer.Ordinal));
         var sameAlbum = !string.IsNullOrWhiteSpace(left.Album) &&
@@ -677,16 +486,11 @@ public sealed class TrackMatchDecisionEngine
                                 FuzzyMatcher.NormalizeForMatching(right.Album),
                                 StringComparison.Ordinal);
         return sameTitle && (sameArtist || sameAlbum) ||
-               Similarity(leftTitle, rightTitle) >= 0.9 &&
+               TrackMatchSignals.Similarity(leftTitle, rightTitle) >= 0.9 &&
                (sameAlbum ||
-                ArtistSimilarity(left.Artist, right.Artist) >= 0.85 &&
-                ComparableSimilarity(left.Album, right.Album) >= 0.9);
+                TrackMatchSignals.ArtistSimilarity(left.Artist, right.Artist) >= 0.85 &&
+                TrackMatchSignals.ComparableSimilarity(left.Album, right.Album) >= 0.9);
     }
-
-    private static string? RecordingIdentity(LocalTrackMatchCandidate candidate) =>
-        TryGetProviderTrackId(candidate.ProviderTrackIds, "musicbrainzrecording", out var recordingId)
-            ? recordingId
-            : candidate.MusicBrainzRecordingId;
 
     private static bool IsVisible(TrackMatchScope scope, LocalTrackMatchCandidate candidate) =>
         candidate.BackendInstanceId.Equals(scope.BackendInstanceId, StringComparison.Ordinal) &&
@@ -733,22 +537,6 @@ public sealed class TrackMatchDecisionEngine
         }
     }
 
-    private static void AddReason(List<string> reasons, string signal, double score)
-    {
-        if (score >= 1)
-        {
-            reasons.Add($"{signal}_exact");
-        }
-        else if (score >= 0.85)
-        {
-            reasons.Add($"{signal}_strong");
-        }
-        else if (score >= 0.65)
-        {
-            reasons.Add($"{signal}_partial");
-        }
-    }
-
     private static TrackMatchCandidateScore Score(
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate,
@@ -771,7 +559,7 @@ public sealed class TrackMatchDecisionEngine
         candidate.ProviderTrackIds,
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(source.Title)),
         FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(candidate.Title)),
-        ArtistSimilarity(source.Artist, candidate.Artist),
+        TrackMatchSignals.ArtistSimilarity(source.Artist, candidate.Artist),
         AlbumEvidence(source, candidate),
         source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
             ? Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value)
@@ -782,8 +570,8 @@ public sealed class TrackMatchDecisionEngine
         ExternalTrackMatchSnapshot source,
         LocalTrackMatchCandidate candidate)
     {
-        var album = ComparableSimilarity(source.Album, candidate.Album);
-        var albumArtist = ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
+        var album = TrackMatchSignals.ComparableSimilarity(source.Album, candidate.Album);
+        var albumArtist = TrackMatchSignals.ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
         return album.HasValue || albumArtist.HasValue
             ? Math.Max(album ?? 0, albumArtist ?? 0)
             : null;
