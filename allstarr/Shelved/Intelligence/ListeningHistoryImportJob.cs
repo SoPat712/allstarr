@@ -240,6 +240,9 @@ public sealed class ListeningHistoryImportJobHandler(
             db.Users.Any(user => user.Id == payload.Scope.OwnerUserId && user.Enabled &&
                 user.BackendType == payload.Scope.Protocol && user.BackendInstanceId == payload.Scope.BackendInstanceId));
 
+    private static string? Identifier(CanonicalRecordingRecord? recording, string kind) =>
+        recording?.Identifiers.FirstOrDefault(item => item.Kind == kind)?.Value;
+
     internal static ListeningEventRecord CreateEvent(
         ListeningHistoryImportJobPayload payload,
         ListeningHistoryImportRow row,
@@ -275,8 +278,8 @@ public sealed class ListeningHistoryImportJobHandler(
             Title = row.Title,
             Artist = row.Artist,
             Album = row.Album,
-            RecordingMusicBrainzId = libraryTrack?.MusicBrainzRecordingId ?? canonical?.MusicBrainzRecordingId ?? row.RecordingMusicBrainzId,
-            Isrc = libraryTrack?.Isrc ?? canonical?.Isrc,
+            RecordingMusicBrainzId = libraryTrack?.MusicBrainzRecordingId ?? Identifier(canonical, RecordingIdentifierKinds.MusicBrainz) ?? row.RecordingMusicBrainzId,
+            Isrc = libraryTrack?.Isrc ?? Identifier(canonical, RecordingIdentifierKinds.Isrc),
             MusicBrainzEnrichmentState = enrichWithMusicBrainz && completed && canonical == null
                 ? MusicBrainzEnrichmentState.Pending
                 : MusicBrainzEnrichmentState.NotRequested,
@@ -388,14 +391,18 @@ public sealed class ListeningHistoryImportJobHandler(
             var recordingMbids = retainedRows.Select(item => item.RecordingMusicBrainzId).OfType<string>().Distinct().ToArray();
             var canonicals = canonicalIds.Length == 0 && recordingMbids.Length == 0
                 ? []
-                : await db.CanonicalRecordings.AsNoTracking().Where(item =>
-                        (canonicalIds.Contains(item.Id) ||
-                         item.MusicBrainzRecordingId != null && recordingMbids.Contains(item.MusicBrainzRecordingId)))
+                : await db.CanonicalRecordings.AsNoTracking().Include(item => item.Identifiers).Where(item =>
+                        canonicalIds.Contains(item.Id) ||
+                        item.Identifiers.Any(identifier =>
+                            identifier.Kind == RecordingIdentifierKinds.MusicBrainz &&
+                            recordingMbids.Contains(identifier.Value)))
                     .ToListAsync(cancellationToken);
             var canonicalById = canonicals.ToDictionary(item => item.Id);
-            var canonicalByMbid = canonicals.Where(item => item.MusicBrainzRecordingId != null)
-                .GroupBy(item => item.MusicBrainzRecordingId!)
-                .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+            var canonicalByMbid = canonicals
+                .Select(item => (item, mbid: Identifier(item, RecordingIdentifierKinds.MusicBrainz)))
+                .Where(item => item.mbid != null)
+                .GroupBy(item => item.mbid!)
+                .ToDictionary(group => group.Key, group => group.First().item, StringComparer.Ordinal);
             var resolvedCanonicalIds = canonicals.Select(item => item.Id).ToArray();
             var libraryTracks = resolvedCanonicalIds.Length == 0
                 ? []

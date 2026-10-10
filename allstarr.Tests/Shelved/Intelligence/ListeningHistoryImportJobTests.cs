@@ -29,16 +29,27 @@ public sealed class ListeningHistoryImportJobTests
         var canonical = new CanonicalRecordingRecord
         {
             Id = canonicalId,
-            MusicBrainzRecordingId = "11111111-1111-1111-1111-111111111111",
-            Isrc = "USABC1234567"
+            Identifiers =
+            [
+                new RecordingIdentifierRecord
+                {
+                    Kind = RecordingIdentifierKinds.MusicBrainz,
+                    Value = "11111111-1111-1111-1111-111111111111"
+                },
+                new RecordingIdentifierRecord
+                {
+                    Kind = RecordingIdentifierKinds.Isrc,
+                    Value = "USABC1234567"
+                }
+            ]
         };
         var libraryTrack = new LibraryTrackRecord
         {
             Id = libraryTrackId,
             CanonicalRecordingId = canonicalId,
             DurationMilliseconds = 200_000,
-            MusicBrainzRecordingId = canonical.MusicBrainzRecordingId,
-            Isrc = canonical.Isrc
+            MusicBrainzRecordingId = "11111111-1111-1111-1111-111111111111",
+            Isrc = "USABC1234567"
         };
 
         var completed = ListeningHistoryImportJobHandler.CreateEvent(
@@ -55,7 +66,7 @@ public sealed class ListeningHistoryImportJobTests
             {
                 SourceService = "lastfm",
                 ProviderTrackReference = null,
-                RecordingMusicBrainzId = canonical.MusicBrainzRecordingId,
+                RecordingMusicBrainzId = "11111111-1111-1111-1111-111111111111",
                 Client = "Last.fm"
             },
             new string('1', 64), null, canonical, null, enrichWithMusicBrainz: true);
@@ -85,7 +96,7 @@ public sealed class ListeningHistoryImportJobTests
         Assert.Contains("private", completed.ImportProvenance, StringComparison.Ordinal);
         Assert.Equal("lastfm", lastFm.ProviderId);
         Assert.Equal("lastfm:" + row.SourceItemKey, lastFm.TrackReference);
-        Assert.Equal(canonical.MusicBrainzRecordingId, lastFm.RecordingMusicBrainzId);
+        Assert.Equal("11111111-1111-1111-1111-111111111111", lastFm.RecordingMusicBrainzId);
         Assert.Equal(canonicalId, lastFm.CanonicalRecordingId);
         Assert.Equal(MusicBrainzEnrichmentState.NotRequested, lastFm.MusicBrainzEnrichmentState);
         Assert.Contains(":lastfm:", lastFm.ImportProvenance, StringComparison.Ordinal);

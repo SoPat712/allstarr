@@ -130,7 +130,9 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                 if (items.Length == 0 || items.Length < request.PageSize || total.HasValue && offset >= total) break;
             }
         }
-        return new(seen, indexed, pathless, malformed, pages);
+        var result = new LibraryCatalogScanResult(seen, indexed, pathless, malformed, pages);
+        await Index.RecordScanSummaryAsync(context, result, cancellationToken);
+        return result;
     }
     private static string? Get(IReadOnlyDictionary<string, string> values, string name) => values.TryGetValue(name, out var value) ? value : null;
 }
@@ -186,7 +188,7 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                 using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(cancellationToken));
                 var envelope = document.RootElement.TryGetProperty("subsonic-response", out var value) ? value : document.RootElement;
                 if (Text(envelope, "status") == "failed") throw new HttpRequestException("The Subsonic catalog request failed.");
-                var search = envelope.TryGetProperty("searchResult3", out var result) ? result : default;
+                var search = envelope.TryGetProperty("searchResult3", out var searchResult) ? searchResult : default;
                 var items = search.ValueKind == JsonValueKind.Object && search.TryGetProperty("song", out var songs) && songs.ValueKind == JsonValueKind.Array ? songs.EnumerateArray().ToArray() : [];
                 pages++; seen += items.Length;
                 foreach (var item in items)
@@ -215,7 +217,9 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
                 if (items.Length < request.PageSize) break;
             }
         }
-        return new(seen, indexed, pathless, malformed, pages);
+        var scan = new LibraryCatalogScanResult(seen, indexed, pathless, malformed, pages);
+        await Index.RecordScanSummaryAsync(context, scan, cancellationToken);
+        return scan;
     }
     private static void Add(IDictionary<string, string> values, string key, string? value) { if (!string.IsNullOrWhiteSpace(value)) values[key] = value; }
 }

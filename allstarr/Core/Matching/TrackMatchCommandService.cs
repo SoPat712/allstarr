@@ -1102,15 +1102,7 @@ public sealed class TrackMatchCommandService(
                     var now = DateTimeOffset.UtcNow;
                     if (identity == null)
                     {
-                        var canonical = new CanonicalRecordingRecord
-                        {
-                            Id = Guid.CreateVersion7(),
-
-                            CreatedByUserId = owner.Id,
-                            IsProvisional = true,
-                            CreatedAt = now,
-                            UpdatedAt = now
-                        };
+                        var canonical = CreateProvisionalRecording(owner.Id, now);
                         identity = new ProviderTrackIdentityRecord
                         {
                             Id = Guid.CreateVersion7(),
@@ -1131,13 +1123,8 @@ public sealed class TrackMatchCommandService(
                         };
                         db.CanonicalRecordings.Add(canonical);
                         db.ProviderTrackIdentities.Add(identity);
-                        await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-                            db, catalogActor, canonical, now, cancellationToken);
                         created++;
                     }
-
-                    await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
-                        db, catalogActor, identity, now, cancellationToken);
 
                     var payloadJson = JsonSerializer.Serialize(new
                     {
@@ -1391,12 +1378,6 @@ public sealed class TrackMatchCommandService(
             {
                 selected.CanonicalRecordingId = identity.CanonicalRecordingId;
                 selected.UpdatedAt = now;
-                await CanonicalCatalogIdentityProjection.ProjectLibraryTrackAsync(
-                    db,
-                    CatalogActor(snapshot),
-                    selected,
-                    now,
-                    cancellationToken);
             }
 
             var state = Enum.Parse<TrackMatchState>(decision.State.ToString(), true);
@@ -1691,19 +1672,8 @@ public sealed class TrackMatchCommandService(
             {
                 if (source == null)
                 {
-                    var canonical = new CanonicalRecordingRecord
-                    {
-                        Id = Guid.CreateVersion7(),
-
-                        CreatedByUserId = actor.UserId,
-                        Isrc = payload.Isrc,
-                        IsProvisional = true,
-                        CreatedAt = clock.UtcNow,
-                        UpdatedAt = clock.UtcNow
-                    };
+                    var canonical = CreateProvisionalRecording(actor.UserId, clock.UtcNow, payload.Isrc);
                     db.CanonicalRecordings.Add(canonical);
-                    await CanonicalCatalogIdentityProjection.ProjectRecordingSignalsAsync(
-                        db, catalogActor, canonical, clock.UtcNow, cancellationToken);
                     source = await AddSourceSnapshotIdentityAsync(
                         db, catalogActor, snapshot, canonical.Id, latestVersion + 1,
                         clock.UtcNow, cancellationToken);
@@ -1723,7 +1693,7 @@ public sealed class TrackMatchCommandService(
                         "The source recording has conflicting identity evidence; review the match before merging it.");
             }
         }
-        catch (CanonicalCatalogAliasConflictException) when (retriesRemaining > 0)
+        catch (InvalidOperationException) when (retriesRemaining > 0)
         {
             return await RematchSnapshotAsync(
                 actor,
@@ -1887,8 +1857,8 @@ public sealed class TrackMatchCommandService(
         {
             if (primary)
                 canonicalRecordingId = identity.CanonicalRecordingId;
-            if (primary && !await CanonicalCatalogEvidenceStore.ReconcileSourceIdentityAsync(
-                    db, actor, source, canonicalRecordingId, now, cancellationToken))
+            if (primary && !await TryRetargetProvisionalIdentityAsync(
+                    db, source, canonicalRecordingId, now, cancellationToken))
                 return null;
             if (identity.VerificationMethod == ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod ||
                 verificationMethod == "automatic-match" &&
@@ -1901,8 +1871,6 @@ public sealed class TrackMatchCommandService(
                 identity.UpdatedAt = now;
                 identity.Revision++;
             }
-            await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
-                db, actor, identity, now, cancellationToken);
             return canonicalRecordingId;
         }
 
@@ -1925,8 +1893,6 @@ public sealed class TrackMatchCommandService(
             UpdatedAt = now
         };
         db.ProviderTrackIdentities.Add(identity);
-        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
-            db, actor, identity, now, cancellationToken);
         return canonicalRecordingId;
     }
 
@@ -2154,9 +2120,60 @@ public sealed class TrackMatchCommandService(
             UpdatedAt = now
         };
         db.ProviderTrackIdentities.Add(identity);
-        await CanonicalCatalogIdentityProjection.ProjectProviderIdentityAsync(
-            db, actor, identity, now, cancellationToken);
         return identity;
+    }
+
+    private static CanonicalRecordingRecord CreateProvisionalRecording(
+        Guid userId, DateTimeOffset now, string? isrc = null)
+    {
+        var id = Guid.CreateVersion7();
+        var recording = new CanonicalRecordingRecord
+        {
+            Id = id,
+            CreatedByUserId = userId,
+            PublicId = CanonicalCatalogKeys.DefaultPublicId(id),
+            IsProvisional = true,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        if (!string.IsNullOrWhiteSpace(isrc))
+        {
+            recording.Identifiers.Add(new RecordingIdentifierRecord
+            {
+                Id = Guid.CreateVersion7(),
+                RecordingId = id,
+                Kind = RecordingIdentifierKinds.Isrc,
+                Value = isrc.Trim().Replace("-", "", StringComparison.Ordinal).ToUpperInvariant(),
+                Source = "match",
+                CreatedAt = now
+            });
+        }
+        return recording;
+    }
+
+    internal static async Task<bool> TryRetargetProvisionalIdentityAsync(
+        AllstarrDbContext db,
+        ProviderTrackIdentityRecord identity,
+        Guid targetRecordingId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (identity.CanonicalRecordingId == targetRecordingId) return true;
+        if (identity.Verification != ProviderIdentityVerification.Verified ||
+            identity.VerificationMethod is not ("source-snapshot" or "source-snapshot-hash"))
+            return false;
+        var previous = db.CanonicalRecordings.Local.FirstOrDefault(item => item.Id == identity.CanonicalRecordingId)
+            ?? await db.CanonicalRecordings
+                .Include(item => item.Identifiers)
+                .SingleOrDefaultAsync(item => item.Id == identity.CanonicalRecordingId, cancellationToken);
+        if (previous != null && !db.Entry(previous).Collection(item => item.Identifiers).IsLoaded)
+            await db.Entry(previous).Collection(item => item.Identifiers).LoadAsync(cancellationToken);
+        if (previous is not { IsProvisional: true } || previous.Identifiers.Count != 0)
+            return false;
+        identity.CanonicalRecordingId = targetRecordingId;
+        identity.UpdatedAt = now;
+        identity.Revision++;
+        return true;
     }
 
     private static ProviderActorContext CatalogActor(

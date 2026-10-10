@@ -382,9 +382,20 @@ public sealed class RecommendationRunJobHandler(IDbContextFactory<AllstarrDbCont
         var musicBrainzIds = candidates.Select(item => item.Identity?.MusicBrainzRecordingId)
             .Where(item => item != null).Distinct().ToArray();
         var isrcs = candidates.Select(item => item.Identity?.Isrc).Where(item => item != null).Distinct().ToArray();
-        var canonicals = await db.CanonicalRecordings.AsNoTracking().Where(item =>
-                musicBrainzIds.Contains(item.MusicBrainzRecordingId) || isrcs.Contains(item.Isrc))
-            .Select(item => new { item.Id, item.MusicBrainzRecordingId, item.Isrc }).ToListAsync(cancellationToken);
+        var canonicals = await db.CanonicalRecordings.AsNoTracking()
+            .Where(item => item.Identifiers.Any(identifier =>
+                identifier.Kind == RecordingIdentifierKinds.MusicBrainz && musicBrainzIds.Contains(identifier.Value) ||
+                identifier.Kind == RecordingIdentifierKinds.Isrc && isrcs.Contains(identifier.Value)))
+            .Select(item => new
+            {
+                item.Id,
+                MusicBrainzRecordingId = item.Identifiers
+                    .Where(identifier => identifier.Kind == RecordingIdentifierKinds.MusicBrainz)
+                    .Select(identifier => identifier.Value).FirstOrDefault(),
+                Isrc = item.Identifiers
+                    .Where(identifier => identifier.Kind == RecordingIdentifierKinds.Isrc)
+                    .Select(identifier => identifier.Value).FirstOrDefault()
+            }).ToListAsync(cancellationToken);
         var validAccounts = await db.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
                 (item.OwnerUserId == run.OwnerUserId || item.OwnerUserId == null))
             .Select(item => new { item.Id, item.ProviderId }).ToListAsync(cancellationToken);

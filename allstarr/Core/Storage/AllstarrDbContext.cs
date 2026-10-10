@@ -19,6 +19,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<DurableJobRecord> Jobs => Set<DurableJobRecord>();
     public DbSet<JobAttemptRecord> JobAttempts => Set<JobAttemptRecord>();
     public DbSet<CanonicalRecordingRecord> CanonicalRecordings => Set<CanonicalRecordingRecord>();
+    public DbSet<RecordingIdentifierRecord> RecordingIdentifiers => Set<RecordingIdentifierRecord>();
     public DbSet<ProviderTrackIdentityRecord> ProviderTrackIdentities => Set<ProviderTrackIdentityRecord>();
     public DbSet<LibraryTrackRecord> LibraryTracks => Set<LibraryTrackRecord>();
     public DbSet<ExternalMetadataSnapshotRecord> ExternalMetadataSnapshots => Set<ExternalMetadataSnapshotRecord>();
@@ -50,6 +51,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
 
     public override int SaveChanges(bool acceptAllChangesOnSuccess)
     {
+        EnsureRecordingPublicIds();
         EnforceImmutableSnapshots();
         return base.SaveChanges(acceptAllChangesOnSuccess);
     }
@@ -58,6 +60,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         bool acceptAllChangesOnSuccess,
         CancellationToken cancellationToken = default)
     {
+        EnsureRecordingPublicIds();
         EnforceImmutableSnapshots();
         return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
     }
@@ -72,7 +75,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureSecrets(modelBuilder);
         ConfigureJobs(modelBuilder);
         ConfigureTrackIdentity(modelBuilder);
-        ConfigureCanonicalCatalog(modelBuilder);
         ConfigureLibraryAndPlaylists(modelBuilder);
         ConfigureExtensions(modelBuilder);
         FavoriteModelConfiguration.Configure(modelBuilder);
@@ -258,16 +260,33 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Id).ValueGeneratedNever();
             entity.Property(item => item.Title).HasMaxLength(500).IsRequired();
             entity.Property(item => item.Disambiguation).HasMaxLength(500);
-            entity.Property(item => item.Isrc).HasMaxLength(32);
-            entity.Property(item => item.MusicBrainzRecordingId).HasMaxLength(100);
+            entity.Property(item => item.PublicId).HasMaxLength(200).IsRequired();
             entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => item.Isrc).IsUnique();
-            entity.HasIndex(item => item.MusicBrainzRecordingId).IsUnique();
+            entity.HasIndex(item => item.PublicId).IsUnique();
             entity.HasIndex(item => new { item.Title, item.Id });
+            entity.HasOne<CanonicalRecordingRecord>().WithMany()
+                .HasForeignKey(item => item.MergedIntoId)
+                .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<UserRecord>().WithMany()
                 .HasForeignKey(item => item.CreatedByUserId)
                 .HasPrincipalKey(item => item.Id)
                 .OnDelete(DeleteBehavior.Restrict);
+        });
+
+        modelBuilder.Entity<RecordingIdentifierRecord>(entity =>
+        {
+            entity.ToTable("recording_identifiers");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.Kind).HasMaxLength(32).IsRequired();
+            entity.Property(item => item.Value).HasMaxLength(100).IsRequired();
+            entity.Property(item => item.Source).HasMaxLength(100).IsRequired();
+            entity.HasIndex(item => new { item.Kind, item.Value }).IsUnique();
+            entity.HasIndex(item => new { item.RecordingId, item.Kind });
+            entity.HasOne<CanonicalRecordingRecord>()
+                .WithMany(item => item.Identifiers)
+                .HasForeignKey(item => item.RecordingId)
+                .OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<ProviderTrackIdentityRecord>(entity =>
@@ -407,6 +426,18 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         }
     }
 
+    private void EnsureRecordingPublicIds()
+    {
+        foreach (var recording in ChangeTracker.Entries<CanonicalRecordingRecord>()
+                     .Where(entry => entry.State == EntityState.Added)
+                     .Select(entry => entry.Entity))
+        {
+            if (recording.Id == Guid.Empty) recording.Id = Guid.CreateVersion7();
+            if (string.IsNullOrWhiteSpace(recording.PublicId))
+                recording.PublicId = CanonicalRecordingRecord.DefaultPublicId(recording.Id);
+        }
+    }
+
     private void EnforceImmutableSnapshots()
     {
         foreach (var entry in ChangeTracker.Entries<ExternalMetadataSnapshotRecord>()
@@ -426,33 +457,18 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         {
             Playlists.PersistenceGuard.ValidateSafeJson(entry.Entity.DetailsJson, nameof(PlaylistSyncEntryResultRecord.DetailsJson));
         }
-        foreach (var entry in ChangeTracker.Entries<CanonicalReleaseGroupRecord>()
-                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
-        {
-            Playlists.PersistenceGuard.ValidateSafeJson(
-                entry.Entity.SecondaryTypesJson,
-                nameof(CanonicalReleaseGroupRecord.SecondaryTypesJson));
-        }
-        foreach (var entry in ChangeTracker.Entries<CatalogFactRecord>()
-                     .Where(entry => entry.State is EntityState.Added or EntityState.Modified))
-        {
-            Playlists.PersistenceGuard.ValidateSafeJson(entry.Entity.ValueJson, nameof(CatalogFactRecord.ValueJson));
-        }
         var changed = ChangeTracker.Entries()
             .FirstOrDefault(entry =>
                 (entry.State is EntityState.Modified or EntityState.Deleted) &&
                 (entry.Entity is ExternalMetadataSnapshotRecord or
                     PlaylistSourceSnapshotRecord or
-                    PlaylistSourceEntryRecord or
-                    CatalogFactRecord) &&
+                    PlaylistSourceEntryRecord) &&
                 !(entry.State == EntityState.Modified &&
                   entry.Properties.Where(property => property.IsModified).All(property =>
                       entry.Entity is PlaylistSourceSnapshotRecord &&
                       property.Metadata.Name == nameof(PlaylistSourceSnapshotRecord.PublishedAt) ||
                       entry.Entity is PlaylistSourceEntryRecord &&
-                      property.Metadata.Name == nameof(PlaylistSourceEntryRecord.PublishedTrackMatchId) ||
-                      entry.Entity is CatalogFactRecord &&
-                      property.Metadata.Name == nameof(CatalogFactRecord.SupersededAt))));
+                      property.Metadata.Name == nameof(PlaylistSourceEntryRecord.PublishedTrackMatchId))));
         if (changed != null)
         {
             throw new InvalidOperationException(

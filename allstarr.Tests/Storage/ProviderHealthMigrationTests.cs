@@ -150,7 +150,10 @@ public sealed class ProviderHealthMigrationTests
         var schema = await db.Database.SqlQueryRaw<string>("""
             SELECT type || '|' || name || '|' || coalesce(sql,'') AS Value FROM sqlite_master
             WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EFMigrations%'
-              AND tbl_name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples')
+              AND tbl_name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples',
+                'canonical_artists','canonical_catalog_aliases','canonical_recording_artists',
+                'canonical_release_group_artists','canonical_release_groups','canonical_releases',
+                'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings')
             ORDER BY type,name
             """).ToArrayAsync();
         return schema;
@@ -160,7 +163,10 @@ public sealed class ProviderHealthMigrationTests
     {
         var names = await db.Database.SqlQueryRaw<string>("""
             SELECT name AS Value FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'
-              AND name NOT LIKE '__EFMigrations%' AND name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples')
+              AND name NOT LIKE '__EFMigrations%' AND name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples',
+                'canonical_artists','canonical_catalog_aliases','canonical_recording_artists',
+                'canonical_release_group_artists','canonical_release_groups','canonical_releases',
+                'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings')
             ORDER BY name
             """).ToArrayAsync();
         await db.Database.OpenConnectionAsync();

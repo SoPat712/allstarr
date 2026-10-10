@@ -1,6 +1,5 @@
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
-using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
@@ -19,7 +18,6 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     private Guid _userB;
     private FakeClock _clock = null!;
     private TrackIdentityService _identities = null!;
-    private readonly Mock<IMusicBrainzCatalogRefreshQueue> _catalogQueue = new(MockBehavior.Strict);
     private readonly Mock<IBackendLibraryAccessResolver> _libraryAccess = new(MockBehavior.Strict);
 
     public async Task InitializeAsync()
@@ -43,7 +41,7 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         var state = new DurableStorageState(options);
         state.Set(DurableStorageReadiness.Ready, "fixture");
         _clock = new FakeClock(now);
-        _identities = new TrackIdentityService(_factory, state, _clock, _catalogQueue.Object);
+        _identities = new TrackIdentityService(_factory, state, _clock);
         _libraryAccess.Setup(service => service.ResolveAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync((ProtocolExecutionContext context, CancellationToken _) =>
                 new BackendLibraryAccess(true, context.Principal!.UserId == _userA ? ["music"] : []));
@@ -150,19 +148,13 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
 
         await using var verification = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await verification.LibraryTracks.CountAsync());
-        var alias = Assert.Single(await verification.CanonicalCatalogAliases.ToListAsync());
-        Assert.Equal(
-            CanonicalCatalogKeys.NativeTrackNamespace("jellyfin", "backend"),
-            alias.Namespace);
-        Assert.Equal("local-item", alias.ExternalId);
-        Assert.Equal(canonicalId, alias.CanonicalEntityId);
+        Assert.Empty(await verification.RecordingIdentifiers.ToListAsync());
         Assert.All(await verification.LibraryTracks.ToListAsync(), track => Assert.Equal(1, track.AcceptedDecisionVersion));
-        Assert.Null((await verification.CanonicalRecordings.FindAsync(canonicalId))!.MusicBrainzRecordingId);
-        _catalogQueue.VerifyNoOtherCalls();
+        Assert.True((await verification.CanonicalRecordings.FindAsync(canonicalId))!.IsProvisional);
     }
 
     [Fact]
-    public async Task NativeAlias_RecoversAssignmentLostByLegacyRescan()
+    public async Task LostAssignment_IsNotRecoveredWithoutExactSignals()
     {
         var context = Context(_userA, "principal-a");
         var canonical = await _identities.CreateRecordingAsync(context.RequireActor(), "existing-native");
@@ -175,23 +167,18 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         }
 
         var rescanned = await _service.UpsertAsync(context, Input());
-        Assert.Equal(canonical.Recording.Id, rescanned.CanonicalRecordingId);
+        Assert.Null(rescanned.CanonicalRecordingId);
         await using var verification = await _factory.CreateDbContextAsync();
         Assert.Single(await verification.CanonicalRecordings.ToListAsync());
-        Assert.Single(await verification.CanonicalCatalogAliases.ToListAsync());
-        _catalogQueue.VerifyNoOtherCalls();
+        Assert.Empty(await verification.RecordingIdentifiers.ToListAsync());
     }
 
     [Fact]
-    public async Task NativeRecording_EnrichesProviderIdentityAndQueuesCatalogWithoutChangingNativeMetadata()
+    public async Task NativeRecording_EnrichesProviderIdentityWithoutChangingNativeMetadata()
     {
         const string mbid = "16ba7915-2acf-42b2-8c87-ed67090dca91";
         var context = Context(_userA, "principal-a");
         var original = await _identities.CreateRecordingAsync(context.RequireActor(), "provider-first", Input().Isrc);
-        _catalogQueue.Setup(queue => queue.EnqueueRecordingAsync(
-                It.Is<ProviderActorContext>(actor => actor.UserId == _userA),
-                mbid, context.CorrelationId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DurableJobEnqueueResult(Guid.CreateVersion7(), true));
 
         var indexed = await _service.UpsertAsync(context, Input() with { MusicBrainzRecordingId = mbid });
         var rescanned = await _service.UpsertAsync(context, Input() with { MusicBrainzRecordingId = mbid });
@@ -201,13 +188,12 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Equal(Input().Title, indexed.Title);
         Assert.Equal(Input().FilePath, indexed.FilePath);
         await using var db = await _factory.CreateDbContextAsync();
-        var canonical = Assert.Single(await db.CanonicalRecordings.ToListAsync());
-        Assert.Equal(mbid, canonical.MusicBrainzRecordingId);
+        var canonical = Assert.Single(await db.CanonicalRecordings.Include(item => item.Identifiers).ToListAsync());
+        Assert.Equal(mbid, canonical.Identifiers.Single(item => item.Kind == RecordingIdentifierKinds.MusicBrainz).Value);
         Assert.False(canonical.IsProvisional);
-        Assert.Equal(3, await db.CanonicalCatalogAliases.CountAsync());
-        Assert.All(await db.CanonicalCatalogAliases.ToListAsync(), alias => Assert.Equal(canonical.Id, alias.CanonicalEntityId));
-        _catalogQueue.Verify(queue => queue.EnqueueRecordingAsync(
-            It.IsAny<ProviderActorContext>(), mbid, context.CorrelationId, It.IsAny<CancellationToken>()), Times.Exactly(2));
+        Assert.Equal(2, await db.RecordingIdentifiers.CountAsync());
+        Assert.All(await db.RecordingIdentifiers.ToListAsync(), item => Assert.Equal(canonical.Id, item.RecordingId));
+        Assert.Empty(await db.Jobs.ToListAsync());
     }
 
     [Fact]
@@ -223,9 +209,20 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             {
                 Id = secondId,
                 CreatedByUserId = _userA,
-                MusicBrainzRecordingId = mbid,
                 CreatedAt = _clock.UtcNow,
-                UpdatedAt = _clock.UtcNow
+                UpdatedAt = _clock.UtcNow,
+                Identifiers =
+                [
+                    new RecordingIdentifierRecord
+                    {
+                        Id = Guid.CreateVersion7(),
+                        RecordingId = secondId,
+                        Kind = RecordingIdentifierKinds.MusicBrainz,
+                        Value = mbid,
+                        Source = "fixture",
+                        CreatedAt = _clock.UtcNow
+                    }
+                ]
             });
             await db.SaveChangesAsync();
         }
@@ -236,10 +233,10 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Single(await _service.GetMatchCandidatesAsync(context, "music"));
         await using var verification = await _factory.CreateDbContextAsync();
         Assert.Equal(2, await verification.CanonicalRecordings.CountAsync());
-        Assert.Null((await verification.CanonicalRecordings.FindAsync(first.Recording.Id))!.MusicBrainzRecordingId);
+        Assert.False(await verification.RecordingIdentifiers.AnyAsync(item =>
+            item.RecordingId == first.Recording.Id && item.Kind == RecordingIdentifierKinds.MusicBrainz));
         var audit = await verification.AuditEvents.SingleAsync(item => item.Category == "library-index");
         Assert.Contains("\"canonicalEnrichment\":\"deferred\"", audit.DetailsJson);
-        _catalogQueue.VerifyNoOtherCalls();
     }
 
     [Theory]
@@ -254,7 +251,6 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Empty(await db.CanonicalRecordings.ToListAsync());
         Assert.Single(await db.LibraryTracks.ToListAsync());
-        _catalogQueue.VerifyNoOtherCalls();
     }
 
     [Fact]

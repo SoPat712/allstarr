@@ -724,11 +724,11 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             Entry(0, "entry-provider-review", "unindexed-source", "Manual target"));
         var refresh = await _service.RefreshAsync(Context(), _link);
         Guid externalSnapshotId;
-        int canonicalCount, aliasCount;
+        int canonicalCount, identifierCount;
         await using (var db = await _factory.CreateDbContextAsync())
         {
             canonicalCount = await db.CanonicalRecordings.CountAsync();
-            aliasCount = await db.CanonicalCatalogAliases.CountAsync();
+            identifierCount = await db.RecordingIdentifiers.CountAsync();
             externalSnapshotId = await db.PlaylistSourceEntries
                 .Where(item => item.PlaylistSourceSnapshotId == refresh.SnapshotId)
                 .Select(item => item.ExternalMetadataSnapshotId)
@@ -762,7 +762,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             item.Id == externalSnapshotId);
         Assert.Null(snapshot.ProviderTrackIdentityId);
         Assert.Equal(canonicalCount, await verify.CanonicalRecordings.CountAsync());
-        Assert.Equal(aliasCount, await verify.CanonicalCatalogAliases.CountAsync());
+        Assert.Equal(identifierCount, await verify.RecordingIdentifiers.CountAsync());
         Assert.False(await verify.ProviderTrackIdentities.AnyAsync(item =>
             item.ProviderId == "deezer" && item.ExternalId == "manual-deezer-track"));
         var selected = await verify.ManualTrackOverrides.SingleAsync(item => item.RevokedAt == null);
@@ -964,17 +964,16 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             item.VerificationMethod == "source-snapshot-hash").ToArrayAsync();
         Assert.Equal(2, sources.Length);
         Assert.All(sources, item => Assert.Equal(provider.CanonicalRecordingId, item.CanonicalRecordingId));
-        var aliases = await db.CanonicalCatalogAliases.ToArrayAsync();
-        Assert.Equal(3, aliases.Length);
-        Assert.All(aliases, item => Assert.Equal(provider.CanonicalRecordingId, item.CanonicalEntityId));
-        Assert.Single(await db.AuditEvents.Where(item => item.Action == "source-identity.reconcile").ToArrayAsync());
+        var identifierCount = await db.RecordingIdentifiers.CountAsync();
         Assert.Equal(2, await db.TrackMatches.CountAsync(item => item.State == TrackMatchState.Accepted));
         foreach (var source in sources)
             await matches.RematchSnapshotAsync(Context(),
                 (await db.ExternalMetadataSnapshots.SingleAsync(item => item.ExternalIdHash == source.ExternalIdHash)).Id,
                 "repeated-source-rematch", "test");
-        Assert.Equal(3, await db.CanonicalCatalogAliases.CountAsync());
-        Assert.Single(await db.AuditEvents.Where(item => item.Action == "source-identity.reconcile").ToArrayAsync());
+        Assert.Equal(identifierCount, await db.RecordingIdentifiers.CountAsync());
+        Assert.All(await db.ProviderTrackIdentities.Where(item =>
+                item.VerificationMethod == "source-snapshot-hash").ToArrayAsync(),
+            item => Assert.Equal(provider.CanonicalRecordingId, item.CanonicalRecordingId));
     }
 
     [Fact]

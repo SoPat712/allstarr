@@ -165,11 +165,31 @@ public sealed class CanonicalRecordingRecord
     public long? DurationMilliseconds { get; set; }
     public bool? IsExplicit { get; set; }
     public bool IsProvisional { get; set; }
-    public string? Isrc { get; set; }
-    public string? MusicBrainzRecordingId { get; set; }
+    public string PublicId { get; set; } = string.Empty;
+    public Guid? MergedIntoId { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long Revision { get; set; }
+    public ICollection<RecordingIdentifierRecord> Identifiers { get; set; } = [];
+
+    public static string DefaultPublicId(Guid recordingId) =>
+        $"ext-allstarr-song-{recordingId:D}";
+}
+
+public static class RecordingIdentifierKinds
+{
+    public const string Isrc = "isrc";
+    public const string MusicBrainz = "musicbrainz";
+}
+
+public sealed class RecordingIdentifierRecord
+{
+    public Guid Id { get; set; }
+    public Guid RecordingId { get; set; }
+    public string Kind { get; set; } = string.Empty;
+    public string Value { get; set; } = string.Empty;
+    public string Source { get; set; } = string.Empty;
+    public DateTimeOffset CreatedAt { get; set; }
 }
 
 public sealed class ProviderTrackIdentityRecord
