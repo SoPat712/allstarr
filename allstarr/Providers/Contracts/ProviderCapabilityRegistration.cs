@@ -13,7 +13,7 @@ public static class ProviderCapabilityRegistration
         services.TryAddSingleton<IDynamicProviderRegistry>(provider =>
             provider.GetRequiredService<ProviderRegistry>());
         services.TryAddSingleton<IProviderRouteAccountResolver, DurableProviderRouteAccountResolver>();
-        services.TryAddSingleton<IProviderRouteHealthSource, DurableProviderRouteHealthSource>();
+        services.TryAddSingleton<IProviderRouteHealthSource, RuntimeProviderRouteHealthSource>();
         services.TryAddSingleton<IProviderRouteSidecarSource, DurableProviderRouteSidecarSource>();
         services.TryAddSingleton<IProviderRouter, ProviderRouter>();
         return services;

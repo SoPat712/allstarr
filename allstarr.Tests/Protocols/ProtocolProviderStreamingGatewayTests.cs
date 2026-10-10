@@ -1,5 +1,6 @@
 using System.Net;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Health;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
@@ -761,6 +762,62 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.NotNull(stream);
         Assert.Equal(HttpMethod.Head, observedMethod);
         stream.Response.Dispose();
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, false, true, false)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, false, true, true)]
+    [InlineData(HttpStatusCode.OK, true, false, false)]
+    public async Task OpenStream_ObservesTheActualOpenResultButNotHeadRequests(
+        HttpStatusCode upstream, bool headOnly, bool expectObservation, bool expectFailure)
+    {
+        var lease = new ProviderStreamLease(
+            "lease",
+            new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            supportsByteRanges: false,
+            supportsSeeking: false,
+            new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (_, _) => Task.FromResult(AudioResponse(upstream)));
+        var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var registry = Registry(capability.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
+                It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, capability.Object));
+        router.Setup(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
+                It.IsAny<int>(), It.IsAny<ProviderError>()))
+            .Returns((ProviderRoutePlan<IProviderStreamingCapability> _, int _, ProviderError error) =>
+                new ProviderFallbackDecision<IProviderStreamingCapability>(
+                    ProviderFallbackDisposition.StopFailure, error.Code, null));
+        var observations = new List<(ProviderCapabilityKind Capability, ProviderError? Error)>();
+        var observer = new Mock<IProviderOutcomeObserver>();
+        observer.Setup(item => item.Observe(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderCapabilityKind>(),
+                It.IsAny<ProviderError?>(), It.IsAny<TimeSpan>()))
+            .Callback((ProviderExecutionContext _, ProviderCapabilityKind kind, ProviderError? error, TimeSpan _) =>
+                observations.Add((kind, error)));
+        var gateway = new ProtocolProviderGateway(
+            router.Object,
+            registry,
+            new HttpClientFactory(),
+            outcomes: observer.Object);
+
+        Task<ProtocolProviderStream?> Open() => gateway.OpenStreamAsync(
+            Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, null, headOnly: headOnly);
+        if (expectFailure)
+            await Assert.ThrowsAsync<HttpRequestException>(Open);
+        else
+            (await Open())?.Response.Dispose();
+
+        if (!expectObservation)
+        {
+            Assert.Empty(observations);
+            return;
+        }
+        var observed = Assert.Single(observations);
+        Assert.Equal(ProviderCapabilityKind.Streaming, observed.Capability);
+        Assert.Equal(expectFailure, observed.Error != null);
     }
 
     [Theory]

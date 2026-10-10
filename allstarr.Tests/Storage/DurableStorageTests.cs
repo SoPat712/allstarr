@@ -55,7 +55,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
         Assert.Equal(DurableStorageProvider.Sqlite, snapshot.Provider);
         Assert.Equal(DurableStorageReadiness.Ready, snapshot.Readiness);
         await using var context = new AllstarrDbContext(_database.Options);
-        Assert.Equal(Assert.Single(context.Database.GetMigrations()), snapshot.SchemaVersion);
+        Assert.Equal(context.Database.GetMigrations().Last(), snapshot.SchemaVersion);
         foreach (var table in new[] { "durable_jobs", "canonical_recordings", "provider_track_identities", "runtime_settings" })
             Assert.True(await context.Database.SqlQuery<bool>($"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name={table}) AS Value").SingleAsync());
         for (var attempt = 0; attempt < 2; attempt++)
@@ -108,7 +108,8 @@ public sealed class DurableStorageTests : IAsyncLifetime
         await using var context = new AllstarrDbContext(_database.Options);
         await context.Database.MigrateAsync();
         await context.Database.ExecuteSqlRawAsync("""
-            UPDATE "__EFMigrationsHistory" SET "MigrationId"='20261008210212_SqliteBaseline'
+            DELETE FROM "__EFMigrationsHistory";
+            INSERT INTO "__EFMigrationsHistory" VALUES ('20261008210212_SqliteBaseline', '10.0.9')
             """);
         var snapshot = (await Initialize(_database.StorageOptions)).GetSnapshot();
         Assert.Equal(DurableStorageReadiness.SchemaIncompatible, snapshot.Readiness);
@@ -122,7 +123,7 @@ public sealed class DurableStorageTests : IAsyncLifetime
     {
         await using var context = new AllstarrDbContext(_database.Options);
         await context.Database.MigrateAsync();
-        var migration = Assert.Single(context.Database.GetMigrations());
+        var migration = context.Database.GetMigrations().Last();
         var divergent = migration.ToLowerInvariant();
         await context.Database.ExecuteSqlInterpolatedAsync(
             $"UPDATE \"__EFMigrationsHistory\" SET \"MigrationId\" = {divergent} WHERE \"MigrationId\" = {migration}");

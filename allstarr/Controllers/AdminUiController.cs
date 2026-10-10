@@ -1,3 +1,4 @@
+using allstarr.Core.Health;
 using System.Text.Json;
 using allstarr.Filters;
 using allstarr.Core.Identity;
@@ -195,43 +196,31 @@ public class AdminUiController : ControllerBase
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .ToListAsync(cancellationToken);
-        var accountIds = accounts.Select(item => item.Id).ToArray();
-        var rollups = await context.ProviderHealthRollups.AsNoTracking()
-            .Where(item => accountIds.Contains(item.ProviderAccountId))
-            .OrderByDescending(item => item.UpdatedAt)
-            .Take(1000)
-            .ToListAsync(cancellationToken);
+        var health = HttpContext.RequestServices.GetRequiredService<ProviderRuntimeHealth>();
 
         var summaries = accounts
             .GroupBy(item => item.ProviderId, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
-                var ids = group.Select(item => item.Id).ToHashSet();
-                var samples = rollups.Where(item => ids.Contains(item.ProviderAccountId)).ToList();
-                var latestSamples = samples
-                    .GroupBy(item => new { item.ProviderAccountId, item.Capability })
-                    .Select(capability => capability.OrderByDescending(item => item.UpdatedAt).First())
-                    .ToList();
-                var sampleCount = samples.Sum(item => item.SampleCount);
-                var healthy = latestSamples.Count(item =>
-                    string.Equals(item.LastState.ToString(), "Healthy", StringComparison.OrdinalIgnoreCase));
-                var failed = latestSamples.Count - healthy;
+                var samples = group.SelectMany(account => Enum.GetValues<ProviderCapabilityKind>()
+                    .Select(capability => health.Get(ProviderRuntimeStatusKey.CreateManaged(
+                        account.ProviderId, capability.ToString(), account.Id), account.Revision)))
+                    .OfType<ProviderHealthObservation>().ToList();
+                var healthy = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Healthy);
+                var failed = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Degraded);
                 return new
                 {
                     providerId = group.Key,
                     connectedAccountName = group.Where(item => item.Enabled).Select(item => item.DisplayName).FirstOrDefault(),
                     enabledAccountCount = group.Count(item => item.Enabled),
-                    capabilityTotal = latestSamples.Count,
+                    capabilityTotal = samples.Count,
                     healthyCapabilityCount = healthy,
                     failedCapabilityCount = failed,
-                    lastCheckedAt = samples.Count > 0 ? samples.Max(item => item.UpdatedAt) : (DateTimeOffset?)null,
-                    successRate = sampleCount > 0
-                        ? samples.Sum(item => item.SuccessCount) / (double)sampleCount
-                        : (double?)null,
-                    p95LatencyMilliseconds = samples.Where(item => item.P95LatencyMilliseconds.HasValue)
-                        .Select(item => item.P95LatencyMilliseconds).Max(),
-                    lastFailureCode = samples.OrderByDescending(item => item.UpdatedAt)
-                        .Select(item => item.LastFailureCode).FirstOrDefault(item => !string.IsNullOrWhiteSpace(item))
+                    lastCheckedAt = samples.Count > 0 ? samples.Max(item => item.ObservedAt) : (DateTimeOffset?)null,
+                    successRate = (double?)null,
+                    p95LatencyMilliseconds = (long?)null,
+                    lastFailureCode = samples.OrderByDescending(item => item.ObservedAt)
+                        .Select(item => item.ReasonCode).FirstOrDefault(item => !string.IsNullOrWhiteSpace(item))
                 };
             })
             .OrderBy(item => item.providerId)
@@ -404,18 +393,11 @@ public class AdminUiController : ControllerBase
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .Where(item => session.IsAdministrator || item.OwnerUserId == userId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var accountIds = accounts.Keys.ToArray();
         var jobs = await context.Jobs.AsNoTracking()
             .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
-            .Take(scanLimit)
-            .ToListAsync(cancellationToken);
-        var health = await context.ProviderHealthSamples.AsNoTracking()
-            .Where(item => accountIds.Contains(item.ProviderAccountId) && (!before.HasValue || item.ObservedAt < before.Value ||
-                (item.ObservedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
-            .OrderByDescending(item => item.ObservedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
@@ -495,22 +477,6 @@ public class AdminUiController : ControllerBase
             SeverityForState(item.State.ToString()),
             item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var providerAccount)
                 ? providerAccount.ProviderId : null)));
-        activity.AddRange(health.Select(item =>
-        {
-            var provider = accounts.TryGetValue(item.ProviderAccountId, out var account)
-                ? account.ProviderId
-                : "provider";
-            return new AdminUiActivityItem(
-                item.Id.ToString("N"),
-                "provider_health",
-                provider,
-                $"{item.Capability} check",
-                item.State.ToString().ToLowerInvariant(),
-                item.FailureCode ?? (item.LatencyMilliseconds.HasValue ? $"{item.LatencyMilliseconds} ms" : "Connection checked"),
-                item.ObservedAt,
-                Severity: SeverityForState(item.State.ToString()),
-                ProviderId: provider);
-        }));
         activity.AddRange(playlistRuns.Select(item =>
         {
             playlistLinks.TryGetValue(item.PlaylistLinkId, out var link);
@@ -628,7 +594,7 @@ public class AdminUiController : ControllerBase
         return Ok(new
         {
             items,
-            hasMore = ordered.Length > limit || jobs.Count == scanLimit || health.Count == scanLimit ||
+            hasMore = ordered.Length > limit || jobs.Count == scanLimit ||
                       playlistRuns.Count == scanLimit || matches.Count == scanLimit || audits.Count == scanLimit ||
                       extensionLogs.Count == scanLimit || downloadArtifacts.Count == scanLimit,
             nextCursor = items.LastOrDefault()?.OccurredAt,

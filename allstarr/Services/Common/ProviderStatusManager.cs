@@ -1,5 +1,4 @@
 using allstarr.Core.Providers.AppleMusicKit;
-using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -19,8 +18,7 @@ namespace allstarr.Services.Common;
 
 /// <summary>
 /// Current status for built-in providers. Reads are side-effect free. Explicit
-/// probes are isolated by managed account and capability, then recorded in the
-/// durable health store when durable storage is ready.
+/// probes and normal activity share volatile account, revision and capability observations.
 /// </summary>
 public class ProviderStatusManager
 {
@@ -29,7 +27,6 @@ public class ProviderStatusManager
         string? ReasonCode = null,
         bool MeasuresLatency = true);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan ObservationLifetime = TimeSpan.FromMinutes(20);
     private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
     private static readonly (string Provider, string Capability, ProviderAccountRequirement AccountRequirement)[] KnownCapabilities =
     [
@@ -62,13 +59,16 @@ public class ProviderStatusManager
     private readonly DeezerSettings _deezerSettings;
     private readonly QobuzSettings _qobuzSettings;
     private readonly ExtensionManager? _extensionManager;
-    private readonly DurableProviderHealthStore? _durableHealth;
+    private readonly ProviderRuntimeHealth _health;
     private readonly IAppleDownloadEndpointDiscovery? _appleDownloadDiscovery;
     private readonly IServiceProvider? _services;
     private readonly IPlatformClock _clock;
-    private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot;
+    private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot
+    {
+        get => _health.AppleDownloadSnapshot;
+        set => _health.AppleDownloadSnapshot = value;
+    }
 
-    private readonly ConcurrentDictionary<ProviderRuntimeStatusKey, ProviderRuntimeStatus> _observations = new();
 
     public ProviderStatusManager(
         IConfiguration configuration,
@@ -79,7 +79,7 @@ public class ProviderStatusManager
         IOptions<DeezerSettings> deezerSettings,
         IOptions<QobuzSettings> qobuzSettings,
         ExtensionManager? extensionManager = null,
-        DurableProviderHealthStore? durableHealth = null,
+        ProviderRuntimeHealth? health = null,
         IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null,
         IServiceProvider? services = null,
         IPlatformClock? clock = null)
@@ -92,10 +92,10 @@ public class ProviderStatusManager
         _deezerSettings = deezerSettings.Value;
         _qobuzSettings = qobuzSettings.Value;
         _extensionManager = extensionManager;
-        _durableHealth = durableHealth;
         _appleDownloadDiscovery = appleDownloadDiscovery;
         _services = services;
         _clock = clock ?? new SystemPlatformClock();
+        _health = health ?? new ProviderRuntimeHealth(clock: _clock);
     }
 
     public IReadOnlyList<string> GetEnabledSearchProviders()
@@ -213,7 +213,8 @@ public class ProviderStatusManager
     public IReadOnlyList<ProviderRuntimeStatus> GetAllManagedStatuses(
         string provider,
         Guid providerAccountId,
-        IReadOnlyDictionary<string, string> accountSecrets)
+        IReadOnlyDictionary<string, string> accountSecrets,
+        long? accountRevision = null)
     {
         var normalizedProvider = Normalize(provider);
         return RuntimeCapabilities()
@@ -222,7 +223,7 @@ public class ProviderStatusManager
                 item.Provider,
                 item.Capability,
                 providerAccountId,
-                accountSecrets))
+                accountSecrets, accountRevision))
             .ToList();
     }
 
@@ -230,7 +231,8 @@ public class ProviderStatusManager
         string provider,
         string capability,
         Guid providerAccountId,
-        IReadOnlyDictionary<string, string> accountSecrets)
+        IReadOnlyDictionary<string, string> accountSecrets,
+        long? accountRevision = null)
     {
         var key = ProviderRuntimeStatusKey.CreateManaged(
             provider,
@@ -239,7 +241,7 @@ public class ProviderStatusManager
         var baseline = ApplyManagedAccountConfiguration(
             BuildBaselineStatus(key),
             accountSecrets);
-        return GetStatusCore(key, baseline);
+        return GetStatusCore(key, baseline, accountRevision);
     }
 
     /// <summary>
@@ -262,50 +264,24 @@ public class ProviderStatusManager
 
     private ProviderRuntimeStatus GetStatusCore(
         ProviderRuntimeStatusKey key,
-        ProviderRuntimeStatus baseline)
+        ProviderRuntimeStatus baseline,
+        long? accountRevision = null)
     {
         if (key.Provider == AppleMusicClient.ProviderId &&
             _services?.GetService<AppleWebTokenProvider>() is { FailureCode: not null } tokens)
             return baseline with { Health = ProviderHealthState.Degraded, ReasonCode = tokens.FailureCode, TestedAt = tokens.ObservedAt };
-        PruneExpiredObservations();
-        if (!_observations.TryGetValue(key, out var observation))
+        var observation = _health.Get(key, accountRevision);
+        if (observation == null) return baseline;
+        var open = _health.IsCircuitOpen(observation);
+        return baseline with
         {
-            if (key.ProviderAccountId.HasValue &&
-                _durableHealth != null &&
-                _durableHealth.TryGetLatest(
-                    key.Provider,
-                    key.ProviderAccountId.Value,
-                    key.Capability,
-                    out var durable))
-            {
-                observation = baseline with
-                {
-                    Health = durable.State switch
-                    {
-                        allstarr.Core.Storage.ProviderHealthState.Healthy => ProviderHealthState.Healthy,
-                        allstarr.Core.Storage.ProviderHealthState.Unknown => ProviderHealthState.Unknown,
-                        _ => ProviderHealthState.Degraded
-                    },
-                    TestedAt = durable.ObservedAt,
-                    LatencyMilliseconds = durable.LatencyMilliseconds,
-                    ReasonCode = durable.FailureCode
-                };
-            }
-            else
-            {
-                return ApplyCircuitState(baseline, key);
-            }
-        }
-
-        return ApplyCircuitState(observation with
-        {
-            IsSupported = baseline.IsSupported,
-            IsEnabled = baseline.IsEnabled,
-            Configuration = baseline.Configuration,
-            ReasonCode = BaselineReasonTakesPrecedence(baseline)
-                ? baseline.ReasonCode
-                : observation.ReasonCode
-        }, key);
+            Health = observation.Health,
+            TestedAt = observation.Health == ProviderHealthState.Testing ? null : observation.ObservedAt,
+            LatencyMilliseconds = observation.LatencyMilliseconds,
+            CircuitOpen = open,
+            ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode :
+                open ? "circuit_open" : observation.ReasonCode
+        };
     }
 
     /// <summary>
@@ -323,7 +299,7 @@ public class ProviderStatusManager
             capability,
             providerAccountId: null,
             accountSecrets: null,
-            cancellationToken);
+            cancellationToken, null);
     }
 
     public async Task<ProviderRuntimeStatus> TestManagedProviderCapabilityAsync(
@@ -331,22 +307,23 @@ public class ProviderStatusManager
         string capability,
         Guid providerAccountId,
         IReadOnlyDictionary<string, string> accountSecrets,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        long? accountRevision = null) =>
         await TestProviderCapabilityCoreAsync(
             provider,
             capability,
             providerAccountId,
             accountSecrets,
-            cancellationToken);
+            cancellationToken, accountRevision);
 
     private async Task<ProviderRuntimeStatus> TestProviderCapabilityCoreAsync(
         string provider,
         string capability,
         Guid? providerAccountId,
         IReadOnlyDictionary<string, string>? accountSecrets,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        long? accountRevision)
     {
-        PruneExpiredObservations();
         var key = providerAccountId.HasValue
             ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, providerAccountId.Value)
             : ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
@@ -368,13 +345,7 @@ public class ProviderStatusManager
             return baseline with { ReasonCode = "probe_not_available" };
         }
 
-        var hadPrevious = _observations.TryGetValue(key, out var previous);
-        _observations[key] = baseline with
-        {
-            Health = ProviderHealthState.Testing,
-            TestedAt = null,
-            ReasonCode = null
-        };
+        var probeObservation = _health.BeginProbe(key, accountRevision);
 
         _logger.LogDebug(
             "Testing provider capability {Provider}/{Capability} for provider account {ProviderAccountId}",
@@ -411,15 +382,7 @@ public class ProviderStatusManager
                 ReasonCode = probe.Success ? null : probe.ReasonCode ?? failureReason
             };
 
-            _observations[key] = result;
-            await PersistObservationAsync(
-                key,
-                probe.Success
-                    ? allstarr.Core.Storage.ProviderHealthState.Healthy
-                    : allstarr.Core.Storage.ProviderHealthState.Degraded,
-                latencyMilliseconds,
-                result.ReasonCode,
-                cancellationToken);
+            _health.Record(key, accountRevision, probe.Success, latencyMilliseconds, result.ReasonCode);
             _logger.LogInformation(
                 "Provider capability probe result: {Provider}/{Capability} => {Health} ({ReasonCode})",
                 key.Provider,
@@ -430,7 +393,7 @@ public class ProviderStatusManager
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            RestorePreviousObservation(key, hadPrevious, previous);
+            _health.CancelProbe(probeObservation);
             throw;
         }
         catch (Exception ex)
@@ -442,13 +405,7 @@ public class ProviderStatusManager
                 LatencyMilliseconds = (long)Math.Max(0, (_clock.UtcNow - startedAt).TotalMilliseconds),
                 ReasonCode = ex is OperationCanceledException ? "timeout" : "unreachable"
             };
-            _observations[key] = result;
-            await PersistObservationAsync(
-                key,
-                allstarr.Core.Storage.ProviderHealthState.Unavailable,
-                null,
-                result.ReasonCode,
-                cancellationToken);
+            _health.Record(key, accountRevision, false, result.LatencyMilliseconds, result.ReasonCode);
 
             // Keep provider response bodies, URLs, and credentials out of status logs.
             _logger.LogWarning(
@@ -460,79 +417,12 @@ public class ProviderStatusManager
         }
     }
 
-    private ProviderRuntimeStatus ApplyCircuitState(
-        ProviderRuntimeStatus status,
-        ProviderRuntimeStatusKey key)
-    {
-        if (!key.ProviderAccountId.HasValue ||
-            _durableHealth?.IsCircuitOpen(key.ProviderAccountId.Value, key.Capability) != true)
-        {
-            return status;
-        }
-
-        return status with
-        {
-            Health = ProviderHealthState.Degraded,
-            ReasonCode = "circuit_open"
-        };
-    }
-
-    private void PruneExpiredObservations()
-    {
-        var cutoff = _clock.UtcNow - ObservationLifetime;
-        foreach (var item in _observations)
-        {
-            if (item.Value.TestedAt.HasValue &&
-                item.Value.TestedAt.Value <= cutoff &&
-                (item.Key.ProviderAccountId.HasValue || item.Value.Health != ProviderHealthState.Degraded))
-            {
-                _observations.TryRemove(item.Key, out _);
-            }
-        }
-    }
-
-    private async Task PersistObservationAsync(
-        ProviderRuntimeStatusKey key,
-        allstarr.Core.Storage.ProviderHealthState state,
-        long? latencyMilliseconds,
-        string? failureCode,
-        CancellationToken cancellationToken)
-    {
-        if (_durableHealth == null || !key.ProviderAccountId.HasValue)
-        {
-            return;
-        }
-
-        try
-        {
-            await _durableHealth.RecordAsync(
-                key.Provider,
-                key.ProviderAccountId.Value,
-                key.Capability,
-                state,
-                latencyMilliseconds,
-                failureCode,
-                cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(
-                "Could not persist provider health observation for {Provider}/{Capability} ({ExceptionType})",
-                key.Provider,
-                key.Capability,
-                ex.GetType().Name);
-        }
-    }
-
     public async Task<bool> TestManagedProviderConnectionAsync(
         string provider,
         Guid providerAccountId,
         IReadOnlyDictionary<string, string> accountSecrets,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        long? accountRevision = null)
     {
         var normalized = Normalize(provider);
         var capabilities = RuntimeCapabilities()
@@ -549,7 +439,7 @@ public class ProviderStatusManager
         var healthy = true;
         foreach (var capability in capabilities)
         {
-            var baseline = GetManagedStatus(normalized, capability, providerAccountId, accountSecrets);
+            var baseline = GetManagedStatus(normalized, capability, providerAccountId, accountSecrets, accountRevision);
             if (!baseline.IsSupported || !baseline.IsEnabled ||
                 baseline.Configuration == ProviderConfigurationState.NeedsConfiguration)
             {
@@ -562,7 +452,7 @@ public class ProviderStatusManager
                 capability,
                 providerAccountId,
                 accountSecrets,
-                cancellationToken);
+                cancellationToken, accountRevision);
             healthy &= result.Health == ProviderHealthState.Healthy;
         }
 
@@ -1176,21 +1066,6 @@ public class ProviderStatusManager
         !baseline.IsSupported ||
         !baseline.IsEnabled ||
         baseline.Configuration == ProviderConfigurationState.NeedsConfiguration;
-
-    private void RestorePreviousObservation(
-        ProviderRuntimeStatusKey key,
-        bool hadPrevious,
-        ProviderRuntimeStatus? previous)
-    {
-        if (hadPrevious && previous != null)
-        {
-            _observations[key] = previous;
-        }
-        else
-        {
-            _observations.TryRemove(key, out _);
-        }
-    }
 
     private static bool ReadTrue(JsonElement source, string property) =>
         source.TryGetProperty(property, out var value) &&

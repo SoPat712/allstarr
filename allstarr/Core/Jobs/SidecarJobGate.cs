@@ -1,8 +1,9 @@
+using allstarr.Core.Health;
 using allstarr.Core.Operations;
 
 namespace allstarr.Core.Jobs;
 
-public sealed class SidecarJobGate(SidecarStatusCatalog catalog)
+public sealed class SidecarJobGate(ProviderRuntimeHealth catalog)
 {
     public DurableJobCompletion? Check(
         string sidecarId,

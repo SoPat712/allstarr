@@ -77,6 +77,8 @@ public sealed record ProviderRuntimeStatus
 
     public string? ReasonCode { get; init; }
 
+    public bool CircuitOpen { get; init; }
+
     // Readiness requires evidence; best-effort routing below also permits untested capabilities.
     public bool IsReady =>
         IsSupported &&
@@ -88,5 +90,5 @@ public sealed record ProviderRuntimeStatus
         IsSupported &&
         IsEnabled &&
         Configuration != ProviderConfigurationState.NeedsConfiguration &&
-        Health != ProviderHealthState.Degraded;
+        !CircuitOpen;
 }

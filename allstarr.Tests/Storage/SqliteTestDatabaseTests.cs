@@ -16,7 +16,7 @@ public sealed class SqliteTestDatabaseTests
         await using var writer = new AllstarrDbContext(first.Options);
         await using var reader = new AllstarrDbContext(second.Options);
         Assert.Equal(await writer.Database.GetAppliedMigrationsAsync(), await reader.Database.GetAppliedMigrationsAsync());
-        Assert.Single(await reader.Database.GetAppliedMigrationsAsync());
+        Assert.Equal(reader.Database.GetMigrations(), await reader.Database.GetAppliedMigrationsAsync());
         writer.Users.Add(new UserRecord
         {
             Id = Guid.CreateVersion7(),
@@ -48,6 +48,6 @@ public sealed class SqliteTestDatabaseTests
         Assert.False(Directory.Exists(directory));
         Assert.True(File.Exists(neighbor.DatabasePath));
         await using var intact = new AllstarrDbContext(neighbor.Options);
-        Assert.Single(await intact.Database.GetAppliedMigrationsAsync());
+        Assert.Equal(intact.Database.GetMigrations(), await intact.Database.GetAppliedMigrationsAsync());
     }
 }

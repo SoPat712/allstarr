@@ -467,6 +467,22 @@ public sealed class ProviderRouterTests
             candidate.ReasonCode == "verified-identity-required");
     }
 
+    [Theory]
+    [InlineData(1, true)]
+    [InlineData(2, false)]
+    public async Task AccountRevision_OnlyCurrentObservationsCanBlockRouting(long observedRevision, bool expectedCandidate)
+    {
+        var user = Guid.CreateVersion7();
+        var account = Account("fixture", user, revision: 2);
+        var router = Router([Metadata("fixture", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal])],
+            new FakeAccountResolver(new Dictionary<string, ProviderRouteAccountResolution> { ["fixture"] = new(account, 2) }),
+            new FakeHealthSource(new Dictionary<string, ProviderRouteHealthSnapshot>
+            { ["fixture"] = new(ProviderRouteHealthState.Unauthorized, true, observedRevision) }));
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata, ["fixture"], actor: Actor(user)));
+        Assert.Equal(expectedCandidate ? 1 : 0, plan.Candidates.Count);
+        if (!expectedCandidate) Assert.Equal("circuit-open", Assert.Single(plan.Decision.Candidates).ReasonCode);
+    }
+
     private static ProviderRouter Router(
         IEnumerable<ProviderRegistration> registrations,
         IProviderRouteAccountResolver? accounts = null,

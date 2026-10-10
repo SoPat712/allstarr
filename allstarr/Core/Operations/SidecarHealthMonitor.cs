@@ -1,4 +1,5 @@
-using System.Collections.Concurrent;
+using allstarr.Core.Health;
+using allstarr.Services.AppleMusic;
 using System.Net;
 using System.Text.Json;
 
@@ -33,22 +34,22 @@ public sealed class SidecarHealthOptions
 {
     public const string SectionName = "Sidecars";
 
-    public int ProbeIntervalSeconds { get; set; } = 900;
-    public int ProbeJitterSeconds { get; set; } = 60;
+    public int ProbeIntervalSeconds { get; set; } = 30;
     public int ProbeTimeoutSeconds { get; set; } = 5;
-    public int MaxProbesPerCycle { get; set; } = 16;
     public List<SidecarProbeTarget> Targets { get; set; } = [];
+
+    public bool ClampProbePolicy()
+    {
+        var interval = Math.Clamp(ProbeIntervalSeconds, 5, 30);
+        var timeout = Math.Clamp(ProbeTimeoutSeconds, 1, 5);
+        var changed = interval != ProbeIntervalSeconds || timeout != ProbeTimeoutSeconds;
+        ProbeIntervalSeconds = interval;
+        ProbeTimeoutSeconds = timeout;
+        return changed;
+    }
 
     public void Validate()
     {
-        if (ProbeIntervalSeconds is < 30 or > 86400 ||
-            ProbeJitterSeconds is < 0 or > 900 ||
-            ProbeTimeoutSeconds is < 1 or > 60 ||
-            MaxProbesPerCycle is < 1 or > 64)
-        {
-            throw new InvalidOperationException("Sidecar probe policy is outside the supported bounds.");
-        }
-
         if (Targets.Count > 256 || Targets.Any(target =>
                 string.IsNullOrWhiteSpace(target.Id) ||
                 string.IsNullOrWhiteSpace(target.ProviderId)))
@@ -66,64 +67,38 @@ public sealed record SidecarStatus(
     string? ErrorCode,
     DateTimeOffset? CheckedAt);
 
-public sealed class SidecarStatusCatalog
-{
-    private readonly ConcurrentDictionary<string, SidecarStatus> _statuses =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    public SidecarStatusCatalog(
-        SidecarHealthOptions options)
-    {
-        foreach (var target in options.Targets)
-        {
-            var state = string.IsNullOrWhiteSpace(target.BaseUrl)
-                ? SidecarRuntimeState.NotInstalled
-                : SidecarRuntimeState.Unknown;
-            Set(new SidecarStatus(
-                target.Id,
-                target.ProviderId,
-                state,
-                target.Required,
-                state == SidecarRuntimeState.NotInstalled ? "sidecar_not_installed" : null,
-                null));
-        }
-    }
-
-    public IReadOnlyList<SidecarStatus> GetAll() => _statuses.Values
-        .OrderBy(item => item.Id, StringComparer.OrdinalIgnoreCase)
-        .ToList();
-
-    public bool TryGet(string id, out SidecarStatus status) =>
-        _statuses.TryGetValue(id, out status!);
-
-    public void Set(SidecarStatus status)
-    {
-        _statuses[status.Id] = status;
-    }
-}
-
 public sealed class SidecarHealthMonitor : BackgroundService
 {
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly SidecarHealthOptions _options;
-    private readonly SidecarStatusCatalog _catalog;
+    private readonly ProviderRuntimeHealth _catalog;
     private readonly ILogger<SidecarHealthMonitor> _logger;
     private readonly IPlatformClock _clock;
-    private int _nextTargetIndex;
+    private readonly IAppleDownloadEndpointDiscovery? _appleDiscovery;
 
     public SidecarHealthMonitor(
         IHttpClientFactory httpClientFactory,
         SidecarHealthOptions options,
-        SidecarStatusCatalog catalog,
+        ProviderRuntimeHealth catalog,
         ILogger<SidecarHealthMonitor> logger,
-        IPlatformClock? clock = null)
+        IPlatformClock? clock = null,
+        IAppleDownloadEndpointDiscovery? appleDiscovery = null)
     {
         _httpClientFactory = httpClientFactory;
         _options = options;
         _catalog = catalog;
         _logger = logger;
         _clock = clock ?? new SystemPlatformClock();
+        if (_options.ClampProbePolicy())
+        {
+            _logger.LogWarning(
+                "Sidecar probe timing was outside the supported range; using a {Interval}s interval and {Timeout}s timeout",
+                _options.ProbeIntervalSeconds,
+                _options.ProbeTimeoutSeconds);
+        }
+
         _options.Validate();
+        _appleDiscovery = appleDiscovery;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -132,7 +107,7 @@ public sealed class SidecarHealthMonitor : BackgroundService
         {
             try
             {
-                await ProbeScheduledCycleAsync(stoppingToken);
+                await ProbeAllOnceAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -145,13 +120,10 @@ public sealed class SidecarHealthMonitor : BackgroundService
                     ex.GetType().Name);
             }
 
-            var jitter = _options.ProbeJitterSeconds == 0
-                ? 0
-                : Random.Shared.Next(0, _options.ProbeJitterSeconds + 1);
             try
             {
                 await Task.Delay(
-                    TimeSpan.FromSeconds(_options.ProbeIntervalSeconds + jitter),
+                    TimeSpan.FromSeconds(_options.ProbeIntervalSeconds),
                     stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -161,48 +133,43 @@ public sealed class SidecarHealthMonitor : BackgroundService
         }
     }
 
-    private async Task ProbeScheduledCycleAsync(CancellationToken cancellationToken)
-    {
-        if (_options.Targets.Count == 0)
-        {
-            return;
-        }
-
-        var count = Math.Min(_options.MaxProbesPerCycle, _options.Targets.Count);
-        var targets = new List<SidecarProbeTarget>(count);
-        for (var offset = 0; offset < count; offset++)
-        {
-            targets.Add(_options.Targets[(_nextTargetIndex + offset) % _options.Targets.Count]);
-        }
-
-        _nextTargetIndex = (_nextTargetIndex + count) % _options.Targets.Count;
-        await ProbeTargetsAsync(targets, cancellationToken);
-    }
-
     public async Task ProbeAllOnceAsync(CancellationToken cancellationToken = default)
     {
-        await ProbeTargetsAsync(_options.Targets, cancellationToken);
+        await Task.WhenAll(ProbeTargetsAsync(_options.Targets, cancellationToken), ProbeAppleAsync(cancellationToken));
+    }
+
+    private async Task ProbeAppleAsync(CancellationToken cancellationToken)
+    {
+        if (_appleDiscovery == null) return;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(5));
+        try
+        {
+            _catalog.AppleDownloadSnapshot = await _appleDiscovery.DiscoverAsync(timeout.Token);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception)
+        {
+            _catalog.AppleDownloadSnapshot = new AppleDownloadEndpointSnapshot(
+                AppleDownloadEndpointState.Unreachable, "endpoint_unreachable", null, false, []);
+        }
     }
 
     private async Task ProbeTargetsAsync(
         IEnumerable<SidecarProbeTarget> targets,
         CancellationToken cancellationToken)
     {
-        foreach (var target in targets)
+        // At most four batches of five seconds, followed by at most thirty seconds idle.
+        await Parallel.ForEachAsync(targets, new ParallelOptions
         {
-            if (!target.ProbeEnabled)
-            {
-                _catalog.Set(Status(
-                    target,
-                    SidecarRuntimeState.ProbeDisabled,
-                    "sidecar_probe_disabled",
-                    _clock.UtcNow));
-                continue;
-            }
-
-            var status = await ProbeAsync(target, cancellationToken);
+            MaxDegreeOfParallelism = 64,
+            CancellationToken = cancellationToken
+        }, async (target, token) =>
+        {
+            var status = target.ProbeEnabled ? await ProbeAsync(target, token) :
+                Status(target, SidecarRuntimeState.ProbeDisabled, "sidecar_probe_disabled", _clock.UtcNow);
             _catalog.Set(status);
-        }
+        });
     }
 
     private async Task<SidecarStatus> ProbeAsync(
@@ -226,7 +193,8 @@ public sealed class SidecarHealthMonitor : BackgroundService
         try
         {
             var endpoint = new Uri(baseUri, target.HealthPath.TrimStart('/'));
-            using var response = await _httpClientFactory.CreateClient().GetAsync(endpoint, timeout.Token);
+            using var response = await _httpClientFactory.CreateClient().GetAsync(
+                endpoint, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
             if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
             {
                 return Status(target, SidecarRuntimeState.Unauthorized, "sidecar_unauthorized", now);
@@ -239,6 +207,7 @@ public sealed class SidecarHealthMonitor : BackgroundService
 
             if (!string.IsNullOrWhiteSpace(target.ExpectedApiVersion) || target.RequireAuthenticated)
             {
+                await response.Content.LoadIntoBufferAsync(64 * 1024, timeout.Token);
                 using var document = await JsonDocument.ParseAsync(
                     await response.Content.ReadAsStreamAsync(timeout.Token),
                     cancellationToken: timeout.Token);

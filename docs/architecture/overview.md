@@ -16,8 +16,9 @@ Allstarr is a music middleware service. It presents a Jellyfin or Subsonic-compa
 
 | Owner | Authoritative state | Allowed payloads and limits | Never owns |
 | --- | --- | --- | --- |
-| SQLite | Users, accounts and encrypted secret references; household and personal settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches and overrides; jobs, schedules and attempts; health, circuits and audit events; extension registries, packages and permission state; playback, favorites, intelligence and managed-file metadata | Durable business and lifecycle records with explicit ownership, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
+| SQLite | Users, accounts and encrypted secret references; household and personal settings; admin sessions; playlist links, snapshots, source entries, sync runs and memberships; canonical identities, matches and overrides; jobs, schedules and attempts; audit events; extension registries, packages and permission state; playback, favorites, intelligence and managed-file metadata | Durable business and lifecycle records with explicit ownership, revisions, constraints and migrations | Audio/artwork bytes, extension package bytes, backup archives or encryption key material |
 | Filesystem | Managed audio and artwork; target playlist files; kept lyrics sidecars; installed extension package payloads; the encryption key ring; verified backup artifacts | Rebuildable media cache with bounded size/TTL; atomic staging files beside an allowed final payload | Accounts, sessions, settings, mappings, accepted decisions, playlist membership/order, sync timestamps, health, jobs or events |
+| In-process provider health | Latest provider/account/revision/capability observations, cooldowns and sidecar readiness | One volatile owner; normal activity and explicit tests supply observations; cheap sidecar readiness refreshes within a minute | Credentials, media bytes, historical health samples or business records |
 | Environment / deployment secrets | Process-start bootstrap, security policy and deployment topology: data-directory location, backend selection/endpoints, mounted paths, bind/trust policy, optional service profiles and initial defaults | Read once into startup configuration; secret values may come from mounted secret files | WebUI mutations, per-user credentials, live playlist configuration or any restart-reconciled business state |
 
 The database row is authoritative whenever a filesystem payload has lifecycle metadata. Deleting a cache payload may cause a rebuild; deleting a durable row may not be repaired from cache. Legacy `.env` input is accepted only through the explicit preview/apply migration boundary and is never reread as live application state.
@@ -172,7 +173,7 @@ The complete application-cache key inventory is:
 | `media:descriptor:*`, `playlist:artwork-descriptor:*`, `artwork:payload:*` | Artwork bytes or descriptor | Bounded media size/TTL and resource revision |
 | `playback:signal:dedupe:*` | Short-lived duplicate-signal marker | Five-minute maximum TTL |
 
-Playlist source entries, order, matches, decisions, sync timestamps, sessions, and health never use cache keys. Their read models are rebuilt from SQLite.
+Playlist source entries, order, matches, decisions, sync timestamps and sessions never use cache keys. Their read models are rebuilt from SQLite. Provider health is volatile: restarting clears observations and cooldowns; normal activity and explicit tests rebuild account status without background account or media probes.
 
 ## WebUI
 

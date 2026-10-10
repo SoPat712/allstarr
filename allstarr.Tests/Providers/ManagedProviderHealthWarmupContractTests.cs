@@ -3,19 +3,14 @@ namespace allstarr.Tests;
 public sealed class ManagedProviderHealthWarmupContractTests
 {
     [Fact]
-    public void ProductionHost_WarmsEnabledManagedAccountsWithoutBlockingStartup()
+    public void HostRebuildsStatusWithoutManagedAccountWarmup()
     {
         var program = File.ReadAllText(FindRepositoryFile("allstarr", "Program.cs"));
-        var service = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Services", "Common", "ManagedProviderAccountHealthWarmupService.cs"));
-
-        Assert.Contains("AddHostedService<ManagedProviderAccountHealthWarmupService>()", program, StringComparison.Ordinal);
-        Assert.Contains("!builder.Environment.IsEnvironment(\"Testing\")", program, StringComparison.Ordinal);
-        Assert.Contains(": BackgroundService", service, StringComparison.Ordinal);
-        Assert.Contains("item.Enabled && item.SecretReferenceId != null", service, StringComparison.Ordinal);
-        Assert.Contains("CanTestCapability", service, StringComparison.Ordinal);
-        Assert.Contains("TestManagedProviderCapabilityAsync", service, StringComparison.Ordinal);
-        Assert.DoesNotContain("logger.LogWarning(ex,", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("AddHostedService<ManagedProviderAccountHealthWarmupService>()", program, StringComparison.Ordinal);
+        Assert.Contains("AddProviderRuntimeHealth", program, StringComparison.Ordinal);
+        var monitor = File.ReadAllText(FindRepositoryFile("allstarr", "Core", "Operations", "SidecarHealthMonitor.cs"));
+        Assert.DoesNotContain("TestManagedProvider", monitor, StringComparison.Ordinal);
+        Assert.DoesNotContain("GetStreamLease", monitor, StringComparison.Ordinal);
     }
 
     private static string FindRepositoryFile(params string[] parts)

@@ -648,7 +648,7 @@ public class ConfigController : ControllerBase
             foreach (var status in statusManager.GetAllManagedStatuses(
                          account.ProviderId,
                          account.Id,
-                         accountSecrets))
+                         accountSecrets, account.Revision))
             {
                 results.Add(new
                 {
@@ -764,6 +764,14 @@ public class ConfigController : ControllerBase
             });
         }
 
+        if (capability == ProviderCapabilities.Streaming)
+        {
+            var media = await MeasureMediaAsync(account);
+            return media == null
+                ? Conflict(new { error = "A verified administrator identity is required." })
+                : MediaTestResult(account, capability, media, []);
+        }
+
         if (string.IsNullOrWhiteSpace(capability))
         {
             var connectionTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -771,16 +779,28 @@ public class ConfigController : ControllerBase
                 normalizedProvider,
                 account.Id,
                 accountSecrets,
-                HttpContext.RequestAborted);
+                HttpContext.RequestAborted, account.Revision);
             connectionTimer.Stop();
             var connectionLatencyMs = connectionTimer.ElapsedMilliseconds;
             var failedCapabilities = statusManager.GetAllManagedStatuses(
                     normalizedProvider,
                     account.Id,
-                    accountSecrets)
+                    accountSecrets, account.Revision)
                 .Where(item => item.Health == allstarr.Services.Common.ProviderHealthState.Degraded)
-                .Select(item => new { capability = item.Capability, reasonCode = item.ReasonCode })
+                .Select(item => new FailedCapability(item.Capability, item.ReasonCode))
                 .ToArray();
+            string? mediaReason = null;
+            var mediaStatus = statusManager.GetManagedStatus(normalizedProvider, ProviderCapabilities.Streaming,
+                account.Id, accountSecrets, account.Revision);
+            if (healthy && mediaStatus.IsSupported && mediaStatus.IsEnabled &&
+                mediaStatus.Configuration != ProviderConfigurationState.NeedsConfiguration)
+            {
+                var media = await MeasureMediaAsync(account);
+                if (media != null && media.Stage != "track-selection")
+                    return MediaTestResult(account, null, media, failedCapabilities);
+                mediaReason = media == null ? "media_sample_unavailable" : "media_sample_needs_known_track";
+            }
+
             return Ok(new
             {
                 success = true,
@@ -790,7 +810,7 @@ public class ConfigController : ControllerBase
                 latencyMs = connectionLatencyMs,
                 bars = ConnectivityQuality.Bars(connectionLatencyMs, healthy, ConnectivityMetric.ApiLatency),
                 metric = "api-latency",
-                reasonCode = failedCapabilities.FirstOrDefault()?.reasonCode,
+                reasonCode = failedCapabilities.FirstOrDefault()?.ReasonCode ?? mediaReason,
                 failedCapabilities
             });
         }
@@ -799,7 +819,7 @@ public class ConfigController : ControllerBase
             normalizedProvider,
             capability,
             account.Id,
-            accountSecrets);
+            accountSecrets, account.Revision);
         if (!current.IsSupported)
         {
             return BadRequest(new
@@ -817,7 +837,7 @@ public class ConfigController : ControllerBase
             capability,
             account.Id,
             accountSecrets,
-            HttpContext.RequestAborted);
+            HttpContext.RequestAborted, account.Revision);
         capabilityTimer.Stop();
         var capabilityLatencyMs = capabilityTimer.ElapsedMilliseconds;
         return Ok(new
@@ -834,6 +854,55 @@ public class ConfigController : ControllerBase
             reasonCode = tested.ReasonCode
         });
     }
+
+    private sealed record FailedCapability(string Capability, string? ReasonCode);
+
+    private async Task<ProviderCtsDiagnosticResult?> MeasureMediaAsync(ProviderAccountRecord account)
+    {
+        var session = GetAdminSession();
+        if (session?.AllstarrUserId is not { } userId) return null;
+        var token = HttpContext.RequestAborted;
+        await using var db = await HttpContext.RequestServices
+            .GetRequiredService<IDbContextFactory<AllstarrDbContext>>().CreateDbContextAsync(token);
+        var identity = await db.Users.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == userId && item.Enabled && item.IsAdmin &&
+            item.BackendType == session.BackendType.ToLowerInvariant() &&
+            item.BackendInstanceId == session.BackendInstanceId && item.BackendPrincipalId == session.UserId, token);
+        if (identity == null) return null;
+        var actor = new ProviderActorContext(ProviderActorKind.Administrator, userId,
+            new ProviderBackendPrincipal(identity.BackendType, identity.BackendInstanceId, identity.BackendPrincipalId));
+        var policy = await HttpContext.RequestServices.GetRequiredService<IEffectiveProviderPolicyResolver>()
+            .ResolveForUserAsync(userId, token);
+        return await HttpContext.RequestServices.GetRequiredService<ProviderCtsDiagnosticRunner>().MeasureAsync(
+            actor, account.ProviderId, account.Id, AudioQualityPolicy.RequestedQuality(policy.AudioQuality),
+            HttpContext.TraceIdentifier.Length <= 100 ? HttpContext.TraceIdentifier : HttpContext.TraceIdentifier[..100],
+            cancellationToken: token);
+    }
+
+    private IActionResult MediaTestResult(ProviderAccountRecord account, string? capability,
+        ProviderCtsDiagnosticResult result, IReadOnlyList<FailedCapability> failedCapabilities)
+    {
+        if (result.RetryAfterSeconds.HasValue) Response.Headers.RetryAfter = result.RetryAfterSeconds.Value.ToString();
+        return Ok(new
+        {
+            success = result.Succeeded,
+            healthy = result.Succeeded,
+            provider = account.ProviderId,
+            providerAccountId = account.Id,
+            capability,
+            health = result.Succeeded ? "healthy" : "degraded",
+            latencyMs = result.ClickToStreamMilliseconds,
+            bars = result.Bars,
+            metric = "cts",
+            testedAt = result.MeasuredAt,
+            reasonCode = result.Succeeded ? null :
+                result.Error is { } error && !error.Contains(' ') ? error : result.Stage,
+            seekRung = result.SeekRung,
+            sampleBytes = result.SampleBytes,
+            failedCapabilities
+        });
+    }
+
 
     private async Task<IReadOnlyDictionary<string, string>> ReadProviderAccountSecretsAsync(
         ProviderAccountRecord account,

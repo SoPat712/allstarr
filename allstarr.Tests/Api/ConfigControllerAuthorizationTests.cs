@@ -1,3 +1,5 @@
+using allstarr.Core.Capabilities;
+using allstarr.Core.Routing;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -288,8 +290,9 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.IsType<BadRequestObjectResult>(await administrator.TestProvider(
             "deezer",
             ProviderCapabilities.Download));
-        await using var context = await _factory.CreateDbContextAsync();
-        Assert.Empty(await context.ProviderHealthSamples.ToListAsync());
+        var publicHealth = administrator.HttpContext.RequestServices.GetRequiredService<ProviderRuntimeHealth>();
+        Assert.NotNull(publicHealth.Get(ProviderRuntimeStatusKey.CreateAccountFree("deezer", ProviderCapabilities.Metadata)));
+        Assert.Null(publicHealth.Get(ProviderRuntimeStatusKey.CreateManaged("deezer", ProviderCapabilities.Metadata, _providerAccountId)));
     }
 
     [Fact]
@@ -307,7 +310,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ManagedDownloadProbe_UsesEncryptedAccountSecretAndPersistsExactCapability()
+    public async Task ManagedMediaTest_UsesExactEncryptedAccountAndVolatileStreamingStatus()
     {
         var secretStore = CreateSecretStore();
         var secret = await secretStore.StoreAsync(
@@ -322,23 +325,67 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             await context.SaveChangesAsync();
         }
 
-        var handler = new CapturingHandler(new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new StringContent(
-                "{\"results\":{\"USER\":{\"USER_ID\":42}}}",
-                Encoding.UTF8,
-                "application/json")
-        });
         var healthStore = CreateHealthStore();
-        var controller = CreateController(
-            CreateHttpContextWithSession(isAdmin: true),
-            httpClientFactory: new HandlerHttpClientFactory(handler),
-            healthStore: healthStore,
-            secretStore: secretStore);
+        var accountRevision = 0L;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            accountRevision = (await db.ProviderAccounts.SingleAsync()).Revision;
+            var recordingId = Guid.CreateVersion7();
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = recordingId, CreatedByUserId = _userId, Title = "Sample", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+            db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+            {
+                Id = Guid.CreateVersion7(),
+                CanonicalRecordingId = recordingId,
+                DecisionVersion = 1,
+                VerificationMethod = "fixture",
+                ProviderId = "deezer",
+                ResourceKind = ProviderResourceKind.Track,
+                Scope = ProviderIdentityScope.Catalog,
+                ExternalId = "sample-track",
+                ExternalIdHash = new string('a', 64),
+                Verification = ProviderIdentityVerification.Verified,
+                VerifiedAt = DateTimeOffset.UtcNow,
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(async (ProviderExecutionContext execution, ProviderStreamLeaseRequest request) =>
+            {
+                Assert.Equal(_providerAccountId, execution.Account!.AccountId);
+                Assert.Equal(accountRevision, execution.Account.Revision);
+                using var credential = await secretStore.OpenAsync(secret.Id,
+                    new SecretAccessContext(null, $"provider-account:deezer:{_providerAccountId:N}", AllowShared: true));
+                Assert.Contains("selected-account-arl", credential.ReadUtf8(), StringComparison.Ordinal);
+                Assert.Equal("sample-track", request.TrackId.Value);
+                return ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease("sample",
+                    new Uri("https://fixture.invalid/media"), DateTimeOffset.UtcNow.AddMinutes(1), false, false,
+                    new ProviderMediaFormat("audio/flac", "flac", "flac", 1411000, 44100, 16, 2),
+                    ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = new ByteArrayContent(new byte[80000]) })));
+            });
+        IProviderStreamingCapability? registered = streaming.Object;
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.TryGetCapability<IProviderStreamingCapability>("deezer", ProviderCapabilityKind.Streaming, out registered)).Returns(true);
+        registry.Setup(item => item.GetRequired("deezer")).Returns(new ProviderDescriptor("deezer", "Deezer", "Fixture provider",
+            ProviderOrigin.BuiltIn, "1", "1", [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming,
+                ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required, "1", ["getStreamLease"], [ProviderAccountScope.Shared])],
+            new ProviderPermissionDescriptor()));
+        var accounts = new Mock<IProviderRouteAccountResolver>();
+        accounts.Setup(item => item.ResolveAsync(It.Is<ProviderRouteAccountRequest>(request =>
+                request.Actor.EffectiveUserId == _userId && request.RequestedAccountId == _providerAccountId), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderRouteAccountResolution(new ProviderAccountContext(_providerAccountId, "deezer",
+                ProviderAccountScope.Shared, accountRevision, secretReferenceId: secret.Id), accountRevision));
+        using var selector = new ProviderCtsTrackSelector(_factory);
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, accounts.Object, selector, healthStore);
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true), healthStore: healthStore,
+            secretStore: secretStore, diagnosticRunner: runner);
 
         var result = Assert.IsType<OkObjectResult>(await controller.TestProvider(
             "deezer",
-            ProviderCapabilities.Download,
+            ProviderCapabilities.Streaming,
             _providerAccountId));
         using (var resultDocument = JsonDocument.Parse(JsonSerializer.Serialize(result.Value)))
         {
@@ -347,23 +394,15 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Assert.Equal(_providerAccountId, resultDocument.RootElement.GetProperty("providerAccountId").GetGuid());
         }
 
-        Assert.Equal("arl=selected-account-arl", handler.CookieHeader);
-        Assert.Equal(HttpMethod.Post, handler.Method);
-        Assert.Contains("deezer.getUserData", handler.RequestUri?.Query, StringComparison.Ordinal);
-
-        await using (var context = await _factory.CreateDbContextAsync())
-        {
-            var sample = await context.ProviderHealthSamples.SingleAsync();
-            Assert.Equal(_providerAccountId, sample.ProviderAccountId);
-            Assert.Equal(ProviderCapabilities.Download, sample.Capability);
-            Assert.Equal(allstarr.Core.Storage.ProviderHealthState.Healthy, sample.State);
-            var rollup = await context.ProviderHealthRollups.SingleAsync();
-            Assert.Equal(_providerAccountId, rollup.ProviderAccountId);
-            Assert.Equal(1, rollup.SuccessCount);
-        }
-
+        var observation = healthStore.Get(ProviderRuntimeStatusKey.CreateManaged("deezer", "streaming", _providerAccountId), accountRevision);
+        Assert.NotNull(observation);
+        Assert.Equal(allstarr.Services.Common.ProviderHealthState.Healthy, observation.Health);
+        Assert.Null(healthStore.Get(ProviderRuntimeStatusKey.CreateManaged("deezer", "download", _providerAccountId)));
+        using var sampleDocument = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.Equal(65536, sampleDocument.RootElement.GetProperty("sampleBytes").GetInt32());
+        Assert.Equal("sequential", sampleDocument.RootElement.GetProperty("seekRung").GetString());
+        streaming.VerifyAll();
         var restartedHealthStore = CreateHealthStore();
-        await restartedHealthStore.InitializeAsync();
         var restartedController = CreateController(
             CreateHttpContextWithSession(isAdmin: true),
             healthStore: restartedHealthStore,
@@ -374,8 +413,55 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             item.GetProperty("providerAccountId").GetGuid() == _providerAccountId &&
             item.GetProperty("capability").GetString() == ProviderCapabilities.Download);
         Assert.Equal("configured", download.GetProperty("configuration").GetString());
-        Assert.Equal("healthy", download.GetProperty("health").GetString());
-        Assert.Equal(JsonValueKind.String, download.GetProperty("testedAt").ValueKind);
+        Assert.Equal("unknown", download.GetProperty("health").GetString());
+        Assert.Equal(JsonValueKind.Null, download.GetProperty("testedAt").ValueKind);
+    }
+
+    [Fact]
+    public async Task ManagedConnectionTest_WithoutKnownTrackKeepsHealthyConnectionAndExplainsMissingSample()
+    {
+        var secretStore = CreateSecretStore();
+        var secret = await secretStore.StoreAsync(
+            userId: null,
+            purpose: $"provider-account:deezer:{_providerAccountId:N}",
+            plaintext: Encoding.UTF8.GetBytes("{\"arl\":\"selected-account-arl\"}"));
+        long accountRevision;
+        await using (var context = await _factory.CreateDbContextAsync())
+        {
+            var account = await context.ProviderAccounts.SingleAsync(item => item.Id == _providerAccountId);
+            account.SecretReferenceId = secret.Id;
+            await context.SaveChangesAsync();
+            accountRevision = account.Revision;
+        }
+
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        IProviderStreamingCapability? registered = streaming.Object;
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.TryGetCapability<IProviderStreamingCapability>("deezer", ProviderCapabilityKind.Streaming, out registered)).Returns(true);
+        registry.Setup(item => item.GetRequired("deezer")).Returns(new ProviderDescriptor("deezer", "Deezer", "Fixture provider",
+            ProviderOrigin.BuiltIn, "1", "1", [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming,
+                ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required, "1", ["getStreamLease"], [ProviderAccountScope.Shared])],
+            new ProviderPermissionDescriptor()));
+        var accounts = new Mock<IProviderRouteAccountResolver>();
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderRouteAccountResolution(new ProviderAccountContext(_providerAccountId, "deezer",
+                ProviderAccountScope.Shared, accountRevision, secretReferenceId: secret.Id), accountRevision));
+        var healthStore = CreateHealthStore();
+        using var selector = new ProviderCtsTrackSelector(_factory);
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, accounts.Object, selector, healthStore);
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true),
+            httpClientFactory: new HandlerHttpClientFactory(new FixtureJsonHandler(
+                """{"id":3135556,"results":{"USER":{"USER_ID":5}}}""")),
+            healthStore: healthStore, secretStore: secretStore, diagnosticRunner: runner);
+
+        var result = Assert.IsType<OkObjectResult>(await controller.TestProvider("deezer", null, _providerAccountId));
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.True(document.RootElement.GetProperty("healthy").GetBoolean());
+        Assert.Equal("api-latency", document.RootElement.GetProperty("metric").GetString());
+        Assert.Equal("media_sample_needs_known_track", document.RootElement.GetProperty("reasonCode").GetString());
+        Assert.False(document.RootElement.TryGetProperty("seekRung", out _));
+        streaming.VerifyNoOtherCalls();
     }
 
     private HttpContext CreateHttpContextWithSession(bool isAdmin)
@@ -385,7 +471,9 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         context.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
         {
             SessionId = "session-id",
-            UserId = "user-id",
+            UserId = "administrator",
+            BackendType = "jellyfin",
+            BackendInstanceId = "primary",
             UserName = "user",
             IsAdministrator = isAdmin,
             JellyfinAccessToken = "token",
@@ -402,9 +490,10 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         HttpContext httpContext,
         Dictionary<string, string?>? configValues = null,
         IHttpClientFactory? httpClientFactory = null,
-        DurableProviderHealthStore? healthStore = null,
+        ProviderRuntimeHealth? healthStore = null,
         EncryptedSecretStore? secretStore = null,
-        IApplicationCache? applicationCache = null)
+        IApplicationCache? applicationCache = null,
+        ProviderCtsDiagnosticRunner? diagnosticRunner = null)
     {
         var logger = new Mock<ILogger<ConfigController>>();
         configValues ??= new Dictionary<string, string?>();
@@ -440,6 +529,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             .AddSingleton<IEffectiveProviderPolicyResolver>(effectiveProviderPolicies)
             .AddSingleton(migration)
             .AddSingleton(effectiveSecretStore);
+        services.AddSingleton(healthStore ?? new ProviderRuntimeHealth());
+        if (diagnosticRunner != null) services.AddSingleton(diagnosticRunner);
         httpContext.RequestServices = services.BuildServiceProvider();
 
         var controller = new ConfigController(
@@ -479,18 +570,12 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         }
     }
 
-    private DurableProviderHealthStore CreateHealthStore() => new(
-        _factory,
-        _storageState,
-        new ProviderHealthOptions
-        {
-            FailureThreshold = 3,
-            CircuitOpenSeconds = 30,
-            SampleTtlSeconds = 300,
-            RollupWindowMinutes = 15,
-            SampleRetentionDays = 7
-        },
-        new SystemPlatformClock());
+    private static ProviderRuntimeHealth CreateHealthStore() => new(new ProviderHealthOptions
+    {
+        FailureThreshold = 3,
+        CircuitOpenSeconds = 30,
+        SampleTtlSeconds = 300
+    }, new SystemPlatformClock());
 
     private EncryptedSecretStore CreateSecretStore()
     {
@@ -544,6 +629,17 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     private sealed class HandlerHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
     {
         public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class FixtureJsonHandler(string json) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
     }
 
     private sealed class CapturingHandler(HttpResponseMessage response) : HttpMessageHandler

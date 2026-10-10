@@ -468,7 +468,7 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public async Task ExpiredAccountFreeFailure_RemainsExcludedUntilReprobed()
+    public async Task ExpiredAccountFreeFailure_AllowsRetryWithoutBackgroundProbes()
     {
         var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
         var discovery = new Mock<IAppleDownloadEndpointDiscovery>();
@@ -498,9 +498,8 @@ public sealed class ProviderStatusManagerTests
         clock.UtcNow += TimeSpan.FromHours(1);
 
         Assert.Equal(ProviderHealthState.Degraded, failed.Health);
-        Assert.Equal(["deezer"], manager.GetEnabledSearchProviders());
-        Assert.Equal(
-            ProviderHealthState.Degraded,
+        Assert.Equal(["apple-musickit", "deezer"], manager.GetEnabledSearchProviders());
+        Assert.Equal(ProviderHealthState.Unknown,
             manager.GetAccountFreeStatus("apple-download", ProviderCapabilities.Metadata).Health);
     }
 

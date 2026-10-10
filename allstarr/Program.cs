@@ -65,7 +65,7 @@ builder.Services.AddSingleton<TrackMatchPolicy>();
 builder.Services.AddProtocolExecution(builder.Configuration);
 builder.Services.AddScoped<ProtocolExecutionContextFilter>();
 builder.Services.AddDurableJobs(builder.Configuration);
-builder.Services.AddDurableProviderHealth(builder.Configuration);
+builder.Services.AddProviderRuntimeHealth(builder.Configuration);
 builder.Services.AddProviderCapabilities();
 builder.Services.AddTrackIdentity();
 builder.Services.AddBackendLibraryIndexing();
@@ -411,7 +411,6 @@ if (probeOptionalProvidersAtStartup)
 // Tests and local contract hosts must never call live providers during startup.
 if (!builder.Environment.IsEnvironment("Testing"))
 {
-    builder.Services.AddHostedService<ManagedProviderAccountHealthWarmupService>();
     builder.Services.AddHostedService<StartupValidationOrchestrator>();
 }
 

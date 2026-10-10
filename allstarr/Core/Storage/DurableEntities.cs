@@ -18,22 +18,6 @@ public enum DurableJobState
     Cancelled
 }
 
-public enum ProviderHealthState
-{
-    Unknown,
-    Healthy,
-    Degraded,
-    Unavailable,
-    Unauthorized
-}
-
-public enum ProviderCircuitState
-{
-    Closed,
-    Open,
-    HalfOpen
-}
-
 public enum ProviderIdentityScope
 {
     Unknown = 0,
@@ -169,50 +153,6 @@ public sealed class JobAttemptRecord
     public string? Outcome { get; set; }
     public string? ErrorCode { get; set; }
     public string? ErrorMessage { get; set; }
-}
-
-public sealed class ProviderHealthSampleRecord
-{
-    public Guid Id { get; set; }
-    public Guid ProviderAccountId { get; set; }
-    public string Capability { get; set; } = string.Empty;
-    public ProviderHealthState State { get; set; }
-    public long? LatencyMilliseconds { get; set; }
-    public string? FailureCode { get; set; }
-    public DateTimeOffset ObservedAt { get; set; }
-    public DateTimeOffset ExpiresAt { get; set; }
-}
-
-public sealed class ProviderHealthRollupRecord
-{
-    public Guid Id { get; set; }
-    public Guid ProviderAccountId { get; set; }
-    public string Capability { get; set; } = string.Empty;
-    public DateTimeOffset WindowStart { get; set; }
-    public DateTimeOffset WindowEnd { get; set; }
-    public int SampleCount { get; set; }
-    public int SuccessCount { get; set; }
-    public int FailureCount { get; set; }
-    public double SuccessRate { get; set; }
-    public long? P50LatencyMilliseconds { get; set; }
-    public long? P95LatencyMilliseconds { get; set; }
-    public ProviderHealthState LastState { get; set; }
-    public string? LastFailureCode { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-    public long Revision { get; set; }
-}
-
-public sealed class ProviderCircuitRecord
-{
-    public Guid Id { get; set; }
-    public Guid ProviderAccountId { get; set; }
-    public string Capability { get; set; } = string.Empty;
-    public ProviderCircuitState State { get; set; }
-    public int ConsecutiveFailures { get; set; }
-    public DateTimeOffset? OpenedAt { get; set; }
-    public DateTimeOffset? RetryAfter { get; set; }
-    public DateTimeOffset UpdatedAt { get; set; }
-    public long Revision { get; set; }
 }
 
 public sealed class CanonicalRecordingRecord

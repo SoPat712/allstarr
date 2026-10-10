@@ -18,9 +18,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<SecretVersionRecord> SecretVersions => Set<SecretVersionRecord>();
     public DbSet<DurableJobRecord> Jobs => Set<DurableJobRecord>();
     public DbSet<JobAttemptRecord> JobAttempts => Set<JobAttemptRecord>();
-    public DbSet<ProviderHealthSampleRecord> ProviderHealthSamples => Set<ProviderHealthSampleRecord>();
-    public DbSet<ProviderHealthRollupRecord> ProviderHealthRollups => Set<ProviderHealthRollupRecord>();
-    public DbSet<ProviderCircuitRecord> ProviderCircuits => Set<ProviderCircuitRecord>();
     public DbSet<CanonicalRecordingRecord> CanonicalRecordings => Set<CanonicalRecordingRecord>();
     public DbSet<ProviderTrackIdentityRecord> ProviderTrackIdentities => Set<ProviderTrackIdentityRecord>();
     public DbSet<LibraryTrackRecord> LibraryTracks => Set<LibraryTrackRecord>();
@@ -74,7 +71,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureProviderAccounts(modelBuilder);
         ConfigureSecrets(modelBuilder);
         ConfigureJobs(modelBuilder);
-        ConfigureProviderHealth(modelBuilder);
         ConfigureTrackIdentity(modelBuilder);
         ConfigureCanonicalCatalog(modelBuilder);
         ConfigureLibraryAndPlaylists(modelBuilder);
@@ -248,66 +244,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.ErrorMessage).HasMaxLength(1000);
             entity.HasIndex(item => new { item.JobId, item.AttemptNumber }).IsUnique();
             entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(item => item.JobId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-    }
-
-    private static void ConfigureProviderHealth(ModelBuilder modelBuilder)
-    {
-        modelBuilder.Entity<ProviderHealthSampleRecord>(entity =>
-        {
-            entity.ToTable("provider_health_samples");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.Capability).HasMaxLength(100).IsRequired();
-            entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.FailureCode).HasMaxLength(100);
-            entity.HasIndex(item => new
-            {
-                item.ProviderAccountId,
-                item.Capability,
-                item.ObservedAt
-            }).HasDatabaseName("IX_provider_health_account_capability_observed");
-            entity.HasIndex(item => new { item.ObservedAt, item.Id })
-                .HasDatabaseName("IX_provider_health_updates");
-            entity.HasOne<ProviderAccountRecord>().WithMany()
-                .HasForeignKey(item => item.ProviderAccountId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<ProviderCircuitRecord>(entity =>
-        {
-            entity.ToTable("provider_circuits");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.Capability).HasMaxLength(100).IsRequired();
-            entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new { item.ProviderAccountId, item.Capability }).IsUnique();
-            entity.HasOne<ProviderAccountRecord>().WithMany()
-                .HasForeignKey(item => item.ProviderAccountId)
-                .OnDelete(DeleteBehavior.Cascade);
-        });
-
-        modelBuilder.Entity<ProviderHealthRollupRecord>(entity =>
-        {
-            entity.ToTable("provider_health_rollups");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.Capability).HasMaxLength(100).IsRequired();
-            entity.Property(item => item.LastState).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.LastFailureCode).HasMaxLength(100);
-            entity.Property(item => item.Revision).IsConcurrencyToken();
-            entity.HasIndex(item => new
-            {
-                item.ProviderAccountId,
-                item.Capability,
-                item.WindowStart
-            }).IsUnique().HasDatabaseName("IX_provider_health_rollup_account_capability_window");
-            entity.HasIndex(item => item.WindowEnd)
-                .HasDatabaseName("IX_provider_health_rollup_window_end");
-            entity.HasOne<ProviderAccountRecord>().WithMany()
-                .HasForeignKey(item => item.ProviderAccountId)
                 .OnDelete(DeleteBehavior.Cascade);
         });
     }
