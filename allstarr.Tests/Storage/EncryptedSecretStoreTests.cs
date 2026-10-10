@@ -422,7 +422,9 @@ public sealed class EncryptedSecretStoreTests : IAsyncLifetime
     {
         File.Delete(_keyRingPath);
         var provider = new FileSecretKeyRingProvider(new SecretStoreOptions { KeyRingPath = _keyRingPath });
-        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => provider.CreateIfMissingAsync(false)));
+        var results = await Task.WhenAll(Enumerable.Range(0, 32).Select(_ => Task.Run(() =>
+            new FileSecretKeyRingProvider(new SecretStoreOptions { KeyRingPath = _keyRingPath })
+                .CreateIfMissingAsync(false))));
         Assert.Single(results, created => created);
         var ring = await provider.LoadAsync();
         Assert.Equal(32, ring.GetActiveKey().Length);
