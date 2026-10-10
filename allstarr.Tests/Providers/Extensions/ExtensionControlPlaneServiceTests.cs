@@ -311,7 +311,78 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         public bool RemoveExtension(string providerId) => registry.RemoveExtension(providerId);
     }
 
-    private VerifiedExtensionPackage Package(string version, string suffix)
+    [Fact]
+    public async Task SignedSessionActions_RequireTheCurrentActiveRevisionAndAreRecorded()
+    {
+        var package = await _service.StageAsync(Package("5.0.0", "signed", signedSession: true));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+        [
+            new("network", "https://api.example.test/", true),
+            new("secret", "accountToken", true)
+        ]);
+        var registry = new ProviderRegistry([]);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>()))
+            .Returns(() => new HttpClient(new SignedSessionHandler(), disposeHandler: false));
+        var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, new PausedProviderRegistration(registry),
+            registry, clients.Object, Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") }),
+            new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "download-workspaces") },
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+
+        Assert.Equal(ExtensionSessionStates.SignedOut, coordinator.SignedSessionStatus(package.Id).State);
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
+            coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision - 1));
+        var pending = await coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision);
+        Assert.Equal(ExtensionSessionStates.VerificationPending, pending.State);
+        var signedIn = await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+        Assert.Equal(ExtensionSessionStates.SignedIn, signedIn.State);
+        var failed = await coordinator.CompleteSignedSessionGrantAsync(
+            package.Id, package.Revision, "spotiflac://session-grant/?state=other&grant=grant-2");
+        Assert.Equal("grant_wrong_extension", failed.ReasonCode);
+        Assert.Equal(ExtensionSessionStates.SignedIn, failed.State);
+        Assert.Equal(ExtensionSessionStates.SignedOut,
+            (await coordinator.ClearSignedSessionAsync(package.Id, package.Revision)).State);
+
+        await coordinator.DisableAsync(package.Id, package.Revision);
+        package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
+        await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
+            coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision));
+        Assert.Throws<KeyNotFoundException>(() => coordinator.SignedSessionStatus(package.Id));
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var events = await db.ExtensionLogs.AsNoTracking()
+            .Where(item => item.ExtensionPackageId == package.Id && item.EventCode!.StartsWith("session."))
+            .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id)
+            .Select(item => new { item.EventCode, item.Message })
+            .ToListAsync();
+        Assert.Equal(["session.started", "session.granted", "session.failed", "session.cleared"],
+            events.Select(item => item.EventCode));
+        Assert.All(events, item =>
+        {
+            Assert.DoesNotContain("session-1", item.Message, StringComparison.Ordinal);
+            Assert.DoesNotContain("challenge-1", item.Message, StringComparison.Ordinal);
+        });
+    }
+
+    private sealed class SignedSessionHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.RequestUri!.AbsolutePath.EndsWith("/bootstrap", StringComparison.Ordinal)
+                ? "{\"challenge_id\":\"challenge-1\"}"
+                : "{\"session_id\":\"session-1\",\"session_secret\":\"secret-1\",\"expires_at\":\"2099-01-01T00:00:00Z\"}";
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+                RequestMessage = request
+            });
+        }
+    }
+
+    private VerifiedExtensionPackage Package(string version, string suffix, bool signedSession = false)
     {
         var packageRoot = Path.Combine(_root, "extensions", ".staging", suffix);
         Directory.CreateDirectory(packageRoot);
@@ -326,8 +397,12 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             sdkVersion = manifest.SdkVersion,
             entryPoint = manifest.EntryPoint,
             capabilities = new[] { new { kind = "metadata", hooks = new[] { "searchTracks", "getTrack" }, accountScopes = new[] { "user" } } },
-            permissions = new[] { new { kind = "network", value = "https://api.example.test/", required = true }, new { kind = "secret", value = "accountToken", required = true } }
-        }));
+            permissions = new[] { new { kind = "network", value = "https://api.example.test/", required = true }, new { kind = "secret", value = "accountToken", required = true } },
+            requiredRuntimeFeatures = signedSession ? new[] { "signedSession@1", "sessionGrant@1" } : null,
+            signedSession = signedSession
+                ? new { @namespace = "fixture-v1", baseUrl = "https://api.example.test/v1", appVersion = "fixture@1.0.0" }
+                : null
+        }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }));
         File.WriteAllText(Path.Combine(packageRoot, "index.js"),
             "registerExtension({ searchTracks: function() { return []; }, getTrack: function() { return null; } });");
         var archiveHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(suffix))).ToLowerInvariant();

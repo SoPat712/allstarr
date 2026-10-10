@@ -2226,6 +2226,145 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   expect(activationRequests).toBe(2);
 });
 
+async function mockSignedSessionExtension(page: Page, initial: Record<string, unknown> | "unavailable") {
+  let revision = 1;
+  let session: Record<string, unknown> = initial === "unavailable" ? { state: "signed_out" } : initial;
+  let statusFailures = initial === "unavailable" ? 1 : 0;
+  type SessionResponse = { status?: number; body: Record<string, unknown> };
+  const responses: Record<string, SessionResponse[]> = { start: [], grant: [], clear: [] };
+  const writes: Array<{ action: string; body: Record<string, unknown> }> = [];
+  const pending = { state: "verification_pending", verificationUrl: "https://verify.example.test/challenge/opaque" };
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([{
+      id: "signed", extensionId: "signed-audio", displayName: "Signed Audio", version: "1.0.0",
+      lifecycle: "active", state: "active", active: true, installed: true, permissionReviewRequired: false,
+      hasPermissions: true, usesSignedSession: true, capabilities: ["streaming"], stagedAt: "2026-01-01", revision,
+    }]),
+  }));
+  await page.route("**/api/admin/extensions/packages/signed/session**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET") {
+      if (statusFailures-- > 0)
+        return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "unavailable" }) });
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify(session) });
+    }
+    const action = path.endsWith("/start") ? "start" : path.endsWith("/grant") ? "grant" : "clear";
+    writes.push({ action, body: request.postDataJSON() as Record<string, unknown> });
+    const next: SessionResponse = responses[action].shift() ?? {
+      body: action === "start" ? pending : action === "grant"
+        ? { state: "signed_in", expiresAt: "2099-06-15T12:00:00Z" } : { state: "signed_out" },
+    };
+    if (!next.status || next.status < 400) session = { ...next.body, reasonCode: undefined };
+    return route.fulfill({ status: next.status ?? 200, contentType: "application/json", body: JSON.stringify(next.body) });
+  });
+  return {
+    writes,
+    pending,
+    respond: (action: "start" | "grant" | "clear", body: Record<string, unknown>, status?: number) =>
+      responses[action].push({ status, body }),
+    updatePackage: () => { revision++; },
+  };
+}
+
+test("extension sign-in explains each verification step and failure", async ({ page }) => {
+  await mockApi(page);
+  const mock = await mockSignedSessionExtension(page, { state: "signed_out" });
+  await page.goto("#/integrations/extensions");
+  const panel = page.getByRole("region", { name: "Sign-in" });
+  await expect(panel.getByText("Not signed in")).toBeVisible();
+
+  mock.respond("start", { state: "signed_out", reasonCode: "provider_unavailable" });
+  await panel.getByRole("button", { name: "Start verification" }).click();
+  await expect(panel.getByRole("alert")).toContainText("unavailable right now");
+  mock.respond("start", { state: "signed_out", reasonCode: "origin_not_approved" });
+  await panel.getByRole("button", { name: "Start verification" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Review access");
+
+  await panel.getByRole("button", { name: "Start verification" }).click();
+  const link = panel.getByRole("link", { name: "Open verification page" });
+  await expect(link).toBeFocused();
+  await expect(link).toHaveAttribute("href", mock.pending.verificationUrl);
+  await expect(link).toHaveAttribute("target", "_blank");
+  await expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  await expect(panel.getByText("Opens verify.example.test in a new tab.")).toBeVisible();
+  await expect(panel.getByText("Verification needed")).toBeVisible();
+
+  await panel.getByRole("button", { name: "Complete sign-in" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Paste the link or code");
+  expect(mock.writes.filter((write) => write.action === "grant")).toHaveLength(0);
+  mock.respond("grant", { ...mock.pending, reasonCode: "grant_invalid" });
+  await panel.getByLabel("Sign-in link or code").fill("not a grant");
+  await panel.getByRole("button", { name: "Complete sign-in" }).click();
+  await expect(panel.getByRole("alert")).toContainText("isn't a sign-in link");
+  mock.respond("grant", { ...mock.pending, reasonCode: "grant_rejected" });
+  await panel.getByLabel("Sign-in link or code").fill("signed-audio://auth?grant=stale");
+  await panel.getByRole("button", { name: "Complete sign-in" }).click();
+  await expect(panel.getByRole("alert")).toContainText("Start verification again");
+
+  await panel.getByLabel("Sign-in link or code").fill("signed-audio://auth?grant=fresh");
+  await panel.getByRole("button", { name: "Complete sign-in" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Signed in.");
+  await expect(panel.getByText("Signed in", { exact: true })).toBeVisible();
+  await expect(panel.getByText(/Session valid until .*2099/)).toBeVisible();
+  await expect(panel.getByLabel("Sign-in link or code")).toHaveCount(0);
+  expect(mock.writes.at(-1)).toEqual({ action: "grant", body: { grant: "signed-audio://auth?grant=fresh", expectedRevision: 1 } });
+
+  const signOut = panel.getByRole("button", { name: "Sign out" });
+  await expect(signOut).toBeFocused();
+  await signOut.click();
+  let confirm = page.getByRole("alertdialog", { name: "Sign out of Signed Audio?" });
+  await confirm.getByRole("button", { name: "Cancel" }).click();
+  await expect(confirm).toBeHidden();
+  expect(mock.writes.filter((write) => write.action === "clear")).toHaveLength(0);
+  await signOut.click();
+  confirm = page.getByRole("alertdialog", { name: "Sign out of Signed Audio?" });
+  await confirm.getByRole("button", { name: "Sign out" }).click();
+  await expect(confirm).toBeHidden();
+  await expect(panel.getByRole("status")).toHaveText("Signed out.");
+  await expect(panel.getByText("Not signed in")).toBeVisible();
+  expect(mock.writes.at(-1)).toEqual({ action: "clear", body: { expectedRevision: 1 } });
+});
+
+test("extension sign-in recovers from expiry, cancellation and package changes on a small screen", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await mockApi(page);
+  const mock = await mockSignedSessionExtension(page, "unavailable");
+  await page.goto("#/integrations/extensions");
+  const panel = page.getByRole("region", { name: "Sign-in" });
+  await expect(panel.getByText("Sign-in status is unavailable right now.")).toBeVisible();
+
+  await page.unroute("**/api/admin/extensions/packages/signed/session**");
+  const expired = await mockSignedSessionExtension(page, { state: "expired", expiresAt: "2026-01-01T00:00:00Z" });
+  await panel.getByRole("button", { name: "Check again" }).click();
+  await expect(panel.getByText("Sign-in expired")).toBeVisible();
+  expect(mock.writes).toHaveLength(0);
+
+  const reconnect = panel.getByRole("button", { name: "Reconnect" });
+  await reconnect.focus();
+  await page.keyboard.press("Enter");
+  await expect(panel.getByRole("link", { name: "Open verification page" })).toBeFocused();
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  await panel.getByRole("button", { name: "Cancel sign-in" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Sign-in cancelled.");
+  await expect(panel.getByRole("button", { name: "Start verification" })).toBeFocused();
+
+  expired.updatePackage();
+  expired.respond("start", { error: "The extension resource changed before this update." }, 409);
+  await page.keyboard.press("Enter");
+  await expect(panel.getByRole("alert")).toContainText("This extension changed while you were signing in");
+  await panel.getByRole("button", { name: "Start verification" }).click();
+  await expect(panel.getByText("Verification needed")).toBeVisible();
+  expect(expired.writes.map((write) => [write.action, write.body.expectedRevision]))
+    .toEqual([["start", 1], ["clear", 1], ["start", 1], ["start", 2]]);
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("extension updates stay beside the shared management menu", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);

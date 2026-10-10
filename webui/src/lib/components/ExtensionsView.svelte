@@ -16,6 +16,7 @@
   } from "$lib/api";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
+  import ExtensionSessionPanel from "$lib/components/ExtensionSessionPanel.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -319,6 +320,7 @@
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             </div>
+            {#if item.active && item.usesSignedSession}<ExtensionSessionPanel {item} onchanged={refresh} />{/if}
           </article>
         {:else}
           <div class="panel compact-empty"><strong>No extensions installed</strong><p>Install from a connected registry or a verified package URL.</p></div>
@@ -327,7 +329,7 @@
     {:else if tab === "available"}
       <section class="panel extension-catalog">
         <header><div><strong>Available packages</strong><small>Updates appear beside new extensions.</small></div><SearchField class="extension-search" label="Search extensions" placeholder="Search extensions…" hiddenLabel bind:value={search} /></header>
-        {#each storeErrors as item}<p class="error-text">{item.repository}: {item.message}</p>{/each}
+        {#each storeErrors as item}<p class="notice-error">{item.repository}: {item.message}</p>{/each}
         <div>
           {#each available as item}
             {@const installedVersion = installed.find((entry) => entry.extensionId.toLowerCase() === item.id.toLowerCase())?.version}
@@ -423,7 +425,7 @@
     <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class="confirm-dialog">
       <AlertDialog.Title>{reviewAccessPackage ? `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
       <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "The reviewed runtime will start with only the approved capabilities and permissions." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
-      {#if feedback}<p class="error-text" role="alert">{feedback}</p>{/if}
+      {#if feedback}<p class="notice-error" role="alert">{feedback}</p>{/if}
       <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>

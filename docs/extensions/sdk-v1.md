@@ -77,6 +77,14 @@ JavaScript packages run in the constrained Jint compatibility runtime with bound
 
 Permission changes require administrator review before an update can activate. Disable, uninstall, and registry removal are control-plane operations with durable state and audit events.
 
+### Signed sessions
+
+A package whose service needs a verified installation declares `signedSession` in its manifest: a `namespace`, an HTTPS `baseUrl`, and optionally `appVersion`, `platform`, `callbackUrl`, `schemeLabel`, `headerPrefix`, `timeWindowSeconds` (30–3600, default 300) and `endpoints` (`bootstrap`, `challenge`, `exchange`, and an optional `refresh`). The base URL's origin must also be an approved network permission.
+
+The host performs bootstrap, challenge, grant exchange and request signing. Session secrets are encrypted on disk and never reach the script, the administrator API or logs; scripts see only session status and the responses to signed requests.
+
+Administrators sign in from **Integrations → Extensions**. An active package with a signed session shows a **Sign-in** section: start verification, open the verification page, paste the link or code it shows, and complete sign-in. The same section offers **Reconnect** after expiry and **Sign out**. Each action applies to the package version on screen; if the package changes meanwhile, the action is refused and sign-in starts again. Extension activity records each step without codes or tokens.
+
 ## Registries and ownership
 
 Allstarr ships the SDK and control plane, not a bundled registry or third-party extension packages. Administrators add registries explicitly. A registry cannot be removed while installed packages still depend on it; remove those packages first.

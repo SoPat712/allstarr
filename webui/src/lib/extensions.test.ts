@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { availablePackages, compareVersions, currentPackages, valueChanges } from "./extensions";
+import {
+  availablePackages, compareVersions, currentPackages, sessionReasonText, sessionSummary, valueChanges,
+  verificationHost,
+} from "./extensions";
 import type { ExtensionPackage, ExtensionStoreItem } from "./api";
 
 const pkg = (overrides: Partial<ExtensionPackage> = {}): ExtensionPackage => ({
@@ -39,5 +42,31 @@ describe("extension catalog", () => {
       { value: "secret", change: "added" },
       { value: "cache", change: "removed" },
     ]);
+  });
+});
+
+describe("extension sign-in", () => {
+  it("names every session state in words, not only color", () => {
+    expect(sessionSummary({ state: "signed_out" })).toMatchObject({ label: "Not signed in", badge: "suggested" });
+    expect(sessionSummary({ state: "verification_pending" })).toMatchObject({ label: "Verification needed" });
+    expect(sessionSummary({ state: "expired", expiresAt: "2026-01-01T00:00:00Z" }))
+      .toMatchObject({ label: "Sign-in expired", badge: "degraded" });
+    const signedIn = sessionSummary({ state: "signed_in", expiresAt: "2099-06-15T12:00:00Z" }, "en-US");
+    expect(signedIn).toMatchObject({ label: "Signed in", badge: "healthy" });
+    expect(signedIn.detail).toContain("2099");
+  });
+
+  it("explains failures with a recovery step and never echoes unknown codes", () => {
+    expect(sessionReasonText(null)).toBe("");
+    expect(sessionReasonText("origin_not_approved")).toContain("Review access");
+    expect(sessionReasonText("provider_unavailable")).toContain("Try again");
+    expect(sessionReasonText("internal_detail_code")).toBe("Sign-in didn't complete. Try again.");
+  });
+
+  it("shows only the host of safe verification links", () => {
+    expect(verificationHost("https://verify.example.test/challenge?id=private")).toBe("verify.example.test");
+    expect(verificationHost("javascript:alert(1)")).toBe("");
+    expect(verificationHost("http://verify.example.test/")).toBe("");
+    expect(verificationHost("not a url")).toBe("");
   });
 });

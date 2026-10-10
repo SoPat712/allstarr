@@ -221,9 +221,10 @@ public sealed class ExtensionCapabilityAdapterTests
             Assert.True(verification?.Contains("VERIFY_REQUIRED", StringComparison.Ordinal) == true, verification);
             Assert.Contains("challenge-1", verification, StringComparison.Ordinal);
 
-            var exchange = JsonSerializer.Serialize(sandbox.CompleteSignedSessionGrant(
-                "spotiflac://session-grant/?cb_version=v2grant&state=signed-demo&grant=grant-1"));
-            Assert.Contains("true", exchange, StringComparison.OrdinalIgnoreCase);
+            var exchange = sandbox.CompleteSignedSessionGrant(
+                "spotiflac://session-grant/?cb_version=v2grant&state=signed-demo&grant=grant-1");
+            Assert.Equal(ExtensionSessionStates.SignedIn, exchange.State);
+            Assert.Null(exchange.ReasonCode);
             Assert.Equal("grant-1", handler.ExchangeGrant);
 
             var response = sandbox.InvokeJson("searchTracks", "{}");
