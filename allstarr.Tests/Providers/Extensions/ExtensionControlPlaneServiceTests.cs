@@ -90,6 +90,19 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.Contains("[redacted]", log.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("status {\"installId\":\"install-123\",\"sessionId\":\"session-456\"}")]
+    [InlineData("{\"session_secret\": \"session-456\", \"access_token\":\"install-123\"}")]
+    [InlineData("Authorization: Bearer install-123 then session_id=session-456")]
+    [InlineData("cookie='install-123'; password=\"session-456\"")]
+    public void SecretPattern_RedactsQuotedKeysBearerValuesAndSessionIdentifiers(string message)
+    {
+        var redacted = ExtensionControlPlaneService.SecretPattern().Replace(message, "$1=[redacted]");
+
+        Assert.DoesNotContain("install-123", redacted, StringComparison.Ordinal);
+        Assert.DoesNotContain("session-456", redacted, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task DisabledPermissionedPackageRequiresFreshReviewBeforeReactivation()
     {

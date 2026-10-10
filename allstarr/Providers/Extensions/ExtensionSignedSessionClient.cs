@@ -271,7 +271,8 @@ internal sealed class ExtensionSignedSessionClient
                 authUrl = BuildChallengeUrl(boot.ChallengeId);
             if (string.IsNullOrWhiteSpace(authUrl))
                 return SessionResult.Failed("unexpected_response", "session bootstrap did not return a challenge");
-            if (!Uri.TryCreate(authUrl, UriKind.Absolute, out var verification) || verification.Scheme != Uri.UriSchemeHttps)
+            if (!Uri.TryCreate(authUrl, UriKind.Absolute, out var verification) || verification.Scheme != Uri.UriSchemeHttps ||
+                !string.IsNullOrEmpty(verification.UserInfo))
                 return SessionResult.Failed("unexpected_response", "session bootstrap returned an unsafe verification link");
             _pendingAuthUrl = verification.AbsoluteUri;
             return SessionResult.Pending(_pendingAuthUrl);
