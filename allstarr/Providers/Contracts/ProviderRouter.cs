@@ -1,4 +1,5 @@
 using allstarr.Core.Capabilities;
+using allstarr.Core.Health;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 
@@ -21,7 +22,8 @@ public sealed class ProviderRouter(
     IProviderRouteAccountResolver accounts,
     IProviderRouteHealthSource health,
     IProviderRouteSidecarSource sidecars,
-    ITrackIdentityService identities) : IProviderRouter
+    ITrackIdentityService identities,
+    IProviderOutcomeObserver? observer = null) : IProviderRouter
 {
     private static readonly IReadOnlyDictionary<ProviderCapabilityKind, Type> CapabilityContracts =
         new Dictionary<ProviderCapabilityKind, Type>
@@ -176,6 +178,8 @@ public sealed class ProviderRouter(
             }
 
             var snapshot = health.Get(provider.Id, account?.AccountId, request.Capability);
+            if (snapshot.AccountRevision.HasValue && snapshot.AccountRevision != account?.Revision)
+                snapshot = new(ProviderRouteHealthState.Unknown, false);
             if (snapshot.CircuitOpen)
             {
                 Reject("circuit-open");
@@ -297,7 +301,7 @@ public sealed class ProviderRouter(
                 priority,
                 provider,
                 descriptor,
-                implementation!,
+                observer == null ? implementation! : ObservedProviderCapabilities.Wrap(implementation!, observer),
                 context,
                 targetTrack));
         }

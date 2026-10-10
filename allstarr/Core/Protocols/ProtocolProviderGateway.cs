@@ -1,4 +1,6 @@
 using System.Net;
+using System.Diagnostics;
+using allstarr.Core.Health;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -127,7 +129,8 @@ public sealed class ProtocolProviderGateway(
     ManagedTrackCacheService? managedTrackCache = null,
     PlaybackDeliveryActivityStore? playbackActivity = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
-    ITrackIdentityService? identities = null) : IProtocolProviderGateway
+    ITrackIdentityService? identities = null,
+    IProviderOutcomeObserver? outcomes = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -957,13 +960,18 @@ public sealed class ProtocolProviderGateway(
                 quality,
                 rangeStart);
 
-            async Task<ProviderOutcome<ProviderStreamLease>> ResolveLeaseAsync() =>
-                await candidate.Implementation.GetStreamLeaseAsync(
+            var leaseFailed = false;
+            async Task<ProviderOutcome<ProviderStreamLease>> ResolveLeaseAsync()
+            {
+                var resolved = await candidate.Implementation.GetStreamLeaseAsync(
                     new ProviderExecutionContext(candidate.Context.Actor, candidate.Context.ProviderId,
                         candidate.Context.Account, candidate.Context.Policy,
                         candidate.Context.OperationId, candidate.Context.CorrelationId, protocol.Deadline,
                         protocol.CancellationToken, candidate.Context.IdempotencyKey),
                     leaseRequest);
+                leaseFailed = !resolved.IsSuccess;
+                return resolved;
+            }
 
             async Task<HttpResponseMessage> OpenLeaseAsync(ProviderStreamLease lease)
             {
@@ -980,8 +988,12 @@ public sealed class ProtocolProviderGateway(
                         protocol.CancellationToken);
             }
 
+            var started = Stopwatch.GetTimestamp();
             var outcome = await OpenCandidateAsync(ResolveLeaseAsync, OpenLeaseAsync,
                 headOnly, protocol.CancellationToken);
+            if (!leaseFailed && (!headOnly || !outcome.IsSuccess))
+                outcomes?.Observe(candidate.Context, ProviderCapabilityKind.Streaming,
+                    outcome.Error, Stopwatch.GetElapsedTime(started));
             if (outcome.IsSuccess)
             {
                 var (response, lease) = outcome.RequireValue();

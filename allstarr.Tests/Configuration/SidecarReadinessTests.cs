@@ -1,3 +1,4 @@
+using allstarr.Core.Health;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -50,7 +51,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                 }
             ]
         };
-        var catalog = new SidecarStatusCatalog(sidecarOptions);
+        var catalog = new ProviderRuntimeHealth(sidecars: sidecarOptions);
         var readiness = Readiness(catalog, new ReadinessOptions());
 
         var snapshot = await readiness.CheckAsync();
@@ -70,7 +71,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     {
         _storageState.Set(DurableStorageReadiness.Unavailable, errorCode: "database_unavailable");
         var readiness = Readiness(
-            new SidecarStatusCatalog(new SidecarHealthOptions()),
+            new ProviderRuntimeHealth(sidecars: new SidecarHealthOptions()),
             new ReadinessOptions());
 
         var snapshot = await readiness.CheckAsync();
@@ -97,7 +98,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                 }
             ]
         };
-        var readiness = Readiness(new SidecarStatusCatalog(sidecarOptions), new ReadinessOptions());
+        var readiness = Readiness(new ProviderRuntimeHealth(sidecars: sidecarOptions), new ReadinessOptions());
 
         var snapshot = await readiness.CheckAsync();
 
@@ -126,7 +127,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
                 }
             ]
         };
-        var catalog = new SidecarStatusCatalog(options);
+        var catalog = new ProviderRuntimeHealth(sidecars: options);
         var handler = new QueueHandler(
             Json("""{"api_version":"0.0.1","logged_in":true}"""),
             Json("""{"api_version":"0.0.2","logged_in":true}"""));
@@ -162,7 +163,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
             ]
         };
         var handler = new QueueHandler(Json("{}"));
-        var catalog = new SidecarStatusCatalog(options);
+        var catalog = new ProviderRuntimeHealth(sidecars: options);
         var monitor = new SidecarHealthMonitor(
             new HandlerFactory(handler),
             options,
@@ -194,7 +195,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         var handler = new QueueHandler(
             new HttpResponseMessage(HttpStatusCode.Unauthorized),
             Json("{}"));
-        var catalog = new SidecarStatusCatalog(options);
+        var catalog = new ProviderRuntimeHealth(sidecars: options);
         var monitor = new SidecarHealthMonitor(
             new HandlerFactory(handler),
             options,
@@ -210,22 +211,43 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     }
 
     [Fact]
-    public void ProbePolicy_RejectsUnboundedOrAggressiveConfiguration()
+    public void ProbePolicy_ClampsEarlierOrAggressiveTimingInsteadOfBlockingStartup()
     {
-        Assert.Throws<InvalidOperationException>(() => new SidecarHealthOptions
+        var earlier = new SidecarHealthOptions { ProbeIntervalSeconds = 900, ProbeTimeoutSeconds = 60 };
+        var aggressive = new SidecarHealthOptions { ProbeIntervalSeconds = 1, ProbeTimeoutSeconds = 0 };
+        var supported = new SidecarHealthOptions { ProbeIntervalSeconds = 10, ProbeTimeoutSeconds = 3 };
+
+        _ = new SidecarHealthMonitor(
+            new HandlerFactory(new QueueHandler()),
+            earlier,
+            new ProviderRuntimeHealth(sidecars: earlier),
+            NullLogger<SidecarHealthMonitor>.Instance,
+            _clock);
+
+        Assert.Equal((30, 5), (earlier.ProbeIntervalSeconds, earlier.ProbeTimeoutSeconds));
+        Assert.True(aggressive.ClampProbePolicy());
+        Assert.Equal((5, 1), (aggressive.ProbeIntervalSeconds, aggressive.ProbeTimeoutSeconds));
+        Assert.False(supported.ClampProbePolicy());
+        Assert.Equal((10, 3), (supported.ProbeIntervalSeconds, supported.ProbeTimeoutSeconds));
+    }
+
+    [Fact]
+    public void ProbePolicy_RejectsTooManyTargets()
+    {
+        var options = new SidecarHealthOptions
         {
-            ProbeIntervalSeconds = 1
-        }.Validate());
-        Assert.Throws<InvalidOperationException>(() => new SidecarHealthOptions
-        {
-            MaxProbesPerCycle = 1000
-        }.Validate());
+            Targets = Enumerable.Range(0, 257)
+                .Select(index => new SidecarProbeTarget { Id = $"sidecar-{index}", ProviderId = "provider" })
+                .ToList()
+        };
+
+        Assert.Throws<InvalidOperationException>(options.Validate);
     }
 
     [Fact]
     public void UndeclaredSidecar_IsAConfigurationFailureInsteadOfAnInfiniteDeferral()
     {
-        var gate = new SidecarJobGate(new SidecarStatusCatalog(new SidecarHealthOptions()));
+        var gate = new SidecarJobGate(new ProviderRuntimeHealth(sidecars: new SidecarHealthOptions()));
 
         var result = gate.Check("missing-definition");
 
@@ -238,7 +260,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     public async Task RequiredSecretKeyRing_IsAReadinessDependencyWithoutExposingPath()
     {
         var readiness = Readiness(
-            new SidecarStatusCatalog(new SidecarHealthOptions()),
+            new ProviderRuntimeHealth(sidecars: new SidecarHealthOptions()),
             new ReadinessOptions { RequireSecretKeyRing = true });
 
         var snapshot = await readiness.CheckAsync();
@@ -269,7 +291,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         cancellation.Cancel();
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Readiness(
-            new SidecarStatusCatalog(new SidecarHealthOptions()),
+            new ProviderRuntimeHealth(sidecars: new SidecarHealthOptions()),
             new ReadinessOptions { RequireSecretKeyRing = true },
             keyRingPath: keyRingPath).CheckAsync(cancellation.Token));
     }
@@ -292,7 +314,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
         var monitor = new SidecarHealthMonitor(
             new HandlerFactory(new BlockingHandler()),
             options,
-            new SidecarStatusCatalog(options),
+            new ProviderRuntimeHealth(sidecars: options),
             NullLogger<SidecarHealthMonitor>.Instance,
             _clock);
         using var cancellation = new CancellationTokenSource();
@@ -306,7 +328,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     public async Task RequiredDirectory_MustExistAndAcceptAWriteProbeWithoutExposingItsPath()
     {
         var existing = await Readiness(
-            new SidecarStatusCatalog(new SidecarHealthOptions()),
+            new ProviderRuntimeHealth(sidecars: new SidecarHealthOptions()),
             new ReadinessOptions
             {
                 MinimumFreeBytes = 0,
@@ -319,7 +341,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
 
         var missingPath = Path.Combine(_root, "private", "missing");
         var missing = await Readiness(
-            new SidecarStatusCatalog(new SidecarHealthOptions()),
+            new ProviderRuntimeHealth(sidecars: new SidecarHealthOptions()),
             new ReadinessOptions
             {
                 MinimumFreeBytes = 0,
@@ -333,7 +355,7 @@ public sealed class SidecarReadinessTests : IAsyncLifetime
     }
 
     private PlatformReadinessService Readiness(
-        SidecarStatusCatalog catalog,
+        ProviderRuntimeHealth catalog,
         ReadinessOptions options,
         string? keyRingPath = null)
     {

@@ -23,23 +23,6 @@ public sealed class ProviderDiagnosticsController(
     {
         if (!TryGetAdministrator(out var session, out var authError)) return authError!;
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var rows = await (
-            from sample in db.ProviderHealthSamples.AsNoTracking()
-            join account in db.ProviderAccounts.AsNoTracking() on sample.ProviderAccountId equals account.Id
-            where sample.Capability == "click-to-stream" &&
-                  (account.OwnerUserId == null || account.OwnerUserId == session.AllstarrUserId)
-            orderby sample.ObservedAt descending
-            select new
-            {
-                account.Id,
-                account.ProviderId,
-                sample.State,
-                sample.LatencyMilliseconds,
-                sample.FailureCode,
-                sample.ObservedAt
-            })
-            .Take(500)
-            .ToArrayAsync(cancellationToken);
         var auditRows = await db.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "provider-cts" &&
                            item.ActorUserId == session.AllstarrUserId)
@@ -53,26 +36,7 @@ public sealed class ProviderDiagnosticsController(
             .GroupBy(item => new { item.ProviderAccountId, item.ProviderId })
             .Select(group => group.First())
             .ToArray();
-        if (durableMeasurements.Length > 0)
-            return Ok(new { measurements = durableMeasurements });
-        var measurements = rows.GroupBy(item => item.Id).Select(group =>
-        {
-            var latest = group.First();
-            var succeeded = latest.State == allstarr.Core.Storage.ProviderHealthState.Healthy;
-            var latency = latest.LatencyMilliseconds ?? 0;
-            return new
-            {
-                providerAccountId = latest.Id,
-                providerId = latest.ProviderId,
-                health = latest.State.ToString().ToLowerInvariant(),
-                latencyMs = latency,
-                bars = ConnectivityQuality.Bars(latency, succeeded, ConnectivityMetric.ClickToStream),
-                metric = "cts",
-                testedAt = latest.ObservedAt,
-                failureCode = latest.FailureCode
-            };
-        });
-        return Ok(new { measurements });
+        return Ok(new { measurements = durableMeasurements });
     }
 
     [HttpPost("deep-stream")]

@@ -2,7 +2,7 @@ namespace allstarr.Core.Health;
 
 public static class ProviderHealthRegistration
 {
-    public static IServiceCollection AddDurableProviderHealth(
+    public static IServiceCollection AddProviderRuntimeHealth(
         this IServiceCollection services,
         IConfiguration configuration)
     {
@@ -11,10 +11,8 @@ public static class ProviderHealthRegistration
                       ?? new ProviderHealthOptions();
         options.Validate();
         services.AddSingleton(options);
-        services.AddSingleton<DurableProviderHealthStore>();
-        services.AddSingleton<IDurableProviderHealthObservationStore>(provider =>
-            provider.GetRequiredService<DurableProviderHealthStore>());
-        services.AddHostedService<DurableProviderHealthInitializer>();
+        services.AddSingleton<ProviderRuntimeHealth>();
+        services.AddSingleton<IProviderOutcomeObserver>(provider => provider.GetRequiredService<ProviderRuntimeHealth>());
         return services;
     }
 }

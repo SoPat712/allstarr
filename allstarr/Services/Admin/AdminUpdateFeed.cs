@@ -62,7 +62,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
     // Source 2 is retired outbox data; keep later source IDs stable for cursors.
     private const int TrackMatchSource = 3;
     private const int PlaylistSnapshotSource = 4;
-    private const int ProviderHealthSource = 5;
+    private const int ReservedSource = 5;
 
     public async Task<IReadOnlyList<AdminUpdateEvent>> ReadAsync(
         AdminUpdateScope scope,
@@ -179,30 +179,6 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             })
             .ToListAsync(cancellationToken);
 
-        var health = await context.ProviderHealthSamples.AsNoTracking()
-            .Where(item => (scope.IsAdministrator ||
-                 context.ProviderAccounts.Any(account =>
-                     account.Id == item.ProviderAccountId &&
-                     account.OwnerUserId == scope.UserId)) &&
-                (item.ObservedAt > cursor.OccurredAt ||
-                 item.ObservedAt == cursor.OccurredAt &&
-                 (ProviderHealthSource > cursor.Source ||
-                  ProviderHealthSource == cursor.Source &&
-                  item.Id.CompareTo(cursor.ResourceId) > 0)))
-            .OrderBy(item => item.ObservedAt).ThenBy(item => item.Id)
-            .Take(limit)
-            .Select(item => new
-            {
-                item.Id,
-                item.ObservedAt,
-                item.ProviderAccountId,
-                item.Capability,
-                item.State,
-                item.LatencyMilliseconds,
-                item.FailureCode
-            })
-            .ToListAsync(cancellationToken);
-
         await transaction.CommitAsync(cancellationToken);
 
         return audits.Select(item => Event(
@@ -258,23 +234,6 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                 item.CorrelationId,
                 item.SourceJobId,
                 new { item.PlaylistLinkId, item.SnapshotVersion })))
-            .Concat(health.Select(item => Event(
-                ProviderHealthSource,
-                item.Id,
-                0,
-                item.ObservedAt,
-                "provider-health",
-                "observed",
-                null,
-                null,
-                new
-                {
-                    item.ProviderAccountId,
-                    item.Capability,
-                    state = item.State.ToString(),
-                    item.LatencyMilliseconds,
-                    item.FailureCode
-                })))
             .OrderBy(item => item.OccurredAt)
             .ThenBy(item => SourceOf(item.Resource))
             .ThenBy(item => item.ResourceId)
@@ -313,6 +272,6 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
         "job" => JobSource,
         "track-match" => TrackMatchSource,
         "playlist-source" => PlaylistSnapshotSource,
-        _ => ProviderHealthSource
+        _ => ReservedSource
     };
 }

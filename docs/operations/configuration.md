@@ -107,3 +107,14 @@ caller's credentials.
 ## Listening preferences
 
 `EXPLICIT_FILTER` seeds the household default through the existing settings importer. Supported values are `All`, `ExplicitOnly` and `CleanOnly`; the default is `All`. `ExplicitOnly` retains its v2 meaning: hide only clean/edited versions (Deezer value 3), while retaining naturally clean (0), explicit (1), unknown/no-advice (2, 6, 7), and missing values. The WebUI labels it **Hide clean/edited versions**. Unknown explicit status is included in every mode. Each signed-in listener can override this filter and independently show the `[A]` external and `[E]` explicit title markers in **Listening preferences**. Both markers default to on. Reset removes that listener's overrides and uses the latest household defaults. Native backend objects remain unchanged; routing order and deployment settings remain household controls.
+
+
+## Provider connection status
+
+Status is kept in memory for each provider, account revision and capability. Restarting starts account status at Unknown; normal requests rebuild it. Changing credentials cannot reuse a previous revision's health. By default three failures open a 60-second cooldown; credential rejection opens it immediately, and rate limits can request a longer wait. After cooldown, normal requests can try again. Historical health samples and rollups are not stored. Explicit stream diagnostic results remain in the audit history.
+
+Sidecar readiness uses cheap bounded requests, starts immediately, and refreshes within a minute. `Sidecars:ProbeIntervalSeconds` defaults to 30 (allowed 5–30), and `ProbeTimeoutSeconds` defaults to 5 (allowed 1–5); values outside these ranges, including the earlier 900-second default, are clamped with a startup warning. Up to 256 targets run in batches of at most 64 concurrent requests. The previous jitter and per-cycle target settings are no longer used. Optional sidecar failures affect only their capabilities. No background task logs into managed accounts or downloads a media sample.
+
+An administrator's account Test first checks each capability's connection. For a streaming account whose checks pass, it then plays a short real sample: at most 64 KiB within 30 seconds (five minutes for extensions that download before streaming), and reports the observed playback support: byte ranges, provider seeking, or sequential playback. The sample needs a known track from saved provider metadata; until one exists the Test reports the connection result and asks for one (refresh playlist metadata first). Playlist and scrobbling tests check their own capabilities. Streaming lease creation alone does not count as successful playback.
+
+The health-table migration preserves users, accounts, encrypted credentials, settings and playlist data. Back up the database and matching encryption key ring before upgrading. A rollback requires the matching older database/key-ring pair and application image.

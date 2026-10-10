@@ -290,6 +290,8 @@
       const result = await sources.test(account, capability);
       testResults = { ...testResults, [key]: result };
       feedback = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
+      if (result.seekRung) feedback += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
+      if (result.reasonCode) feedback += ` ${humanize(result.reasonCode)}.`;
       await refresh();
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "The connection test failed.";
@@ -308,7 +310,7 @@
         ...result,
         latencyMs: result.clickToStreamMilliseconds ?? result.latencyMs,
       } };
-      feedback = `${provider(account.providerId)?.name ?? account.providerId} click-to-stream measured.`;
+      feedback = `${provider(account.providerId)?.name ?? account.providerId} click-to-stream measured${result.seekRung ? `: ${humanize(result.seekRung)}` : ""}.`;
       await refresh();
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : "The click-to-stream test failed.";

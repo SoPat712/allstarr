@@ -483,6 +483,8 @@ export type ConnectivityResult = {
   metric?: string;
   testedAt?: string;
   reasonCode?: string | null;
+  seekRung?: "byte-range" | "provider-seek" | "sequential" | "unavailable";
+  sampleBytes?: number;
 };
 
 export type CtsMeasurement = {

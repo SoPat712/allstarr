@@ -17,7 +17,7 @@ public sealed class ProviderCtsDiagnosticRunner(
     IProviderRegistry providers,
     IProviderRouteAccountResolver accounts,
     ProviderCtsTrackSelector trackSelector,
-    IDurableProviderHealthObservationStore healthStore,
+    IProviderOutcomeObserver health,
     IDbContextFactory<AllstarrDbContext>? contextFactory = null)
 {
     private const int SampleLimitBytes = 64 * 1024;
@@ -124,14 +124,14 @@ public sealed class ProviderCtsDiagnosticRunner(
                     null), cancellationToken);
             }
         }
-        catch (UnauthorizedAccessException exception)
+        catch (UnauthorizedAccessException)
         {
             return ProviderCtsDiagnosticResult.Failure(
                 StatusCodes.Status403Forbidden,
                 providerId,
                 providerAccountId,
                 "account-resolution",
-                exception.Message);
+                "The selected provider account is not authorized.");
         }
 
         if ((capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.Required && resolved == null) ||
@@ -197,7 +197,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             if (!leaseOutcome.IsSuccess)
             {
                 var error = leaseOutcome.Error!.Kind.ToString();
-                await RecordFailureAsync(providerId, providerAccountId, error, resolveMilliseconds, cancellationToken);
+                RecordFailure(execution, error, resolveMilliseconds);
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity,
                     providerId,
@@ -210,7 +210,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             var lease = leaseOutcome.RequireValue();
             if (lease.ExpiresAt <= DateTimeOffset.UtcNow)
             {
-                await RecordFailureAsync(providerId, providerAccountId, "expired-lease", resolveMilliseconds, cancellationToken);
+                RecordFailure(execution, "expired-lease", resolveMilliseconds);
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity,
                     providerId,
@@ -223,7 +223,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(
                     lease.ProtectedSourceUri.AbsoluteUri, out var safeUri, out var unsafeReason))
             {
-                await RecordFailureAsync(providerId, providerAccountId, unsafeReason, resolveMilliseconds, cancellationToken);
+                RecordFailure(execution, unsafeReason, resolveMilliseconds);
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity,
                     providerId,
@@ -256,7 +256,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 var error = IsRedirect(response.StatusCode)
                     ? "redirect-rejected"
                     : $"http-{(int)response.StatusCode}";
-                await RecordFailureAsync(providerId, providerAccountId, error, headersMilliseconds, cancellationToken);
+                RecordFailure(execution, error, headersMilliseconds);
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity,
                     providerId,
@@ -285,7 +285,7 @@ public sealed class ProviderCtsDiagnosticRunner(
 
             if (bytesRead == 0 || !firstByteMilliseconds.HasValue)
             {
-                await RecordFailureAsync(providerId, providerAccountId, "empty-media-response", total.Elapsed.TotalMilliseconds, cancellationToken);
+                RecordFailure(execution, "empty-media-response", total.Elapsed.TotalMilliseconds);
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity,
                     providerId,
@@ -299,16 +299,8 @@ public sealed class ProviderCtsDiagnosticRunner(
             var transferSeconds = Math.Max((total.Elapsed - transferStart).TotalSeconds, 0.001);
             var throughputKbps = bytesRead * 8d / 1000d / transferSeconds;
             var totalMilliseconds = total.Elapsed.TotalMilliseconds;
-            if (providerAccountId.HasValue)
-            {
-                await healthStore.RecordAsync(
-                    providerId,
-                    providerAccountId.Value,
-                    "click-to-stream",
-                    allstarr.Core.Storage.ProviderHealthState.Healthy,
-                    (long)Math.Round(firstByteMilliseconds.Value),
-                    cancellationToken: cancellationToken);
-            }
+            health.Observe(execution, ProviderCapabilityKind.Streaming, null,
+                TimeSpan.FromMilliseconds(firstByteMilliseconds.Value));
             return ProviderCtsDiagnosticResult.Success(
                 providerId,
                 providerAccountId,
@@ -343,7 +335,7 @@ public sealed class ProviderCtsDiagnosticRunner(
         }
         catch (OperationCanceledException)
         {
-            await RecordFailureAsync(providerId, providerAccountId, "timeout", total.Elapsed.TotalMilliseconds, cancellationToken);
+            RecordFailure(execution, "timeout", total.Elapsed.TotalMilliseconds);
             return ProviderCtsDiagnosticResult.Failure(
                 StatusCodes.Status504GatewayTimeout,
                 providerId,
@@ -353,7 +345,7 @@ public sealed class ProviderCtsDiagnosticRunner(
         }
         catch (HttpRequestException)
         {
-            await RecordFailureAsync(providerId, providerAccountId, "endpoint-unreachable", total.Elapsed.TotalMilliseconds, cancellationToken);
+            RecordFailure(execution, "endpoint-unreachable", total.Elapsed.TotalMilliseconds);
             return ProviderCtsDiagnosticResult.Failure(
                 StatusCodes.Status502BadGateway,
                 providerId,
@@ -363,22 +355,12 @@ public sealed class ProviderCtsDiagnosticRunner(
         }
     }
 
-    private async Task RecordFailureAsync(
-        string providerId,
-        Guid? providerAccountId,
-        string failureCode,
-        double latencyMilliseconds,
-        CancellationToken cancellationToken)
+    private void RecordFailure(ProviderExecutionContext context, string failureCode, double latencyMilliseconds)
     {
-        if (!providerAccountId.HasValue) return;
-        await healthStore.RecordAsync(
-            providerId,
-            providerAccountId.Value,
-            "click-to-stream",
-            allstarr.Core.Storage.ProviderHealthState.Degraded,
-            (long)Math.Round(latencyMilliseconds),
-            failureCode,
-            cancellationToken);
+        var kind = Enum.TryParse<ProviderErrorKind>(failureCode, out var parsed) ? parsed : ProviderErrorKind.TransientFailure;
+        health.Observe(context, ProviderCapabilityKind.Streaming,
+            new ProviderError(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromMinutes(1) : null),
+            TimeSpan.FromMilliseconds(latencyMilliseconds));
     }
 
     private static HttpClient CreateSampleClient()
@@ -446,6 +428,9 @@ public sealed class ProviderCtsDiagnosticResult
     public string? SampleSha256 { get; init; }
     public bool LeaseSupportsByteRanges { get; init; }
     public bool LeaseSupportsSeeking { get; init; }
+    public string SeekRung => !Succeeded ? "unavailable" :
+        LeaseSupportsByteRanges && UpstreamStatusCode == 206 && !string.IsNullOrWhiteSpace(ContentRange)
+            ? "byte-range" : LeaseSupportsSeeking ? "provider-seek" : "sequential";
     public ProviderMediaFormat? Media { get; init; }
     public string? QualityDowngradeReason { get; init; }
     public string ProbeMode { get; init; } = "cold-connect";

@@ -1,3 +1,4 @@
+using allstarr.Core.Health;
 using System.Security.Cryptography;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
@@ -26,13 +27,13 @@ public sealed class PlatformReadinessService
     private readonly DurableStorageState _storageState;
     private readonly ReadinessOptions _options;
     private readonly FileSecretKeyRingProvider _keyRingProvider;
-    private readonly SidecarStatusCatalog _sidecars;
+    private readonly ProviderRuntimeHealth _sidecars;
 
     public PlatformReadinessService(
         DurableStorageState storageState,
         ReadinessOptions options,
         FileSecretKeyRingProvider keyRingProvider,
-        SidecarStatusCatalog sidecars)
+        ProviderRuntimeHealth sidecars)
     {
         _storageState = storageState;
         _options = options;

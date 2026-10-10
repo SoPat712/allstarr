@@ -4,8 +4,6 @@ using allstarr.Core.Identity;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
-using DurableHealthState = allstarr.Core.Storage.ProviderHealthState;
-using RuntimeHealthState = allstarr.Services.Common.ProviderHealthState;
 
 namespace allstarr.Core.Routing;
 
@@ -47,7 +45,8 @@ public sealed class DurableProviderRouteAccountResolver(
             : candidates.FirstOrDefault(candidate =>
             {
                 var current = health.Get(request.ProviderId, candidate.Account.Id, request.Capability);
-                return !current.CircuitOpen && current.State is
+                return current.AccountRevision.HasValue && current.AccountRevision != candidate.Account.Revision ||
+                    !current.CircuitOpen && current.State is
                     ProviderRouteHealthState.Healthy or ProviderRouteHealthState.Unknown;
             }) ?? candidates.FirstOrDefault();
         if (resolved == null)
@@ -73,52 +72,14 @@ public sealed class DurableProviderRouteAccountResolver(
         capability.ToString().ToLowerInvariant();
 }
 
-public sealed class DurableProviderRouteHealthSource(
-    DurableProviderHealthStore healthStore,
-    ProviderStatusManager runtimeStatus) : IProviderRouteHealthSource
+public sealed class RuntimeProviderRouteHealthSource(ProviderRuntimeHealth health) : IProviderRouteHealthSource
 {
-    public ProviderRouteHealthSnapshot Get(
-        string providerId,
-        Guid? providerAccountId,
-        ProviderCapabilityKind capability)
-    {
-        var capabilityName = capability.ToString().ToLowerInvariant();
-        if (!providerAccountId.HasValue)
-        {
-            var status = runtimeStatus.GetAccountFreeStatus(providerId, capabilityName);
-            return new ProviderRouteHealthSnapshot(status.Health switch
-            {
-                RuntimeHealthState.Healthy => ProviderRouteHealthState.Healthy,
-                RuntimeHealthState.Degraded => ProviderRouteHealthState.Degraded,
-                _ => ProviderRouteHealthState.Unknown
-            }, CircuitOpen: false);
-        }
-
-        var accountId = providerAccountId.Value;
-        var circuitOpen = healthStore.IsCircuitOpen(accountId, capabilityName);
-        if (!healthStore.TryGetLatest(
-                providerId,
-                accountId,
-                capabilityName,
-                out var latest))
-        {
-            return new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, circuitOpen);
-        }
-
-        var state = latest.State switch
-        {
-            DurableHealthState.Healthy => ProviderRouteHealthState.Healthy,
-            DurableHealthState.Degraded => ProviderRouteHealthState.Degraded,
-            DurableHealthState.Unavailable => ProviderRouteHealthState.Unavailable,
-            DurableHealthState.Unauthorized => ProviderRouteHealthState.Unauthorized,
-            _ => ProviderRouteHealthState.Unknown
-        };
-        return new ProviderRouteHealthSnapshot(state, circuitOpen);
-    }
+    public ProviderRouteHealthSnapshot Get(string providerId, Guid? providerAccountId, ProviderCapabilityKind capability) =>
+        health.GetRouteStatus(providerId, providerAccountId, capability);
 }
 
 public sealed class DurableProviderRouteSidecarSource(
-    SidecarStatusCatalog sidecars) : IProviderRouteSidecarSource
+    ProviderRuntimeHealth sidecars) : IProviderRouteSidecarSource
 {
     public bool IsReady(string dependencyId) =>
         sidecars.TryGet(dependencyId, out var status) &&

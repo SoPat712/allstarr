@@ -101,7 +101,7 @@ public sealed class FreshInstallContractTests
                      "AdminAuthSession", "ProviderAccount", "RuntimeSetting",
                      "PlaylistLink", "PlaylistSourceSnapshot", "PlaylistSyncRun",
                      "TrackMatch", "DurableJob",
-                     "ProviderHealthSample", "AuditEvent", "ExtensionPackage"
+                     "AuditEvent", "ExtensionPackage"
                  })
         {
             Assert.Contains($"DbSet<{durableEntity}", dbContext, StringComparison.Ordinal);

@@ -15,7 +15,6 @@ public static class OperationsRegistration
         sidecars.Validate();
         services.AddSingleton(readiness);
         services.AddSingleton(sidecars);
-        services.AddSingleton<SidecarStatusCatalog>();
         services.AddSingleton<PlatformReadinessService>();
         services.AddHostedService<SidecarHealthMonitor>();
         return services;

@@ -33,7 +33,8 @@ public enum ProviderRouteHealthState
 
 public sealed record ProviderRouteHealthSnapshot(
     ProviderRouteHealthState State,
-    bool CircuitOpen);
+    bool CircuitOpen,
+    long? AccountRevision = null);
 
 public interface IProviderRouteHealthSource
 {

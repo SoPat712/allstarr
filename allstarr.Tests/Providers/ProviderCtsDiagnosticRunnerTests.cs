@@ -71,16 +71,11 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 It.Is<ProviderRouteAccountRequest>(request => request.RequestedAccountId == accountId),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ProviderRouteAccountResolution(account, 1));
-        var health = new Mock<IDurableProviderHealthObservationStore>(MockBehavior.Strict);
-        health.Setup(item => item.RecordAsync(
-                "qobuz",
-                accountId,
-                "click-to-stream",
-                allstarr.Core.Storage.ProviderHealthState.Healthy,
-                It.IsAny<long?>(),
-                null,
-                It.IsAny<CancellationToken>()))
-            .ReturnsAsync((DurableProviderHealthSnapshot?)null);
+        var health = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
+        health.Setup(item => item.Observe(
+            It.Is<ProviderExecutionContext>(context => context.ProviderId == "qobuz" && context.Account != null &&
+                context.Account.AccountId == accountId && context.Account.Revision == 1),
+            ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
         using var selector = new ProviderCtsTrackSelector(
             Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
         var runner = new ProviderCtsDiagnosticRunner(
@@ -164,11 +159,14 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             .Returns(Descriptor("apple-download", ProviderAccountRequirement.None));
         using var selector = new ProviderCtsTrackSelector(
             Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
+        observer.Setup(item => item.Observe(It.Is<ProviderExecutionContext>(context => context.Account == null),
+            ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
         var runner = new ProviderCtsDiagnosticRunner(
             providers.Object,
             Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
             selector,
-            Mock.Of<IDurableProviderHealthObservationStore>(MockBehavior.Strict));
+            observer.Object);
         var actor = new ProviderActorContext(
             ProviderActorKind.User,
             Guid.CreateVersion7(),
@@ -186,6 +184,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.Null(result.ProviderAccountId);
         Assert.Equal(4, result.SampleBytes);
         Assert.Equal(media, result.Media);
+        observer.VerifyAll();
         capability.VerifyAll();
         providers.VerifyAll();
     }
@@ -206,7 +205,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             providers.Object,
             Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
             selector,
-            Mock.Of<IDurableProviderHealthObservationStore>(MockBehavior.Strict));
+            Mock.Of<IProviderOutcomeObserver>(MockBehavior.Strict));
         var actor = new ProviderActorContext(
             ProviderActorKind.User,
             Guid.CreateVersion7(),
