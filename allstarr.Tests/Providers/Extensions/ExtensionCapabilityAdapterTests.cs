@@ -436,6 +436,71 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task SpotiFlacRuntimeAdapter_PassesPreparedAvailabilityContextToDownload()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-prepared", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string sourceManifest = """
+                {"name":"prepared","displayName":"Prepared","version":"1.0.0","description":"Fixture",
+                 "type":["download_provider"],"permissions":{"network":["media.example.test"]},
+                 "requiredRuntimeFeatures":["preparedContext@1"]}
+                """;
+            const string script = """
+                registerExtension({
+                  getTrack: function(id) { return { id: id, name: 'Song ' + id, artists: 'Artist', duration_ms: 1000 }; },
+                  checkAvailability: function(isrc, name, artists, options) {
+                    if (!options || !options.track || options.duration_ms !== 1000) throw new Error('availability options missing');
+                    return { available: true, prepared_context: { web_metadata: { id: options.track.id, title: name } } };
+                  },
+                  download: function(id, quality, path, progress, options) {
+                    var prepared = options && options.preparedContext;
+                    if (!prepared || typeof prepared !== 'object') throw new Error('prepared context must always be an object');
+                    if (id === 'track-1' && (!prepared.web_metadata || prepared.web_metadata.id !== 'track-1' ||
+                        prepared.web_metadata.title !== 'Song track-1')) throw new Error('prepared context was not returned');
+                    if (id === 'track-2' && Object.keys(prepared).length !== 0) throw new Error('prepared context leaked between tracks');
+                    return file.download('https://media.example.test/audio', path, {});
+                  }
+                });
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            Assert.Contains("preparedContext@1", manifest.RequiredRuntimeFeatures ?? []);
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var context = Context("spotiflac-prepared");
+
+            Assert.Contains("\"Available\"", sandbox.InvokeJson("checkAvailability",
+                "{\"trackId\":\"track-1\",\"requestedQuality\":\"Any\"}"), StringComparison.Ordinal);
+            foreach (var trackId in new[] { "track-1", "track-2" })
+            {
+                var job = Guid.CreateVersion7();
+                var workspace = await resolver.CreateWorkspaceAsync(new(
+                    context.Actor.EffectiveUserId, job, "spotiflac-prepared", null, "download"));
+                string? raw;
+                using (ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "spotiflac-prepared", 1024, CancellationToken.None))
+                    raw = sandbox.InvokeJson("download", $"{{\"trackId\":\"{trackId}\",\"requestedQuality\":\"Any\"}}");
+                Assert.Contains("\"sizeBytes\":4", raw, StringComparison.Ordinal);
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+    }
+
+    [Fact]
+    public void RuntimeCoordinator_SupportsPreparedAvailabilityContext()
+    {
+        Assert.Contains("preparedContext@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+        Assert.DoesNotContain("unknownFeature@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+    }
+
+    [Fact]
     public async Task SpotiFlacDownloadProvider_PreparesAStreamAndDeletesItsTransientWorkspace()
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-stream", Guid.NewGuid().ToString("N"));

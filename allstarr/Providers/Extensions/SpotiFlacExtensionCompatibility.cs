@@ -251,6 +251,24 @@ public static class SpotiFlacExtensionCompatibility
           while (_sfTrackCacheOrder.length > 512) delete _sfTrackCache[_sfTrackCacheOrder.shift()];
           return track;
         }
+        var _sfPrepared = Object.create(null);
+        var _sfPreparedOrder = [];
+        function _sfRememberPrepared(trackId, context) {
+          var id = String(trackId || '');
+          if (!id) return;
+          if (!context || typeof context !== 'object' || Array.isArray(context)) { delete _sfPrepared[id]; return; }
+          var json;
+          try { json = JSON.stringify(context); } catch (error) { return; }
+          if (!json || json.length > 262144) return;
+          if (!Object.prototype.hasOwnProperty.call(_sfPrepared, id)) _sfPreparedOrder.push(id);
+          _sfPrepared[id] = { json: json, at: Date.now() };
+          while (_sfPreparedOrder.length > 256) delete _sfPrepared[_sfPreparedOrder.shift()];
+        }
+        function _sfPreparedFor(trackId) {
+          var entry = _sfPrepared[String(trackId || '')];
+          if (!entry || Date.now() - entry.at > 900000) return {};
+          try { return JSON.parse(entry.json); } catch (error) { return {}; }
+        }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
           return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
@@ -343,7 +361,10 @@ public static class SpotiFlacExtensionCompatibility
             var track = typeof _spotiflacExtension.getTrack === 'function' ? _spotiflacExtension.getTrack(request.trackId) : null;
             track = track || {};
             var artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
-            var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists, { requestedQuality: request.requestedQuality });
+            var durationMs = Number(track.duration_ms || track.durationMs || 0) || undefined;
+            var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists,
+              { requestedQuality: request.requestedQuality, track: track, duration_ms: durationMs });
+            if (result && result.available !== false) _sfRememberPrepared(request.trackId, result.prepared_context || result.preparedContext);
             return result && result.available !== false
               ? { state: 'Available', availableQualities: ['Any'], estimatedBytes: null }
               : { state: 'Unavailable', availableQualities: [], estimatedBytes: null };
@@ -358,7 +379,8 @@ public static class SpotiFlacExtensionCompatibility
             var safeId = String(request.trackId || 'track').replace(/[^A-Za-z0-9._-]/g, '_');
             var output = safeId + '.audio';
             var quality = request.requestedQuality === 'Lossy' ? 'best' : 'best';
-            var result = _spotiflacExtension.download(request.trackId, quality, output, function() {});
+            var result = _spotiflacExtension.download(request.trackId, quality, output, function() {},
+              { preparedContext: _sfPreparedFor(request.trackId) });
             if (!result || result.success === false) throw new Error(result && (result.error_message || result.error) || 'SpotiFLAC download failed');
             var path = String(result.file_path || result.path || output);
             var extension = String(result.actual_extension || result.output_extension || path.substring(path.lastIndexOf('.')) || '.audio').toLowerCase();
