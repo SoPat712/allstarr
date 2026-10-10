@@ -10,6 +10,7 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<ITrackIdentityService, TrackIdentityService>();
         services.TryAddSingleton<ILibraryIndexService, LibraryIndexService>();
         services.TryAddSingleton<TrackMatchDecisionEngine>();
+        services.TryAddSingleton<TrackMatchPlayableSearch>();
         services.TryAddSingleton<TrackMatchCommandService>();
         services.TryAddSingleton<PlaylistRematchService>();
         services.TryAddSingleton<TrackRematchAllService>();

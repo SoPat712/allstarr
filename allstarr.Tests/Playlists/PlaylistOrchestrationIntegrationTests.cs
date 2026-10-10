@@ -14,7 +14,6 @@ using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
-using allstarr.Services.Spotify;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging;
@@ -825,10 +824,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             matcher,
             new ProviderAccountResolver(_factory),
             new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
-            new PlaylistPlayableSearchService(
+            new TrackMatchPlayableSearch(
                 gateway.Object,
                 matcher,
-                NullLogger<PlaylistPlayableSearchService>.Instance));
+                NullLogger<TrackMatchPlayableSearch>.Instance));
 
         var result = await matches.ResolveSnapshotAsync(
             new TrackMatchActor(_user, false),
@@ -890,10 +889,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             matcher,
             new ProviderAccountResolver(_factory),
             new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
-            new PlaylistPlayableSearchService(
+            new TrackMatchPlayableSearch(
                 gateway.Object,
                 matcher,
-                NullLogger<PlaylistPlayableSearchService>.Instance));
+                NullLogger<TrackMatchPlayableSearch>.Instance));
         var service = new PlaylistOrchestrationService(
             _factory,
             _source,
@@ -950,8 +949,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var matcher = new TrackMatchDecisionEngine();
         var matches = new TrackMatchCommandService(
             _factory, matcher, new ProviderAccountResolver(_factory), new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
-            new PlaylistPlayableSearchService(
-                gateway.Object, matcher, NullLogger<PlaylistPlayableSearchService>.Instance));
+            new TrackMatchPlayableSearch(
+                gateway.Object, matcher, NullLogger<TrackMatchPlayableSearch>.Instance));
         var service = new PlaylistOrchestrationService(
             _factory, _source, new FakeTargetResolver(_target), new PlaylistMaterializationPlanner(), matcher,
             matches, new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"));
@@ -1046,10 +1045,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             matcher,
             new ProviderAccountResolver(_factory),
             new Clock(_now), new TestBackendLibraryAccess(concurrentFactory, "music"),
-            new PlaylistPlayableSearchService(
+            new TrackMatchPlayableSearch(
                 gateway.Object,
                 matcher,
-                NullLogger<PlaylistPlayableSearchService>.Instance));
+                NullLogger<TrackMatchPlayableSearch>.Instance));
 
         var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
         {

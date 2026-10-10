@@ -2,22 +2,21 @@ using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
-using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using allstarr.Services.Spotify;
 using Microsoft.Extensions.Options;
 
-namespace allstarr.Services.Spotify;
+namespace allstarr.Core.Matching;
 
-// Use the protocol gateway so background matching keeps the initiating user credential scope.
-public sealed class PlaylistPlayableSearchService(
+public sealed class TrackMatchPlayableSearch(
     IProtocolProviderGateway gateway,
     TrackMatchDecisionEngine matcher,
-    ILogger<PlaylistPlayableSearchService> logger,
+    ILogger<TrackMatchPlayableSearch> logger,
     IEffectiveProviderPolicyResolver? effectivePolicies = null)
 {
     public async Task<PlayableTrackMatch> MatchAsync(

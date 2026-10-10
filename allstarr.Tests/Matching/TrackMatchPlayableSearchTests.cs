@@ -14,7 +14,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class PlaylistPlayableSearchServiceTests
+public sealed class TrackMatchPlayableSearchTests
 {
     [Fact]
     public void Provider_eligibility_comes_from_streaming_routes()
@@ -24,10 +24,10 @@ public sealed class PlaylistPlayableSearchServiceTests
             .Returns(["jellyfin", "stream-extension"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["download-extension"]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
 
         Assert.True(service.CanUseProvider("stream-extension"));
         Assert.False(service.CanUseProvider("download_extension"));
@@ -51,10 +51,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                 new[] { "qobuz" }.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase),
                 AudioQualityPolicy.DefaultStep,
                 0.07));
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance,
+            NullLogger<TrackMatchPlayableSearch>.Instance,
             policies.Object);
 
         Assert.False(await service.CanUseProviderAsync("qobuz"));
@@ -93,10 +93,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                         Duration = 223
                     }
                 ]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
         var context = Context(user);
         var scope = new TrackMatchScope(
             user, "main", Guid.CreateVersion7(), 2, 1,
@@ -145,10 +145,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                     Duration = 240
                 }
             ]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
         var result = await service.MatchAsync(
             Context(user),
             new ExternalTrackMatchSnapshot(
@@ -191,10 +191,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                     Duration = 195
                 }
             ]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
 
         var result = await service.MatchAsync(
             Context(user),
@@ -248,10 +248,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                 Album = "Greatest Hits",
                 Duration = 313
             });
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
         var context = Context(user);
         var scope = new TrackMatchScope(
             user, "main", Guid.CreateVersion7(), 2, 1,
@@ -319,7 +319,7 @@ public sealed class PlaylistPlayableSearchServiceTests
                 Album = "Sunroof (Remixes) - EP",
                 Duration = 163
             });
-        var service = new PlaylistPlayableSearchService(gateway.Object, new TrackMatchDecisionEngine(), NullLogger<PlaylistPlayableSearchService>.Instance);
+        var service = new TrackMatchPlayableSearch(gateway.Object, new TrackMatchDecisionEngine(), NullLogger<TrackMatchPlayableSearch>.Instance);
         var routes = new[] { new ProviderTrackIdentityRecord
         {
             CanonicalRecordingId = Guid.CreateVersion7(), ProviderId = "apple-download",
@@ -354,10 +354,10 @@ public sealed class PlaylistPlayableSearchServiceTests
             .Returns(["deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns([]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
 
         var result = await service.ReuseAsync(
             Context(user),
@@ -410,10 +410,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                         Duration = 223
                     }
                 ]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
 
         var result = await service.MatchAsync(
             Context(user),
@@ -471,10 +471,10 @@ public sealed class PlaylistPlayableSearchServiceTests
                     Duration = 401
                 }
             ]);
-        var service = new PlaylistPlayableSearchService(
+        var service = new TrackMatchPlayableSearch(
             gateway.Object,
             new TrackMatchDecisionEngine(),
-            NullLogger<PlaylistPlayableSearchService>.Instance);
+            NullLogger<TrackMatchPlayableSearch>.Instance);
 
         var result = await service.MatchAsync(
             Context(user),
@@ -517,8 +517,8 @@ public sealed class PlaylistPlayableSearchServiceTests
                 ExternalProvider = "apple-download", ExternalId = "1440638659", Title = "Crush",
                 Artist = "Selena Gomez & The Scene", Album = "Kiss & Tell", Duration = 199
             }]);
-        var service = new PlaylistPlayableSearchService(
-            gateway.Object, new TrackMatchDecisionEngine(), NullLogger<PlaylistPlayableSearchService>.Instance);
+        var service = new TrackMatchPlayableSearch(
+            gateway.Object, new TrackMatchDecisionEngine(), NullLogger<TrackMatchPlayableSearch>.Instance);
 
         var result = await service.MatchAsync(
             Context(user),

@@ -54,8 +54,7 @@ public sealed class LegacyMappingReadinessContractTests
     {
         var orchestration = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Core", "Playlists", "PlaylistOrchestrationService.cs"));
-        var service = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"));
+        var service = ReadMatchingCommandSources();
 
         Assert.Contains("TrackMatchDecisionEngine", orchestration, StringComparison.Ordinal);
         Assert.Contains("ITrackMatchRepository", orchestration, StringComparison.Ordinal);
@@ -68,8 +67,7 @@ public sealed class LegacyMappingReadinessContractTests
     [Fact]
     public void LegacyMappingConvergence_PreservesEvidenceAndContinuesThroughNormalMatching()
     {
-        var service = File.ReadAllText(FindRepositoryFile(
-            "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"));
+        var service = ReadMatchingCommandSources();
 
         Assert.Contains("DurableProviderRoute", service, StringComparison.Ordinal);
         Assert.Contains("TrackMatchDetailData", service, StringComparison.Ordinal);
@@ -101,6 +99,15 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("PlanAsync<IProviderStreamingCapability>", search, StringComparison.Ordinal);
         Assert.Contains("ProviderSearchConcurrency", search, StringComparison.Ordinal);
         Assert.Contains("protocol.Deadline", search, StringComparison.Ordinal);
+    }
+
+    private static string ReadMatchingCommandSources()
+    {
+        var directory = Path.GetDirectoryName(FindRepositoryFile(
+            "allstarr", "Core", "Matching", "TrackMatchCommandService.cs"))!;
+        return string.Join('\n', Directory.GetFiles(directory, "TrackMatchCommandService*.cs")
+            .Order(StringComparer.Ordinal)
+            .Select(File.ReadAllText));
     }
 
     private static string FindRepositoryFile(params string[] segments)
