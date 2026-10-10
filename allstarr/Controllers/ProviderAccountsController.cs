@@ -178,6 +178,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                     secretBytes,
                     cancellationToken: cancellationToken);
                 account.SecretReferenceId = storedSecret.Id;
+                account.SettingsJson = PublicSettingsJson(account.ProviderId, secretBytes);
             }
 
             await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
@@ -185,6 +186,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 item => item.Id == account.Id,
                 cancellationToken);
             persisted.SecretReferenceId = account.SecretReferenceId;
+            persisted.SettingsJson = account.SettingsJson;
             persisted.Enabled = request.Enabled;
             persisted.UpdatedAt = DateTimeOffset.UtcNow;
             persisted.Revision++;
@@ -284,6 +286,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.SecretReferenceId,
             cancellationToken);
         account.SecretReferenceId = secret.Id;
+        account.SettingsJson = PublicSettingsJson(account.ProviderId, bytes);
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
         AddAudit(
@@ -717,6 +720,11 @@ public sealed partial class ProviderAccountsController : ControllerBase
 
         return JsonSerializer.SerializeToUtf8Bytes(values);
     }
+
+    private string PublicSettingsJson(string providerId, byte[] configuration) =>
+        _providerRegistry != null && _providerRegistry.TryGet(providerId, out var provider) && provider != null
+            ? ProviderAccountSettings.Project(provider, configuration)
+            : ProviderAccountSettings.Empty;
 
     private static SecretAccessContext SecretAccess(ProviderAccountRecord account) =>
         new(account.OwnerUserId, $"provider-account:{account.ProviderId}:{account.Id:N}",

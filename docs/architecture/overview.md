@@ -66,7 +66,7 @@ The public protocol controllers preserve client compatibility. Provider metadata
 
 The product term **Source** covers anything that can supply music data or an action. A source can expose one or more typed capabilities: metadata, playlist discovery, streaming, download, lyrics, health, or scrobbling.
 
-A **provider account** is an encrypted credential and access policy for a source. It can be Personal or Shared. A source can exist without an account when its capability is public. Routing considers the initiating user, capability, account ownership, permission, readiness, and configured priority. Backend library permissions govern local copies separately.
+A **provider account** is an encrypted credential, any non-secret source settings, and an access policy for a source. It can be Personal or Shared. A source can exist without an account when its capability is public. Routing considers the initiating user, capability, account ownership, permission, readiness, and configured priority. Backend library permissions govern local copies separately.
 
 Public external artwork uses an identity-free `PublicRead` context limited to account-free metadata or a built-in metadata/playlist capability that explicitly supports anonymous reads. It cannot resolve credentials or carry user, account, or job identity. Authenticated artwork uses the viewer's normal provider context; private and virtual playlist artwork remains subject to authorization.
 

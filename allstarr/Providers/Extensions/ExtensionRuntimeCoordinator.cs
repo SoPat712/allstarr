@@ -26,6 +26,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly IDataProtector _sessionProtector;
     private readonly ConcurrentDictionary<Guid, ExtensionSandbox> _sandboxes = new();
     private readonly object _runtimeMutationLock = new();
+    private readonly SemaphoreSlim _runtimeGate = new(1, 1);
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -68,7 +69,11 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             try
             {
                 var build = await BuildRegistrationAsync(package, cancellationToken);
-                RegisterRuntime(package, build);
+                await WithRuntimeGateAsync(() =>
+                {
+                    RegisterRuntime(package, build);
+                    return Task.FromResult(true);
+                }, cancellationToken);
             }
             catch (Exception exception)
             {
@@ -102,54 +107,92 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                 packageId, expectedRevision, "runtime_validation_failed", CancellationToken.None);
             throw;
         }
-        var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
-        RegisterRuntime(package, build);
-        return active;
+        return await WithRuntimeGateAsync(async () =>
+        {
+            var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
+            RegisterRuntime(package, build);
+            return active;
+        }, cancellationToken);
     }
 
-    public async Task DisableAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
-    {
-        var package = await GetPackageAsync(packageId, cancellationToken);
-        await _controlPlane.DisableAsync(packageId, expectedRevision, cancellationToken);
-        RemoveRuntime(package);
-    }
+    public Task DisableAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default) =>
+        WithRuntimeGateAsync(async () =>
+        {
+            var package = await GetPackageAsync(packageId, cancellationToken);
+            await _controlPlane.DisableAsync(packageId, expectedRevision, cancellationToken);
+            RemoveRuntime(package);
+            return true;
+        }, cancellationToken);
 
-    public async Task<ExtensionPackageRecord> ResetPermissionsForReviewAsync(
+    public Task<ExtensionPackageRecord> ResetPermissionsForReviewAsync(
         Guid packageId,
         long expectedRevision,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) => WithRuntimeGateAsync(async () =>
+        {
+            var package = await GetPackageAsync(packageId, cancellationToken);
+            var reset = await _controlPlane.ResetPermissionsForReviewAsync(
+                packageId, expectedRevision, cancellationToken);
+            RemoveRuntime(package);
+            return reset;
+        }, cancellationToken);
+
+    public Task<ExtensionPackageRecord> UninstallAsync(
+        Guid packageId, long expectedRevision,
+        CancellationToken cancellationToken = default) => WithRuntimeGateAsync(async () =>
+        {
+            var package = await GetPackageAsync(packageId, cancellationToken);
+            var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
+            RemoveRuntime(package);
+            try
+            {
+                var packagePath = ContainedPath(_packageRoot, package.PackagePath);
+                if (Directory.Exists(packagePath)) Directory.Delete(packagePath, recursive: true);
+                if (await RetiredRuntimeStateAsync(package, cancellationToken) is { } runtimeState &&
+                    Directory.Exists(runtimeState))
+                    Directory.Delete(runtimeState, recursive: true);
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(exception, "Uninstalled extension content requires filesystem cleanup for {ExtensionId}", package.ExtensionId);
+                await _controlPlane.WriteLogAsync(package.Id, "warning", "package.cleanup-pending",
+                    "Package state is uninstalled but its staged directory still requires cleanup.",
+                    "extension-uninstall", cancellationToken);
+            }
+            return uninstalled;
+        }, cancellationToken);
+
+    private async Task<string?> RetiredRuntimeStateAsync(ExtensionPackageRecord package, CancellationToken cancellationToken)
     {
-        var package = await GetPackageAsync(packageId, cancellationToken);
-        var reset = await _controlPlane.ResetPermissionsForReviewAsync(
-            packageId, expectedRevision, cancellationToken);
-        RemoveRuntime(package);
-        return reset;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var remainingSources = await db.ExtensionPackages.AsNoTracking()
+            .Where(item => item.Id != package.Id && item.ExtensionId == package.ExtensionId &&
+                           item.State != ExtensionPackageState.Uninstalled)
+            .Select(item => item.RegistryId)
+            .ToListAsync(cancellationToken);
+        if (remainingSources.Count == 0) return ContainedPath(_runtimeRoot, Path.Combine(_runtimeRoot, package.ExtensionId));
+        return remainingSources.Contains(package.RegistryId)
+            ? null
+            : SessionStateDirectory(package.ExtensionId, package.RegistryId);
     }
 
-    public async Task<ExtensionPackageRecord> UninstallAsync(
-        Guid packageId, long expectedRevision,
-        CancellationToken cancellationToken = default)
+    private string SessionStateDirectory(string extensionId, Guid? registryId) => ContainedPath(_runtimeRoot,
+        Path.Combine(_runtimeRoot, extensionId, "sessions", registryId?.ToString("N") ?? "local"));
+
+    private static string ContainedPath(string root, string path)
     {
-        var package = await GetPackageAsync(packageId, cancellationToken);
-        var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
-        RemoveRuntime(package);
-        try
-        {
-            var packagePath = Path.GetFullPath(package.PackagePath);
-            var relative = Path.GetRelativePath(_packageRoot, packagePath);
-            if (Path.IsPathRooted(relative) || relative is "" or "." or ".." ||
-                relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
-                throw new UnauthorizedAccessException("Extension package cleanup path is outside the package root.");
-            if (Directory.Exists(packagePath)) Directory.Delete(packagePath, recursive: true);
-        }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(exception, "Uninstalled extension content requires filesystem cleanup for {ExtensionId}", package.ExtensionId);
-            await _controlPlane.WriteLogAsync(package.Id, "warning", "package.cleanup-pending",
-                "Package state is uninstalled but its staged directory still requires cleanup.",
-                "extension-uninstall", cancellationToken);
-        }
-        return uninstalled;
+        var fullPath = Path.GetFullPath(path);
+        var relative = Path.GetRelativePath(root, fullPath);
+        if (Path.IsPathRooted(relative) || relative is "" or "." or ".." ||
+            relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("Extension cleanup path is outside its root.");
+        return fullPath;
+    }
+
+    private async Task<T> WithRuntimeGateAsync<T>(Func<Task<T>> operation, CancellationToken cancellationToken)
+    {
+        await _runtimeGate.WaitAsync(cancellationToken);
+        try { return await operation(); }
+        finally { _runtimeGate.Release(); }
     }
 
     private async Task<RuntimeBuild> BuildRegistrationAsync(
@@ -203,7 +246,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var sandbox = new ExtensionSandbox(package.PackagePath, manifestJson,
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
-            _sessionProtector);
+            _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId));
         if (manifest.Capabilities.SelectMany(item => item.Hooks).Any(hook =>
                 !(downloadBackedStreaming && hook is "getStreamLease" or "probeStream") &&
                 !sandbox.HasCallableHook(hook)))
@@ -274,13 +317,14 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         "preparedContext@1"
     };
 
-    public ExtensionSessionView SignedSessionStatus(Guid packageId) => RequireSandbox(packageId).SignedSessionStatus();
+    public async Task<ExtensionSessionView> SignedSessionStatusAsync(Guid packageId, CancellationToken cancellationToken = default) =>
+        await RequireSandbox(packageId).SignedSessionStatusAsync(cancellationToken);
 
     public async Task<ExtensionSessionView> StartSignedSessionVerificationAsync(
         Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
     {
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
-        var view = sandbox.StartSignedSessionVerification(cancellationToken);
+        var view = await sandbox.StartSignedSessionVerificationAsync(cancellationToken);
         await LogSessionAsync(packageId, view, view.State == ExtensionSessionStates.SignedIn
             ? "Sign-in restored without verification."
             : "Sign-in verification started.", "session.started");
@@ -291,7 +335,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         Guid packageId, long expectedRevision, string grant, CancellationToken cancellationToken = default)
     {
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
-        var view = sandbox.CompleteSignedSessionGrant(grant, cancellationToken);
+        var view = await sandbox.CompleteSignedSessionGrantAsync(grant, cancellationToken);
         await LogSessionAsync(packageId, view, "Sign-in completed.", "session.granted");
         return view;
     }
@@ -300,19 +344,20 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
     {
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
-        var view = sandbox.ClearSignedSession();
+        var view = await sandbox.ClearSignedSessionAsync(cancellationToken);
         await LogSessionAsync(packageId, view, "Sign-in cleared.", "session.cleared");
         return view;
     }
 
-    private async Task<ExtensionSandbox> RequireCurrentSandboxAsync(
-        Guid packageId, long expectedRevision, CancellationToken cancellationToken)
-    {
-        var package = await GetPackageAsync(packageId, cancellationToken);
-        if (package.Revision != expectedRevision || package.State != ExtensionPackageState.Active)
-            throw new DbUpdateConcurrencyException("The extension package changed before this session update.");
-        return RequireSandbox(packageId);
-    }
+    private Task<ExtensionSandbox> RequireCurrentSandboxAsync(
+        Guid packageId, long expectedRevision, CancellationToken cancellationToken) =>
+        WithRuntimeGateAsync(async () =>
+        {
+            var package = await GetPackageAsync(packageId, cancellationToken);
+            if (package.Revision != expectedRevision || package.State != ExtensionPackageState.Active)
+                throw new DbUpdateConcurrencyException("The extension package changed before this session update.");
+            return RequireSandbox(packageId);
+        }, cancellationToken);
 
     private Task LogSessionAsync(Guid packageId, ExtensionSessionView view, string success, string eventCode) =>
         view.ReasonCode == null

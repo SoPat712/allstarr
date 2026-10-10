@@ -140,6 +140,87 @@ public sealed class AppleMusicClientTests
         Assert.DoesNotContain("private-upstream-body", outcome.Error.ToString());
     }
 
+    [Fact]
+    public async Task Catalog_reads_use_the_account_storefront_without_leasing_the_secret()
+    {
+        var secrets = new SelectedSecrets();
+        var paths = new System.Collections.Concurrent.ConcurrentBag<string>();
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            paths.Add(path);
+            Assert.False(request.Headers.Contains("Cookie"));
+            return Json(path.EndsWith("/search", StringComparison.Ordinal)
+                ? """{"results":{"songs":{"data":[]},"playlists":{"data":[]}}}"""
+                : path.EndsWith("/tracks", StringComparison.Ordinal)
+                    ? """{"data":[]}"""
+                    : path.Contains("/playlists/", StringComparison.Ordinal)
+                        ? """{"data":[{"id":"pl.public","attributes":{"name":"Playlist","description":""}}]}"""
+                        : """{"data":[{"id":"101","attributes":{"name":"Track","artistName":"Artist"}}]}""");
+        }));
+        var client = AppleProviderTestFactory.Client(http, secrets, new Storefronts(" GB "));
+        var metadata = new AppleMusicKitMetadataCapabilityAdapter(client);
+        var playlist = new AppleMusicKitPlaylistCapabilityAdapter(client, http);
+        var account = Personal();
+
+        Assert.True((await metadata.SearchTracksAsync(account, new("query", new(5)))).IsSuccess);
+        Assert.True((await metadata.LookupByIsrcAsync(account, new("USAT21234567"))).IsSuccess);
+        Assert.True((await metadata.GetTrackAsync(account, new(new("apple-musickit", ProviderResourceKind.Track, "101")))).IsSuccess);
+        Assert.True((await playlist.GetPlaylistTracksAsync(account,
+            new(new("apple-musickit", ProviderResourceKind.Playlist, "pl.public"), new()))).IsSuccess);
+        Assert.True((await playlist.SearchPlaylistsAsync(Public(), new("query", new(5)))).IsSuccess);
+
+        Assert.Empty(secrets.Reads);
+        Assert.Equal(5, paths.Count(path => path.StartsWith("/v1/catalog/gb/", StringComparison.Ordinal)));
+        Assert.Equal(["/v1/catalog/us/search"], paths.Where(path => !path.StartsWith("/v1/catalog/gb/", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("usa")]
+    [InlineData("g1")]
+    public async Task Missing_or_invalid_storefront_setting_uses_the_default(string? storefront)
+    {
+        var paths = new List<string>();
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            paths.Add(request.RequestUri!.AbsolutePath);
+            return Json("""{"results":{"songs":{"data":[]}}}""");
+        }));
+        var metadata = new AppleMusicKitMetadataCapabilityAdapter(
+            AppleProviderTestFactory.Client(http, new SelectedSecrets(), new Storefronts(storefront)));
+        Assert.True((await metadata.SearchTracksAsync(Personal(), new("query", new(5)))).IsSuccess);
+        Assert.Equal(["/v1/catalog/us/search"], paths);
+    }
+
+    [Fact]
+    public async Task Catalog_and_personal_unauthorized_keep_their_own_failure()
+    {
+        var secrets = new SelectedSecrets();
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(_ => new(HttpStatusCode.Unauthorized)));
+        var client = AppleProviderTestFactory.Client(http, secrets, new Storefronts("gb"));
+        var account = Personal();
+
+        var catalog = await new AppleMusicKitMetadataCapabilityAdapter(client).SearchTracksAsync(account, new("query", new(5)));
+        Assert.Equal("apple-web-token-unavailable", catalog.Error!.Code);
+        Assert.Empty(secrets.Reads);
+
+        var personal = await new AppleMusicKitPlaylistCapabilityAdapter(client, http).GetUserPlaylistsAsync(account, new(new()));
+        Assert.Equal(ProviderErrorKind.AccountNeedsReauthentication, personal.Error!.Kind);
+        Assert.Single(secrets.Reads);
+    }
+
+    [Fact]
+    public void Account_settings_projection_keeps_only_non_secret_values()
+    {
+        var descriptor = AppleMusicKitPlaylistCapabilityAdapter.Descriptor([AppleMusicKitPlaylistCapabilityAdapter.MetadataDescriptor]);
+        var json = ProviderAccountSettings.Project(descriptor,
+            Encoding.UTF8.GetBytes("""{"MusicUserToken":"private-token","Storefront":"gb","extra":"ignored"}"""));
+        Assert.Equal("""{"storefront":"gb"}""", json);
+        Assert.Equal("gb", ProviderAccountSettings.ReadText(json, "storefront"));
+        Assert.Equal(ProviderAccountSettings.Empty, ProviderAccountSettings.Project(descriptor, Encoding.UTF8.GetBytes("not json")));
+    }
+
     internal static ProviderExecutionContext Public() => new(new(ProviderActorKind.PublicRead, null), "apple-musickit", null,
         Policy(), "catalog-read", "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
     internal static ProviderExecutionContext Personal(Guid? accountId = null, Guid? userId = null, long revision = 1)
@@ -153,6 +234,11 @@ public sealed class AppleMusicClientTests
         ProviderExplicitContentPolicy.Allow, true, false, true, ["apple-musickit"]);
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
     private static HttpResponseMessage JsonText(string body) => new(HttpStatusCode.OK) { Content = new StringContent(body) };
+    private sealed class Storefronts(string? value) : IProviderAccountSettingsReader
+    {
+        public Task<string?> GetTextAsync(ProviderAccountContext? account, string key, CancellationToken cancellationToken) =>
+            Task.FromResult(account != null && key == "storefront" ? value : null);
+    }
     private sealed class SelectedSecrets : IProviderAccountSecretAccessor
     {
         public Dictionary<Guid, string> Values { get; } = [];

@@ -605,7 +605,8 @@ public class ExtensionSandbox
         ILogger logger,
         ExtensionRuntimePermissionSet? permissions = null,
         string? runtimeStateDirectory = null,
-        IDataProtector? sessionProtector = null)
+        IDataProtector? sessionProtector = null,
+        string? sessionStateDirectory = null)
     {
         _logger = logger;
 
@@ -662,7 +663,8 @@ public class ExtensionSandbox
             permissions ?? ExtensionRuntimePermissionSet.None,
             manifest?.SignedSession,
             sessionProtector,
-            Id);
+            Id,
+            sessionStateDirectory);
         _engine.SetValue("host", _hostBridge);
 
         var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
@@ -851,12 +853,14 @@ public class ExtensionSandbox
             return _hostBridge.StorageUsage();
         }
     }
-    public ExtensionSessionView SignedSessionStatus() => _hostBridge.SessionView();
-    public ExtensionSessionView StartSignedSessionVerification(CancellationToken cancellationToken = default) =>
-        _hostBridge.SessionBeginView(cancellationToken);
-    public ExtensionSessionView CompleteSignedSessionGrant(string grant, CancellationToken cancellationToken = default) =>
-        _hostBridge.SessionCompleteView(grant, cancellationToken);
-    public ExtensionSessionView ClearSignedSession() => _hostBridge.SessionClearView();
+    public Task<ExtensionSessionView> SignedSessionStatusAsync(CancellationToken cancellationToken = default) =>
+        _hostBridge.SessionViewAsync(cancellationToken);
+    public Task<ExtensionSessionView> StartSignedSessionVerificationAsync(CancellationToken cancellationToken = default) =>
+        _hostBridge.SessionBeginViewAsync(cancellationToken);
+    public Task<ExtensionSessionView> CompleteSignedSessionGrantAsync(string grant, CancellationToken cancellationToken = default) =>
+        _hostBridge.SessionCompleteViewAsync(grant, cancellationToken);
+    public Task<ExtensionSessionView> ClearSignedSessionAsync(CancellationToken cancellationToken = default) =>
+        _hostBridge.SessionClearViewAsync(cancellationToken);
 
     private bool IsCallable(string hook)
     {
@@ -1124,7 +1128,8 @@ public class ExtensionHostBridge
         ExtensionRuntimePermissionSet permissions,
         ExtensionSignedSessionConfig? signedSession = null,
         IDataProtector? sessionProtector = null,
-        string? extensionId = null)
+        string? extensionId = null,
+        string? sessionStateDirectory = null)
     {
         _folderPath = Path.GetFullPath(runtimeStateDirectory);
         Directory.CreateDirectory(_folderPath);
@@ -1138,8 +1143,10 @@ public class ExtensionHostBridge
             if (sessionProtector == null)
                 throw new InvalidOperationException("Signed-session extensions require protected runtime storage.");
             _signedSession = new ExtensionSignedSessionClient(
-                signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins, _folderPath,
-                extensionId ?? signedSession.Namespace);
+                signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
+                sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory),
+                extensionId ?? signedSession.Namespace,
+                sessionStateDirectory == null ? null : _folderPath);
         }
         LoadStorage();
     }
@@ -1149,12 +1156,14 @@ public class ExtensionHostBridge
     public object SessionStartVerification() => RequireSignedSession().StartVerification();
     public object SessionCompleteGrant(string? grant) => RequireSignedSession().CompleteGrant(grant);
     public object SessionClear() => RequireSignedSession().Clear();
-    internal ExtensionSessionView SessionView() => RequireSignedSession().View();
-    internal ExtensionSessionView SessionBeginView(CancellationToken cancellationToken) =>
-        RequireSignedSession().StartVerificationView(cancellationToken);
-    internal ExtensionSessionView SessionCompleteView(string? grant, CancellationToken cancellationToken) =>
-        RequireSignedSession().CompleteGrantView(grant, cancellationToken);
-    internal ExtensionSessionView SessionClearView() => RequireSignedSession().ClearView();
+    internal Task<ExtensionSessionView> SessionViewAsync(CancellationToken cancellationToken) =>
+        RequireSignedSession().ViewAsync(cancellationToken);
+    internal Task<ExtensionSessionView> SessionBeginViewAsync(CancellationToken cancellationToken) =>
+        RequireSignedSession().StartVerificationViewAsync(cancellationToken);
+    internal Task<ExtensionSessionView> SessionCompleteViewAsync(string? grant, CancellationToken cancellationToken) =>
+        RequireSignedSession().CompleteGrantViewAsync(grant, cancellationToken);
+    internal Task<ExtensionSessionView> SessionClearViewAsync(CancellationToken cancellationToken) =>
+        RequireSignedSession().ClearViewAsync(cancellationToken);
     public object SessionSignedFetch(string method, string path, string? body, object? headers) =>
         RequireSignedSession().SignedFetch(method, path, body, headers);
 

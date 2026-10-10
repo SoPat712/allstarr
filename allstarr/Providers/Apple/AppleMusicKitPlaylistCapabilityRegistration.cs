@@ -11,6 +11,7 @@ public static class AppleMusicKitPlaylistCapabilityRegistration
     public static IServiceCollection AddAppleMusicProvider(this IServiceCollection services)
     {
         services.TryAddSingleton<IProviderAccountSecretAccessor, EncryptedProviderAccountSecretAccessor>();
+        services.TryAddSingleton<IProviderAccountSettingsReader, ProviderAccountSettingsReader>();
         foreach (var name in new[] { AppleWebTokenProvider.HttpClientName, AppleMusicClient.HttpClientName })
             services.AddHttpClient(name, client => client.Timeout = TimeSpan.FromSeconds(30))
                 .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
@@ -18,7 +19,8 @@ public static class AppleMusicKitPlaylistCapabilityRegistration
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(AppleWebTokenProvider.HttpClientName)));
         services.AddSingleton(provider => new AppleMusicClient(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(AppleMusicClient.HttpClientName),
-            provider.GetRequiredService<AppleWebTokenProvider>(), provider.GetRequiredService<IProviderAccountSecretAccessor>()));
+            provider.GetRequiredService<AppleWebTokenProvider>(), provider.GetRequiredService<IProviderAccountSecretAccessor>(),
+            provider.GetRequiredService<IProviderAccountSettingsReader>()));
         services.AddSingleton<AppleMusicKitMetadataCapabilityAdapter>();
         services.AddSingleton(provider => new AppleMusicKitPlaylistCapabilityAdapter(
             provider.GetRequiredService<AppleMusicClient>(),

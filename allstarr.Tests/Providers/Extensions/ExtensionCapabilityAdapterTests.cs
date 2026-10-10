@@ -193,7 +193,7 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
-    public void SignedSessionRuntime_BootstrapsExchangesAndSignsRequests()
+    public async Task SignedSessionRuntime_BootstrapsExchangesAndSignsRequests()
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-signed-session", Guid.NewGuid().ToString("N"));
         try
@@ -221,7 +221,7 @@ public sealed class ExtensionCapabilityAdapterTests
             Assert.True(verification?.Contains("VERIFY_REQUIRED", StringComparison.Ordinal) == true, verification);
             Assert.Contains("challenge-1", verification, StringComparison.Ordinal);
 
-            var exchange = sandbox.CompleteSignedSessionGrant(
+            var exchange = await sandbox.CompleteSignedSessionGrantAsync(
                 "spotiflac://session-grant/?cb_version=v2grant&state=signed-demo&grant=grant-1");
             Assert.Equal(ExtensionSessionStates.SignedIn, exchange.State);
             Assert.Null(exchange.ReasonCode);
@@ -319,6 +319,31 @@ public sealed class ExtensionCapabilityAdapterTests
         var json = sandbox.InvokeJson("searchTracks", "{\"query\":\"Song\",\"page\":{\"limit\":1}}");
 
         Assert.Contains($"\"title\":\"{markerOffset}\"", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SpotiFlacRuntimeAdapter_InitializesOnceWhileSettingsAreUnchanged()
+    {
+        const string sourceManifest = """
+            {"name":"init-count","displayName":"Init count","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{}}
+            """;
+        const string script = """
+            var initializations=0;
+            registerExtension({
+              initialize:function(){initializations++;return true;},
+              customSearch:function(){return [{id:'track-1',name:String(initializations),artists:'Artist',item_type:'track'}];}
+            });
+            """;
+        var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
+            new HttpClientFactory(new BytesHandler([])), NullLogger.Instance, ExtensionRuntimePermissionSet.None);
+
+        string? json = null;
+        for (var call = 0; call < 3; call++)
+            json = sandbox.InvokeJson("searchTracks", "{\"query\":\"Song\",\"page\":{\"limit\":1}}");
+
+        Assert.Contains("\"title\":\"1\"", json, StringComparison.Ordinal);
     }
 
     [Fact]

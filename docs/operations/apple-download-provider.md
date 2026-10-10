@@ -38,7 +38,7 @@ The repository gateway is a narrow HTTP adapter around the official upstream pro
 [wrapper-v2](https://github.com/glomatico/wrapper-v2). It exposes download-backed streaming,
 managed song downloads, health, login, and 2FA. It runs on the private Compose network and publishes no host port.
 
-Apple's public catalog and personal playlists run directly in Allstarr. Connect one **Personal Apple Music** account with its `media-user-token` and two-letter storefront; no developer token is required. Allstarr fetches and caches the public web-player bearer. A fetch failure appears on the Apple account status card and can be retried with **Test**.
+Apple's public catalog and personal playlists run directly in Allstarr. Connect one **Personal Apple Music** account with its `media-user-token` and two-letter storefront; no developer token is required. Catalog search and lookups use that account's storefront without opening its token; without an account they use `us`. Allstarr fetches and caches the public web-player bearer. A fetch failure appears on the Apple account status card and can be retried with **Test**.
 
 The optional gateway supplies track streaming, managed downloads, and synced lyrics. Each media request uses the selected account's encrypted credential. Cache entries are separated by account revision and storefront. Wrapper-backed audio requires the wrapper and selected account to identify the same Apple account; a mismatch fails before media access. Catalog access works without the optional gateway, and public playlists do not require a user token.
 
