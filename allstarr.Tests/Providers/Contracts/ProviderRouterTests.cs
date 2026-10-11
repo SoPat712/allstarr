@@ -704,6 +704,10 @@ public sealed class ProviderRouterTests
             ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+        public Task<Guid> RememberSourceAsync(ProviderExecutionContext context, ProviderExternalResourceId externalId,
+            string publicId, ProviderIdentityScope scope, string? isrc = null, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<TrackIdentityLinkResult> LinkAsync(
             ProviderExecutionContext executionContext,
             TrackIdentityLinkRequest request,

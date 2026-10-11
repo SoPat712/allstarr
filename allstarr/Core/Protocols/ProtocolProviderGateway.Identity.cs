@@ -2,25 +2,42 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using allstarr.Models.Domain;
+using allstarr.Services.Local;
 
 namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    public async Task RememberTrackAsync(ProtocolExecutionContext protocol, string itemId)
+    {
+        if (identities == null) return;
+        var parsed = LocalLibraryService.ParseExternalResource(itemId);
+        if (!parsed.isExternal || parsed.type != "song") return;
+        try
+        {
+            var provider = registry.ResolveProviderId(NormalizeProvider(parsed.provider!));
+            var track = new ProviderExternalResourceId(provider, ProviderResourceKind.Track, parsed.externalId!);
+            var routed = await PlanExactAsync<IProviderMetadataCapability>(protocol, provider,
+                ProviderCapabilityKind.Metadata, "remember-track", track);
+            if (routed.Candidate is { } candidate)
+                await RememberPlayedTrackAsync(candidate.Context, candidate.TrackId ?? track, itemId);
+        }
+        catch (Exception error)
+        {
+            logger?.LogWarning("Could not retain the track identity ({ErrorType})", error.GetType().Name);
+        }
+    }
+
     private async Task RememberPlayedTrackAsync(ProviderExecutionContext context,
         ProviderExternalResourceId track, string requestedItemId)
     {
         if (identities == null) return;
         try
         {
-            // Playing an already linked alias must not change a manual or suggested identity.
-            if (await identities.ResolveAsync(context, track, context.CancellationToken) != null) return;
-            var created = await identities.CreateRecordingAsync(context.Actor, context.CorrelationId,
-                null, null, requestedItemId, context.CancellationToken);
-            await identities.LinkAsync(context, new(created.Recording.Id, track,
+            await identities.RememberSourceAsync(context, track, requestedItemId,
                 context.Account != null && !IsPublicMetadataProvider(context.ProviderId)
                     ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog,
-                ProviderIdentityVerification.Verified, "playback-source", 1), context.CancellationToken);
+                cancellationToken: context.CancellationToken);
         }
         catch (Exception error)
         {

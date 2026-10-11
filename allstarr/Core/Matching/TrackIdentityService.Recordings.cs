@@ -8,6 +8,54 @@ namespace allstarr.Core.Matching;
 
 public sealed partial class TrackIdentityService
 {
+    public async Task<Guid> RememberSourceAsync(ProviderExecutionContext execution,
+        ProviderExternalResourceId externalId, string publicId, ProviderIdentityScope scope, string? isrc = null,
+        CancellationToken cancellationToken = default)
+    {
+        EnsureStorageReady();
+        ThrowIfUnavailable(execution, cancellationToken);
+        publicId = ValidatePublicId(publicId);
+        var normalizedIsrc = NormalizeIsrc(isrc);
+        var request = new TrackIdentityLinkRequest(Guid.CreateVersion7(), externalId, scope,
+            ProviderIdentityVerification.Verified, "source-use", 1);
+        ValidateLinkRequest(execution, request);
+        var userId = execution.Actor.EffectiveUserId ?? throw new UnauthorizedAccessException("A user actor is required.");
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var account = await ValidateExecutionContextAsync(db, execution, cancellationToken);
+        var existing = await ResolveCoreAsync(db, externalId, account?.Id, cancellationToken);
+        // A use never changes an existing manual or suggested association.
+        if (existing != null) return existing.CanonicalRecordingId;
+        var recording = await FindCanonicalByExactSignalsAsync(db, normalizedIsrc, null, cancellationToken);
+        var previous = await FindRecordingByPublicIdAsync(db, execution.Actor, publicId, cancellationToken);
+        if (recording != null && previous != null && recording.Id != previous.Id)
+            throw new InvalidOperationException("The requested ID and exact signals identify different recordings.");
+        recording ??= previous;
+        var created = recording == null;
+        var now = _clock.UtcNow;
+        if (recording == null)
+        {
+            recording = CreateProvisionalRecording(userId, now, publicId: publicId);
+            db.CanonicalRecordings.Add(recording);
+        }
+        EnsureSignalsCompatible(recording, normalizedIsrc, null);
+        var enriched = AttachIdentifier(db, recording, RecordingIdentifierKinds.Isrc, normalizedIsrc, "source-use", now);
+        if (!created && enriched)
+        {
+            recording.UpdatedAt = now;
+            recording.Revision++;
+        }
+        if (created || enriched)
+            AddAudit(db, execution.Actor, execution.CorrelationId,
+                created ? "canonical-recording.create" : "canonical-recording.enrich",
+                created ? "created" : "enriched", new { canonicalRecordingId = recording.Id, hasIsrc = normalizedIsrc != null });
+        AddLink(db, execution, request with { CanonicalRecordingId = recording.Id },
+            scope == ProviderIdentityScope.Account ? account!.Id : null, now);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return recording.Id;
+    }
+
     public async Task<CanonicalRecordingIdentity?> ResolveRecordingAsync(
         ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default)
     {

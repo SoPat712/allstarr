@@ -123,6 +123,9 @@ public interface ITrackIdentityService
         ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
         CancellationToken cancellationToken = default);
 
+    Task<Guid> RememberSourceAsync(ProviderExecutionContext context, ProviderExternalResourceId externalId,
+        string publicId, ProviderIdentityScope scope, string? isrc = null, CancellationToken cancellationToken = default);
+
     Task<TrackIdentityLinkResult> LinkAsync(
         ProviderExecutionContext executionContext,
         TrackIdentityLinkRequest request,
@@ -311,26 +314,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         }
 
         var now = _clock.UtcNow;
-        var link = new ProviderTrackIdentityRecord
-        {
-            Id = Guid.CreateVersion7(),
-            CanonicalRecordingId = request.CanonicalRecordingId,
-            ProviderAccountId = scopeAccountId,
-            ProviderId = key.ProviderId,
-            ResourceKind = key.ResourceKind,
-            CatalogNamespace = key.Catalog,
-            Scope = request.Scope,
-            ExternalId = request.ExternalId.Value,
-            ExternalIdHash = key.ExternalIdHash,
-            Verification = request.Verification,
-            VerificationMethod = request.VerificationMethod,
-            DecisionVersion = request.DecisionVersion,
-            VerifiedAt = now,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        context.ProviderTrackIdentities.Add(link);
-        AddLinkAudit(context, executionContext, request, "created", link.Id, null);
+        var link = AddLink(context, executionContext, request, scopeAccountId, now);
 
         try
         {
@@ -364,6 +348,34 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
                 cancellationToken,
                 concurrent: true);
         }
+    }
+
+    private static ProviderTrackIdentityRecord AddLink(AllstarrDbContext context,
+        ProviderExecutionContext executionContext, TrackIdentityLinkRequest request, Guid? scopeAccountId, DateTimeOffset now)
+    {
+        var key = ExactKey(request.ExternalId);
+        var link = new ProviderTrackIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            CanonicalRecordingId = request.CanonicalRecordingId,
+            ProviderAccountId = scopeAccountId,
+            ProviderId = key.ProviderId,
+            ResourceKind = key.ResourceKind,
+            CatalogNamespace = key.Catalog,
+            Scope = request.Scope,
+            ExternalId = request.ExternalId.Value,
+            ExternalIdHash = key.ExternalIdHash,
+            Verification = request.Verification,
+            VerificationMethod = request.VerificationMethod,
+            DecisionVersion = request.DecisionVersion,
+            VerifiedAt = now,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+        context.ProviderTrackIdentities.Add(link);
+        AddLinkAudit(context, executionContext, request, "created", link.Id, null);
+
+        return link;
     }
 
     public async Task<TrackIdentityResolution?> ResolveAsync(
