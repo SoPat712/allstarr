@@ -7,6 +7,57 @@ namespace allstarr.Core.Protocols;
 
 public sealed partial class ProtocolProviderGateway
 {
+    private async Task RememberPlayedTrackAsync(ProviderExecutionContext context,
+        ProviderExternalResourceId track, string requestedItemId)
+    {
+        if (identities == null) return;
+        try
+        {
+            // Playing an already linked alias must not change a manual or suggested identity.
+            if (await identities.ResolveAsync(context, track, context.CancellationToken) != null) return;
+            var created = await identities.CreateRecordingAsync(context.Actor, context.CorrelationId,
+                null, null, requestedItemId, context.CancellationToken);
+            await identities.LinkAsync(context, new(created.Recording.Id, track,
+                context.Account != null && !IsPublicMetadataProvider(context.ProviderId)
+                    ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog,
+                ProviderIdentityVerification.Verified, "playback-source", 1), context.CancellationToken);
+        }
+        catch (Exception error)
+        {
+            // Recording bookkeeping cannot turn an already opened audio response into a failure.
+            logger?.LogWarning("Could not retain the playback identity ({ErrorType})", error.GetType().Name);
+        }
+    }
+
+    private async Task<Song?> GetKnownSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId)
+    {
+        if (identities == null) return null;
+        var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        var recording = await identities.ResolveRecordingAsync(actor, $"ext-{providerId}-song-{externalId}",
+            protocol.CancellationToken);
+        if (recording == null) return null;
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(protocol, actor,
+            ProviderCapabilityKind.Metadata, "protocol-recording-metadata",
+            ResolveProviderOrder(ProviderCapabilityKind.Metadata, policy),
+            new ProviderExternalResourceId("allstarr", ProviderResourceKind.Track, recording.Id.ToString("D"))));
+        foreach (var candidate in plan.Candidates)
+        {
+            if (candidate.TrackId == null) continue;
+            var outcome = await candidate.Implementation.GetTrackAsync(candidate.Context, new(candidate.TrackId));
+            if (!outcome.IsSuccess)
+            {
+                if (outcome.Error!.Kind == ProviderErrorKind.NotFound) continue;
+                ThrowRouteFailure(outcome.Error);
+            }
+            var song = await EnrichRelationshipsAsync(candidate, outcome.RequireValue());
+            song.Id = recording.PublicId;
+            song.CanonicalRecordingId = recording.Id;
+            return policy?.Includes(song) == false ? null : song;
+        }
+        return null;
+    }
+
     private async Task ApplyKnownPublicIdsAsync(ProviderExecutionContext context, IReadOnlyList<Song> songs)
     {
         if (identities == null || songs.Count == 0) return;
@@ -21,7 +72,10 @@ public sealed partial class ProtocolProviderGateway
                     ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
                     ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod) &&
                 !string.IsNullOrWhiteSpace(identity.PublicId))
+            {
                 songs[index].Id = identity.PublicId;
+                songs[index].CanonicalRecordingId = identity.CanonicalRecordingId;
+            }
         }
     }
 }

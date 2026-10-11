@@ -119,6 +119,8 @@ public sealed record ProtocolExecutionContext
 
     public EffectiveProviderPolicySnapshot? Policy { get; init; }
 
+    public string? RequestedItemId { get; init; }
+
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(
         "The verified backend principal is not linked to an Allstarr user.");
 

@@ -128,10 +128,8 @@ public partial class JellyfinController
         var song = await GetProviderSongAsync(provider, externalId, HttpContext.RequestAborted);
         if (song == null) return NotFound(new { error = "Track metadata was not found." });
 
-        // A provider's canonical ID could build stream URLs for a different synthetic item.
-        song.Id = itemId;
-        song.ExternalProvider = provider;
-        song.ExternalId = externalId;
+        // Preserve a new alias until playback records it; known recordings keep their saved ID.
+        if (!song.CanonicalRecordingId.HasValue) song.Id = itemId;
 
         var item = _responseBuilder.ConvertSongToJellyfinItem(song);
         item.TryGetValue("MediaSources", out var mediaSources);

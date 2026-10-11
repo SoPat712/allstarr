@@ -215,7 +215,7 @@ public partial class SubsonicController : ControllerBase
         try
         {
             var routed = await _providerGateway.OpenStreamAsync(
-                CurrentProtocolContext,
+                CurrentProtocolContext with { RequestedItemId = id },
                 provider!,
                 externalId!,
                 requestedQuality,

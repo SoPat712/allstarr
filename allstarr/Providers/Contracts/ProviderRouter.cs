@@ -247,7 +247,23 @@ public sealed class ProviderRouter(
             ProviderExternalResourceId? targetTrack = null;
             if (request.SourceTrackId != null)
             {
-                if (request.SourceTrackId.ProviderId.Equals(provider.Id, StringComparison.Ordinal))
+                if (request.SourceTrackId.ProviderId == "allstarr")
+                {
+                    var target = Guid.TryParse(request.SourceTrackId.Value, out var recordingId)
+                        ? await identities.ResolveTargetAsync(context, recordingId,
+                            new ProviderTrackIdentityTarget(provider.Id, ProviderResourceKind.Track, state.TrackCatalog),
+                            request.CancellationToken)
+                        : null;
+                    if (target?.Verification is not (ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned) ||
+                        target.VerificationMethod is "automatic-suggestion" or
+                            ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
+                    {
+                        Reject("verified-identity-required");
+                        continue;
+                    }
+                    targetTrack = target.ExternalId;
+                }
+                else if (request.SourceTrackId.ProviderId.Equals(provider.Id, StringComparison.Ordinal))
                 {
                     targetTrack = request.SourceTrackId;
                     sourceContext = context;
