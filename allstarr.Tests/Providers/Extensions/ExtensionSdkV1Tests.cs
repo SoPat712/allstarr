@@ -186,6 +186,61 @@ public sealed class ExtensionSdkV1Tests : IDisposable
             File.ReadAllText(Path.Combine(verified.PackageRoot, "manifest.json"))));
     }
 
+    [Fact]
+    public void VerifyArchive_JioSaavnKeepsConfigurationAndExcludesActionButtons()
+    {
+        Directory.CreateDirectory(_root);
+        var archivePath = Path.Combine(_root, "jiosaavn.sflx");
+        using (var archive = ZipFile.Open(archivePath, ZipArchiveMode.Create))
+        {
+            Write(archive, "manifest.json", File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+                "Fixtures", "Extensions", "Registry", "jiosaavn.json")));
+            Write(archive, "index.js", "registerExtension({download:function(){}});");
+            Write(archive, "icon.png", "image");
+        }
+        var hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(archivePath))).ToLowerInvariant();
+
+        var verified = ExtensionSdkV1.VerifyArchive(archivePath, hash, Path.Combine(_root, "jiosaavn-staged"));
+
+        Assert.Equal("1.0.6", verified.Manifest.Version);
+        var language = Assert.Single(verified.Manifest.Settings!);
+        Assert.Equal("lang", language.Key);
+        Assert.Equal("\"english\"", language.DefaultJson);
+        Assert.All(verified.Manifest.Capabilities, capability => Assert.False(capability.AccountRequired));
+        Assert.DoesNotContain(verified.Manifest.Permissions, permission => permission.Value == "clear_cache");
+        var normalized = File.ReadAllText(Path.Combine(verified.PackageRoot, "manifest.json"));
+        Assert.Equal("{\"lang\":\"english\"}", SpotiFlacExtensionCompatibility.SettingsJson(normalized));
+    }
+
+    [Fact]
+    public void SpotiFlacActionButtons_DoNotRequireAnAccountOrSecretPermission()
+    {
+        const string original = """
+            {"name":"buttons","version":"1.0.0","type":["metadata_provider"],"permissions":{},
+             "settings":[{"key":"clear_token","type":"button","secret":true,"required":true,"default":"action","action":"clear"}]}
+            """;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, "registerExtension({});");
+        var manifest = ExtensionSdkV1.ParseManifest(normalized);
+
+        Assert.Empty(manifest.Settings!);
+        Assert.Empty(manifest.Permissions);
+        var capability = Assert.Single(manifest.Capabilities);
+        Assert.False(capability.AccountRequired);
+        Assert.Empty(capability.AccountScopes);
+        Assert.Equal("{}", SpotiFlacExtensionCompatibility.SettingsJson(normalized));
+    }
+
+    [Fact]
+    public void SpotiFlacConfigurationKeys_StillRequireLowerCamelCase()
+    {
+        const string original = """
+            {"name":"settings","version":"1.0.0","type":["metadata_provider"],"permissions":{},
+             "settings":[{"key":"invalid_key","type":"string"}]}
+            """;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, "registerExtension({});");
+        Assert.Throws<ExtensionSdkValidationException>(() => ExtensionSdkV1.ParseManifest(normalized));
+    }
+
     private static string Manifest() => """
         {"id":"fixture-provider","displayName":"Fixture","version":"1.2.3","sdkVersion":"1","entryPoint":"index.js",
          "capabilities":[{"kind":"metadata","hooks":["searchTracks","getTrack"],"accountScopes":["user"]}],
