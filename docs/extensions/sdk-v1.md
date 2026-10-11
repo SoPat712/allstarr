@@ -76,6 +76,10 @@ media-server writes; intelligence extensions do not write playlists through this
 
 For the SpotiFLAC Apple Music package, catalog metadata can work without a subscription token. Subscription lyrics require the package's `mediaUserToken`. This is separate from Allstarr's built-in Apple MusicKit playlist account and the optional Apple download gateway.
 
+SpotiFLAC settings declared as `button` are source-app actions, so they are not
+imported as account fields or permissions. Allstarr does not run these actions;
+ordinary configuration fields and their defaults remain available.
+
 ## Runtime and permissions
 
 JavaScript packages run in the constrained Jint compatibility runtime with bounded bridges. A package receives only the APIs granted by its reviewed permissions. Network access is allowlisted and request-bounded. File access is package-scoped. Host process, Docker socket, arbitrary filesystem, and raw secret-store access are not capabilities.
