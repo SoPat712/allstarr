@@ -410,9 +410,13 @@ public sealed partial class TrackMatchCommandService
         {
             if (primary)
                 canonicalRecordingId = identity.CanonicalRecordingId;
-            if (primary && !await TryRetargetProvisionalIdentityAsync(
-                    db, source, canonicalRecordingId, now, cancellationToken))
-                return null;
+            if (primary)
+            {
+                var mergedId = await TryMergeProvisionalIdentityAsync(
+                    db, source, canonicalRecordingId, actor, "match-source-merge", now, cancellationToken);
+                if (!mergedId.HasValue) return null;
+                canonicalRecordingId = mergedId.Value;
+            }
             if (identity.VerificationMethod == ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod ||
                 verificationMethod == "automatic-match" &&
                 identity.VerificationMethod == "automatic-suggestion")
