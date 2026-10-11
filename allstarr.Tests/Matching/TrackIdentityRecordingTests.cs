@@ -3,11 +3,25 @@ using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Fact]
+    public async Task RecordingLookup_ResolvesRegisteredProviderAliases()
+    {
+        var actor = Actor(_userA);
+        var recording = await _service.CreateRecordingAsync(actor, "original");
+        await Link(recording.Recording.Id, Context(actor, "current-provider"), "track");
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.ResolveProviderId("legacy-provider")).Returns("current-provider");
+        var service = new TrackIdentityService(_factory, _storageState, _clock, registry.Object);
+        Assert.Equal(recording.Recording.Id,
+            (await service.ResolveRecordingAsync(actor, "ext-legacy-provider-song-track"))?.Id);
+    }
+
     [Fact]
     public async Task PublicIdReads_AreReadOnlyAndPersonalTargetsStayScoped()
     {

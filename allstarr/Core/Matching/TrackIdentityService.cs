@@ -155,15 +155,18 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
+    private readonly IProviderRegistry? _registry;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
-        IPlatformClock clock)
+        IPlatformClock clock,
+        IProviderRegistry? registry = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
+        _registry = registry;
     }
 
     public Task<CanonicalRecordingCreationResult> CreateRecordingAsync(

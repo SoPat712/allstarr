@@ -49,6 +49,103 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task KnownRecordingReads_UseOnlyProvenIdentityAndCurrentLibraryAccessWithoutWrites()
+    {
+        var viewer = Context(_userA, "principal-a");
+        await _service.UpsertAsync(viewer, Input());
+        var lookups = new LibraryRecordingLookup[]
+        {
+            new("ext-deezer-song-same", null, "USRC17607839", "deezer", "same"),
+            new("ext-deezer-song-lookalike", null, null, "deezer", "lookalike")
+        };
+        await using var db = await _factory.CreateDbContextAsync();
+        var before = (await db.CanonicalRecordings.CountAsync(), await db.ProviderTrackIdentities.CountAsync(),
+            await db.AuditEvents.CountAsync(), await db.Jobs.CountAsync());
+        var matches = await _service.FindKnownRecordingTracksAsync(viewer, lookups);
+        Assert.Equal("local-item", Assert.Single(matches).Value);
+        Assert.Equal("ext-deezer-song-same", Assert.Single(matches).Key);
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(Context(_userB, "principal-b"), lookups));
+        _libraryAccess.Setup(item => item.ResolveAsync(viewer, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(BackendLibraryAccess.Unavailable);
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(viewer, lookups));
+        Assert.Equal(before, (await db.CanonicalRecordings.CountAsync(), await db.ProviderTrackIdentities.CountAsync(),
+            await db.AuditEvents.CountAsync(), await db.Jobs.CountAsync()));
+    }
+
+    [Fact]
+    public async Task NativeRecordingChoice_PreservesPersonalAuthorityOverHouseholdPins()
+    {
+        var viewer = Context(_userA, "principal-a");
+        var track = await _service.UpsertAsync(viewer, Input());
+        var sourceHash = CanonicalCatalogKeys.Hash("remote");
+        await using var db = await _factory.CreateDbContextAsync();
+        var accountId = Guid.CreateVersion7();
+        var snapshotId = Guid.CreateVersion7();
+        db.ProviderAccounts.Add(new ProviderAccountRecord
+        {
+            Id = accountId,
+            ProviderId = "deezer",
+            DisplayName = "Fixture",
+            OwnerUserId = null,
+            Enabled = true,
+            CreatedAt = _clock.UtcNow,
+            UpdatedAt = _clock.UtcNow
+        });
+        db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+        {
+            Id = snapshotId,
+            OwnerUserId = _userA,
+            ProviderAccountId = accountId,
+            ProviderId = "deezer",
+            ResourceKind = "track",
+            ExternalIdHash = sourceHash,
+            SnapshotVersion = 1,
+            ProviderRevision = "1",
+            PayloadJson = "{}",
+            PayloadSha256 = CanonicalCatalogKeys.Hash("{}"),
+            BackendInstanceId = "backend",
+            BackendPrincipalId = "principal-a",
+            Protocol = "jellyfin",
+            CorrelationId = "fixture",
+            RetrievedAt = _clock.UtcNow
+        });
+        db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+        {
+            Id = Guid.CreateVersion7(),
+            ExternalSnapshotId = snapshotId,
+            SourceProviderId = "deezer",
+            SourceExternalIdHash = sourceHash,
+            Decision = ManualOverrideDecision.Pin,
+            LibraryTrackId = track.Id,
+            Reason = "Fixture",
+            DecisionVersion = 1,
+            CreatedAt = _clock.UtcNow
+        });
+        await db.SaveChangesAsync();
+        LibraryRecordingLookup[] lookups = [new("ext-deezer-song-remote", null, null, "deezer", "remote")];
+        Assert.Equal("local-item", Assert.Single(await _service.FindKnownRecordingTracksAsync(viewer, lookups)).Value);
+        db.ManualTrackOverrides.Add(new ManualTrackOverrideRecord
+        {
+            Id = Guid.CreateVersion7(),
+            ExternalSnapshotId = snapshotId,
+            OwnerUserId = _userA,
+            SourceProviderId = "deezer",
+            SourceExternalIdHash = sourceHash,
+            Decision = ManualOverrideDecision.Reject,
+            LibraryTrackId = track.Id,
+            Reason = "Fixture",
+            DecisionVersion = 1,
+            CreatedAt = _clock.UtcNow
+        });
+        await db.SaveChangesAsync();
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(viewer, lookups));
+        var other = Context(_userB, "principal-b");
+        _libraryAccess.Setup(item => item.ResolveAsync(other, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccess(true, ["music"]));
+        Assert.Equal("local-item", Assert.Single(await _service.FindKnownRecordingTracksAsync(other, lookups)).Value);
+    }
+
+    [Fact]
     public async Task Upsert_IsScopedIdempotentAndReturnsMatchCandidatesWithoutMediaPayloads()
     {
         var context = Context(_userA, "principal-a");

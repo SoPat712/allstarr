@@ -16,6 +16,7 @@ using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Matching;
 
 namespace allstarr.Controllers;
 
@@ -49,6 +50,7 @@ public partial class SubsonicController : ControllerBase
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
+    private readonly ILibraryIndexService? _libraryIndex;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -71,9 +73,11 @@ public partial class SubsonicController : ControllerBase
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
-        ManagedTrackCacheService? managedTrackCache = null)
+        ManagedTrackCacheService? managedTrackCache = null,
+        ILibraryIndexService? libraryIndex = null)
     {
         _subsonicSettings = subsonicSettings.Value;
+        _libraryIndex = libraryIndex;
         _localLibraryService = localLibraryService;
         _requestParser = requestParser;
         _responseBuilder = responseBuilder;
@@ -183,7 +187,7 @@ public partial class SubsonicController : ControllerBase
         var externalResult = _searchProtocolAdapter.ApplyWindow(await externalTask, window);
         var playlistResult = _searchProtocolAdapter.ApplyAlbumWindow(await playlistTask, window);
 
-        return MergeSearchResults(subsonicResult, externalResult, playlistResult, format, cleanQuery);
+        return await MergeSearchResultsAsync(subsonicResult, externalResult, playlistResult, format, cleanQuery, parameters);
     }
 
     [AcceptVerbs("GET", "POST", "HEAD")]
@@ -204,6 +208,13 @@ public partial class SubsonicController : ControllerBase
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
+        if (isExternal && _libraryIndex != null &&
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId)
+        {
+            id = nativeId;
+            parameters = parameters.SetValue("id", nativeId);
+            isExternal = false;
+        }
 
         if (!isExternal)
         {
@@ -279,6 +290,13 @@ public partial class SubsonicController : ControllerBase
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
+        if (isExternal && _libraryIndex != null &&
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, id, HttpContext.RequestAborted) is { } nativeId)
+        {
+            id = nativeId;
+            parameters = parameters.SetValue("id", nativeId);
+            isExternal = false;
+        }
 
         if (!isExternal)
         {
@@ -620,18 +638,20 @@ public partial class SubsonicController : ControllerBase
 
     #region Helper Methods
 
-    private IActionResult MergeSearchResults(
+    private async Task<IActionResult> MergeSearchResultsAsync(
         (byte[]? Body, string? ContentType, bool Success) subsonicResult,
         SearchResult externalResult,
         List<ExternalPlaylist> playlistResult,
         string format,
-        string query)
+        string query,
+        SubsonicRequestParameters parameters)
     {
         var (localSongs, localAlbums, localArtists) = subsonicResult.Success && subsonicResult.Body != null
             ? _modelMapper.ParseSearchResponse(subsonicResult.Body, subsonicResult.ContentType)
             : (new List<object>(), new List<object>(), new List<object>());
 
         var isJson = format == "json" || subsonicResult.ContentType?.Contains("json") == true;
+        await PreferKnownNativeSongsAsync(externalResult.Songs, localSongs, parameters, isJson);
         var (mergedSongs, mergedAlbums, mergedArtists) = _modelMapper.MergeSearchResults(
             localSongs,
             localAlbums,

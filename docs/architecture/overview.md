@@ -127,7 +127,12 @@ and same-recording search grouping are read-only, including Personal account
 scope checks. Successful non-HEAD playback creates a missing identity with the
 literal requested track ID, including legacy IDs. Generated and merged recording
 IDs resolve through the same authorized provider selector; they do not grant
-access to another user's Personal account. Provider track links remain on `provider_track_identities`. Allstarr does not
+access to another user's Personal account. The library index resolves proven
+recordings and exact ISRCs against the viewer's currently accessible libraries,
+with personal overrides ahead of household overrides. Search returns the complete
+native backend item after a successful backend read; a denied read retains the
+external result. Known local recordings use the normal authenticated native
+metadata and streaming routes. Provider track links remain on `provider_track_identities`. Allstarr does not
 mirror a MusicBrainz catalog graph. `MusicBrainzService` stays the bounded
 `/ws/2` client for later background lookups; a source outage never invalidates
 an already accepted route. Library scans write one `scan.summary` audit row

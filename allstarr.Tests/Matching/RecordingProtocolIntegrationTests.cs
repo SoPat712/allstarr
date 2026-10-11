@@ -27,6 +27,11 @@ public sealed partial class TrackIdentityServiceTests
             .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(new(new("qobuz", ProviderResourceKind.Track, "available"),
                 "Track", [new("Artist", new("qobuz", ProviderResourceKind.Artist, "artist"))],
                 artwork: new ProviderArtworkReference(publicUri: new Uri("https://art.example.test/cover")))));
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("qobuz", [
+                new(new("qobuz", ProviderResourceKind.Track, "available"), "Track", [new("Artist")]),
+                new(new("qobuz", ProviderResourceKind.Track, "unseen"), "Track", [new("Artist")])
+            ])));
         var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
         streaming.SetupGet(item => item.ProviderId).Returns("qobuz");
         streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
@@ -53,6 +58,13 @@ public sealed partial class TrackIdentityServiceTests
             new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false), "merged-play",
             DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client", "device"));
 
+        await using var before = await _factory.CreateDbContextAsync();
+        var counts = (await before.CanonicalRecordings.CountAsync(), await before.ProviderTrackIdentities.CountAsync(),
+            await before.AuditEvents.CountAsync(), await before.Jobs.CountAsync());
+        var search = await gateway.SearchAsync(protocol, "Track", 10, 0, 0);
+        Assert.Equal(new[] { first.Recording.PublicId, "ext-qobuz-song-unseen" }.Order(), search.Songs.Select(item => item.Id).Order());
+        Assert.Equal(counts, (await before.CanonicalRecordings.CountAsync(), await before.ProviderTrackIdentities.CountAsync(),
+            await before.AuditEvents.CountAsync(), await before.Jobs.CountAsync()));
         var song = await gateway.GetSongAsync(protocol, "allstarr", loser.Recording.Id.ToString("D"));
         Assert.Equal(first.Recording.PublicId, song?.Id);
         Assert.Equal(first.Recording.Id, song?.CanonicalRecordingId);

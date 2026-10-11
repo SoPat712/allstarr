@@ -304,6 +304,13 @@ public sealed class BackendLibraryIndexingTests
         public Task<IReadOnlyList<LocalTrackMatchCandidate>> GetMatchCandidatesAsync(ProtocolExecutionContext executionContext, string backendLibraryId, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<LocalTrackMatchCandidate>>([]);
 
+        public Task<IReadOnlyDictionary<string, string>> FindKnownRecordingTracksAsync(
+            ProtocolExecutionContext context, IReadOnlyList<LibraryRecordingLookup> recordings, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+
+        public Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<string?>(null);
+
         public Task RecordScanSummaryAsync(ProtocolExecutionContext executionContext, LibraryCatalogScanResult result, CancellationToken cancellationToken = default) =>
             Task.CompletedTask;
     }

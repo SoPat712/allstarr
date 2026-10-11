@@ -15,20 +15,26 @@ public sealed record ManualTrackOverrideLayers(
 
 internal static class ManualTrackOverrides
 {
-    public static async Task<IReadOnlyList<ManualTrackOverrideRecord>> LoadAsync(
+    public static Task<IReadOnlyList<ManualTrackOverrideRecord>> LoadAsync(
         AllstarrDbContext db, Guid userId,
         IReadOnlyCollection<ExternalMetadataSnapshotRecord> snapshots, CancellationToken cancellationToken,
+        bool includeRevoked = false) => LoadAsync(db, userId,
+            snapshots.Select(item => (item.ProviderId, item.ExternalIdHash)).ToArray(), cancellationToken, includeRevoked);
+
+    public static async Task<IReadOnlyList<ManualTrackOverrideRecord>> LoadAsync(
+        AllstarrDbContext db, Guid userId,
+        IReadOnlyCollection<(string ProviderId, string ExternalIdHash)> sources, CancellationToken cancellationToken,
         bool includeRevoked = false)
     {
-        if (snapshots.Count == 0) return [];
-        var hashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
-        var providers = snapshots.Select(item => item.ProviderId).Distinct().ToArray();
+        if (sources.Count == 0) return [];
+        var hashes = sources.Select(item => item.ExternalIdHash).Distinct().ToArray();
+        var providers = sources.Select(item => item.ProviderId).Distinct().ToArray();
         var records = await db.ManualTrackOverrides.AsNoTracking().Where(item =>
                 (includeRevoked || item.RevokedAt == null) &&
                 (item.OwnerUserId == userId || item.OwnerUserId == null) &&
                 providers.Contains(item.SourceProviderId) && hashes.Contains(item.SourceExternalIdHash))
             .ToArrayAsync(cancellationToken);
-        var requested = snapshots.Select(item => (item.ProviderId, item.ExternalIdHash)).ToHashSet();
+        var requested = sources.ToHashSet();
         return records.Where(item => requested.Contains((item.SourceProviderId, item.SourceExternalIdHash))).ToArray();
     }
 
@@ -66,7 +72,7 @@ internal static class ManualTrackOverrides
                 authority.RevokedAt == null && (authority.OwnerUserId == snapshot.OwnerUserId || authority.OwnerUserId == null)))
         .Select(snapshot => snapshot.Id).ToHashSetAsync(cancellationToken);
 
-    private static ManualTrackOverrideLayers Select(IEnumerable<ManualTrackOverrideRecord> records, Guid userId)
+    public static ManualTrackOverrideLayers Select(IEnumerable<ManualTrackOverrideRecord> records, Guid userId)
     {
         var materialized = records.ToArray();
         return new(materialized.SingleOrDefault(item => item.OwnerUserId == userId),

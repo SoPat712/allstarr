@@ -179,7 +179,7 @@ public sealed partial class TrackIdentityService
         return publicId;
     }
 
-    private static async Task<CanonicalRecordingRecord?> FindRecordingByPublicIdAsync(
+    private async Task<CanonicalRecordingRecord?> FindRecordingByPublicIdAsync(
         AllstarrDbContext context, ProviderActorContext actor, string publicId, CancellationToken cancellationToken)
     {
         var record = await context.CanonicalRecordings.SingleOrDefaultAsync(item => item.PublicId == publicId, cancellationToken);
@@ -194,6 +194,7 @@ public sealed partial class TrackIdentityService
         if (record != null) return await FindSurvivorAsync(context, record.Id, cancellationToken);
         if (provider == "allstarr" && Guid.TryParse(externalId, out recordingId))
             return await FindSurvivorAsync(context, recordingId, cancellationToken);
+        provider = _registry?.ResolveProviderId(provider!) ?? provider;
         var hash = CanonicalCatalogKeys.Hash(externalId!);
         var userId = actor.EffectiveUserId;
         var links = await context.ProviderTrackIdentities.AsNoTracking().Where(item =>

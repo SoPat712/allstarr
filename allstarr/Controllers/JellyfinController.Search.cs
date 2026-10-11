@@ -369,6 +369,8 @@ public partial class JellyfinController
             }
         }
 
+        await PreferKnownNativeSongsAsync(externalResult.Songs, jellyfinSongItems);
+
         var localAlbumNamesPreview = string.Join(" | ", jellyfinAlbumItems
             .Take(10)
             .Select(GetItemName));
