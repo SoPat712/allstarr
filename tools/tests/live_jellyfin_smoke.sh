@@ -124,6 +124,8 @@ direct_virtual_items_file="$(mktemp)"
 direct_playlists_file="$(mktemp)"
 allstarr_playlists_file="$(mktemp)"
 external_search_file="$(mktemp)"
+search_contract_directory="$(mktemp -d)"
+search_contract_project="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/SearchContract/SearchContract.csproj"
 provider_cases_file="$(mktemp)"
 issued_token=0
 issued_admin_session=0
@@ -135,6 +137,92 @@ external_search_query() {
         (.Name | sub(" \\[A\\](/\\[E\\])?$"; "")),
         ((.Artists[0] // .AlbumArtist // "") | sub(" \\[[^\\[\\]]+\\]$"; ""))
     ] | map(select(length > 0)) | join(" ")' "$1"
+}
+
+build_search_contract() {
+    local directory="$1"
+    command -v dotnet >/dev/null || return 1
+    mkdir -p "$directory" || return 1
+    # This helper only needs the installed SDK, including during the offline CI checks.
+    printf '<configuration><packageSources><clear /></packageSources></configuration>\n' >"$directory/NuGet.Config"
+    dotnet build "$search_contract_project" --configuration Release --nologo \
+        --output "$directory/bin" --property:BaseIntermediateOutputPath="$directory/obj/" \
+        --configfile "$directory/NuGet.Config" >"$directory/build.log" 2>&1 || return 1
+    [[ -f "$directory/bin/SearchContract.dll" ]]
+}
+
+capture_native_search_items() {
+    local output="$1" directory="$2" offset=0 total=-1 count page_total page
+    local page_size=500 max_items=100000
+    : >"$directory/native-pages.json"
+    for ((page = 0; page < max_items / page_size; page++)); do
+        if ! curl -fsS --max-time "$TIMEOUT_SECONDS" --max-filesize 8388608 "${auth[@]}" \
+            "$DIRECT_BASE/Users/$best_user_id/Items?Recursive=true&IncludeItemTypes=Audio&Fields=ProviderIds&EnableTotalRecordCount=true&SortBy=SortName&SortOrder=Ascending&StartIndex=$offset&Limit=$page_size" \
+            -o "$directory/native-page.json" 2>/dev/null; then
+            return 1
+        fi
+        if ! jq -e --argjson offset "$offset" --argjson limit "$page_size" --argjson max "$max_items" '
+            .StartIndex == $offset and
+            (.TotalRecordCount | type == "number" and . >= 0 and . <= $max and floor == .) and
+            (.Items | type == "array" and length <= $limit) and
+            all(.Items[];
+                .Type == "Audio" and
+                (.Id | type == "string" and length > 0 and (startswith("ext-") | not)) and
+                (.Name | type == "string" and length > 0) and
+                (.ProviderIds | type == "object"))
+            ' "$directory/native-page.json" >/dev/null 2>&1; then
+            return 1
+        fi
+        count="$(jq '.Items | length' "$directory/native-page.json")"
+        page_total="$(jq '.TotalRecordCount' "$directory/native-page.json")"
+        if (( total < 0 )); then total="$page_total"; fi
+        (( page_total == total && offset + count <= total )) || return 1
+        jq -c '.Items' "$directory/native-page.json" >>"$directory/native-pages.json" || return 1
+        offset=$((offset + count))
+        if (( offset == total )); then
+            jq -s --argjson total "$total" '{Items: add, StartIndex: 0, TotalRecordCount: $total}' \
+                "$directory/native-pages.json" >"$output" || return 1
+            jq -e '(.Items | length) == .TotalRecordCount and
+                ([.Items[].Id | ascii_downcase] | unique | length) == .TotalRecordCount' \
+                "$output" >/dev/null 2>&1
+            return "$?"
+        fi
+        (( count > 0 )) || return 1
+    done
+    return 1
+}
+
+check_search_contract() {
+    local query="$1" page="$2" directory="$3" result
+    checks=$((checks + 1))
+    if ! build_search_contract "$directory"; then
+        printf 'FAIL %-34s scorer-setup\n' "external search ranking"
+        failures=$((failures + 1))
+        return
+    fi
+    if ! capture_native_search_items "$directory/native.json" "$directory"; then
+        printf 'FAIL %-34s incomplete-native-capture\n' "external search ranking"
+        failures=$((failures + 1))
+        return
+    fi
+    if ! jq -n --arg query "$query" --slurpfile page "$page" --slurpfile local "$directory/native.json" \
+        '{query: $query, page: $page[0], local: $local[0]}' >"$directory/input.json" 2>/dev/null; then
+        printf 'FAIL %-34s invalid-capture\n' "external search ranking"
+        failures=$((failures + 1))
+        return
+    fi
+    if dotnet "$directory/bin/SearchContract.dll" <"$directory/input.json" \
+        >"$directory/result.json" 2>"$directory/scorer.log" &&
+       jq -e '.errors == [] and (.scores | type == "array" and length > 0) and
+            (.localPreferenceChecks | type == "number" and . >= 0)' "$directory/result.json" >/dev/null 2>&1; then
+        result="$(jq -r '"items=\(.scores | length) local_identity_checks=\(.localPreferenceChecks)"' "$directory/result.json")"
+        printf 'PASS %-34s relevance-and-recording-identity %s\n' "external search ranking" "$result"
+    else
+        # Keep private IDs, metadata, and raw scorer failures out of the report.
+        result="$(jq -r '.errors // ["scorer-failed"] | join(",")' "$directory/result.json" 2>/dev/null || echo scorer-failed)"
+        printf 'FAIL %-34s %s\n' "external search ranking" "$result"
+        failures=$((failures + 1))
+    fi
 }
 
 playlist_identity_matches() {
@@ -193,6 +281,7 @@ cleanup() {
         "$allstarr_headers_file" "$virtual_items_file" "$direct_virtual_items_file" \
         "$direct_playlists_file" "$allstarr_playlists_file" "$external_search_file"
     rm -f "$provider_cases_file"
+    rm -rf "$search_contract_directory"
     [[ "$cleanup_failed" == 0 ]] || exit 1
 }
 trap cleanup EXIT
@@ -1612,7 +1701,7 @@ if [[ -n "$external_song_id" ]]; then
     measure "external metadata" "$external_detail_url"
     timing_budget "external metadata latency" "external metadata" "$MAX_EXTERNAL_METADATA_TTFB_MS"
 
-    external_search_url="$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&StartIndex=0&Limit=20"
+    external_search_url="$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&Fields=ProviderIds&StartIndex=0&Limit=20"
     check_json "external exact search flow" "$external_search_url" \
         "$item_contract
          (.Items | type == \"array\" and length > 0) and
@@ -1622,24 +1711,9 @@ if [[ -n "$external_song_id" ]]; then
          all(.Items[] | select((.Id // \"\") | startswith(\"ext-\")); external_audio)" \
         --arg id "$external_song_id"
     cp "$response_file" "$external_search_file"
-    checks=$((checks + 1))
-    if jq -e '
-        [.Items[] |
-         select((.Id // "") | test("^ext-.+-song-"; "i")) |
-         (first((.ProviderIds // {}) | keys[] |
-             select(. != "ISRC" and . != "AllstarrSource")) // "")] as $providers |
-        ($providers | map(select(. != ""))) as $providers |
-        ($providers | length) > 0 and
-        (($providers | unique | length) as $count |
-            $count < 2 or ($providers[0:$count] | unique | length) == $count)
-        ' "$external_search_file" >/dev/null; then
-        printf 'PASS %-34s provider-order-interleaved\n' "external provider ordering"
-    else
-        printf 'FAIL %-34s provider-order-not-interleaved\n' "external provider ordering"
-        failures=$((failures + 1))
-    fi
+    check_search_contract "$external_search_term" "$external_search_file" "$search_contract_directory"
     check_json "external search second page" \
-        "$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&StartIndex=5&Limit=5" \
+        "$ALLSTARR_BASE/Items?UserId=$best_user_id&SearchTerm=$external_search_term_encoded&IncludeItemTypes=Audio&Fields=ProviderIds&StartIndex=5&Limit=5" \
         '.StartIndex == 5 and
          .TotalRecordCount == $first[0].TotalRecordCount and
          [.Items[].Id] == [$first[0].Items[5:10][].Id]' \
