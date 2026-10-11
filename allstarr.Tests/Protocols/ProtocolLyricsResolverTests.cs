@@ -122,16 +122,12 @@ public sealed class ProtocolLyricsResolverTests
                 ProviderLyricsAvailabilityState.Available, "apple-download",
                 ProviderLyricsFormat.LineTimed, "[00:01.00]Rocket line\n"));
         var handler = new JsonHandler(
-            """{"linksByPlatform":{"spotify":{"url":"https://open.spotify.com/track/2takcwOaAZWiXQijPHIx7B"},"appleMusic":{"url":"https://music.apple.com/us/album/fixture?i=2037093408"}}}""");
-        var cache = new Mock<IApplicationCache>();
-        cache.Setup(item => item.GetAsync<string>(It.IsAny<string>())).ReturnsAsync((string?)null);
-        cache.Setup(item => item.SetAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
-            .ReturnsAsync(true);
+            """{"linksByPlatform":{"deezer":{"url":"https://www.deezer.com/track/13190193"},"spotify":{"url":"https://open.spotify.com/track/2takcwOaAZWiXQijPHIx7B"},"appleMusic":{"url":"https://music.apple.com/us/album/fixture?i=2037093408"}}}""");
+        var cache = new TestMemoryApplicationCache();
         var odesli = new OdesliService(
             new HttpFactory(handler),
             NullLogger<OdesliService>.Instance,
-            cache.Object);
+            cache);
         var resolver = new ProtocolLyricsResolver(
             providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, odesli);
 
@@ -142,7 +138,7 @@ public sealed class ProtocolLyricsResolverTests
             "deezer",
             "13190193");
 
-        Assert.Equal(2, handler.RequestCount);
+        Assert.Equal(1, handler.RequestCount);
         Assert.Equal(
             "spotify:2takcwOaAZWiXQijPHIx7B|apple-download:2037093408",
             string.Join('|', providers.Invocations

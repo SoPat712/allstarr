@@ -57,6 +57,23 @@ Shared accounts are eligible for household use only while enabled and authorized
 
 `ALLSTARR_RELEASE_PROFILE` defaults to `core`. The core profile omits unreleased Intelligence controllers, recommendation providers, imports, background handlers, and direct WebUI access while preserving their database records. `development` explicitly composes those surfaces for continued work. Unknown profile names stop startup instead of silently widening the release.
 
+## Background cross-provider links
+
+`Odesli__Enabled=true` enables optional cross-provider evidence after a match
+has been saved. It defaults to false. A durable job queries public track links,
+verifies the exact source ID, and stores new catalog aliases through the recording
+identity owner. Existing conflicting or manual associations are left unchanged.
+New links enqueue an owner-scoped rematch; lookups never run inside the original
+match decision, search, or playback request. Existing lyrics URL translation uses
+the same bounded client independently of this background-work toggle.
+
+`Odesli__RateLimitMs` defaults to 6000 and is clamped to 1000–60000 ms.
+Successful responses use the existing Odesli cache duration; empty responses are
+cached for six hours. Rate limits and server failures honor `Retry-After`, bounded
+to one hour, across all requests. Jobs make at most three attempts; a later match
+can request unresolved evidence again the following week. Disabling enrichment
+leaves previously accepted aliases intact.
+
 ## Canonical metadata upstream
 
 MusicBrainz recording enrichment is optional and disabled by default. Set

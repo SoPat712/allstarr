@@ -112,6 +112,7 @@ public sealed partial class TrackMatchCommandService
             });
 
         var results = new List<AutomatedSourceMatchResult>(snapshots.Length);
+        var aliases = await LoadCrossLinksAsync(db, identities.Select(item => item.CanonicalRecordingId), cancellationToken);
         var now = DateTimeOffset.UtcNow;
         var effectiveEngine = await DecisionEngineAsync(cancellationToken);
         foreach (var snapshot in snapshots)
@@ -165,7 +166,8 @@ public sealed partial class TrackMatchCommandService
                 seed.DurationMilliseconds is > 0 ? seed.DurationMilliseconds : null,
                 seed.Isrc,
                 null,
-                null);
+                null)
+            { ExactProviderAliases = aliases.GetValueOrDefault(identity.CanonicalRecordingId) };
             var rejectedOverride =
                 manual?.Decision == ManualOverrideDecision.Reject &&
                 manual.LibraryTrackId.HasValue &&
@@ -217,6 +219,10 @@ public sealed partial class TrackMatchCommandService
         }
 
         await db.SaveChangesAsync(cancellationToken);
+        if (crossLinks != null)
+            foreach (var snapshot in snapshots)
+                await crossLinks.EnqueueAsync(snapshot.OwnerUserId, snapshot.ProviderTrackIdentityId!.Value,
+                    correlationId, cancellationToken);
         return results;
     }
 

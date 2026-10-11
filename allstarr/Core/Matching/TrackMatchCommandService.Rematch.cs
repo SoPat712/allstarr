@@ -149,7 +149,12 @@ public sealed partial class TrackMatchCommandService
             ReadDurationMilliseconds(snapshot.PayloadJson),
             payload.Isrc,
             null,
-            null);
+            null)
+        {
+            ExactProviderAliases = source == null ? null :
+                (await LoadCrossLinksAsync(db, [source.CanonicalRecordingId], cancellationToken))
+                    .GetValueOrDefault(source.CanonicalRecordingId)
+        };
         var localCandidates = decisionEngine.PrepareCandidates(candidates.Select(ToLocalCandidate));
         var libraryIndexRevision = localCandidates.Revision;
         var scope = new TrackMatchScope(
@@ -331,6 +336,8 @@ public sealed partial class TrackMatchCommandService
             }
         }
 
+        if (crossLinks != null && source != null)
+            await crossLinks.EnqueueAsync(snapshot.OwnerUserId, source.Id, correlationId, cancellationToken);
         return new(
             true,
             State: decision.State.ToString().ToLowerInvariant(),

@@ -273,7 +273,8 @@ public sealed partial class TrackMatchCommandService(
     IBackendLibraryAccessResolver libraryAccess,
     TrackMatchPlayableSearch? playableSearch = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
-    IProtocolProviderGateway? providerGateway = null) : ITrackMatchRepository
+    IProtocolProviderGateway? providerGateway = null,
+    RecordingOdesliEnrichmentQueue? crossLinks = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
     private readonly ConcurrentDictionary<
