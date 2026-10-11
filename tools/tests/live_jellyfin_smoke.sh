@@ -1268,6 +1268,13 @@ item_contract='
                     all(.[]; .Type == "Audio" and .BitRate == null))));
 '
 
+playback_identity_contract='
+    (.MediaSources | type == "array" and length > 0) and
+    all(.MediaSources[];
+        .Id == $id and
+        (.DirectStreamUrl | split("?")[0]) == ("/Audio/" + ($id | @uri) + "/stream"))
+'
+
 check_external_provider_case() {
     local provider="$1" song_id="$2" detail_url artist_id album_id
     detail_url="$ALLSTARR_BASE/Items/$song_id?UserId=$best_user_id"
@@ -1339,8 +1346,7 @@ check_external_provider_case() {
     fi
     check_json "$provider external playback identity" \
         "$ALLSTARR_BASE/Items/$song_id/PlaybackInfo?UserId=$best_user_id" \
-        '(.MediaSources | type == "array" and length > 0) and
-         all(.MediaSources[]; .Id == $id and (.DirectStreamUrl | contains($id)))' \
+        "$playback_identity_contract" \
         --arg id "$song_id"
     check_json "$provider similar songs" \
         "$ALLSTARR_BASE/Items/$song_id/Similar?UserId=$best_user_id&Limit=10" \
@@ -1732,8 +1738,7 @@ if [[ -n "$external_song_id" ]]; then
         --arg id "$external_song_id"
     check_json "external playback identity" \
         "$ALLSTARR_BASE/Items/$external_song_id/PlaybackInfo?UserId=$best_user_id" \
-        '(.MediaSources | type == "array" and length > 0) and
-         all(.MediaSources[]; .Id == $id and (.DirectStreamUrl | contains($id)))' \
+        "$playback_identity_contract" \
         --arg id "$external_song_id"
     check_json "external similar envelope" \
         "$ALLSTARR_BASE/Items/$external_song_id/Similar?UserId=$best_user_id&Limit=10" \

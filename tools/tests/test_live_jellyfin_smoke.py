@@ -38,6 +38,39 @@ def envelope(items, total=None):
     return {"Items": items, "StartIndex": 0, "TotalRecordCount": len(items) if total is None else total}
 
 
+class PlaybackIdentityTests(unittest.TestCase):
+    def check_identity(self, identity, sources):
+        body = function("check_external_provider_case")
+        self.assertIn('"$playback_identity_contract"', body)
+        contract = re.search(r"^playback_identity_contract='(.*?)'", SCRIPT, re.M | re.S)[1]
+        return subprocess.run(["jq", "-e", "--arg", "id", identity, contract],
+                              input=json.dumps({"MediaSources": sources}), text=True, capture_output=True).returncode == 0
+
+    def test_encoded_recording_identity_is_preserved(self):
+        identifier = "ext-fixture-song-qobuz:123"
+        self.assertTrue(self.check_identity(identifier, [{"Id": identifier, "DirectStreamUrl":
+            "/Audio/ext-fixture-song-qobuz%3A123/stream?static=true"}]))
+
+    def test_ordinary_recording_identity_is_preserved(self):
+        identifier = "ext-fixture-song-123"
+        self.assertTrue(self.check_identity(identifier, [{"Id": identifier, "DirectStreamUrl":
+            "/Audio/ext-fixture-song-123/stream?static=true"}]))
+
+    def test_different_source_identity_is_rejected(self):
+        self.assertFalse(self.check_identity("ext-fixture-song-123", [{"Id": "different", "DirectStreamUrl":
+            "/Audio/ext-fixture-song-123/stream"}]))
+
+    def test_identity_in_wrong_path_or_query_is_rejected(self):
+        identifier = "ext-fixture-song-123"
+        for path in ["/Other/" + identifier + "/stream", "/Audio/different/stream?id=" + identifier,
+                     "/Audio/" + identifier + "4/stream", "/Audio/" + identifier + "/universal"]:
+            with self.subTest(path=path):
+                self.assertFalse(self.check_identity(identifier, [{"Id": identifier, "DirectStreamUrl": path}]))
+
+    def test_missing_sources_are_rejected(self):
+        self.assertFalse(self.check_identity("ext-fixture-song-123", []))
+
+
 class StreamFixture(BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
