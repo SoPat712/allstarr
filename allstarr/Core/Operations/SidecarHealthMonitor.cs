@@ -145,7 +145,17 @@ public sealed class SidecarHealthMonitor : BackgroundService
         timeout.CancelAfter(TimeSpan.FromSeconds(5));
         try
         {
-            _catalog.AppleDownloadSnapshot = await _appleDiscovery.DiscoverAsync(timeout.Token);
+            var previous = _catalog.AppleDownloadSnapshot;
+            var snapshot = await _appleDiscovery.DiscoverAsync(timeout.Token);
+            _catalog.AppleDownloadSnapshot = snapshot;
+            if (previous?.State != snapshot.State || previous?.ReasonCode != snapshot.ReasonCode)
+            {
+                if (snapshot.State == AppleDownloadEndpointState.NeedsAuthentication)
+                    _logger.LogWarning("Apple download needs sign-in ({Provider})", "apple-musickit");
+                else
+                    _logger.LogInformation("Apple download readiness: {State} ({ReasonCode})", snapshot.State,
+                        snapshot.ReasonCode ?? "ready");
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception)

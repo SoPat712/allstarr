@@ -10,6 +10,20 @@ namespace allstarr.Tests;
 public sealed partial class TrackIdentityServiceTests
 {
     [Fact]
+    public async Task RememberSource_MergesPriorPublicIdWithVerifiedIsrcAndKeepsEarliestId()
+    {
+        var actor = Actor(_userA);
+        var earlier = new TrackIdentityService(_factory, _storageState, new FakeClock(_clock.UtcNow.AddMinutes(-1)));
+        var first = await earlier.CreateRecordingAsync(actor, "first", null, null, publicId: "ext-spotify-song-track");
+        var other = await _service.CreateRecordingAsync(actor, "isrc", "USRC17607839", null, publicId: "ext-deezer-song-other");
+
+        Assert.Equal(first.Recording.Id, await _service.RememberSourceAsync(Context(actor, "spotify"),
+            Track("spotify", "track"), first.Recording.PublicId, ProviderIdentityScope.Catalog, "USRC17607839"));
+        Assert.Equal(first.Recording.Id, (await _service.ResolveRecordingAsync(actor, other.Recording.PublicId))!.Id);
+        Assert.Equal("USRC17607839", (await _service.ResolveRecordingAsync(actor, first.Recording.PublicId))!.Isrc);
+    }
+
+    [Fact]
     public async Task RememberSource_RetainsFirstLiteralIdAcrossRestartAndLaterProvider()
     {
         var actor = Actor(_userA);
@@ -198,7 +212,7 @@ public sealed partial class TrackIdentityServiceTests
         var actor = Actor(_userA);
         var first = await _service.CreateRecordingAsync(actor, "first", musicBrainzRecordingId: "11111111-1111-4111-8111-111111111111");
         var second = await _service.CreateRecordingAsync(actor, "second", musicBrainzRecordingId: "22222222-2222-4222-8222-222222222222");
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<RecordingMergeConflictException>(() =>
             _service.MergeRecordingsAsync(actor, first.Recording.Id, second.Recording.Id, "conflict"));
         await using var db = await _factory.CreateDbContextAsync();
         Assert.All(await db.CanonicalRecordings.ToArrayAsync(), item => Assert.Null(item.MergedIntoId));

@@ -54,12 +54,16 @@ public sealed class PlaybackSignalPipeline(
             streamSource = null;
         var occurrenceKey = CreateOccurrenceKey(scope, request.ItemId, deviceId, request.PlaySessionId,
             request.PositionTicks, request.ObservedAt);
-        var key = Hash($"{occurrenceKey}|{request.Transition}|{bucket}");
         var normalizedTicks = request.Transition == PlaybackTransition.Progress ? TimeSpan.FromSeconds(bucket * 10).Ticks : request.PositionTicks;
+        var payload = new PlaybackSignalPayload(scope, request.Transition, request.ItemId, deviceId,
+            request.PlaySessionId, normalizedTicks, request.ObservedAt, string.Empty, occurrenceKey,
+            execution.Client.ClientId, execution.Client.DeviceName, request.SubmittedTrack,
+            request.RelayExternally, request.SourceKind, streamSource);
+        // A paused or repeated position can still be a new observation. Only identical
+        // observations share a job; listening effects deduplicate by occurrence separately.
+        var key = Hash(JsonSerializer.Serialize(payload));
         var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaybackSignalPayload>(JobType, key,
-            new(scope, request.Transition, request.ItemId, deviceId, request.PlaySessionId, normalizedTicks,
-                request.ObservedAt, key, occurrenceKey, execution.Client.ClientId, execution.Client.DeviceName,
-                request.SubmittedTrack, request.RelayExternally, request.SourceKind, streamSource),
+            payload with { SignalKey = key },
             scope.OwnerUserId,
             CorrelationId: execution.CorrelationId), cancellationToken);
         return result.Created;

@@ -12,11 +12,13 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Theory]
-    [InlineData(ProtocolKind.Jellyfin, false)]
-    [InlineData(ProtocolKind.Subsonic, false)]
-    [InlineData(ProtocolKind.Jellyfin, true)]
-    [InlineData(ProtocolKind.Subsonic, true)]
-    public async Task Playback_RetainsLiteralLegacyIdOnlyAfterSuccessfulNonHeadOpen(ProtocolKind protocol, bool headOnly)
+    [InlineData(ProtocolKind.Jellyfin, false, false)]
+    [InlineData(ProtocolKind.Jellyfin, false, true)]
+    [InlineData(ProtocolKind.Subsonic, false, false)]
+    [InlineData(ProtocolKind.Subsonic, false, true)]
+    [InlineData(ProtocolKind.Jellyfin, true, false)]
+    [InlineData(ProtocolKind.Subsonic, true, false)]
+    public async Task Playback_RetainsLiteralLegacyIdOnlyAfterSuccessfulNonHeadOpen(ProtocolKind protocol, bool headOnly, bool identityUnavailable)
     {
         var context = new ProtocolExecutionContext(protocol, "backend", "principal",
             new AllstarrPrincipal(Guid.CreateVersion7(), protocol.ToString().ToLowerInvariant(), "backend", "principal", "User", false),
@@ -37,10 +39,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         { PublicId = context.RequestedItemId };
         if (!headOnly)
         {
-            identities.Setup(item => item.RememberSourceAsync(It.IsAny<ProviderExecutionContext>(),
+            var remember = identities.Setup(item => item.RememberSourceAsync(It.IsAny<ProviderExecutionContext>(),
                 It.Is<ProviderExternalResourceId>(id => id.ProviderId == "qobuz" && id.Value == "legacy-track"),
-                context.RequestedItemId, ProviderIdentityScope.Catalog, null, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(recording.Id);
+                context.RequestedItemId, ProviderIdentityScope.Catalog, null, It.IsAny<CancellationToken>()));
+            if (identityUnavailable) remember.ThrowsAsync(new InvalidOperationException("Identity storage unavailable"));
+            else remember.ReturnsAsync(recording.Id);
         }
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
         var stream = await gateway.OpenStreamAsync(context, "qobuz", "legacy-track", ProviderAudioQuality.Any, null, headOnly);

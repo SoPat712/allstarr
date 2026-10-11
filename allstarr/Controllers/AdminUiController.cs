@@ -1105,7 +1105,8 @@ public class AdminUiController : ControllerBase
             });
         }
 
-        var runtimeStatuses = _providerStatusManager.GetAllAccountFreeStatuses();
+        var runtimeStatuses = _providerStatusManager.GetAllAccountFreeStatuses()
+            .Concat(_providerStatusManager.GetAppleDownloadEndpointStatuses()).ToList();
         if (_providerRegistry != null)
         {
             foreach (var item in _providerRegistry.Providers)

@@ -100,7 +100,7 @@ public sealed class ProviderPlaylistSourceGateway(
         if (!result.IsSuccess || result.Snapshot == null)
             throw new PlaylistSourceUnavailableException(result.Error?.Kind.ToString() ?? "source_unavailable");
         if (identities == null) return result.Snapshot;
-        var remembered = new Dictionary<ProviderExternalResourceId, Guid>();
+        var remembered = new Dictionary<ProviderExternalResourceId, Guid?>();
         var entries = new List<CollectedPlaylistSourceEntry>(result.Snapshot.Entries.Count);
         foreach (var entry in result.Snapshot.Entries)
         {
@@ -111,9 +111,17 @@ public sealed class ProviderPlaylistSourceGateway(
             }
             if (!remembered.TryGetValue(track, out var recordingId))
             {
-                recordingId = await identities.RememberSourceAsync(providerContext, track,
-                    $"ext-{track.ProviderId}-song-{track.Value}", ProviderIdentityScope.Account,
-                    entry.Isrc, cancellationToken);
+                try
+                {
+                    recordingId = await identities.RememberSourceAsync(providerContext, track,
+                        $"ext-{track.ProviderId}-song-{track.Value}", ProviderIdentityScope.Account,
+                        entry.Isrc, cancellationToken);
+                }
+                catch (RecordingMergeConflictException)
+                {
+                    // Ambiguous identity leaves this entry unresolved, not the entire snapshot.
+                    recordingId = null;
+                }
                 remembered.Add(track, recordingId);
             }
             entries.Add(entry with { CanonicalRecordingId = recordingId });

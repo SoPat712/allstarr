@@ -47,7 +47,8 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderStreaming
         {
             var snapshot = await discovery.DiscoverAsync(context.CancellationToken);
             if (!Available(snapshot))
-                return ProviderOutcome<ProviderStreamLease>.Failure(new(ErrorFor(snapshot.State)));
+                return ProviderOutcome<ProviderStreamLease>.Failure(snapshot.State == AppleDownloadEndpointState.NeedsAuthentication
+                    ? ProviderError.AppleDownloadSignInRequired() : new(ErrorFor(snapshot.State)));
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
                 return ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
             var resolved = await client.ResolveCatalogTrackAsync(context, request.TrackId.Value);

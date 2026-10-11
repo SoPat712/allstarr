@@ -192,7 +192,11 @@ public partial class JellyfinController
 
         var (statusCode, errorMessage) = MapExternalStreamException(ex);
 
-        if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
+        if (ex is ProtocolProviderUnavailableException unavailable)
+        {
+            _logger.LogWarning("External playback unavailable: {Reason}", unavailable.Message);
+        }
+        else if (ex is HttpRequestException httpRequestException && httpRequestException.StatusCode.HasValue)
         {
             _logger.LogError("Failed to stream external song {Provider}:{ExternalId}: responding {StatusCode}; upstream returned {UpstreamStatus}: {ReasonPhrase}",
                 provider,
@@ -213,6 +217,9 @@ public partial class JellyfinController
 
     internal static (int statusCode, string errorMessage) MapExternalStreamException(Exception ex)
     {
+        if (ex is ProtocolProviderUnavailableException unavailable)
+            return (StatusCodes.Status503ServiceUnavailable, unavailable.Message);
+
         if (ex is UnauthorizedAccessException)
         {
             return (StatusCodes.Status403Forbidden, "External provider account is unavailable");

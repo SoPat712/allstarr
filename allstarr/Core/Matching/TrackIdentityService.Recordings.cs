@@ -6,6 +6,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
 
+public sealed class RecordingMergeConflictException(string message) : InvalidOperationException(message);
+
 public sealed partial class TrackIdentityService
 {
     public async Task<Guid> RememberSourceAsync(ProviderExecutionContext execution,
@@ -29,7 +31,11 @@ public sealed partial class TrackIdentityService
         var recording = await FindCanonicalByExactSignalsAsync(db, normalizedIsrc, null, cancellationToken);
         var previous = await FindRecordingByPublicIdAsync(db, execution.Actor, publicId, cancellationToken);
         if (recording != null && previous != null && recording.Id != previous.Id)
-            throw new InvalidOperationException("The requested ID and exact signals identify different recordings.");
+        {
+            EnsureSignalsCompatible(previous, normalizedIsrc, null);
+            recording = await MergeRecordsAsync(db, recording, previous, execution.Actor,
+                execution.CorrelationId, _clock.UtcNow, cancellationToken);
+        }
         recording ??= previous;
         var created = recording == null;
         var now = _clock.UtcNow;
@@ -131,7 +137,7 @@ public sealed partial class TrackIdentityService
             .Where(item => item.Kind == RecordingIdentifierKinds.MusicBrainz)
             .Select(item => item.Value).Distinct(StringComparer.Ordinal).ToArray();
         if (musicBrainzIds.Length > 1)
-            throw new InvalidOperationException("Recordings with conflicting MusicBrainz identities cannot be merged.");
+            throw new RecordingMergeConflictException("Recordings with conflicting MusicBrainz identities cannot be merged.");
 
         foreach (var identifier in loser.Identifiers.ToArray())
         {

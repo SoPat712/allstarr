@@ -157,7 +157,7 @@ public sealed class ProviderRouter(
             account = resolvedAccount?.Account;
             if (descriptor.AccountRequirement == ProviderAccountRequirement.Required && account == null)
             {
-                Reject("account-required");
+                Reject(health.Get(provider.Id, null, request.Capability).ReasonCode ?? "account-required");
                 continue;
             }
 
@@ -195,7 +195,7 @@ public sealed class ProviderRouter(
             };
             if (healthRejection != null)
             {
-                Reject(healthRejection);
+                Reject(snapshot.ReasonCode ?? healthRejection);
                 continue;
             }
 

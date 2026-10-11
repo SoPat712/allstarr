@@ -1,4 +1,5 @@
 using System.Net;
+using allstarr.Core.Protocols;
 using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
@@ -41,6 +42,8 @@ public sealed class SubsonicExceptionFilter(
         Exception exception,
         bool requestAborted = false) => exception switch
         {
+            ProtocolProviderUnavailableException unavailable =>
+                (0, unavailable.Message, StatusCodes.Status503ServiceUnavailable),
             FileNotFoundException or KeyNotFoundException or
                 HttpRequestException { StatusCode: HttpStatusCode.NotFound } =>
                 (70, "Requested data was not found.", StatusCodes.Status404NotFound),

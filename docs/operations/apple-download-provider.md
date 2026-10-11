@@ -68,6 +68,8 @@ Allstarr first requests `GET /api/capabilities`. A compatible version 2 response
 The included gateway also advertises its verified ALAC and AAC input support. Allstarr displays absent features as
 unsupported.
 
+Background discovery appears on the Apple Music provider card even before an account Test. A missing gateway session shows **Apple download needs sign-in**; an incompatible gateway shows **Apple download gateway needs an update**. Jellyfin playback reports these setup failures as HTTP 503 with the same explanation, and Activity records the reason. Listener authorization failures remain HTTP 403. A gateway sign-in and a Personal Apple Music account are separate prerequisites.
+
 Gateway API 2 requires the selected Media User Token, storefront, and opaque account-revision scope in headers for every media request, including HEAD. Version 1 gateways are rejected because they cannot guarantee that boundary. Credentials never appear in URLs; request cookie files are private and removed after the subprocess exits.
 
 The current typed lanes use these routes:

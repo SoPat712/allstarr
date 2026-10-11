@@ -55,6 +55,20 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task KnownNativeLookupFailureLeavesExternalPlaybackAvailable()
+    {
+        var viewer = Context(_userA, "principal-a");
+        var recording = await _identities.CreateRecordingAsync(viewer.RequireActor(), "lookup",
+            "USRC17607839", null, publicId: "ext-deezer-song-source");
+        _libraryAccess.Setup(item => item.ResolveAsync(viewer, It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Backend unavailable"));
+
+        Assert.Null(await _service.ResolveKnownTrackAsync(viewer, recording.Recording.PublicId));
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(viewer,
+            [new(recording.Recording.PublicId, recording.Recording.Id, "USRC17607839", "deezer", "source")]));
+    }
+
+    [Fact]
     public async Task UnchangedScanJob_WritesOnlyOneCompletionAudit()
     {
         var http = new Mock<HttpMessageHandler>();

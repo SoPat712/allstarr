@@ -14,6 +14,27 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData("apple-download-sign-in-required", "Apple download needs sign-in.")]
+    [InlineData("account-required", "Apple download needs sign-in.")]
+    [InlineData("apple-download-gateway-update-required", "Apple download gateway needs an update.")]
+    public async Task MissingAppleSessionReportsServiceUnavailableWithSignInReason(string reason, string message)
+    {
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<IProviderStreamingCapability>(
+                request, [], new(request.CorrelationId, request.Capability, null, null,
+                    [new("apple-musickit", null, ProviderRouteDecisionStatus.Rejected,
+                        reason, 0)])));
+        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory());
+
+        var error = await Assert.ThrowsAsync<ProtocolProviderUnavailableException>(() => gateway.OpenStreamAsync(
+            Context(), "apple-download", "1881685399", ProviderAudioQuality.Any, null));
+
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, error.StatusCode);
+        Assert.Equal(message, error.Message);
+    }
+
     [Fact]
     public async Task OpenStream_ActorlessContextCannotOpenProviderStream()
     {
