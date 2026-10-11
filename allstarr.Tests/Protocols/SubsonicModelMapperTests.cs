@@ -150,6 +150,57 @@ public class SubsonicModelMapperTests
         Assert.Empty(artists);
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MergeSearchResults_RanksRawMetadataAndPreservesNativeFields(bool isJson)
+    {
+        object Local(string id, string title) => isJson
+            ? new Dictionary<string, object> { ["id"] = id, ["title"] = title, ["futureField"] = "retained" }
+            : new XElement("song", new XAttribute("id", id), new XAttribute("title", title),
+                new XAttribute("futureField", "retained"));
+        var weaker = Local("local-weaker", "luther remastered");
+        var tied = Local("local-tied", "luther");
+        var external = new SearchResult
+        {
+            Songs = [new Song { Id = "provider-tied", Title = "luther", ExternalProvider = "deezer" }]
+        };
+
+        var (songs, _, _) = _mapper.MergeSearchResults([weaker, tied], [], [], external, [], isJson, "luther");
+
+        string Field(object item, string field) => item is XElement xml
+            ? xml.Attribute(field)!.Value
+            : JsonSerializer.SerializeToElement(item).GetProperty(field).GetString()!;
+        Assert.Equal(["local-tied", "provider-tied", "local-weaker"], songs.Select(item => Field(item, "id")));
+        Assert.Same(tied, songs[0]);
+        Assert.Same(weaker, songs[2]);
+        Assert.Equal("retained", Field(songs[0], "futureField"));
+        if (!isJson) Assert.Equal(XNamespace.Get("http://subsonic.org/restapi") + "song", ((XElement)songs[0]).Name);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void MergeSearchResults_RanksAlbumsAndArtistsWithArtistContext(bool isJson)
+    {
+        object Local(string type, string id, string name) => isJson
+            ? new Dictionary<string, object> { ["id"] = id, ["name"] = name }
+            : new XElement(type, new XAttribute("id", id), new XAttribute("name", name));
+        var external = new SearchResult
+        {
+            Albums = [new Album { Id = "provider-album", Title = "folklore", Artist = "Taylor Swift" }],
+            Artists = [new Artist { Id = "provider-artist", Name = "Taylor Swift" }]
+        };
+
+        var (_, albums, artists) = _mapper.MergeSearchResults([], [Local("album", "local-album", "unrelated")],
+            [Local("artist", "local-artist", "unrelated")], external, [], isJson, "Taylor Swift");
+
+        string Id(object item) => item is XElement xml ? xml.Attribute("id")!.Value
+            : JsonSerializer.SerializeToElement(item).GetProperty("id").GetString()!;
+        Assert.Equal(["provider-album", "local-album"], albums.Select(Id));
+        Assert.Equal(["provider-artist", "local-artist"], artists.Select(Id));
+    }
+
     [Fact]
     public void MergeSearchResults_Json_MergesSongsCorrectly()
     {

@@ -1,11 +1,12 @@
 using allstarr.Controllers;
+using allstarr.Services.Common;
 
 namespace allstarr.Tests;
 
 public class JellyfinSearchInterleaveTests
 {
     [Fact]
-    public void InterleaveByScore_PrimaryOnly_PreservesOriginalOrder()
+    public void InterleaveByScore_PrimaryOnly_RanksByRelevance()
     {
         var primary = new List<Dictionary<string, object?>>
         {
@@ -13,13 +14,13 @@ public class JellyfinSearchInterleaveTests
             CreateItem("BTS Anthem")
         };
 
-        var result = JellyfinController.InterleaveByScore(primary, [], "bts", 5.0);
+        var result = Rank(primary, [], "bts");
 
-        Assert.Equal(["zzz filler", "BTS Anthem"], result.Select(GetName));
+        Assert.Equal(["BTS Anthem", "zzz filler"], result.Select(GetName));
     }
 
     [Fact]
-    public void InterleaveByScore_SecondaryOnly_PreservesOriginalOrder()
+    public void InterleaveByScore_SecondaryOnly_RanksByRelevance()
     {
         var secondary = new List<Dictionary<string, object?>>
         {
@@ -27,9 +28,9 @@ public class JellyfinSearchInterleaveTests
             CreateItem("BTS Anthem")
         };
 
-        var result = JellyfinController.InterleaveByScore([], secondary, "bts", 5.0);
+        var result = Rank([], secondary, "bts");
 
-        Assert.Equal(["zzz filler", "BTS Anthem"], result.Select(GetName));
+        Assert.Equal(["BTS Anthem", "zzz filler"], result.Select(GetName));
     }
 
     [Fact]
@@ -46,7 +47,7 @@ public class JellyfinSearchInterleaveTests
             CreateItem("yyy filler")
         };
 
-        var result = JellyfinController.InterleaveByScore(primary, secondary, "luther", 0.0);
+        var result = Rank(primary, secondary, "luther");
 
         Assert.Equal(["luther", "luther remastered", "zzz filler", "yyy filler"], result.Select(GetName));
     }
@@ -65,13 +66,13 @@ public class JellyfinSearchInterleaveTests
             CreateItem("bts", "s2")
         };
 
-        var result = JellyfinController.InterleaveByScore(primary, secondary, "bts", 0.0);
+        var result = Rank(primary, secondary, "bts");
 
         Assert.Equal(["p1", "p2", "s1", "s2"], result.Select(GetId));
     }
 
     [Fact]
-    public void InterleaveByScore_StrongerLaterPrimaryHead_DoesNotBypassCurrentQueueHead()
+    public void InterleaveByScore_StrongerLaterMatch_BypassesWeakEarlierResult()
     {
         var primary = new List<Dictionary<string, object?>>
         {
@@ -84,13 +85,13 @@ public class JellyfinSearchInterleaveTests
             CreateItem("bts live", "s2")
         };
 
-        var result = JellyfinController.InterleaveByScore(primary, secondary, "bts", 0.0);
+        var result = Rank(primary, secondary, "bts");
 
-        Assert.Equal(["s1", "s2", "p1", "p2"], result.Select(GetId));
+        Assert.Equal(["s1", "p2", "s2", "p1"], result.Select(GetId));
     }
 
     [Fact]
-    public void InterleaveByScore_JellyfinBoost_CanWinCloseHeadToHead()
+    public void InterleaveByScore_StrongerProviderMatch_WinsWithoutLocalBoost()
     {
         var primary = new List<Dictionary<string, object?>>
         {
@@ -101,9 +102,9 @@ public class JellyfinSearchInterleaveTests
             CreateItem("luther", "s1")
         };
 
-        var result = JellyfinController.InterleaveByScore(primary, secondary, "luther", 5.0);
+        var result = Rank(primary, secondary, "luther");
 
-        Assert.Equal(["p1", "s1"], result.Select(GetId));
+        Assert.Equal(["s1", "p1"], result.Select(GetId));
     }
 
     [Fact]
@@ -147,6 +148,10 @@ public class JellyfinSearchInterleaveTests
 
         Assert.Equal(plainScore, noisyScore);
     }
+
+    private static List<Dictionary<string, object?>> Rank(
+        List<Dictionary<string, object?>> local, List<Dictionary<string, object?>> external, string query) =>
+        SearchRelevanceRanker.Merge(local, external, item => JellyfinController.CalculateItemRelevanceScore(query, item));
 
     private static Dictionary<string, object?> CreateItem(string name, string? id = null)
     {

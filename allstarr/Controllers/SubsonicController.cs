@@ -183,7 +183,7 @@ public partial class SubsonicController : ControllerBase
         var externalResult = _searchProtocolAdapter.ApplyWindow(await externalTask, window);
         var playlistResult = _searchProtocolAdapter.ApplyAlbumWindow(await playlistTask, window);
 
-        return MergeSearchResults(subsonicResult, externalResult, playlistResult, format);
+        return MergeSearchResults(subsonicResult, externalResult, playlistResult, format, cleanQuery);
     }
 
     [AcceptVerbs("GET", "POST", "HEAD")]
@@ -624,7 +624,8 @@ public partial class SubsonicController : ControllerBase
         (byte[]? Body, string? ContentType, bool Success) subsonicResult,
         SearchResult externalResult,
         List<ExternalPlaylist> playlistResult,
-        string format)
+        string format,
+        string query)
     {
         var (localSongs, localAlbums, localArtists) = subsonicResult.Success && subsonicResult.Body != null
             ? _modelMapper.ParseSearchResponse(subsonicResult.Body, subsonicResult.ContentType)
@@ -637,7 +638,8 @@ public partial class SubsonicController : ControllerBase
             localArtists,
             externalResult,
             playlistResult,
-            isJson);
+            isJson,
+            query);
 
         if (isJson)
         {

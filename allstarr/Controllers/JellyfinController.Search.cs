@@ -380,60 +380,31 @@ public partial class JellyfinController
             jellyfinArtistItems.Count,
             localAlbumNamesPreview);
 
-        var externalSongItems = externalResult.Songs.Select(s => _responseBuilder.ConvertSongToJellyfinItem(s)).ToList();
-        var externalAlbumItems = externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJellyfinItem(a)).ToList();
-        var externalArtistItems = externalResult.Artists.Select(a => _responseBuilder.ConvertArtistToJellyfinItem(a)).ToList();
-
-        var allSongs = InterleaveByScore(jellyfinSongItems, externalSongItems, cleanQuery, primaryBoost: 5.0);
-        var allAlbums = InterleaveByScore(jellyfinAlbumItems, externalAlbumItems, cleanQuery, primaryBoost: 5.0);
-        var allArtists = InterleaveByScore(jellyfinArtistItems, externalArtistItems, cleanQuery, primaryBoost: 5.0);
-
-        if (_logger.IsEnabled(LogLevel.Debug))
-        {
-            if (allSongs.Any())
-            {
-                var topSong = allSongs.First();
-                var topName = topSong.TryGetValue("Name", out var nameObj) && nameObj is JsonElement nameEl ? nameEl.GetString() ?? "" : topSong["Name"]?.ToString() ?? "";
-                _logger.LogDebug("🎵 Top song: '{Title}' (local={IsLocal})",
-                    topName, IsLocalItem(topSong));
-            }
-
-            if (allAlbums.Any())
-            {
-                var topAlbum = allAlbums.First();
-                var topName = topAlbum.TryGetValue("Name", out var nameObj) && nameObj is JsonElement nameEl ? nameEl.GetString() ?? "" : topAlbum["Name"]?.ToString() ?? "";
-                _logger.LogDebug("💿 Top album: '{Title}' (local={IsLocal})",
-                    topName, IsLocalItem(topAlbum));
-            }
-
-            if (allArtists.Any())
-            {
-                var topArtist = allArtists.First();
-                var topName = topArtist.TryGetValue("Name", out var nameObj) && nameObj is JsonElement nameEl ? nameEl.GetString() ?? "" : topArtist["Name"]?.ToString() ?? "";
-                _logger.LogDebug("🎤 Top artist: '{Name}' (local={IsLocal})",
-                    topName, IsLocalItem(topArtist));
-            }
-        }
+        // Score source metadata before adding display labels to the protocol objects.
+        var externalSongItems = externalResult.Songs.Select(song => (
+            Item: _responseBuilder.ConvertSongToJellyfinItem(song),
+            Score: SearchRelevanceRanker.Score(cleanQuery, song.Title, song.Artist)));
+        var externalAlbumItems = externalResult.Albums.Select(album => (
+            Item: _responseBuilder.ConvertAlbumToJellyfinItem(album),
+            Score: SearchRelevanceRanker.Score(cleanQuery, album.Title, album.Artist)));
+        var externalArtistItems = externalResult.Artists.Select(artist => (
+            Item: _responseBuilder.ConvertArtistToJellyfinItem(artist),
+            Score: SearchRelevanceRanker.Score(cleanQuery, artist.Name)));
 
         // Jellyfin search cannot mix playlists directly, so project them as albums.
-        var mergedPlaylistItems = new List<Dictionary<string, object?>>();
-        if (playlistResult.Count > 0)
-        {
-            _logger.LogDebug("Processing {Count} playlists for merging with albums", playlistResult.Count);
-            foreach (var playlist in playlistResult)
-            {
-                var playlistItem = _responseBuilder.ConvertPlaylistToAlbumItem(playlist);
-                mergedPlaylistItems.Add(playlistItem);
-            }
+        var playlistItems = playlistResult.Select(playlist => (
+            Item: _responseBuilder.ConvertPlaylistToAlbumItem(playlist),
+            Score: SearchRelevanceRanker.Score(cleanQuery, playlist.Name, playlist.CuratorName)));
+        var allSongs = Rank(jellyfinSongItems, externalSongItems);
+        var allArtists = Rank(jellyfinArtistItems, externalArtistItems);
+        var mergedAlbumsAndPlaylists = Rank(jellyfinAlbumItems, externalAlbumItems.Concat(playlistItems));
 
-            _logger.LogDebug("Found {Count} playlists, merging with albums", playlistResult.Count);
-        }
-        else
-        {
-            _logger.LogDebug("No playlists found to merge with albums");
-        }
-
-        var mergedAlbumsAndPlaylists = InterleaveByScore(allAlbums, mergedPlaylistItems, cleanQuery, primaryBoost: 0.0);
+        List<Dictionary<string, object?>> Rank(
+            List<Dictionary<string, object?>> local,
+            IEnumerable<(Dictionary<string, object?> Item, double Score)> external) =>
+            SearchRelevanceRanker.Merge(
+                local.Select(item => (Item: item, Score: CalculateItemRelevanceScore(cleanQuery, item))),
+                external, item => item.Score).Select(item => item.Item).ToList();
 
         _logger.LogDebug(
             "Merged results: Songs={Songs}, Albums+Playlists={AlbumsPlaylists}, Artists={Artists}",
@@ -677,126 +648,15 @@ public partial class JellyfinController
         });
     }
 
-    // Compare queue heads only so source-specific ordering remains stable.
-    internal static List<Dictionary<string, object?>> InterleaveByScore(
-        List<Dictionary<string, object?>> primaryItems,
-        List<Dictionary<string, object?>> secondaryItems,
-        string query,
-        double primaryBoost)
-    {
-        var primaryScored = primaryItems.Select(item =>
+    internal static double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item) =>
+        SearchRelevanceRanker.Score(query, GetItemName(item), GetItemType(item) switch
         {
-            return new
-            {
-                Item = item,
-                Score = Math.Min(100.0, CalculateItemRelevanceScore(query, item) + primaryBoost)
-            };
-        })
-        .ToList();
+            "Audio" => GetSongArtistText(item),
+            "MusicAlbum" => GetAlbumArtistText(item),
+            _ => null
+        });
 
-        var secondaryScored = secondaryItems.Select(item =>
-        {
-            return new
-            {
-                Item = item,
-                Score = CalculateItemRelevanceScore(query, item)
-            };
-        })
-        .ToList();
-
-        var result = new List<Dictionary<string, object?>>(primaryScored.Count + secondaryScored.Count);
-        int primaryIdx = 0, secondaryIdx = 0;
-
-        while (primaryIdx < primaryScored.Count && secondaryIdx < secondaryScored.Count)
-        {
-            var primaryCandidate = primaryScored[primaryIdx];
-            var secondaryCandidate = secondaryScored[secondaryIdx];
-
-            if (primaryCandidate.Score >= secondaryCandidate.Score)
-            {
-                result.Add(primaryScored[primaryIdx++].Item);
-            }
-            else
-            {
-                result.Add(secondaryScored[secondaryIdx++].Item);
-            }
-        }
-
-        while (primaryIdx < primaryScored.Count)
-        {
-            result.Add(primaryScored[primaryIdx++].Item);
-        }
-
-        while (secondaryIdx < secondaryScored.Count)
-        {
-            result.Add(secondaryScored[secondaryIdx++].Item);
-        }
-
-        return result;
-    }
-
-    internal static double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item)
-    {
-        return GetItemType(item) switch
-        {
-            "Audio" => CalculateSongRelevanceScore(query, item),
-            "MusicAlbum" => CalculateAlbumRelevanceScore(query, item),
-            "MusicArtist" => CalculateArtistRelevanceScore(query, item),
-            _ => CalculateArtistRelevanceScore(query, item)
-        };
-    }
-
-    private static string GetItemName(Dictionary<string, object?> item)
-    {
-        return GetItemStringValue(item, "Name");
-    }
-
-    private static double CalculateSongRelevanceScore(string query, Dictionary<string, object?> item)
-    {
-        var title = GetItemName(item);
-        var artistText = GetSongArtistText(item);
-        return CalculateBestFuzzyScore(query, title, CombineSearchFields(title, artistText));
-    }
-
-    private static double CalculateAlbumRelevanceScore(string query, Dictionary<string, object?> item)
-    {
-        var albumName = GetItemName(item);
-        var artistText = GetAlbumArtistText(item);
-        return CalculateBestFuzzyScore(query, albumName, CombineSearchFields(albumName, artistText));
-    }
-
-    private static double CalculateArtistRelevanceScore(string query, Dictionary<string, object?> item)
-    {
-        var artistName = GetItemName(item);
-        if (string.IsNullOrWhiteSpace(artistName))
-        {
-            return 0;
-        }
-
-        return FuzzyMatcher.CalculateSimilarityAggressive(query, artistName);
-    }
-
-    private static double CalculateBestFuzzyScore(string query, params string?[] candidates)
-    {
-        var best = 0;
-
-        foreach (var candidate in candidates)
-        {
-            if (string.IsNullOrWhiteSpace(candidate))
-            {
-                continue;
-            }
-
-            best = Math.Max(best, FuzzyMatcher.CalculateSimilarityAggressive(query, candidate));
-        }
-
-        return best;
-    }
-
-    private static string CombineSearchFields(params string?[] fields)
-    {
-        return string.Join(" ", fields.Where(field => !string.IsNullOrWhiteSpace(field)));
-    }
+    private static string GetItemName(Dictionary<string, object?> item) => GetItemStringValue(item, "Name");
 
     private static string GetItemType(Dictionary<string, object?> item)
     {

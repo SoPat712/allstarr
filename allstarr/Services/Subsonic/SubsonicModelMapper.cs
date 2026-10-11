@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Xml.Linq;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Subsonic;
 
@@ -97,117 +98,47 @@ public class SubsonicModelMapper
         List<object> localArtists,
         SearchResult externalResult,
         List<ExternalPlaylist> externalPlaylists,
-        bool isJson)
-    {
-        if (isJson)
-        {
-            return MergeSearchResultsJson(localSongs, localAlbums, localArtists, externalResult, externalPlaylists);
-        }
-        else
-        {
-            return MergeSearchResultsXml(localSongs, localAlbums, localArtists, externalResult, externalPlaylists);
-        }
-    }
-
-    private (List<object> MergedSongs, List<object> MergedAlbums, List<object> MergedArtists) MergeSearchResultsJson(
-        List<object> localSongs,
-        List<object> localAlbums,
-        List<object> localArtists,
-        SearchResult externalResult,
-        List<ExternalPlaylist> externalPlaylists)
-    {
-        var mergedSongs = localSongs
-            .Concat(externalResult.Songs.Select(s => _responseBuilder.ConvertSongToJson(s)))
-            .ToList();
-
-        // Subsonic discovery has no playlist result type, so playlists join the album results.
-        var mergedAlbums = localAlbums
-            .Concat(externalResult.Albums.Select(a => _responseBuilder.ConvertAlbumToJson(a)))
-            .Concat(externalPlaylists.Select(p => ConvertPlaylistToAlbumJson(p)))
-            .ToList();
-
-        // Prefer the local artist when a provider returns the same display name.
-        var localArtistNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var artist in localArtists)
-        {
-            if (artist is Dictionary<string, object> dict && dict.TryGetValue("name", out var nameObj))
-            {
-                localArtistNames.Add(nameObj?.ToString() ?? "");
-            }
-        }
-
-        var mergedArtists = localArtists.ToList();
-        foreach (var externalArtist in externalResult.Artists)
-        {
-            if (!localArtistNames.Contains(externalArtist.Name))
-            {
-                mergedArtists.Add(_responseBuilder.ConvertArtistToJson(externalArtist));
-            }
-        }
-
-        return (mergedSongs, mergedAlbums, mergedArtists);
-    }
-
-    private (List<object> MergedSongs, List<object> MergedAlbums, List<object> MergedArtists) MergeSearchResultsXml(
-        List<object> localSongs,
-        List<object> localAlbums,
-        List<object> localArtists,
-        SearchResult externalResult,
-        List<ExternalPlaylist> externalPlaylists)
+        bool isJson,
+        string query = "")
     {
         var ns = XNamespace.Get("http://subsonic.org/restapi");
+        var localArtistNames = localArtists.Select(item => GetSearchField(item, "name"))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var songs = externalResult.Songs.Select(song => (
+            Item: isJson ? (object)_responseBuilder.ConvertSongToJson(song) : _responseBuilder.ConvertSongToXml(song, ns),
+            Score: SearchRelevanceRanker.Score(query, song.Title, song.Artist)));
+        var albums = externalResult.Albums.Select(album => (
+            Item: isJson ? (object)_responseBuilder.ConvertAlbumToJson(album) : _responseBuilder.ConvertAlbumToXml(album, ns),
+            Score: SearchRelevanceRanker.Score(query, album.Title, album.Artist)));
+        var playlists = externalPlaylists.Select(playlist => (
+            Item: isJson ? (object)ConvertPlaylistToAlbumJson(playlist) : ConvertPlaylistToAlbumXml(playlist, ns),
+            Score: SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName)));
+        var artists = externalResult.Artists.Where(artist => !localArtistNames.Contains(artist.Name)).Select(artist => (
+            Item: isJson ? _responseBuilder.ConvertArtistToJson(artist) : _responseBuilder.ConvertArtistToXml(artist, ns),
+            Score: SearchRelevanceRanker.Score(query, artist.Name)));
 
-        // Prefer the local artist when a provider returns the same display name.
-        var localArtistNamesXml = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var mergedArtists = new List<object>();
+        return (Rank(localSongs, songs, "song", "title", includeArtist: true),
+            Rank(localAlbums, albums.Concat(playlists), "album", "name", includeArtist: true),
+            Rank(localArtists, artists, "artist", "name", includeArtist: false));
 
-        foreach (var artist in localArtists.Cast<XElement>())
+        List<object> Rank(List<object> local, IEnumerable<(object Item, double Score)> external,
+            string type, string name, bool includeArtist)
         {
-            var name = artist.Attribute("name")?.Value;
-            if (!string.IsNullOrEmpty(name))
-            {
-                localArtistNamesXml.Add(name);
-            }
-            artist.Name = ns + "artist";
-            mergedArtists.Add(artist);
+            // Preserve the native object and its unknown fields; XML only needs the protocol namespace.
+            foreach (var element in local.OfType<XElement>()) element.Name = ns + type;
+            return SearchRelevanceRanker.Merge(local.Select(item => (Item: item,
+                    Score: SearchRelevanceRanker.Score(query, GetSearchField(item, name),
+                        includeArtist ? GetSearchField(item, "artist") : null))),
+                external, item => item.Score).Select(item => item.Item).ToList();
         }
-
-        foreach (var artist in externalResult.Artists)
-        {
-            if (!localArtistNamesXml.Contains(artist.Name))
-            {
-                mergedArtists.Add(_responseBuilder.ConvertArtistToXml(artist, ns));
-            }
-        }
-
-        var mergedAlbums = new List<object>();
-        foreach (var album in localAlbums.Cast<XElement>())
-        {
-            album.Name = ns + "album";
-            mergedAlbums.Add(album);
-        }
-        foreach (var album in externalResult.Albums)
-        {
-            mergedAlbums.Add(_responseBuilder.ConvertAlbumToXml(album, ns));
-        }
-        foreach (var playlist in externalPlaylists)
-        {
-            mergedAlbums.Add(ConvertPlaylistToAlbumXml(playlist, ns));
-        }
-
-        var mergedSongs = new List<object>();
-        foreach (var song in localSongs.Cast<XElement>())
-        {
-            song.Name = ns + "song";
-            mergedSongs.Add(song);
-        }
-        foreach (var song in externalResult.Songs)
-        {
-            mergedSongs.Add(_responseBuilder.ConvertSongToXml(song, ns));
-        }
-
-        return (mergedSongs, mergedAlbums, mergedArtists);
     }
+
+    private static string GetSearchField(object item, string field) => item switch
+    {
+        XElement element => element.Attribute(field)?.Value ?? string.Empty,
+        Dictionary<string, object> values when values.TryGetValue(field, out var value) => value?.ToString() ?? string.Empty,
+        _ => string.Empty
+    };
 
     private Dictionary<string, object> ConvertPlaylistToAlbumJson(ExternalPlaylist playlist)
     {
