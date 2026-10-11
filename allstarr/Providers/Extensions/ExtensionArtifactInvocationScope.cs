@@ -42,7 +42,7 @@ public sealed class ExtensionArtifactInvocationScope : IDisposable
 
     public static ExtensionArtifactInvocationScope? Current => Ambient.Value;
     public ProviderDownloadArtifactWriteResult? Result { get; private set; }
-    public CancellationToken CancellationToken => cancellationToken;
+    public CancellationToken CancellationToken => ExtensionInvocationBudget.Current?.Token ?? cancellationToken;
     public long MaximumBytes => maximumBytes;
 
     public string ResolveTemporaryPath(string relativePath)

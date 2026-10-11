@@ -1,0 +1,92 @@
+{
+  "name": "soundcloud",
+  "displayName": "SoundCloud",
+  "version": "1.0.10",
+  "description": "SoundCloud metadata and download provider. Search tracks, albums, playlists, artists. Downloads via direct SoundCloud streams.",
+  "homepage": "https://github.com/zarzet/SpotiFLAC-Mobile",
+  "type": [
+    "metadata_provider",
+    "download_provider"
+  ],
+  "minAppVersion": "4.9.1",
+  "requiredRuntimeFeatures": [
+    "preparedContext@1",
+    "downloadSegments@1"
+  ],
+  "skipLyrics": true,
+  "permissions": {
+    "network": [
+      "soundcloud.com",
+      "api-v2.soundcloud.com",
+      "*.sndcdn.com",
+      "*.media-streaming.soundcloud.cloud",
+      "on.soundcloud.com",
+      "m.soundcloud.com"
+    ],
+    "storage": true,
+    "file": true
+  },
+  "qualityOptions": [
+    {
+      "id": "aac_160",
+      "label": "AAC up to 160kbps",
+      "description": "Current SoundCloud quality, saved as M4A without re-encoding; falls back to the available full stream"
+    }
+  ],
+  "capabilities": {
+    "homeFeed": false,
+    "browseCategories": false,
+    "downloadFallbackTier": "low_res",
+    "networkTimeoutSeconds": 15,
+    "shareUrlTemplates": {
+      "artist": "https://soundcloud.com/users/{id}"
+    }
+  },
+  "serviceHealth": [
+    {
+      "id": "soundcloud",
+      "label": "SoundCloud",
+      "url": "https://soundcloud.com/",
+      "method": "GET",
+      "serviceKey": "soundcloud",
+      "timeoutMs": 4000,
+      "cacheTtlSeconds": 60,
+      "required": true
+    }
+  ],
+  "searchBehavior": {
+    "enabled": true,
+    "placeholder": "Search SoundCloud...",
+    "icon": "cloud",
+    "thumbnailRatio": "square",
+    "filters": [
+      {
+        "id": "tracks",
+        "label": "Tracks",
+        "icon": "music"
+      },
+      {
+        "id": "albums",
+        "label": "Albums",
+        "icon": "album"
+      },
+      {
+        "id": "artists",
+        "label": "Artists",
+        "icon": "artist"
+      },
+      {
+        "id": "playlists",
+        "label": "Playlists",
+        "icon": "playlist"
+      }
+    ]
+  },
+  "urlHandler": {
+    "enabled": true,
+    "patterns": [
+      "soundcloud.com"
+    ]
+  },
+  "settings": []
+}

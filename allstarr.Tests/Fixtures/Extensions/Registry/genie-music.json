@@ -1,0 +1,39 @@
+{
+  "name": "genie-music",
+  "displayName": "Genie Music",
+  "version": "1.0.29",
+  "description": "Genie Music metadata, albums, artist highlights, charts, and URL imports (local compatibility patch)",
+  "author": "custom",
+  "permissions": {
+    "network": [
+      "www.genie.co.kr",
+      "genie.co.kr"
+    ],
+    "storage": false,
+    "file": false
+  },
+  "type": [
+    "metadata_provider"
+  ],
+  "icon": "icon.png",
+  "capabilities": {
+    "homeFeed": true
+  },
+  "minAppVersion": "3.0.1",
+  "searchBehavior": {
+    "enabled": true,
+    "primary": false,
+    "placeholder": "지니뮤직 검색...",
+    "thumbnailRatio": "square"
+  },
+  "urlHandler": {
+    "enabled": true,
+    "patterns": [
+      "genie.co.kr/detail/songInfo",
+      "genie.co.kr/detail/albumInfo",
+      "genie.co.kr/detail/artistInfo"
+    ]
+  },
+  "skipMetadataEnrichment": false,
+  "skipBuiltInFallback": false
+}

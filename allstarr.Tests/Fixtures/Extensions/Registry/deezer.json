@@ -1,0 +1,121 @@
+{
+  "name": "deezer",
+  "displayName": "Deezer",
+  "version": "1.3.5",
+  "description": "Deezer metadata and lossless download provider with complete release, disc, barcode, credits, explicit, genre, rights, link, and high-resolution artwork metadata.",
+  "homepage": "https://github.com/zarzet/SpotiFLAC-Mobile",
+  "type": [
+    "metadata_provider",
+    "download_provider"
+  ],
+  "minAppVersion": "4.9.1",
+  "requiredRuntimeFeatures": [
+    "signedSession@1",
+    "sessionGrant@1",
+    "patternedFileTransform@1",
+    "preparedContext@1"
+  ],
+  "signedSession": {
+    "namespace": "zarz-v2",
+    "baseUrl": "https://api.zarz.moe/v2",
+    "appVersion": "deezer@1.3.5",
+    "platform": "extension",
+    "callbackUrl": "spotiflac://session-grant",
+    "schemeLabel": "ZARZ-HMAC-V1",
+    "headerPrefix": "X-Zarz-",
+    "timeWindowSeconds": 300,
+    "endpoints": {
+      "bootstrap": "/bootstrap",
+      "challenge": "/challenge",
+      "exchange": "/session/exchange",
+      "refresh": "/session/refresh"
+    }
+  },
+  "permissions": {
+    "network": [
+      "api.zarz.moe",
+      "dl.musicdl.me",
+      "api.deezer.com",
+      "www.deezer.com",
+      "deezer.page.link",
+      "link.deezer.com",
+      "*.dzcdn.net"
+    ],
+    "storage": true,
+    "file": true
+  },
+  "qualityOptions": [
+    {
+      "id": "flac",
+      "label": "FLAC",
+      "description": "Best available Deezer FLAC stream"
+    }
+  ],
+  "searchBehavior": {
+    "enabled": true,
+    "primary": true,
+    "placeholder": "Search Deezer...",
+    "thumbnailRatio": "square",
+    "filters": [
+      {
+        "id": "track",
+        "label": "Songs",
+        "icon": "music"
+      },
+      {
+        "id": "album",
+        "label": "Albums",
+        "icon": "album"
+      },
+      {
+        "id": "artist",
+        "label": "Artists",
+        "icon": "artist"
+      },
+      {
+        "id": "playlist",
+        "label": "Playlists",
+        "icon": "playlist"
+      }
+    ]
+  },
+  "urlHandler": {
+    "enabled": true,
+    "patterns": [
+      "deezer.com",
+      "www.deezer.com",
+      "deezer.page.link",
+      "link.deezer.com",
+      "deezer:"
+    ]
+  },
+  "capabilities": {
+    "downloadFallbackTier": "lossless",
+    "networkTimeoutSeconds": 15,
+    "shareUrlTemplates": {
+      "album": "https://www.deezer.com/album/{id}",
+      "artist": "https://www.deezer.com/artist/{id}"
+    }
+  },
+  "serviceHealth": [
+    {
+      "id": "zarz-api",
+      "label": "Zarz API",
+      "url": "https://api.zarz.moe/v1/health",
+      "method": "GET",
+      "serviceKey": "deezer",
+      "timeoutMs": 4000,
+      "cacheTtlSeconds": 60,
+      "required": true
+    }
+  ],
+  "settings": [
+    {
+      "key": "apiBaseUrl",
+      "label": "Resolver API URL",
+      "type": "string",
+      "default": "https://api.zarz.moe",
+      "description": "Base URL for the Deezer resolver API."
+    }
+  ]
+}

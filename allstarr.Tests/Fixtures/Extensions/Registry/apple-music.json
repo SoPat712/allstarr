@@ -1,0 +1,96 @@
+{
+  "name": "apple-music",
+  "displayName": "Apple Music",
+  "version": "1.4.12",
+  "description": "Apple Music metadata and lyrics provider for SpotiFLAC Mobile with guarded track matching, bounded caching, resilient requests, and complete release metadata.",
+  "homepage": "https://github.com/zarzet/SpotiFLAC-Mobile",
+  "type": [
+    "metadata_provider",
+    "lyrics_provider"
+  ],
+  "minAppVersion": "4.2.3",
+  "skipMetadataEnrichment": false,
+  "capabilities": {
+    "homeFeed": true,
+    "browseCategories": false,
+    "shareUrlTemplates": {
+      "track": "https://music.apple.com/us/song/{id}",
+      "album": "https://music.apple.com/us/album/{id}",
+      "artist": "https://music.apple.com/us/artist/{id}",
+      "playlist": "https://music.apple.com/us/playlist/{id}"
+    },
+    "networkTimeoutSeconds": 15
+  },
+  "permissions": {
+    "network": [
+      "music.apple.com",
+      "amp-api.music.apple.com",
+      "*.mzstatic.com"
+    ],
+    "storage": true
+  },
+  "searchBehavior": {
+    "enabled": true,
+    "placeholder": "Search Apple Music...",
+    "icon": "apple",
+    "thumbnailRatio": "square",
+    "filters": [
+      {
+        "id": "tracks",
+        "label": "Songs",
+        "icon": "music"
+      },
+      {
+        "id": "albums",
+        "label": "Albums",
+        "icon": "album"
+      },
+      {
+        "id": "artists",
+        "label": "Artists",
+        "icon": "artist"
+      },
+      {
+        "id": "playlists",
+        "label": "Playlists",
+        "icon": "playlist"
+      }
+    ]
+  },
+  "urlHandler": {
+    "enabled": true,
+    "patterns": [
+      "music.apple.com"
+    ]
+  },
+  "settings": [
+    {
+      "key": "storefront",
+      "label": "Storefront / Region",
+      "type": "string",
+      "default": "us",
+      "description": "Apple Music storefront code (e.g. us, gb, jp, id). Affects search results and catalog availability."
+    },
+    {
+      "key": "mediaUserToken",
+      "label": "Media User Token",
+      "type": "string",
+      "default": "",
+      "description": "Required for lyrics. Get it from browser console on music.apple.com: MusicKit.getInstance().musicUserToken. Needs an active Apple Music subscription."
+    },
+    {
+      "key": "lyricsTranslation",
+      "label": "Lyrics Translation Language",
+      "type": "string",
+      "default": "",
+      "description": "Language code for translated lyrics (e.g. en, zh-Hans, ja, ko, id). Leave empty to disable. Uses Apple Music's built-in translations."
+    },
+    {
+      "key": "lyricsPronunciation",
+      "label": "Lyrics Pronunciation Language",
+      "type": "string",
+      "default": "",
+      "description": "Language code for romanized pronunciation (e.g. ja-Latn for romaji, ko-Latn for Korean). Leave empty to disable."
+    }
+  ]
+}

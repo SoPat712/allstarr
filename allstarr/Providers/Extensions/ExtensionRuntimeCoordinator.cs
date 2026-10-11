@@ -313,6 +313,10 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         "file@1",
         "storage@1",
         "signedSession@1",
+        "signedSession@2",
+        "signedSession@3",
+        "patternedFileTransform@1",
+        "downloadSegments@1",
         "sessionGrant@1",
         "preparedContext@1"
     };

@@ -1,0 +1,44 @@
+{
+  "name": "melon-music",
+  "displayName": "Melon Music",
+  "version": "1.2.4",
+  "description": "Melon Music metadata provider with charts, album and artist catalogs, and DJ playlists",
+  "author": "custom",
+  "permissions": {
+    "network": [
+      "www.melon.com",
+      "melon.com"
+    ],
+    "storage": false,
+    "file": false
+  },
+  "type": [
+    "metadata_provider"
+  ],
+  "icon": "icon.png",
+  "capabilities": {
+    "homeFeed": true
+  },
+  "minAppVersion": "3.0.1",
+  "searchBehavior": {
+    "enabled": true,
+    "primary": false,
+    "placeholder": "멜론뮤직 검색...",
+    "thumbnailRatio": "square"
+  },
+  "skipMetadataEnrichment": false,
+  "skipBuiltInFallback": false,
+  "urlHandler": {
+    "enabled": true,
+    "patterns": [
+      "melon.com/song/detail.htm",
+      "melon.com/album/detail.htm",
+      "melon.com/artist/detail.htm",
+      "melon.com/artist/timeline.htm",
+      "melon.com/artist/song.htm",
+      "melon.com/artist/album.htm",
+      "melon.com/landing/playList.htm",
+      "melon.com/mymusic/dj/mymusicdjplaylistview_inform.htm"
+    ]
+  }
+}

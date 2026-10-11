@@ -186,6 +186,155 @@ public static class SpotiFlacExtensionCompatibility
     private static string Text(JsonObject value, string key, string fallback = "") =>
         value[key]?.GetValue<string>() ?? fallback;
 
+    // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/extensions/src/prelude.js.
+    internal const string RuntimePreludeScript = """
+        (function(host) {
+            const symbolDescription = Object.getOwnPropertyDescriptor(Symbol.prototype, "description").get;
+            const stringApply = Reflect.apply;
+            const primitiveSymbol = Symbol.toPrimitive;
+            function isPrimitive(value) {
+                return value === null || (typeof value !== "object" && typeof value !== "function");
+            }
+            function goString(value) {
+                // Goja Value.String accepts a Symbol returned by an object's coercion.
+                if (!isPrimitive(value)) {
+                    const exotic = value[primitiveSymbol];
+                    if (exotic !== undefined && exotic !== null) {
+                        value = stringApply(exotic, value, ["string"]);
+                        if (!isPrimitive(value)) throw new TypeError("cannot convert object to primitive value");
+                    } else {
+                        let converted = false;
+                        for (const key of ["toString", "valueOf"]) {
+                            const method = value[key];
+                            if (typeof method !== "function") continue;
+                            const result = stringApply(method, value, []);
+                            if (isPrimitive(result)) { value = result; converted = true; break; }
+                        }
+                        if (!converted) throw new TypeError("cannot convert object to primitive value");
+                    }
+                }
+                if (typeof value === "symbol") return (stringApply(symbolDescription, value, []) || "").toWellFormed();
+                return String(value).toWellFormed();
+            }
+            function isMap(value) {
+                return value !== null && typeof value === "object" && !Array.isArray(value)
+                    && !ArrayBuffer.isView(value) && !(value instanceof Date)
+                    && !(value instanceof Map) && !(value instanceof Set);
+            }
+            function formatGo(value) {
+                if (value === null || value === undefined) return "<nil>";
+                if (typeof value === "number") {
+                    if (Number.isNaN(value)) return "NaN";
+                    if (!Number.isFinite(value)) return value < 0 ? "-Inf" : "+Inf";
+                    if (Object.is(value, -0)) return "-0";
+                }
+                if (Array.isArray(value) || ArrayBuffer.isView(value)) {
+                    return "[" + Array.from(value, formatGo).join(" ") + "]";
+                }
+                if (isMap(value)) {
+                    return "map[" + Object.keys(value).sort()
+                        .map(key => goString(key) + ":" + formatGo(value[key])).join(" ") + "]";
+                }
+                return goString(value);
+            }
+            const responseByteArrays = new WeakMap();
+            function binaryOptions(value) {
+                if (value === null || typeof value !== "object" || Array.isArray(value) || ArrayBuffer.isView(value)
+                    || value instanceof ArrayBuffer || value instanceof Date || value instanceof Map || value instanceof Set) return null;
+                const result = Object.create(null);
+                for (const key of Object.keys(value)) {
+                    let item = value[key];
+                    if (typeof item === "string") item = goString(item);
+                    else if (responseByteArrays.has(item)) item = responseByteArrays.get(item);
+                    else if (item instanceof Uint8ClampedArray) item = new Uint8Array(item.buffer, item.byteOffset, item.byteLength);
+                    if (key === "segments" && Array.isArray(item)) item = Array.from(item, binaryOptions);
+                    result[key] = item;
+                }
+                return result;
+            }
+            function binaryPayload(value) {
+                if (typeof value === "string") return goString(value);
+                if (responseByteArrays.has(value)) return responseByteArrays.get(value);
+                if (value instanceof ArrayBuffer) return new Uint8Array(value);
+                if (value instanceof Uint8ClampedArray) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+                return value;
+            }
+                globalThis.ffmpeg = {
+                    getInfo(path) {
+                        if (!arguments.length) return {success: false, error: "file path is required"};
+                        return {success: false, error: 'media inspection is unavailable'};
+                    },
+                    convert(input, output, options) {
+                        if (arguments.length < 2) return {success: false, error: "input and output paths are required"};
+                        return host.FfmpegConvert(goString(input), goString(output), JSON.stringify(binaryOptions(options)));
+                    }
+                };
+                globalThis.ffmpeg.execute = function() {
+                    return {success: false, error: "raw FFmpeg execution is disabled; use ffmpeg.convert"};
+                };
+                function fileCall(method, args) {
+                    const paired = ["copy", "move", "transformPatternedBlocks"].includes(method);
+                    const write = method === "write" || method === "writeBytes";
+                    const required = method === "transformPatternedBlocks" ? 3 : paired || write ? 2 : 1;
+                    if (args.length < required) {
+                        if (method === "exists") return false;
+                        return {success: false, error: method === "transformPatternedBlocks"
+                            ? "input path, output path, and options are required"
+                            : paired ? "source and destination paths are required"
+                            : write ? "path and data are required" : "path is required"};
+                    }
+                    const value = paired || method === "write" ? goString(args[1])
+                        : method === "writeBytes" ? binaryPayload(args[1]) : undefined;
+                    const options = method === "readBytes" ? binaryOptions(args[1])
+                        : method === "writeBytes" || method === "transformPatternedBlocks" ? binaryOptions(args[2]) : null;
+                    if (args[3] != null && typeof args[3] !== "function") return {success: false, error: "progress callback must be a function"};
+                    return host.Transform(goString(args[0]), value, JSON.stringify(options), args[3] || null);
+                }
+                globalThis.file.downloadSegments = function(segments, path, options) {
+                    const failure = (error_type, error) => ({success: false, error, error_type, attempts: 0});
+                    if (arguments.length < 2) return failure("invalid_request", "segments and output path are required");
+                    if (!Array.isArray(segments) || !segments.length) return failure("invalid_request", "segments must be a non-empty array");
+                    const opts = binaryOptions(options);
+                    const common = Object.create(null);
+                    function headersInto(target, source) {
+                        if (source && typeof source === "object" && !Array.isArray(source)
+                            && !ArrayBuffer.isView(source) && !(source instanceof ArrayBuffer)
+                            && !(source instanceof Date) && !(source instanceof Map) && !(source instanceof Set)) {
+                            for (const key of Object.keys(source)) target[goString(key)] = formatGo(source[key]);
+                        }
+                    }
+                    if (opts) headersInto(common, opts.headers);
+                    const specs = [];
+                    for (let index = 0; index < segments.length; index++) {
+                        const item = segments[index];
+                        const headers = Object.assign(Object.create(null), common);
+                        let url;
+                        if (typeof item === "string") url = item;
+                        else if (item && typeof item === "object" && !Array.isArray(item)
+                            && !ArrayBuffer.isView(item) && !(item instanceof ArrayBuffer)
+                            && !(item instanceof Date) && !(item instanceof Map) && !(item instanceof Set)) {
+                            url = typeof item.url === "string" ? item.url : "";
+                            headersInto(headers, item.headers);
+                        } else return failure("invalid_request", "segment " + index + " must be a URL string or object");
+                        specs.push({url: goString(url), headers});
+                    }
+                    return host.DownloadSegments(JSON.stringify(specs), goString(path), JSON.stringify(opts), opts && typeof opts.onProgress === "function" ? opts.onProgress : null);
+                };
+                globalThis.file.transformPatternedBlocks = function() { return fileCall("transformPatternedBlocks", arguments); };
+            globalThis.matching = {
+                compareStrings(first, second) {
+                    return arguments.length < 2 ? 0 : host.CompareStrings(goString(first), goString(second));
+                },
+                compareDuration(first, second, tolerance) {
+                    return arguments.length < 2 ? false : host.CompareDuration(+first, +second, tolerance === undefined ? 3000 : +tolerance);
+                },
+                normalizeString(value) { return arguments.length ? host.Normalize(goString(value)) : ""; }
+            };
+                globalThis.gobackend = null;
+                utils.getResolutionRemainingMs = function() { return host.ResolutionRemainingMs(); };
+                })(host);
+        """;
+
     public const string RuntimeAdapterScript = """
         var _spotiflacExtension = _registeredExtension;
         var _allstarrInitializedSettings = null;
@@ -241,7 +390,7 @@ public static class SpotiFlacExtensionCompatibility
             title: String(value.name || value.title || ''),
             artists: _sfArtists(value),
             albumId: value.album_id || value.albumId || album.id || album.browse_id || album.browseId || null,
-            albumTitle: String(value.album_name || value.albumTitle || album.name || album.title || ''),
+            albumTitle: String(value.album_name || value.albumTitle || album.name || album.title || '').trim() || null,
             durationMs: Number(value.duration_ms || value.durationMs || 0),
             isrc: value.isrc ? String(value.isrc) : null,
             isExplicit: value.explicit == null ? null : Boolean(value.explicit),

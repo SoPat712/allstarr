@@ -133,7 +133,8 @@ internal sealed class ExtensionSignedSessionClient
 
     private T RunScript<T>(Func<CancellationToken, Task<T>> operation)
     {
-        using var limit = new CancellationTokenSource(ScriptRequestLimit);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None);
+        limit.CancelAfter(ScriptRequestLimit);
         if (!_gate.Wait(GateWait)) throw new TimeoutException("The extension session is busy.");
         try { return operation(limit.Token).GetAwaiter().GetResult(); }
         finally { _gate.Release(); }
@@ -324,6 +325,7 @@ internal sealed class ExtensionSignedSessionClient
         public static SessionResult Failed(string reasonCode, string detail) => new(null, reasonCode, detail);
     }
 
+    // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/extensions/src/signed_session/fetch.rs.
     public object SignedFetch(string method, string path, string? body, object? headers)
     {
         var payload = body ?? string.Empty;
@@ -340,13 +342,26 @@ internal sealed class ExtensionSignedSessionClient
                 if (TryExpiry(record, out var expiry) && expiry - DateTimeOffset.UtcNow <= RefreshSkew &&
                     !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
                     record = await TryRefreshAsync(record, limit);
-                var response = await SendSignedAsync(record, method, path, payload, extraHeaders, limit);
-                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired)
+                for (var retry = 0; ; retry++)
                 {
-                    Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
-                    return HostResponse(await BeginVerificationAsync(limit));
+                    var response = await SendSignedAsync(record, method, path, payload, extraHeaders, limit);
+                    var contract = ErrorContract.Parse(response.Response.Body);
+                    if (contract.ProviderRetry(response.StatusCode) && retry < 2)
+                    {
+                        var delay = response.Response.RetryAfterSeconds > 0 ? response.Response.RetryAfterSeconds :
+                            contract.RetryAfterSeconds > 0 ? contract.RetryAfterSeconds : 1;
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Min(10, delay)), limit);
+                        continue;
+                    }
+                    var reset = contract.GatewayAction(response.StatusCode).Length > 0 ||
+                        contract.Origin.Length == 0 && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired;
+                    if (reset)
+                    {
+                        Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
+                        return HostResponse(await BeginVerificationAsync(limit));
+                    }
+                    return response.ToHostResponse();
                 }
-                return response.ToHostResponse();
             });
         }
         catch (TimeoutException)
@@ -457,7 +472,8 @@ internal sealed class ExtensionSignedSessionClient
         }
         var responseHeaders = response.Headers.Concat(response.Content.Headers)
             .ToDictionary(item => item.Key, item => (object)string.Join(", ", item.Value), StringComparer.OrdinalIgnoreCase);
-        var retry = response.Headers.RetryAfter?.Delta is { } delta ? Math.Max(0, (int)delta.TotalSeconds) : 0;
+        var retry = response.Headers.RetryAfter?.Delta is { } delta ? Math.Max(0, (int)delta.TotalSeconds) :
+            response.Headers.RetryAfter?.Date is { } date ? Math.Max(0, (int)(date - DateTimeOffset.UtcNow).TotalSeconds) : 0;
         return new(response.StatusCode, Encoding.UTF8.GetString(output.ToArray()), responseHeaders, retry);
     }
 
@@ -523,16 +539,62 @@ internal sealed class ExtensionSignedSessionClient
     private sealed record SignedResponse(Uri Target, ResponseData Response)
     {
         public HttpStatusCode StatusCode => Response.StatusCode;
-        public object ToHostResponse() => new
+        public object ToHostResponse()
         {
-            statusCode = (int)Response.StatusCode,
-            status = (int)Response.StatusCode,
-            ok = Response.IsSuccessStatusCode,
-            url = Target.AbsoluteUri,
-            body = Response.Body,
-            headers = Response.Headers,
-            retryAfterSeconds = Response.RetryAfterSeconds
+            var contract = ErrorContract.Parse(Response.Body);
+            var result = new Dictionary<string, object>
+            {
+                ["statusCode"] = (int)Response.StatusCode,
+                ["status"] = (int)Response.StatusCode,
+                ["ok"] = Response.IsSuccessStatusCode,
+                ["url"] = Target.AbsoluteUri,
+                ["body"] = Response.Body,
+                ["headers"] = Response.Headers,
+                ["retryAfterSeconds"] = Response.RetryAfterSeconds > 0 ? Response.RetryAfterSeconds : contract.RetryAfterSeconds
+            };
+            if (contract.Code.Length > 0 || contract.Origin.Length > 0 || contract.Action.Length > 0)
+            {
+                result["error"] = contract.Error;
+                result["code"] = contract.Code;
+                result["origin"] = contract.Origin;
+                result["action"] = contract.Action;
+                result["retryable"] = contract.Retryable;
+                result["retryMode"] = contract.RetryMode;
+            }
+            return result;
+        }
+    }
+
+    // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/extensions/src/signed_session/protocol.rs.
+    private sealed record ErrorContract(string Error = "", string Code = "", string Origin = "", string Action = "",
+        bool Retryable = false, string RetryMode = "", int RetryAfterSeconds = 0)
+    {
+        public string GatewayAction(HttpStatusCode status) => (status, Origin, Code, Action) switch
+        {
+            (HttpStatusCode.Unauthorized, "gateway", "SESSION_INVALID", "bootstrap_session") => "bootstrap_session",
+            (HttpStatusCode.PreconditionRequired, "gateway", "VERIFY_REQUIRED", "verify") => "verify",
+            _ => ""
         };
+
+        public bool ProviderRetry(HttpStatusCode status) => status == HttpStatusCode.ServiceUnavailable &&
+            Origin == "provider" && Code == "PROVIDER_UNAVAILABLE" && Retryable && RetryMode == "same_operation";
+
+        public static ErrorContract Parse(string body)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(body);
+                var root = document.RootElement;
+                if (root.ValueKind != JsonValueKind.Object) return new();
+                string Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
+                    ? value.GetString()!.Trim() : "";
+                return new(Text("error"), Text("code").ToUpperInvariant(), Text("origin").ToLowerInvariant(),
+                    Text("action").ToLowerInvariant(), root.TryGetProperty("retryable", out var retryable) && retryable.ValueKind == JsonValueKind.True,
+                    Text("retry_mode").ToLowerInvariant(), root.TryGetProperty("retry_after_seconds", out var seconds) &&
+                    seconds.ValueKind == JsonValueKind.Number && seconds.TryGetInt32(out var count) ? Math.Max(0, count) : 0);
+            }
+            catch (JsonException) { return new(); }
+        }
     }
     private sealed class SessionExchange
     {
