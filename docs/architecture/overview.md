@@ -113,10 +113,14 @@ Playlist snapshot persistence serializes writes for each provider account with a
 ## Recording identity
 
 `TrackIdentityService` owns canonical recordings. Each recording has a stable
-`PublicId` (`ext-allstarr-song-{guid}`) assigned at creation, optional
+`PublicId` assigned at creation from the first known source alias, with
+`ext-allstarr-song-{guid}` as the fallback when no source ID is available, optional
 `MergedIntoId`, and zero or more `recording_identifiers` rows (ISRC and
 MusicBrainz recording IDs today). Identifier writes go through that owner;
 exact signals find or enrich one recording and never silently merge two.
+Explicit merges retain the earliest-created recording and its public ID, preserve
+the losing public IDs as redirects, and move identifiers and durable recording
+references to the survivor without changing provider-account scopes.
 Provider track links remain on `provider_track_identities`. Allstarr does not
 mirror a MusicBrainz catalog graph. `MusicBrainzService` stays the bounded
 `/ws/2` client for later background lookups; a source outage never invalidates

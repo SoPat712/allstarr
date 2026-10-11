@@ -88,34 +88,6 @@ public sealed partial class TrackMatchCommandService
         return identity;
     }
 
-    private static CanonicalRecordingRecord CreateProvisionalRecording(
-        Guid userId, DateTimeOffset now, string? isrc = null)
-    {
-        var id = Guid.CreateVersion7();
-        var recording = new CanonicalRecordingRecord
-        {
-            Id = id,
-            CreatedByUserId = userId,
-            PublicId = CanonicalCatalogKeys.DefaultPublicId(id),
-            IsProvisional = true,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        if (!string.IsNullOrWhiteSpace(isrc))
-        {
-            recording.Identifiers.Add(new RecordingIdentifierRecord
-            {
-                Id = Guid.CreateVersion7(),
-                RecordingId = id,
-                Kind = RecordingIdentifierKinds.Isrc,
-                Value = isrc.Trim().Replace("-", "", StringComparison.Ordinal).ToUpperInvariant(),
-                Source = "match",
-                CreatedAt = now
-            });
-        }
-        return recording;
-    }
-
     internal static async Task<bool> TryRetargetProvisionalIdentityAsync(
         AllstarrDbContext db,
         ProviderTrackIdentityRecord identity,

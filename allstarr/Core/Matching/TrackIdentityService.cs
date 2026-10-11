@@ -27,7 +27,10 @@ public sealed record CanonicalRecordingIdentity(
     Guid CreatedByUserId,
     string? Isrc,
     string? MusicBrainzRecordingId,
-    long Revision);
+    long Revision)
+{
+    public string PublicId { get; init; } = string.Empty;
+}
 
 public sealed record CanonicalRecordingCreationResult(
     CanonicalRecordingIdentity Recording,
@@ -55,7 +58,10 @@ public sealed record TrackIdentityResolution(
     Guid? ProviderAccountId,
     ProviderIdentityVerification Verification,
     string VerificationMethod,
-    int DecisionVersion);
+    int DecisionVersion)
+{
+    public string? PublicId { get; init; }
+}
 
 public sealed record ProviderTrackIdentityTarget
 {
@@ -124,7 +130,7 @@ public interface ITrackIdentityService
         CancellationToken cancellationToken = default);
 }
 
-public sealed class TrackIdentityService : ITrackIdentityService
+public sealed partial class TrackIdentityService : ITrackIdentityService
 {
     private const string DefaultCatalog = "default";
     private static readonly Regex IsrcPattern = new(
@@ -145,12 +151,27 @@ public sealed class TrackIdentityService : ITrackIdentityService
         _clock = clock;
     }
 
-    public async Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
+    public Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
         ProviderActorContext actor,
         string correlationId,
         string? isrc = null,
         string? musicBrainzRecordingId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        CreateRecordingCoreAsync(actor, correlationId, isrc, musicBrainzRecordingId, null, cancellationToken);
+
+    public Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
+        ProviderActorContext actor,
+        string correlationId,
+        string? isrc,
+        string? musicBrainzRecordingId,
+        string publicId,
+        CancellationToken cancellationToken = default) =>
+        CreateRecordingCoreAsync(actor, correlationId, isrc, musicBrainzRecordingId,
+            ValidatePublicId(publicId), cancellationToken);
+
+    private async Task<CanonicalRecordingCreationResult> CreateRecordingCoreAsync(
+        ProviderActorContext actor, string correlationId, string? isrc, string? musicBrainzRecordingId,
+        string? publicId, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(actor);
         EnsureStorageReady();
@@ -173,6 +194,13 @@ public sealed class TrackIdentityService : ITrackIdentityService
                 normalizedIsrc,
                 normalizedMusicBrainzId,
                 cancellationToken);
+            if (publicId != null)
+            {
+                var previous = await FindRecordingByPublicIdAsync(context, actor, publicId, cancellationToken);
+                if (record != null && previous != null && record.Id != previous.Id)
+                    throw new InvalidOperationException("The requested ID and exact signals identify different recordings.");
+                record ??= previous;
+            }
             var created = record == null;
             var now = _clock.UtcNow;
             if (record == null)
@@ -185,7 +213,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
                     CreatedAt = now,
                     UpdatedAt = now
                 };
-                record.PublicId = CanonicalCatalogKeys.DefaultPublicId(record.Id);
+                record.PublicId = publicId ?? CanonicalCatalogKeys.DefaultPublicId(record.Id);
                 context.CanonicalRecordings.Add(record);
             }
             EnsureSignalsCompatible(record, normalizedIsrc, normalizedMusicBrainzId);
@@ -239,13 +267,9 @@ public sealed class TrackIdentityService : ITrackIdentityService
             context,
             executionContext,
             cancellationToken);
-        var canonicalExists = await context.CanonicalRecordings.AsNoTracking().AnyAsync(
-            item => item.Id == request.CanonicalRecordingId,
-            cancellationToken);
-        if (!canonicalExists)
-        {
-            throw new KeyNotFoundException("The canonical recording does not exist.");
-        }
+        var recording = await FindSurvivorAsync(context, request.CanonicalRecordingId, cancellationToken)
+            ?? throw new KeyNotFoundException("The canonical recording does not exist.");
+        request = request with { CanonicalRecordingId = recording.Id };
 
         var scopeAccountId = request.Scope == ProviderIdentityScope.Account
             ? account!.Id
@@ -688,7 +712,7 @@ public sealed class TrackIdentityService : ITrackIdentityService
     {
         var existingIsrc = Identifier(existing, RecordingIdentifierKinds.Isrc);
         if (isrc != null && existingIsrc != null &&
-            !existingIsrc.Equals(isrc, StringComparison.Ordinal))
+            !existing.Identifiers.Any(item => item.Kind == RecordingIdentifierKinds.Isrc && item.Value == isrc))
         {
             throw new InvalidOperationException("The ISRC conflicts with the existing canonical recording.");
         }
@@ -891,7 +915,8 @@ public sealed class TrackIdentityService : ITrackIdentityService
         record.CreatedByUserId,
         Identifier(record, RecordingIdentifierKinds.Isrc),
         Identifier(record, RecordingIdentifierKinds.MusicBrainz),
-        record.Revision);
+        record.Revision)
+    { PublicId = record.PublicId };
 
     private static TrackIdentityResolution ToResolution(ProviderTrackIdentityRecord record) => new(
         record.CanonicalRecordingId,

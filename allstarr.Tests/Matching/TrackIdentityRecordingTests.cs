@@ -1,0 +1,134 @@
+using allstarr.Core.Capabilities;
+using allstarr.Core.Intelligence;
+using allstarr.Core.Matching;
+using allstarr.Core.Storage;
+using Microsoft.EntityFrameworkCore;
+
+namespace allstarr.Tests;
+
+public sealed partial class TrackIdentityServiceTests
+{
+    [Fact]
+    public async Task Merge_KeepsEarliestPublicIdAndAllAliasesAcrossRestart()
+    {
+        var actor = Actor(_userA);
+        var younger = await _service.CreateRecordingAsync(actor, "younger", "USRC17607839", null, "ext-qobuz-song-second");
+        var earlierService = new TrackIdentityService(_factory, _storageState, new FakeClock(_clock.UtcNow.AddMinutes(-1)));
+        var earlier = await earlierService.CreateRecordingAsync(actor, "earlier", "GBAYE0601498", null, "ext-deezer-first");
+        await Link(earlier.Recording.Id, Context(actor, "deezer"), "first");
+        await Link(younger.Recording.Id, Context(actor, "qobuz"), "second");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ListeningEvents.Add(new ListeningEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _userA,
+                Protocol = "jellyfin",
+                BackendInstanceId = "fixture",
+                OccurrenceKey = "before-merge",
+                CanonicalRecordingId = younger.Recording.Id,
+                TrackReference = younger.Recording.PublicId,
+                UpdatedAt = _clock.UtcNow
+            });
+            db.LibraryTracks.Add(new LibraryTrackRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _userA,
+                Protocol = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendLibraryId = "music",
+                BackendItemId = "native",
+                CanonicalRecordingId = younger.Recording.Id,
+                Title = "Recording",
+                Artist = "Artist",
+                IndexedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow,
+                SourceModifiedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var merged = await _service.MergeRecordingsAsync(actor, younger.Recording.Id, earlier.Recording.Id, "merge");
+        var restarted = new TrackIdentityService(_factory, _storageState, _clock);
+        foreach (var alias in new[] { earlier.Recording.PublicId, younger.Recording.PublicId,
+                     younger.Recording.Id.ToString("D"), CanonicalCatalogKeys.DefaultPublicId(younger.Recording.Id),
+                     "ext-deezer-song-first", "ext-qobuz-second" })
+        {
+            var resolved = await restarted.ResolveRecordingAsync(actor, alias);
+            Assert.Equal(earlier.Recording.Id, resolved?.Id);
+            Assert.Equal("ext-deezer-first", resolved?.PublicId);
+        }
+        Assert.Equal(earlier.Recording.Id, merged.Id);
+        await Link(younger.Recording.Id, Context(actor, "spotify"), "later-provider");
+        Assert.Equal(merged.Id, (await restarted.ResolveAsync(Context(actor, "spotify"), Track("spotify", "later-provider")))?.CanonicalRecordingId);
+        var existing = await restarted.CreateRecordingAsync(actor, "second-isrc", "USRC17607839");
+        Assert.False(existing.Created);
+        Assert.Equal(merged.PublicId, existing.Recording.PublicId);
+        var repeated = await restarted.MergeRecordingsAsync(actor, younger.Recording.Id, earlier.Recording.Id, "repeat");
+        Assert.Equal(merged.Id, repeated.Id);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await verify.CanonicalRecordings.CountAsync());
+        Assert.Equal(merged.Id, (await verify.CanonicalRecordings.SingleAsync(item => item.Id == younger.Recording.Id)).MergedIntoId);
+        Assert.All(await verify.ProviderTrackIdentities.ToArrayAsync(), item => Assert.Equal(merged.Id, item.CanonicalRecordingId));
+        Assert.All(await verify.RecordingIdentifiers.ToArrayAsync(), item => Assert.Equal(merged.Id, item.RecordingId));
+        Assert.Equal(merged.Id, (await verify.LibraryTracks.SingleAsync()).CanonicalRecordingId);
+        var history = await verify.ListeningEvents.SingleAsync();
+        Assert.Equal(merged.Id, history.CanonicalRecordingId);
+        Assert.Equal(younger.Recording.PublicId, history.TrackReference);
+        Assert.Single(await verify.AuditEvents.Where(item => item.Action == "canonical-recording.merge").ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task Merge_PreservesPersonalRouteAuthorization()
+    {
+        var actorA = Actor(_userA);
+        var actorB = Actor(_userB);
+        var accountA = await SeedUserAccount("qobuz", _userA);
+        var first = await _service.CreateRecordingAsync(actorA, "public", null, null, "ext-deezer-song-shared");
+        var second = await _service.CreateRecordingAsync(actorA, "personal", null, null, "ext-qobuz-song-personal");
+        await Link(first.Recording.Id, Context(actorA, "deezer"), "shared");
+        await Link(second.Recording.Id, Context(actorA, "qobuz", accountA), "personal", ProviderIdentityScope.Account);
+        await _service.MergeRecordingsAsync(actorA, first.Recording.Id, second.Recording.Id, "merge");
+
+        var authorized = await _service.TranslateAsync(Context(actorA, "deezer"), Track("deezer", "shared"),
+            Context(actorA, "qobuz", accountA), new ProviderTrackIdentityTarget("qobuz"));
+        var unauthorized = await _service.TranslateAsync(Context(actorB, "deezer"), Track("deezer", "shared"),
+            Context(actorB, "qobuz"), new ProviderTrackIdentityTarget("qobuz"));
+        Assert.Equal(TrackIdentityTranslationStatus.Translated, authorized.Status);
+        Assert.Equal(TrackIdentityTranslationStatus.TargetNotLinked, unauthorized.Status);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _service.TranslateAsync(
+            Context(actorB, "deezer"), Track("deezer", "shared"), Context(actorB, "qobuz", accountA), new ProviderTrackIdentityTarget("qobuz")));
+        await using var db = await _factory.CreateDbContextAsync();
+        var personal = await db.ProviderTrackIdentities.SingleAsync(item => item.ProviderId == "qobuz");
+        Assert.Equal(ProviderIdentityScope.Account, personal.Scope);
+        Assert.Equal(accountA.Id, personal.ProviderAccountId);
+    }
+
+    [Fact]
+    public async Task Merge_RejectsConflictingMusicBrainzIdentitiesWithoutChanges()
+    {
+        var actor = Actor(_userA);
+        var first = await _service.CreateRecordingAsync(actor, "first", musicBrainzRecordingId: "11111111-1111-4111-8111-111111111111");
+        var second = await _service.CreateRecordingAsync(actor, "second", musicBrainzRecordingId: "22222222-2222-4222-8222-222222222222");
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            _service.MergeRecordingsAsync(actor, first.Recording.Id, second.Recording.Id, "conflict"));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(await db.CanonicalRecordings.ToArrayAsync(), item => Assert.Null(item.MergedIntoId));
+        Assert.Equal(2, await db.RecordingIdentifiers.CountAsync());
+        Assert.Empty(await db.AuditEvents.Where(item => item.Action == "canonical-recording.merge").ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task FirstSeenPublicId_IsStableWhenLaterAliasUsesTheSameIsrc()
+    {
+        var actor = Actor(_userA);
+        var first = await _service.CreateRecordingAsync(actor, "first", "USRC17607839", null, "ext-deezer-song-first");
+        var restarted = new TrackIdentityService(_factory, _storageState, _clock);
+        var later = await restarted.CreateRecordingAsync(actor, "later", "USRC17607839", null, "ext-qobuz-song-later");
+        Assert.True(first.Created);
+        Assert.False(later.Created);
+        Assert.Equal(first.Recording.PublicId, later.Recording.PublicId);
+        Assert.Equal(first.Recording.Id, later.Recording.Id);
+        await Assert.ThrowsAsync<ArgumentException>(() => restarted.CreateRecordingAsync(actor, "bad", null, null, "ext-deezer-album-first"));
+    }
+}

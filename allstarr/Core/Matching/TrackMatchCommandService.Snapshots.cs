@@ -171,7 +171,8 @@ public sealed partial class TrackMatchCommandService
                     var now = DateTimeOffset.UtcNow;
                     if (identity == null)
                     {
-                        var canonical = CreateProvisionalRecording(owner.Id, now);
+                        var canonical = TrackIdentityService.CreateProvisionalRecording(owner.Id, now,
+                            publicId: $"ext-{providerId}-song-{externalId}");
                         identity = new ProviderTrackIdentityRecord
                         {
                             Id = Guid.CreateVersion7(),

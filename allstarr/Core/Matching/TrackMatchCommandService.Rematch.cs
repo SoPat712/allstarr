@@ -225,7 +225,7 @@ public sealed partial class TrackMatchCommandService
             {
                 if (source == null)
                 {
-                    var canonical = CreateProvisionalRecording(actor.UserId, clock.UtcNow, payload.Isrc);
+                    var canonical = TrackIdentityService.CreateProvisionalRecording(actor.UserId, clock.UtcNow, payload.Isrc);
                     db.CanonicalRecordings.Add(canonical);
                     source = await AddSourceSnapshotIdentityAsync(
                         db, catalogActor, snapshot, canonical.Id, latestVersion + 1,
