@@ -4,6 +4,9 @@ using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
+using allstarr.Core.Playlists;
+using allstarr.Core.Playlists.Sources;
+using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
@@ -11,6 +14,57 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlaylistImport_RemembersSourceIdsOnlyAfterCompleteCollection(bool partial)
+    {
+        var account = await SeedUserAccount("spotify", _userA);
+        var playlist = new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist");
+        var track = Track("spotify", "track");
+        var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderPlaylistTracksRequest>())).ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
+                new(playlist, "Playlist", new("Owner"), "revision", trackCount: 2),
+                new("spotify", [new(0, track), new(1, track)], isPartial: partial))));
+        var registry = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        registry.Setup(item => item.GetRequiredCapability<IProviderPlaylistCapability>("spotify", ProviderCapabilityKind.Playlist))
+            .Returns(capability.Object);
+        var gateway = new ProviderPlaylistSourceGateway(registry.Object, new(), _factory, _clock, _service);
+        var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
+            new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false),
+            "playlist-import", _clock.UtcNow.AddMinutes(5), default);
+        var link = new PlaylistLinkRecord
+        {
+            OwnerUserId = _userA,
+            ProviderAccountId = account.Id,
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "playlist",
+            TargetProtocol = "jellyfin",
+            TargetBackendInstanceId = "fixture"
+        };
+        if (partial)
+        {
+            await Assert.ThrowsAsync<PlaylistSourceUnavailableException>(() => gateway.CollectAsync(protocol, link, default));
+            await using var db = await _factory.CreateDbContextAsync();
+            Assert.Empty(await db.CanonicalRecordings.ToListAsync());
+            Assert.Empty(await db.ProviderTrackIdentities.ToListAsync());
+        }
+        else
+        {
+            var snapshot = await gateway.CollectAsync(protocol, link, default);
+            await using var db = await _factory.CreateDbContextAsync();
+            var recording = await db.CanonicalRecordings.SingleAsync();
+            Assert.Equal("ext-spotify-song-track", recording.PublicId);
+            Assert.All(snapshot.Entries, item => Assert.Equal(recording.Id, item.CanonicalRecordingId));
+            var identity = await db.ProviderTrackIdentities.SingleAsync();
+            Assert.Equal(ProviderIdentityScope.Account, identity.Scope);
+            Assert.Equal(account.Id, identity.ProviderAccountId);
+            Assert.Null(await _service.ResolveTargetAsync(Context(Actor(_userB), "spotify"), recording.Id, new("spotify")));
+        }
+    }
+
     [Fact]
     public async Task MergedGeneratedId_ResolvesMetadataAndPlaysWithoutRevivingTheLoser()
     {

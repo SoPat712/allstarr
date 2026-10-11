@@ -6,6 +6,7 @@ using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -72,6 +73,27 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         Assert.Equal(actionCount, await database.Set<FavoriteActionRecord>().CountAsync());
         Assert.Single(await database.Jobs.Where(item => item.Type == FavoriteActionPipeline.JobType).ToListAsync());
         Assert.Null(database.Model.FindEntityType("allstarr.Core.Storage.OutboxMessageRecord"));
+    }
+
+    [Theory]
+    [InlineData(FavoriteOperation.Favorite)]
+    [InlineData(FavoriteOperation.Unfavorite)]
+    public async Task FavoriteJob_RemembersTheLiteralIdForItsOwnerOnlyWhenFavoriting(FavoriteOperation operation)
+    {
+        const string itemId = "ext-fixture-legacy-track";
+        await _pipeline.RecordAsync(Request(operation, "identity") with { ItemId = itemId });
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        if (operation == FavoriteOperation.Favorite)
+            gateway.Setup(item => item.RememberTrackAsync(It.Is<ProtocolExecutionContext>(context =>
+                context.Principal!.UserId == _userId && context.VerifiedBackendPrincipalId == "backend-user"), itemId))
+                .Returns(Task.CompletedTask);
+        var handler = new FavoriteActionJobHandler(_factory,
+            [new RecordingExecutor("download", [])], _clock, providerGateway: gateway.Object);
+        var claim = await _jobs.ClaimNextAsync("identity-worker", [FavoriteActionPipeline.JobType]);
+        var completion = await handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        gateway.VerifyAll();
+        if (operation == FavoriteOperation.Unfavorite) gateway.VerifyNoOtherCalls();
     }
 
     [Fact]

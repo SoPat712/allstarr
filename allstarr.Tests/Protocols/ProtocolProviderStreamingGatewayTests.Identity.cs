@@ -37,17 +37,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         { PublicId = context.RequestedItemId };
         if (!headOnly)
         {
-            identities.Setup(item => item.ResolveAsync(It.IsAny<ProviderExecutionContext>(),
+            identities.Setup(item => item.RememberSourceAsync(It.IsAny<ProviderExecutionContext>(),
                 It.Is<ProviderExternalResourceId>(id => id.ProviderId == "qobuz" && id.Value == "legacy-track"),
-                It.IsAny<CancellationToken>())).ReturnsAsync((TrackIdentityResolution?)null);
-            identities.Setup(item => item.CreateRecordingAsync(context.Actor!, context.CorrelationId,
-                null, null, context.RequestedItemId, It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new CanonicalRecordingCreationResult(recording, true));
-            identities.Setup(item => item.LinkAsync(It.IsAny<ProviderExecutionContext>(),
-                It.Is<TrackIdentityLinkRequest>(request => request.CanonicalRecordingId == recording.Id &&
-                    request.ExternalId.Value == "legacy-track" && request.Scope == ProviderIdentityScope.Catalog &&
-                    request.Verification == ProviderIdentityVerification.Verified), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new TrackIdentityLinkResult(TrackIdentityLinkStatus.Created, recording.Id, Guid.CreateVersion7(), null));
+                context.RequestedItemId, ProviderIdentityScope.Catalog, null, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(recording.Id);
         }
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
         var stream = await gateway.OpenStreamAsync(context, "qobuz", "legacy-track", ProviderAudioQuality.Any, null, headOnly);

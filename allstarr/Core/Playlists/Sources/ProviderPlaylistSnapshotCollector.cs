@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 
 namespace allstarr.Core.Playlists.Sources;
@@ -22,7 +23,11 @@ public sealed record CollectedPlaylistSourceEntry(
     long? DurationMilliseconds,
     string? Isrc,
     bool? IsExplicit,
-    string? ArtworkUrl = null);
+    string? ArtworkUrl = null)
+{
+    [JsonIgnore]
+    public ProviderExternalResourceId? TrackId { get; init; }
+}
 
 public sealed record CollectedPlaylistSourceSnapshot(
     string ProviderId,
@@ -200,7 +205,8 @@ public sealed class ProviderPlaylistSnapshotCollector
                 : null,
             metadata?.Isrc,
             metadata?.IsExplicit,
-            metadata?.Artwork?.PublicUri?.AbsoluteUri);
+            metadata?.Artwork?.PublicUri?.AbsoluteUri)
+        { TrackId = track.TrackId };
     }
 
     private static string? StableArtworkReference(ProviderArtworkReference? artwork)

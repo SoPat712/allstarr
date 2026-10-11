@@ -36,6 +36,7 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
         Assert.All(snapshot.Entries, entry => Assert.Equal(180_000, entry.DurationMilliseconds));
         Assert.All(snapshot.Entries, entry =>
             Assert.Equal("https://i.scdn.co/album.jpg", entry.ArtworkUrl));
+        Assert.Equal("opaque-track-a", snapshot.Entries[0].TrackId!.Value);
         var json = JsonSerializer.Serialize(snapshot);
         Assert.DoesNotContain("opaque-playlist-secret", json, StringComparison.Ordinal);
         Assert.DoesNotContain("opaque-track-a", json, StringComparison.Ordinal);

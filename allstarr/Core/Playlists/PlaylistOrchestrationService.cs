@@ -62,7 +62,8 @@ public sealed class ProviderPlaylistSourceGateway(
     IProviderRegistry registry,
     ProviderPlaylistSnapshotCollector collector,
     IDbContextFactory<AllstarrDbContext> contextFactory,
-    IPlatformClock clock) : IProviderPlaylistSourceGateway
+    IPlatformClock clock,
+    ITrackIdentityService? identities = null) : IProviderPlaylistSourceGateway
 {
     public async Task<CollectedPlaylistSourceSnapshot> CollectAsync(
         ProtocolExecutionContext context,
@@ -98,7 +99,26 @@ public sealed class ProviderPlaylistSourceGateway(
                 account.ProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId)));
         if (!result.IsSuccess || result.Snapshot == null)
             throw new PlaylistSourceUnavailableException(result.Error?.Kind.ToString() ?? "source_unavailable");
-        return result.Snapshot;
+        if (identities == null) return result.Snapshot;
+        var remembered = new Dictionary<ProviderExternalResourceId, Guid>();
+        var entries = new List<CollectedPlaylistSourceEntry>(result.Snapshot.Entries.Count);
+        foreach (var entry in result.Snapshot.Entries)
+        {
+            if (entry.TrackId is not { } track)
+            {
+                entries.Add(entry);
+                continue;
+            }
+            if (!remembered.TryGetValue(track, out var recordingId))
+            {
+                recordingId = await identities.RememberSourceAsync(providerContext, track,
+                    $"ext-{track.ProviderId}-song-{track.Value}", ProviderIdentityScope.Account,
+                    entry.Isrc, cancellationToken);
+                remembered.Add(track, recordingId);
+            }
+            entries.Add(entry with { CanonicalRecordingId = recordingId });
+        }
+        return result.Snapshot with { Entries = entries };
     }
 
     public async Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(

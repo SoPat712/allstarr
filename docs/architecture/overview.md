@@ -106,7 +106,7 @@ Jellyfin search fetches native results with the current viewer’s credentials o
 
 Library indexing discovers all music libraries, optionally restricted by the deployment's selected library IDs. Local-copy selection uses the current viewer's backend library permissions rather than the identity that indexed the item. Permission results are isolated by backend, viewer and authentication context, expire after 30 seconds, and are invalidated on sign-in. Lookup failures deny indexed local routes; independently authorized provider routes remain eligible. Native playback metadata and artwork require a fresh viewer-filtered item lookup.
 
-Authenticated search keeps successful tracks, albums, and artists when another provider or search category fails. A batched, account-aware identity lookup collapses external track hits only when accepted links identify the same recording; tentative, released, replaced, pinned, and unknown links remain separate. The representative follows configured streaming order. This is still a provider-shaped search result, not the stable canonical protocol ID or native-item merge needed for unified music results.
+Authenticated search keeps successful tracks, albums, and artists when another provider or search category fails. A batched, account-aware identity lookup collapses external track hits only when accepted links identify the same recording; tentative, released, replaced, pinned, and unknown links remain separate. The representative follows configured streaming order. Known recordings retain their stable public ID and are projected as native items where the current viewer has access.
 
 Playlist snapshot persistence serializes writes for each provider account with a shared process-local lock. Source collection finishes before that lock is acquired, and the database transaction starts only after acquisition. Run one Allstarr process for a deployment; the lock does not coordinate separate processes. Database conflict classification lives in `Core/Storage/DbErrors`, while each operation retains its own bounded retry policy.
 
@@ -125,7 +125,10 @@ Protocol search, track details, and track lists publish the known public ID whil
 retaining the actual provider ID for metadata and route selection. Identity lookup
 and same-recording search grouping are read-only, including Personal account
 scope checks. Successful non-HEAD playback creates a missing identity with the
-literal requested track ID, including legacy IDs. Generated and merged recording
+literal requested track ID, including legacy IDs. Favorite jobs retain the same literal ID;
+complete imported playlist snapshots retain each source track ID before publication.
+Creation and source linking commit together, and repeated uses leave existing manual
+and suggested associations unchanged. Generated and merged recording
 IDs resolve through the same authorized provider selector; they do not grant
 access to another user's Personal account. The library index resolves proven
 recordings and exact ISRCs against the viewer's currently accessible libraries,

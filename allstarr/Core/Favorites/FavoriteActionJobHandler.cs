@@ -2,6 +2,8 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Identity;
+using allstarr.Core.Protocols;
 using Microsoft.EntityFrameworkCore;
 using System.Text.Json;
 
@@ -12,7 +14,8 @@ public sealed class FavoriteActionJobHandler(
     IEnumerable<IFavoriteActionExecutor> actionExecutors,
     IPlatformClock clock,
     IRecommendationSignalWriter? recommendationSignals = null,
-    ILogger<FavoriteActionJobHandler>? logger = null) : IDurableJobHandler
+    ILogger<FavoriteActionJobHandler>? logger = null,
+    IProtocolProviderGateway? providerGateway = null) : IDurableJobHandler
 {
     private readonly IReadOnlyDictionary<string, IFavoriteActionExecutor> _executors = actionExecutors.ToDictionary(
         executor => executor.ActionType.Trim().ToLowerInvariant(), StringComparer.Ordinal);
@@ -84,6 +87,16 @@ public sealed class FavoriteActionJobHandler(
             if (action.ActionType == FavoriteActionPipeline.VirtualLikedAction)
             {
                 result = await ApplyVirtualLikedStateAsync(database, favoriteEvent, cancellationToken);
+                if (providerGateway != null && favoriteEvent.Operation == FavoriteOperation.Favorite)
+                {
+                    var protocol = favoriteEvent.Protocol == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic;
+                    var execution = new ProtocolExecutionContext(protocol, favoriteEvent.BackendInstanceId,
+                        favoriteEvent.BackendPrincipalId,
+                        new AllstarrPrincipal(favoriteEvent.OwnerUserId, favoriteEvent.Protocol,
+                            favoriteEvent.BackendInstanceId, favoriteEvent.BackendPrincipalId, "User", false),
+                        favoriteEvent.CorrelationId, clock.UtcNow.AddSeconds(30), cancellationToken);
+                    await providerGateway.RememberTrackAsync(execution, favoriteEvent.ItemId);
+                }
             }
             else if (action.ActionType == "download" && _executors.TryGetValue(action.ActionType, out var executor))
             {

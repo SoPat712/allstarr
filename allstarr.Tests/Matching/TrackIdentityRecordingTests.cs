@@ -10,6 +10,54 @@ namespace allstarr.Tests;
 public sealed partial class TrackIdentityServiceTests
 {
     [Fact]
+    public async Task RememberSource_RetainsFirstLiteralIdAcrossRestartAndLaterProvider()
+    {
+        var actor = Actor(_userA);
+        var first = await _service.RememberSourceAsync(Context(actor, "deezer"), Track("deezer", "first"),
+            "ext-deezer-first", ProviderIdentityScope.Catalog, "USRC17607839");
+        var restarted = new TrackIdentityService(_factory, _storageState, _clock);
+        Assert.Equal(first, await restarted.RememberSourceAsync(Context(actor, "deezer"), Track("deezer", "first"),
+            "ext-deezer-song-first", ProviderIdentityScope.Catalog));
+        Assert.Equal(first, await restarted.RememberSourceAsync(Context(actor, "qobuz"), Track("qobuz", "second"),
+            "ext-qobuz-song-second", ProviderIdentityScope.Catalog, "USRC17607839"));
+        Assert.Equal("ext-deezer-first", (await restarted.ResolveRecordingAsync(actor, "ext-qobuz-song-second"))!.PublicId);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.CanonicalRecordings.ToListAsync());
+        Assert.Equal(2, await db.ProviderTrackIdentities.CountAsync());
+        Assert.Single(await db.RecordingIdentifiers.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(ProviderIdentityVerification.Pinned, "manual")]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion")]
+    public async Task RememberSource_DoesNotReplaceExistingAssociation(ProviderIdentityVerification verification, string method)
+    {
+        var execution = Context(Actor(_userA), "deezer");
+        var recording = await _service.CreateRecordingAsync(execution.Actor, "existing");
+        await _service.LinkAsync(execution, new(recording.Recording.Id, Track("deezer", "track"),
+            ProviderIdentityScope.Catalog, verification, method, 1));
+        Assert.Equal(recording.Recording.Id, await _service.RememberSourceAsync(execution, Track("deezer", "track"),
+            "ext-deezer-song-track", ProviderIdentityScope.Catalog));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.CanonicalRecordings.ToListAsync());
+        var link = await db.ProviderTrackIdentities.SingleAsync();
+        Assert.Equal(verification, link.Verification);
+        Assert.Equal(method, link.VerificationMethod);
+    }
+
+    [Fact]
+    public async Task RememberSource_RejectsAnotherUsersAccountWithoutCreatingAnOrphan()
+    {
+        var account = await SeedUserAccount("qobuz", _userA);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _service.RememberSourceAsync(
+            Context(Actor(_userB), "qobuz", account), Track("qobuz", "private"), "ext-qobuz-song-private",
+            ProviderIdentityScope.Account));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.CanonicalRecordings.ToListAsync());
+        Assert.Empty(await db.ProviderTrackIdentities.ToListAsync());
+    }
+
+    [Fact]
     public async Task RecordingLookup_ResolvesRegisteredProviderAliases()
     {
         var actor = Actor(_userA);

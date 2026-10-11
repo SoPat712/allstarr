@@ -47,6 +47,8 @@ public interface IProtocolProviderGateway
 
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task RememberTrackAsync(ProtocolExecutionContext protocol, string itemId);
+
     Task<Song?> GetPublicSongAsync(string providerId, string externalId, CancellationToken cancellationToken = default);
 
     Task<Album?> GetAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
