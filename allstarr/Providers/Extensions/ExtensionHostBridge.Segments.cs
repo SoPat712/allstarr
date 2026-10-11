@@ -126,6 +126,7 @@ public partial class ExtensionHostBridge
     {
         for (var attempt = 1; attempt <= maximumAttempts; attempt++)
         {
+            var attemptHeaders = headers;
             long written = 0;
             SegmentFailure? failure = null;
             try
@@ -134,7 +135,7 @@ public partial class ExtensionHostBridge
                 for (var redirect = 0; ; redirect++)
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Get, current);
-                    AddHeaders(request, headers);
+                    AddHeaders(request, attemptHeaders);
                     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                     if (response.RequestMessage?.RequestUri is not { } finalUri)
                         throw new SegmentFailure("permission", attempt);
@@ -145,7 +146,7 @@ public partial class ExtensionHostBridge
                         if (redirect >= 5 || response.Headers.Location == null) throw new SegmentFailure("http_error", attempt, status);
                         var redirected = RequireSegmentUri(new Uri(current, response.Headers.Location).AbsoluteUri);
                         if (redirected.GetLeftPart(UriPartial.Authority) != current.GetLeftPart(UriPartial.Authority))
-                            headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            attemptHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                         current = redirected;
                         continue;
                     }

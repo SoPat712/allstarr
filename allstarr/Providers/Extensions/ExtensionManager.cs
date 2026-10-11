@@ -819,28 +819,35 @@ public class ExtensionSandbox
     }
 
     /// <summary>Invokes an SDK v1 hook through a JSON-only boundary.</summary>
-    public string? InvokeJson(string hook, string requestJson)
+    public string? InvokeJson(string hook, string requestJson, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
         lock (_engineLock)
         {
-            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout,
-                ExtensionArtifactInvocationScope.Current?.CancellationToken ?? CancellationToken.None);
-            var function = _extensionObj.Get(hook);
-            if (!function.IsCallable()) return null;
+            var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
+            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken);
+            try
+            {
+                var function = _extensionObj.Get(hook);
+                if (!function.IsCallable()) return null;
 
-            var prepare = _engine.GetValue("_allstarrPrepareInvocation");
-            if (prepare.IsCallable()) _engine.Invoke(prepare);
+                var prepare = _engine.GetValue("_allstarrPrepareInvocation");
+                if (prepare.IsCallable()) _engine.Invoke(prepare);
 
-            var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
-            var result = _engine.Invoke(function, request);
-            budget.Token.ThrowIfCancellationRequested();
-            if (result.IsUndefined()) return null;
-            var serialized = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("stringify"), result).ToString();
-            if (serialized.Length > MaximumHookResultCharacters)
-                throw new InvalidOperationException("Extension response is too large.");
-            return serialized;
+                var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
+                var result = _engine.Invoke(function, request);
+                budget.Token.ThrowIfCancellationRequested();
+                if (result.IsUndefined()) return null;
+                var serialized = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("stringify"), result).ToString();
+                if (serialized.Length > MaximumHookResultCharacters)
+                    throw new InvalidOperationException("Extension response is too large.");
+                return serialized;
+            }
+            catch (OperationCanceledException) when (budget.Token.IsCancellationRequested && !callerToken.IsCancellationRequested)
+            {
+                throw new TimeoutException("Extension hook exceeded its time budget.");
+            }
         }
     }
 

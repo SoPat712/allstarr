@@ -53,7 +53,7 @@ public abstract class ExtensionCapabilityAdapterBase
                 using var invocationScope = openInvocationScope?.Invoke();
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);
-                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions));
+                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken);
                 if (json == null) return Failure<T>(ProviderErrorKind.NotSupported);
                 using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
                 return ProviderOutcome<T>.Success(map(document.RootElement));
@@ -67,7 +67,8 @@ public abstract class ExtensionCapabilityAdapterBase
                 return Task.FromResult(Run());
             }, context.CancellationToken);
         }
-        catch (OperationCanceledException) { return Failure<T>(ProviderErrorKind.Canceled); }
+        catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
+        { return Failure<T>(ProviderErrorKind.Canceled); }
         catch { return Failure<T>(ProviderErrorKind.TransientFailure); }
     }
 

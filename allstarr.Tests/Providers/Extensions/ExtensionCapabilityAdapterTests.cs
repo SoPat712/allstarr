@@ -94,6 +94,7 @@ public sealed class ExtensionCapabilityAdapterTests
 
     [Theory]
     [InlineData("ordered", 1024, null)]
+    [InlineData("retry-redirect", 1024, null)]
     [InlineData("denied", 1024, "permission")]
     [InlineData("redirect", 1024, "permission")]
     [InlineData("limited", 1024, "rate_limited")]
@@ -112,14 +113,14 @@ public sealed class ExtensionCapabilityAdapterTests
                   var progress = [];
                   var segments = [0,1,2,3].map(function(i) { return {url:'https://media.example.test/' + i, headers:{'X-Test':'segment'}}; });
                   if (request.scenario === 'denied') segments[3].url = 'https://denied.example.test/3';
-                  var result = file.downloadSegments(segments, 'output', {maxParallel:4, maxAttempts:1, headers:{'X-Test':'common'},
+                  var result = file.downloadSegments(segments, 'output', {maxParallel:4, maxAttempts:request.scenario === 'retry-redirect' ? 2 : 1, headers:{'X-Test':'common'},
                     onProgress:function(bytes,total,completed,count) { progress.push([bytes,total,completed,count]); }});
                   return {result:result, progress:progress};
                 }});
                 """;
             var handler = new SegmentHandler(scenario);
             var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(handler), NullLogger.Instance,
-                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]), new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/", "https://cdn.example.test/"]), new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
                 new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 });
             var job = Guid.CreateVersion7();
@@ -135,6 +136,7 @@ public sealed class ExtensionCapabilityAdapterTests
                 Assert.Equal(4, handler.Peak);
                 Assert.Equal(4, response.RootElement.GetProperty("progress").GetArrayLength());
                 Assert.Equal("[4,0,4,4]", response.RootElement.GetProperty("progress")[3].GetRawText());
+                if (scenario == "retry-redirect") Assert.All(handler.OriginAttempts.Values, count => Assert.Equal(2, count));
             }
             else
             {
@@ -154,10 +156,13 @@ public sealed class ExtensionCapabilityAdapterTests
     private sealed class SegmentHandler(string scenario) : HttpMessageHandler
     {
         private int active;
+        public System.Collections.Concurrent.ConcurrentDictionary<int, int> OriginAttempts { get; } = new();
         public int Peak { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            Assert.Equal("segment", Assert.Single(request.Headers.GetValues("X-Test")));
+            var redirected = request.RequestUri!.Host == "cdn.example.test";
+            if (redirected) Assert.False(request.Headers.Contains("X-Test"));
+            else Assert.Equal("segment", Assert.Single(request.Headers.GetValues("X-Test")));
             var count = Interlocked.Increment(ref active);
             Peak = Math.Max(Peak, count);
             try
@@ -166,6 +171,20 @@ public sealed class ExtensionCapabilityAdapterTests
                 await Task.Delay(20 * (4 - index), cancellationToken);
                 var response = new HttpResponseMessage(scenario == "limited" ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK)
                 { RequestMessage = request, Content = new ByteArrayContent([(byte)index]) };
+                if (scenario == "retry-redirect")
+                {
+                    if (!redirected)
+                    {
+                        OriginAttempts.AddOrUpdate(index, 1, (_, count) => count + 1);
+                        response.StatusCode = HttpStatusCode.Redirect;
+                        response.Headers.Location = new Uri("https://cdn.example.test/" + index);
+                    }
+                    else if (OriginAttempts[index] == 1)
+                    {
+                        response.StatusCode = HttpStatusCode.ServiceUnavailable;
+                        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.Zero);
+                    }
+                }
                 if (scenario == "redirect")
                 {
                     response.StatusCode = HttpStatusCode.Redirect;
@@ -299,6 +318,42 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.True(result.RootElement.GetProperty("before").GetInt64() > result.RootElement.GetProperty("after").GetInt64());
         Assert.ThrowsAny<Exception>(() => sandbox.InvokeJson("searchTracks", "{}"));
         Assert.NotNull(sandbox.InvokeJson("download", "{}"));
+    }
+
+    [Theory]
+    [InlineData("while (true) {}")]
+    [InlineData("utils.sleep(1000);")]
+    public async Task InvocationBudget_ExpiryIsATransientFailure(string work)
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, "searchTracks");
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            "registerExtension({searchTracks:function(){" + work + "return {items:[]};}});",
+            new HttpClientFactory(), NullLogger.Instance, hookTimeout: TimeSpan.FromMilliseconds(5));
+        Assert.Equal("Extension hook exceeded its time budget.",
+            Assert.Throws<TimeoutException>(() => sandbox.InvokeJson("searchTracks", "{}")).Message);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var outcome = await adapter.SearchTracksAsync(Context(), new("query", new ProviderPageRequest(10)));
+
+        Assert.Equal(ProviderErrorKind.TransientFailure, outcome.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task InvocationBudget_CallerCancellationRemainsCanceled()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, "searchTracks");
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            "registerExtension({searchTracks:function(){utils.sleep(1000);return {items:[]};}});",
+            new HttpClientFactory(), NullLogger.Instance, hookTimeout: TimeSpan.FromSeconds(3));
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
+
+        var outcome = await adapter.SearchTracksAsync(Context(cancellationToken: caller.Token),
+            new("query", new ProviderPageRequest(10)));
+
+        Assert.Equal(ProviderErrorKind.Canceled, outcome.Error!.Kind);
     }
 
     [Fact]
