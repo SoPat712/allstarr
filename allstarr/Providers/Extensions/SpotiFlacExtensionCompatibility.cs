@@ -437,7 +437,7 @@ public static class SpotiFlacExtensionCompatibility
         }
         function _sfSearch(request, filter, mapper) {
           if (!_spotiflacExtension || typeof _spotiflacExtension.customSearch !== 'function') return { items: [], isPartial: false };
-          var result = _spotiflacExtension.customSearch(request.query || '', { limit: request.page && request.page.limit || 20, filter: filter });
+          var result = _spotiflacExtension.customSearch(request.query || '', { limit: request.page && request.page.limit || 20, filter: filter.replace(/s$/, '') });
           var items = _sfArray(result).filter(function(item) {
             var type = String(item.item_type || item.type || '').toLowerCase();
             return !type || type === filter || type === filter.replace(/s$/, '');

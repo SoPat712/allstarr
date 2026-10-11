@@ -638,6 +638,34 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
+    [InlineData("searchTracks", "track")]
+    [InlineData("searchAlbums", "album")]
+    [InlineData("searchArtists", "artist")]
+    [InlineData("searchPlaylists", "playlist")]
+    public void SpotiFlacRuntimeAdapter_UsesSingularSearchFilters(string hook, string expectedFilter)
+    {
+        const string sourceManifest = """
+            {"name":"demo","displayName":"Demo","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{}}
+            """;
+        var script = $$$"""
+            registerExtension({customSearch:function(query, options) {
+              if (query !== 'Song' || options.limit !== 10 || options.filter !== '{{{expectedFilter}}}') return [];
+              return [{id:'result-1',name:'Song',artists:'Artist',item_type:'{{{expectedFilter}}}'},
+                      {id:'wrong-type',name:'Other',item_type:'unrelated'}];
+            }});
+            """;
+        var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
+            new HttpClientFactory(), NullLogger.Instance);
+
+        using var result = JsonDocument.Parse(sandbox.InvokeJson(hook, """{"query":"Song","page":{"limit":10}}""")!);
+
+        var item = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("result-1", item.GetProperty("id").GetString());
+    }
+
+    [Theory]
     [InlineData("")]
     [InlineData("   ")]
     public async Task SpotiFlacRuntimeAdapter_PreservesSearchTracksWithoutAnAlbum(string albumTitle)
