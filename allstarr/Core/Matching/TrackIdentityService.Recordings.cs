@@ -19,6 +19,36 @@ public sealed partial class TrackIdentityService
         return recording == null ? null : ToIdentity(recording);
     }
 
+    public async Task<TrackIdentityResolution?> ResolveTargetAsync(
+        ProviderExecutionContext executionContext, Guid recordingId, ProviderTrackIdentityTarget target,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(executionContext);
+        ArgumentNullException.ThrowIfNull(target);
+        EnsureStorageReady();
+        ThrowIfUnavailable(executionContext, cancellationToken);
+        if (target.ProviderId != executionContext.ProviderId || target.ResourceKind != ProviderResourceKind.Track)
+            throw new ArgumentException("The target must be a track owned by the execution provider.", nameof(target));
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await ValidateExecutionContextAsync(context, executionContext, cancellationToken);
+        var recording = await FindSurvivorAsync(context, recordingId, cancellationToken);
+        if (recording == null) return null;
+        var catalog = target.Catalog ?? DefaultCatalog;
+        var candidates = await context.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                item.CanonicalRecordingId == recording.Id && item.ProviderId == target.ProviderId &&
+                item.ResourceKind == ProviderResourceKind.Track && item.CatalogNamespace == catalog &&
+                (item.Scope == ProviderIdentityScope.Catalog || account != null && item.ProviderAccountId == account.Id))
+            .ToArrayAsync(cancellationToken);
+        var preferred = PreferAccountScope(candidates, account?.Id);
+        if (preferred.Count != 1) return null;
+        var identity = preferred[0];
+        if (identity.Verification is not (ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned) ||
+            identity.VerificationMethod is "automatic-suggestion" or
+                ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
+            return null;
+        return ToResolution(identity) with { PublicId = recording.PublicId };
+    }
+
     public async Task<CanonicalRecordingIdentity> MergeRecordingsAsync(
         ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
         CancellationToken cancellationToken = default)
@@ -157,6 +187,11 @@ public sealed partial class TrackIdentityService
         if (Guid.TryParse(publicId, out var recordingId)) return await FindSurvivorAsync(context, recordingId, cancellationToken);
         var (external, provider, type, externalId) = LocalLibraryService.ParseExternalResource(publicId);
         if (!external || type != "song") return null;
+        var typedId = $"ext-{provider}-song-{externalId}";
+        var legacyId = $"ext-{provider}-{externalId}";
+        record = await context.CanonicalRecordings.SingleOrDefaultAsync(
+            item => item.PublicId == (publicId == typedId ? legacyId : typedId), cancellationToken);
+        if (record != null) return await FindSurvivorAsync(context, record.Id, cancellationToken);
         if (provider == "allstarr" && Guid.TryParse(externalId, out recordingId))
             return await FindSurvivorAsync(context, recordingId, cancellationToken);
         var hash = CanonicalCatalogKeys.Hash(externalId!);

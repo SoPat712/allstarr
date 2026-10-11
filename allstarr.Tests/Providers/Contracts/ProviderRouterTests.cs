@@ -653,6 +653,22 @@ public sealed class ProviderRouterTests
             string? musicBrainzRecordingId = null,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+        public Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
+            ProviderActorContext actor, string correlationId, string? isrc, string? musicBrainzRecordingId,
+            string publicId, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
+        public Task<CanonicalRecordingIdentity?> ResolveRecordingAsync(
+            ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default) =>
+            Task.FromResult<CanonicalRecordingIdentity?>(null);
+
+        public Task<TrackIdentityResolution?> ResolveTargetAsync(
+            ProviderExecutionContext executionContext, Guid recordingId, ProviderTrackIdentityTarget target,
+            CancellationToken cancellationToken = default) => Task.FromResult<TrackIdentityResolution?>(null);
+
+        public Task<CanonicalRecordingIdentity> MergeRecordingsAsync(
+            ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public Task<TrackIdentityLinkResult> LinkAsync(
             ProviderExecutionContext executionContext,
             TrackIdentityLinkRequest request,

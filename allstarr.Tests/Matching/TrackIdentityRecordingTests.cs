@@ -9,6 +9,32 @@ namespace allstarr.Tests;
 public sealed partial class TrackIdentityServiceTests
 {
     [Fact]
+    public async Task PublicIdReads_AreReadOnlyAndPersonalTargetsStayScoped()
+    {
+        var actor = Actor(_userA);
+        var account = await SeedUserAccount("qobuz", _userA);
+        var record = await _service.CreateRecordingAsync(actor, "first", null, null, "ext-deezer-first");
+        await Link(record.Recording.Id, Context(actor, "deezer"), "first");
+        await Link(record.Recording.Id, Context(actor, "qobuz", account), "personal", ProviderIdentityScope.Account);
+        await using var before = await _factory.CreateDbContextAsync();
+        var counts = (await before.CanonicalRecordings.CountAsync(), await before.ProviderTrackIdentities.CountAsync(),
+            await before.AuditEvents.CountAsync(), await before.Jobs.CountAsync());
+        var resolved = await _service.ResolveManyAsync([
+            new(Context(actor, "deezer"), Track("deezer", "first")),
+            new(Context(actor, "qobuz", account), Track("qobuz", "personal"))]);
+        Assert.All(resolved, item => Assert.Equal("ext-deezer-first", item?.PublicId));
+        var allowed = await _service.ResolveTargetAsync(Context(actor, "qobuz", account), record.Recording.Id, new("qobuz"));
+        Assert.Equal("personal", allowed?.ExternalId.Value);
+        Assert.Equal(record.Recording.PublicId, allowed?.PublicId);
+        Assert.Null(await _service.ResolveTargetAsync(Context(Actor(_userB), "qobuz"), record.Recording.Id, new("qobuz")));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _service.ResolveTargetAsync(
+            Context(Actor(_userB), "qobuz", account), record.Recording.Id, new("qobuz")));
+        await using var after = await _factory.CreateDbContextAsync();
+        Assert.Equal(counts, (await after.CanonicalRecordings.CountAsync(), await after.ProviderTrackIdentities.CountAsync(),
+            await after.AuditEvents.CountAsync(), await after.Jobs.CountAsync()));
+    }
+
+    [Fact]
     public async Task Merge_KeepsEarliestPublicIdAndAllAliasesAcrossRestart()
     {
         var actor = Actor(_userA);

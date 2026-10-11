@@ -108,6 +108,21 @@ public interface ITrackIdentityService
         string? musicBrainzRecordingId = null,
         CancellationToken cancellationToken = default);
 
+    Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
+        ProviderActorContext actor, string correlationId, string? isrc, string? musicBrainzRecordingId,
+        string publicId, CancellationToken cancellationToken = default);
+
+    Task<CanonicalRecordingIdentity?> ResolveRecordingAsync(
+        ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default);
+
+    Task<TrackIdentityResolution?> ResolveTargetAsync(
+        ProviderExecutionContext executionContext, Guid recordingId, ProviderTrackIdentityTarget target,
+        CancellationToken cancellationToken = default);
+
+    Task<CanonicalRecordingIdentity> MergeRecordingsAsync(
+        ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
+        CancellationToken cancellationToken = default);
+
     Task<TrackIdentityLinkResult> LinkAsync(
         ProviderExecutionContext executionContext,
         TrackIdentityLinkRequest request,
@@ -411,6 +426,9 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
                            hashes.Contains(item.ExternalIdHash))
             .ToListAsync(cancellationToken);
 
+        var recordingIds = candidates.Select(item => item.CanonicalRecordingId).Distinct().ToArray();
+        var recordings = await context.CanonicalRecordings.AsNoTracking()
+            .Where(item => recordingIds.Contains(item.Id)).ToDictionaryAsync(item => item.Id, cancellationToken);
         var results = new TrackIdentityResolution?[lookups.Count];
         for (var index = 0; index < lookups.Count; index++)
         {
@@ -436,7 +454,18 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
                     "More than one accepted track identity exists in the same exact scope.");
             }
 
-            if (preferred.Count == 1) results[index] = ToResolution(preferred[0]);
+            if (preferred.Count == 1)
+            {
+                var identity = preferred[0];
+                var recording = recordings.GetValueOrDefault(identity.CanonicalRecordingId);
+                if (recording?.MergedIntoId != null)
+                    recording = await FindSurvivorAsync(context, recording.Id, cancellationToken);
+                results[index] = ToResolution(identity) with
+                {
+                    CanonicalRecordingId = recording?.Id ?? identity.CanonicalRecordingId,
+                    PublicId = recording?.PublicId
+                };
+            }
         }
 
         return results;
@@ -527,7 +556,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
             TrackIdentityTranslationStatus.Translated,
             source.CanonicalRecordingId,
             source,
-            ToResolution(preferred[0]));
+            await WithRecordingAsync(context, preferred[0], cancellationToken));
     }
 
     private async Task<TrackIdentityLinkResult> CompleteExistingLinkAsync(
@@ -587,9 +616,20 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         return preferred.Count switch
         {
             0 => null,
-            1 => ToResolution(preferred[0]),
+            1 => await WithRecordingAsync(context, preferred[0], cancellationToken),
             _ => throw new InvalidOperationException(
                 "More than one accepted track identity exists in the same exact scope.")
+        };
+    }
+
+    private static async Task<TrackIdentityResolution> WithRecordingAsync(
+        AllstarrDbContext context, ProviderTrackIdentityRecord identity, CancellationToken cancellationToken)
+    {
+        var recording = await FindSurvivorAsync(context, identity.CanonicalRecordingId, cancellationToken);
+        return ToResolution(identity) with
+        {
+            CanonicalRecordingId = recording?.Id ?? identity.CanonicalRecordingId,
+            PublicId = recording?.PublicId
         };
     }
 
