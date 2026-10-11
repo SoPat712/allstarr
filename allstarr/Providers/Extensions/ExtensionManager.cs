@@ -904,6 +904,9 @@ public class ExtensionSandbox
     internal bool IsNetworkAllowed(Uri uri) => _hostBridge.IsNetworkAllowed(uri);
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;
+
+    public Task<ExtensionSessionView?> RefreshSignedSessionIfDueAsync(CancellationToken cancellationToken = default) =>
+        _hostBridge.RefreshSessionIfDueAsync(cancellationToken);
     internal Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
         Uri uri,
         int maximumBytes,
@@ -1216,6 +1219,8 @@ public partial class ExtensionHostBridge
     }
 
     public bool HasSignedSession => _signedSession != null;
+    internal Task<ExtensionSessionView?> RefreshSessionIfDueAsync(CancellationToken cancellationToken) =>
+        RequireSignedSession().RefreshDueAsync(cancellationToken);
     public object SessionStatus() => RequireSignedSession().Status();
     public object SessionStartVerification() => RequireSignedSession().StartVerification();
     public object SessionCompleteGrant(string? grant) => RequireSignedSession().CompleteGrant(grant);

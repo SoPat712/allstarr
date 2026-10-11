@@ -21,7 +21,11 @@ public sealed record ExtensionSessionView(
     string State,
     string? ExpiresAt,
     string? VerificationUrl,
-    string? ReasonCode);
+    string? ReasonCode)
+{
+    public bool RenewsAutomatically { get; init; }
+    public string? LastRenewalFailure { get; init; }
+}
 
 public static class ExtensionSessionStates
 {
@@ -46,6 +50,7 @@ internal sealed class ExtensionSignedSessionClient
     private readonly string _extensionId;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _pendingAuthUrl;
+    private string? _lastRenewalFailure;
 
     public ExtensionSignedSessionClient(
         ExtensionSignedSessionConfig config,
@@ -94,6 +99,23 @@ internal sealed class ExtensionSignedSessionClient
 
     public Task<ExtensionSessionView> ViewAsync(CancellationToken cancellationToken) =>
         RunAdministratorAsync(_ => Task.FromResult(ViewOf(Load(), null)), cancellationToken);
+
+    public Task<ExtensionSessionView?> RefreshDueAsync(CancellationToken cancellationToken) =>
+        RunAdministratorAsync<ExtensionSessionView?>(async limit =>
+        {
+            if (string.IsNullOrWhiteSpace(_config.Endpoints.Refresh)) return null;
+            var record = Load();
+            if (!RefreshDue(record)) return null;
+            record = await TryRefreshAsync(record, limit);
+            cancellationToken.ThrowIfCancellationRequested();
+            return ViewOf(record, null);
+        }, cancellationToken);
+
+    // Adapted from SpotiFLAC-Mobile (MIT), signed_session/ss_protocol.rs refresh_due.
+    private bool RefreshDue(SessionRecord record) =>
+        !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh) && HasUsableSession(record) &&
+        TryExpiry(record, out var expiry) && expiry > DateTimeOffset.UtcNow &&
+        expiry - DateTimeOffset.UtcNow <= RefreshSkew;
 
     public object Clear() => RunScript(_ =>
     {
@@ -156,17 +178,22 @@ internal sealed class ExtensionSignedSessionClient
         var record = Load();
         Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
         _pendingAuthUrl = null;
+        _lastRenewalFailure = null;
     }
 
     private ExtensionSessionView ViewOf(SessionRecord record, string? reasonCode)
     {
         if (HasUsableSession(record))
-            return new(ExtensionSessionStates.SignedIn, record.ExpiresAt, null, reasonCode);
+            return new(ExtensionSessionStates.SignedIn, record.ExpiresAt, null, reasonCode)
+            {
+                RenewsAutomatically = !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh) && TryExpiry(record, out _),
+                LastRenewalFailure = _lastRenewalFailure
+            };
         if (_pendingAuthUrl != null)
             return new(ExtensionSessionStates.VerificationPending, null, _pendingAuthUrl, reasonCode);
         var expired = !string.IsNullOrWhiteSpace(record.SessionId) && !string.IsNullOrWhiteSpace(record.SessionSecret);
         return expired
-            ? new(ExtensionSessionStates.Expired, record.ExpiresAt, null, reasonCode)
+            ? new(ExtensionSessionStates.Expired, record.ExpiresAt, null, reasonCode) { LastRenewalFailure = _lastRenewalFailure }
             : new(ExtensionSessionStates.SignedOut, null, null, reasonCode);
     }
 
@@ -202,6 +229,7 @@ internal sealed class ExtensionSignedSessionClient
                 ExpiresAt = exchanged.ExpiresAt
             });
             _pendingAuthUrl = null;
+            _lastRenewalFailure = null;
             return SessionResult.Succeeded;
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)
@@ -339,8 +367,7 @@ internal sealed class ExtensionSignedSessionClient
             {
                 var record = Load();
                 if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit));
-                if (TryExpiry(record, out var expiry) && expiry - DateTimeOffset.UtcNow <= RefreshSkew &&
-                    !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh))
+                if (RefreshDue(record))
                     record = await TryRefreshAsync(record, limit);
                 for (var retry = 0; ; retry++)
                 {
@@ -405,7 +432,11 @@ internal sealed class ExtensionSignedSessionClient
         {
             var body = JsonSerializer.Serialize(new { install_id = record.InstallId });
             var result = await SendSignedAsync(record, "POST", _config.Endpoints.Refresh!, body, null, cancellationToken);
-            if (!result.Response.IsSuccessStatusCode) return record;
+            if (!result.Response.IsSuccessStatusCode)
+            {
+                _lastRenewalFailure = ResponseReason(result.StatusCode, "renewal_rejected");
+                return record;
+            }
             var refreshed = JsonSerializer.Deserialize<SessionExchange>(result.Response.Body,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             var next = record with
@@ -414,10 +445,21 @@ internal sealed class ExtensionSignedSessionClient
                 SessionSecret = refreshed?.SessionSecret ?? record.SessionSecret,
                 ExpiresAt = refreshed?.ExpiresAt ?? record.ExpiresAt
             };
+            if (string.IsNullOrWhiteSpace(refreshed?.ExpiresAt) || !TryExpiry(next, out var expiry) ||
+                expiry <= DateTimeOffset.UtcNow || !HasUsableSession(next))
+            {
+                _lastRenewalFailure = "unexpected_response";
+                return record;
+            }
             Save(next);
+            _lastRenewalFailure = null;
             return next;
         }
-        catch { return record; }
+        catch (Exception exception)
+        {
+            _lastRenewalFailure = ExceptionReason(exception);
+            return record;
+        }
     }
 
     private string BuildChallengeUrl(string challengeId)
@@ -518,8 +560,19 @@ internal sealed class ExtensionSignedSessionClient
         return record;
     }
 
-    private void Save(SessionRecord record) =>
-        File.WriteAllText(_statePath, _protector.Protect(JsonSerializer.Serialize(record)));
+    private void Save(SessionRecord record)
+    {
+        var temporary = _statePath + ".tmp";
+        try
+        {
+            File.WriteAllText(temporary, _protector.Protect(JsonSerializer.Serialize(record)));
+            File.Move(temporary, _statePath, overwrite: true);
+        }
+        finally
+        {
+            if (File.Exists(temporary)) File.Delete(temporary);
+        }
+    }
 
     private static bool HasUsableSession(SessionRecord record) =>
         !string.IsNullOrWhiteSpace(record.SessionId) && !string.IsNullOrWhiteSpace(record.SessionSecret) &&

@@ -5,7 +5,7 @@
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { sessionReasonText, sessionSummary, verificationHost } from "$lib/extensions";
+  import { renewalFailureText, sessionReasonText, sessionSummary, verificationHost } from "$lib/extensions";
 
   let { item, onchanged }: { item: ExtensionPackage; onchanged: () => Promise<void> } = $props();
 
@@ -109,6 +109,7 @@
     {#if summary}<Badge state={summary.badge}>{summary.label}</Badge>{/if}
   </header>
   {#if problem}<p class="notice-error" role="alert">{problem}</p>{:else if message}<p class="extension-session-message" role="status">{message}</p>{/if}
+  {#if session?.lastRenewalFailure}<p class="notice-error" role="status">{renewalFailureText(session.lastRenewalFailure)}</p>{/if}
 
   {#if loadFailed && !session}
     <div class="extension-session-actions"><Button size="sm" variant="secondary" onclick={() => void load(item)}>Check again</Button></div>

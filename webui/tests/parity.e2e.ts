@@ -2452,6 +2452,21 @@ async function mockSignedSessionExtension(page: Page, initial: Record<string, un
   };
 }
 
+test("extension sign-in shows automatic renewal without starting verification", async ({ page }) => {
+  await mockApi(page);
+  const mock = await mockSignedSessionExtension(page, {
+    state: "signed_in", expiresAt: "2099-06-15T12:00:00Z", renewsAutomatically: true,
+    lastRenewalFailure: "provider_unavailable",
+  });
+  await page.goto("#/integrations/extensions");
+  const panel = page.getByRole("region", { name: "Sign-in" });
+  await expect(panel.getByText(/Renews automatically.*2099/)).toBeVisible();
+  await expect(panel.getByRole("status")).toContainText("Last automatic renewal failed");
+  await expect(panel.getByRole("status")).toContainText("Your sign-in was kept");
+  await expect(panel.getByRole("button", { name: "Start verification" })).toHaveCount(0);
+  expect(mock.writes).toHaveLength(0);
+});
+
 test("extension sign-in explains each verification step and failure", async ({ page }) => {
   await mockApi(page);
   const mock = await mockSignedSessionExtension(page, { state: "signed_out" });

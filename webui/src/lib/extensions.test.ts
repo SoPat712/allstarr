@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  availablePackages, compareVersions, currentPackages, extensionFailureReason, sessionReasonText, sessionSummary, valueChanges,
+  availablePackages, compareVersions, currentPackages, extensionFailureReason, renewalFailureText, sessionReasonText, sessionSummary, valueChanges,
   verificationHost,
 } from "./extensions";
 import type { ExtensionPackage, ExtensionStoreItem } from "./api";
@@ -46,6 +46,14 @@ describe("extension catalog", () => {
 });
 
 describe("extension sign-in", () => {
+  it("shows automatic renewal and safe failure guidance", () => {
+    const summary = sessionSummary({ state: "signed_in", expiresAt: "2099-06-15T12:00:00Z", renewsAutomatically: true }, "en-US");
+    expect(summary.detail).toContain("Renews automatically.");
+    expect(summary.detail).toContain("2099");
+    expect(renewalFailureText("provider_unavailable")).toContain("Your sign-in was kept");
+    expect(renewalFailureText("token=private")).not.toContain("private");
+    expect(renewalFailureText(null)).toBe("");
+  });
   it("names every session state in words, not only color", () => {
     expect(sessionSummary({ state: "signed_out" })).toMatchObject({ label: "Not signed in", badge: "suggested" });
     expect(sessionSummary({ state: "verification_pending" })).toMatchObject({ label: "Verification needed" });

@@ -86,6 +86,38 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+    public async Task RefreshSignedSessionsAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var packageId in _sandboxes.Keys)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await WithRuntimeGateAsync(async () =>
+                {
+                    var package = await GetPackageAsync(packageId, cancellationToken);
+                    if (package.State != ExtensionPackageState.Active ||
+                        !_sandboxes.TryGetValue(packageId, out var sandbox) || !sandbox.HasSignedSession)
+                        return false;
+                    var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
+                    if (view == null) return false;
+                    var failed = view.LastRenewalFailure != null;
+                    await _controlPlane.WriteLogAsync(packageId, failed ? "warning" : "information",
+                        failed ? "session.renewal-failed" : "session.renewed",
+                        failed ? $"Automatic renewal failed ({view.LastRenewalFailure}); the existing sign-in was retained."
+                            : "Sign-in renewed automatically.", "extension-session", cancellationToken);
+                    return true;
+                }, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception)
+            {
+                // Do not include transport details or session material in diagnostics.
+                _logger.LogWarning("An extension session renewal check could not complete; it will be retried next tick");
+            }
+        }
+    }
+
     public async Task<ExtensionPackageRecord> ActivateAsync(
         Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
     {

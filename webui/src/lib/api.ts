@@ -1636,6 +1636,8 @@ export type ExtensionSession = {
   expiresAt?: string | null;
   verificationUrl?: string | null;
   reasonCode?: string | null;
+  renewsAutomatically?: boolean;
+  lastRenewalFailure?: string | null;
 };
 
 export type ExtensionStoreItem = {
