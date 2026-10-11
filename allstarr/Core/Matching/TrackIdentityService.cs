@@ -126,6 +126,10 @@ public interface ITrackIdentityService
     Task<Guid> RememberSourceAsync(ProviderExecutionContext context, ProviderExternalResourceId externalId,
         string publicId, ProviderIdentityScope scope, string? isrc = null, CancellationToken cancellationToken = default);
 
+    Task<CanonicalRecordingIdentity> EnrichRecordingAsync(ProviderActorContext actor, Guid recordingId,
+        string expectedIsrc, string musicBrainzId, IReadOnlyCollection<string> isrcs, string correlationId,
+        CancellationToken cancellationToken = default);
+
     Task<TrackIdentityLinkResult> LinkAsync(
         ProviderExecutionContext executionContext,
         TrackIdentityLinkRequest request,

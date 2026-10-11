@@ -136,9 +136,13 @@ with personal overrides ahead of household overrides. Search returns the complet
 native backend item after a successful backend read; a denied read retains the
 external result. Known local recordings use the normal authenticated native
 metadata and streaming routes. Provider track links remain on `provider_track_identities`. Allstarr does not
-mirror a MusicBrainz catalog graph. `MusicBrainzService` stays the bounded
-`/ws/2` client for later background lookups; a source outage never invalidates
-an already accepted route. Library scans write one `scan.summary` audit row
+mirror a MusicBrainz catalog graph. `MusicBrainzService` is the bounded `/ws/2` client for optional background
+ISRC lookups. When enabled, hourly discovery queues low-priority durable jobs
+for recordings with an ISRC and no MBID. Only one exact, unambiguous recording
+response may add identifiers or merge recordings through the identity owner.
+Conflicting MBIDs leave all recordings unchanged. A source outage never invalidates
+an already accepted route; search, playback, scans and match decisions make no
+MusicBrainz request. Library scans write one `scan.summary` audit row
 plus one row per created or changed track.
 
 ## External playback selection
