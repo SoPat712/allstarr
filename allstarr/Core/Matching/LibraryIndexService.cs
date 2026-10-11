@@ -1,4 +1,5 @@
 using System.Text.Json;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -63,13 +64,20 @@ public interface ILibraryIndexService
         string backendLibraryId,
         CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyDictionary<string, string>> FindKnownRecordingTracksAsync(
+        ProtocolExecutionContext context, IReadOnlyList<LibraryRecordingLookup> recordings,
+        CancellationToken cancellationToken = default);
+
+    Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId,
+        CancellationToken cancellationToken = default);
+
     Task RecordScanSummaryAsync(
         ProtocolExecutionContext executionContext,
         LibraryCatalogScanResult result,
         CancellationToken cancellationToken = default);
 }
 
-public sealed class LibraryIndexService : ILibraryIndexService
+public sealed partial class LibraryIndexService : ILibraryIndexService
 {
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -81,19 +89,22 @@ public sealed class LibraryIndexService : ILibraryIndexService
     private readonly IPlatformClock _clock;
     private readonly ITrackIdentityService _identities;
     private readonly IBackendLibraryAccessResolver _libraryAccess;
+    private readonly IProviderRegistry? _registry;
 
     public LibraryIndexService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
         IPlatformClock clock,
         ITrackIdentityService identities,
-        IBackendLibraryAccessResolver libraryAccess)
+        IBackendLibraryAccessResolver libraryAccess,
+        IProviderRegistry? registry = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
         _identities = identities;
         _libraryAccess = libraryAccess;
+        _registry = registry;
     }
 
     public async Task<IndexedLibraryTrack> UpsertAsync(

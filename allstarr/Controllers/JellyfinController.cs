@@ -24,6 +24,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Favorites;
 using allstarr.Core.Playback;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Matching;
 using SkiaSharp;
 
 namespace allstarr.Controllers;
@@ -67,6 +68,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
+    private readonly ILibraryIndexService? _libraryIndex;
 
     public JellyfinController(
         IOptions<JellyfinSettings> settings,
@@ -96,9 +98,11 @@ public partial class JellyfinController : ControllerBase
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         ManagedTrackCacheService? managedTrackCache = null,
-        IBackendLibraryAccessResolver? libraryAccess = null)
+        IBackendLibraryAccessResolver? libraryAccess = null,
+        ILibraryIndexService? libraryIndex = null)
     {
         _settings = settings.Value;
+        _libraryIndex = libraryIndex;
         _libraryAccess = libraryAccess;
         _spotifySettings = spotifySettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
@@ -242,6 +246,11 @@ public partial class JellyfinController : ControllerBase
         }
 
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
+        if (isExternal && type == "song" && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+        {
+            itemId = nativeId;
+            isExternal = false;
+        }
 
         if (isExternal)
         {

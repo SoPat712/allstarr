@@ -113,6 +113,8 @@ public partial class JellyfinController
     public async Task<IActionResult> GetMusicPlaybackInfo(string itemId)
     {
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(itemId);
+        if (isExternal && type == "song" && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+            return await ProxyPlaybackInfoAsync($"Items/{Uri.EscapeDataString(nativeId)}/PlaybackInfo{Request.QueryString}");
         if (!isExternal)
         {
             var upstream = BuildCurrentEndpoint();

@@ -33,7 +33,7 @@ using SkiaSharp;
 
 namespace allstarr.Tests;
 
-public sealed class ProtocolRouteFixtureTests
+public sealed partial class ProtocolRouteFixtureTests
 {
     [Fact]
     public async Task JellyfinSearch_RechecksNativeAccessForEachViewerAndAfterRevocation()
@@ -1016,6 +1016,8 @@ public sealed class ProtocolRouteFixtureTests
             services =>
             {
                 AddArtworkPrincipal(services, "user-1");
+                services.RemoveAll<ILibraryIndexService>();
+                services.AddSingleton(Mock.Of<ILibraryIndexService>());
                 services.RemoveAll<IProtocolProviderGateway>();
                 services.AddSingleton(gateway.Object);
             });

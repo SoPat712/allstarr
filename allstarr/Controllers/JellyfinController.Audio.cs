@@ -23,6 +23,11 @@ public partial class JellyfinController
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        if (isExternal && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+        {
+            itemId = nativeId;
+            isExternal = false;
+        }
 
         if (!isExternal)
         {
@@ -53,6 +58,11 @@ public partial class JellyfinController
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        if (isExternal && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+        {
+            itemId = nativeId;
+            isExternal = false;
+        }
 
         if (!isExternal)
         {
@@ -252,6 +262,11 @@ public partial class JellyfinController
         }
 
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        if (isExternal && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+        {
+            itemId = nativeId;
+            isExternal = false;
+        }
 
         if (!isExternal)
         {
