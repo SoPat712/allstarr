@@ -34,7 +34,7 @@ LABEL org.opencontainers.image.version="${ALLSTARR_VERSION}"
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 RUN install -d /app/data /app/data/downloads /app/data/kept /app/data/cache /app/data/extensions /app/data/backups

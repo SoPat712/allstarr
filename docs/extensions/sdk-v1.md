@@ -77,11 +77,36 @@ JavaScript packages run in the constrained Jint compatibility runtime with bound
 
 Permission changes require administrator review before an update can activate. Disable, uninstall, and registry removal are control-plane operations with durable state and audit events.
 
+### Download compatibility
+
+The runtime supports `preparedContext@1`, `patternedFileTransform@1` and `downloadSegments@1`.
+Download hooks have a five-minute cancellation budget; other hooks have twelve seconds.
+`utils.getResolutionRemainingMs()` reports the remaining invocation budget.
+
+`file.transformPatternedBlocks` supports Blowfish or AES with CBC or CTR, no padding, and
+hex, base64 or UTF-8 keys and IVs. Each selected segment starts with the supplied IV.
+`file.downloadSegments` downloads approved HTTPS URLs with up to eight parallel requests,
+preserves segment order, and reports progress on the script thread. Common headers may be
+overridden per segment. Downloads and transforms use invocation-owned temporary files,
+enforce the managed artifact size limit, and publish completed output atomically.
+Persistent segment checkpoints are accepted but are not retained between invocations.
+
+`ffmpeg.convert` supports audio remuxing with `codec: "copy"` using the FFmpeg included in
+the container. Local installations need FFmpeg on their executable path. Input and output
+remain inside the invocation workspace; raw FFmpeg commands are disabled.
+The `matching` helpers expose string similarity, duration comparison and string normalization.
+The legacy `gobackend` global is `null`.
+
 ### Signed sessions
 
 A package whose service needs a verified installation declares `signedSession` in its manifest: a `namespace`, an HTTPS `baseUrl`, and optionally `appVersion`, `platform`, `callbackUrl`, `schemeLabel`, `headerPrefix`, `timeWindowSeconds` (30–3600, default 300) and `endpoints` (`bootstrap`, `challenge`, `exchange`, and an optional `refresh`). The base URL's origin must also be an approved network permission.
 
 The host performs bootstrap, challenge, grant exchange and request signing. Session secrets are encrypted on disk and never reach the script, the administrator API or logs; scripts see only session status and the responses to signed requests. Session operations for a package run one at a time, and each signed request has a 30-second limit.
+
+The host supports `signedSession@1`, `signedSession@2` and `signedSession@3`. Explicit
+provider-unavailable responses may retry twice with cancellable delays capped at ten seconds.
+Provider authentication errors retain the session; gateway session-invalid or verification-required
+responses start verification. Error-contract fields are returned to the script with the response.
 
 A sign-in belongs to the extension ID and the registry the package came from (or local upload). Updates from the same registry keep it; a package with the same ID from another source starts signed out. Uninstalling the last package of that source deletes its session, and uninstalling the last package of the extension deletes all of its runtime state.
 
