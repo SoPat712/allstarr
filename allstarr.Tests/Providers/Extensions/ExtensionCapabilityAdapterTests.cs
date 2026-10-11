@@ -14,6 +14,293 @@ namespace allstarr.Tests;
 
 public sealed class ExtensionCapabilityAdapterTests
 {
+    [Theory]
+    [InlineData("blowfish", "cbc", 2048, false)]
+    [InlineData("aes", "cbc", 2048, false)]
+    [InlineData("aes", "ctr", 2047, true)]
+    public async Task PatternedTransform_RestartsIvAndPreservesUnselectedSegments(string algorithm, string mode, int segmentSize, bool partial)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-transform", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string manifest = """
+                {"id":"transform-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+                 "capabilities":[{"kind":"Download","hooks":["download"],"accountScopes":[],"accountRequired":false}],"permissions":[]}
+                """;
+            const string script = """
+                registerExtension({download:function(request) {
+                  var calls = 0;
+                  var result = file.transformPatternedBlocks('input', 'output', request, function(processed, total) {
+                    if (processed !== total) throw new Error('unexpected progress');
+                    calls++;
+                  });
+                  return {result: result, progressCalls: calls};
+                }, invalid:function(request) { return file.transformPatternedBlocks('../outside', 'output', request); }});
+                """;
+            var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(), NullLogger.Instance,
+                ExtensionRuntimePermissionSet.None, Path.Combine(root, "runtime"));
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 32768 });
+            var job = Guid.CreateVersion7();
+            var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "transform-demo", null, "download"));
+            using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "transform-demo", 32768, CancellationToken.None);
+            var original = Enumerable.Range(0, 7 * segmentSize + 100).Select(i => (byte)(i * 31)).ToArray();
+            var encrypted = original.ToArray();
+            var key = Convert.FromHexString("00112233445566778899aabbccddeeff");
+            var iv = algorithm == "aes" ? new byte[16] : Convert.FromHexString("0001020304050607");
+            Org.BouncyCastle.Crypto.IBlockCipher engine = algorithm == "aes"
+                ? new Org.BouncyCastle.Crypto.Engines.AesEngine() : new Org.BouncyCastle.Crypto.Engines.BlowfishEngine();
+            Org.BouncyCastle.Crypto.IBlockCipher cipher = mode == "cbc"
+                ? new Org.BouncyCastle.Crypto.Modes.CbcBlockCipher(engine) : new Org.BouncyCastle.Crypto.Modes.SicBlockCipher(engine);
+            for (var segment = 0; segment < 7; segment += 3)
+            {
+                cipher.Init(true, new Org.BouncyCastle.Crypto.Parameters.ParametersWithIV(new Org.BouncyCastle.Crypto.Parameters.KeyParameter(key), iv));
+                for (var offset = 0; offset < segmentSize; offset += cipher.GetBlockSize())
+                {
+                    var block = new byte[cipher.GetBlockSize()];
+                    var count = Math.Min(block.Length, segmentSize - offset);
+                    Buffer.BlockCopy(encrypted, segment * segmentSize + offset, block, 0, count);
+                    cipher.ProcessBlock(block, 0, block, 0);
+                    Buffer.BlockCopy(block, 0, encrypted, segment * segmentSize + offset, count);
+                }
+            }
+            File.WriteAllBytes(scope.ResolveTemporaryPath("input"), encrypted);
+            var options = JsonSerializer.Serialize(new
+            {
+                algorithm,
+                mode,
+                key = Convert.ToHexString(key),
+                keyEncoding = "hex",
+                iv = Convert.ToHexString(iv),
+                ivEncoding = "hex",
+                segmentSize,
+                transformEvery = 3,
+                transformPartial = partial
+            });
+            using var result = JsonDocument.Parse(sandbox.InvokeJson("download", options)!);
+            var transformedResult = result.RootElement.GetProperty("result");
+            Assert.True(transformedResult.GetProperty("success").GetBoolean());
+            Assert.Equal(8, transformedResult.GetProperty("segments_processed").GetInt32());
+            Assert.Equal(3, transformedResult.GetProperty("segments_transformed").GetInt32());
+            Assert.Equal(original.Length, transformedResult.GetProperty("bytes_processed").GetInt32());
+            Assert.Equal(1, result.RootElement.GetProperty("progressCalls").GetInt32());
+            Assert.Equal(original, File.ReadAllBytes(scope.ResolveTemporaryPath("output")));
+            using var invalid = JsonDocument.Parse(sandbox.InvokeJson("invalid", options)!);
+            Assert.False(invalid.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(original, File.ReadAllBytes(scope.ResolveTemporaryPath("output")));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("ordered", 1024, null)]
+    [InlineData("denied", 1024, "permission")]
+    [InlineData("redirect", 1024, "permission")]
+    [InlineData("limited", 1024, "rate_limited")]
+    [InlineData("ordered", 3, "storage_error")]
+    public async Task SegmentedDownload_PreservesOrderAndEnforcesBoundaries(string scenario, int maximumBytes, string? error)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-segments", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string manifest = """
+                {"id":"segments-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+                 "capabilities":[{"kind":"Download","hooks":["download"],"accountScopes":[],"accountRequired":false}],"permissions":[]}
+                """;
+            const string script = """
+                registerExtension({download:function(request) {
+                  var progress = [];
+                  var segments = [0,1,2,3].map(function(i) { return {url:'https://media.example.test/' + i, headers:{'X-Test':'segment'}}; });
+                  if (request.scenario === 'denied') segments[3].url = 'https://denied.example.test/3';
+                  var result = file.downloadSegments(segments, 'output', {maxParallel:4, maxAttempts:1, headers:{'X-Test':'common'},
+                    onProgress:function(bytes,total,completed,count) { progress.push([bytes,total,completed,count]); }});
+                  return {result:result, progress:progress};
+                }});
+                """;
+            var handler = new SegmentHandler(scenario);
+            var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(handler), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]), new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 });
+            var job = Guid.CreateVersion7();
+            var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "segments-demo", null, "download"));
+            using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "segments-demo", maximumBytes, CancellationToken.None);
+            File.WriteAllBytes(scope.ResolveTemporaryPath("output"), [99]);
+            using var response = JsonDocument.Parse(sandbox.InvokeJson("download", JsonSerializer.Serialize(new { scenario }))!);
+            var result = response.RootElement.GetProperty("result");
+            Assert.Equal(error == null, result.GetProperty("success").GetBoolean());
+            if (error == null)
+            {
+                Assert.Equal(new byte[] { 0, 1, 2, 3 }, File.ReadAllBytes(scope.ResolveTemporaryPath("output")));
+                Assert.Equal(4, handler.Peak);
+                Assert.Equal(4, response.RootElement.GetProperty("progress").GetArrayLength());
+                Assert.Equal("[4,0,4,4]", response.RootElement.GetProperty("progress")[3].GetRawText());
+            }
+            else
+            {
+                Assert.Equal(error, result.GetProperty("error_type").GetString());
+                Assert.Equal(new byte[] { 99 }, File.ReadAllBytes(scope.ResolveTemporaryPath("output")));
+                if (scenario == "limited")
+                {
+                    Assert.Equal(429, result.GetProperty("http_status").GetInt32());
+                    Assert.Equal(1, result.GetProperty("attempts").GetInt32());
+                }
+                if (scenario == "denied") Assert.Equal(0, handler.Peak);
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    private sealed class SegmentHandler(string scenario) : HttpMessageHandler
+    {
+        private int active;
+        public int Peak { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Assert.Equal("segment", Assert.Single(request.Headers.GetValues("X-Test")));
+            var count = Interlocked.Increment(ref active);
+            Peak = Math.Max(Peak, count);
+            try
+            {
+                var index = int.Parse(request.RequestUri!.AbsolutePath.Trim('/'));
+                await Task.Delay(20 * (4 - index), cancellationToken);
+                var response = new HttpResponseMessage(scenario == "limited" ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK)
+                { RequestMessage = request, Content = new ByteArrayContent([(byte)index]) };
+                if (scenario == "redirect")
+                {
+                    response.StatusCode = HttpStatusCode.Redirect;
+                    response.Headers.Location = new Uri("https://denied.example.test/0");
+                }
+                return response;
+            }
+            finally { Interlocked.Decrement(ref active); }
+        }
+    }
+
+    private sealed class SlowBudgetHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(100, cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new StringContent("ok") };
+        }
+    }
+
+    [Fact]
+    public async Task MediaConvert_RemuxesScopedAudioOrReportsMissingExecutable()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-remux", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string manifest = """
+                {"id":"remux-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+                 "capabilities":[{"kind":"Download","hooks":["download"],"accountScopes":[],"accountRequired":false}],"permissions":[]}
+                """;
+            const string script = """
+                registerExtension({download:function(request) { return ffmpeg.convert(request.input,'output.wav',{codec:request.codec}); }});
+                """;
+            var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(), NullLogger.Instance,
+                ExtensionRuntimePermissionSet.None, Path.Combine(root, "runtime"));
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(),
+                new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 32768 });
+            var job = Guid.CreateVersion7();
+            var workspace = await resolver.CreateWorkspaceAsync(new(Guid.CreateVersion7(), job, "remux-demo", null, "download"));
+            using var scope = ExtensionArtifactInvocationScope.Open(resolver, workspace.Reference, job, "remux-demo", 32768, CancellationToken.None);
+            using (var writer = new BinaryWriter(File.Create(scope.ResolveTemporaryPath("input.wav"))))
+            {
+                writer.Write(Encoding.ASCII.GetBytes("RIFF")); writer.Write(36 + 1600);
+                writer.Write(Encoding.ASCII.GetBytes("WAVEfmt ")); writer.Write(16);
+                writer.Write((short)1); writer.Write((short)1); writer.Write(8000); writer.Write(16000);
+                writer.Write((short)2); writer.Write((short)16); writer.Write(Encoding.ASCII.GetBytes("data"));
+                writer.Write(1600); writer.Write(new byte[1600]);
+            }
+            using var result = JsonDocument.Parse(sandbox.InvokeJson("download", "{\"input\":\"input.wav\",\"codec\":\"copy\"}")!);
+            if (result.RootElement.GetProperty("success").GetBoolean())
+            {
+                Assert.Equal("output.wav", result.RootElement.GetProperty("output_path").GetString());
+                Assert.True(new FileInfo(scope.ResolveTemporaryPath("output.wav")).Length > 1600);
+                Assert.Equal("RIFF", Encoding.ASCII.GetString(File.ReadAllBytes(scope.ResolveTemporaryPath("output.wav")), 0, 4));
+            }
+            else Assert.Equal("ffmpeg is not available", result.RootElement.GetProperty("error").GetString());
+            foreach (var request in new[] { "{\"input\":\"../outside.wav\",\"codec\":\"copy\"}", "{\"input\":\"input.wav\",\"codec\":\"aac\"}" })
+            {
+                using var denied = JsonDocument.Parse(sandbox.InvokeJson("download", request)!);
+                Assert.False(denied.RootElement.GetProperty("success").GetBoolean());
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Fact]
+    public void RegistryManifests_RequireOnlySupportedFeatures()
+    {
+        var paths = Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Extensions", "Registry"), "*.json");
+        Assert.Equal(12, paths.Length);
+        foreach (var path in paths)
+        {
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(File.ReadAllText(path), "registerExtension({});");
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            Assert.All(manifest.RequiredRuntimeFeatures ?? [], feature =>
+                Assert.True(ExtensionRuntimeCoordinator.SupportedRuntimeFeatures.Contains(feature), Path.GetFileName(path) + ": " + feature));
+        }
+    }
+
+    [Fact]
+    public void CompatibilityGlobals_MatchReferenceShapes()
+    {
+        const string manifest = """
+            {"id":"globals-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Metadata","hooks":["searchTracks"],"accountScopes":[],"accountRequired":false}],"permissions":[]}
+            """;
+        const string script = """
+            registerExtension({searchTracks:function() { return {
+              normalized:matching.normalizeString('  My SONG (Remastered)'),
+              score:matching.compareStrings(' KITTEN ','sitting'),
+              unicodeScore:matching.compareStrings('é','e'),
+              duration:matching.compareDuration(1000,4000),
+              outside:matching.compareDuration(1000,4001),
+              legacy:!gobackend, remaining:utils.getResolutionRemainingMs(), disabled:ffmpeg.execute(),
+              missingSegments:file.downloadSegments(), emptySegments:file.downloadSegments([], 'output'),
+              missingTransform:file.transformPatternedBlocks('input','output'), missingConvert:ffmpeg.convert('input')
+            }; }});
+            """;
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script, new HttpClientFactory(), NullLogger.Instance);
+        using var response = JsonDocument.Parse(sandbox.InvokeJson("searchTracks", "{}")!);
+        var value = response.RootElement;
+        Assert.Equal("my song", value.GetProperty("normalized").GetString());
+        Assert.Equal(4.0 / 7, value.GetProperty("score").GetDouble(), 8);
+        Assert.Equal(0, value.GetProperty("unicodeScore").GetDouble());
+        Assert.True(value.GetProperty("duration").GetBoolean());
+        Assert.False(value.GetProperty("outside").GetBoolean());
+        Assert.True(value.GetProperty("legacy").GetBoolean());
+        Assert.InRange(value.GetProperty("remaining").GetInt64(), 1, 12000);
+        Assert.False(value.GetProperty("disabled").GetProperty("success").GetBoolean());
+        Assert.Equal("segments and output path are required", value.GetProperty("missingSegments").GetProperty("error").GetString());
+        Assert.Equal("invalid_request", value.GetProperty("emptySegments").GetProperty("error_type").GetString());
+        Assert.Equal("input path, output path, and options are required", value.GetProperty("missingTransform").GetProperty("error").GetString());
+        Assert.Equal("input and output paths are required", value.GetProperty("missingConvert").GetProperty("error").GetString());
+    }
+
+    [Fact]
+    public void InvocationBudget_DownloadHasLongerBudgetAndOtherHooksStillExpire()
+    {
+        const string manifest = """
+            {"id":"budget-demo","displayName":"Demo","version":"1.0.0","sdkVersion":"1","entryPoint":"index.js",
+             "capabilities":[{"kind":"Download","hooks":["download"],"accountScopes":[],"accountRequired":false}],"permissions":[]}
+            """;
+        const string script = """
+            function work() { var before = utils.getResolutionRemainingMs(); http.get('https://media.example.test/audio', {}); return {before:before,after:utils.getResolutionRemainingMs()}; }
+            registerExtension({download:work,searchTracks:work});
+            """;
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script, new HttpClientFactory(new SlowBudgetHandler()), NullLogger.Instance,
+            new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]), new HashSet<string>(), new HashSet<string>()),
+            hookTimeout: TimeSpan.FromMilliseconds(30), downloadTimeout: TimeSpan.FromSeconds(2));
+        using var result = JsonDocument.Parse(sandbox.InvokeJson("download", "{}")!);
+        Assert.True(result.RootElement.GetProperty("before").GetInt64() > result.RootElement.GetProperty("after").GetInt64());
+        Assert.ThrowsAny<Exception>(() => sandbox.InvokeJson("searchTracks", "{}"));
+        Assert.NotNull(sandbox.InvokeJson("download", "{}"));
+    }
+
     [Fact]
     public void DownloadOnlyManifest_GainsHostBackedStreamingWithoutReinstallation()
     {
@@ -192,8 +479,14 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Equal(4, handler.CallCount);
     }
 
-    [Fact]
-    public async Task SignedSessionRuntime_BootstrapsExchangesAndSignsRequests()
+    [Theory]
+    [InlineData("success")]
+    [InlineData("provider-retry")]
+    [InlineData("provider-auth")]
+    [InlineData("gateway-auth")]
+    [InlineData("legacy-auth")]
+    [InlineData("request-auth")]
+    public async Task SignedSessionRuntime_BootstrapsExchangesAndSignsRequests(string scenario)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-signed-session", Guid.NewGuid().ToString("N"));
         try
@@ -211,7 +504,7 @@ public sealed class ExtensionCapabilityAdapterTests
                   authorize:function(){return session.signedFetch('GET','/catalog',null,{});}
                 });
                 """;
-            var handler = new SignedSessionHandler();
+            var handler = new SignedSessionHandler(scenario);
             var permissions = new ExtensionRuntimePermissionSet(
                 new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>());
             var sandbox = new ExtensionSandbox(root, manifest, script, new HttpClientFactory(handler), NullLogger.Instance,
@@ -228,7 +521,23 @@ public sealed class ExtensionCapabilityAdapterTests
             Assert.Equal("grant-1", handler.ExchangeGrant);
 
             var response = sandbox.InvokeJson("searchTracks", "{}");
-            Assert.Contains("catalog ok", response, StringComparison.Ordinal);
+            if (scenario is "gateway-auth" or "legacy-auth")
+            {
+                Assert.Contains("VERIFY_REQUIRED", response, StringComparison.Ordinal);
+                Assert.NotEqual(ExtensionSessionStates.SignedIn, (await sandbox.SignedSessionStatusAsync()).State);
+            }
+            else
+            {
+                Assert.Equal(ExtensionSessionStates.SignedIn, (await sandbox.SignedSessionStatusAsync()).State);
+                if (scenario is "provider-auth" or "request-auth")
+                {
+                    using var parsed = JsonDocument.Parse(response!);
+                    Assert.Equal(scenario == "provider-auth" ? "provider" : "gateway", parsed.RootElement.GetProperty("origin").GetString());
+                    Assert.True(parsed.RootElement.GetProperty("retryAfterSeconds").GetInt32() > 0);
+                }
+                else Assert.Contains("catalog ok", response, StringComparison.Ordinal);
+            }
+            Assert.Equal(scenario == "provider-retry" ? 3 : 1, handler.CatalogCalls);
             Assert.NotNull(handler.SignedRequest);
             Assert.Equal("session-1", handler.SignedRequest!.Headers.GetValues("X-Sig-Session").Single());
             Assert.True(handler.SignedRequest.Headers.Contains("X-Sig-Signature"));
@@ -271,6 +580,34 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Contains("\"id\":\"track-1\"", detail, StringComparison.Ordinal);
         Assert.Contains("\"title\":\"Song\"", detail, StringComparison.Ordinal);
         Assert.DoesNotContain("wrong-track", detail, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task SpotiFlacRuntimeAdapter_PreservesSearchTracksWithoutAnAlbum(string albumTitle)
+    {
+        const string sourceManifest = """
+            {"name":"demo","displayName":"Demo","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{}}
+            """;
+        var script = "registerExtension({customSearch:function(){return [" +
+            "{id:'single',name:'Single',artists:'Artist',album_name:" + JsonSerializer.Serialize(albumTitle) + ",item_type:'track'}," +
+            "{id:'album-track',name:'Album track',artists:'Artist',album_name:'Album',item_type:'track'}];}});";
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var manifest = ExtensionSdkV1.ParseManifest(normalized);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script,
+            new HttpClientFactory(), NullLogger.Instance);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var outcome = await adapter.SearchTracksAsync(Context(manifest.Id),
+            new ProviderMetadataSearchRequest("Artist", new ProviderPageRequest(20)));
+
+        Assert.True(outcome.IsSuccess);
+        var tracks = outcome.RequireValue().Items;
+        Assert.Equal(2, tracks.Count);
+        Assert.Null(tracks[0].AlbumTitle);
+        Assert.Equal("Album", tracks[1].AlbumTitle);
     }
 
     [Fact]
@@ -522,6 +859,10 @@ public sealed class ExtensionCapabilityAdapterTests
     public void RuntimeCoordinator_SupportsPreparedAvailabilityContext()
     {
         Assert.Contains("preparedContext@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+        Assert.Contains("patternedFileTransform@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+        Assert.Contains("downloadSegments@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+        Assert.Contains("signedSession@2", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
+        Assert.Contains("signedSession@3", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
         Assert.DoesNotContain("unknownFeature@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
     }
 
@@ -1198,8 +1539,9 @@ public sealed class ExtensionCapabilityAdapterTests
         }
     }
 
-    private sealed class SignedSessionHandler : HttpMessageHandler
+    private sealed class SignedSessionHandler(string scenario) : HttpMessageHandler
     {
+        public int CatalogCalls { get; private set; }
         public HttpRequestMessage? SignedRequest { get; private set; }
         public string? ExchangeGrant { get; private set; }
 
@@ -1217,7 +1559,25 @@ public sealed class ExtensionCapabilityAdapterTests
             else
             {
                 SignedRequest = request;
+                CatalogCalls++;
                 response = Json("{\"message\":\"catalog ok\"}");
+                if (scenario == "provider-retry" && CatalogCalls < 3)
+                {
+                    response = Json("{\"code\":\"PROVIDER_UNAVAILABLE\",\"origin\":\"provider\",\"retryable\":true,\"retry_mode\":\"same_operation\"}");
+                    response.StatusCode = HttpStatusCode.ServiceUnavailable;
+                }
+                else if (scenario is "provider-auth" or "gateway-auth" or "legacy-auth" or "request-auth")
+                {
+                    response = Json(scenario switch
+                    {
+                        "provider-auth" => "{\"error\":\"upstream auth\",\"origin\":\"provider\",\"code\":\"PROVIDER_AUTH_REQUIRED\"}",
+                        "gateway-auth" => "{\"origin\":\"gateway\",\"code\":\"SESSION_INVALID\",\"action\":\"bootstrap_session\"}",
+                        "request-auth" => "{\"origin\":\"gateway\",\"code\":\"REQUEST_AUTH_INVALID\"}",
+                        _ => "{}"
+                    });
+                    response.StatusCode = scenario == "request-auth" ? HttpStatusCode.Forbidden : HttpStatusCode.Unauthorized;
+                    response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(20));
+                }
             }
             response.RequestMessage = request;
             return Task.FromResult(response);

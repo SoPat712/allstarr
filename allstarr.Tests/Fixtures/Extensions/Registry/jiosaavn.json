@@ -1,0 +1,26 @@
+{
+  "name": "jiosaavn",
+  "displayName": "JioSaavn",
+  "version": "1.0.1",
+  "description": "Search JioSaavn and import song, album, and artist metadata from its public catalog.",
+  "author": "Dishaan23-otc; SpotiFLAC compatibility fixes",
+  "homepage": "https://github.com/spotiflacapp/SpotiFLAC-Extension/pull/29",
+  "icon": "icon.png",
+  "type": ["metadata_provider"],
+  "minAppVersion": "4.2.3",
+  "permissions": {"network": ["www.jiosaavn.com"], "storage": false, "file": false},
+  "settings": [],
+  "searchBehavior": {
+    "enabled": true,
+    "placeholder": "Search JioSaavn",
+    "filters": [
+      {"id": "tracks", "label": "Songs"},
+      {"id": "albums", "label": "Albums"},
+      {"id": "artists", "label": "Artists"}
+    ]
+  },
+  "urlHandler": {
+    "enabled": true,
+    "patterns": ["jiosaavn.com/song/", "jiosaavn.com/album/", "jiosaavn.com/artist/"]
+  }
+}

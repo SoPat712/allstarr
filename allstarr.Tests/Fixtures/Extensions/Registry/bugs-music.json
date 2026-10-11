@@ -1,0 +1,41 @@
+{
+  "name": "bugs-music",
+  "displayName": "Bugs Music",
+  "version": "1.6.2",
+  "description": "Bugs Music TOP100 album, domestic latest/popular charts and genre sections",
+  "author": "ldw0403-netizen",
+  "homepage": "https://github.com/ldw0403-netizen/Bugs-Music-SpotiFLAC",
+  "icon": "icon.png",
+  "permissions": {
+    "network": [
+      "music.bugs.co.kr",
+      "image.bugsm.co.kr"
+    ]
+  },
+  "type": [
+    "metadata_provider"
+  ],
+  "minAppVersion": "3.0.1",
+  "capabilities": {
+    "homeFeed": true
+  },
+  "searchBehavior": {
+    "enabled": true,
+    "primary": false,
+    "placeholder": "벅스뮤직 검색...",
+    "thumbnailRatio": "square"
+  },
+  "urlHandler": {
+    "enabled": true,
+    "patterns": [
+      "https://music.bugs.co.kr/track/",
+      "https://music.bugs.co.kr/album/",
+      "https://music.bugs.co.kr/artist/",
+      "https://m.bugs.co.kr/track/",
+      "https://m.bugs.co.kr/album/",
+      "https://m.bugs.co.kr/artist/"
+    ]
+  },
+  "skipMetadataEnrichment": false,
+  "skipBuiltInFallback": false
+}

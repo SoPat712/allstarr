@@ -596,6 +596,8 @@ public class ExtensionSandbox
     private readonly ILogger _logger;
     private readonly object _engineLock = new();
     private readonly ExtensionHostBridge _hostBridge;
+    private readonly TimeSpan _hookTimeout;
+    private readonly TimeSpan _downloadTimeout;
 
     public ExtensionSandbox(
         string folderPath,
@@ -606,9 +608,13 @@ public class ExtensionSandbox
         ExtensionRuntimePermissionSet? permissions = null,
         string? runtimeStateDirectory = null,
         IDataProtector? sessionProtector = null,
-        string? sessionStateDirectory = null)
+        string? sessionStateDirectory = null,
+        TimeSpan? hookTimeout = null,
+        TimeSpan? downloadTimeout = null)
     {
         _logger = logger;
+        _hookTimeout = hookTimeout ?? TimeSpan.FromSeconds(12);
+        _downloadTimeout = downloadTimeout ?? TimeSpan.FromMinutes(5);
 
         using var doc = JsonDocument.Parse(manifestJson);
         var root = doc.RootElement;
@@ -651,7 +657,7 @@ public class ExtensionSandbox
             options.LimitRecursion(150);
             options.LimitMemory(64L * 1024 * 1024);
             options.MaxStatements(1_000_000);
-            options.TimeoutInterval(TimeSpan.FromSeconds(12));
+            options.Constraints.Constraints.Add(new ExtensionInvocationBudget.ExecutionConstraint());
         });
 
         var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
@@ -733,9 +739,10 @@ public class ExtensionSandbox
             }
             """);
         _engine.Execute("const artifacts = { download: function(url, artifactId, headers) { return host.ArtifactDownload(url, artifactId, headers); } };");
-        _engine.Execute("const file = { download: function(url, path, options) { return host.FileDownload(url, path, options); }, exists: function(path) { return host.FileExists(path); }, delete: function(path) { return host.FileDelete(path); }, getSize: function(path) { return host.FileSize(path); }, readBytes: function(path, options) { return host.FileReadBytes(path, options); }, writeBytes: function(path, data, options) { return host.FileWriteBytes(path, data, options); } };");
+        _engine.Execute("var file = { download: function(url, path, options) { return host.FileDownload(url, path, options); }, exists: function(path) { return host.FileExists(path); }, delete: function(path) { return host.FileDelete(path); }, getSize: function(path) { return host.FileSize(path); }, readBytes: function(path, options) { return host.FileReadBytes(path, options); }, writeBytes: function(path, data, options) { return host.FileWriteBytes(path, data, options); } };");
         _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, appUserAgent: function() { return host.AppUserAgent(); }, appVersion: function() { return '4.7.0'; }, sleep: function(ms) { host.Sleep(ms); }, sha256: function(value) { return host.Sha256(value); }, md5: function(value) { return host.Md5(value); }, base64Decode: function(value) { return host.Base64Decode(value); }, isDownloadCancelled: function() { return false; }, isRequestCancelled: function() { return false; }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
 
+        _engine.Execute(SpotiFlacExtensionCompatibility.RuntimePreludeScript);
         _engine.Execute(indexJs);
 
         if (isSpotiFlac) _engine.Execute(SpotiFlacExtensionCompatibility.RuntimeAdapterScript);
@@ -818,6 +825,8 @@ public class ExtensionSandbox
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
         lock (_engineLock)
         {
+            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout,
+                ExtensionArtifactInvocationScope.Current?.CancellationToken ?? CancellationToken.None);
             var function = _extensionObj.Get(hook);
             if (!function.IsCallable()) return null;
 
@@ -826,6 +835,7 @@ public class ExtensionSandbox
 
             var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
             var result = _engine.Invoke(function, request);
+            budget.Token.ThrowIfCancellationRequested();
             if (result.IsUndefined()) return null;
             var serialized = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("stringify"), result).ToString();
             if (serialized.Length > MaximumHookResultCharacters)
@@ -1093,7 +1103,7 @@ public class ExtensionSandbox
     }
 }
 
-public class ExtensionHostBridge
+public partial class ExtensionHostBridge
 {
     private const int MaximumCacheBytes = 4 * 1024 * 1024;
     private const int MaximumCacheKeys = 256;
@@ -1479,7 +1489,7 @@ public class ExtensionHostBridge
     public void Sleep(int milliseconds)
     {
         if (milliseconds is < 0 or > 30_000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
-        Thread.Sleep(milliseconds);
+        Task.Delay(milliseconds, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
     }
 
     public string Sha256(string value) =>
@@ -1611,7 +1621,7 @@ public class ExtensionHostBridge
 
             AddHeaders(request, headersObj);
 
-            using var response = client.SendAsync(request).GetAwaiter().GetResult();
+            using var response = client.SendAsync(request, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
             if (response.RequestMessage?.RequestUri is { } finalUri &&
                 !IsNetworkAllowed(finalUri))
                 throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
@@ -1779,6 +1789,7 @@ public class ExtensionHostBridge
                     prop.Key.ToString(), obj.Get(prop.Key).ToString())),
             IDictionary<string, object?> values => values.Select(item =>
                 new KeyValuePair<string, string>(item.Key, item.Value?.ToString() ?? string.Empty)),
+            IDictionary<string, string> values => values,
             _ => []
         };
         foreach (var header in headers)
