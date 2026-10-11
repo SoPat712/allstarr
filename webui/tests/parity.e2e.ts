@@ -2226,6 +2226,190 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   expect(activationRequests).toBe(2);
 });
 
+test("failed extension packages can be retried without automatic activation", async ({ page }) => {
+  await mockApi(page);
+  let packageResponse: Record<string, unknown> = {
+    id: "failed", extensionId: "failed-audio", displayName: "Failed Audio", version: "1.0.0",
+    lifecycle: "failed", state: "failed", active: false, installed: false,
+    permissionReviewRequired: false, hasPermissions: false, capabilities: ["streaming"],
+    failureCode: "runtime_validation_failed", stagedAt: "2026-01-01", revision: 4,
+  };
+  let retryRequests = 0;
+  let activationRequests = 0;
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([packageResponse]),
+  }));
+  await page.route("**/api/admin/extensions/packages/failed/retry", async (route) => {
+    expect(route.request().method()).toBe("POST");
+    expect(route.request().postDataJSON()).toEqual({ expectedRevision: 4 });
+    retryRequests++;
+    packageResponse = {
+      ...packageResponse,
+      lifecycle: "reviewrequired", state: "reviewrequired", permissionReviewRequired: true,
+      hasPermissions: true, failureCode: null, revision: 5,
+    };
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(packageResponse) });
+  });
+  await page.route("**/api/admin/extensions/packages/failed/activate", async (route) => {
+    activationRequests++;
+    await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "activation must wait for review" }) });
+  });
+
+  await page.goto("#/integrations/extensions");
+  const row = page.locator(".extension-row");
+  await expect(row).toContainText("The extension failed runtime validation before it could start.");
+  await row.getByRole("button", { name: "Manage extension" }).click();
+  await expect(page.getByRole("menuitem", { name: "Retry" })).toBeVisible();
+  await expect(page.getByRole("menuitem", { name: "Uninstall" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await row.getByRole("button", { name: "Retry" }).click();
+  await expect.poll(() => retryRequests).toBe(1);
+  await expect(row.getByRole("button", { name: "Review permissions" })).toBeVisible();
+  await expect(page.locator(".action-feedback")).toContainText("Review permissions before enabling");
+  expect(activationRequests).toBe(0);
+});
+
+test("disabled extensions with permissions require a fresh review before enabling", async ({ page }) => {
+  await mockApi(page);
+  let packageResponse: Record<string, unknown> = {
+    id: "disabled", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "1.0.0",
+    lifecycle: "disabled", state: "disabled", active: false, installed: true,
+    permissionReviewRequired: false, hasPermissions: true, capabilities: ["streaming"],
+    stagedAt: "2026-01-01", revision: 3,
+  };
+  let revokeRequests = 0;
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify([packageResponse]),
+  }));
+  await page.route("**/api/admin/extensions/packages/disabled/permissions/revoke", async (route) => {
+    revokeRequests++;
+    packageResponse = {
+      ...packageResponse,
+      lifecycle: "reviewrequired", state: "reviewrequired", permissionReviewRequired: true,
+      active: false, installed: false, revision: 4,
+    };
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify(packageResponse) });
+  });
+  await page.route("**/api/admin/extensions/packages/disabled/permissions", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify([{ id: "permission", permissionKind: "network", permissionValue: "https://example.test/", required: true, decision: "pending" }]),
+  }));
+
+  await page.goto("#/integrations/extensions");
+  const row = page.locator(".extension-row");
+  await expect(row.getByRole("button", { name: "Review and enable" })).toBeVisible();
+  await row.getByRole("button", { name: "Review and enable" }).click();
+  const access = page.getByRole("alertdialog", { name: "Review and enable Lumen Audio?" });
+  await expect(access).toBeVisible();
+  await access.getByRole("button", { name: "Stop and review" }).click();
+  await expect.poll(() => revokeRequests).toBe(1);
+  await expect(page.getByRole("dialog", { name: "Review permissions" })).toBeVisible();
+});
+
+test("activation closes its confirmation before a delayed extension refresh", async ({ page }) => {
+  await mockApi(page);
+  const initial = {
+    id: "staged", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "1.0.0",
+    lifecycle: "staged", state: "staged", active: false, installed: false,
+    permissionReviewRequired: false, hasPermissions: false, capabilities: ["streaming"],
+    stagedAt: "2026-01-01", revision: 1,
+  };
+  let packageGets = 0;
+  const refresh = routeRelease();
+  await page.route("**/api/admin/extensions/packages", async (route) => {
+    packageGets++;
+    if (packageGets > 1) await refresh.promise;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify([initial]) });
+  });
+  let activationRequests = 0;
+  await page.route("**/api/admin/extensions/packages/staged/activate", (route) => {
+    activationRequests++;
+    return route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ ...initial, lifecycle: "active", state: "active", active: true, installed: true, revision: 2 }),
+    });
+  });
+
+  await page.goto("#/integrations/extensions");
+  const row = page.locator(".extension-row");
+  await row.getByRole("button", { name: "Enable" }).click();
+  const activation = page.getByRole("alertdialog", { name: "Activate Lumen Audio?" });
+  await activation.getByRole("button", { name: "Activate extension" }).click();
+  await expect.poll(() => activationRequests).toBe(1);
+  await expect(activation).toBeHidden();
+  await expect(page.getByText("Extension enabled.", { exact: true })).toBeVisible();
+  await expect(page.locator('[role="alert"]')).toHaveCount(0);
+  refresh.release();
+});
+
+test("uninstall keeps refresh failures on the page after its dialog closes", async ({ page }) => {
+  await mockApi(page);
+  const initial = {
+    id: "package", extensionId: "lumen-audio", displayName: "Lumen Audio", version: "1.0.0",
+    lifecycle: "active", state: "active", active: true, installed: true,
+    permissionReviewRequired: false, hasPermissions: false, capabilities: ["streaming"],
+    stagedAt: "2026-01-01", revision: 1,
+  };
+  let packageGets = 0;
+  await page.route("**/api/admin/extensions/packages", async (route) => {
+    packageGets++;
+    if (packageGets > 1) {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "fixture unavailable" }) });
+      return;
+    }
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify([initial]) });
+  });
+  let uninstallRequests = 0;
+  await page.route("**/api/admin/extensions/packages/package", async (route) => {
+    expect(route.request().method()).toBe("DELETE");
+    uninstallRequests++;
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...initial, state: "uninstalled", active: false, installed: false, revision: 2 }) });
+  });
+
+  await page.goto("#/integrations/extensions");
+  const row = page.locator(".extension-row");
+  await row.getByRole("button", { name: "Manage extension" }).click();
+  await page.getByRole("menuitem", { name: "Uninstall" }).click();
+  const uninstall = page.getByRole("alertdialog", { name: "Uninstall Lumen Audio?" });
+  await uninstall.getByRole("button", { name: "Uninstall" }).click();
+  await expect.poll(() => uninstallRequests).toBe(1);
+  await expect(uninstall).toBeHidden();
+  await expect(page.locator(".action-feedback")).toContainText("Some extension data is unavailable.");
+  await expect(page.locator('[role="alert"]')).toHaveCount(0);
+});
+
+test("removing a registry closes its confirmation before a delayed refresh", async ({ page }) => {
+  await mockApi(page);
+  const refresh = routeRelease();
+  let registryGets = 0;
+  await page.route("**/api/admin/extensions/registries", async (route) => {
+    registryGets++;
+    if (registryGets > 1) await refresh.promise;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify([{ id: "registry", name: "Community", registryUrl: "https://example.test/registry.json", enabled: true, revision: 1 }]),
+    });
+  });
+  let removeRequests = 0;
+  await page.route("**/api/admin/extensions/registries/registry*", async (route) => {
+    expect(route.request().method()).toBe("DELETE");
+    removeRequests++;
+    await route.fulfill({ status: 204 });
+  });
+
+  await page.goto("#/integrations/extensions");
+  await page.getByRole("tab", { name: /Registries/ }).click();
+  await page.getByRole("button", { name: "Remove" }).click();
+  const removal = page.getByRole("alertdialog", { name: "Remove Community?" });
+  await removal.getByRole("button", { name: "Remove registry" }).click();
+  await expect.poll(() => removeRequests).toBe(1);
+  await expect(removal).toBeHidden();
+  await expect(page.getByText("Extension registry removed.", { exact: true })).toBeVisible();
+  await expect(page.locator('[role="alert"]')).toHaveCount(0);
+  refresh.release();
+});
+
 async function mockSignedSessionExtension(page: Page, initial: Record<string, unknown> | "unavailable") {
   let revision = 1;
   let session: Record<string, unknown> = initial === "unavailable" ? { state: "signed_out" } : initial;

@@ -195,6 +195,15 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         finally { _runtimeGate.Release(); }
     }
 
+    internal static void ValidateRuntimeFeatures(ExtensionSdkManifest manifest)
+    {
+        var unsupported = (manifest.RequiredRuntimeFeatures ?? [])
+            .Where(feature => !SupportedRuntimeFeatures.Contains(feature)).ToArray();
+        if (unsupported.Length != 0)
+            throw new ExtensionSdkValidationException(
+                $"This extension requires runtime features that Allstarr does not support yet: {string.Join(", ", unsupported)}.");
+    }
+
     private async Task<RuntimeBuild> BuildRegistrationAsync(
         ExtensionPackageRecord package, CancellationToken cancellationToken)
     {
@@ -209,12 +218,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var actualHash = ExtensionSdkV1.ComputePackageContentSha256(package.PackagePath);
         if (!actualHash.Equals(package.ContentSha256, StringComparison.OrdinalIgnoreCase))
             throw new ExtensionSdkValidationException("Extension package contents changed after staging.");
-        var unsupportedRuntimeFeatures = (manifest.RequiredRuntimeFeatures ?? [])
-            .Where(feature => !SupportedRuntimeFeatures.Contains(feature))
-            .ToArray();
-        if (unsupportedRuntimeFeatures.Length != 0)
-            throw new ExtensionSdkValidationException(
-                $"This extension requires runtime features that Allstarr does not support yet: {string.Join(", ", unsupportedRuntimeFeatures)}.");
+        ValidateRuntimeFeatures(manifest);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var reviews = await db.ExtensionPermissionReviews.AsNoTracking()
             .Where(item => item.ExtensionPackageId == package.Id)

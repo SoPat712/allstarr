@@ -1713,6 +1713,8 @@ export const extensions = {
     }),
   activate: (item: ExtensionPackage) =>
     json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/activate`, revisionBody(item.revision)),
+  retry: (item: ExtensionPackage) =>
+    json<ExtensionPackage>(`/api/admin/extensions/packages/${item.id}/retry`, revisionBody(item.revision)),
   disable: (item: ExtensionPackage) =>
     json<void>(`/api/admin/extensions/packages/${item.id}/disable`, revisionBody(item.revision)),
   revokePermissions: (item: ExtensionPackage) =>

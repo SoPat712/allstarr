@@ -48,9 +48,23 @@ const sessionReasons: Record<string, string> = {
   unexpected_response: "The sign-in service returned an unexpected response. Try again, or check for an extension update.",
 };
 
+const packageFailureReasons: Record<string, string> = {
+  required_permission_denied: "A required permission was denied during review.",
+  staged_contents_invalid: "The staged package changed before it could be enabled.",
+  runtime_validation_failed: "The extension failed runtime validation before it could start.",
+  activation_failed: "The extension could not be enabled.",
+  staging_cancelled: "Package staging was cancelled before the extension could start.",
+};
+
 export function sessionReasonText(reasonCode?: string | null) {
   if (!reasonCode) return "";
   return sessionReasons[reasonCode] ?? "Sign-in didn't complete. Try again.";
+}
+
+export function extensionFailureReason(reasonCode?: string | null) {
+  if (!reasonCode) return "The extension could not be enabled.";
+  return packageFailureReasons[reasonCode.trim().toLowerCase()] ??
+    "The extension failed before it could start. Retry the package or install it again.";
 }
 
 export function verificationHost(url?: string | null) {

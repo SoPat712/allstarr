@@ -278,6 +278,53 @@ public class ExtensionManager : IDisposable
                 "Package installation is limited to this server and trusted admin networks unless Extensions:AllowRemoteInstall=true.");
         }
         if (_controlPlane == null) throw new InvalidOperationException("The extension control plane is unavailable.");
+        return await DownloadPackageAsync(downloadUrl, expectedSha256,
+            verified => _controlPlane.StageAsync(verified, registryId, cancellationToken), cancellationToken);
+    }
+
+    public async Task<ExtensionPackageRecord> RetryExtensionAsync(
+        Guid packageId,
+        long expectedRevision,
+        bool trustedAdminRequest = false,
+        CancellationToken cancellationToken = default)
+    {
+        if (_controlPlane == null) throw new InvalidOperationException("The extension control plane is unavailable.");
+        var package = (await _controlPlane.ListPackagesAsync(cancellationToken: cancellationToken))
+            .SingleOrDefault(item => item.Id == packageId)
+            ?? throw new KeyNotFoundException("Extension package not found.");
+        if (package.Revision != expectedRevision)
+            throw new Microsoft.EntityFrameworkCore.DbUpdateConcurrencyException("The extension package changed before retry.");
+        if (package.State != ExtensionPackageState.Failed)
+            throw new InvalidOperationException("Only a failed package can be retried.");
+        ExtensionRuntimeCoordinator.ValidateRuntimeFeatures(ExtensionSdkV1.ParseManifest(package.ManifestJson));
+        if (Directory.Exists(EnsureContainedPath(package.PackagePath)))
+            return await _controlPlane.RetryAsync(packageId, expectedRevision, cancellationToken: cancellationToken);
+        if (!package.RegistryId.HasValue)
+            throw new InvalidOperationException("This local package's files are unavailable. Upload the package again before retrying.");
+        if (!RemoteInstallEnabled && !trustedAdminRequest)
+            throw new UnauthorizedAccessException("Restoring package files is limited to this server and trusted admin networks.");
+        var registry = (await _controlPlane.ListRegistriesAsync(cancellationToken))
+            .SingleOrDefault(item => item.Id == package.RegistryId && item.Enabled)
+            ?? throw new InvalidOperationException("Enable this package's registry before retrying.");
+        using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
+        client.Timeout = TimeSpan.FromSeconds(15);
+        using var response = await client.GetAsync(registry.RegistryUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+        var items = ParseStoreRegistry(await ReadRegistryJsonAsync(response.Content, cancellationToken), registry.RegistryUrl);
+        var item = items.SingleOrDefault(item => item.Id == package.ExtensionId && item.Version == package.Version)
+            ?? throw new InvalidOperationException("The registry no longer offers this package version. Install an available version and review its permissions.");
+        if (!string.IsNullOrEmpty(item.Sha256) && !item.Sha256.Equals(package.Sha256, StringComparison.OrdinalIgnoreCase))
+            throw new ExtensionSdkValidationException("The registry checksum changed for this version. Retry cannot replace the verified package.");
+        return await DownloadPackageAsync(item.DownloadUrl, package.Sha256,
+            verified => _controlPlane.RetryAsync(packageId, expectedRevision, verified, cancellationToken), cancellationToken);
+    }
+
+    private async Task<ExtensionPackageRecord> DownloadPackageAsync(
+        string downloadUrl,
+        string expectedSha256,
+        Func<VerifiedExtensionPackage, Task<ExtensionPackageRecord>> stage,
+        CancellationToken cancellationToken)
+    {
         if (!OutboundRequestGuard.TryCreateSafeHttpUri(downloadUrl, out var packageUri, out _) ||
             packageUri!.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(packageUri.Fragment))
             throw new ArgumentException("An HTTPS package URL without credentials or a fragment is required.", nameof(downloadUrl));
@@ -311,7 +358,7 @@ public class ExtensionManager : IDisposable
                 }
             }
             var verified = ExtensionSdkV1.VerifyArchive(archivePath, expectedSha256, extractedDirectory);
-            var package = await _controlPlane.StageAsync(verified, registryId, cancellationToken);
+            var package = await stage(verified);
             File.Delete(archivePath);
             stagingDirectory = null;
             return package;

@@ -21,7 +21,7 @@
   import SearchField from "$lib/components/SearchField.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { availablePackages, currentPackages, valueChanges } from "$lib/extensions";
+  import { availablePackages, currentPackages, extensionFailureReason, valueChanges } from "$lib/extensions";
   import { humanize } from "$lib/sources";
 
   const tabs = ["installed", "available", "registries", "activity"] as const;
@@ -34,6 +34,7 @@
   let loading = $state(true);
   let action = $state("");
   let feedback = $state("");
+  let dialogError = $state("");
   let search = $state("");
   let installOpen = $state(false);
   let reviewOpen = $state(false);
@@ -48,6 +49,8 @@
   let removeRegistry = $state<ExtensionRegistry | null>(null);
   let reviewAccessPackage = $state<ExtensionPackage | null>(null);
   let confirmOpen = $state(false);
+
+  const extensionDataUnavailable = "Some extension data is unavailable.";
 
   const installed = $derived(currentPackages(packages));
   const catalog = $derived(availablePackages(store, installed));
@@ -95,8 +98,7 @@
     }
     if (results[3].status === "fulfilled") logs = results[3].value;
     const failed = results.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected")
-      feedback = failed.reason instanceof Error ? failed.reason.message : "Some extension data is unavailable.";
+    if (failed?.status === "rejected") feedback = extensionDataUnavailable;
     loading = false;
   }
 
@@ -146,6 +148,23 @@
     });
   }
 
+  async function retryPackage(item: ExtensionPackage) {
+    if (action || item.state.toLowerCase() !== "failed") return;
+    action = `retry:${item.id}`;
+    feedback = "";
+    try {
+      const retried = await extensions.retry(item);
+      feedback = retried.permissionReviewRequired || retried.state.toLowerCase() === "reviewrequired"
+        ? "Package staged. Review permissions before enabling."
+        : "Package staged. Enable it when ready.";
+      void refresh();
+    } catch (cause) {
+      feedback = cause instanceof Error ? cause.message : "The extension package could not be retried.";
+    } finally {
+      action = "";
+    }
+  }
+
   async function openReview(item: ExtensionPackage) {
     if (action) return;
     action = `review-load:${item.id}`;
@@ -190,6 +209,7 @@
       if (reviewed.state.toLowerCase() === "staged") {
         activatePackage = reviewed;
         feedback = "";
+        dialogError = "";
         confirmOpen = true;
       } else {
         feedback = "Extension permissions saved.";
@@ -209,6 +229,7 @@
 
   function confirmRemoval(item: ExtensionPackage | ExtensionRegistry) {
     feedback = "";
+    dialogError = "";
     activatePackage = null;
     reviewAccessPackage = null;
     if ("extensionId" in item) {
@@ -223,6 +244,7 @@
 
   function confirmActivation(item: ExtensionPackage) {
     feedback = "";
+    dialogError = "";
     activatePackage = item;
     removePackage = null;
     removeRegistry = null;
@@ -232,6 +254,7 @@
 
   function confirmPermissionReview(item: ExtensionPackage) {
     feedback = "";
+    dialogError = "";
     activatePackage = null;
     removePackage = null;
     removeRegistry = null;
@@ -240,25 +263,53 @@
   }
 
   async function confirm() {
-    let succeeded = false;
+    if (action) return;
+    let operation: (() => Promise<unknown>) | null = null;
+    let operationKey = "";
+    let successMessage = "";
     let resetPackage: ExtensionPackage | null = null;
-    if (reviewAccessPackage)
-      succeeded = await run(`review-access:${reviewAccessPackage.id}`, async () => {
-        resetPackage = await extensions.revokePermissions(reviewAccessPackage!);
-      }, "Permissions reset. Complete the review before re-enabling.");
-    else if (activatePackage)
-      succeeded = await run(`activate:${activatePackage.id}`, () => extensions.activate(activatePackage!), "Extension enabled.");
-    else if (removePackage)
-      succeeded = await run(`remove:${removePackage.id}`, () => extensions.uninstall(removePackage!), "Extension uninstalled. Saved Source accounts were retained.");
-    else if (removeRegistry)
-      succeeded = await run(`registry:${removeRegistry.id}`, () => extensions.removeRegistry(removeRegistry!), "Extension registry removed.");
-    if (!succeeded) return;
-    confirmOpen = false;
-    reviewAccessPackage = null;
-    activatePackage = null;
-    removePackage = null;
-    removeRegistry = null;
-    if (resetPackage) await openReview(resetPackage);
+    if (reviewAccessPackage) {
+      const target = reviewAccessPackage;
+      operationKey = `review-access:${target.id}`;
+      successMessage = "Permissions reset. Complete the review before re-enabling.";
+      operation = async () => { resetPackage = await extensions.revokePermissions(target); };
+    } else if (activatePackage) {
+      const target = activatePackage;
+      operationKey = `activate:${target.id}`;
+      successMessage = "Extension enabled.";
+      operation = () => extensions.activate(target);
+    } else if (removePackage) {
+      const target = removePackage;
+      operationKey = `remove:${target.id}`;
+      successMessage = "Extension uninstalled. Saved Source accounts were retained.";
+      operation = () => extensions.uninstall(target);
+    } else if (removeRegistry) {
+      const target = removeRegistry;
+      operationKey = `registry:${target.id}`;
+      successMessage = "Extension registry removed.";
+      operation = () => extensions.removeRegistry(target);
+    }
+    if (!operation) return;
+
+    action = operationKey;
+    dialogError = "";
+    let succeeded = false;
+    try {
+      await operation();
+      confirmOpen = false;
+      reviewAccessPackage = null;
+      activatePackage = null;
+      removePackage = null;
+      removeRegistry = null;
+      feedback = successMessage;
+      void refresh();
+      succeeded = true;
+    } catch (cause) {
+      dialogError = cause instanceof Error ? cause.message : `${successMessage} failed.`;
+    } finally {
+      action = "";
+    }
+    if (succeeded && resetPackage) await openReview(resetPackage);
   }
 
   async function addRegistry(event: SubmitEvent) {
@@ -300,20 +351,25 @@
           {@const update = updateFor(item)}
           <article class="panel extension-row">
             <ProviderArtwork id={item.extensionId} definition={definition(item)} />
-            <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p><div>{#each item.capabilities ?? [] as capability}<Badge>{humanize(capability)}</Badge>{/each}</div></div>
+            <div class="extension-copy"><span><strong>{item.displayName}</strong><small>v{item.version}{item.author ? ` · ${item.author}` : ""}</small></span><p>{item.description || "No description supplied."}</p>{#if item.state.toLowerCase() === "failed"}<p class="notice-error extension-failure" role="status">Reason: {extensionFailureReason(item.failureCode)}</p>{/if}<div>{#each item.capabilities ?? [] as capability}<Badge>{humanize(capability)}</Badge>{/each}</div></div>
             <Badge state={item.active ? "healthy" : item.state === "failed" ? "degraded" : "suggested"}>{humanize(item.state)}</Badge>
             <div class="extension-actions">
               {#if item.active}<Button variant="secondary" href={`#/integrations/services?source=${encodeURIComponent(item.extensionId)}&section=configuration`}>Configure Service</Button>{/if}
               {#if update}<Button disabled={Boolean(action)} onclick={() => void stage(update)}>{action === `install:${update.id}` ? "Verifying…" : `Update ${item.version} → ${update.version}`}</Button>{/if}
               {#if item.permissionReviewRequired}<Button disabled={Boolean(action)} onclick={() => void openReview(item)}>{action === `review-load:${item.id}` ? "Loading review…" : "Review permissions"}</Button>
-              {:else if ["staged", "disabled"].includes(item.state.toLowerCase())}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
+              {:else if item.state.toLowerCase() === "failed"}<Button disabled={Boolean(action)} onclick={() => void retryPackage(item)}>{action === `retry:${item.id}` ? "Retrying…" : "Retry"}</Button>
+              {:else if item.state.toLowerCase() === "staged"}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
+              {:else if item.state.toLowerCase() === "disabled" && item.hasPermissions}<Button disabled={Boolean(action)} onclick={() => confirmPermissionReview(item)}>Review and enable</Button>
+              {:else if item.state.toLowerCase() === "disabled"}<Button disabled={Boolean(action)} onclick={() => confirmActivation(item)}>Enable</Button>
               {/if}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger class={buttonVariants({ variant: "secondary" })}>Manage extension</DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
                     {#if item.active}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run(item.id, () => extensions.disable(item), "Extension disabled.")}>Disable</DropdownMenu.Item>{/if}
-                    {#if item.hasPermissions && ["active", "disabled"].includes(item.state.toLowerCase())}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
+                    {#if item.hasPermissions && item.state.toLowerCase() === "active"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review access</DropdownMenu.Item>{/if}
+                    {#if item.hasPermissions && item.state.toLowerCase() === "disabled"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => confirmPermissionReview(item)}>Review and enable</DropdownMenu.Item>{/if}
+                    {#if item.state.toLowerCase() === "failed"}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void retryPackage(item)}>Retry</DropdownMenu.Item>{/if}
                     <DropdownMenu.Separator />
                     <DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => confirmRemoval(item)}>Uninstall</DropdownMenu.Item>
                   </DropdownMenu.Content>
@@ -423,9 +479,9 @@
 
   <AlertDialog.Root bind:open={confirmOpen}>
     <AlertDialog.Portal><AlertDialog.Overlay class="dialog-overlay" /><AlertDialog.Content class="confirm-dialog">
-      <AlertDialog.Title>{reviewAccessPackage ? `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
+      <AlertDialog.Title>{reviewAccessPackage ? reviewAccessPackage.state.toLowerCase() === "disabled" ? `Review and enable ${reviewAccessPackage.displayName}?` : `Review access for ${reviewAccessPackage.displayName}?` : activatePackage ? `Activate ${activatePackage.displayName}?` : removePackage ? `Uninstall ${removePackage.displayName}?` : `Remove ${removeRegistry?.name ?? "this registry"}?`}</AlertDialog.Title>
       <AlertDialog.Description>{reviewAccessPackage ? reviewAccessPackage.active ? "The extension runtime will stop now and remain disabled until you save a fresh permission review and reactivate it." : "The extension will remain disabled until you save a fresh permission review and reactivate it." : activatePackage ? "The reviewed runtime will start with only the approved capabilities and permissions." : removePackage ? "The package and runtime are removed. Encrypted Source accounts remain available for a later reinstall." : "You can add this registry URL again later."}</AlertDialog.Description>
-      {#if feedback}<p class="notice-error" role="alert">{feedback}</p>{/if}
+      {#if dialogError}<p class="notice-error" role="alert">{dialogError}</p>{/if}
       <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(action)}>Cancel</AlertDialog.Cancel><Button variant={activatePackage || reviewAccessPackage ? "default" : "destructive"} disabled={Boolean(action)} onclick={() => void confirm()}>{action ? reviewAccessPackage ? "Stopping…" : activatePackage ? "Activating…" : "Removing…" : reviewAccessPackage ? "Stop and review" : activatePackage ? "Activate extension" : removePackage ? "Uninstall" : "Remove registry"}</Button></footer>
     </AlertDialog.Content></AlertDialog.Portal>
   </AlertDialog.Root>

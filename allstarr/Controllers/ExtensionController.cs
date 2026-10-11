@@ -201,6 +201,32 @@ public sealed class ExtensionController(
             : await _runtime.ActivateAsync(packageId, request.ExpectedRevision, cancellationToken))));
     }
 
+    [HttpPost("packages/{packageId:guid}/retry")]
+    public async Task<IActionResult> Retry(Guid packageId, [FromBody] RevisionRequest request, CancellationToken cancellationToken)
+    {
+        if (RequireAdministrator() is { } error) return error;
+        try
+        {
+            return await ControlPlaneAsync(async () => Ok(PackageResponse(
+                await _extensionManager.RetryExtensionAsync(packageId, request.ExpectedRevision,
+                    _extensionManager.IsTrustedInstallClient(HttpContext.Connection.RemoteIpAddress), cancellationToken))));
+        }
+        catch (HttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status502BadGateway,
+                new { error = "The registry or package could not be reached. Try again shortly." });
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return StatusCode(StatusCodes.Status504GatewayTimeout,
+                new { error = "Package retrieval timed out. Try again shortly." });
+        }
+        catch (InvalidDataException)
+        {
+            return BadRequest(new { error = "The registry did not return a valid extension catalog." });
+        }
+    }
+
     [HttpPost("packages/{packageId:guid}/permissions/revoke")]
     public async Task<IActionResult> RevokePermissionGrants(
         Guid packageId,
@@ -513,6 +539,7 @@ public sealed class ExtensionController(
             "package.staged" => "Extension package staged",
             "package.reviewed" => "Extension permissions reviewed",
             "package.activated" => "Extension activated",
+            "package.retry-staged" => "Extension retry prepared",
             "package.disabled" => "Extension disabled",
             "package.uninstalled" => "Extension uninstalled",
             "package.rollback" or "package.rolled_back" => "Extension rolled back",

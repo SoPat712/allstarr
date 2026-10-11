@@ -129,6 +129,19 @@ Reserved built-in provider IDs cannot be replaced by a registry package. Package
 7. Review permission changes before an update.
 8. Disable, roll back, or uninstall without deleting unrelated provider state.
 
+Failed packages offer **Retry**. The administrator-only `POST packages/{id}/retry`
+action requires `expectedRevision` and records the retry in extension activity.
+It validates the package and required runtime features again. Missing files are
+retrieved from the original enabled registry only when that version is still
+available, using the original archive and content checksums. A local package with
+missing files must be uploaded again. Retry retains existing permission decisions;
+pending or denied required permissions return to review, and activation remains
+explicit. It also retains the extension's sign-in for that source.
+
+A disabled package with permissions offers **Review and enable**: revoke its old
+grants, review access again, then enable it. A package without permissions can be
+enabled directly.
+
 ## Owning code
 
 - `allstarr/Providers/Extensions/ExtensionSdkV1.cs`
