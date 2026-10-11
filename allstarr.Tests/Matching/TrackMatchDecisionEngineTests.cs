@@ -10,6 +10,32 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void StoredCrossLink_FindsIndexedCandidateButDoesNotOverrideConflictingIsrc(bool conflict)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Isrc = conflict ? "USRC17607839" : null,
+            ExactProviderAliases = new Dictionary<string, string> { ["qobuz"] = "42" }
+        };
+        var candidate = Candidate(scope) with
+        {
+            Title = "Different catalog title",
+            Artist = "Alternate credits",
+            Isrc = conflict ? "GBAYE0601498" : null,
+            ProviderTrackIds = new Dictionary<string, string> { ["qobuz"] = "42" }
+        };
+        var engine = new TrackMatchDecisionEngine();
+        var decision = engine.Decide(scope, source, engine.PrepareCandidates([candidate]));
+        var score = Assert.Single(decision.Candidates);
+        Assert.Contains(conflict ? "isrc_conflict" : "odesli_alias_exact", score.Reasons);
+        Assert.Equal(conflict ? TrackMatchReviewState.Unresolved : TrackMatchReviewState.Accepted, decision.State);
+        if (conflict) Assert.Null(decision.SelectedLibraryTrackId);
+    }
+
     [Fact]
     public void Matching_baseline_is_linear_at_100_1000_and_10000_tracks()
     {

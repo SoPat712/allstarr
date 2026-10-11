@@ -23,6 +23,8 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<RecordingMusicBrainzEnrichmentQueue>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, RecordingMusicBrainzEnrichmentJobHandler>());
         services.AddHostedService<RecordingMusicBrainzEnrichmentService>();
+        services.TryAddSingleton<RecordingOdesliEnrichmentQueue>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, RecordingOdesliEnrichmentJobHandler>());
         services.TryAddSingleton<Playlists.IPlaylistPersistenceService, Playlists.PlaylistPersistenceService>();
         return services;
     }

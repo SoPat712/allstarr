@@ -142,7 +142,11 @@ for recordings with an ISRC and no MBID. Only one exact, unambiguous recording
 response may add identifiers or merge recordings through the identity owner.
 Conflicting MBIDs leave all recordings unchanged. A source outage never invalidates
 an already accepted route; search, playback, scans and match decisions make no
-MusicBrainz request. Library scans write one `scan.summary` audit row
+MusicBrainz request. Optional Odesli jobs run after a saved match, cache and rate-limit
+public cross-links, and store exact catalog aliases without replacing existing
+associations. The shared decision engine reads those aliases as local evidence;
+new evidence queues an owner-scoped rematch. Neither upstream is called by the
+decision engine. Library scans write one `scan.summary` audit row
 plus one row per created or changed track.
 
 ## External playback selection

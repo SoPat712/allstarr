@@ -1,262 +1,175 @@
+using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Common;
 
-/// <summary>
-/// Service for converting music URLs between platforms using Odesli/song.link API
-/// </summary>
-public class OdesliService
+public sealed class OdesliSettings
 {
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<OdesliService> _logger;
-    private readonly IApplicationCache _cache;
+    public bool Enabled { get; set; }
+    public int RateLimitMs { get; set; } = 6000;
+}
 
-    public OdesliService(
-        IHttpClientFactory httpClientFactory,
-        ILogger<OdesliService> logger,
-        IApplicationCache cache)
+public sealed class OdesliLookupException(bool retryable, TimeSpan? retryAfter = null)
+    : Exception("Cross-provider links are unavailable.")
+{
+    public bool Retryable { get; } = retryable;
+    public TimeSpan? RetryAfter { get; } = retryAfter;
+}
+
+/// <summary>Cached, bounded public track links from Odesli/song.link.</summary>
+public class OdesliService(
+    IHttpClientFactory httpClientFactory,
+    ILogger<OdesliService> logger,
+    IApplicationCache cache,
+    IOptions<OdesliSettings>? settings = null,
+    ApplicationCacheRequestCoalescer? coalescer = null)
+{
+    private readonly HttpClient _httpClient = PublicClient(httpClientFactory);
+    private readonly SemaphoreSlim _requests = new(1, 1);
+    private readonly ApplicationCacheRequestCoalescer _coalescer = coalescer ?? new(new ApplicationCacheActivityMetrics());
+    private DateTimeOffset _nextRequestAt;
+
+    private static HttpClient PublicClient(IHttpClientFactory factory)
     {
-        _httpClient = httpClientFactory.CreateClient("Odesli");
-        _logger = logger;
-        _cache = cache;
+        var client = factory.CreateClient("Odesli");
+        client.DefaultRequestHeaders.Authorization = null;
+        return client;
     }
 
-    /// <summary>
-    /// Converts a Tidal track ID to a Spotify track ID using Odesli
-    /// Results are cached for 7 days
-    /// </summary>
-    public async Task<string?> ConvertTidalToSpotifyIdAsync(string tidalTrackId, CancellationToken cancellationToken = default)
-    {
-        // Check cache first (7 day TTL - these mappings don't change)
-        var cacheKey = CacheKeyBuilder.BuildOdesliTidalToSpotifyKey(tidalTrackId);
-        var cached = await _cache.GetAsync<string>(cacheKey);
-        if (!string.IsNullOrEmpty(cached))
-        {
-            _logger.LogDebug("✓ Using cached Spotify ID for Tidal track {TidalId}", tidalTrackId);
-            return cached;
-        }
+    public Task<string?> ConvertTidalToSpotifyIdAsync(string tidalTrackId, CancellationToken cancellationToken = default) =>
+        TranslateTrackUrlAsync(BuildTrackUrl("tidal", tidalTrackId)!, "spotify", cancellationToken);
 
-        try
-        {
-            var tidalUrl = $"https://tidal.com/browse/track/{tidalTrackId}";
-            var odesliUrl = $"https://api.song.link/v1-alpha.1/links?url={Uri.EscapeDataString(tidalUrl)}&userCountry=US";
+    public Task<string?> ConvertUrlToSpotifyIdAsync(string musicUrl, CancellationToken cancellationToken = default) =>
+        TranslateTrackUrlAsync(musicUrl, "spotify", cancellationToken);
 
-            _logger.LogDebug("🔗 Converting Tidal track {TidalId} to Spotify ID via Odesli", tidalTrackId);
-
-            using var odesliResponse = await _httpClient.GetAsync(odesliUrl, cancellationToken);
-            if (odesliResponse.IsSuccessStatusCode)
-            {
-                var odesliJson = await odesliResponse.Content.ReadAsStringAsync(cancellationToken);
-                using var odesliDoc = JsonDocument.Parse(odesliJson);
-
-                // Extract Spotify track ID from the Spotify URL
-                if (odesliDoc.RootElement.TryGetProperty("linksByPlatform", out var platforms) &&
-                    platforms.TryGetProperty("spotify", out var spotifyPlatform) &&
-                    spotifyPlatform.TryGetProperty("url", out var spotifyUrlEl))
-                {
-                    var spotifyUrl = spotifyUrlEl.GetString();
-                    if (!string.IsNullOrEmpty(spotifyUrl))
-                    {
-                        // Extract ID from URL: https://open.spotify.com/track/{id}
-                        var match = System.Text.RegularExpressions.Regex.Match(spotifyUrl, @"spotify\.com/track/([a-zA-Z0-9]+)");
-                        if (match.Success)
-                        {
-                            var spotifyId = match.Groups[1].Value;
-                            _logger.LogDebug("✓ Converted Tidal/{TidalId} → Spotify ID {SpotifyId}", tidalTrackId, spotifyId);
-
-                            // Cache for configurable duration
-                            await _cache.SetAsync(cacheKey, spotifyId, CacheExtensions.OdesliLookupTTL);
-
-                            return spotifyId;
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to convert Tidal track to Spotify ID via Odesli");
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Converts any music URL to a Spotify track ID using Odesli
-    /// Results are cached for 7 days
-    /// </summary>
-    public async Task<string?> ConvertUrlToSpotifyIdAsync(string musicUrl, CancellationToken cancellationToken = default)
-    {
-        // Check cache first
-        var cacheKey = CacheKeyBuilder.BuildOdesliUrlToSpotifyKey(musicUrl);
-        var cached = await _cache.GetAsync<string>(cacheKey);
-        if (!string.IsNullOrEmpty(cached))
-        {
-            _logger.LogDebug("✓ Using cached Spotify ID for URL {Url}", musicUrl);
-            return cached;
-        }
-
-        try
-        {
-            var odesliUrl = $"https://api.song.link/v1-alpha.1/links?url={Uri.EscapeDataString(musicUrl)}&userCountry=US";
-
-            _logger.LogDebug("🔗 Converting URL to Spotify ID via Odesli: {Url}", musicUrl);
-
-            using var odesliResponse = await _httpClient.GetAsync(odesliUrl, cancellationToken);
-            if (odesliResponse.IsSuccessStatusCode)
-            {
-                var odesliJson = await odesliResponse.Content.ReadAsStringAsync(cancellationToken);
-                using var odesliDoc = JsonDocument.Parse(odesliJson);
-
-                // Extract Spotify track ID from the Spotify URL
-                if (odesliDoc.RootElement.TryGetProperty("linksByPlatform", out var platforms) &&
-                    platforms.TryGetProperty("spotify", out var spotifyPlatform) &&
-                    spotifyPlatform.TryGetProperty("url", out var spotifyUrlEl))
-                {
-                    var spotifyUrl = spotifyUrlEl.GetString();
-                    if (!string.IsNullOrEmpty(spotifyUrl))
-                    {
-                        // Extract ID from URL: https://open.spotify.com/track/{id}
-                        var match = System.Text.RegularExpressions.Regex.Match(spotifyUrl, @"spotify\.com/track/([a-zA-Z0-9]+)");
-                        if (match.Success)
-                        {
-                            var spotifyId = match.Groups[1].Value;
-                            _logger.LogDebug("✓ Converted URL → Spotify ID {SpotifyId}", spotifyId);
-
-                            // Cache for configurable duration
-                            await _cache.SetAsync(cacheKey, spotifyId, CacheExtensions.OdesliLookupTTL);
-
-                            return spotifyId;
-                        }
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to convert URL to Spotify ID via Odesli");
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Translates a track URL from a source provider to a target provider's track ID.
-    /// </summary>
     public async Task<string?> TranslateTrackUrlAsync(string sourceUrl, string targetProvider, CancellationToken cancellationToken = default)
     {
-        var normalizedProvider = NormalizeProviderId(targetProvider);
-        var targetPlatform = normalizedProvider switch
-        {
-            "spotify" or "spotify-web" => "spotify",
-            "applemusic" or "apple-music" or "apple-download" or "apple-musickit" => "appleMusic",
-            "deezer" => "deezer",
-            "qobuz" => "qobuz",
-            "tidal" => "tidal",
-            _ => null
-        };
-
-        if (targetPlatform == null) return null;
-
-        var cacheKey = CacheKeyBuilder.BuildOdesliTranslationKey(sourceUrl, targetPlatform);
-        var cached = await _cache.GetAsync<string>(cacheKey);
-        if (!string.IsNullOrEmpty(cached))
-        {
-            return cached;
-        }
-
         try
         {
-            var odesliUrl = $"https://api.song.link/v1-alpha.1/links?url={Uri.EscapeDataString(sourceUrl)}&userCountry=US";
-            _logger.LogDebug("🔗 Odesli: Translating {Url} to platform {Platform}", sourceUrl, targetPlatform);
-
-            using var response = await _httpClient.GetAsync(odesliUrl, cancellationToken);
-            if (response.IsSuccessStatusCode)
-            {
-                var json = await response.Content.ReadAsStringAsync(cancellationToken);
-                using var doc = JsonDocument.Parse(json);
-
-                if (doc.RootElement.TryGetProperty("linksByPlatform", out var platforms) &&
-                    platforms.TryGetProperty(targetPlatform, out var platformObj) &&
-                    platformObj.TryGetProperty("url", out var urlEl))
-                {
-                    var targetUrl = urlEl.GetString();
-                    if (!string.IsNullOrEmpty(targetUrl))
-                    {
-                        var targetId = ExtractTrackIdFromUrl(targetUrl, targetPlatform);
-                        if (!string.IsNullOrEmpty(targetId))
-                        {
-                            await _cache.SetAsync(cacheKey, targetId, CacheExtensions.OdesliLookupTTL);
-                            return targetId;
-                        }
-                    }
-                }
-            }
+            return (await GetTrackLinksAsync(sourceUrl, cancellationToken)).GetValueOrDefault(NormalizeProviderId(targetProvider));
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception error)
         {
-            _logger.LogError(ex, "Failed to translate URL {Url} to {Platform} via Odesli", sourceUrl, targetPlatform);
+            logger.LogDebug("Cross-provider translation unavailable ({ErrorType})", error.GetType().Name);
+            return null;
         }
+    }
 
-        return null;
+    public async Task<IReadOnlyDictionary<string, string>> GetTrackLinksAsync(string sourceUrl, CancellationToken cancellationToken)
+    {
+        if (ParseTrackUrl(sourceUrl) is not { } source) return new Dictionary<string, string>();
+        var canonicalUrl = BuildTrackUrl(source.Provider, source.Id)!;
+        var key = CacheKeyBuilder.BuildOdesliTranslationKey(canonicalUrl, "aliases-v1");
+        cancellationToken.ThrowIfCancellationRequested();
+        var cached = await cache.GetAsync<Dictionary<string, string>>(key);
+        if (cached != null) return cached;
+        return await _coalescer.RunAsync(key, async () =>
+        {
+            await _requests.WaitAsync(cancellationToken);
+            try
+            {
+                var delay = _nextRequestAt - DateTimeOffset.UtcNow;
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
+                _nextRequestAt = DateTimeOffset.UtcNow.AddMilliseconds(Math.Clamp(settings?.Value.RateLimitMs ?? 6000, 1000, 60000));
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    "https://api.song.link/v1-alpha.1/links?url=" + Uri.EscapeDataString(canonicalUrl) + "&userCountry=US");
+                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
+                {
+                    var retry = response.Headers.RetryAfter?.Delta ??
+                        (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow) ?? TimeSpan.FromMinutes(1);
+                    retry = TimeSpan.FromSeconds(Math.Clamp(retry.TotalSeconds, 1, 3600));
+                    _nextRequestAt = DateTimeOffset.UtcNow.Add(retry);
+                    throw new OdesliLookupException(true, retry);
+                }
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    throw new OdesliLookupException(false);
+                var links = new Dictionary<string, string>(StringComparer.Ordinal);
+                if (response.IsSuccessStatusCode)
+                {
+                    await response.Content.LoadIntoBufferAsync(1024 * 1024, cancellationToken);
+                    using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                    if (json.RootElement.TryGetProperty("linksByPlatform", out var platforms) && platforms.ValueKind == JsonValueKind.Object)
+                        foreach (var item in platforms.EnumerateObject())
+                        {
+                            if (item.Value.ValueKind != JsonValueKind.Object || !item.Value.TryGetProperty("url", out var url) ||
+                                url.ValueKind != JsonValueKind.String || ParseTrackUrl(url.GetString()) is not { } target)
+                                continue;
+                            if (links.TryGetValue(target.Provider, out var existing) && existing != target.Id)
+                                throw new OdesliLookupException(false);
+                            links[target.Provider] = target.Id;
+                        }
+                    // A cross-link response must still identify the exact requested source track.
+                    if (links.GetValueOrDefault(source.Provider) != source.Id) links.Clear();
+                }
+                await cache.SetAsync(key, links, links.Count == 0 ? TimeSpan.FromHours(6) : CacheExtensions.OdesliLookupTTL);
+                return links;
+            }
+            finally { _requests.Release(); }
+        }, cancellationToken);
     }
 
     public static string? BuildTrackUrl(string provider, string trackId)
     {
-        var normalizedProvider = NormalizeProviderId(provider);
-        return normalizedProvider switch
+        if (string.IsNullOrWhiteSpace(trackId)) return null;
+        var id = Uri.EscapeDataString(trackId);
+        return NormalizeProviderId(provider) switch
         {
-            "spotify" or "spotify-web" => $"https://open.spotify.com/track/{trackId}",
-            "deezer" => $"https://www.deezer.com/track/{trackId}",
-            "applemusic" or "apple-music" or "apple-download" or "apple-musickit" =>
-                $"https://music.apple.com/us/song/{trackId}",
-            "qobuz" => $"https://open.qobuz.com/track/{trackId}",
-            "tidal" => $"https://tidal.com/browse/track/{trackId}",
+            "spotify" => $"https://open.spotify.com/track/{id}",
+            "deezer" => $"https://www.deezer.com/track/{id}",
+            "apple-musickit" => $"https://music.apple.com/us/song/{id}",
+            "qobuz" => $"https://open.qobuz.com/track/{id}",
+            "tidal" => $"https://tidal.com/browse/track/{id}",
             _ => null
         };
     }
 
-    private static string? ExtractTrackIdFromUrl(string url, string platform)
+    private static (string Provider, string Id)? ParseTrackUrl(string? value)
     {
-        if (string.IsNullOrEmpty(url)) return null;
-
-        if (platform == "spotify")
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
+            !uri.IsDefaultPort || uri.UserInfo.Length != 0) return null;
+        var provider = uri.Host switch
         {
-            var match = System.Text.RegularExpressions.Regex.Match(url, @"spotify\.com/track/([a-zA-Z0-9]+)");
-            return match.Success ? match.Groups[1].Value : null;
-        }
-        if (platform == "appleMusic")
+            "open.spotify.com" => "spotify",
+            "www.deezer.com" or "deezer.com" => "deezer",
+            "music.apple.com" => "apple-musickit",
+            "open.qobuz.com" or "play.qobuz.com" => "qobuz",
+            "tidal.com" or "listen.tidal.com" => "tidal",
+            _ => null
+        };
+        if (provider == null) return null;
+        var path = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        string? id = null;
+        if (provider == "apple-musickit")
         {
-            var match = System.Text.RegularExpressions.Regex.Match(url, @"[?&]i=([0-9]+)");
-            if (match.Success) return match.Groups[1].Value;
-
-            match = System.Text.RegularExpressions.Regex.Match(url, @"/song/([0-9]+)");
-            if (match.Success) return match.Groups[1].Value;
+            if (Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query).TryGetValue("i", out var queryId) && queryId.Count == 1)
+                id = queryId[0];
+            else if (Array.IndexOf(path, "song") >= 0) id = path.LastOrDefault();
         }
-        if (platform == "deezer")
+        else
         {
-            var match = System.Text.RegularExpressions.Regex.Match(url, @"/track/([0-9]+)");
-            return match.Success ? match.Groups[1].Value : null;
+            var position = Array.IndexOf(path, "track");
+            if (position >= 0 && position == path.Length - 2) id = path[^1];
         }
-        if (platform == "qobuz")
-        {
-            var match = System.Text.RegularExpressions.Regex.Match(url, @"/track/([0-9]+)");
-            return match.Success ? match.Groups[1].Value : null;
-        }
-        if (platform == "tidal")
-        {
-            var match = System.Text.RegularExpressions.Regex.Match(url, @"/track/([0-9]+)");
-            return match.Success ? match.Groups[1].Value : null;
-        }
-
-        return null;
+        return id is { Length: > 0 and <= 128 } && id.All(character =>
+            provider == "spotify" ? char.IsAsciiLetterOrDigit(character) : char.IsAsciiDigit(character))
+            ? (provider, id) : null;
     }
 
     internal static string NormalizeProviderId(string provider)
     {
         const string prefix = "spotiflac-";
         var normalized = provider.Trim().ToLowerInvariant();
-        return normalized.StartsWith(prefix, StringComparison.Ordinal) ? normalized[prefix.Length..] : normalized;
+        if (normalized.StartsWith(prefix, StringComparison.Ordinal)) normalized = normalized[prefix.Length..];
+        return normalized switch
+        {
+            "spotify-web" => "spotify",
+            "qobuz-web" => "qobuz",
+            "tidal-web" => "tidal",
+            "applemusic" or "apple-music" or "apple-download" => "apple-musickit",
+            _ => normalized
+        };
     }
 }

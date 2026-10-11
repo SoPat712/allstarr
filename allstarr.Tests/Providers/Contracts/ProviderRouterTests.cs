@@ -712,6 +712,10 @@ public sealed class ProviderRouterTests
             string expectedIsrc, string musicBrainzId, IReadOnlyCollection<string> isrcs, string correlationId,
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
+        public Task<int> AddExactAliasesAsync(ProviderExecutionContext context, ProviderExternalResourceId source,
+            IReadOnlyList<ProviderExternalResourceId> aliases, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<TrackIdentityLinkResult> LinkAsync(
             ProviderExecutionContext executionContext,
             TrackIdentityLinkRequest request,

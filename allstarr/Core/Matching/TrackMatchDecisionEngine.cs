@@ -37,7 +37,10 @@ public sealed record ExternalTrackMatchSnapshot(
     string? Isrc,
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
-    Guid? CanonicalRecordingId = null);
+    Guid? CanonicalRecordingId = null)
+{
+    public IReadOnlyDictionary<string, string>? ExactProviderAliases { get; init; }
+}
 
 public sealed record LocalTrackMatchCandidate(
     Guid LibraryTrackId,
@@ -132,7 +135,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v19";
+    public const string AlgorithmVersion = "accepted-routing-v20";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -653,10 +656,16 @@ public sealed class TrackMatchCandidateIndex
     private readonly IReadOnlyDictionary<Guid, IReadOnlyList<LocalTrackMatchCandidate>> _byCanonical;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byIsrc;
     private readonly IReadOnlyDictionary<string, IReadOnlyList<LocalTrackMatchCandidate>> _byMatchKey;
+    private readonly IReadOnlyDictionary<(string Provider, string Id), IReadOnlyList<LocalTrackMatchCandidate>> _byProviderTrack;
 
     public TrackMatchCandidateIndex(IEnumerable<LocalTrackMatchCandidate> candidates)
     {
         var items = candidates.ToArray();
+        _byProviderTrack = items.SelectMany(candidate => (candidate.ProviderTrackIds ?? new Dictionary<string, string>())
+                .Select(pair => new { Key = (pair.Key.ToLowerInvariant(), pair.Value), Candidate = candidate }))
+            .GroupBy(item => item.Key).ToDictionary(group => group.Key,
+                group => (IReadOnlyList<LocalTrackMatchCandidate>)group.Select(item => item.Candidate)
+                    .DistinctBy(item => item.LibraryTrackId).ToArray());
         _byCanonical = items
             .Where(item => item.CanonicalRecordingId.HasValue)
             .GroupBy(item => item.CanonicalRecordingId!.Value)
@@ -692,6 +701,13 @@ public sealed class TrackMatchCandidateIndex
         var isrc = NormalizeIsrc(source.Isrc);
         if (isrc != null && _byIsrc.TryGetValue(isrc, out var isrcCandidates))
             return isrcCandidates;
+
+        var aliases = (source.ExactProviderAliases ?? new Dictionary<string, string>())
+            .Append(new KeyValuePair<string, string>(source.ProviderId, source.ExternalId));
+        var exactTracks = aliases.SelectMany(alias => _byProviderTrack.GetValueOrDefault(
+                (alias.Key.ToLowerInvariant(), alias.Value)) ?? [])
+            .DistinctBy(item => item.LibraryTrackId).ToArray();
+        if (exactTracks.Length > 0) return exactTracks;
 
         var keys = BuildMatchKeys(source.Title, source.Artist).ToArray();
         if (keys.Length == 0) return [];

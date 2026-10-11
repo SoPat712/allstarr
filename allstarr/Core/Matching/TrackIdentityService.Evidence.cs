@@ -7,6 +7,38 @@ namespace allstarr.Core.Matching;
 
 public sealed partial class TrackIdentityService
 {
+    public async Task<int> AddExactAliasesAsync(ProviderExecutionContext execution, ProviderExternalResourceId source,
+        IReadOnlyList<ProviderExternalResourceId> aliases, CancellationToken cancellationToken = default)
+    {
+        EnsureStorageReady();
+        ThrowIfUnavailable(execution, cancellationToken);
+        source.RequireOwner(execution.ProviderId, ProviderResourceKind.Track);
+        if (aliases.Count > 32) throw new ArgumentException("Too many provider aliases.");
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var account = await ValidateExecutionContextAsync(db, execution, cancellationToken);
+        var identity = await ResolveCoreAsync(db, source, account?.Id, cancellationToken);
+        if (identity?.Verification != ProviderIdentityVerification.Verified ||
+            identity.VerificationMethod is "automatic-suggestion" or
+                ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
+            return 0;
+        var added = 0;
+        foreach (var alias in aliases.Distinct())
+        {
+            RequireTrack(alias);
+            if (alias.ProviderId == source.ProviderId) continue;
+            // Existing associations, including manual choices and conflicting recordings, retain authority.
+            if (await FindExactLinkAsync(db, ExactKey(alias), ProviderIdentityScope.Catalog, null, true, cancellationToken) != null)
+                continue;
+            AddLink(db, execution, new(identity.CanonicalRecordingId, alias, ProviderIdentityScope.Catalog,
+                ProviderIdentityVerification.Verified, "odesli-link", 1), null, _clock.UtcNow);
+            added++;
+        }
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return added;
+    }
+
     public async Task<CanonicalRecordingIdentity> EnrichRecordingAsync(ProviderActorContext actor, Guid recordingId,
         string expectedIsrc, string musicBrainzId, IReadOnlyCollection<string> isrcs, string correlationId,
         CancellationToken cancellationToken = default)

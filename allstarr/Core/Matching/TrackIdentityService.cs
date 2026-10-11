@@ -130,6 +130,9 @@ public interface ITrackIdentityService
         string expectedIsrc, string musicBrainzId, IReadOnlyCollection<string> isrcs, string correlationId,
         CancellationToken cancellationToken = default);
 
+    Task<int> AddExactAliasesAsync(ProviderExecutionContext context, ProviderExternalResourceId source,
+        IReadOnlyList<ProviderExternalResourceId> aliases, CancellationToken cancellationToken = default);
+
     Task<TrackIdentityLinkResult> LinkAsync(
         ProviderExecutionContext executionContext,
         TrackIdentityLinkRequest request,

@@ -133,10 +133,13 @@ internal sealed class OdesliAliasRule : ITrackMatchRule
     public string Id => "odesli";
 
     public TrackMatchRuleOutcome? Evaluate(
-        ExternalTrackMatchSnapshot _,
-        LocalTrackMatchCandidate __,
-        TrackMatchPolicy ___) =>
-        null;
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy) =>
+        source.ExactProviderAliases?.Any(alias =>
+            TrackMatchSignals.TryGetProviderTrackId(candidate.ProviderTrackIds, alias.Key, out var id) && id == alias.Value) == true
+            ? TrackMatchRuleSet.Accept("odesli_alias_exact", "An exact cross-provider link identifies this recording.", "providerAlias")
+            : null;
 }
 
 internal sealed class ProviderTrackIdExactRule : ITrackMatchRule
