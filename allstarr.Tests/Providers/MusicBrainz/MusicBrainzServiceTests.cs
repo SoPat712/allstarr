@@ -12,6 +12,19 @@ namespace allstarr.Tests;
 
 public sealed class MusicBrainzServiceTests
 {
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("[{\"id\":\"31e68c1d-31f9-432c-a3a4-13aef4a53833\",\"isrcs\":[\"GBAYE0601498\"]}]")]
+    [InlineData("[{\"id\":\"31e68c1d-31f9-432c-a3a4-13aef4a53833\",\"isrcs\":[\"USABC1234567\"]},{\"id\":\"41e68c1d-31f9-432c-a3a4-13aef4a53833\",\"isrcs\":[\"USABC1234567\"]}]")]
+    public async Task IsrcLookup_RejectsMissingMismatchedOrAmbiguousEvidence(string recordings)
+    {
+        var handler = new QueueHandler(_ => Json("{\"recordings\":" + recordings + "}"));
+        var service = Create(new RecordingFactory(handler));
+        Assert.Null(await service.LookupByIsrcAsync("USABC1234567"));
+        Assert.Null(await service.LookupByIsrcAsync("USABC1234567"));
+        Assert.Equal(1, handler.Calls);
+    }
+
     [Fact]
     public async Task IsrcLookup_UsesNamedCurrentClientWithoutCredentialsAndCachesHits()
     {

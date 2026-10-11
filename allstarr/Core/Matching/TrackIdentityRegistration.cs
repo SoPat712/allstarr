@@ -20,6 +20,9 @@ public static class TrackIdentityRegistration
         services.TryAddSingleton<TrackRematchAllJobHandler>();
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, TrackRematchJobHandler>());
         services.AddHostedService<TrackMatchAlgorithmRolloutService>();
+        services.TryAddSingleton<RecordingMusicBrainzEnrichmentQueue>();
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IDurableJobHandler, RecordingMusicBrainzEnrichmentJobHandler>());
+        services.AddHostedService<RecordingMusicBrainzEnrichmentService>();
         services.TryAddSingleton<Playlists.IPlaylistPersistenceService, Playlists.PlaylistPersistenceService>();
         return services;
     }

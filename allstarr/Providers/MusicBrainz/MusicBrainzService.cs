@@ -33,6 +33,7 @@ public interface IMusicBrainzCatalogClient
 {
     string ConfiguredSourceId { get; }
     string ConfiguredSourceRevision { get; }
+    Task<MusicBrainzRecording?> LookupByIsrcAsync(string isrc, CancellationToken cancellationToken = default);
     Task<MusicBrainzRecording?> LookupByMbidAsync(string mbid, CancellationToken cancellationToken = default);
     Task<MusicBrainzArtist?> LookupArtistByMbidAsync(string mbid, CancellationToken cancellationToken = default);
     Task<MusicBrainzReleaseGroup?> LookupReleaseGroupByMbidAsync(string mbid, CancellationToken cancellationToken = default);
@@ -107,7 +108,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         var normalized = NormalizeIsrc(isrc) ??
             throw new ArgumentException("ISRC must contain a valid 12-character recording code.", nameof(isrc));
         if (!_settings.Enabled) return Task.FromResult<MusicBrainzRecording?>(null);
-        var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalized, _sourceId);
+        var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalized, _sourceId) + ":exact-unique";
         return GetCachedAsync(key, token => LookupIsrcUncachedAsync(normalized, token), cancellationToken);
     }
 
@@ -254,13 +255,10 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
             cancellationToken);
         var recordings = response?.Recordings;
         if (recordings is not { Count: > 0 }) return null;
-        var exact = recordings.Where(recording =>
-            recording.Isrcs?.Any(value => NormalizeIsrc(value) == isrc) == true).ToArray();
-        IEnumerable<MusicBrainzRecording> eligible = exact.Length > 0 ? exact : recordings;
-        return eligible
-            .Where(recording => NormalizeMbid(recording.Id) != null)
-            .OrderBy(recording => recording.Id, StringComparer.Ordinal)
-            .FirstOrDefault();
+        var exact = recordings.Where(recording => NormalizeMbid(recording.Id) != null &&
+                recording.Isrcs?.Any(value => NormalizeIsrc(value) == isrc) == true)
+            .DistinctBy(recording => NormalizeMbid(recording.Id)).Take(2).ToArray();
+        return exact.Length == 1 ? exact[0] : null;
     }
 
     private async Task<IReadOnlyList<MusicBrainzRecording>?> SearchUncachedAsync(

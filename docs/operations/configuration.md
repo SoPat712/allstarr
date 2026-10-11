@@ -59,6 +59,17 @@ Shared accounts are eligible for household use only while enabled and authorized
 
 ## Canonical metadata upstream
 
+MusicBrainz recording enrichment is optional and disabled by default. Set
+`MusicBrainz__Enabled=true` to discover recordings with ISRCs but no MBID in
+hourly background passes. Each lookup runs as a low-priority durable job, with
+three attempts; unresolved or exhausted work can be queued again the following
+week. It never runs inside a search, playback, library scan or match decision.
+`MusicBrainz__RateLimitMs` defaults to 1000 and is clamped to 1000–60000 ms.
+Rate limits and temporary failures use cancellable requests and durable retries;
+`Retry-After` is bounded to one hour. Exact, unambiguous evidence can add ISRCs
+and merge recordings, retaining the earliest public ID and all old redirects.
+Ambiguous results or conflicting MBIDs leave the existing identity unchanged.
+
 Allstarr's catalog client speaks the read-only MusicBrainz `/ws/2` contract. The public MusicBrainz service remains the bootstrap default. After the BrainzMash operator approves Allstarr's user agent, select the pool without changing matching or catalog ownership:
 
 ```dotenv

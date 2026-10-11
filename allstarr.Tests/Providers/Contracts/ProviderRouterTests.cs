@@ -708,6 +708,10 @@ public sealed class ProviderRouterTests
             string publicId, ProviderIdentityScope scope, string? isrc = null, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public Task<CanonicalRecordingIdentity> EnrichRecordingAsync(ProviderActorContext actor, Guid recordingId,
+            string expectedIsrc, string musicBrainzId, IReadOnlyCollection<string> isrcs, string correlationId,
+            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+
         public Task<TrackIdentityLinkResult> LinkAsync(
             ProviderExecutionContext executionContext,
             TrackIdentityLinkRequest request,
