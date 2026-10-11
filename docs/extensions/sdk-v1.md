@@ -82,6 +82,13 @@ JavaScript packages run in the constrained Jint compatibility runtime with bound
 
 Permission changes require administrator review before an update can activate. Disable, uninstall, and registry removal are control-plane operations with durable state and audit events.
 
+Activating an update uninstalls the previous active or disabled version and removes
+its package files. Historical records, permission reviews and Activity remain
+available for later update comparisons. Extension sign-ins and provider accounts
+are retained. Startup also removes historical rollback-version files when the
+same extension has a newer active or disabled version. Interrupted file cleanup
+is retried at startup and reported in Activity; it never removes runtime sign-in state.
+
 ### Download compatibility
 
 The runtime supports `preparedContext@1`, `patternedFileTransform@1` and `downloadSegments@1`.
@@ -142,7 +149,7 @@ Reserved built-in provider IDs cannot be replaced by a registry package. Package
 5. Test capability health.
 6. Enable the package.
 7. Review permission changes before an update.
-8. Disable, roll back, or uninstall without deleting unrelated provider state.
+8. Disable or uninstall without deleting unrelated provider account records.
 
 Failed packages offer **Retry**. The administrator-only `POST packages/{id}/retry`
 action requires `expectedRevision` and records the retry in extension activity.

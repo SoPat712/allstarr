@@ -113,7 +113,8 @@ public class ExtensionManager : IDisposable
                         item.Sha256 = await ResolveRemotePackageSha256Async(client, item.DownloadUrl, cancellationToken);
                     item.RegistryId = registry.Id;
                     item.IsInstalled = packages.Any(package => package.ExtensionId == item.Id &&
-                                                               package.State != ExtensionPackageState.Uninstalled);
+                                                               package.State != ExtensionPackageState.Uninstalled &&
+                                                               package.State != ExtensionPackageState.RolledBack);
                     item.IsEnabled = packages.Any(package => package.ExtensionId == item.Id &&
                                                              package.State == ExtensionPackageState.Active);
                     catalog.Items.Add(item);

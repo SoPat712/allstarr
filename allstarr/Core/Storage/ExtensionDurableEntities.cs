@@ -6,7 +6,7 @@ public enum ExtensionPackageState
     ReviewRequired,
     Active,
     Disabled,
-    RolledBack,
+    RolledBack, // Read compatibility for historical package rows; never assigned by lifecycle operations.
     Uninstalled,
     Failed
 }

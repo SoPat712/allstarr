@@ -59,6 +59,11 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        await WithRuntimeGateAsync(async () =>
+        {
+            await _controlPlane.ReconcileSupersededPackagesAsync(cancellationToken);
+            return true;
+        }, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var active = await db.ExtensionPackages.AsNoTracking()
             .Where(item => item.State == ExtensionPackageState.Active)
@@ -198,7 +203,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var remainingSources = await db.ExtensionPackages.AsNoTracking()
             .Where(item => item.Id != package.Id && item.ExtensionId == package.ExtensionId &&
-                           item.State != ExtensionPackageState.Uninstalled)
+                           item.State != ExtensionPackageState.Uninstalled && item.State != ExtensionPackageState.RolledBack)
             .Select(item => item.RegistryId)
             .ToListAsync(cancellationToken);
         if (remainingSources.Count == 0) return ContainedPath(_runtimeRoot, Path.Combine(_runtimeRoot, package.ExtensionId));
