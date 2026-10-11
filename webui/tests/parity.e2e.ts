@@ -2138,7 +2138,7 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
     contentType: "application/json",
     body: JSON.stringify([
-      { ...basePackage, id: "old", version: "1.0.0", state: "disabled", stagedAt: "2026-01-01" },
+      { ...basePackage, id: "old", version: "1.0.0", state: "uninstalled", installed: false, stagedAt: "2026-01-01" },
       {
         ...basePackage, id: "new", version: "2.0.0", state: "reviewRequired",
         previousPackageId: "old", permissionReviewRequired: true,

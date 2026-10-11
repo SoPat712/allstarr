@@ -115,7 +115,7 @@ export function compareVersions(left: string, right: string) {
 export function currentPackages(items: ExtensionPackage[]) {
   const current = new Map<string, ExtensionPackage>();
   for (const item of items) {
-    if (["uninstalled", "rolledback"].includes(item.state.toLowerCase())) continue;
+    if (!["active", "disabled", "staged", "reviewrequired", "failed"].includes(item.state.toLowerCase())) continue;
     const key = item.extensionId.toLowerCase();
     const existing = current.get(key);
     if (!existing || new Date(item.stagedAt ?? 0) >= new Date(existing.stagedAt ?? 0))

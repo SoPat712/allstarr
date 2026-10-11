@@ -107,6 +107,65 @@ public sealed class ExtensionControllerControlPlaneTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PackageListRetainsHistoryWithoutCountingRetiredVersionsAsInstalled()
+    {
+        await using (var db = new AllstarrDbContext(_database.Options))
+        {
+            foreach (var state in new[] { ExtensionPackageState.Active, ExtensionPackageState.Disabled,
+                         ExtensionPackageState.RolledBack, ExtensionPackageState.Uninstalled })
+                db.ExtensionPackages.Add(new ExtensionPackageRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    ExtensionId = "fixture",
+                    DisplayName = "Fixture",
+                    Version = "1.0.0",
+                    SdkVersion = "1",
+                    Sha256 = new string('a', 64),
+                    ContentSha256 = new string('b', 64),
+                    PackagePath = Path.Combine(_root, state.ToString()),
+                    State = state,
+                    StagedAt = DateTimeOffset.UtcNow
+                });
+            await db.SaveChangesAsync();
+        }
+        var response = Assert.IsType<OkObjectResult>(await Controller(Session(administrator: true)).ListPackages(null, default));
+        using var json = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(response.Value));
+        var packages = json.RootElement.EnumerateArray().ToArray();
+        Assert.Equal(4, packages.Length);
+        Assert.Equal(2, packages.Count(item => item.GetProperty("installed").GetBoolean()));
+        Assert.All(packages.Where(item => item.GetProperty("state").GetString() is "rolledback" or "uninstalled"),
+            item => Assert.False(item.GetProperty("installed").GetBoolean()));
+    }
+
+    [Fact]
+    public async Task StoreDoesNotCountLegacyRollbackRowsAsInstalled()
+    {
+        var registry = await _service.AddRegistryAsync(new("Fixture", "https://extensions.example.test/index.json"));
+        await using (var db = new AllstarrDbContext(_database.Options))
+        {
+            db.ExtensionPackages.Add(new ExtensionPackageRecord
+            {
+                Id = Guid.CreateVersion7(),
+                RegistryId = registry.Id,
+                ExtensionId = "fixture-extension",
+                DisplayName = "Fixture",
+                Version = "1.0.0",
+                SdkVersion = "1",
+                Sha256 = new string('a', 64),
+                ContentSha256 = new string('b', 64),
+                PackagePath = Path.Combine(_root, "legacy"),
+                State = ExtensionPackageState.RolledBack,
+                StagedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var catalog = await _manager.FetchStoreCatalogAsync();
+        Assert.Empty(catalog.Errors);
+        Assert.False(Assert.Single(catalog.Items).IsInstalled);
+        Assert.False(Assert.Single(catalog.Items).IsEnabled);
+    }
+
+    [Fact]
     public async Task ReviewEndpoint_RequiresPlatformUserLinkedAdministratorSession()
     {
         var administrator = Controller(Session(administrator: true, allstarrUserId: null));

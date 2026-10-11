@@ -62,7 +62,10 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.Equal(first.Id, second.PreviousPackageId);
 
         first = (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id);
-        Assert.Equal(ExtensionPackageState.RolledBack, first.State);
+        Assert.Equal(ExtensionPackageState.Uninstalled, first.State);
+        Assert.False(Directory.Exists(first.PackagePath));
+        Assert.True(Directory.Exists(second.PackagePath));
+        Assert.Equal(2, (await _service.ListPermissionReviewsAsync(first.Id)).Count);
         Assert.Equal(ExtensionPackageState.Active, second.State);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal(second.Id, (await db.ExtensionPackages.SingleAsync(item => item.State == ExtensionPackageState.Active)).Id);
@@ -216,7 +219,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task RuntimeUpdatePreservesActiveVersionWhenPreviousPackageIsUninstalled(bool concurrentUninstall)
+    public async Task RuntimeUpdatePreservesActiveVersionWhenRetiredPackageUninstallIsRefused(bool concurrentUninstall)
     {
         var package = await _service.StageAsync(Package("4.0.0", "runtime"));
         package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
@@ -266,14 +269,15 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
                 uninstall = Task.Run(() => coordinator.UninstallAsync(previous.Id, previous.Revision));
                 await Task.WhenAny(uninstall, Task.Delay(TimeSpan.FromMilliseconds(200)));
                 Assert.False(uninstall.IsCompleted);
-                Assert.NotEqual(ExtensionPackageState.Uninstalled,
+                Assert.Equal(ExtensionPackageState.Uninstalled,
                     (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id).State);
             }
             finally
             {
                 registrationGate.Resume.TrySetResult();
                 package = await activation.WaitAsync(TimeSpan.FromSeconds(20));
-                if (uninstall != null) await uninstall.WaitAsync(TimeSpan.FromSeconds(20));
+                if (uninstall != null)
+                    await Assert.ThrowsAsync<InvalidOperationException>(() => uninstall.WaitAsync(TimeSpan.FromSeconds(20)));
             }
             Assert.Equal(ExtensionPackageState.Uninstalled,
                 (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id).State);
@@ -284,7 +288,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             Assert.True(registry.TryGetCapability(package.ExtensionId,
                 ProviderCapabilityKind.Metadata, out activeCapability));
             previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
-            await coordinator.UninstallAsync(previous.Id, previous.Revision);
+            await Assert.ThrowsAsync<InvalidOperationException>(() => coordinator.UninstallAsync(previous.Id, previous.Revision));
         }
         Assert.False(Directory.Exists(previous.PackagePath));
         Assert.True(Directory.Exists(package.PackagePath));
@@ -429,6 +433,231 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var calls = handler.Calls;
         await coordinator.RefreshSignedSessionsAsync();
         Assert.Equal(calls, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UpdateRetiresFilesButPreservesSignInAccountsAndPermissionHistory(bool disabled)
+    {
+        var handler = new SignedSessionHandler();
+        var coordinator = Coordinator(handler);
+        var first = await ReviewedPackage("1.0.0", "first", signedSession: true);
+        first = await coordinator.ActivateAsync(first.Id, first.Revision);
+        var signedIn = await coordinator.CompleteSignedSessionGrantAsync(first.Id, first.Revision, "grant-1");
+        var runtimeState = Path.Combine(_root, "extensions", ".runtime", first.ExtensionId);
+        var sessionPath = Assert.Single(Directory.GetFiles(runtimeState, "signed-session-*.protected", SearchOption.AllDirectories));
+        var protectedSession = File.ReadAllBytes(sessionPath);
+        var account = await AddAccountAsync(first.ExtensionId);
+        var firstReviews = await _service.ListPermissionReviewsAsync(first.Id);
+        if (disabled) await coordinator.DisableAsync(first.Id, first.Revision);
+
+        var second = await ReviewedPackage("2.0.0", "second", signedSession: true);
+        Assert.Equal(first.Id, second.PreviousPackageId);
+        second = await coordinator.ActivateAsync(second.Id, second.Revision);
+
+        var packages = await _service.ListPackagesAsync();
+        Assert.Equal(second.Id, Assert.Single(packages, item => item.State is
+            ExtensionPackageState.Active or ExtensionPackageState.Disabled).Id);
+        Assert.Equal(ExtensionPackageState.Uninstalled, packages.Single(item => item.Id == first.Id).State);
+        Assert.False(Directory.Exists(first.PackagePath));
+        Assert.True(Directory.Exists(second.PackagePath));
+        Assert.Equal(protectedSession, File.ReadAllBytes(sessionPath));
+        var retainedSession = await coordinator.SignedSessionStatusAsync(second.Id);
+        Assert.Equal(ExtensionSessionStates.SignedIn, retainedSession.State);
+        Assert.Equal(signedIn.ExpiresAt, retainedSession.ExpiresAt);
+        Assert.Equal(1, handler.Calls); // The update must not start verification or exchange another grant.
+        Assert.Equal(firstReviews.Select(item => item.Id),
+            (await _service.ListPermissionReviewsAsync(first.Id)).Select(item => item.Id));
+
+        // A subsequent review can still compare both historical versions, without their files.
+        var third = await _service.StageAsync(Package("3.0.0", "third", signedSession: true));
+        Assert.Equal(second.Id, third.PreviousPackageId);
+        Assert.All(await _service.ListPermissionReviewsAsync(third.Id),
+            review => Assert.Equal(ExtensionPermissionDecision.Pending, review.Decision));
+        Assert.All(await _service.ListPermissionReviewsAsync(second.PreviousPackageId!.Value),
+            review => Assert.Equal(ExtensionPermissionDecision.Approved, review.Decision));
+        Assert.All(await _service.ListPermissionReviewsAsync(third.PreviousPackageId!.Value),
+            review => Assert.Equal(ExtensionPermissionDecision.Approved, review.Decision));
+        await _service.AbandonStagingAsync(third.Id, third.Revision);
+        await coordinator.DisableAsync(second.Id, second.Revision);
+        second = (await _service.ListPackagesAsync()).Single(item => item.Id == second.Id);
+        await coordinator.UninstallAsync(second.Id, second.Revision);
+        Assert.False(Directory.Exists(runtimeState));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(account.Id, (await db.ProviderAccounts.SingleAsync()).Id);
+        Assert.Equal(account.SettingsJson, (await db.ProviderAccounts.SingleAsync()).SettingsJson);
+        Assert.Contains(await _service.ListLogsAsync(first.Id), item => item.EventCode == "session.granted");
+        Assert.Contains(await _service.ListLogsAsync(first.Id), item => item.EventCode == "package.superseded");
+    }
+
+    [Theory]
+    [InlineData(ExtensionPackageState.Active)]
+    [InlineData(ExtensionPackageState.Disabled)]
+    public async Task StartupReconcilesLegacyVersionsOnceAndPreservesProtectedState(ExtensionPackageState retainedState)
+    {
+        var handler = new SignedSessionHandler();
+        var coordinator = Coordinator(handler);
+        var first = await ReviewedPackage("1.0.0", "legacy", signedSession: true);
+        first = await coordinator.ActivateAsync(first.Id, first.Revision);
+        await coordinator.CompleteSignedSessionGrantAsync(first.Id, first.Revision, "grant-1");
+        var sessionPath = Assert.Single(Directory.GetFiles(Path.Combine(_root, "extensions", ".runtime"),
+            "signed-session-*.protected", SearchOption.AllDirectories));
+        var protectedSession = File.ReadAllBytes(sessionPath);
+        var account = await AddAccountAsync(first.ExtensionId);
+        var second = await ReviewedPackage("1.1.0", "retained", signedSession: true);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == first.Id)).State = ExtensionPackageState.RolledBack;
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == second.Id)).State = retainedState;
+            await db.SaveChangesAsync();
+        }
+
+        await coordinator.StartAsync(default);
+        var retired = (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id);
+        Assert.Equal(ExtensionPackageState.Uninstalled, retired.State);
+        Assert.False(Directory.Exists(first.PackagePath));
+        Assert.True(Directory.Exists(second.PackagePath));
+        Assert.Equal(protectedSession, File.ReadAllBytes(sessionPath));
+        Assert.Equal(1, handler.Calls);
+        var logs = await _service.ListLogsAsync(first.Id);
+        Assert.Single(logs, item => item.EventCode == "package.superseded");
+        Assert.Single(logs, item => item.EventCode == "package.contents-removed");
+        Assert.Contains(logs, item => item.EventCode == "session.granted");
+        Assert.All(await _service.ListPermissionReviewsAsync(first.Id),
+            item => Assert.Equal(ExtensionPermissionDecision.Approved, item.Decision));
+        await coordinator.StartAsync(default);
+        Assert.Equal(retired.Revision, (await _service.ListPackagesAsync()).Single(item => item.Id == first.Id).Revision);
+        Assert.Equal(logs.Count, (await _service.ListLogsAsync(first.Id)).Count);
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(account.SettingsJson, (await check.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).SettingsJson);
+    }
+
+    [Theory]
+    [InlineData(null, ExtensionPackageState.Active, false)]
+    [InlineData("0.9.0", ExtensionPackageState.Active, false)]
+    [InlineData("1.0.0", ExtensionPackageState.Disabled, false)]
+    [InlineData("2.0.0", ExtensionPackageState.Staged, false)]
+    [InlineData("2.0.0", ExtensionPackageState.Failed, false)]
+    [InlineData("1.0.0-beta", ExtensionPackageState.Active, false)]
+    [InlineData("1.0.1", ExtensionPackageState.Disabled, true)]
+    public async Task ReconciliationRequiresAnActiveOrDisabledNewerVersion(
+        string? replacementVersion, ExtensionPackageState replacementState, bool removed)
+    {
+        var old = await ReviewedPackage("1.0.0", "old");
+        ExtensionPackageRecord? replacement = replacementVersion == null
+            ? null : await ReviewedPackage(replacementVersion, "candidate");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == old.Id)).State = ExtensionPackageState.RolledBack;
+            if (replacement != null)
+                (await db.ExtensionPackages.SingleAsync(item => item.Id == replacement.Id)).State = replacementState;
+            await db.SaveChangesAsync();
+        }
+        await _service.ReconcileSupersededPackagesAsync(default);
+        Assert.Equal(removed ? ExtensionPackageState.Uninstalled : ExtensionPackageState.RolledBack,
+            (await _service.ListPackagesAsync()).Single(item => item.Id == old.Id).State);
+        Assert.Equal(!removed, Directory.Exists(old.PackagePath));
+        if (replacement != null) Assert.True(Directory.Exists(replacement.PackagePath));
+    }
+
+    [Theory]
+    [InlineData("runtime")]
+    [InlineData("active")]
+    [InlineData("linked")]
+    public async Task InterruptedCleanupRetriesWithoutDeletingRetainedContent(string protectedPath)
+    {
+        var old = await ReviewedPackage("1.0.0", "cleanup-old");
+        var current = await ReviewedPackage("2.0.0", "cleanup-new");
+        var runtimeState = Path.Combine(_root, "extensions", ".runtime", old.ExtensionId);
+        Directory.CreateDirectory(runtimeState);
+        var marker = Path.Combine(runtimeState, "protected-state");
+        File.WriteAllText(marker, "fixture");
+        var cleanupPath = protectedPath == "active" ? current.PackagePath : runtimeState;
+        if (protectedPath == "linked")
+        {
+            var link = Path.Combine(_root, "extensions", ".staging", "linked-runtime");
+            Directory.CreateSymbolicLink(link, Path.GetDirectoryName(runtimeState)!);
+            cleanupPath = Path.Combine(link, old.ExtensionId);
+        }
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var historical = await db.ExtensionPackages.SingleAsync(item => item.Id == old.Id);
+            historical.State = ExtensionPackageState.RolledBack;
+            historical.PackagePath = cleanupPath;
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == current.Id)).State = ExtensionPackageState.Active;
+            await db.SaveChangesAsync();
+        }
+        await _service.ReconcileSupersededPackagesAsync(default);
+        Assert.Equal("fixture", File.ReadAllText(marker));
+        Assert.True(File.Exists(Path.Combine(current.PackagePath, "index.js")));
+        Assert.Contains(await _service.ListLogsAsync(old.Id), item => item.EventCode == "package.cleanup-pending");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == old.Id)).PackagePath = old.PackagePath;
+            await db.SaveChangesAsync();
+        }
+        await _service.ReconcileSupersededPackagesAsync(default);
+        Assert.False(Directory.Exists(old.PackagePath));
+        Assert.True(File.Exists(marker));
+        Assert.Single((await _service.ListLogsAsync(old.Id)), item => item.EventCode == "package.superseded");
+    }
+
+    [Theory]
+    [InlineData("1.0.0-beta.9", "1.0.0-beta.10", true)]
+    [InlineData("1.0.0-beta.10", "1.0.0-beta.9", false)]
+    [InlineData("1.0.0-rc.1", "1.0.0", true)]
+    [InlineData("1.0.0--1", "1.0.0-0", false)]
+    public async Task ReconciliationHonorsPrereleaseVersionOrder(string previous, string current, bool removed)
+    {
+        var old = await ReviewedPackage(previous, "old-prerelease");
+        var retained = await ReviewedPackage(current, "current-prerelease");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == old.Id)).State = ExtensionPackageState.RolledBack;
+            (await db.ExtensionPackages.SingleAsync(item => item.Id == retained.Id)).State = ExtensionPackageState.Active;
+            await db.SaveChangesAsync();
+        }
+        await _service.ReconcileSupersededPackagesAsync(default);
+        Assert.Equal(!removed, Directory.Exists(old.PackagePath));
+        Assert.True(Directory.Exists(retained.PackagePath));
+    }
+
+    private async Task<ExtensionPackageRecord> ReviewedPackage(string version, string suffix, bool signedSession = false)
+    {
+        var package = await _service.StageAsync(Package(version, suffix, signedSession));
+        return await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+            [new("network", "https://api.example.test/", true), new("secret", "accountToken", true)]);
+    }
+
+    private ExtensionRuntimeCoordinator Coordinator(SignedSessionHandler handler)
+    {
+        var registry = new ProviderRegistry([]);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(handler, false));
+        var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "downloads") };
+        return new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
+            Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+    }
+
+    private async Task<ProviderAccountRecord> AddAccountAsync(string provider)
+    {
+        await using var db = await _factory.CreateDbContextAsync();
+        var account = new ProviderAccountRecord
+        {
+            Id = Guid.CreateVersion7(),
+            ProviderId = provider,
+            DisplayName = "Fixture",
+            Enabled = true,
+            SettingsJson = "{\"quality\":\"lossless\"}",
+            CreatedAt = DateTimeOffset.UtcNow,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+        db.ProviderAccounts.Add(account);
+        await db.SaveChangesAsync();
+        return account;
     }
 
     private sealed class SignedSessionHandler : HttpMessageHandler

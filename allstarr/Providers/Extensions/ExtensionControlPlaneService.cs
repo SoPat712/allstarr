@@ -119,7 +119,8 @@ public sealed partial class ExtensionControlPlaneService
             throw new DbUpdateConcurrencyException("The extension registry changed before removal.");
 
         var dependencies = await db.ExtensionPackages.AsNoTracking()
-            .Where(item => item.RegistryId == registryId && item.State != ExtensionPackageState.Uninstalled)
+            .Where(item => item.RegistryId == registryId && item.State != ExtensionPackageState.Uninstalled &&
+                           item.State != ExtensionPackageState.RolledBack)
             .OrderBy(item => item.DisplayName)
             .ThenByDescending(item => item.StagedAt)
             .Select(item => new ExtensionRegistryDependency(
@@ -202,7 +203,8 @@ public sealed partial class ExtensionControlPlaneService
                 throw new KeyNotFoundException("The enabled extension registry is unavailable.");
             var existing = await db.ExtensionPackages.SingleOrDefaultAsync(item =>
                 item.ExtensionId == verified.Manifest.Id && item.Version == verified.Manifest.Version &&
-                item.Sha256 == verified.Sha256 && item.RegistryId == registryId && item.State != ExtensionPackageState.Uninstalled,
+                item.Sha256 == verified.Sha256 && item.RegistryId == registryId &&
+                item.State != ExtensionPackageState.Uninstalled && item.State != ExtensionPackageState.RolledBack,
                 cancellationToken);
             if (existing != null)
             {
@@ -216,8 +218,11 @@ public sealed partial class ExtensionControlPlaneService
                     DeletePackageContents(verified.PackageRoot);
                 return existing;
             }
-            var previous = await db.ExtensionPackages.AsNoTracking().SingleOrDefaultAsync(item =>
-                item.ExtensionId == verified.Manifest.Id && item.State == ExtensionPackageState.Active, cancellationToken);
+            var previous = await db.ExtensionPackages.AsNoTracking()
+                .Where(item => item.ExtensionId == verified.Manifest.Id &&
+                               (item.State == ExtensionPackageState.Active || item.State == ExtensionPackageState.Disabled))
+                .OrderByDescending(item => item.ActivatedAt).ThenByDescending(item => item.StagedAt)
+                .FirstOrDefaultAsync(cancellationToken);
             var now = _clock.UtcNow;
             var package = new ExtensionPackageRecord
             {
@@ -319,9 +324,9 @@ public sealed partial class ExtensionControlPlaneService
                       ?? throw new KeyNotFoundException("Extension package not found.");
         if (package.Revision != expectedRevision)
             throw new DbUpdateConcurrencyException("The extension package changed before its grants could be revoked.");
-        if (package.State is not (ExtensionPackageState.Active or ExtensionPackageState.Disabled or ExtensionPackageState.RolledBack or ExtensionPackageState.Staged))
+        if (package.State is not (ExtensionPackageState.Active or ExtensionPackageState.Disabled or ExtensionPackageState.Staged))
             throw new InvalidOperationException(
-                "Only an active, disabled, rolled-back, or reviewed staged package can have its grants revoked.");
+                "Only an active, disabled, or reviewed staged package can have its grants revoked.");
 
         var reviews = await db.ExtensionPermissionReviews
             .Where(item => item.ExtensionPackageId == package.Id)
@@ -532,15 +537,13 @@ public sealed partial class ExtensionControlPlaneService
             DeletePackageContents(target.PackagePath);
             throw;
         }
-        var current = await db.ExtensionPackages.SingleOrDefaultAsync(item =>
-            item.ExtensionId == target.ExtensionId && item.State == ExtensionPackageState.Active, cancellationToken);
+        var superseded = await db.ExtensionPackages.Where(item =>
+            item.Id != target.Id && item.ExtensionId == target.ExtensionId &&
+            (item.State == ExtensionPackageState.Active || item.State == ExtensionPackageState.Disabled))
+            .ToListAsync(cancellationToken);
         var now = _clock.UtcNow;
-        if (current != null && current.Id != target.Id)
-        {
-            current.State = ExtensionPackageState.RolledBack;
-            current.DisabledAt = now;
-            current.Revision++;
-        }
+        foreach (var current in superseded)
+            await RetireSupersededPackageAsync(db, current, now);
         target.State = ExtensionPackageState.Active;
         target.ActivatedAt = now;
         target.DisabledAt = null;
@@ -549,6 +552,8 @@ public sealed partial class ExtensionControlPlaneService
             "Extension package activated.", "extension-activate", now);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        foreach (var current in superseded)
+            await CleanupSupersededPackageAsync(current, CancellationToken.None);
         return target;
     }
 

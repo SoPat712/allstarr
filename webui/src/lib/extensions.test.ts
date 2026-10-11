@@ -36,6 +36,20 @@ describe("extension catalog", () => {
       .toEqual(["demo:1.1.0", "new:1.0.0"]);
   });
 
+  it("excludes historical versions while keeping packages that need action", () => {
+    const items = [
+      pkg(),
+      pkg({ id: "retired", state: "uninstalled", installed: false, stagedAt: "2026-03-01" }),
+      pkg({ id: "legacy", extensionId: "legacy-only", state: "rolledback", installed: true }),
+      ...["disabled", "staged", "reviewRequired", "failed"].map((state) =>
+        pkg({ id: state, extensionId: state, state, installed: false })),
+    ];
+    expect(currentPackages(items).map((item) => item.id))
+      .toEqual(["1", "disabled", "staged", "reviewRequired", "failed"]);
+    expect(availablePackages([{ id: "legacy-only", version: "1.0.0" }] as ExtensionStoreItem[], currentPackages(items)))
+      .toHaveLength(1);
+  });
+
   it("labels added, unchanged, and removed update access", () => {
     expect(valueChanges(["network", "secret"], ["network", "cache"])).toEqual([
       { value: "network", change: "unchanged" },
