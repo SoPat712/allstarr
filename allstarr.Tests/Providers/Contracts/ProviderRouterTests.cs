@@ -3,11 +3,46 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
+using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class ProviderRouterTests
 {
+    [Theory]
+    [InlineData(ProviderIdentityVerification.Verified, "exact", true)]
+    [InlineData(ProviderIdentityVerification.Unknown, "exact", false)]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion", false)]
+    public async Task CanonicalSource_UsesOnlyAuthorizedVerifiedTargets(
+        ProviderIdentityVerification verification, string method, bool allowed)
+    {
+        var recordingId = Guid.CreateVersion7();
+        var actor = Actor(Guid.CreateVersion7());
+        var account = Account("private", actor.EffectiveUserId!.Value);
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.ResolveTargetAsync(
+                It.Is<ProviderExecutionContext>(context => context.ProviderId == "private" && context.Account!.AccountId == account.AccountId),
+                recordingId, It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TrackIdentityResolution(recordingId, Guid.CreateVersion7(), Track("private", "actual"),
+                ProviderIdentityScope.Account, account.AccountId, verification, method, 1));
+        var accounts = new FakeAccountResolver(new Dictionary<string, ProviderRouteAccountResolution>
+        {
+            ["private"] = new(account, account.Revision)
+        });
+        var router = Router([Metadata("private", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal])],
+            accounts: accounts, identity: identities.Object);
+        var source = Track("allstarr", recordingId.ToString("D"));
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            ProviderCapabilityKind.Metadata, ["private"], actor: actor, source: source));
+        Assert.Equal(allowed ? 1 : 0, plan.Candidates.Count);
+        if (allowed) Assert.Equal("actual", Assert.Single(plan.Candidates).TrackId!.Value);
+        var denied = await router.PlanAsync<IProviderMetadataCapability>(Request(
+            ProviderCapabilityKind.Metadata, ["private"], actor: Actor(Guid.CreateVersion7()), source: source));
+        Assert.Empty(denied.Candidates);
+        identities.Verify(item => item.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), recordingId,
+            It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Fact]
     public async Task PublicRead_AllowsOnlyAccountFreeMetadataWithoutAccountResolution()
     {

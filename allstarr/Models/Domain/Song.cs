@@ -3,6 +3,7 @@ namespace allstarr.Models.Domain;
 public sealed class Song
 {
     public string Id { get; set; } = string.Empty;
+    public Guid? CanonicalRecordingId { get; set; }
 
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;

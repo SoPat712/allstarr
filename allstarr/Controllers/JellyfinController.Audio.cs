@@ -38,7 +38,7 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        return await StreamExternalContent(provider!, externalId!);
+        return await StreamExternalContent(provider!, externalId!, itemId);
     }
 
     [HttpGet("Audio/{itemId}/stream")]
@@ -69,7 +69,7 @@ public partial class JellyfinController
         }
 
         var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
-        return await StreamExternalContent(provider!, externalId!, quality);
+        return await StreamExternalContent(provider!, externalId!, itemId, quality);
     }
 
     private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
@@ -118,11 +118,12 @@ public partial class JellyfinController
     private async Task<IActionResult> StreamExternalContent(
         string provider,
         string externalId,
+        string requestedItemId,
         StreamQuality quality = StreamQuality.Original)
     {
         try
         {
-            var protocol = HttpContext.RequireProtocolExecutionContext();
+            var protocol = HttpContext.RequireProtocolExecutionContext() with { RequestedItemId = requestedItemId };
             var requestedQuality = quality switch
             {
                 StreamQuality.Low => ProviderAudioQuality.DataSaver,
@@ -264,7 +265,7 @@ public partial class JellyfinController
         }
 
         var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
-        return await StreamExternalContent(provider!, externalId!, quality);
+        return await StreamExternalContent(provider!, externalId!, itemId, quality);
     }
 
     #endregion

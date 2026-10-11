@@ -1286,8 +1286,10 @@ public sealed class ProtocolRouteFixtureTests
         gateway.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream(bool knownRecording)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetSongAsync(
@@ -1297,7 +1299,8 @@ public sealed class ProtocolRouteFixtureTests
                 "6768469976"))
             .ReturnsAsync(new Song
             {
-                Id = "ext-applemusic-song-6768469976",
+                Id = knownRecording ? "ext-deezer-first" : "ext-applemusic-song-6768469976",
+                CanonicalRecordingId = knownRecording ? Guid.CreateVersion7() : null,
                 ExternalProvider = "applemusic",
                 ExternalId = "6768469976",
                 Title = "Playback Track",
@@ -1327,7 +1330,7 @@ public sealed class ProtocolRouteFixtureTests
 
         Assert.Equal("flac", source.GetProperty("Container").GetString());
         Assert.Equal(
-            "/Audio/ext-applemusic-song-6768469976/stream?static=true",
+            knownRecording ? "/Audio/ext-deezer-first/stream?static=true" : "/Audio/ext-applemusic-song-6768469976/stream?static=true",
             source.GetProperty("DirectStreamUrl").GetString());
         Assert.False(source.GetProperty("RequiresOpening").GetBoolean());
         gateway.VerifyAll();

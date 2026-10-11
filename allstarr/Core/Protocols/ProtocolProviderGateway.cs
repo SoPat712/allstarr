@@ -144,16 +144,17 @@ public sealed partial class ProtocolProviderGateway(
         CancellationToken cancellationToken = default)
     {
         providerId = NormalizeProvider(providerId);
-        if (!IsPublicMetadataProvider(providerId) ||
-            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId)) return null;
+        if (providerId != "allstarr" && (!IsPublicMetadataProvider(providerId) ||
+            !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId))) return null;
         if (resourceKind is not (ProviderResourceKind.Track or ProviderResourceKind.Album or
             ProviderResourceKind.Artist or ProviderResourceKind.Playlist)) return null;
 
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        var candidate = await PlanPublicMetadataAsync(providerId, "public-artwork", timeout.Token);
+        var candidate = await PlanPublicMetadataAsync(providerId, "public-artwork", timeout.Token,
+            resourceKind == ProviderResourceKind.Track ? externalId : null);
         if (candidate == null) return null;
-        var id = new ProviderExternalResourceId(providerId, resourceKind, externalId);
+        var id = candidate.TrackId ?? new ProviderExternalResourceId(providerId, resourceKind, externalId);
         ProviderArtworkReference? artwork = null;
         switch (resourceKind)
         {
@@ -184,10 +185,10 @@ public sealed partial class ProtocolProviderGateway(
         providerId = NormalizeProvider(providerId);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        var candidate = await PlanPublicMetadataAsync(providerId, "public-playback-metadata", timeout.Token);
+        var candidate = await PlanPublicMetadataAsync(providerId, "public-playback-metadata", timeout.Token, externalId);
         if (candidate == null) return null;
         var outcome = await candidate.Implementation.GetTrackAsync(candidate.Context,
-            new(new(providerId, ProviderResourceKind.Track, externalId)));
+            new(candidate.TrackId ?? new(providerId, ProviderResourceKind.Track, externalId)));
         cancellationToken.ThrowIfCancellationRequested();
         if (outcome.IsSuccess)
         {
@@ -202,8 +203,18 @@ public sealed partial class ProtocolProviderGateway(
     }
 
     private async Task<ProviderRouteCandidate<IProviderMetadataCapability>?> PlanPublicMetadataAsync(
-        string providerId, string operation, CancellationToken cancellationToken)
+        string providerId, string operation, CancellationToken cancellationToken, string? trackId = null)
     {
+        if (providerId == "allstarr")
+        {
+            if (!Guid.TryParse(trackId, out var recordingId)) return null;
+            var known = await router.PlanAsync<IProviderMetadataCapability>(Request(
+                new(ProviderActorKind.PublicRead, null), ProviderCapabilityKind.Metadata, operation,
+                ResolveProviderOrder(ProviderCapabilityKind.Metadata),
+                new("allstarr", ProviderResourceKind.Track, recordingId.ToString("D")),
+                deadline: DateTimeOffset.UtcNow.AddSeconds(30), cancellationToken: cancellationToken));
+            return known.Candidates.FirstOrDefault();
+        }
         if (!IsPublicMetadataProvider(providerId) ||
             !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId)) return null;
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
@@ -398,7 +409,11 @@ public sealed partial class ProtocolProviderGateway(
         var groupByIsrc = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (song, identity) in verified)
         {
-            if (!string.IsNullOrWhiteSpace(identity!.PublicId)) song.Id = identity.PublicId;
+            if (!string.IsNullOrWhiteSpace(identity!.PublicId))
+            {
+                song.Id = identity.PublicId;
+                song.CanonicalRecordingId = identity.CanonicalRecordingId;
+            }
             var group = $"recording:{identity.CanonicalRecordingId:N}";
             groupBySong[song] = group;
             if (NormalizeIsrc(song.Isrc) is { } isrc) groupByIsrc.TryAdd(isrc, group);
@@ -423,7 +438,11 @@ public sealed partial class ProtocolProviderGateway(
             if (linked)
             {
                 var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key).Identity;
-                if (!string.IsNullOrWhiteSpace(known?.PublicId)) best.Id = known.PublicId;
+                if (!string.IsNullOrWhiteSpace(known?.PublicId))
+                {
+                    best.Id = known.PublicId;
+                    best.CanonicalRecordingId = known.CanonicalRecordingId;
+                }
             }
             // An ISRC alone only merges across providers; same-provider duplicates (album and single,
             // for example) stay separate rows unless an accepted link already proves they're one recording.
@@ -584,6 +603,7 @@ public sealed partial class ProtocolProviderGateway(
         string externalId)
     {
         var routedProviderId = NormalizeProvider(providerId);
+        if (routedProviderId == "allstarr") return await GetKnownSongAsync(protocol, routedProviderId, externalId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");
         if (routed.Candidate != null)
@@ -598,11 +618,12 @@ public sealed partial class ProtocolProviderGateway(
                 await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song]);
                 return (await ResolveEffectivePolicyAsync(protocol))?.Includes(song) == false ? null : song;
             }
-            if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
+            if (outcome.Error!.Kind == ProviderErrorKind.NotFound)
+                return await GetKnownSongAsync(protocol, routedProviderId, externalId);
             ThrowRouteFailure(outcome.Error);
         }
 
-        return null;
+        return await GetKnownSongAsync(protocol, routedProviderId, externalId);
     }
 
     public async Task<Album?> GetAlbumAsync(
@@ -904,7 +925,7 @@ public sealed partial class ProtocolProviderGateway(
         protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
             protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
             protocol.Deadline, opening.Token, protocol.Client)
-        { Policy = protocol.Policy };
+        { Policy = protocol.Policy, RequestedItemId = protocol.RequestedItemId };
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
@@ -935,17 +956,20 @@ public sealed partial class ProtocolProviderGateway(
         {
             providerOrder = providerOrder.Append(providerId).Distinct(StringComparer.Ordinal).ToArray();
         }
-        var itemId = ProtocolItemId(trackId);
+        var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
         var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
         var resuming = parsedRange != null && rangeStart != 0;
         var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
-        if (!hasPlaybackIdentity)
+        if (!hasPlaybackIdentity && providerId != "allstarr")
         {
             if (!providerOrder.Contains(providerId, StringComparer.Ordinal)) return null;
             providerOrder = [providerId];
         }
         if (resuming)
         {
+            if (!hasPlaybackIdentity && providerId == "allstarr")
+                throw new HttpRequestException("Restart playback before seeking this recording.", null,
+                    HttpStatusCode.RequestedRangeNotSatisfiable);
             // Byte offsets cannot be transferred between two encodings of the same recording.
             if (hasPlaybackIdentity && playbackActivity != null && previous == null)
                 throw new HttpRequestException("Restart playback before seeking this external track.", null,
@@ -1007,7 +1031,7 @@ public sealed partial class ProtocolProviderGateway(
             var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
                 servingTrack, cacheScope, protocol.CancellationToken);
             if (cached != null)
-                return Opened(cached with { SelectionReason = $"{routeReason}:managed-cache" });
+                return await OpenedAsync(cached with { SelectionReason = $"{routeReason}:managed-cache" }, candidate.Context, servingTrack);
             var leaseRequest = new ProviderStreamLeaseRequest(
                 servingTrack,
                 quality,
@@ -1050,10 +1074,10 @@ public sealed partial class ProtocolProviderGateway(
             if (outcome.IsSuccess)
             {
                 var (response, lease) = outcome.RequireValue();
-                return Opened(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
+                return await OpenedAsync(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
                     servingTrack.Value, candidate.Context.Account?.AccountId,
                     EffectiveQuality: quality,
-                    SelectionReason: $"{routeReason}:remote"));
+                    SelectionReason: $"{routeReason}:remote"), candidate.Context, servingTrack);
             }
             var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
             if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
@@ -1070,8 +1094,10 @@ public sealed partial class ProtocolProviderGateway(
 
         return null;
 
-        ProtocolProviderStream Opened(ProtocolProviderStream stream)
+        async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
+            ProviderExecutionContext execution, ProviderExternalResourceId servingTrack)
         {
+            if (!headOnly) await RememberPlayedTrackAsync(execution, servingTrack, itemId);
             stream.Response.Headers.Remove("X-Allstarr-Provider");
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
             stream.Response.Headers.Remove("X-Allstarr-Route-Reason");
