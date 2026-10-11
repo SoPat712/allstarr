@@ -445,6 +445,61 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
+    public async Task PlayableSearch_RestrictsProviderBeforeGroupingSameRecording()
+    {
+        var providerIds = new[] { "deezer", "qobuz", "apple-musickit" };
+        var tracks = new Dictionary<string, ProviderTrackMetadata[]>
+        {
+            ["deezer"] =
+            [
+                new(new("deezer", ProviderResourceKind.Track, "d-1"), "Song", [new("Artist")], isrc: "US-RC1-76-07839"),
+                new(new("deezer", ProviderResourceKind.Track, "d-2"), "Song (single)", [new("Artist")], isrc: "USRC17607839")
+            ],
+            ["qobuz"] = [new(new("qobuz", ProviderResourceKind.Track, "q-1"), "Song", [new("Artist")], isrc: "usrc17607839")],
+            ["apple-musickit"] = [new(new("apple-musickit", ProviderResourceKind.Track, "a-1"), "Song (live)", [new("Artist")], isrc: "GBAYE0000001")]
+        };
+        var metadata = providerIds.Select(providerId =>
+        {
+            var capability = new Mock<IProviderMetadataCapability>();
+            capability.SetupGet(item => item.ProviderId).Returns(providerId);
+            capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+            capability.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(providerId, tracks[providerId])));
+            capability.Setup(item => item.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(new(providerId, [])));
+            capability.Setup(item => item.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(new(providerId, [])));
+            return capability.Object;
+        }).ToArray();
+        var registry = MetadataRegistry(metadata);
+        var streaming = providerIds.Select(providerId =>
+        {
+            var capability = new Mock<IProviderStreamingCapability>();
+            capability.SetupGet(item => item.ProviderId).Returns(providerId);
+            capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+            return capability.Object;
+        }).ToArray();
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, streaming));
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata.Where(item => request.ProviderPriority.Contains(item.ProviderId)).ToArray()));
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Providers:StreamingOrder"] = "qobuz,deezer,apple-musickit" }).Build();
+        // No identity service: grouping must come only from the ISRCs already in the search payloads.
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
+
+        var songs = await gateway.SearchPlayableSongsAsync(Context(), "Song", 10, "apple-musickit");
+
+        Assert.Equal("a-1", Assert.Single(songs).ExternalId);
+        songs = await gateway.SearchPlayableSongsAsync(Context(), "Song", 10, "deezer");
+        Assert.Equal(["d-1", "d-2"], songs.Select(song => song.ExternalId!).Order().ToArray());
+        Assert.Empty(await gateway.SearchPlayableSongsAsync(Context(), "Song", 10, "unavailable"));
+        router.Verify(item => item.PlanAsync<IProviderMetadataCapability>(
+            It.Is<ProviderRouteRequest>(request => request.ProviderPriority.Count != 1)), Times.Never);
+    }
+
+    [Fact]
     public async Task MetadataSearch_KeepsSameProviderIsrcDuplicatesSeparate()
     {
         var capability = new Mock<IProviderMetadataCapability>();

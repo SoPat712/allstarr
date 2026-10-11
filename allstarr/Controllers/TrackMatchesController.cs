@@ -477,10 +477,7 @@ public sealed class TrackMatchesController(
         {
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
-        var fetchLimit = provider.Length == 0
-            ? limit
-            : Math.Min(200, limit * playableProviders.Length);
-        var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, fetchLimit))
+        var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, limit, provider))
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                            playableProviders.Contains(song.ExternalProvider, StringComparer.OrdinalIgnoreCase) &&
                            (provider.Length == 0 ||

@@ -88,6 +88,23 @@ permissions (listeners must receive 403 for the operator's live-session list). I
 temporary dashboard session is logged out independently on exit.
 
 Run `python3 tools/tests/test_live_jellyfin_smoke.py` for offline harness checks.
+Both these checks and the live external-search check require the .NET 10 SDK,
+`bash`, `curl`, and `jq`. The package-free `SearchContract` helper builds into a
+temporary directory with NuGet sources disabled and executes the production
+relevance scorer directly; it does not need the main application's restore.
+The first search page must have descending relevance, unique recording identities,
+and native copies for identities observed in the selected listener's library.
+The original exact second-page continuation check also runs.
+
+The library comparison captures authenticated, visible native audio directly
+from Jellyfin, including provider IDs and candidates outside the search text.
+It pages through at most 100,000 items in batches of 500 and fails on incomplete,
+invalid, or changing totals instead of silently reducing coverage. Local preference
+is conditional on matching observed item or recording provider IDs, including
+normalized ISRCs; missing identity tags cannot prove a local counterpart, and
+similar titles are not treated as evidence. The report gives the number of local
+identity checks performed. Captures and build output are deleted on exit.
+
 External audio must use `[A]` or `[A]/[E]`, while artist and album labels remain
 catalog-specific. The opt-in stream checks require audio content and the actual
 `X-Allstarr-Provider`, then verify private song-info provenance and that HEAD

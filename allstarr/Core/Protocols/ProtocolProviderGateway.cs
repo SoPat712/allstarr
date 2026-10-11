@@ -45,6 +45,12 @@ public interface IProtocolProviderGateway
         string query,
         int limit);
 
+    Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit,
+        string? providerId);
+
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
     Task RememberTrackAsync(ProtocolExecutionContext protocol, string itemId);
@@ -494,10 +500,16 @@ public sealed partial class ProtocolProviderGateway(
         }
     }
 
+    public Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
+        ProtocolExecutionContext protocol,
+        string query,
+        int limit) => SearchPlayableSongsAsync(protocol, query, limit, null);
+
     public async Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
         ProtocolExecutionContext protocol,
         string query,
-        int limit)
+        int limit,
+        string? providerId)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         limit = Math.Clamp(limit, 1, 200);
@@ -520,6 +532,8 @@ public sealed partial class ProtocolProviderGateway(
         }
         var providerOrder = await ResolvePlayableProviderOrderAsync(
             protocol, actor, configuredProviderOrder);
+        if (!string.IsNullOrWhiteSpace(providerId))
+            providerOrder = providerOrder.Where(item => item == NormalizeProvider(providerId)).ToArray();
         if (providerOrder.Count == 0) return [];
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             protocol,

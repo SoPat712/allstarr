@@ -11,13 +11,30 @@ import threading
 import time
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlsplit
 
 
 SCRIPT = Path(__file__).with_name("live_jellyfin_smoke.sh").read_text()
+SEARCH_PROJECT = Path(__file__).with_name("SearchContract").joinpath("SearchContract.csproj").resolve()
 
 
 def function(name):
     return re.search(rf"^{name}\(\) \{{\n.*?^\}}", SCRIPT, re.M | re.S)[0]
+
+
+def audio(identifier, title="Fixture", artist="Artist", isrc=None):
+    providers = {} if isrc is None else {"ISRC": isrc}
+    item = {"Id": identifier, "Type": "Audio", "Name": title,
+            "Artists": [artist], "ProviderIds": providers}
+    if identifier.startswith("ext-"):
+        item.update(Name=f"{title} [A]", Album="Album [Provider]",
+                    Artists=[f"{artist} [Provider]"],
+                    Path=f"/music/{artist} [Provider]/Album [Provider]/{title} [A].flac")
+    return item
+
+
+def envelope(items, total=None):
+    return {"Items": items, "StartIndex": 0, "TotalRecordCount": len(items) if total is None else total}
 
 
 class StreamFixture(BaseHTTPRequestHandler):
@@ -25,6 +42,35 @@ class StreamFixture(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        if self.path.startswith("/native/"):
+            url = urlsplit(self.path)
+            query = parse_qs(url.query)
+            mode = url.path.split("/")[2]
+            offset = int(query.get("StartIndex", ["0"])[0])
+            self.server.native_requests.append((mode, offset, query))
+            valid = (self.headers.get("Authorization") == "fixture-auth" and
+                     query.get("Fields") == ["ProviderIds"] and
+                     query.get("IncludeItemTypes") == ["Audio"] and
+                     "SearchTerm" not in query)
+            items = [audio(f"native-{index}", "Unrelated", "Other") for index in range(500)]
+            # This tagged native counterpart is outside the requested search text and first capture page.
+            items.append(audio("native-500", "Alternate title", "Different credit", "us-ab1-26-12345"))
+            selected = items[offset:offset + int(query.get("Limit", ["500"])[0])]
+            if mode == "truncated" and offset > 0:
+                selected = []
+            if mode == "duplicate" and offset > 0:
+                selected = [items[0]]
+            if mode == "invalid" and selected:
+                selected[0].pop("ProviderIds")
+            total = 100001 if mode == "over-limit" else 502 if mode == "changed-total" and offset else len(items)
+            value = {"Items": selected, "StartIndex": offset + (mode == "wrong-offset"), "TotalRecordCount": total}
+            body = json.dumps(value).encode()
+            self.send_response(200 if valid else 401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if self.path.startswith("/api/admin/"):
             cookie = self.headers.get("Cookie")
             valid_cookie = cookie in ("fixture=admin", "fixture=listener", "fixture=foreign")
@@ -189,6 +235,174 @@ class JellyfinSmokeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn(expected, result.stdout)
                 self.assertNotIn(password, result.stdout)
+
+
+class SearchContractTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.workspace = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.workspace.cleanup)
+        cls.build = Path(cls.workspace.name, "scorer")
+        result = subprocess.run(["bash", "-c", function("build_search_contract") +
+                                 '\nbuild_search_contract "$SCORER_BUILD"'],
+                                text=True, capture_output=True, timeout=90,
+                                env={**os.environ, "search_contract_project": str(SEARCH_PROJECT),
+                                     "SCORER_BUILD": str(cls.build), "DOTNET_CLI_TELEMETRY_OPTOUT": "1"})
+        if result.returncode:
+            log = cls.build / "build.log"
+            raise RuntimeError("SearchContract build failed: " + (log.read_text() if log.exists() else result.stderr))
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), StreamFixture)
+        cls.server.native_requests = []
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.thread.join()
+
+    def score(self, page, local=(), query="Fixture Artist", expected=()):
+        capture = {"query": query, "page": envelope(page), "local": envelope(list(local))}
+        return self.score_capture(capture, expected)
+
+    def score_capture(self, capture, expected):
+        result = subprocess.run(["dotnet", str(self.build / "bin/SearchContract.dll")],
+                                input=capture if isinstance(capture, str) else json.dumps(capture),
+                                text=True, capture_output=True, timeout=10)
+        self.assertEqual(1 if expected else 0, result.returncode, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(set(expected), set(output["errors"]))
+        self.assertEqual("", result.stderr)
+        return output
+
+    def test_relevance_puts_strong_external_before_weak_native(self):
+        native = audio("native-weak", "Unrelated", "Other")
+        output = self.score([audio("ext-qobuz-song-1"), native], [native])
+        self.assertEqual(100, output["scores"][0])
+        self.assertGreater(output["scores"][0], output["scores"][1])
+        self.assertEqual(1, output["localPreferenceChecks"])
+
+    def test_descending_scores_allow_equal_relevance(self):
+        native = audio("native-exact")
+        output = self.score([native, audio("ext-qobuz-song-1"), audio("ext-deezer-song-2", "Unrelated")], [native])
+        self.assertEqual(output["scores"][0], output["scores"][1])
+        self.assertGreater(output["scores"][1], output["scores"][2])
+
+    def test_reversed_relevance_fails(self):
+        self.score([audio("native-weak", "Unrelated", "Other"), audio("ext-qobuz-song-1")],
+                   expected=["relevance-order"])
+
+    def test_duplicate_same_id_fails(self):
+        self.score([audio("ext-qobuz-song-1"), audio("ext-qobuz-song-1")], expected=["duplicate-recording"])
+
+    def test_same_normalized_isrc_across_different_ids_fails(self):
+        self.score([audio("ext-qobuz-song-1", isrc="US-AB1-26-12345"),
+                    audio("ext-deezer-song-2", isrc="usab12612345")], expected=["duplicate-recording"])
+
+    def test_same_recording_mbid_and_provider_track_id_fail(self):
+        for left, right in (({"MusicBrainzTrack": "recording"}, {"MusicBrainzRecording": "recording"}),
+                            ({"qobuz": "same-track"}, {"Qobuz": "same-track"})):
+            with self.subTest(left=left):
+                items = [audio("ext-qobuz-song-1"), audio("ext-deezer-song-2")]
+                items[0]["ProviderIds"], items[1]["ProviderIds"] = left, right
+                self.score(items, expected=["duplicate-recording"])
+
+    def test_unproven_lookalikes_and_shared_album_ids_remain_distinct(self):
+        items = [audio("ext-qobuz-song-1"), audio("ext-deezer-song-2")]
+        for item in items:
+            item["ProviderIds"] = {"MusicBrainzAlbum": "album", "MusicBrainzArtist": "artist", "AllstarrSource": "provider"}
+        self.score(items)
+
+    def test_native_same_isrc_is_preferred(self):
+        native = audio("native-copy", isrc="US-AB1-26-12345")
+        output = self.score([native], [native])
+        self.assertEqual(1, output["localPreferenceChecks"])
+        self.score([audio("ext-qobuz-song-1", isrc="usab12612345")], [native],
+                   expected=["local-copy-not-preferred"])
+
+    def test_scorer_preserves_source_primary_credit_and_native_first_three_artists(self):
+        item = audio("ext-qobuz-song-1", artist="Artist feat. Guest")
+        item["Artists"] = ["Artist [Provider]", "Guest [Provider]"]
+        output = self.score([item], query="Fixture Artist feat. Guest")
+        self.assertEqual([100], output["scores"])
+        native = audio("native-copy")
+        native["Artists"] = ["Artist", "Second", "Third", "Excluded"]
+        output = self.score([native], [native], query="Fixture Artist Second Third")
+        self.assertEqual([100], output["scores"])
+
+    def test_invalid_or_incomplete_capture_fails_safely(self):
+        valid = {"query": "Fixture Artist", "page": envelope([audio("ext-qobuz-song-1")]), "local": envelope([])}
+        cases = ["not json", {}, {**valid, "query": ""}, {**valid, "query": None},
+                 {**valid, "local": envelope([], total=1)},
+                 {**valid, "page": {**valid["page"], "StartIndex": 5}},
+                 {**valid, "page": {**valid["page"], "TotalRecordCount": 0.5}},
+                 {**valid, "page": {"Items": valid["page"]["Items"]}}]
+        for field, value in (("Id", ""), ("Name", None), ("Type", "MusicAlbum"),
+                             ("ProviderIds", None), ("Artists", "Artist")):
+            item = {**valid["page"]["Items"][0], field: value}
+            cases.append({**valid, "page": envelope([item])})
+        for capture in cases:
+            with self.subTest(capture=capture):
+                self.score_capture(capture, ["invalid-capture"])
+        missing_path = audio("ext-qobuz-song-1")
+        missing_path.pop("Path")
+        self.score([missing_path], expected=["missing-source-metadata"])
+        self.score([], expected=["empty-first-page"])
+
+    def capture(self, mode):
+        with tempfile.TemporaryDirectory() as directory:
+            result = subprocess.run(["bash", "-c", "\n".join([
+                "set -euo pipefail", "auth=(-H 'Authorization: fixture-auth'); best_user_id=fixture; TIMEOUT_SECONDS=2",
+                function("capture_native_search_items"), 'capture_native_search_items native.json .',
+            ])], cwd=directory, text=True, capture_output=True, timeout=10,
+                env={**os.environ, "DIRECT_BASE": f"http://127.0.0.1:{self.server.server_port}/native/{mode}"})
+            output = Path(directory, "native.json")
+            return result, json.loads(output.read_text()) if output.exists() else None
+
+    def test_authenticated_native_capture_paginates_without_query_filter(self):
+        previous = len(self.server.native_requests)
+        result, capture = self.capture("complete")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(501, capture["TotalRecordCount"])
+        self.assertEqual("native-500", capture["Items"][-1]["Id"])
+        self.assertEqual([0, 500], [offset for _, offset, _ in self.server.native_requests[previous:]])
+
+    def test_native_capture_fails_closed_on_incomplete_or_invalid_pages(self):
+        for mode in ("truncated", "changed-total", "duplicate", "over-limit", "invalid", "wrong-offset"):
+            with self.subTest(mode=mode):
+                result, _ = self.capture(mode)
+                self.assertNotEqual(0, result.returncode)
+
+    def live_contract(self, item, mode="complete", build_success=True):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "first.json").write_text(json.dumps(envelope([item])))
+            code = "\n".join([
+                "set -euo pipefail", "checks=0; failures=0; auth=(-H 'Authorization: fixture-auth'); best_user_id=fixture; TIMEOUT_SECONDS=2",
+                function("capture_native_search_items"), function("check_search_contract"),
+                'build_search_contract() { mkdir -p "$1"; cp -R "$SCORER_BIN" "$1/bin"; }' if build_success else
+                'build_search_contract() { return 1; }',
+                'check_search_contract "Fixture Artist" first.json work',
+                'printf "RESULT %s %s\\n" "$checks" "$failures"',
+            ])
+            result = subprocess.run(["bash", "-c", code], cwd=directory, text=True, capture_output=True, timeout=15,
+                                    env={**os.environ, "SCORER_BIN": str(self.build / "bin"),
+                                         "DIRECT_BASE": f"http://127.0.0.1:{self.server.server_port}/native/{mode}"})
+            self.assertEqual(0, result.returncode, result.stderr)
+            self.assertNotIn(item["Id"], result.stdout)
+            self.assertNotIn("fixture-auth", result.stdout)
+            return result.stdout
+
+    def test_live_helper_executes_scorer_and_finds_native_counterpart_outside_query(self):
+        self.assertIn("RESULT 1 0", self.live_contract(audio("ext-qobuz-song-1")))
+        self.assertIn("RESULT 1 1", self.live_contract(audio("ext-qobuz-song-1", isrc="USAB12612345")))
+
+    def test_live_helper_fails_on_setup_capture_or_scorer_error(self):
+        self.assertIn("scorer-setup", self.live_contract(audio("ext-qobuz-song-1"), build_success=False))
+        self.assertIn("incomplete-native-capture", self.live_contract(audio("ext-qobuz-song-1"), mode="truncated"))
+        invalid = audio("ext-qobuz-song-1")
+        invalid.pop("Path")
+        self.assertIn("RESULT 1 1", self.live_contract(invalid))
 
 
 if __name__ == "__main__":
