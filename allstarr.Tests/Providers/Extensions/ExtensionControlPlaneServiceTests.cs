@@ -382,14 +382,76 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         });
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionRenewal_LogsFailuresAndSkipsRemovedRuntime(bool uninstall)
+    {
+        var package = await _service.StageAsync(Package("6.0.0", "renewal", signedSession: true, refreshSession: true));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+            [new("network", "https://api.example.test/", true), new("secret", "accountToken", true)]);
+        var registry = new ProviderRegistry([]);
+        var handler = new SignedSessionHandler
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O"),
+            RejectRefresh = true
+        };
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(handler, false));
+        var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "downloads") };
+        var coordinator = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
+            Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        await coordinator.RefreshSignedSessionsAsync(); // Signed out: never verify.
+        Assert.Equal(0, handler.Calls);
+        await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+        await coordinator.RefreshSignedSessionsAsync();
+        Assert.Equal(ExtensionSessionStates.SignedIn, (await coordinator.SignedSessionStatusAsync(package.Id)).State);
+        handler.RejectRefresh = false;
+        await coordinator.RefreshSignedSessionsAsync();
+        Assert.Equal(2, handler.RefreshCalls);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var events = await db.ExtensionLogs.Where(item => item.ExtensionPackageId == package.Id &&
+                (item.EventCode == "session.renewal-failed" || item.EventCode == "session.renewed")).ToListAsync();
+            Assert.Equal(2, events.Count);
+            Assert.Contains(events, item => item.EventCode == "session.renewal-failed" && item.Level == "warning");
+            Assert.Contains(events, item => item.EventCode == "session.renewed");
+            Assert.All(events, item => Assert.DoesNotContain("secret-1", item.Message, StringComparison.Ordinal));
+        }
+        // Put it back in the due window before removing it from the runtime.
+        await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+        await coordinator.DisableAsync(package.Id, package.Revision);
+        package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
+        if (uninstall) await coordinator.UninstallAsync(package.Id, package.Revision);
+        var calls = handler.Calls;
+        await coordinator.RefreshSignedSessionsAsync();
+        Assert.Equal(calls, handler.Calls);
+    }
+
     private sealed class SignedSessionHandler : HttpMessageHandler
     {
+        public string ExpiresAt { get; init; } = "2099-01-01T00:00:00Z";
+        public bool RejectRefresh { get; set; }
+        public int RefreshCalls { get; private set; }
+        public int Calls { get; private set; }
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
-            var body = request.RequestUri!.AbsolutePath.EndsWith("/bootstrap", StringComparison.Ordinal)
+            Calls++;
+            var refreshing = request.RequestUri!.AbsolutePath == "/v1/refresh";
+            if (refreshing) RefreshCalls++;
+            var body = request.RequestUri.AbsolutePath.EndsWith("/bootstrap", StringComparison.Ordinal)
                 ? "{\"challenge_id\":\"challenge-1\"}"
-                : "{\"session_id\":\"session-1\",\"session_secret\":\"secret-1\",\"expires_at\":\"2099-01-01T00:00:00Z\"}";
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                : JsonSerializer.Serialize(new
+                {
+                    session_id = "session-1",
+                    session_secret = "secret-1",
+                    expires_at = refreshing ? DateTimeOffset.UtcNow.AddHours(6).ToString("O") : ExpiresAt
+                });
+            return Task.FromResult(new HttpResponseMessage(refreshing && RejectRefresh
+                ? System.Net.HttpStatusCode.ServiceUnavailable : System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
                 RequestMessage = request
@@ -397,7 +459,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         }
     }
 
-    private VerifiedExtensionPackage Package(string version, string suffix, bool signedSession = false)
+    private VerifiedExtensionPackage Package(string version, string suffix, bool signedSession = false, bool refreshSession = false)
     {
         var packageRoot = Path.Combine(_root, "extensions", ".staging", suffix);
         Directory.CreateDirectory(packageRoot);
@@ -415,7 +477,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             permissions = new[] { new { kind = "network", value = "https://api.example.test/", required = true }, new { kind = "secret", value = "accountToken", required = true } },
             requiredRuntimeFeatures = signedSession ? new[] { "signedSession@1", "sessionGrant@1" } : null,
             signedSession = signedSession
-                ? new { @namespace = "fixture-v1", baseUrl = "https://api.example.test/v1", appVersion = "fixture@1.0.0" }
+                ? new { @namespace = "fixture-v1", baseUrl = "https://api.example.test/v1", appVersion = "fixture@1.0.0", endpoints = new { refresh = refreshSession ? "/refresh" : "" } }
                 : null
         }, new JsonSerializerOptions { DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull }));
         File.WriteAllText(Path.Combine(packageRoot, "index.js"),

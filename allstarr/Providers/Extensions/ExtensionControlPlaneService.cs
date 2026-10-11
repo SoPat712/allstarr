@@ -612,6 +612,7 @@ public static class ExtensionControlPlaneRegistration
         services.AddSingleton<ExtensionControlPlaneService>();
         services.AddSingleton<ExtensionRuntimeCoordinator>();
         services.AddHostedService(provider => provider.GetRequiredService<ExtensionRuntimeCoordinator>());
+        services.AddHostedService<ExtensionSessionRenewalService>();
         return services;
     }
 }

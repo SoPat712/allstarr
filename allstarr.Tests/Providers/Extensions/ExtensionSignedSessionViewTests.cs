@@ -214,13 +214,114 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
         Assert.Contains("\"InstallId\":", status, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task BackgroundRenewal_RenewsOnlyWhenDueAndPublishesSafeStatus()
+    {
+        var handler = new SessionHandler { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O") };
+        var sandbox = Sandbox(handler, refresh: true);
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+
+        var renewed = await sandbox.RefreshSignedSessionIfDueAsync();
+
+        Assert.NotNull(renewed);
+        Assert.True(renewed.RenewsAutomatically);
+        Assert.Equal(handler.RenewedExpiresAt, renewed.ExpiresAt);
+        Assert.Null(renewed.LastRenewalFailure);
+        Assert.Null(await sandbox.RefreshSignedSessionIfDueAsync());
+        Assert.Equal(1, handler.RefreshCalls);
+        Assert.Equal(2, handler.Calls);
+        Assert.DoesNotContain("secret-1", JsonSerializer.Serialize(renewed), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(61, true, true)]
+    [InlineData(-1, true, true)]
+    [InlineData(30, false, true)]
+    [InlineData(30, true, false)]
+    public async Task BackgroundRenewal_SkipsWithoutStartingVerification(int minutes, bool signedIn, bool refresh)
+    {
+        var handler = new SessionHandler { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(minutes).ToString("O") };
+        var sandbox = Sandbox(handler, refresh: refresh);
+        if (signedIn) await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+        var calls = handler.Calls;
+
+        Assert.Null(await sandbox.RefreshSignedSessionIfDueAsync());
+        Assert.Equal(calls, handler.Calls);
+        Assert.Equal(0, handler.RefreshCalls);
+    }
+
+    [Theory]
+    [InlineData(401, null)]
+    [InlineData(429, null)]
+    [InlineData(503, null)]
+    [InlineData(200, "not json")]
+    [InlineData(200, "{}")]
+    [InlineData(200, "{\"expires_at\":\"2020-01-01T00:00:00Z\"}")]
+    public async Task BackgroundRenewal_FailureKeepsSessionAndRetriesNextTick(int status, string? body)
+    {
+        var handler = new SessionHandler
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O"),
+            RefreshStatus = (HttpStatusCode)status,
+            RefreshBody = body
+        };
+        var runtime = Path.Combine(_root, Guid.NewGuid().ToString("N"));
+        var sandbox = Sandbox(handler, runtime: runtime, refresh: true);
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+        var statePath = Assert.Single(Directory.GetFiles(Path.Combine(runtime, "state"), "*.protected"));
+        var before = await File.ReadAllBytesAsync(statePath);
+
+        var failed = await sandbox.RefreshSignedSessionIfDueAsync();
+
+        Assert.NotNull(failed);
+        Assert.Equal(ExtensionSessionStates.SignedIn, failed.State);
+        Assert.Equal(handler.ExpiresAt, failed.ExpiresAt);
+        Assert.NotNull(failed.LastRenewalFailure);
+        Assert.Equal(before, await File.ReadAllBytesAsync(statePath));
+        Assert.Equal(failed.LastRenewalFailure, (await sandbox.SignedSessionStatusAsync()).LastRenewalFailure);
+        Assert.Equal(2, handler.Calls);
+        handler.RefreshStatus = HttpStatusCode.OK;
+        handler.RefreshBody = null;
+        Assert.Null((await sandbox.RefreshSignedSessionIfDueAsync())!.LastRenewalFailure);
+        Assert.Equal(2, handler.RefreshCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task BackgroundRenewal_AndSignedFetchShareOneGate(bool fetchFirst)
+    {
+        var handler = new SessionHandler
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O"),
+            HoldRefresh = true
+        };
+        var sandbox = Sandbox(handler, refresh: true,
+            script: "registerExtension({ searchTracks: function() { return session.signedFetch('GET', '/catalog'); } });");
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+        Task Fetch() => Task.Run(() => sandbox.InvokeJson("searchTracks", "{}"));
+        Task Renew() => sandbox.RefreshSignedSessionIfDueAsync();
+        var first = fetchFirst ? Fetch() : Renew();
+        await handler.RefreshEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var second = fetchFirst ? Renew() : Fetch();
+        try { Assert.False(second.IsCompleted); }
+        finally { handler.ReleaseRefresh.TrySetResult(); }
+        await Task.WhenAll(first, second).WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(1, handler.MaximumConcurrency);
+        Assert.Equal(1, handler.RefreshCalls);
+        Assert.Equal(3, handler.Calls); // Exchange, one renewal, and the signed catalog request.
+        Assert.Equal(handler.RenewedExpiresAt, (await sandbox.SignedSessionStatusAsync()).ExpiresAt);
+    }
+
     private ExtensionSandbox Sandbox(SessionHandler handler, IReadOnlySet<string>? origins = null,
-        string? runtime = null, string? sessionState = null)
+        string? runtime = null, string? sessionState = null, bool refresh = false, string? script = null)
     {
         var permissions = new ExtensionRuntimePermissionSet(
             origins ?? new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>());
         runtime ??= Path.Combine(_root, Guid.NewGuid().ToString("N"));
-        return new ExtensionSandbox(runtime, Manifest, Script, new Factory(handler), NullLogger.Instance,
+        var manifest = refresh ? Manifest.Replace("\"appVersion\":\"demo@1.0.0\"", "\"appVersion\":\"demo@1.0.0\",\"endpoints\":{\"refresh\":\"/refresh\"}", StringComparison.Ordinal) : Manifest;
+        return new ExtensionSandbox(runtime, manifest, script ?? Script, new Factory(handler), NullLogger.Instance,
             permissions, Path.Combine(runtime, "state"), _protector, sessionState);
     }
 
@@ -239,6 +340,13 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
         private int _active;
         private int _calls;
         private int _maximumConcurrency;
+        public int RefreshCalls { get; private set; }
+        public HttpStatusCode RefreshStatus { get; set; } = HttpStatusCode.OK;
+        public string? RefreshBody { get; set; }
+        public string RenewedExpiresAt { get; } = DateTimeOffset.UtcNow.AddHours(6).ToString("O");
+        public bool HoldRefresh { get; init; }
+        public TaskCompletionSource RefreshEntered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseRefresh { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Calls => Volatile.Read(ref _calls);
         public int MaximumConcurrency => Volatile.Read(ref _maximumConcurrency);
         public string? ExchangeGrant { get; private set; }
@@ -270,6 +378,19 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
                 {
                     InstallId = System.Web.HttpUtility.ParseQueryString(request.RequestUri.Query)["install_id"];
                     response = Json(BootstrapStatus, BootstrapBody);
+                }
+                else if (request.RequestUri.AbsolutePath == "/v1/refresh")
+                {
+                    RefreshCalls++;
+                    Assert.False(request.Content == null);
+                    RefreshEntered.TrySetResult();
+                    if (HoldRefresh) await ReleaseRefresh.Task.WaitAsync(cancellationToken);
+                    response = Json(RefreshStatus, RefreshBody ?? JsonSerializer.Serialize(new { expires_at = RenewedExpiresAt }));
+                }
+                else if (request.RequestUri.AbsolutePath == "/v1/catalog")
+                {
+                    Assert.Contains(request.Headers, header => header.Key.EndsWith("Session", StringComparison.OrdinalIgnoreCase));
+                    response = Json(HttpStatusCode.OK, "{}");
                 }
                 else
                 {

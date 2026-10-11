@@ -103,6 +103,16 @@ A package whose service needs a verified installation declares `signedSession` i
 
 The host performs bootstrap, challenge, grant exchange and request signing. Session secrets are encrypted on disk and never reach the script, the administrator API or logs; scripts see only session status and the responses to signed requests. Session operations for a package run one at a time, and each signed request has a 30-second limit.
 
+Active packages with a refresh endpoint renew signed-in sessions automatically. Every
+15 minutes the host checks for sessions with at most one hour remaining and renews
+them through the same gate used by signed requests. It never starts verification
+from this background check. Expired, signed-out, disabled and uninstalled packages
+are skipped. Failed renewal retains the existing session, records an extension
+Activity entry and retries on the next tick while the session remains valid.
+The Sign-in section shows automatic renewal, the current expiry and the last
+renewal failure observed by this runtime. The upstream service controls the new
+expiry and may limit how long a session can keep renewing.
+
 The host supports `signedSession@1`, `signedSession@2` and `signedSession@3`. Explicit
 provider-unavailable responses may retry twice with cancellable delays capped at ten seconds.
 Provider authentication errors retain the session; gateway session-invalid or verification-required

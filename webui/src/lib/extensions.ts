@@ -13,7 +13,7 @@ export function sessionSummary(session: ExtensionSession, locale?: string): Sess
         label: "Signed in",
         badge: "healthy",
         detail: session.expiresAt
-          ? `Session valid until ${formatSessionTime(session.expiresAt, locale)}.`
+          ? `${session.renewsAutomatically ? "Renews automatically. " : ""}Session valid until ${formatSessionTime(session.expiresAt, locale)}.`
           : "The extension can use its service.",
       };
     case "verification_pending":
@@ -47,6 +47,17 @@ const sessionReasons: Record<string, string> = {
   origin_not_approved: "The sign-in service isn't in this extension's approved network access. Use Review access to allow it, then try again.",
   unexpected_response: "The sign-in service returned an unexpected response. Try again, or check for an extension update.",
 };
+
+export function renewalFailureText(reasonCode?: string | null) {
+  if (!reasonCode) return "";
+  const reasons: Record<string, string> = {
+    provider_unavailable: "The sign-in service is unavailable.",
+    renewal_rejected: "The sign-in service refused renewal.",
+    origin_not_approved: "The sign-in service needs approved network access.",
+    unexpected_response: "The sign-in service returned an unexpected response.",
+  };
+  return `Last automatic renewal failed. ${reasons[reasonCode] ?? "Renewal could not complete."} Your sign-in was kept; renewal will be retried while the session is valid.`;
+}
 
 const packageFailureReasons: Record<string, string> = {
   required_permission_denied: "A required permission was denied during review.",
