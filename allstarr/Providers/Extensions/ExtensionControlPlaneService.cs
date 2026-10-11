@@ -202,10 +202,15 @@ public sealed partial class ExtensionControlPlaneService
                 throw new KeyNotFoundException("The enabled extension registry is unavailable.");
             var existing = await db.ExtensionPackages.SingleOrDefaultAsync(item =>
                 item.ExtensionId == verified.Manifest.Id && item.Version == verified.Manifest.Version &&
-                item.Sha256 == verified.Sha256 && item.State != ExtensionPackageState.Uninstalled,
+                item.Sha256 == verified.Sha256 && item.RegistryId == registryId && item.State != ExtensionPackageState.Uninstalled,
                 cancellationToken);
             if (existing != null)
             {
+                if (existing.State == ExtensionPackageState.Failed)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return await RetryAsync(existing.Id, existing.Revision, verified, cancellationToken);
+                }
                 if (!Path.GetFullPath(existing.PackagePath).Equals(
                         Path.GetFullPath(verified.PackageRoot), StringComparison.Ordinal))
                     DeletePackageContents(verified.PackageRoot);
@@ -396,6 +401,50 @@ public sealed partial class ExtensionControlPlaneService
             "extension-activation-failed", _clock.UtcNow);
         await db.SaveChangesAsync(cancellationToken);
         DeletePackageContents(package.PackagePath);
+    }
+
+    public async Task<ExtensionPackageRecord> RetryAsync(
+        Guid packageId,
+        long expectedRevision,
+        VerifiedExtensionPackage? replacement = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var package = await db.ExtensionPackages.SingleOrDefaultAsync(item => item.Id == packageId, cancellationToken)
+                      ?? throw new KeyNotFoundException("Extension package not found.");
+        if (package.Revision != expectedRevision)
+            throw new DbUpdateConcurrencyException("The extension package changed before retry.");
+        if (package.State != ExtensionPackageState.Failed)
+            throw new InvalidOperationException("Only a failed package can be retried.");
+        if (replacement != null)
+        {
+            EnsureContainedPackagePath(replacement.PackageRoot);
+            if (replacement.Manifest.Id != package.ExtensionId || replacement.Manifest.Version != package.Version ||
+                !replacement.Sha256.Equals(package.Sha256, StringComparison.OrdinalIgnoreCase) ||
+                !replacement.ContentSha256.Equals(package.ContentSha256, StringComparison.OrdinalIgnoreCase))
+                throw new ExtensionSdkValidationException("Retry requires the same verified package version and contents.");
+            package.PackagePath = Path.GetFullPath(replacement.PackageRoot);
+        }
+        VerifyStagedContents(package);
+        var manifest = ExtensionSdkV1.ParseManifest(File.ReadAllText(Path.Combine(package.PackagePath, "manifest.json")));
+        ExtensionRuntimeCoordinator.ValidateRuntimeFeatures(manifest);
+        var reviews = await db.ExtensionPermissionReviews
+            .Where(item => item.ExtensionPackageId == package.Id).ToListAsync(cancellationToken);
+        package.State = reviews.Any(item => item.Decision == ExtensionPermissionDecision.Pending ||
+                                           item.Required && item.Decision != ExtensionPermissionDecision.Approved)
+            ? ExtensionPackageState.ReviewRequired
+            : ExtensionPackageState.Staged;
+        package.FailureCode = null;
+        package.DisabledAt = null;
+        package.Revision++;
+        await AddLogAsync(db, package, "information", "package.retry-staged",
+            package.State == ExtensionPackageState.ReviewRequired
+                ? "Failed package verified again; permission review is required."
+                : "Failed package verified again; ready for explicit activation.", "extension-retry", _clock.UtcNow);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return package;
     }
 
     public async Task DisableAsync(Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)

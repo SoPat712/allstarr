@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  availablePackages, compareVersions, currentPackages, sessionReasonText, sessionSummary, valueChanges,
+  availablePackages, compareVersions, currentPackages, extensionFailureReason, sessionReasonText, sessionSummary, valueChanges,
   verificationHost,
 } from "./extensions";
 import type { ExtensionPackage, ExtensionStoreItem } from "./api";
@@ -68,5 +68,13 @@ describe("extension sign-in", () => {
     expect(verificationHost("javascript:alert(1)")).toBe("");
     expect(verificationHost("http://verify.example.test/")).toBe("");
     expect(verificationHost("not a url")).toBe("");
+  });
+});
+
+describe("extension package failures", () => {
+  it("explains known failure codes without exposing implementation details", () => {
+    expect(extensionFailureReason("required_permission_denied")).toContain("permission was denied");
+    expect(extensionFailureReason("staged_contents_invalid")).toContain("package changed");
+    expect(extensionFailureReason("unknown_internal_code")).toContain("Retry the package");
   });
 });
