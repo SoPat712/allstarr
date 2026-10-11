@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -261,6 +262,26 @@ class SearchContractTests(unittest.TestCase):
         cls.server.shutdown()
         cls.server.server_close()
         cls.thread.join()
+
+    def test_build_ignores_stale_generated_files_with_relocated_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory, "source")
+            project = root / "tools/tests/SearchContract/SearchContract.csproj"
+            for relative in ["tools/tests/SearchContract/SearchContract.csproj", "tools/tests/SearchContract/Program.cs",
+                             "allstarr/Services/Common/SearchRelevanceRanker.cs", "allstarr/Services/Common/FuzzyMatcher.cs"]:
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(SEARCH_PROJECT.parents[3] / relative, target)
+            stale = project.parent / "obj/Release/net10.0/Stale.Generated.cs"
+            stale.parent.mkdir(parents=True)
+            stale.write_text("#error stale generated source must not be compiled\n")
+            build = Path(directory, "output")
+            result = subprocess.run(["bash", "-c", function("build_search_contract") +
+                                     '\nbuild_search_contract "$SCORER_BUILD"'],
+                                    text=True, capture_output=True, timeout=90,
+                                    env={**os.environ, "search_contract_project": str(project), "SCORER_BUILD": str(build)})
+            self.assertEqual(result.returncode, 0, (build / "build.log").read_text())
+            self.assertTrue((build / "bin/SearchContract.dll").is_file())
 
     def score(self, page, local=(), query="Fixture Artist", expected=()):
         capture = {"query": query, "page": envelope(page), "local": envelope(list(local))}

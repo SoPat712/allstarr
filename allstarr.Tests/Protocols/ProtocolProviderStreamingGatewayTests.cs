@@ -187,16 +187,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     new("metadata-only", ProviderResourceKind.Track, "track-1"),
                     "Track",
                     [new("Artist")])])));
-        metadata.Setup(item => item.SearchAlbumsAsync(
-                It.IsAny<ProviderExecutionContext>(),
-                It.IsAny<ProviderMetadataSearchRequest>()))
-            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>.Success(
-                new("metadata-only", [])));
-        metadata.Setup(item => item.SearchArtistsAsync(
-                It.IsAny<ProviderExecutionContext>(),
-                It.IsAny<ProviderMetadataSearchRequest>()))
-            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Success(
-                new("metadata-only", [])));
         var registry = new ProviderRegistry([
             new ProviderRegistration(
                 new ProviderDescriptor(
@@ -235,7 +225,64 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         Assert.Empty(result.Songs);
         metadata.VerifyAll();
+        metadata.Verify(item => item.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Never);
+        metadata.Verify(item => item.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Never);
         router.VerifyAll();
+    }
+
+    [Theory]
+    [InlineData(10, 0, 0)]
+    [InlineData(0, 10, 0)]
+    [InlineData(0, 0, 10)]
+    public async Task MetadataSearch_DoesNotWaitForUnrequestedCategories(int songs, int albums, int artists)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task<ProviderOutcome<ProviderPage<T>>> Page<T>(int limit, T value)
+        {
+            if (limit == 0) await release.Task;
+            return ProviderOutcome<ProviderPage<T>>.Success(new("deezer", [value]));
+        }
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.SetupGet(item => item.ProviderId).Returns("deezer");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        var artistId = new ProviderExternalResourceId("deezer", ProviderResourceKind.Artist, "artist");
+        var albumId = new ProviderExternalResourceId("deezer", ProviderResourceKind.Album, "album");
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() => Page(songs, new ProviderTrackMetadata(new("deezer", ProviderResourceKind.Track, "track"),
+                "Track", [new("Artist", artistId)], albumId, "Album")));
+        metadata.Setup(item => item.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() => Page(albums, new ProviderAlbumMetadata(albumId, "Album", [new("Artist", artistId)])));
+        metadata.Setup(item => item.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() => Page(artists, new ProviderArtistMetadata(artistId, "Artist")));
+        var registry = MetadataRegistry(metadata.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata.Object));
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry,
+                registry.GetRequiredCapability<IProviderStreamingCapability>("deezer", ProviderCapabilityKind.Streaming)));
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        var search = gateway.SearchAsync(Context(), "Track Artist", songs, albums, artists);
+        try
+        {
+            var result = await search.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.Equal(songs > 0 ? 1 : 0, result.Songs.Count);
+            Assert.Equal(albums > 0 ? 1 : 0, result.Albums.Count);
+            Assert.Equal(artists > 0 ? 1 : 0, result.Artists.Count);
+            if (songs > 0)
+            {
+                Assert.Equal("ext-deezer-artist-artist", result.Songs[0].ArtistId);
+                Assert.Equal("ext-deezer-album-album", result.Songs[0].AlbumId);
+            }
+            metadata.Verify(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(songs > 0 ? 1 : 0));
+            metadata.Verify(item => item.SearchAlbumsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(albums > 0 ? 1 : 0));
+            metadata.Verify(item => item.SearchArtistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(artists > 0 ? 1 : 0));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await search;
+        }
     }
 
     [Fact]

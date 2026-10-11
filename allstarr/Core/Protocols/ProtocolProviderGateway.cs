@@ -316,13 +316,13 @@ public sealed partial class ProtocolProviderGateway(
                 var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(fetchLimit));
                 var songsTask = TrySearchAsync(
                     () => candidate.Implementation.SearchTracksAsync(candidate.Context, request),
-                    protocol.CancellationToken);
+                    protocol.CancellationToken, enabled: songLimit > 0);
                 var albumsTask = TrySearchAsync(
                     () => candidate.Implementation.SearchAlbumsAsync(candidate.Context, request),
-                    protocol.CancellationToken);
+                    protocol.CancellationToken, enabled: albumLimit > 0);
                 var artistsTask = TrySearchAsync(
                     () => candidate.Implementation.SearchArtistsAsync(candidate.Context, request),
-                    protocol.CancellationToken);
+                    protocol.CancellationToken, enabled: artistLimit > 0);
                 await Task.WhenAll(songsTask, albumsTask, artistsTask);
                 return new
                 {
@@ -484,8 +484,10 @@ public sealed partial class ProtocolProviderGateway(
 
     private static async Task<ProviderOutcome<ProviderPage<T>>?> TrySearchAsync<T>(
         Func<Task<ProviderOutcome<ProviderPage<T>>>> search,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool enabled = true)
     {
+        if (!enabled) return null;
         try
         {
             return await search();
