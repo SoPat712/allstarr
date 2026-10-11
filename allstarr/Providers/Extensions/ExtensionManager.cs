@@ -837,7 +837,7 @@ public class ExtensionSandbox
 
                 var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
                 var result = _engine.Invoke(function, request);
-                budget.Token.ThrowIfCancellationRequested();
+                budget.Check();
                 if (result.IsUndefined()) return null;
                 var serialized = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("stringify"), result).ToString();
                 if (serialized.Length > MaximumHookResultCharacters)

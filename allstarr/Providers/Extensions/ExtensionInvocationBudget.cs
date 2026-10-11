@@ -23,6 +23,12 @@ internal sealed class ExtensionInvocationBudget : IDisposable
         Ambient.Value = this;
     }
 
+    public void Check()
+    {
+        if (clock.Elapsed >= duration) cancellation.Cancel();
+        cancellation.Token.ThrowIfCancellationRequested();
+    }
+
     public void Dispose()
     {
         Ambient.Value = prior;
@@ -35,7 +41,7 @@ internal sealed class ExtensionInvocationBudget : IDisposable
         public override void Reset() => fallback.Restart();
         public override void Check()
         {
-            if (Current is { } budget) budget.Token.ThrowIfCancellationRequested();
+            if (Current is { } budget) budget.Check();
             else if (fallback.Elapsed > TimeSpan.FromSeconds(12)) throw new TimeoutException("Extension invocation timed out.");
         }
     }

@@ -316,7 +316,7 @@ public sealed class ExtensionCapabilityAdapterTests
             hookTimeout: TimeSpan.FromMilliseconds(30), downloadTimeout: TimeSpan.FromSeconds(2));
         using var result = JsonDocument.Parse(sandbox.InvokeJson("download", "{}")!);
         Assert.True(result.RootElement.GetProperty("before").GetInt64() > result.RootElement.GetProperty("after").GetInt64());
-        Assert.ThrowsAny<Exception>(() => sandbox.InvokeJson("searchTracks", "{}"));
+        Assert.Throws<TimeoutException>(() => sandbox.InvokeJson("searchTracks", "{}"));
         Assert.NotNull(sandbox.InvokeJson("download", "{}"));
     }
 
