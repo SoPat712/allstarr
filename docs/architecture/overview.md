@@ -121,7 +121,10 @@ exact signals find or enrich one recording and never silently merge two.
 Explicit merges retain the earliest-created recording and its public ID, preserve
 the losing public IDs as redirects, and move identifiers and durable recording
 references to the survivor without changing provider-account scopes.
-Provider track links remain on `provider_track_identities`. Allstarr does not
+Protocol search, track details, and track lists publish the known public ID while
+retaining the actual provider ID for metadata and route selection. Identity lookup
+and same-recording search grouping are read-only, including Personal account
+scope checks. Provider track links remain on `provider_track_identities`. Allstarr does not
 mirror a MusicBrainz catalog graph. `MusicBrainzService` stays the bounded
 `/ws/2` client for later background lookups; a source outage never invalidates
 an already accepted route. Library scans write one `scan.summary` audit row

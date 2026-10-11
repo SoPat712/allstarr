@@ -361,7 +361,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                         : new TrackIdentityResolution(
                             recordingId, Guid.CreateVersion7(), lookup.ExternalId,
                             ProviderIdentityScope.Catalog, null,
-                            verification, method, 1))
+                            verification, method, 1)
+                        { PublicId = "ext-deezer-first-seen" })
                     .ToArray());
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["Providers:StreamingOrder"] = streamingOrder }).Build();
@@ -383,7 +384,13 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         Assert.Equal(expectedCount, songs.Count);
         Assert.Contains(songs, song => song.ExternalProvider == "qobuz");
-        if (preferredProvider != null) Assert.Contains(songs, song => song.ExternalProvider == preferredProvider);
+        if (preferredProvider != null)
+        {
+            var known = Assert.Single(songs, song => song.ExternalProvider == preferredProvider);
+            Assert.Equal("ext-deezer-first-seen", known.Id);
+        }
+        identities.Verify(item => item.CreateRecordingAsync(It.IsAny<ProviderActorContext>(),
+            It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
         identities.VerifyAll();
     }
 

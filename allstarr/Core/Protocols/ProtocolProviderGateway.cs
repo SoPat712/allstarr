@@ -119,7 +119,7 @@ public sealed record ProtocolProviderStream(
     ProviderAudioQuality EffectiveQuality = ProviderAudioQuality.Any,
     string SelectionReason = "provider-priority");
 
-public sealed class ProtocolProviderGateway(
+public sealed partial class ProtocolProviderGateway(
     IProviderRouter router,
     IProviderRegistry registry,
     IHttpClientFactory httpClientFactory,
@@ -189,7 +189,12 @@ public sealed class ProtocolProviderGateway(
         var outcome = await candidate.Implementation.GetTrackAsync(candidate.Context,
             new(new(providerId, ProviderResourceKind.Track, externalId)));
         cancellationToken.ThrowIfCancellationRequested();
-        if (outcome.IsSuccess) return Map(outcome.RequireValue());
+        if (outcome.IsSuccess)
+        {
+            var song = Map(outcome.RequireValue());
+            await ApplyKnownPublicIdsAsync(candidate.Context, [song]);
+            return song;
+        }
         if (outcome.Error!.Kind is ProviderErrorKind.NotFound or ProviderErrorKind.NotSupported or
             ProviderErrorKind.CapabilityUnavailable) return null;
         ThrowRouteFailure(outcome.Error);
@@ -362,11 +367,6 @@ public sealed class ProtocolProviderGateway(
         IReadOnlyList<string> providerOrder,
         CancellationToken cancellationToken)
     {
-        if (songs.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
-        {
-            return songs;
-        }
-
         var verified = Array.Empty<(Song Song, TrackIdentityResolution? Identity)>();
         if (identities != null)
         {
@@ -398,7 +398,8 @@ public sealed class ProtocolProviderGateway(
         var groupByIsrc = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (song, identity) in verified)
         {
-            var group = $"recording:{identity!.CanonicalRecordingId:N}";
+            if (!string.IsNullOrWhiteSpace(identity!.PublicId)) song.Id = identity.PublicId;
+            var group = $"recording:{identity.CanonicalRecordingId:N}";
             groupBySong[song] = group;
             if (NormalizeIsrc(song.Isrc) is { } isrc) groupByIsrc.TryAdd(isrc, group);
         }
@@ -419,6 +420,11 @@ public sealed class ProtocolProviderGateway(
             var members = group.ToArray();
             var best = members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
             var linked = group.Key.StartsWith("recording:", StringComparison.Ordinal);
+            if (linked)
+            {
+                var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key).Identity;
+                if (!string.IsNullOrWhiteSpace(known?.PublicId)) best.Id = known.PublicId;
+            }
             // An ISRC alone only merges across providers; same-provider duplicates (album and single,
             // for example) stay separate rows unless an accepted link already proves they're one recording.
             if (!linked && members.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
@@ -507,24 +513,27 @@ public sealed class ProtocolProviderGateway(
             await searchGate.WaitAsync(protocol.CancellationToken);
             try
             {
-                return await TrySearchAsync(
+                var outcome = await TrySearchAsync(
                     () => candidate.Implementation.SearchTracksAsync(
                         candidate.Context,
                         new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit))),
                     protocol.CancellationToken);
+                return (candidate.Context, Outcome: outcome);
             }
             finally
             {
                 searchGate.Release();
             }
         });
-        var routed = (await Task.WhenAll(tasks))
-            .Where(outcome => outcome?.IsSuccess == true)
-            .SelectMany(outcome => outcome!.RequireValue().Items)
-            .Select(Map)
-            .Where(item => effectivePolicy?.Includes(item) != false)
+        var trackLookups = (await Task.WhenAll(tasks))
+            .Where(item => item.Outcome?.IsSuccess == true)
+            .SelectMany(item => item.Outcome!.RequireValue().Items.Select(track =>
+                (Song: Map(track), Lookup: new TrackIdentityLookup(item.Context, track.Id))))
+            .Where(item => effectivePolicy?.Includes(item.Song) != false)
             .Where(item => providerOrder.Contains(
-                NormalizeProvider(item.ExternalProvider), StringComparer.Ordinal));
+                NormalizeProvider(item.Song.ExternalProvider), StringComparer.Ordinal)).ToArray();
+        var routed = await CollapseVerifiedSearchTracksAsync(
+            trackLookups.Select(item => item.Song).ToArray(), trackLookups, providerOrder, protocol.CancellationToken);
         return Merge(
             routed,
             limit,
@@ -586,6 +595,7 @@ public sealed class ProtocolProviderGateway(
             if (outcome.IsSuccess)
             {
                 var song = await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song]);
                 return (await ResolveEffectivePolicyAsync(protocol))?.Includes(song) == false ? null : song;
             }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
@@ -614,6 +624,7 @@ public sealed class ProtocolProviderGateway(
                 var album = Map(outcome.RequireValue());
                 var policy = await ResolveEffectivePolicyAsync(protocol);
                 album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs);
                 return album;
             }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
@@ -678,6 +689,7 @@ public sealed class ProtocolProviderGateway(
                 if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
                     throw new HttpRequestException("The provider repeated an artist-album page cursor.");
             } while (cursor != null);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray());
             return albums;
         }
 
@@ -718,6 +730,7 @@ public sealed class ProtocolProviderGateway(
                     throw new HttpRequestException("The provider repeated an artist-track page cursor.");
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
@@ -836,6 +849,7 @@ public sealed class ProtocolProviderGateway(
                 cursor = page.NextCursor;
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
