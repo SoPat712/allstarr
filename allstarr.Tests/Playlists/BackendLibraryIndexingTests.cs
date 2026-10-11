@@ -311,7 +311,5 @@ public sealed class BackendLibraryIndexingTests
         public Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId, CancellationToken cancellationToken = default) =>
             Task.FromResult<string?>(null);
 
-        public Task RecordScanSummaryAsync(ProtocolExecutionContext executionContext, LibraryCatalogScanResult result, CancellationToken cancellationToken = default) =>
-            Task.CompletedTask;
     }
 }

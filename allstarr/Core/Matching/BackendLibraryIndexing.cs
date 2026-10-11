@@ -131,7 +131,6 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
             }
         }
         var result = new LibraryCatalogScanResult(seen, indexed, pathless, malformed, pages);
-        await Index.RecordScanSummaryAsync(context, result, cancellationToken);
         return result;
     }
     private static string? Get(IReadOnlyDictionary<string, string> values, string name) => values.TryGetValue(name, out var value) ? value : null;
@@ -218,7 +217,6 @@ public sealed class SubsonicLibraryCatalogScanner : JsonLibraryCatalogScanner, I
             }
         }
         var scan = new LibraryCatalogScanResult(seen, indexed, pathless, malformed, pages);
-        await Index.RecordScanSummaryAsync(context, scan, cancellationToken);
         return scan;
     }
     private static void Add(IDictionary<string, string> values, string key, string? value) { if (!string.IsNullOrWhiteSpace(value)) values[key] = value; }

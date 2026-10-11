@@ -70,11 +70,6 @@ public interface ILibraryIndexService
 
     Task<string?> ResolveKnownTrackAsync(ProtocolExecutionContext context, string publicId,
         CancellationToken cancellationToken = default);
-
-    Task RecordScanSummaryAsync(
-        ProtocolExecutionContext executionContext,
-        LibraryCatalogScanResult result,
-        CancellationToken cancellationToken = default);
 }
 
 public sealed partial class LibraryIndexService : ILibraryIndexService
@@ -220,36 +215,6 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         }
         await db.SaveChangesAsync(cancellationToken);
         return Map(record);
-    }
-
-    public async Task RecordScanSummaryAsync(
-        ProtocolExecutionContext executionContext,
-        LibraryCatalogScanResult result,
-        CancellationToken cancellationToken = default)
-    {
-        if (executionContext.Principal == null || executionContext.Actor?.UserId == null)
-            throw new UnauthorizedAccessException("A linked user is required to access the library index.");
-        EnsureStorageReady();
-        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        db.AuditEvents.Add(new AuditEventRecord
-        {
-            Id = Guid.CreateVersion7(),
-            ActorUserId = executionContext.Actor.UserId,
-            Category = "library-index",
-            Action = "scan.summary",
-            Outcome = "succeeded",
-            CorrelationId = executionContext.CorrelationId,
-            DetailsJson = JsonSerializer.Serialize(new
-            {
-                result.Seen,
-                result.Indexed,
-                result.SkippedPathless,
-                result.SkippedMalformed,
-                result.Pages
-            }),
-            CreatedAt = _clock.UtcNow
-        });
-        await db.SaveChangesAsync(cancellationToken);
     }
 
     private static string TrackFingerprint(LibraryTrackRecord record) =>
