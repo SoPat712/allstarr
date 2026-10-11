@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace allstarr.Tests;
 
-public sealed class TrackIdentityServiceTests : IAsyncLifetime
+public sealed partial class TrackIdentityServiceTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
