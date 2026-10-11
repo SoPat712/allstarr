@@ -356,6 +356,79 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Equal(ProviderErrorKind.Canceled, outcome.Error!.Kind);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MetadataInvocation_YieldsWhileHostCallWaitsAndRetainsAccountScope(bool accountRequired)
+    {
+        var accessor = new WaitingSecretAccessor();
+        var handler = new WaitingMetadataHandler(accountRequired, accessor);
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, "searchTracks") with
+        {
+            Permissions = accountRequired ? [new(ExtensionPermissionKind.Secret, "accountToken", true)] : []
+        };
+        var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api.example.test/"]),
+            new HashSet<string>(), new HashSet<string>(["accountToken"]), ExtensionInvocationSecretScope.Resolve);
+        var script = "registerExtension({searchTracks:function(){http.get('https://api.example.test/tracks'" +
+            (accountRequired ? ",{Authorization:'Bearer '+secrets.get('accountToken')}" : "") +
+            ");return {items:[{id:'track',title:'Track',artists:[{name:'Artist'}]}]};}});";
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""", script,
+            new HttpClientFactory(handler), NullLogger.Instance, permissions);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest, accessor);
+        var returned = new TaskCompletionSource<Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>>>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var invocation = Task.Run(() => returned.TrySetResult(adapter.SearchTracksAsync(Context(includeAccount: accountRequired),
+            new("query", new ProviderPageRequest(10)))));
+        try
+        {
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var pending = await returned.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Assert.False(pending.IsCompleted);
+            Assert.Equal(accountRequired, accessor.InUse);
+        }
+        finally
+        {
+            handler.Release.TrySetResult();
+            await invocation;
+            await await returned.Task;
+        }
+        var result = await await returned.Task;
+        Assert.True(result.IsSuccess);
+        Assert.Single(result.RequireValue().Items);
+        Assert.False(accessor.InUse);
+        Assert.Null(ExtensionInvocationSecretScope.Resolve("accountToken"));
+    }
+
+    private sealed class WaitingSecretAccessor : allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor
+    {
+        public bool InUse { get; private set; }
+        public async Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation,
+            CancellationToken cancellationToken)
+        {
+            InUse = true;
+            try { return await operation(Encoding.UTF8.GetBytes("{\"accountToken\":\"fixture-value\"}")); }
+            finally { InUse = false; }
+        }
+    }
+
+    private sealed class WaitingMetadataHandler(bool accountRequired, WaitingSecretAccessor accessor) : HttpMessageHandler
+    {
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (accountRequired)
+            {
+                Assert.True(accessor.InUse);
+                Assert.Equal("Bearer fixture-value", request.Headers.Authorization?.ToString());
+            }
+            Entered.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return new(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        }
+    }
+
     [Fact]
     public void DownloadOnlyManifest_GainsHostBackedStreamingWithoutReinstallation()
     {

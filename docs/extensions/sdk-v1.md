@@ -24,6 +24,11 @@ The manifest and archive are data from an untrusted publisher. Installation vali
 
 SDK v1 recognizes typed metadata, streaming, download, playlist, lyrics, intelligence, and health hooks. Declare only hooks the package implements.
 
+Search invokes only the requested resource kinds. Track results should include
+their artist and album IDs; an audio-only search does not fetch album or artist
+search results to fill missing relationships. Hooks remain serialized within a
+package, while waiting host calls allow other providers to make progress.
+
 - Metadata returns normalized song, album, artist, identifiers, and artwork facts.
 - Streaming returns an expiring playable response for the requested external track.
 - Download writes through the managed download lifecycle and reports media facts.

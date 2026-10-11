@@ -59,12 +59,14 @@ public abstract class ExtensionCapabilityAdapterBase
                 return ProviderOutcome<T>.Success(map(document.RootElement));
             }
 
-            if (_accountValueKeys.Count == 0 || context.Account == null) return Run();
+            // Hooks and host calls are synchronous; keep them off the request's search fan-out.
+            if (_accountValueKeys.Count == 0 || context.Account == null)
+                return await Task.Run(Run, context.CancellationToken);
             if (_secrets == null) return Failure<T>(ProviderErrorKind.AccountNeedsConfiguration);
-            return await _secrets.UseAsync(context.Account, value =>
+            return await _secrets.UseAsync(context.Account, async value =>
             {
                 using var scope = ExtensionInvocationSecretScope.Open(ParseAccountValues(value));
-                return Task.FromResult(Run());
+                return await Task.Run(Run, context.CancellationToken);
             }, context.CancellationToken);
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
