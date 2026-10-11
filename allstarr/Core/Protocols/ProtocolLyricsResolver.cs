@@ -61,7 +61,7 @@ public sealed class ProtocolLyricsResolver(
                 var externalId = ResolveExternalId(
                     providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
                 if (externalId == null && sourceUrl != null && odesli != null)
-                    externalId = await odesli.TranslateTrackUrlAsync(
+                    externalId = await odesli.TranslateCachedTrackUrlAsync(
                         sourceUrl, providerId, protocol.CancellationToken);
                 if (externalId == null) continue;
                 var result = await providers.GetLyricsAsync(

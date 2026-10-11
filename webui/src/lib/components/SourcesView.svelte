@@ -38,6 +38,7 @@
     audienceLabel,
     ctsMeasurementLabel,
     humanize,
+    providerReadinessLabel,
     sourceMetrics,
     sourceNeedsAccount,
     sourceOriginLabel,
@@ -407,12 +408,15 @@
                 measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
                 (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
               {@const timing = sourceTimingLabel(item, summary(item.id))}
+              {@const appleReadiness = item.runtimeCapabilities?.find((capability) =>
+                capability.reasonCode?.startsWith("apple-download-"))?.reasonCode}
               <tr data-state={state}>
                 <td>
                   <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
                     <ProviderArtwork id={item.id} definition={item} />
                     <span><strong>{item.name}</strong><small>{implementationLabel(item)} · {sourcePurpose(item)}</small></span>
                   </button>
+                  {#if appleReadiness}<small role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
                   <Badge class="operational-mobile-state" state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge>
                   <details class="operational-mobile-detail">
                     <summary class="disclosure-summary compact"><DisclosureLabel title="More details" description="Capabilities and timing" /></summary>
@@ -564,7 +568,7 @@
                   <span><strong>{route.name || selectedSource.name}</strong><small>{humanize(route.origin || "built_in")} · {route.capabilities.map(humanize).join(", ") || "No published capabilities"}</small></span>
                 {/each}
                 {#each selectedSource.runtimeCapabilities ?? [] as capability}
-                  <span><strong>{humanize(capability.id)}</strong><Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</Badge></span>
+                  <span><strong>{humanize(capability.id)}</strong><Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : providerReadinessLabel(capability.reasonCode || capability.configuration || capability.health || "Unavailable")}</Badge></span>
                 {:else}<p>No runtime capability probes are published for this Source.</p>{/each}
               </div>
             {:else if detailTab === "data" && selectedAccount}
@@ -682,7 +686,7 @@
                   {@const result = testResults[`${selectedAccount.id}:${capability.capability}`]}
                   <span>
                     <strong>{humanize(capability.capability)}</strong>
-                    <Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : humanize(capability.reasonCode || capability.configuration)}</Badge>
+                    <Badge state={readinessClass(capability.ready, capability.health)}>{capability.ready ? "Ready" : providerReadinessLabel(capability.reasonCode || capability.configuration)}</Badge>
                     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{/if}
                     {#if administrator && capability.canTest && selectedAccount.canManage}<Button variant="secondary" disabled={!selectedAccount.enabled || Boolean(action)} onclick={() => void test(selectedAccount!, capability.capability)}>Test</Button>{/if}
                   </span>

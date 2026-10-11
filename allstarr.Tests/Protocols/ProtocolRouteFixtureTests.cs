@@ -101,6 +101,19 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
+    public void JellyfinExternalStream_ExplainsMissingAppleSessionWithoutExposingUpstreamText()
+    {
+        var (status, message) = allstarr.Controllers.JellyfinController.MapExternalStreamException(
+            new ProtocolProviderUnavailableException(allstarr.Core.Capabilities.ProviderError.AppleDownloadSignInRequired()));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, status);
+        Assert.Equal("Apple download needs sign-in.", message);
+        var subsonic = allstarr.Filters.SubsonicExceptionFilter.Map(
+            new ProtocolProviderUnavailableException(allstarr.Core.Capabilities.ProviderError.AppleDownloadSignInRequired()));
+        Assert.Equal(StatusCodes.Status503ServiceUnavailable, subsonic.StatusCode);
+        Assert.Equal(message, subsonic.Message);
+    }
+
+    [Fact]
     public void JellyfinExternalStream_ReportsUnavailableAccountAsForbidden()
     {
         var (status, message) = allstarr.Controllers.JellyfinController.MapExternalStreamException(

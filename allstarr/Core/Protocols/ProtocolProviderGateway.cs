@@ -117,6 +117,9 @@ public interface IProtocolProviderGateway
         int? durationSeconds = null);
 }
 
+public sealed class ProtocolProviderUnavailableException(ProviderError error)
+    : HttpRequestException(error.SafeMessage, null, HttpStatusCode.ServiceUnavailable);
+
 public sealed record ProtocolProviderStream(
     HttpResponseMessage Response,
     ProviderStreamLease Lease,
@@ -1012,8 +1015,7 @@ public sealed partial class ProtocolProviderGateway(
                     item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
                     item.ReasonCode != "capability-unavailable"))
             {
-                throw new UnauthorizedAccessException(
-                    "The provider route is not available to this user.");
+                ThrowRejectedRoute(plan.Decision.Candidates.First(item => item.ProviderId == providerId));
             }
 
             var isTranslationMiss = plan.Decision.Candidates.Any(item =>
@@ -1268,7 +1270,7 @@ public sealed partial class ProtocolProviderGateway(
                 item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
                 item.ReasonCode != "capability-unavailable"))
         {
-            throw new UnauthorizedAccessException("The provider route is not available to this user.");
+            ThrowRejectedRoute(plan.Decision.Candidates.First(item => item.ProviderId == providerId));
         }
         return (candidate, plan);
     }
@@ -1404,18 +1406,41 @@ public sealed partial class ProtocolProviderGateway(
         return parsed;
     }
 
-    private static void ThrowRouteFailure(ProviderError error) => throw error.Kind switch
+    private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection)
     {
-        ProviderErrorKind.NotFound => new FileNotFoundException(error.SafeMessage),
-        ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden or
-            ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication =>
-            new UnauthorizedAccessException(error.SafeMessage),
-        ProviderErrorKind.Canceled => new OperationCanceledException(error.SafeMessage),
-        ProviderErrorKind.RateLimited => new HttpRequestException(error.SafeMessage, null,
-            System.Net.HttpStatusCode.TooManyRequests),
-        ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable =>
-            new NotSupportedException(error.SafeMessage),
-        _ => new HttpRequestException(error.SafeMessage)
+        if (rejection.ReasonCode == ProviderError.AppleDownloadGatewayUpdateRequired().Code)
+        {
+            logger?.LogWarning("Apple download gateway needs an update ({Provider})", rejection.ProviderId);
+            throw new ProtocolProviderUnavailableException(ProviderError.AppleDownloadGatewayUpdateRequired());
+        }
+        if (rejection.ReasonCode == ProviderError.AppleDownloadSignInRequired().Code ||
+            rejection.ProviderId == "apple-musickit" && rejection.ReasonCode == "account-required")
+        {
+            logger?.LogWarning("Apple download needs sign-in ({Provider})", rejection.ProviderId);
+            throw new ProtocolProviderUnavailableException(ProviderError.AppleDownloadSignInRequired());
+        }
+        if (rejection.ReasonCode is "health-degraded" or "health-unavailable" or "health-unauthorized" or
+            "circuit-open" or "sidecar-not-ready")
+            throw new ProtocolProviderUnavailableException(new(ProviderErrorKind.CapabilityUnavailable));
+        throw new UnauthorizedAccessException("The provider route is not available to this user.");
+    }
+
+    private static void ThrowRouteFailure(ProviderError error) => throw error switch
+    {
+        { Code: "apple-download-sign-in-required" } => new ProtocolProviderUnavailableException(error),
+        _ => error.Kind switch
+        {
+            ProviderErrorKind.NotFound => new FileNotFoundException(error.SafeMessage),
+            ProviderErrorKind.Unauthorized or ProviderErrorKind.Forbidden or
+                ProviderErrorKind.AccountNeedsConfiguration or ProviderErrorKind.AccountNeedsReauthentication =>
+                new UnauthorizedAccessException(error.SafeMessage),
+            ProviderErrorKind.Canceled => new OperationCanceledException(error.SafeMessage),
+            ProviderErrorKind.RateLimited => new HttpRequestException(error.SafeMessage, null,
+                System.Net.HttpStatusCode.TooManyRequests),
+            ProviderErrorKind.NotSupported or ProviderErrorKind.CapabilityUnavailable =>
+                new NotSupportedException(error.SafeMessage),
+            _ => new HttpRequestException(error.SafeMessage)
+        }
     };
 
     internal static Song Map(ProviderTrackMetadata item)

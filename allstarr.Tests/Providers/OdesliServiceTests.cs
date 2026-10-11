@@ -9,6 +9,26 @@ namespace allstarr.Tests;
 
 public sealed class OdesliServiceTests
 {
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    [InlineData(HttpStatusCode.Gone)]
+    public async Task OptionalUnavailable_IsNonRetryableAndSharedAcrossDistinctUrls(HttpStatusCode status)
+    {
+        var handler = new Handler(_ => new HttpResponseMessage(status));
+        var service = Create(handler);
+        var first = await Assert.ThrowsAsync<OdesliLookupException>(() =>
+            service.GetTrackLinksAsync("https://tidal.com/browse/track/42", default));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+        var second = await Assert.ThrowsAsync<OdesliLookupException>(() =>
+            service.GetTrackLinksAsync("https://tidal.com/browse/track/43", timeout.Token));
+        Assert.False(first.Retryable);
+        Assert.False(second.Retryable);
+        Assert.Equal(1, handler.Calls);
+        Assert.Null(await service.TranslateCachedTrackUrlAsync("https://tidal.com/browse/track/44", "spotify"));
+        Assert.Equal(1, handler.Calls);
+    }
+
     [Fact]
     public async Task PublicLinks_AreCachedSharedByWrappersAndRejectUntrustedHosts()
     {

@@ -7,6 +7,7 @@ using allstarr.Services.AppleMusic;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Operations;
+using allstarr.Core.Health;
 using Moq;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -16,6 +17,25 @@ namespace allstarr.Tests;
 
 public sealed class ProviderStatusManagerTests
 {
+    [Fact]
+    public void AppleMediaReadinessUsesBackgroundDiscoveryEvenWithoutAnAccountTest()
+    {
+        var clock = new FakeClock(DateTimeOffset.UtcNow);
+        var health = new ProviderRuntimeHealth(clock: clock);
+        health.AppleDownloadSnapshot = new(AppleDownloadEndpointState.NeedsAuthentication,
+            "endpoint_authentication_required", "2.0.0", false, []);
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            appleMusicSettings: new AppleDownloadSettings { BaseUrl = "http://apple-gateway" }, health: health);
+        Assert.All(manager.GetAppleDownloadEndpointStatuses(), status =>
+        {
+            Assert.Equal(ProviderHealthState.Degraded, status.Health);
+            Assert.Equal("apple-download-sign-in-required", status.ReasonCode);
+            Assert.Equal(clock.UtcNow, status.TestedAt);
+        });
+        Assert.Equal(ProviderHealthState.Unknown,
+            manager.GetAccountFreeStatus("apple-musickit", ProviderCapabilities.Metadata).Health);
+    }
+
     [Fact]
     public async Task ActiveExtensionCapabilitiesReceiveReadinessChecks()
     {
@@ -574,7 +594,8 @@ public sealed class ProviderStatusManagerTests
         IProviderRegistry? providerRegistry = null,
         IAppleDownloadEndpointDiscovery? appleDownloadDiscovery = null,
         IPlatformClock? clock = null,
-        IServiceProvider? services = null)
+        IServiceProvider? services = null,
+        ProviderRuntimeHealth? health = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -588,6 +609,7 @@ public sealed class ProviderStatusManagerTests
             Options.Create(appleMusicSettings ?? new AppleDownloadSettings()),
             Options.Create(deezerSettings ?? new DeezerSettings()),
             Options.Create(qobuzSettings ?? new QobuzSettings()),
+            health: health,
             appleDownloadDiscovery: appleDownloadDiscovery,
             services: services ?? (providerRegistry == null
                 ? null

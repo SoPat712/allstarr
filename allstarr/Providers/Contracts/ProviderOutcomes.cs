@@ -55,6 +55,16 @@ public sealed record ProviderError
 
     public TimeSpan? RetryAfter { get; }
 
+    public static ProviderError AppleDownloadGatewayUpdateRequired() => new(
+        ProviderErrorKind.CapabilityUnavailable,
+        "apple-download-gateway-update-required",
+        "Apple download gateway needs an update.");
+
+    public static ProviderError AppleDownloadSignInRequired() => new(
+        ProviderErrorKind.AccountNeedsReauthentication,
+        "apple-download-sign-in-required",
+        "Apple download needs sign-in.");
+
     public static ProviderError AppleWebTokenUnavailable() => new(
         ProviderErrorKind.CapabilityUnavailable,
         "apple-web-token-unavailable",

@@ -99,7 +99,8 @@ public sealed class AppleDownloadCapabilityAdapter : IProviderDownloadCapability
             var snapshot = await discovery.DiscoverAsync(context.CancellationToken);
             var availability = Availability(snapshot);
             if (availability != ProviderDownloadAvailabilityState.Available)
-                return ProviderOutcome<ProviderDownloadedArtifact>.Failure(new(ErrorFor(snapshot.State)));
+                return ProviderOutcome<ProviderDownloadedArtifact>.Failure(snapshot.State == AppleDownloadEndpointState.NeedsAuthentication
+                    ? ProviderError.AppleDownloadSignInRequired() : new(ErrorFor(snapshot.State)));
             if (!OutboundRequestGuard.TryCreateConfiguredServiceUri(settings.BaseUrl, out var baseUri, out _))
                 return ProviderOutcome<ProviderDownloadedArtifact>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
 

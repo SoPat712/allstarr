@@ -98,8 +98,10 @@ public sealed class ProtocolLyricsResolverTests
             It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
 
-    [Fact]
-    public async Task Resolver_TranslatesADeezerIdentityAcrossConfiguredLyricsFallbacks()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Resolver_UsesCachedCrosslinksWithoutNetworkBeforeLyricsFallback(bool cached)
     {
         using var services = new ServiceCollection()
             .AddSingleton<IOptions<CacheSettings>>(Options.Create(new CacheSettings()))
@@ -124,6 +126,19 @@ public sealed class ProtocolLyricsResolverTests
         var handler = new JsonHandler(
             """{"linksByPlatform":{"deezer":{"url":"https://www.deezer.com/track/13190193"},"spotify":{"url":"https://open.spotify.com/track/2takcwOaAZWiXQijPHIx7B"},"appleMusic":{"url":"https://music.apple.com/us/album/fixture?i=2037093408"}}}""");
         var cache = new TestMemoryApplicationCache();
+        if (cached)
+            await cache.SetAsync(CacheKeyBuilder.BuildOdesliTranslationKey(
+                OdesliService.BuildTrackUrl("deezer", "13190193")!, "aliases-v1"),
+                new Dictionary<string, string>
+                {
+                    ["deezer"] = "13190193",
+                    ["spotify"] = "2takcwOaAZWiXQijPHIx7B",
+                    ["apple-musickit"] = "2037093408"
+                });
+        providers.Setup(item => item.GetLyricsAsync(protocol, "lrclib", It.IsAny<string>(),
+                ProviderLyricsFormat.LineTimed, "Rocket", It.IsAny<IReadOnlyList<string>>(), "Fixture album", 210))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
+                ProviderLyricsFormat.LineTimed, "[00:01.00]Rocket line\n"));
         var odesli = new OdesliService(
             new HttpFactory(handler),
             NullLogger<OdesliService>.Instance,
@@ -138,7 +153,14 @@ public sealed class ProtocolLyricsResolverTests
             "deezer",
             "13190193");
 
-        Assert.Equal(1, handler.RequestCount);
+        Assert.Equal(0, handler.RequestCount);
+        if (!cached)
+        {
+            Assert.Equal("lrclib", result?.Source);
+            Assert.DoesNotContain(providers.Invocations, call => call.Method.Name == nameof(IProtocolProviderGateway.GetLyricsAsync) &&
+                call.Arguments[1] is "spotify" or "apple-download");
+            return;
+        }
         Assert.Equal(
             "spotify:2takcwOaAZWiXQijPHIx7B|apple-download:2037093408",
             string.Join('|', providers.Invocations

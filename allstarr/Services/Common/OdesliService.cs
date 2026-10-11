@@ -29,6 +29,7 @@ public class OdesliService(
     private readonly SemaphoreSlim _requests = new(1, 1);
     private readonly ApplicationCacheRequestCoalescer _coalescer = coalescer ?? new(new ApplicationCacheActivityMetrics());
     private DateTimeOffset _nextRequestAt;
+    private long _optionalUnavailableUntilUtcTicks;
 
     private static HttpClient PublicClient(IHttpClientFactory factory)
     {
@@ -57,6 +58,23 @@ public class OdesliService(
         }
     }
 
+    public async Task<string?> TranslateCachedTrackUrlAsync(string sourceUrl, string targetProvider,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (ParseTrackUrl(sourceUrl) is not { } source) return null;
+        var key = CacheKeyBuilder.BuildOdesliTranslationKey(BuildTrackUrl(source.Provider, source.Id)!, "aliases-v1");
+        var cached = await cache.GetAsync<Dictionary<string, string>>(key);
+        cancellationToken.ThrowIfCancellationRequested();
+        return cached?.GetValueOrDefault(NormalizeProviderId(targetProvider));
+    }
+
+    private void ThrowIfOptionalUnavailable()
+    {
+        if (Interlocked.Read(ref _optionalUnavailableUntilUtcTicks) > DateTimeOffset.UtcNow.UtcTicks)
+            throw new OdesliLookupException(false);
+    }
+
     public async Task<IReadOnlyDictionary<string, string>> GetTrackLinksAsync(string sourceUrl, CancellationToken cancellationToken)
     {
         if (ParseTrackUrl(sourceUrl) is not { } source) return new Dictionary<string, string>();
@@ -65,11 +83,14 @@ public class OdesliService(
         cancellationToken.ThrowIfCancellationRequested();
         var cached = await cache.GetAsync<Dictionary<string, string>>(key);
         if (cached != null) return cached;
+        ThrowIfOptionalUnavailable();
         return await _coalescer.RunAsync(key, async () =>
         {
+            ThrowIfOptionalUnavailable();
             await _requests.WaitAsync(cancellationToken);
             try
             {
+                ThrowIfOptionalUnavailable();
                 var delay = _nextRequestAt - DateTimeOffset.UtcNow;
                 if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
                 _nextRequestAt = DateTimeOffset.UtcNow.AddMilliseconds(Math.Clamp(settings?.Value.RateLimitMs ?? 6000, 1000, 60000));
@@ -84,8 +105,12 @@ public class OdesliService(
                     _nextRequestAt = DateTimeOffset.UtcNow.Add(retry);
                     throw new OdesliLookupException(true, retry);
                 }
-                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.Gone)
+                {
+                    Interlocked.Exchange(ref _optionalUnavailableUntilUtcTicks,
+                        DateTimeOffset.UtcNow.AddHours(1).UtcTicks);
                     throw new OdesliLookupException(false);
+                }
                 var links = new Dictionary<string, string>(StringComparer.Ordinal);
                 if (response.IsSuccessStatusCode)
                 {

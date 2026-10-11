@@ -75,6 +75,20 @@ public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ProgressObservationsInSamePositionBucketRemainDurableAndRetryable()
+    {
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        var first = Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(20).Ticks);
+        var later = first with { ObservedAt = first.ObservedAt.AddSeconds(10) };
+
+        Assert.True(await pipeline.RecordAsync(first));
+        Assert.True(await pipeline.RecordAsync(later));
+        Assert.False(await new PlaybackSignalPipeline(jobs).RecordAsync(later));
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Equal(2, await db.Jobs.CountAsync(item => item.Type == PlaybackSignalPipeline.JobType));
+    }
+
+    [Fact]
     public async Task UnlimitedHistoryGivesRecommendationSignalsNoExpiry()
     {
         await using (var db = await factory.CreateDbContextAsync())

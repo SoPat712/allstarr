@@ -117,7 +117,10 @@ Playlist snapshot persistence serializes writes for each provider account with a
 `ext-allstarr-song-{guid}` as the fallback when no source ID is available, optional
 `MergedIntoId`, and zero or more `recording_identifiers` rows (ISRC and
 MusicBrainz recording IDs today). Identifier writes go through that owner;
-exact signals find or enrich one recording and never silently merge two.
+exact signals find or enrich one recording. When a used source's existing public ID
+and verified ISRC resolve to separate compatible recordings, the identity owner
+merges them with an audit entry. A conflicting MusicBrainz identity leaves that
+playlist entry's canonical identity unset while collection continues.
 Explicit merges retain the earliest-created recording and its public ID, preserve
 the losing public IDs as redirects, and move identifiers and durable recording
 references to the survivor without changing provider-account scopes.
@@ -145,8 +148,10 @@ an already accepted route; search, playback, scans and match decisions make no
 MusicBrainz request. Optional Odesli jobs run after a saved match, cache and rate-limit
 public cross-links, and store exact catalog aliases without replacing existing
 associations. The shared decision engine reads those aliases as local evidence;
-new evidence queues an owner-scoped rematch. Neither upstream is called by the
-decision engine. Library scan jobs write one `scan.completed` audit row
+new evidence queues an owner-scoped rematch. Foreground lyrics read only cached
+Odesli cross-links and never wait for its network or rate limiter. An Odesli
+401, 403, or 410 suppresses uncached requests for one hour; cached links remain usable.
+Neither upstream is called by the decision engine. Library scan jobs write one `scan.completed` audit row
 plus one row per created or changed track.
 
 ## External playback selection

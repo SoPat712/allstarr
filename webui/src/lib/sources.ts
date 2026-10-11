@@ -7,7 +7,12 @@ import type {
   ProviderSummary,
 } from "./api";
 
-export { humanize } from "./activity";
+import { humanize } from "./activity";
+export { humanize };
+
+export const providerReadinessLabel = (reason: string) =>
+  reason === "apple-download-sign-in-required" ? "Apple download needs sign-in" :
+    reason === "apple-download-gateway-update-required" ? "Apple download gateway needs an update" : humanize(reason);
 
 export const canonicalProviderId = (id: string) => ["apple-download", "applemusic", "apple-music", "apple_music"].includes(id.toLowerCase())
   ? "apple-musickit" : id.toLowerCase();

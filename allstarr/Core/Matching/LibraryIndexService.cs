@@ -85,6 +85,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
     private readonly ITrackIdentityService _identities;
     private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly IProviderRegistry? _registry;
+    private readonly ILogger<LibraryIndexService>? _logger;
 
     public LibraryIndexService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -92,7 +93,8 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         IPlatformClock clock,
         ITrackIdentityService identities,
         IBackendLibraryAccessResolver libraryAccess,
-        IProviderRegistry? registry = null)
+        IProviderRegistry? registry = null,
+        ILogger<LibraryIndexService>? logger = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
@@ -100,6 +102,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         _identities = identities;
         _libraryAccess = libraryAccess;
         _registry = registry;
+        _logger = logger;
     }
 
     public async Task<IndexedLibraryTrack> UpsertAsync(

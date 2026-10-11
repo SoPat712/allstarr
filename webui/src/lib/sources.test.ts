@@ -11,6 +11,7 @@ import {
   sourceStatus,
   supportsPlaybackDiagnostic,
   humanize,
+  providerReadinessLabel,
   settingDefault,
   sourceTimingLabel,
 } from "./sources";
@@ -180,4 +181,10 @@ describe("source presentation", () => {
     expect(ctsMeasurementLabel({ ...measurement, health: "healthy", latencyMs: 42.1 }))
       .toBe("42.1 ms");
   });
+});
+
+it("explains a missing Apple download session", () => {
+  expect(providerReadinessLabel("apple-download-sign-in-required")).toBe("Apple download needs sign-in");
+  expect(providerReadinessLabel("apple-download-gateway-update-required")).toBe("Apple download gateway needs an update");
+  expect(providerReadinessLabel("endpoint_unreachable")).toBe("Endpoint Unreachable");
 });

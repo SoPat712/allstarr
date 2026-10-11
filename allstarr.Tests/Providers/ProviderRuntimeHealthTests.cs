@@ -10,6 +10,30 @@ namespace allstarr.Tests;
 
 public sealed class ProviderRuntimeHealthTests
 {
+    [Fact]
+    public void AppleDownloadMissingSessionIsReportedWithoutSuppressingCatalog()
+    {
+        var store = Store();
+        store.AppleDownloadSnapshot = new(allstarr.Services.AppleMusic.AppleDownloadEndpointState.NeedsAuthentication,
+            "endpoint_authentication_required", "2.0.0", false, []);
+        foreach (var capability in new[] { ProviderCapabilityKind.Streaming, ProviderCapabilityKind.Download,
+                     ProviderCapabilityKind.Lyrics })
+        {
+            var status = store.GetRouteStatus("apple-download", _account, capability);
+            Assert.Equal(ProviderRouteHealthState.Unavailable, status.State);
+            Assert.Equal("apple-download-sign-in-required", status.ReasonCode);
+        }
+        Assert.Equal(ProviderRouteHealthState.Unknown,
+            store.GetRouteStatus("apple-musickit", _account, ProviderCapabilityKind.Metadata).State);
+        store.AppleDownloadSnapshot = new(allstarr.Services.AppleMusic.AppleDownloadEndpointState.Available,
+            null, "2.0.0", true, []);
+        Assert.Null(store.GetRouteStatus("apple-musickit", _account, ProviderCapabilityKind.Streaming).ReasonCode);
+        store.AppleDownloadSnapshot = new(allstarr.Services.AppleMusic.AppleDownloadEndpointState.Incompatible,
+            "unsupported_api_version", "1.0.0", false, []);
+        Assert.Equal("apple-download-gateway-update-required",
+            store.GetRouteStatus("apple-musickit", _account, ProviderCapabilityKind.Streaming).ReasonCode);
+    }
+
     private readonly FakeClock _clock = new(DateTimeOffset.UtcNow);
     private readonly Guid _account = Guid.CreateVersion7();
     private ProviderRuntimeStatusKey Key(string provider = "deezer", string capability = "streaming", Guid? account = null) =>

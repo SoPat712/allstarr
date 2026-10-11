@@ -205,6 +205,12 @@ public class ProviderStatusManager
             .Select(item => GetAccountFreeStatus(item.Provider, item.Capability))
             .ToList();
 
+    public IReadOnlyList<ProviderRuntimeStatus> GetAppleDownloadEndpointStatuses() =>
+        new[] { ProviderCapabilities.Streaming, ProviderCapabilities.Download, ProviderCapabilities.Lyrics }
+            .Select(capability => ProviderRuntimeStatusKey.CreateAccountFree("apple-musickit", capability))
+            .Select(key => GetStatusCore(key, BuildBaselineStatus(key)))
+            .ToList();
+
     /// <summary>
     /// Returns the capabilities for one managed provider account. Credential
     /// configuration is evaluated from that account's decrypted, in-memory view;
@@ -267,7 +273,23 @@ public class ProviderStatusManager
         ProviderRuntimeStatus baseline,
         long? accountRevision = null)
     {
+        if (key.Provider == "apple-musickit" &&
+            key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics &&
+            _appleDownloadSnapshot is { } apple && apple.State != AppleDownloadEndpointState.Available)
+            return baseline with
+            {
+                Health = ProviderHealthState.Degraded,
+                ReasonCode = apple.State == AppleDownloadEndpointState.NeedsAuthentication
+                    ? ProviderError.AppleDownloadSignInRequired().Code : apple.ReasonCode == "unsupported_api_version"
+                        ? ProviderError.AppleDownloadGatewayUpdateRequired().Code : apple.ReasonCode,
+                TestedAt = _health.AppleDownloadObservedAt
+            };
+        if (key.Provider == "apple-musickit" &&
+            key.Capability is ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics &&
+            baseline.ReasonCode == "provider_account_required")
+            return baseline with { ReasonCode = ProviderError.AppleDownloadSignInRequired().Code };
         if (key.Provider == AppleMusicClient.ProviderId &&
+            key.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist &&
             _services?.GetService<AppleWebTokenProvider>() is { FailureCode: not null } tokens)
             return baseline with { Health = ProviderHealthState.Degraded, ReasonCode = tokens.FailureCode, TestedAt = tokens.ObservedAt };
         var observation = _health.Get(key, accountRevision);

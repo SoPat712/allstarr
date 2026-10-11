@@ -17,6 +17,54 @@ public sealed partial class TrackIdentityServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task PlaylistImport_MergesExactIsrcOrLeavesConflictingEntryUnsetAndContinues(bool conflict)
+    {
+        var actor = Actor(_userA);
+        var earlier = new TrackIdentityService(_factory, _storageState, new FakeClock(_clock.UtcNow.AddMinutes(-1)));
+        var first = await earlier.CreateRecordingAsync(actor, "first", null,
+            conflict ? "11111111-1111-4111-8111-111111111111" : null, "ext-spotify-song-track");
+        await Link(first.Recording.Id, Context(actor, "deezer"), "served-track");
+        var other = await _service.CreateRecordingAsync(actor, "other", "USRC17607839",
+            conflict ? "22222222-2222-4222-8222-222222222222" : null, "ext-deezer-song-other");
+        var account = await SeedUserAccount("spotify", _userA);
+        var playlist = new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist");
+        var capability = new Mock<IProviderPlaylistCapability>();
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderPlaylistTracksRequest>())).ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
+                new(playlist, "Playlist", new("Owner"), "revision", trackCount: 3),
+                new("spotify", [new(0, Track("spotify", "track"), metadata: new(Track("spotify", "track"), "First", [new("Artist")], isrc: "USRC17607839")),
+                    new(1, Track("spotify", "track"), metadata: new(Track("spotify", "track"), "First", [new("Artist")], isrc: "USRC17607839")),
+                    new(2, Track("spotify", "next"), metadata: new(Track("spotify", "next"), "Next", [new("Artist")], isrc: "GBAYE0601498"))]))));
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.GetRequiredCapability<IProviderPlaylistCapability>("spotify", ProviderCapabilityKind.Playlist))
+            .Returns(capability.Object);
+        var gateway = new ProviderPlaylistSourceGateway(registry.Object, new(), _factory, _clock, _service);
+        var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
+            new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false),
+            "playlist-import", _clock.UtcNow.AddMinutes(5), default);
+        var snapshot = await gateway.CollectAsync(protocol, new PlaylistLinkRecord
+        {
+            OwnerUserId = _userA,
+            ProviderAccountId = account.Id,
+            SourceProviderId = "spotify",
+            SourcePlaylistId = "playlist",
+            TargetProtocol = "jellyfin",
+            TargetBackendInstanceId = "fixture"
+        }, default);
+        Assert.Equal(3, snapshot.Entries.Count);
+        Assert.All(snapshot.Entries.Take(2), entry => Assert.Equal(conflict ? (Guid?)null : first.Recording.Id,
+            entry.CanonicalRecordingId));
+        Assert.NotNull(snapshot.Entries[2].CanonicalRecordingId);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(conflict ? (Guid?)null : first.Recording.Id,
+            (await db.CanonicalRecordings.SingleAsync(item => item.Id == other.Recording.Id)).MergedIntoId);
+        Assert.Equal(conflict ? 2 : 3, await db.ProviderTrackIdentities.CountAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task PlaylistImport_RemembersSourceIdsOnlyAfterCompleteCollection(bool partial)
     {
         var account = await SeedUserAccount("spotify", _userA);

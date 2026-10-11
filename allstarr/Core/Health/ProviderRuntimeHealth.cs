@@ -46,11 +46,21 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     private readonly IPlatformClock _clock;
 
     private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot;
+    private DateTimeOffset? _appleDownloadObservedAt;
     public AppleDownloadEndpointSnapshot? AppleDownloadSnapshot
     {
         get { lock (_sync) return _appleDownloadSnapshot; }
-        set { lock (_sync) _appleDownloadSnapshot = value; }
+        set
+        {
+            lock (_sync)
+            {
+                _appleDownloadSnapshot = value;
+                _appleDownloadObservedAt = _clock.UtcNow;
+            }
+        }
     }
+
+    public DateTimeOffset? AppleDownloadObservedAt { get { lock (_sync) return _appleDownloadObservedAt; } }
 
     public ProviderRuntimeHealth(ProviderHealthOptions? options = null, IPlatformClock? clock = null,
         SidecarHealthOptions? sidecars = null)
@@ -107,6 +117,17 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
 
     public ProviderRouteHealthSnapshot GetRouteStatus(string providerId, Guid? accountId, ProviderCapabilityKind capability)
     {
+        if (ProviderRuntimeStatusKey.CreateAccountFree(providerId, capability.ToString()).Provider == "apple-musickit" &&
+            capability is ProviderCapabilityKind.Streaming or ProviderCapabilityKind.Download or ProviderCapabilityKind.Lyrics &&
+            AppleDownloadSnapshot is { } apple)
+        {
+            if (apple.State == AppleDownloadEndpointState.NeedsAuthentication)
+                return new(ProviderRouteHealthState.Unavailable, false,
+                    ReasonCode: ProviderError.AppleDownloadSignInRequired().Code);
+            if (apple.ReasonCode == "unsupported_api_version")
+                return new(ProviderRouteHealthState.Unavailable, false,
+                    ReasonCode: ProviderError.AppleDownloadGatewayUpdateRequired().Code);
+        }
         var current = Get(Key(providerId, accountId, capability.ToString()));
         var open = current?.RetryAfter > _clock.UtcNow;
         return new(current?.Health == ProviderHealthState.Healthy ? ProviderRouteHealthState.Healthy :
