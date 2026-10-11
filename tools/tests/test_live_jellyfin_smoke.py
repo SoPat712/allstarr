@@ -96,6 +96,20 @@ class JellyfinSmokeTests(unittest.TestCase):
         cls.server.server_close()
         cls.thread.join()
 
+    def test_external_search_keeps_artist_to_disambiguate_shared_titles(self):
+        for item, expected in (
+            ({"Name": "Just One Touch [A]", "Artists": ["Fixture Artist [YouTube Music]"]}, "Just One Touch Fixture Artist"),
+            ({"Name": "Track [A]/[E]", "Artists": ["Artist [Deezer]"]}, "Track Artist"),
+            ({"Name": "Track [A]", "AlbumArtist": "Artist"}, "Track Artist"),
+            ({"Name": "Track [A]"}, "Track"),
+        ):
+            with self.subTest(item=item), tempfile.TemporaryDirectory() as directory:
+                Path(directory, "item.json").write_text(json.dumps(item))
+                result = subprocess.run(["bash", "-c", function("external_search_query") +
+                                         '\nexternal_search_query item.json'], cwd=directory,
+                                        text=True, capture_output=True, check=True)
+                self.assertEqual(expected, result.stdout.strip())
+
     def test_external_title_contract(self):
         contract = re.search(r"^item_contract='\n(.*?)^'", SCRIPT, re.M | re.S)[1]
         audio = {

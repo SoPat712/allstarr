@@ -146,7 +146,7 @@ MusicBrainz request. Optional Odesli jobs run after a saved match, cache and rat
 public cross-links, and store exact catalog aliases without replacing existing
 associations. The shared decision engine reads those aliases as local evidence;
 new evidence queues an owner-scoped rematch. Neither upstream is called by the
-decision engine. Library scans write one `scan.summary` audit row
+decision engine. Library scan jobs write one `scan.completed` audit row
 plus one row per created or changed track.
 
 ## External playback selection

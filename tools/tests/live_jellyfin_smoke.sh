@@ -130,6 +130,13 @@ issued_admin_session=0
 stateful_playlist_id=""
 stateful_playlist_name=""
 stateful_playlist_original_name=""
+external_search_query() {
+    jq -r '[
+        (.Name | sub(" \\[A\\](/\\[E\\])?$"; "")),
+        ((.Artists[0] // .AlbumArtist // "") | sub(" \\[[^\\[\\]]+\\]$"; ""))
+    ] | map(select(length > 0)) | join(" ")' "$1"
+}
+
 playlist_identity_matches() {
     local playlist_id="$1" playlist_name="$2"
     [[ "$playlist_id" =~ ^[[:alnum:]_-]{1,128}$ ]] || return 1
@@ -1552,9 +1559,7 @@ if [[ -n "$external_song_id" ]]; then
             select(. != "ISRC" and . != "AllstarrSource")) // empty' "$response_file")"
     external_artist_id="$(jq -r '.ArtistItems[0].Id // empty' "$response_file")"
     external_album_id="$(jq -r '.AlbumId // empty' "$response_file")"
-    external_search_term="$(jq -r '
-        .Name |
-        sub(" \\[A\\](/\\[E\\])?$"; "")' "$response_file" 2>/dev/null || true)"
+    external_search_term="$(external_search_query "$response_file" 2>/dev/null || true)"
     external_search_term="${external_search_term:-$search_term}"
     if [[ -n "$external_artist_id" ]]; then
         check_json "external artist detail" \

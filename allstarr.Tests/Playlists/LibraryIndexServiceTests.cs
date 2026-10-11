@@ -1,3 +1,9 @@
+using System.Net;
+using System.Text.Json;
+using allstarr.Core.Jobs;
+using allstarr.Models.Settings;
+using Microsoft.Extensions.DependencyInjection;
+using Moq.Protected;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
@@ -46,6 +52,49 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
             .ReturnsAsync((ProtocolExecutionContext context, CancellationToken _) =>
                 new BackendLibraryAccess(true, context.Principal!.UserId == _userA ? ["music"] : []));
         _service = new LibraryIndexService(_factory, state, _clock, _identities, _libraryAccess.Object);
+    }
+
+    [Fact]
+    public async Task UnchangedScanJob_WritesOnlyOneCompletionAudit()
+    {
+        var http = new Mock<HttpMessageHandler>();
+        http.Protected().Setup<Task<HttpResponseMessage>>("SendAsync",
+                ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync((HttpRequestMessage request, CancellationToken _) => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(request.RequestUri!.AbsolutePath == "/UserViews"
+                    ? """{"Items":[{"Id":"music","CollectionType":"music"}]}"""
+                    : """{"Items":[{"Id":"local-item","Name":"Song","Artists":["Artist"],"Path":"/music/song.flac","DateCreated":"2026-07-12T01:00:00Z","RunTimeTicks":2400000000}],"TotalRecordCount":1}""")
+            });
+        using var client = new HttpClient(http.Object);
+        var scanner = new JellyfinLibraryCatalogScanner(client,
+            new JellyfinSettings { Url = "https://backend.test", ApiKey = "test-key" }, _service, _clock);
+        var handler = new LibraryIndexJobHandler(_factory, new BackendLibraryCatalogScannerResolver([scanner]), _clock);
+        await using var services = new ServiceCollection().BuildServiceProvider();
+        using var payload = JsonDocument.Parse(JsonSerializer.Serialize(new LibraryIndexJobPayload("music", "backend", "principal-a")));
+        using var policy = JsonDocument.Parse("{}");
+        async Task Scan()
+        {
+            var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "library.index",
+                payload.RootElement.Clone(), _userA, null, null, policy.RootElement.Clone(),
+                "unchanged-scan", "worker", _clock.UtcNow.AddMinutes(5));
+            Assert.Equal(DurableJobCompletionKind.Succeeded,
+                (await handler.ExecuteAsync(new DurableJobExecutionContext(claim, services), default)).Kind);
+        }
+
+        await Scan();
+        await using var db = await _factory.CreateDbContextAsync();
+        var before = await db.AuditEvents.Select(item => item.Id).ToArrayAsync();
+        _clock.UtcNow = _clock.UtcNow.AddMinutes(15);
+        await Scan();
+
+        var audit = Assert.Single(await db.AuditEvents.Where(item => !before.Contains(item.Id)).ToListAsync());
+        Assert.Equal("library-index", audit.Category);
+        Assert.Equal("scan.completed", audit.Action);
+        using var details = JsonDocument.Parse(audit.DetailsJson);
+        Assert.Equal("music", details.RootElement.GetProperty("BackendLibraryId").GetString());
+        Assert.Equal(1, details.RootElement.GetProperty("Seen").GetInt32());
+        Assert.Equal(1, await db.LibraryTracks.CountAsync());
     }
 
     [Fact]
