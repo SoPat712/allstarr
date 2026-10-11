@@ -88,29 +88,32 @@ public sealed partial class TrackMatchCommandService
         return identity;
     }
 
-    internal static async Task<bool> TryRetargetProvisionalIdentityAsync(
+    internal static async Task<Guid?> TryMergeProvisionalIdentityAsync(
         AllstarrDbContext db,
         ProviderTrackIdentityRecord identity,
         Guid targetRecordingId,
+        ProviderActorContext actor,
+        string correlationId,
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        if (identity.CanonicalRecordingId == targetRecordingId) return true;
+        if (identity.CanonicalRecordingId == targetRecordingId) return targetRecordingId;
         if (identity.Verification != ProviderIdentityVerification.Verified ||
             identity.VerificationMethod is not ("source-snapshot" or "source-snapshot-hash"))
-            return false;
+            return null;
         var previous = db.CanonicalRecordings.Local.FirstOrDefault(item => item.Id == identity.CanonicalRecordingId)
-            ?? await db.CanonicalRecordings
-                .Include(item => item.Identifiers)
+            ?? await db.CanonicalRecordings.Include(item => item.Identifiers)
                 .SingleOrDefaultAsync(item => item.Id == identity.CanonicalRecordingId, cancellationToken);
-        if (previous != null && !db.Entry(previous).Collection(item => item.Identifiers).IsLoaded)
+        if (previous != null && db.Entry(previous).State != EntityState.Added &&
+            !db.Entry(previous).Collection(item => item.Identifiers).IsLoaded)
             await db.Entry(previous).Collection(item => item.Identifiers).LoadAsync(cancellationToken);
         if (previous is not { IsProvisional: true } || previous.Identifiers.Count != 0)
-            return false;
-        identity.CanonicalRecordingId = targetRecordingId;
-        identity.UpdatedAt = now;
-        identity.Revision++;
-        return true;
+            return null;
+        var target = await db.CanonicalRecordings.Include(item => item.Identifiers)
+            .SingleAsync(item => item.Id == targetRecordingId, cancellationToken);
+        var winner = await TrackIdentityService.MergeRecordsAsync(
+            db, previous, target, actor, correlationId, now, cancellationToken);
+        return winner.Id;
     }
 
     private static ProviderActorContext CatalogActor(

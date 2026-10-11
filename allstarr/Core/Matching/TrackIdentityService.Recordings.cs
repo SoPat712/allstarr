@@ -34,7 +34,18 @@ public sealed partial class TrackIdentityService
             ?? throw new KeyNotFoundException("The first recording does not exist.");
         var second = await FindSurvivorAsync(context, secondId, cancellationToken)
             ?? throw new KeyNotFoundException("The second recording does not exist.");
-        if (first.Id == second.Id) return ToIdentity(first);
+        var winner = await MergeRecordsAsync(context, first, second, actor, correlationId, _clock.UtcNow, cancellationToken);
+        await context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return ToIdentity(winner);
+    }
+
+    // The caller saves this unit of work, including any new source identity and match decision.
+    internal static async Task<CanonicalRecordingRecord> MergeRecordsAsync(
+        AllstarrDbContext context, CanonicalRecordingRecord first, CanonicalRecordingRecord second,
+        ProviderActorContext actor, string correlationId, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (first.Id == second.Id) return first;
         var ordered = new[] { first, second }.OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).ToArray();
         var winner = ordered[0];
         var loser = ordered[1];
@@ -44,7 +55,6 @@ public sealed partial class TrackIdentityService
         if (musicBrainzIds.Length > 1)
             throw new InvalidOperationException("Recordings with conflicting MusicBrainz identities cannot be merged.");
 
-        var now = _clock.UtcNow;
         foreach (var identifier in loser.Identifiers.ToArray())
         {
             identifier.RecordingId = winner.Id;
@@ -58,29 +68,48 @@ public sealed partial class TrackIdentityService
         winner.IsProvisional = Identifier(winner, RecordingIdentifierKinds.MusicBrainz) == null;
         winner.UpdatedAt = now;
         winner.Revision++;
-        await context.CanonicalRecordings.Where(item => item.MergedIntoId == loser.Id)
-            .ExecuteUpdateAsync(update => update.SetProperty(item => item.MergedIntoId, winner.Id)
-                .SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
-        await context.ProviderTrackIdentities.Where(item => item.CanonicalRecordingId == loser.Id)
-            .ExecuteUpdateAsync(update => update.SetProperty(item => item.CanonicalRecordingId, winner.Id)
-                .SetProperty(item => item.UpdatedAt, now).SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
-        await context.LibraryTracks.Where(item => item.CanonicalRecordingId == loser.Id)
-            .ExecuteUpdateAsync(update => update.SetProperty(item => item.CanonicalRecordingId, winner.Id)
-                .SetProperty(item => item.UpdatedAt, now).SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
-        await context.TrackMatches.Where(item => item.CanonicalRecordingId == loser.Id)
-            .ExecuteUpdateAsync(update => update.SetProperty(item => item.CanonicalRecordingId, winner.Id)
-                .SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
-        await context.ListeningEvents.Where(item => item.CanonicalRecordingId == loser.Id)
-            .ExecuteUpdateAsync(update => update.SetProperty(item => item.CanonicalRecordingId, winner.Id)
-                .SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
-        await context.RecommendationCandidates.Where(item => item.CanonicalRecordingId == loser.Id)
-            .ExecuteUpdateAsync(update => update.SetProperty(item => item.CanonicalRecordingId, winner.Id)
-                .SetProperty(item => item.Revision, item => item.Revision + 1), cancellationToken);
+        await context.CanonicalRecordings.Where(item => item.MergedIntoId == loser.Id).LoadAsync(cancellationToken);
+        foreach (var record in context.CanonicalRecordings.Local.Where(item => item.MergedIntoId == loser.Id))
+        {
+            record.MergedIntoId = winner.Id;
+            record.UpdatedAt = now;
+            record.Revision++;
+        }
+        await context.ProviderTrackIdentities.Where(item => item.CanonicalRecordingId == loser.Id).LoadAsync(cancellationToken);
+        foreach (var record in context.ProviderTrackIdentities.Local.Where(item => item.CanonicalRecordingId == loser.Id))
+        {
+            record.CanonicalRecordingId = winner.Id;
+            record.UpdatedAt = now;
+            record.Revision++;
+        }
+        await context.LibraryTracks.Where(item => item.CanonicalRecordingId == loser.Id).LoadAsync(cancellationToken);
+        foreach (var record in context.LibraryTracks.Local.Where(item => item.CanonicalRecordingId == loser.Id))
+        {
+            record.CanonicalRecordingId = winner.Id;
+            record.UpdatedAt = now;
+            record.Revision++;
+        }
+        await context.TrackMatches.Where(item => item.CanonicalRecordingId == loser.Id).LoadAsync(cancellationToken);
+        foreach (var record in context.TrackMatches.Local.Where(item => item.CanonicalRecordingId == loser.Id))
+        {
+            record.CanonicalRecordingId = winner.Id;
+            record.Revision++;
+        }
+        await context.ListeningEvents.Where(item => item.CanonicalRecordingId == loser.Id).LoadAsync(cancellationToken);
+        foreach (var record in context.ListeningEvents.Local.Where(item => item.CanonicalRecordingId == loser.Id))
+        {
+            record.CanonicalRecordingId = winner.Id;
+            record.Revision++;
+        }
+        await context.RecommendationCandidates.Where(item => item.CanonicalRecordingId == loser.Id).LoadAsync(cancellationToken);
+        foreach (var record in context.RecommendationCandidates.Local.Where(item => item.CanonicalRecordingId == loser.Id))
+        {
+            record.CanonicalRecordingId = winner.Id;
+            record.Revision++;
+        }
         AddAudit(context, actor, correlationId, "canonical-recording.merge", "merged",
             new { recordingId = winner.Id, mergedRecordingId = loser.Id });
-        await context.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
-        return ToIdentity(winner);
+        return winner;
     }
 
     internal static CanonicalRecordingRecord CreateProvisionalRecording(

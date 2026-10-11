@@ -23,22 +23,77 @@ public sealed class SourceIdentityReconciliationTests
         var seed = await SeedAsync(db, evidence, alreadyMoved);
         var before = seed.Identity.CanonicalRecordingId;
         var now = DateTimeOffset.UtcNow;
-        var result = await TrackMatchCommandService.TryRetargetProvisionalIdentityAsync(
-            db, seed.Identity, seed.Target, now, default);
-        Assert.Equal(expected, result);
+        var result = await TrackMatchCommandService.TryMergeProvisionalIdentityAsync(
+            db, seed.Identity, seed.Target, seed.Actor, "merge-test", now, default);
+        Assert.Equal(expected, result.HasValue);
+        await using (var unchanged = new AllstarrDbContext(database.Options))
+        {
+            Assert.Equal(before, (await unchanged.ProviderTrackIdentities.SingleAsync()).CanonicalRecordingId);
+            Assert.All(await unchanged.CanonicalRecordings.ToArrayAsync(), item => Assert.Null(item.MergedIntoId));
+        }
         await db.SaveChangesAsync();
         db.ChangeTracker.Clear();
 
         var identity = await db.ProviderTrackIdentities.SingleAsync();
-        Assert.Equal(expected ? seed.Target : before, identity.CanonicalRecordingId);
+        Assert.Equal(expected ? result!.Value : before, identity.CanonicalRecordingId);
+        if (expected && !alreadyMoved)
+        {
+            Assert.Equal(seed.Origin, result);
+            var target = await db.CanonicalRecordings.SingleAsync(item => item.Id == seed.Target);
+            Assert.Equal(seed.Origin, target.MergedIntoId);
+            Assert.Equal(CanonicalCatalogKeys.DefaultPublicId(seed.Target), target.PublicId);
+        }
         Assert.Equal(2, await db.CanonicalRecordings.CountAsync());
         if (!expected) return;
 
         var revision = identity.Revision;
-        Assert.True(await TrackMatchCommandService.TryRetargetProvisionalIdentityAsync(
-            db, identity, seed.Target, now, default));
+        Assert.Equal(identity.CanonicalRecordingId, await TrackMatchCommandService.TryMergeProvisionalIdentityAsync(
+            db, identity, result!.Value, seed.Actor, "merge-repeat", now, default));
         await db.SaveChangesAsync();
         Assert.Equal(revision, identity.Revision);
+    }
+
+    [Fact]
+    public async Task Reconciliation_IncludesAnUnsavedSourceInTheSameAtomicSave()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        await using var db = new AllstarrDbContext(database.Options);
+        var seed = await SeedAsync(db, "provisional", false);
+        var now = DateTimeOffset.UtcNow;
+        var recording = TrackIdentityService.CreateProvisionalRecording(
+            seed.Actor.UserId!.Value, now.AddMinutes(-2), publicId: "ext-fixture-song-pending");
+        var identity = new ProviderTrackIdentityRecord
+        {
+            Id = Guid.CreateVersion7(),
+            CanonicalRecordingId = recording.Id,
+            ProviderId = "fixture",
+            ResourceKind = ProviderResourceKind.Track,
+            Scope = ProviderIdentityScope.Catalog,
+            ExternalId = "pending",
+            ExternalIdHash = CanonicalCatalogKeys.Hash("pending"),
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "source-snapshot",
+            DecisionVersion = 1,
+            CreatedAt = now,
+            UpdatedAt = now,
+            VerifiedAt = now
+        };
+        db.CanonicalRecordings.Add(recording);
+        db.ProviderTrackIdentities.Add(identity);
+
+        var result = await TrackMatchCommandService.TryMergeProvisionalIdentityAsync(
+            db, identity, seed.Target, seed.Actor, "pending-merge", now, default);
+        Assert.Equal(recording.Id, result);
+        await using (var unchanged = new AllstarrDbContext(database.Options))
+        {
+            Assert.False(await unchanged.CanonicalRecordings.AnyAsync(item => item.Id == recording.Id));
+            Assert.Null((await unchanged.CanonicalRecordings.SingleAsync(item => item.Id == seed.Target)).MergedIntoId);
+        }
+        await db.SaveChangesAsync();
+        await using var verify = new AllstarrDbContext(database.Options);
+        Assert.Equal(recording.Id, (await verify.CanonicalRecordings.SingleAsync(item => item.Id == seed.Target)).MergedIntoId);
+        Assert.Equal("ext-fixture-song-pending", (await verify.CanonicalRecordings.SingleAsync(item => item.Id == recording.Id)).PublicId);
+        Assert.Equal(recording.Id, (await verify.ProviderTrackIdentities.SingleAsync(item => item.Id == identity.Id)).CanonicalRecordingId);
     }
 
     [Fact]
@@ -106,7 +161,7 @@ public sealed class SourceIdentityReconciliationTests
         {
             Id = target,
             CreatedByUserId = user,
-            CreatedAt = now,
+            CreatedAt = now.AddMinutes(1),
             UpdatedAt = now
         });
         var identity = new ProviderTrackIdentityRecord
