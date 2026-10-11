@@ -314,6 +314,26 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
         Assert.Equal(handler.RenewedExpiresAt, (await sandbox.SignedSessionStatusAsync()).ExpiresAt);
     }
 
+    [Fact]
+    public async Task SignedFetch_ForwardsTicketHeaderFromScriptObject()
+    {
+        var handler = new SessionHandler();
+        var sandbox = Sandbox(handler, script: """
+            registerExtension({ searchTracks: function() {
+                var ticket = JSON.parse(session.signedFetch('POST', '/tickets', {provider:'fixture'}).body);
+                return session.signedFetch('POST', '/download', {id:'track'}, {'X-Zarz-Ticket':ticket.ticket_id});
+            } });
+            """);
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+
+        using var response = JsonDocument.Parse(sandbox.InvokeJson("searchTracks", "{}")!);
+
+        Assert.Equal(200, response.RootElement.GetProperty("statusCode").GetInt32());
+        Assert.True(handler.DownloadTicketReceived);
+        Assert.Equal(3, handler.Calls);
+        Assert.Equal(ExtensionSessionStates.SignedIn, (await sandbox.SignedSessionStatusAsync()).State);
+    }
+
     private ExtensionSandbox Sandbox(SessionHandler handler, IReadOnlySet<string>? origins = null,
         string? runtime = null, string? sessionState = null, bool refresh = false, string? script = null)
     {
@@ -341,6 +361,7 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
         private int _calls;
         private int _maximumConcurrency;
         public int RefreshCalls { get; private set; }
+        public bool DownloadTicketReceived { get; private set; }
         public HttpStatusCode RefreshStatus { get; set; } = HttpStatusCode.OK;
         public string? RefreshBody { get; set; }
         public string RenewedExpiresAt { get; } = DateTimeOffset.UtcNow.AddHours(6).ToString("O");
@@ -386,6 +407,17 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
                     RefreshEntered.TrySetResult();
                     if (HoldRefresh) await ReleaseRefresh.Task.WaitAsync(cancellationToken);
                     response = Json(RefreshStatus, RefreshBody ?? JsonSerializer.Serialize(new { expires_at = RenewedExpiresAt }));
+                }
+                else if (request.RequestUri.AbsolutePath == "/v1/tickets")
+                {
+                    response = Json(HttpStatusCode.OK, "{\"ticket_id\":\"fixture-ticket\"}");
+                }
+                else if (request.RequestUri.AbsolutePath == "/v1/download")
+                {
+                    DownloadTicketReceived = request.Headers.TryGetValues("X-Zarz-Ticket", out var tickets) &&
+                        tickets.Single() == "fixture-ticket";
+                    response = Json(DownloadTicketReceived ? HttpStatusCode.OK : HttpStatusCode.Forbidden,
+                        "{\"origin\":\"gateway\",\"code\":\"TICKET_REQUIRED\"}");
                 }
                 else if (request.RequestUri.AbsolutePath == "/v1/catalog")
                 {

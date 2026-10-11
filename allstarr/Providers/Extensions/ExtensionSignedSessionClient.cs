@@ -358,9 +358,16 @@ internal sealed class ExtensionSignedSessionClient
     {
         var payload = body ?? string.Empty;
         var extraHeaders = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (headers is Jint.Native.Object.ObjectInstance headerObject)
-            foreach (var entry in headerObject.GetOwnProperties())
-                extraHeaders[entry.Key.ToString()] = headerObject.Get(entry.Key).ToString();
+        var headerValues = headers switch
+        {
+            Jint.Native.Object.ObjectInstance value => value.GetOwnProperties().Select(entry =>
+                new KeyValuePair<string, string>(entry.Key.ToString(), value.Get(entry.Key).ToString())),
+            IDictionary<string, object?> values => values.Select(entry =>
+                new KeyValuePair<string, string>(entry.Key, entry.Value?.ToString() ?? string.Empty)),
+            IDictionary<string, string> values => values,
+            _ => []
+        };
+        foreach (var (key, value) in headerValues) extraHeaders[key] = value;
         try
         {
             return RunScript(async limit =>
