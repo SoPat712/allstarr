@@ -1389,7 +1389,7 @@ for (const viewport of viewports) {
       await expect(intelligenceLink).toHaveAttribute("href", "#/intelligence?section=automation");
       await expect(page.getByRole("dialog")).toContainText("AudioMuse-AI powers sound-based discovery");
       await page.goto("#/integrations/accounts");
-      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
       await page.getByRole("tab", { name: "Access" }).click();
       await page.getByRole("button", { name: "Edit access" }).click();
       const access = page.locator(".access-dialog");
@@ -1400,7 +1400,7 @@ for (const viewport of viewports) {
       await access.getByRole("button", { name: "Save access" }).click();
       await expect(access).toBeHidden();
 
-      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
       await page.getByRole("tab", { name: "Access" }).click();
       await page.getByRole("button", { name: "Edit access" }).click();
       await expect(page.getByRole("radio", { name: "One library" })).toHaveCount(0);
@@ -1434,7 +1434,7 @@ for (const viewport of viewports) {
       await dialog.getByRole("button", { name: "Save connection" }).click();
       await expect(dialog).toBeHidden();
       expect(writes).toHaveLength(1);
-      expect(writes[0]).toMatchObject({ providerId: "spotify", scope: "Personal", secret: { sessionCookie: "fixture-only-cookie" } });
+      expect(writes[0]).toMatchObject({ providerId: "spotify", displayName: "", scope: "Personal", secret: { sessionCookie: "fixture-only-cookie" } });
     });
 
     test("A listener keeps existing account controls when connections are off and Shared accounts are read-only", async ({ page }) => {
@@ -1455,7 +1455,7 @@ for (const viewport of viewports) {
       await page.goto("#/integrations/accounts");
       await expect(page.getByRole("dialog", { name: "Connect a Source" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Connect Source" })).toHaveCount(0);
-      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
       await page.getByRole("tab", { name: "Configuration", exact: true }).click();
       await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toBeVisible();
       await expect(page.getByRole("button", { name: "Disable account", exact: true })).toBeVisible();
@@ -1463,7 +1463,7 @@ for (const viewport of viewports) {
       await expect(page.getByRole("button", { name: "Edit access", exact: true })).toHaveCount(0);
       shared = true;
       await page.reload();
-      await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
+      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
       await page.getByRole("tab", { name: "Configuration", exact: true }).click();
       await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Disable account", exact: true })).toHaveCount(0);
@@ -1531,6 +1531,9 @@ for (const viewport of viewports) {
       await removeButton.click();
       const removal = page.getByRole("alertdialog", { name: "Remove this track?" });
       await expect(removal).toBeVisible();
+      await expect(removal.locator(".dialog-actions")).toHaveCSS("border-top-width", "0px");
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await removal.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/remove-track-${viewport.width}.png` });
       await expect(removal.getByRole("button", { name: "Remove track" })).toBeInViewport();
     });
 
@@ -1924,6 +1927,47 @@ for (const theme of ["light", "dark"] as const) {
     });
   }
 }
+
+test("provider readiness separates provider names from account labels", async ({ page }) => {
+  await mockApi(page);
+  const definitions = [
+    { id: "lastfm", name: "Last.fm" }, { id: "listenbrainz", name: "ListenBrainz" },
+    { id: "spotify", name: "Spotify" }, { id: "deezer", name: "Deezer" },
+    { id: "apple-musickit", name: "Apple Music" },
+  ];
+  await page.route("**/api/admin/ui/home", (route) => route.fulfill({ json: {
+    ...(responses["/api/admin/ui/home"] as Record<string, unknown>), schema: { ...schema, providers: definitions },
+    providerHealth: { providers: definitions.map((provider, index) => ({
+      providerId: provider.id, connectedAccountName: index === 3 ? "Road trip" : `My ${provider.id}`,
+      connectedAccounts: [{ scope: index === 3 ? "Shared" : "Personal", customLabel: index === 3 ? "Road trip" : null }],
+      enabledAccountCount: 1, capabilityTotal: 0, healthyCapabilityCount: 0, failedCapabilityCount: 0,
+    })) },
+  } }));
+  await page.goto("#/");
+  await expect(page.locator(".provider-line strong")).toHaveText(definitions.map((provider) => provider.name));
+  const deezer = page.locator(".provider-line").filter({ hasText: "Deezer" });
+  await expect(deezer).toContainText("Shared with everyone · Road trip");
+  await expect(page.locator(".provider-line").filter({ hasText: "Last.fm" })).toContainText("Personal");
+  await expect(page.locator(".provider-result")).toHaveText(Array(5).fill("Not checked yet"));
+  if (process.env.ALLSTARR_SCREENSHOT_DIR)
+    await page.locator(".home-panel").filter({ hasText: "Provider readiness" }).screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/provider-readiness.png` });
+});
+
+test("account titles use provider definitions and keep custom labels in subtitles", async ({ page }) => {
+  await mockApi(page);
+  const accountResponse = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };
+  await page.route("**/api/admin/provider-accounts", (route) => route.fulfill({ json: {
+    ...accountResponse,
+    accounts: [{ ...accountResponse.accounts[0],
+      displayName: "Road trip", sourceDisplayName: "Road trip · Tester", customLabel: "Road trip", scope: "Shared" }],
+  } }));
+  await page.goto("#/integrations/accounts");
+  const row = page.locator(".accounts-table tbody tr").first();
+  await expect(row.locator(".operational-row-identity strong")).toHaveText("Lumen Audio");
+  await expect(row.locator(".operational-row-identity small")).toContainText("Shared with everyone · Road trip");
+  await row.locator(".operational-row-identity").click();
+  await expect(page.getByRole("dialog").getByRole("heading", { name: "Lumen Audio", exact: true })).toBeVisible();
+});
 
 test("Home stays inside runtime and request budgets", async ({ page }) => {
   const requests: string[] = [];
@@ -3926,7 +3970,7 @@ test("Apple accounts explain public web-token failures without asking for a deve
     });
   });
   await page.goto("#/integrations/accounts");
-  await page.getByRole("button", { name: /Apple Music Account details stored/ }).click();
+  await page.getByRole("button", { name: "Open Apple Music account" }).click();
   await expect(page.getByText("Apple's web-player token could not be fetched. Retry this account's Test action later.")).toBeVisible();
   await expect(page.getByLabel(/Developer token/i)).toHaveCount(0);
   await expectContainedMobileGeometry(page);
@@ -4022,8 +4066,8 @@ test("Integrations keep primary actions visible and report scoped degradation", 
     .toHaveAttribute("href", "#/integrations/services?source=apple-musickit&section=configuration");
   await page.keyboard.press("Escape");
   await page.goto("#/integrations/accounts");
-  await page.getByRole("button", { name: /Lumen Audio Account details stored/ }).click();
-  const accountDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Lumen Audio account" });
+  await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
+  const accountDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Personal" });
   await accountDetails.getByRole("tab", { name: "Configuration" }).click();
   await expect(accountDetails.getByRole("button", { name: "Disable account" })).toBeVisible();
   await expect(accountDetails.getByRole("button", { name: "Test connection" })).toBeVisible();

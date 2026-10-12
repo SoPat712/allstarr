@@ -35,6 +35,8 @@
   import { relativeTime } from "$lib/activity";
   import {
     accountSettings,
+    accountSubtitle,
+    providerDisplayName,
     audienceLabel,
     ctsMeasurementLabel,
     humanize,
@@ -427,7 +429,7 @@
                   </details>
                 </td>
                 <td>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</td>
-                <td><Badge state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge><small>{metrics.passing}/{metrics.total || 0} passing · {relativeTime(metrics.checkedAt)}</small></td>
+                <td><Badge state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge><small>{metrics.checkedAt ? `${metrics.passing}/${metrics.total || 0} passing · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small></td>
                 <td><Badge state={state === "disabled" ? "suggested" : "healthy"}>{state === "disabled" ? "Disabled" : "Enabled"}</Badge>{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
                 <td>{timing}{#if cts}{#if timing} · {/if}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
               </tr>
@@ -460,9 +462,9 @@
               {@const cts = measurements.find((item) => item.providerAccountId === account.id)}
               <tr id={`connection-${account.id}`}>
                 <td>
-                  <button class="operational-row-identity" type="button" onclick={() => inspectAccount(account)}>
+                  <button class="operational-row-identity" type="button" aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`} onclick={() => inspectAccount(account)}>
                     <ProviderArtwork id={account.providerId} definition={definition} />
-                    <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>{account.secret.configured && !account.secret.revoked ? "Account details stored" : "Setup needed"}</small></span>
+                    <span><strong>{providerDisplayName(providers, account.providerId)}</strong><small>{accountSubtitle(account)} · {account.secret.configured && !account.secret.revoked ? "Account details stored" : "Setup needed"}</small></span>
                   </button>
                   <Badge class="operational-mobile-state" state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
                   <details class="operational-mobile-detail">
@@ -474,7 +476,7 @@
                     </dl>
                   </details>
                 </td>
-                <td>{definition?.name ?? account.providerId}</td>
+                <td>{providerDisplayName(providers, account.providerId)}</td>
                 <td>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</td>
                 <td>{audienceLabel(account)}</td>
                 <td><Badge state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge></td>
@@ -523,8 +525,8 @@
                 definition={selectedSource ?? undefined}
               />
               <span>
-                <Dialog.Title>{selectedAccount?.sourceDisplayName || selectedAccount?.displayName || selectedSource?.name}</Dialog.Title>
-                <Dialog.Description>{detailKind === "account" ? `${selectedSource?.name ?? selectedAccount?.providerId} account` : selectedSource?.description || "Source capability and readiness"}</Dialog.Description>
+                <Dialog.Title>{selectedAccount ? providerDisplayName(providers, selectedAccount.providerId) : selectedSource?.name}</Dialog.Title>
+                <Dialog.Description>{detailKind === "account" && selectedAccount ? accountSubtitle(selectedAccount) : selectedSource?.description || "Source capability and readiness"}</Dialog.Description>
               </span>
             </div>
             <Dialog.Close class="icon-button" aria-label="Close Source details"><X size={18} aria-hidden="true" /></Dialog.Close>
@@ -559,7 +561,7 @@
                 <div><dt>Implementations</dt><dd>{implementationLabel(selectedSource)}</dd></div>
                 <div><dt>Capabilities</dt><dd>{(selectedSource.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
                 <div><dt>Readiness</dt><dd>{metrics.passing}/{metrics.total || 0} passing · {metrics.failed} failing</dd></div>
-                <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt)}</dd></div>
+                <div><dt>Last check</dt><dd>{relativeTime(metrics.checkedAt, "Not checked yet")}</dd></div>
                 <div><dt>API timing</dt><dd>{sourceTimingLabel(selectedSource, summary(selectedSource.id))}</dd></div>
                 <div><dt>Click to stream</dt><dd>{#if cts}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>{ctsMeasurementLabel(cts)}</Badge> · {relativeTime(cts.testedAt)}{:else if selectedSource.categories?.some((item) => ["streaming", "download"].includes(item.toLowerCase()))}Awaiting first sample{:else}Not applicable{/if}</dd></div>
               </dl>
@@ -575,7 +577,7 @@
               {@const capabilities = health.filter((item) => item.providerAccountId === selectedAccount?.id)}
               {@const cts = measurements.find((item) => item.providerAccountId === selectedAccount?.id)}
               <dl class="source-detail-data">
-                <div><dt>Provider</dt><dd>{selectedSource?.name ?? selectedAccount.providerId}</dd></div>
+                <div><dt>Provider</dt><dd>{providerDisplayName(providers, selectedAccount.providerId)}</dd></div>
                 <div><dt>Owner</dt><dd>{selectedAccount.creatorDisplayName || selectedAccount.ownerDisplayName || "Unknown"}</dd></div>
                 <div><dt>Audience</dt><dd>{audienceLabel(selectedAccount)}</dd></div>
                 <div><dt>State</dt><dd><Badge state={selectedAccount.enabled ? "healthy" : "suggested"}>{selectedAccount.enabled ? "Enabled" : "Disabled"}</Badge></dd></div>
@@ -609,7 +611,7 @@
                     {#each sourceAccounts as account}
                       <section class="source-account-configuration">
                         <header>
-                          <span><strong>{account.sourceDisplayName || account.displayName}</strong><small>Encrypted account configuration</small></span>
+                          <span><strong>{providerDisplayName(providers, account.providerId)}</strong><small>{accountSubtitle(account)}</small></span>
                           <Badge state={account.enabled ? "healthy" : "suggested"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
                         </header>
                         <dl class="source-detail-data">

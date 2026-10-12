@@ -4522,6 +4522,10 @@
     padding-top: 1rem;
   }
 
+  .confirm-dialog > .dialog-actions {
+    border-top: 0;
+  }
+
   .confirm-dialog [data-alert-dialog-title],
   .confirm-dialog [data-alert-dialog-description] {
     display: block;

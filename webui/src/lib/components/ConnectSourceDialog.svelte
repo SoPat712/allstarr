@@ -6,7 +6,7 @@
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { accountSettings, secretFromForm, settingDefault } from "$lib/sources";
+  import { accountSubtitle, accountSettings, secretFromForm, settingDefault } from "$lib/sources";
 
   let {
     open = $bindable(false),
@@ -66,7 +66,7 @@
       } else {
         saved = await sources.create({
           providerId: selected.id,
-          displayName: String(data.get("displayName") || "").trim() || `My ${selected.name} connection`,
+          displayName: String(data.get("displayName") || "").trim(),
           scope,
           ...(administrator && scope === "Personal" && ownerUserId ? { ownerUserId } : {}),
           enabled: true,
@@ -118,7 +118,7 @@
           {#if account}
             <div class="provider-select source-dialog-provider">
               <ProviderMark id={selected.id} definition={selected} />
-              <strong>{account.sourceDisplayName || account.displayName}</strong>
+              <span><strong>{selected.name}</strong><small>{accountSubtitle(account)}</small></span>
             </div>
           {:else}
             <label class="field">
@@ -131,7 +131,7 @@
             {#if administrator && scope === "Personal" && users.length > 0}
               <label class="field"><span>Account owner</span><SelectField bind:value={ownerUserId} label="Account owner" options={users.map((user) => ({ value: user.id, label: user.displayName }))} /></label>
             {/if}
-            <label class="field"><span>Connection name</span><input name="displayName" placeholder={`My ${selected.name} connection`} /></label>
+            <label class="field"><span>Connection name</span><input name="displayName" placeholder={selected.name} /></label>
             <label class="field">
               <span>Who can use it?</span>
               <SelectField name="scope" label="Who can use it?" bind:value={scope} options={[

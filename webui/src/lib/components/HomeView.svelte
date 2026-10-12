@@ -13,7 +13,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
+  import { accountSubtitle, findProviderDefinition, providerDisplayName } from "$lib/sources";
 
   let { administrator }: { administrator: boolean } = $props();
 
@@ -93,12 +93,6 @@
 
   function providerName(providerId: string) {
     return providerDisplayName(snapshot?.providerCatalog ?? [], providerId);
-  }
-
-  function accountName(providerId: string, displayName?: string | null) {
-    return displayName?.startsWith("Legacy .env import")
-      ? providerName(providerId)
-      : displayName || providerName(providerId);
   }
 
   function deliveryComplete(kind: string, state: string) {
@@ -376,17 +370,18 @@
                 definition={providerDefinition(provider.providerId)}
               />
               <span>
-                <strong>{accountName(provider.providerId, provider.connectedAccountName)}</strong>
+                <strong>{providerName(provider.providerId)}</strong>
                 <small>
-                  {provider.enabledAccountCount} connected account{provider.enabledAccountCount === 1 ? "" : "s"}
-                  {provider.connectedAccountName?.startsWith("Legacy .env import") ? " · Imported" : ""}
+                  {provider.connectedAccounts?.length
+                    ? provider.connectedAccounts.map(accountSubtitle).join("; ")
+                    : `${provider.enabledAccountCount} connected account${provider.enabledAccountCount === 1 ? "" : "s"}`}
                 </small>
               </span>
               <span class:attention={provider.failedCapabilityCount > 0} class="provider-result">
-                {provider.capabilityTotal
-                  ? `${provider.healthyCapabilityCount}/${provider.capabilityTotal}`
-                  : "—"}
-                <small>{relativeTime(provider.lastCheckedAt)}</small>
+                {#if provider.capabilityTotal}
+                  {provider.healthyCapabilityCount}/{provider.capabilityTotal}
+                  <small>{relativeTime(provider.lastCheckedAt, "Not checked yet")}</small>
+                {:else}Not checked yet{/if}
               </span>
             </div>
           {/each}

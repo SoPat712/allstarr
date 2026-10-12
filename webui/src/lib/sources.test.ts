@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
 import {
   accountSettings,
+  accountSubtitle,
   providerDisplayName,
   audienceLabel,
   ctsMeasurementLabel,
@@ -31,11 +32,16 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("shows audience and only an explicitly supplied custom label", () => {
+    expect(accountSubtitle({ scope: "Personal", customLabel: null })).toBe("Personal");
+    expect(accountSubtitle({ scope: "Shared" })).toBe("Shared with everyone");
+    expect(accountSubtitle({ scope: "Shared", customLabel: "Road trip" })).toBe("Shared with everyone · Road trip");
+  });
   it("labels legacy Apple identities with the unified service without changing their IDs", () => {
     const providers = [{ id: "apple-musickit", name: "Apple Music" }];
     for (const id of ["apple-download", "applemusic", "apple-musickit"])
       expect(providerDisplayName(providers, id)).toBe("Apple Music");
-    expect(providerDisplayName(providers, "spotiflac-apple-music")).toBe("spotiflac-apple-music");
+    expect(providerDisplayName(providers, "spotiflac-apple-music")).toBe("Unknown source");
   });
 
   it("humanizes camel-case lifecycle labels", () => {

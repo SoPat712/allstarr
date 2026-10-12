@@ -474,7 +474,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         return false;
     }
 
-    private static bool TryNormalizeRequest(
+    private bool TryNormalizeRequest(
         CreateProviderAccountRequest request,
         AdminAuthSession session,
         bool canManageAllAccounts,
@@ -490,6 +490,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
             error = "ProviderId must use lowercase letters, numbers, and single hyphens";
             return false;
         }
+
+        if (string.IsNullOrWhiteSpace(displayName))
+            displayName = ProviderAccountNames.DefaultName(providerId, _providerRegistry);
 
         if (string.IsNullOrWhiteSpace(displayName) || displayName.Length > 200)
         {
@@ -605,7 +608,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         });
     }
 
-    private static object AccountResponse(
+    private object AccountResponse(
         ProviderAccountRecord account,
         SecretReferenceRecord? secret,
         string? ownerDisplayName = null,
@@ -616,7 +619,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         {
             account.Id,
             account.ProviderId,
-            displayName = FriendlyDisplayName(account),
+            displayName = ProviderAccountNames.DisplayName(account, _providerRegistry),
+            customLabel = ProviderAccountNames.CustomLabel(account, _providerRegistry),
             sourceDisplayName = SourceDisplayName(account, canManage ? creatorDisplayName : null),
             scope = account.Scope.ToString(),
             account.OwnerUserId,
@@ -752,33 +756,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
         IReadOnlyDictionary<string, JsonElement> Values,
         IReadOnlyList<string> ConfiguredFields);
 
-    private static string SourceDisplayName(ProviderAccountRecord account, string? creatorDisplayName)
+    private string SourceDisplayName(ProviderAccountRecord account, string? creatorDisplayName)
     {
-        var name = FriendlyDisplayName(account);
+        var name = ProviderAccountNames.DisplayName(account, _providerRegistry);
         return string.IsNullOrWhiteSpace(creatorDisplayName)
             ? name
             : $"{name} · {creatorDisplayName}";
-    }
-
-    private static string FriendlyDisplayName(ProviderAccountRecord account)
-    {
-        if (account.DisplayName is not ("Legacy .env import" or "Legacy .env import (current user)"))
-        {
-            return account.DisplayName;
-        }
-
-        var provider = account.ProviderId.ToLowerInvariant() switch
-        {
-            "lastfm" => "Last.fm",
-            "listenbrainz" => "ListenBrainz",
-            "qobuz" => "Qobuz",
-            "deezer" => "Deezer",
-            "spotify" => "Spotify",
-            _ => account.ProviderId
-        };
-        return account.Scope == ProviderAccountScope.Personal
-            ? $"My {provider} account"
-            : $"Shared {provider} account";
     }
 
     [GeneratedRegex("^[a-z0-9]+(?:-[a-z0-9]+)*$", RegexOptions.CultureInvariant)]

@@ -2,6 +2,7 @@ using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
+using allstarr.Core.Health;
 using allstarr.Core.Operations;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Providers.AppleMusicKit;
@@ -14,6 +15,8 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -64,6 +67,109 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
             new FileSecretKeyRingProvider(options),
             options,
             new SystemPlatformClock());
+    }
+
+    [Theory]
+    [InlineData("lastfm", "Last.fm", "Personal")]
+    [InlineData("listenbrainz", "ListenBrainz", "Shared")]
+    [InlineData("spotify", "Spotify", "Personal")]
+    [InlineData("deezer", "Deezer", "Shared")]
+    [InlineData("apple-musickit", "Apple Music", "Personal")]
+    public async Task Create_BlankLabelUsesProviderName(string providerId, string expected, string scope)
+    {
+        var result = await Controller(Session(_userId, administrator: true)).Create(new()
+        {
+            ProviderId = providerId,
+            DisplayName = "  ",
+            Scope = scope
+        });
+        var created = Assert.IsType<CreatedAtActionResult>(result);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+        Assert.Equal(expected, json.RootElement.GetProperty("displayName").GetString());
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("customLabel").ValueKind);
+        await using var context = await _factory.CreateDbContextAsync();
+        Assert.Equal(expected, (await context.ProviderAccounts.SingleAsync()).DisplayName);
+    }
+
+    [Fact]
+    public async Task Create_DefaultUsesExtensionDefinitionAndPreservesCustomLabel()
+    {
+        var controller = Controller(Session(_userId), providerRegistry: AppleExtensionRegistry());
+        var created = Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
+        {
+            ProviderId = "spotiflac-apple-music"
+        }));
+        using var defaultJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+        Assert.Equal("Apple Music", defaultJson.RootElement.GetProperty("displayName").GetString());
+        created = Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
+        {
+            ProviderId = "spotiflac-apple-music",
+            DisplayName = "Road trip"
+        }));
+        using var customJson = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+        Assert.Equal("Road trip", customJson.RootElement.GetProperty("displayName").GetString());
+        Assert.Equal("Road trip", customJson.RootElement.GetProperty("customLabel").GetString());
+    }
+
+    [Fact]
+    public async Task StartupRename_PreservesPersonalAccountAndEncryptedSecretBytes()
+    {
+        var original = await CreateUserAccount(_userId, "deezer", "My deezer");
+        await using var context = await _factory.CreateDbContextAsync();
+        var references = JsonSerializer.Serialize(await context.SecretReferences.AsNoTracking().ToListAsync());
+        var ciphertext = JsonSerializer.Serialize(await context.SecretVersions.AsNoTracking().ToListAsync());
+        var keyring = await File.ReadAllBytesAsync(Path.Combine(_root, "keyring.json"));
+        var state = new DurableStorageState(new StorageOptions());
+        state.Set(DurableStorageReadiness.Ready);
+        await new ProviderAccountNameNormalizer(_factory, new ProviderRegistry([]), state,
+            NullLogger<ProviderAccountNameNormalizer>.Instance).StartAsync(CancellationToken.None);
+        var renamed = await context.ProviderAccounts.AsNoTracking().SingleAsync();
+        Assert.Equal("Deezer", renamed.DisplayName);
+        Assert.Equal(original.Id, renamed.Id);
+        Assert.Equal(original.OwnerUserId, renamed.OwnerUserId);
+        Assert.Equal(original.CreatedByUserId, renamed.CreatedByUserId);
+        Assert.Equal(original.SecretReferenceId, renamed.SecretReferenceId);
+        Assert.Equal(original.SettingsJson, renamed.SettingsJson);
+        Assert.Equal(original.Enabled, renamed.Enabled);
+        Assert.Equal(references, JsonSerializer.Serialize(await context.SecretReferences.AsNoTracking().ToListAsync()));
+        Assert.Equal(ciphertext, JsonSerializer.Serialize(await context.SecretVersions.AsNoTracking().ToListAsync()));
+        Assert.Equal(keyring, await File.ReadAllBytesAsync(Path.Combine(_root, "keyring.json")));
+    }
+
+    [Fact]
+    public async Task HomeSummary_SeparatesAudiencesAndCustomLabelsWithoutExposingAccountData()
+    {
+        await CreateUserAccount(_userId, "deezer", "My deezer");
+        Assert.IsType<CreatedAtActionResult>(await Controller(Session(_userId, administrator: true)).Create(new()
+        {
+            ProviderId = "deezer",
+            DisplayName = "Road trip",
+            Scope = "Shared"
+        }));
+        await using var services = new ServiceCollection()
+            .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
+            .AddSingleton(new ProviderRuntimeHealth()).BuildServiceProvider();
+        var controller = new AdminUiController(new ConfigurationBuilder().Build(),
+            Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, null!,
+            new ProviderAccountOptions(), null!)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = services } }
+        };
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, administrator: true);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await controller.GetProviderSummaries()).Value));
+        var summary = Assert.Single(json.RootElement.GetProperty("providers").EnumerateArray());
+        var accounts = summary.GetProperty("connectedAccounts").EnumerateArray().ToArray();
+        Assert.Equal(2, accounts.Length);
+        Assert.Contains(accounts, item => item.GetProperty("scope").GetString() == "Personal" &&
+            item.GetProperty("customLabel").ValueKind == JsonValueKind.Null);
+        Assert.Contains(accounts, item => item.GetProperty("scope").GetString() == "Shared" &&
+            item.GetProperty("customLabel").GetString() == "Road trip");
+        Assert.All(accounts, item => Assert.Equal(2, item.EnumerateObject().Count()));
+        Assert.Equal(0, summary.GetProperty("capabilityTotal").GetInt32());
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId);
+        AssertForbidden(await controller.GetProviderSummaries());
     }
 
     [Fact]
