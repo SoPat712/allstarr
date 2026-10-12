@@ -5332,68 +5332,14 @@
     transform: none;
   }
 
-  .extension-activity summary {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    gap: var(--space-2);
-  }
-
-  .extension-activity summary > span:first-child {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-  }
-
-  .extension-activity summary > span:nth-child(2) {
-    grid-column: 2;
-    grid-row: 1;
+  .extension-activity details > summary {
+    grid-template-columns: 0.625rem minmax(0, 1fr) 1rem;
+    padding: var(--space-3) var(--space-4);
   }
 
   .extension-activity summary time {
     grid-column: 2;
     grid-row: 2;
-  }
-
-  .extension-activity summary .disclosure-chevron {
-    grid-column: 3;
-    grid-row: 1 / span 2;
-  }
-
-  .extension-header,
-  .extension-catalog > header {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .extension-header button,
-  .extension-catalog > header .extension-search {
-    width: 100%;
-  }
-
-  .extension-row {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .extension-row > .badge {
-    grid-column: 2;
-    justify-self: start;
-  }
-
-  .extension-actions {
-    grid-column: 1 / -1;
-  }
-
-  .extension-catalog article,
-  .extension-registry-list article {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .extension-catalog article button,
-  .extension-registry-list article > div {
-    grid-column: 1 / -1;
-  }
-
-  .extension-permissions article {
-    align-items: stretch;
-    flex-direction: column;
   }
 }
 
