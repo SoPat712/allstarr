@@ -26,6 +26,7 @@ using allstarr.Core.Playback;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
 using SkiaSharp;
+using allstarr.Core.Music;
 
 namespace allstarr.Controllers;
 
@@ -52,7 +53,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IJellyfinInteractionProtocolAdapter _interactionProtocolAdapter;
     private readonly JellyfinVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
-    private readonly JellyfinModelMapper _modelMapper;
+    private readonly MusicSearchService _musicSearch;
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
     private readonly IProtocolLyricsResolver _protocolLyricsResolver;
@@ -83,7 +84,7 @@ public partial class JellyfinController : ControllerBase
         IJellyfinInteractionProtocolAdapter interactionProtocolAdapter,
         JellyfinVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
         ProtocolStreamingResponseAdapter streamingResponseAdapter,
-        JellyfinModelMapper modelMapper,
+        MusicSearchService musicSearch,
         JellyfinProxyService proxyService,
         JellyfinSessionManager sessionManager,
         IApplicationCache cache,
@@ -115,7 +116,7 @@ public partial class JellyfinController : ControllerBase
         _interactionProtocolAdapter = interactionProtocolAdapter;
         _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
         _streamingResponseAdapter = streamingResponseAdapter;
-        _modelMapper = modelMapper;
+        _musicSearch = musicSearch;
         _proxyService = proxyService;
         _sessionManager = sessionManager;
         _protocolLyricsResolver = protocolLyricsResolver;
