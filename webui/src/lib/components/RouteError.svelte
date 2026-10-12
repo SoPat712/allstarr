@@ -24,8 +24,8 @@
   }
 </script>
 
-<section class="panel route-error" role="alert">
+<section class="panel route-error" role="alert" aria-label={eyebrow}>
   <span aria-hidden="true">!</span>
-  <div><p class="eyebrow">{eyebrow}</p><h2>{title}</h2><p>{message}</p></div>
+  <div><h2>{title}</h2><p>{message}</p></div>
   <button class="route-error-retry" type="button" disabled={retrying} onclick={() => void retry()}>{retrying ? "Trying again…" : "Try again"}</button>
 </section>

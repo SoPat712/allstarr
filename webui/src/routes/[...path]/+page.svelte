@@ -409,7 +409,6 @@
   <main class="grid min-h-screen place-items-center p-6">
     <section class="panel bootstrap-error w-full max-w-sm p-6 sm:p-8" aria-labelledby="bootstrap-error-title">
       <div class="brand-mark mb-6" aria-hidden="true">A</div>
-      <p class="eyebrow">Connection interrupted</p>
       <h1 id="bootstrap-error-title" class="mt-2 text-3xl font-semibold tracking-tight">Allstarr could not start.</h1>
       <p class="notice-error mt-4" role="alert">{error}</p>
       <button class="auth-submit mt-6 w-full" type="button" onclick={() => void bootstrap()}>Try again</button>
@@ -419,7 +418,6 @@
   <main class="grid min-h-screen place-items-center p-6">
     <section class="panel w-full max-w-sm p-6 sm:p-8" aria-labelledby="login-title">
       <div class="brand-mark mb-6" aria-hidden="true">A</div>
-      <p class="eyebrow">Allstarr</p>
       <h1 id="login-title" class="mt-2 text-3xl font-semibold tracking-tight">Your music, connected.</h1>
       <p class="mt-3 text-sm leading-6 text-ink-muted">
         {#if oidc.linkPending}
@@ -613,8 +611,7 @@
       {#if forbiddenRoute}
         <section class="panel empty-state" aria-labelledby="administrator-required-title">
           <span class="empty-orbit" aria-hidden="true">✦</span>
-          <p class="eyebrow">Administrator required</p>
-          <h2 id="administrator-required-title">This workspace is for administrators.</h2>
+                    <h2 id="administrator-required-title">This workspace is for administrators.</h2>
           <p>Your Home, listening preferences, playlists, accounts, and personal activity remain available.</p>
           <div class="flex flex-wrap justify-center gap-2">
             <a class="button" href="#/">Go to Home</a>
@@ -640,8 +637,7 @@
       {:else}
         <section class="panel empty-state">
           <span class="empty-orbit" aria-hidden="true">✦</span>
-          <p class="eyebrow">Page not found</p>
-          <h2>This Allstarr view does not exist.</h2>
+                    <h2>This Allstarr view does not exist.</h2>
           <p>Use the navigation to return to a current workspace.</p>
         </section>
       {/if}
@@ -657,9 +653,8 @@
       }}>
         <header>
           <div>
-            <p class="eyebrow">{administrator ? "Account and administration" : "Your account"}</p>
             <Dialog.Title>More</Dialog.Title>
-            <Dialog.Description>{administrator ? "Listening preferences, connections, deployment settings, appearance, and your session." : "Listening preferences, connections, appearance, and your session."}</Dialog.Description>
+            <Dialog.Description>{administrator ? "Preferences, integrations, settings and your account." : "Preferences, connections and your account."}</Dialog.Description>
           </div>
           <Dialog.Close class="icon-button" aria-label="Close more destinations"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>

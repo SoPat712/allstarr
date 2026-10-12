@@ -1553,7 +1553,7 @@
     font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.08em;
-    text-transform: uppercase;
+    text-transform: none;
   }
 
   .attention {
@@ -3419,7 +3419,7 @@
     font-size: var(--text-xs);
     font-weight: 750;
     letter-spacing: 0.06em;
-    text-transform: uppercase;
+    text-transform: none;
   }
 
   .candidate-card > .candidate-action {
@@ -4437,7 +4437,7 @@
   .source-metrics dt {
     color: var(--color-ink-muted);
     font-size: var(--text-xs);
-    text-transform: uppercase;
+    text-transform: none;
   }
 
   .source-metrics dd {
@@ -8600,5 +8600,69 @@
 
   .routing-group > header {
     flex-wrap: wrap;
+  }
+}
+
+@layer components {
+  :is(.panel-heading, .playlist-toolbar) > div:first-child h2 {
+    margin: 0;
+    color: var(--color-ink);
+    font-size: 1.125rem;
+    line-height: 1.5rem;
+    font-weight: 600;
+  }
+
+  :is(.panel-heading, .playlist-toolbar) > div:first-child > p {
+    max-width: 42rem;
+    margin: 0.125rem 0 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+  }
+
+  .route-error h2 {
+    margin: 0;
+    font-size: 1.125rem;
+    line-height: 1.5rem;
+    font-weight: 600;
+  }
+
+  .route-error p {
+    margin: var(--space-1) 0 0;
+    font-size: var(--text-sm);
+  }
+
+  .empty-state h2 {
+    margin: var(--space-3) 0 var(--space-2);
+    font-size: 1.375rem;
+    line-height: 1.75rem;
+    font-weight: 600;
+  }
+
+  .empty-state > p {
+    font-size: var(--text-sm);
+  }
+}
+
+@layer components {
+  :is(.source-dialog, .match-dialog) > header {
+    padding: var(--space-5) var(--space-6) var(--space-4);
+  }
+
+  :is(.source-dialog, .match-dialog) [data-dialog-title] {
+    font-size: 1.375rem;
+    line-height: 1.75rem;
+    font-weight: 600;
+  }
+
+  :is(.source-dialog, .match-dialog) [data-dialog-description] {
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+  }
+}
+
+@media (max-width: 650px) {
+  :is(.source-dialog, .match-dialog) > header {
+    padding: var(--space-4);
   }
 }

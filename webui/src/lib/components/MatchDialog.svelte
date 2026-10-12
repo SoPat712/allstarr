@@ -223,7 +223,6 @@
       {#if match}
         <header>
           <div>
-            <p class="eyebrow">Review match</p>
             <Dialog.Title>{match.title || "Unknown track"}</Dialog.Title>
             <Dialog.Description>{match.artist || "Unknown artist"} · {providerName(match.providerId)}</Dialog.Description>
           </div>
