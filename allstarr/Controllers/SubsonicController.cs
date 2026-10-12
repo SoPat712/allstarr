@@ -17,6 +17,7 @@ using allstarr.Core.Playback;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
+using allstarr.Core.Music;
 
 namespace allstarr.Controllers;
 
@@ -47,6 +48,7 @@ public partial class SubsonicController : ControllerBase
     private readonly IPlaybackSignalPipeline? _playbackSignals;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
+    private readonly MusicSearchService _musicSearch;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ManagedTrackCacheService? _managedTrackCache;
@@ -69,6 +71,7 @@ public partial class SubsonicController : ControllerBase
         ILogger<SubsonicController> logger,
         IProtocolProviderGateway providerGateway,
         ProtocolStreamingResponseAdapter streamingResponseAdapter,
+        MusicSearchService musicSearch,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
@@ -95,6 +98,7 @@ public partial class SubsonicController : ControllerBase
         _playbackSignals = playbackSignals;
         _providerGateway = providerGateway;
         _streamingResponseAdapter = streamingResponseAdapter;
+        _musicSearch = musicSearch;
         _audioMuse = audioMuse;
         _intelligencePolicies = intelligencePolicies;
         _managedTrackCache = managedTrackCache;
@@ -166,28 +170,22 @@ public partial class SubsonicController : ControllerBase
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
 
-        var subsonicTask = _proxyService.RelaySafeAsync("rest/search3", parameters);
-        var externalTask = _providerGateway.SearchAsync(
+        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format);
+        var playlists = _subsonicSettings.EnableExternalPlaylists
+            ? new MusicSearchWindow(window.AlbumFetchCount, window.AlbumOffset, window.AlbumCount)
+            : MusicSearchWindow.None;
+        var merged = await _musicSearch.SearchAsync(
             CurrentProtocolContext,
-            cleanQuery,
-            window.SongFetchCount,
-            window.AlbumFetchCount,
-            window.ArtistFetchCount);
-
-        Task<List<ExternalPlaylist>> playlistTask = _subsonicSettings.EnableExternalPlaylists
-            ? _providerGateway.SearchPlaylistsAsync(
-                CurrentProtocolContext,
+            new MusicSearchRequest(
                 cleanQuery,
-                window.AlbumFetchCount)
-            : Task.FromResult(new List<ExternalPlaylist>());
-
-        await Task.WhenAll(subsonicTask, externalTask, playlistTask);
-
-        var subsonicResult = await subsonicTask;
-        var externalResult = _searchProtocolAdapter.ApplyWindow(await externalTask, window);
-        var playlistResult = _searchProtocolAdapter.ApplyAlbumWindow(await playlistTask, window);
-
-        return await MergeSearchResultsAsync(subsonicResult, externalResult, playlistResult, format, cleanQuery, parameters);
+                new MusicSearchWindow(window.SongFetchCount, window.SongOffset, window.SongCount),
+                new MusicSearchWindow(window.AlbumFetchCount, window.AlbumOffset, window.AlbumCount),
+                new MusicSearchWindow(window.ArtistFetchCount, window.ArtistOffset, window.ArtistCount),
+                playlists,
+                HideProviderArtistsNamedLikeNative: true),
+            native,
+            HttpContext.RequestAborted);
+        return RenderSearchResult(_modelMapper.RenderSearchResult(merged, native.IsJson), native.IsJson);
     }
 
     [AcceptVerbs("GET", "POST", "HEAD")]
@@ -638,29 +636,11 @@ public partial class SubsonicController : ControllerBase
 
     #region Helper Methods
 
-    private async Task<IActionResult> MergeSearchResultsAsync(
-        (byte[]? Body, string? ContentType, bool Success) subsonicResult,
-        SearchResult externalResult,
-        List<ExternalPlaylist> playlistResult,
-        string format,
-        string query,
-        SubsonicRequestParameters parameters)
+    private IActionResult RenderSearchResult(
+        (List<object> Songs, List<object> Albums, List<object> Artists) merged,
+        bool isJson)
     {
-        var (localSongs, localAlbums, localArtists) = subsonicResult.Success && subsonicResult.Body != null
-            ? _modelMapper.ParseSearchResponse(subsonicResult.Body, subsonicResult.ContentType)
-            : (new List<object>(), new List<object>(), new List<object>());
-
-        var isJson = format == "json" || subsonicResult.ContentType?.Contains("json") == true;
-        await PreferKnownNativeSongsAsync(externalResult.Songs, localSongs, parameters, isJson);
-        var (mergedSongs, mergedAlbums, mergedArtists) = _modelMapper.MergeSearchResults(
-            localSongs,
-            localAlbums,
-            localArtists,
-            externalResult,
-            playlistResult,
-            isJson,
-            query);
-
+        var (mergedSongs, mergedAlbums, mergedArtists) = merged;
         if (isJson)
         {
             return _responseBuilder.CreateJsonResponse(new

@@ -1,3 +1,8 @@
+using System.Text;
+using System.Text.Json;
+using System.Xml;
+using System.Xml.Linq;
+using allstarr.Core.Music;
 using allstarr.Models.Search;
 using allstarr.Services.Subsonic;
 
@@ -74,5 +79,60 @@ public sealed class SubsonicSearchProtocolAdapter
         }
 
         return Math.Min(value, MaximumWindow);
+    }
+}
+
+/// <summary>
+/// The backend half of a Subsonic integrated search: the client's own search3 request and
+/// single-song lookups, kept in whatever format the backend answered with.
+/// </summary>
+public sealed class SubsonicNativeMusicSearch(
+    SubsonicProxyService proxy,
+    SubsonicModelMapper mapper,
+    SubsonicResponseBuilder responses,
+    SubsonicRequestParameters parameters,
+    string format) : INativeMusicSearch<object>
+{
+    public bool IsJson { get; private set; } = format == "json";
+
+    public async Task<IReadOnlyList<NativeMusicItem<object>>> SearchAsync(CancellationToken cancellationToken)
+    {
+        var response = await proxy.RelaySafeAsync("rest/search3", parameters, cancellationToken);
+        IsJson = format == "json" || response.ContentType?.Contains("json") == true;
+        if (!response.Success || response.Body == null) return [];
+        var (songs, albums, artists) = mapper.ParseSearchResponse(response.Body, response.ContentType);
+        return songs.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Song))
+            .Concat(albums.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Album)))
+            .Concat(artists.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Artist)))
+            .ToList();
+    }
+
+    public async Task<NativeMusicItem<object>?> GetSongAsync(string id, CancellationToken cancellationToken)
+    {
+        var response = await proxy.RelaySafeAsync("rest/getSong", parameters.SetValue("id", id)
+            .SetValue("f", IsJson ? "json" : "xml"), cancellationToken);
+        if (!response.Success || response.Body == null) return null;
+        try
+        {
+            if (IsJson)
+            {
+                using var document = JsonDocument.Parse(response.Body);
+                return document.RootElement.TryGetProperty("subsonic-response", out var root) &&
+                       root.TryGetProperty("status", out var status) && status.GetString() == "ok" &&
+                       root.TryGetProperty("song", out var song) && song.TryGetProperty("id", out var songId) &&
+                       songId.GetString() == id
+                    ? SubsonicModelMapper.ToNativeItem(responses.ConvertSubsonicJsonElement(song, true), MusicItemKind.Song)
+                    : null;
+            }
+            var xml = XDocument.Parse(Encoding.UTF8.GetString(response.Body));
+            var element = xml.Root?.Element(xml.Root.GetDefaultNamespace() + "song");
+            return xml.Root?.Attribute("status")?.Value == "ok" && element?.Attribute("id")?.Value == id
+                ? SubsonicModelMapper.ToNativeItem(responses.ConvertSubsonicXmlElement(element, "song"), MusicItemKind.Song)
+                : null;
+        }
+        catch (Exception error) when (error is JsonException or XmlException)
+        {
+            return null;
+        }
     }
 }

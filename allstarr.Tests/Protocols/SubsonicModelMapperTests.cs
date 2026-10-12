@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Moq;
+using allstarr.Core.Music;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -166,7 +167,7 @@ public class SubsonicModelMapperTests
             Songs = [new Song { Id = "provider-tied", Title = "luther", ExternalProvider = "deezer" }]
         };
 
-        var (songs, _, _) = _mapper.MergeSearchResults([weaker, tied], [], [], external, [], isJson, "luther");
+        var (songs, _, _) = Merge([weaker, tied], [], [], external, [], isJson, "luther");
 
         string Field(object item, string field) => item is XElement xml
             ? xml.Attribute(field)!.Value
@@ -192,7 +193,7 @@ public class SubsonicModelMapperTests
             Artists = [new Artist { Id = "provider-artist", Name = "Taylor Swift" }]
         };
 
-        var (_, albums, artists) = _mapper.MergeSearchResults([], [Local("album", "local-album", "unrelated")],
+        var (_, albums, artists) = Merge([], [Local("album", "local-album", "unrelated")],
             [Local("artist", "local-artist", "unrelated")], external, [], isJson, "Taylor Swift");
 
         string Id(object item) => item is XElement xml ? xml.Attribute("id")!.Value
@@ -218,7 +219,7 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist>()
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
             localSongs, new List<object>(), new List<object>(), externalResult, new List<ExternalPlaylist>(), true);
 
         Assert.Equal(2, mergedSongs.Count);
@@ -241,7 +242,7 @@ public class SubsonicModelMapperTests
             }
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
             new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), true);
 
         Assert.Single(mergedArtists); // Only the local artist
@@ -265,7 +266,7 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist>()
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
             localSongs, new List<object>(), new List<object>(), externalResult, new List<ExternalPlaylist>(), false);
 
         Assert.Equal(2, mergedSongs.Count);
@@ -289,7 +290,7 @@ public class SubsonicModelMapperTests
             }
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
             new List<object>(), new List<object>(), localArtists, externalResult, new List<ExternalPlaylist>(), false);
 
         Assert.Equal(2, mergedArtists.Count); // 1 local + 1 external (duplicate filtered)
@@ -305,7 +306,7 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist> { new Artist { Id = "ext3", Name = "Artist" } }
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
             new List<object>(), new List<object>(), new List<object>(), externalResult, new List<ExternalPlaylist>(), true);
 
         Assert.Single(mergedSongs);
@@ -326,7 +327,7 @@ public class SubsonicModelMapperTests
             Artists = new List<Artist>()
         };
 
-        var (mergedSongs, mergedAlbums, mergedArtists) = _mapper.MergeSearchResults(
+        var (mergedSongs, mergedAlbums, mergedArtists) = Merge(
             localSongs, localAlbums, localArtists, externalResult, new List<ExternalPlaylist>(), true);
 
         Assert.Single(mergedSongs);
@@ -347,13 +348,33 @@ public class SubsonicModelMapperTests
         };
         var empty = new SearchResult();
 
-        var (_, jsonAlbums, _) = _mapper.MergeSearchResults(
+        var (_, jsonAlbums, _) = Merge(
             [], [], [], empty, [playlist], true);
         Assert.False(Assert.IsType<Dictionary<string, object>>(Assert.Single(jsonAlbums))
             .ContainsKey("duration"));
 
-        var (_, xmlAlbums, _) = _mapper.MergeSearchResults(
+        var (_, xmlAlbums, _) = Merge(
             [], [], [], empty, [playlist], false);
         Assert.Null(Assert.IsType<XElement>(Assert.Single(xmlAlbums)).Attribute("duration"));
     }
+
+    // The shared search core ranks the rows; the Subsonic mapper renders them.
+    private (List<object> Songs, List<object> Albums, List<object> Artists) Merge(
+        List<object> localSongs,
+        List<object> localAlbums,
+        List<object> localArtists,
+        SearchResult external,
+        List<ExternalPlaylist> playlists,
+        bool isJson,
+        string query = "") =>
+        _mapper.RenderSearchResult(MusicSearchService.Merge(
+            query,
+            localSongs.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Song))
+                .Concat(localAlbums.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Album)))
+                .Concat(localArtists.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Artist))),
+            external.Songs,
+            external.Albums,
+            external.Artists,
+            playlists,
+            hideProviderArtistsNamedLikeNative: true), isJson);
 }

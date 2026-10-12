@@ -1,9 +1,8 @@
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
-using allstarr.Models.Search;
+using allstarr.Core.Music;
 using allstarr.Models.Subsonic;
-using allstarr.Services.Common;
 
 namespace allstarr.Services.Subsonic;
 
@@ -92,45 +91,39 @@ public class SubsonicModelMapper
         return (songs, albums, artists);
     }
 
-    public (List<object> MergedSongs, List<object> MergedAlbums, List<object> MergedArtists) MergeSearchResults(
-        List<object> localSongs,
-        List<object> localAlbums,
-        List<object> localArtists,
-        SearchResult externalResult,
-        List<ExternalPlaylist> externalPlaylists,
-        bool isJson,
-        string query = "")
+    /// <summary>Describes a native search row for the shared search core without changing it.</summary>
+    public static NativeMusicItem<object> ToNativeItem(object item, MusicItemKind kind) => new(
+        kind,
+        GetSearchField(item, "id"),
+        GetSearchField(item, kind == MusicItemKind.Song ? "title" : "name"),
+        kind == MusicItemKind.Artist ? null : GetSearchField(item, "artist"),
+        item);
+
+    /// <summary>Renders merged search rows: native rows keep every field, provider rows are converted.</summary>
+    public (List<object> Songs, List<object> Albums, List<object> Artists) RenderSearchResult(
+        MusicSearchResult<object> result,
+        bool isJson)
     {
         var ns = XNamespace.Get("http://subsonic.org/restapi");
-        var localArtistNames = localArtists.Select(item => GetSearchField(item, "name"))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var songs = externalResult.Songs.Select(song => (
-            Item: isJson ? (object)_responseBuilder.ConvertSongToJson(song) : _responseBuilder.ConvertSongToXml(song, ns),
-            Score: SearchRelevanceRanker.Score(query, song.Title, song.Artist)));
-        var albums = externalResult.Albums.Select(album => (
-            Item: isJson ? (object)_responseBuilder.ConvertAlbumToJson(album) : _responseBuilder.ConvertAlbumToXml(album, ns),
-            Score: SearchRelevanceRanker.Score(query, album.Title, album.Artist)));
-        var playlists = externalPlaylists.Select(playlist => (
-            Item: isJson ? (object)ConvertPlaylistToAlbumJson(playlist) : ConvertPlaylistToAlbumXml(playlist, ns),
-            Score: SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName)));
-        var artists = externalResult.Artists.Where(artist => !localArtistNames.Contains(artist.Name)).Select(artist => (
-            Item: isJson ? _responseBuilder.ConvertArtistToJson(artist) : _responseBuilder.ConvertArtistToXml(artist, ns),
-            Score: SearchRelevanceRanker.Score(query, artist.Name)));
+        return (Render(result.Songs, "song"), Render(result.Albums, "album"), Render(result.Artists, "artist"));
 
-        return (Rank(localSongs, songs, "song", "title", includeArtist: true),
-            Rank(localAlbums, albums.Concat(playlists), "album", "name", includeArtist: true),
-            Rank(localArtists, artists, "artist", "name", includeArtist: false));
-
-        List<object> Rank(List<object> local, IEnumerable<(object Item, double Score)> external,
-            string type, string name, bool includeArtist)
-        {
-            // Preserve the native object and its unknown fields; XML only needs the protocol namespace.
-            foreach (var element in local.OfType<XElement>()) element.Name = ns + type;
-            return SearchRelevanceRanker.Merge(local.Select(item => (Item: item,
-                    Score: SearchRelevanceRanker.Score(query, GetSearchField(item, name),
-                        includeArtist ? GetSearchField(item, "artist") : null))),
-                external, item => item.Score).Select(item => item.Item).ToList();
-        }
+        List<object> Render(IEnumerable<MusicSearchEntry<object>> entries, string type) =>
+            entries.Select(entry =>
+            {
+                if (entry.Native != null)
+                {
+                    // Native XML only needs the protocol namespace; JSON passes through as-is.
+                    if (entry.Native.Payload is XElement element) element.Name = ns + type;
+                    return entry.Native.Payload;
+                }
+                if (entry.Song != null)
+                    return isJson ? (object)_responseBuilder.ConvertSongToJson(entry.Song) : _responseBuilder.ConvertSongToXml(entry.Song, ns);
+                if (entry.Album != null)
+                    return isJson ? (object)_responseBuilder.ConvertAlbumToJson(entry.Album) : _responseBuilder.ConvertAlbumToXml(entry.Album, ns);
+                if (entry.Playlist != null)
+                    return isJson ? (object)ConvertPlaylistToAlbumJson(entry.Playlist) : ConvertPlaylistToAlbumXml(entry.Playlist, ns);
+                return isJson ? _responseBuilder.ConvertArtistToJson(entry.Artist!) : _responseBuilder.ConvertArtistToXml(entry.Artist!, ns);
+            }).ToList();
     }
 
     private static string GetSearchField(object item, string field) => item switch
