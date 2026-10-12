@@ -63,8 +63,8 @@ public partial class JellyfinController : ControllerBase
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly IConfiguration _configuration;
     private readonly ILogger<JellyfinController> _logger;
-    private readonly IFavoriteActionPipeline? _favoriteActions;
-    private readonly IPlaybackSignalPipeline? _playbackSignals;
+    private readonly MusicFavorites _favorites;
+    private readonly MusicPlaybackObservations _playbackObservations;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
@@ -128,8 +128,8 @@ public partial class JellyfinController : ControllerBase
         _mediaAssets = mediaAssets;
         _configuration = configuration;
         _logger = logger;
-        _favoriteActions = favoriteActions;
-        _playbackSignals = playbackSignals;
+        _favorites = new MusicFavorites(favoriteActions, logger);
+        _playbackObservations = new MusicPlaybackObservations(playbackSignals, logger);
         _providerGateway = providerGateway;
         _audioMuse = audioMuse;
         _intelligencePolicies = intelligencePolicies;
@@ -1040,25 +1040,11 @@ public partial class JellyfinController : ControllerBase
         _logger.LogDebug("MarkFavorite called: userId={UserId}, itemId={ItemId}, route={Route}",
             userId, itemId, Request.Path);
 
-        if (PlaylistIdHelper.IsExternalPlaylist(itemId))
-        {
-            if (CanRunOptionalUserScopedWork())
-            {
-                await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
-            }
-
-            return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, true));
-        }
-
         var (isExternal, _, _, _) =
             _localLibraryService.ParseExternalId(itemId);
-        if (isExternal)
+        if (isExternal || PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
-            if (CanRunOptionalUserScopedWork())
-            {
-                await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
-            }
-
+            await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
             return CreateProtocolResponse(_interactionProtocolAdapter.ShapeFavorite(itemId, true));
         }
 
@@ -1072,7 +1058,7 @@ public partial class JellyfinController : ControllerBase
 
         var (result, statusCode) = await _proxyService.PostJsonAsync(endpoint, "{}", Request.Headers);
 
-        if (statusCode is >= 200 and < 300 && CanRunOptionalUserScopedWork())
+        if (statusCode is >= 200 and < 300)
         {
             await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
         }
@@ -1097,8 +1083,7 @@ public partial class JellyfinController : ControllerBase
             _localLibraryService.ParseExternalId(itemId);
         if (isExternal || PlaylistIdHelper.IsExternalPlaylist(itemId))
         {
-            if (CanRunOptionalUserScopedWork())
-                await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
+            await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
             _logger.LogInformation(
                 "Unfavorited external item {ItemId}; managed files were preserved",
                 itemId);
@@ -1116,7 +1101,7 @@ public partial class JellyfinController : ControllerBase
 
         var (result, statusCode) = await _proxyService.DeleteAsync(endpoint, Request.Headers);
 
-        if (statusCode is >= 200 and < 300 && CanRunOptionalUserScopedWork())
+        if (statusCode is >= 200 and < 300)
         {
             await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
         }
@@ -1124,26 +1109,11 @@ public partial class JellyfinController : ControllerBase
         return HandleProxyResponse(result, statusCode);
     }
 
-    private async Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation)
-    {
-        if (_favoriteActions == null) return;
-        try
-        {
-            var execution = HttpContext.RequireProtocolExecutionContext();
-            var sourceRevision = Request.Headers["Idempotency-Key"].FirstOrDefault()
-                ?? Request.Headers["X-Allstarr-Source-Revision"].FirstOrDefault()
-                ?? "protocol-state-v1";
-            await _favoriteActions.RecordAsync(
-                new FavoriteMutationRequest(execution, itemId, operation, sourceRevision),
-                HttpContext.RequestAborted);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            // The backend mutation already succeeded. Optional work is observable through the durable system
-            // when recorded, but must never rewrite the backend's favorite response.
-            _logger.LogWarning("Favorite workflow recording failed ({ExceptionType})", ex.GetType().Name);
-        }
-    }
+    private Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation) =>
+        CanRunOptionalUserScopedWork()
+            ? _favorites.RecordAsync(HttpContext.RequireProtocolExecutionContext(), itemId, operation,
+                Request.Headers, HttpContext.RequestAborted)
+            : Task.CompletedTask;
 
     #endregion
 

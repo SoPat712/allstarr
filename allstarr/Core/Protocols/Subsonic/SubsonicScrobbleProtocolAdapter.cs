@@ -43,6 +43,17 @@ public sealed class SubsonicScrobbleProtocolAdapter
         return signals;
     }
 
+    // Subsonic scrobbles carry no play session, so each submitted item gets its own stable key.
+    public PlaybackSignalRequest ToSignalRequest(ProtocolExecutionContext context, SubsonicScrobbleSignal signal) =>
+        new(
+            context,
+            signal.Transition,
+            signal.ItemId,
+            context.Client.DeviceId ?? context.Client.ClientId,
+            $"subsonic:{signal.EventKey}:{signal.Index}",
+            null,
+            signal.ObservedAt);
+
     private static DateTimeOffset? ParseTime(IReadOnlyList<string> values, int index)
     {
         if (index >= values.Count || !long.TryParse(values[index], out var milliseconds)) return null;

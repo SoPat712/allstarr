@@ -44,8 +44,8 @@ public partial class SubsonicController : ControllerBase
     private readonly IApplicationCache _cache;
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly ILogger<SubsonicController> _logger;
-    private readonly IFavoriteActionPipeline? _favoriteActions;
-    private readonly IPlaybackSignalPipeline? _playbackSignals;
+    private readonly MusicFavorites _favorites;
+    private readonly MusicPlaybackObservations _playbackObservations;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly MusicSearchService _musicSearch;
@@ -98,8 +98,8 @@ public partial class SubsonicController : ControllerBase
         _cache = cache;
         _mediaAssets = mediaAssets;
         _logger = logger;
-        _favoriteActions = favoriteActions;
-        _playbackSignals = playbackSignals;
+        _favorites = new MusicFavorites(favoriteActions, logger);
+        _playbackObservations = new MusicPlaybackObservations(playbackSignals, logger);
         _providerGateway = providerGateway;
         _streamingResponseAdapter = streamingResponseAdapter;
         _musicSearch = musicSearch;
@@ -1101,12 +1101,9 @@ public partial class SubsonicController : ControllerBase
                 parameters,
                 HttpContext.RequestAborted,
                 Request.Headers);
-            if ((int)result.StatusCode is >= 200 and < 300 && CurrentProtocolContext.Actor != null)
+            if ((int)result.StatusCode is >= 200 and < 300)
             {
-                foreach (var itemId in parameters.GetAllValues("id").Where(item => !string.IsNullOrWhiteSpace(item)))
-                {
-                    await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Favorite);
-                }
+                await RecordFavoriteEventsAsync(parameters, FavoriteOperation.Favorite);
             }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
@@ -1131,12 +1128,9 @@ public partial class SubsonicController : ControllerBase
         {
             var result = await _proxyService.RelayRawAsync(
                 relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
-            if ((int)result.StatusCode is >= 200 and < 300 && CurrentProtocolContext.Actor != null)
+            if ((int)result.StatusCode is >= 200 and < 300)
             {
-                foreach (var itemId in parameters.GetAllValues("id").Where(item => !string.IsNullOrWhiteSpace(item)))
-                {
-                    await RecordFavoriteEventSafelyAsync(itemId, FavoriteOperation.Unfavorite);
-                }
+                await RecordFavoriteEventsAsync(parameters, FavoriteOperation.Unfavorite);
             }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
@@ -1242,51 +1236,27 @@ public partial class SubsonicController : ControllerBase
         }
     }
 
-    private async Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation)
+    private Task RecordFavoriteEventSafelyAsync(string itemId, FavoriteOperation operation) =>
+        _favorites.RecordAsync(CurrentProtocolContext, itemId, operation, Request.Headers, HttpContext.RequestAborted);
+
+    private async Task RecordFavoriteEventsAsync(SubsonicRequestParameters parameters, FavoriteOperation operation)
     {
-        if (_favoriteActions == null) return;
-        try
+        foreach (var itemId in parameters.GetAllValues("id").Where(item => !string.IsNullOrWhiteSpace(item)))
         {
-            var sourceRevision = Request.Headers["Idempotency-Key"].FirstOrDefault()
-                ?? Request.Headers["X-Allstarr-Source-Revision"].FirstOrDefault()
-                ?? "protocol-state-v1";
-            await _favoriteActions.RecordAsync(
-                new FavoriteMutationRequest(CurrentProtocolContext, itemId, operation, sourceRevision),
-                HttpContext.RequestAborted);
-        }
-        catch (Exception ex) when (ex is not OperationCanceledException)
-        {
-            _logger.LogWarning("Favorite workflow recording failed ({ExceptionType})", ex.GetType().Name);
+            await RecordFavoriteEventSafelyAsync(itemId, operation);
         }
     }
 
     private async Task RecordScrobbleSignalsSafelyAsync(SubsonicRequestParameters parameters)
     {
-        if (_playbackSignals == null || CurrentProtocolContext.Actor == null) return;
-
+        var context = CurrentProtocolContext;
         foreach (var signal in _scrobbleProtocolAdapter.Parse(parameters, DateTimeOffset.UtcNow))
         {
-            try
-            {
-                await _playbackSignals.RecordAsync(new PlaybackSignalRequest(
-                    CurrentProtocolContext,
-                    signal.Transition,
-                    signal.ItemId,
-                    CurrentProtocolContext.Client.DeviceId ?? CurrentProtocolContext.Client.ClientId,
-                    $"subsonic:{signal.EventKey}:{signal.Index}",
-                    null,
-                    signal.ObservedAt), HttpContext.RequestAborted);
-            }
-            catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested)
+            if (!await _playbackObservations.RecordAsync(
+                    _scrobbleProtocolAdapter.ToSignalRequest(context, signal),
+                    HttpContext.RequestAborted))
             {
                 return;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(
-                    "Could not durably record Subsonic scrobble item {ItemIndex} ({ExceptionType})",
-                    signal.Index,
-                    ex.GetType().Name);
             }
         }
     }

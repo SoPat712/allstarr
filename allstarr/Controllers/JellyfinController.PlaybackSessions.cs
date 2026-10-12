@@ -1338,17 +1338,9 @@ public partial class JellyfinController
     private async Task QueuePlaybackSignalAsync(PlaybackTransition transition, string? itemId,
         string? deviceId, string? playSessionId, long? positionTicks)
     {
-        if (_playbackSignals == null || string.IsNullOrWhiteSpace(itemId) || !CanRunOptionalUserScopedWork()) return;
-        try
-        {
-            await _playbackSignals.RecordAsync(new(HttpContext.RequireProtocolExecutionContext(), transition,
-                itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow), HttpContext.RequestAborted);
-        }
-        catch (OperationCanceledException) when (HttpContext.RequestAborted.IsCancellationRequested) { }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(exception, "Could not durably record playback signal {Transition}", transition);
-        }
+        if (itemId == null || !CanRunOptionalUserScopedWork()) return;
+        await _playbackObservations.RecordAsync(new(HttpContext.RequireProtocolExecutionContext(), transition,
+            itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow), HttpContext.RequestAborted);
     }
 
 
