@@ -159,6 +159,21 @@ public sealed class MusicSearchService(
                     SearchRelevanceRanker.Score(query, artist.Name)))));
     }
 
+    /// <summary>Ranks all kinds together for clients with one combined result limit.</summary>
+    public static IEnumerable<MusicSearchEntry<TPayload>> RankTogether<TPayload>(
+        string query, MusicSearchResult<TPayload> result) =>
+        result.Artists.Concat(result.Albums).Concat(result.Songs)
+            .OrderByDescending(entry => entry switch
+            {
+                { Native: { } native } => SearchRelevanceRanker.Score(query, native.Name, native.ArtistText),
+                { Song: { } song } => SearchRelevanceRanker.Score(query, song.Title, song.Artist),
+                { Album: { } album } => SearchRelevanceRanker.Score(query, album.Title, album.Artist),
+                { Artist: { } artist } => SearchRelevanceRanker.Score(query, artist.Name),
+                { Playlist: { } playlist } => SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName),
+                _ => 0
+            })
+            .ThenBy(entry => entry.Native == null);
+
     private async Task PreferOwnedSongsAsync<TPayload>(
         ProtocolExecutionContext context,
         List<Song> songs,

@@ -17,6 +17,8 @@ These clients have been used successfully with the Jellyfin surface:
 
 The proxy preserves normal Jellyfin authentication and relays unhandled routes. Integrated search, external streams, range requests, artwork, lyrics, favorites, playlists, playback sessions, and InstantMix have explicit compatibility handling, but a client may not expose all of them in its UI. Similar items for a provider song and instant mixes seeded from a provider song, album or artist use the same mix owner as Subsonic: provider recommendations lead a song seed when the provider offers them, then Last.fm suggestions for listeners with a connected Last.fm account, followed by the seed artist's albums and songs. Similar items for a provider artist are the provider's related artists, or none when the provider offers none. Native seeds are relayed to Jellyfin unchanged.
 
+Jellyfin search hints compare song, album, and artist relevance before applying the shared result limit. Native results win ties, so unrelated artist or album rows cannot crowd out an exact song match.
+
 ## Subsonic And OpenSubsonic Clients
 
 These clients have been used with a Navidrome or other Subsonic-compatible backend:
