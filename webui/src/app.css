@@ -1446,10 +1446,6 @@
     flex: 1 0 max-content;
   }
 
-  .playlist-add-steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .app-shell,
   .app-shell.slim {
     grid-template-columns: 1fr;
@@ -2922,13 +2918,6 @@
     max-height: none;
   }
 
-  .playlist-source-groups,
-  .playlist-targets,
-  .playlist-add-list,
-  .playlist-sync-settings .setting-field {
-    grid-template-columns: 1fr;
-  }
-
   .playlist-view-switcher {
     align-items: stretch;
     flex-direction: column;
@@ -2936,20 +2925,6 @@
 
   .playlist-view-switcher nav {
     width: 100%;
-  }
-
-  .playlist-add-steps {
-    padding-inline: 0.5rem;
-  }
-
-  .playlist-add-steps button {
-    gap: 0.25rem;
-    font-size: var(--text-xs);
-  }
-
-  .playlist-add-search {
-    align-items: stretch;
-    flex-direction: column;
   }
 
   .playlist-filters,
@@ -3772,144 +3747,6 @@
     overflow-wrap: anywhere;
   }
 
-  .playlist-add-dialog {
-    --dialog-width: 64rem;
-
-    display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
-    overflow: hidden;
-  }
-
-  .playlist-add-body {
-    display: grid;
-    min-height: 0;
-    gap: 1rem;
-    overflow: auto;
-    padding: 1rem;
-  }
-
-  .playlist-add-steps {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    border-bottom: 1px solid var(--color-edge);
-    padding: 0.65rem 1rem;
-  }
-
-  .playlist-add-steps button {
-    display: flex;
-    min-height: 2.35rem;
-    align-items: center;
-    justify-content: center;
-    gap: 0.45rem;
-    border: 0;
-    background: transparent;
-    color: var(--color-ink-muted);
-    font-size: var(--text-xs);
-    font-weight: 750;
-  }
-
-  .playlist-add-steps button span {
-    display: grid;
-    width: 1.35rem;
-    height: 1.35rem;
-    place-items: center;
-    border: 1px solid var(--color-edge);
-    border-radius: 50%;
-    font-size: var(--text-xs);
-  }
-
-  .playlist-add-steps button.active {
-    color: var(--color-signal-text);
-  }
-
-  .playlist-add-steps button.active span,
-  .playlist-add-steps button.complete span {
-    border-color: var(--color-signal-text);
-    background: var(--color-signal-muted);
-    color: var(--color-signal-text);
-  }
-
-  .playlist-add-step {
-    display: grid;
-    align-content: start;
-    gap: 1rem;
-  }
-
-  .playlist-source-groups {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0.75rem;
-  }
-
-  .playlist-source-groups > .credential-safety {
-    grid-column: 1 / -1;
-  }
-
-  .playlist-add-dialog .audience-options label {
-    display: grid;
-    grid-template-columns: auto 2.5rem minmax(0, 1fr);
-    column-gap: 0.65rem;
-  }
-
-  .playlist-mode-options {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .playlist-mode-options legend {
-    grid-column: 1 / -1;
-  }
-
-  .playlist-add-dialog .playlist-mode-options label {
-    grid-template-columns: auto minmax(0, 1fr);
-  }
-
-  .playlist-settings-dialog {
-    --dialog-width: 60rem;
-    --dialog-max-height: 54rem;
-
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .playlist-settings-form {
-    display: grid;
-    min-height: 0;
-    gap: 1rem;
-    overflow: auto;
-    padding: 1rem;
-  }
-
-  .playlist-settings-form .playlist-mode-options label {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    column-gap: 0.65rem;
-  }
-
-  .playlist-settings-form .setting-field {
-    grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.7fr);
-    align-items: center;
-    border: 1px solid var(--color-edge);
-    border-radius: 0.8rem;
-    padding: 1rem;
-  }
-
-  .playlist-settings-form .setting-field > span {
-    display: grid;
-    justify-content: start;
-  }
-
-  .playlist-settings-form .setting-field > span small {
-    background: transparent;
-    padding: 0;
-  }
-
-  .playlist-settings-form > footer {
-    position: sticky;
-    bottom: -1rem;
-    margin: 0 -1rem -1rem;
-  }
-
   .playlist-source-update-dialog {
     --dialog-width: 46rem;
     --dialog-max-height: 48rem;
@@ -4032,105 +3869,6 @@
 
   .playlist-source-update-skips li > span {
     color: var(--color-ink-muted);
-  }
-
-  .playlist-targets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .playlist-targets legend {
-    grid-column: 1 / -1;
-  }
-
-  .playlist-add-search {
-    display: flex;
-    align-items: end;
-    gap: 0.6rem;
-  }
-
-  .playlist-add-search .field {
-    flex: 1;
-  }
-
-  .playlist-add-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .playlist-add-list legend,
-  .playlist-add-list > p {
-    grid-column: 1 / -1;
-  }
-
-  .playlist-add-list .media-art {
-    width: 2.5rem;
-    height: 2.5rem;
-  }
-
-  .playlist-add-dialog .audience-options label > span:last-child {
-    min-width: 0;
-  }
-
-  .playlist-add-dialog .audience-options label > span:last-child strong {
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .playlist-add-dialog .audience-options label > span:last-child small {
-    display: -webkit-box;
-    overflow: hidden;
-    line-height: 1.35;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-  }
-
-  .playlist-sync-settings {
-    width: min(100%, 44rem);
-    justify-self: center;
-  }
-
-  .playlist-sync-settings .setting-field {
-    grid-template-columns: minmax(0, 1fr) minmax(14rem, 0.7fr);
-    align-items: center;
-    border: 1px solid var(--color-edge);
-    border-radius: 0.8rem;
-    padding: 1rem;
-  }
-
-  .playlist-sync-settings .setting-field > span {
-    display: grid;
-    justify-content: start;
-  }
-
-  .playlist-sync-settings .setting-field > span small {
-    background: transparent;
-    padding: 0;
-    font-size: var(--text-xs);
-  }
-
-  .playlist-sync-fields {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem 1.25rem;
-    margin: 0;
-    border: 1px solid var(--color-edge);
-    border-radius: 0.8rem;
-    padding: 1rem;
-  }
-
-  .playlist-sync-fields legend {
-    padding: 0 0.3rem;
-    font-size: var(--text-xs);
-    font-weight: 750;
-  }
-
-  .playlist-sync-fields label {
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    color: var(--color-ink-muted);
-    font-size: var(--text-xs);
   }
 
   .automatic-candidates {
@@ -7385,11 +7123,6 @@
 }
 
 @media (max-width: 650px) {
-  .playlist-mode-options,
-  .playlist-settings-form .setting-field {
-    grid-template-columns: 1fr;
-  }
-
   .playlist-source-update-counts {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -7533,5 +7266,496 @@
 @media (max-width: 760px) {
   :root :is(button, summary, [role="button"], [role="tab"], [data-slot="button"], .bits-menu-item) {
     min-height: var(--control-md);
+  }
+}
+
+@layer components {
+  .pl-dialog {
+    --pl-gutter: var(--space-6);
+  }
+
+  .playlist-add-dialog,
+  .playlist-settings-dialog {
+    --dialog-width: 45rem;
+    --dialog-max-height: 56rem;
+
+    overflow: hidden;
+  }
+
+  .playlist-add-dialog {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+  }
+
+  .playlist-settings-dialog {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pl-dialog > header {
+    padding: var(--pl-gutter) var(--pl-gutter) var(--space-5);
+  }
+
+  .playlist-add-dialog > header {
+    border-bottom: 0;
+  }
+
+  .pl-dialog > header .icon-button {
+    margin: -0.375rem -0.5rem 0 0;
+  }
+
+  .pl-dialog [data-dialog-title] {
+    margin: 0;
+    font-size: 1.375rem;
+    line-height: 1.75rem;
+    font-weight: 600;
+  }
+
+  .pl-dialog [data-dialog-description] {
+    margin-top: var(--space-1);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+  }
+
+  .playlist-add-steps {
+    display: flex;
+    border-bottom: 1px solid var(--color-edge);
+    padding: 0 var(--pl-gutter) var(--space-5);
+  }
+
+  .playlist-add-steps button {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    min-height: var(--control-md);
+    align-items: center;
+    gap: var(--space-2);
+    border: 0;
+    background: transparent;
+    color: var(--color-ink-muted);
+    padding: 0;
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .playlist-add-steps button:disabled {
+    opacity: 1;
+    cursor: default;
+  }
+
+  .playlist-add-steps button::after {
+    content: "";
+    min-width: var(--space-3);
+    height: 1px;
+    flex: 1;
+    margin: 0 var(--space-3) 0 var(--space-1);
+    background: var(--color-edge);
+  }
+
+  .playlist-add-steps button:last-child {
+    flex-grow: 0;
+  }
+
+  .playlist-add-steps button:last-child::after {
+    display: none;
+  }
+
+  .playlist-add-steps button:is(.active, .complete) {
+    color: var(--color-ink);
+  }
+
+  .playlist-add-steps button.active {
+    font-weight: 600;
+  }
+
+  .playlist-add-steps button.complete::after {
+    background: var(--color-signal);
+  }
+
+  .playlist-add-steps button.complete:hover .pl-step-label {
+    text-decoration: underline;
+  }
+
+  .playlist-add-steps button:focus-visible {
+    border-radius: var(--radius-sm);
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  .pl-step-dot {
+    display: grid;
+    width: 1.5rem;
+    height: 1.5rem;
+    flex: none;
+    place-items: center;
+    border: 1.5px solid var(--color-edge-strong);
+    border-radius: 50%;
+    font-size: var(--text-xs);
+    line-height: 1rem;
+    font-weight: 600;
+  }
+
+  .playlist-add-steps button:is(.active, .complete) .pl-step-dot {
+    border-color: var(--color-signal);
+    background: var(--color-signal);
+    color: var(--color-on-signal);
+  }
+
+  .pl-step-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .playlist-add-body,
+  .playlist-settings-body {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+    gap: 1.75rem;
+    padding: var(--pl-gutter);
+  }
+
+  .playlist-add-body {
+    overflow: auto;
+  }
+
+  .playlist-settings-body {
+    flex: none;
+  }
+
+  .pl-dialog > .playlist-settings-form {
+    display: flex;
+    min-height: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 0;
+    overflow: auto;
+    padding: 0;
+  }
+
+  .pl-dialog > .playlist-settings-form > .dialog-actions {
+    position: sticky;
+    bottom: 0;
+    margin: auto 0 0;
+  }
+
+  .pl-section {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .pl-section h3 {
+    margin: 0;
+    color: var(--color-ink);
+    font-size: var(--text-md);
+    line-height: 1.5rem;
+    font-weight: 600;
+  }
+
+  .pl-help {
+    margin: 0.125rem 0 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+  }
+
+  .pl-options {
+    display: grid;
+    gap: var(--space-2);
+  }
+
+  .pl-options-two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pl-option {
+    display: grid;
+    grid-template-columns: 1.25rem minmax(0, 1fr);
+    align-items: start;
+    column-gap: var(--space-3);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    padding: 0.875rem var(--space-4);
+    cursor: pointer;
+    transition: border-color var(--motion-standard), background-color var(--motion-standard);
+  }
+
+  .pl-option:hover {
+    border-color: var(--color-edge-strong);
+  }
+
+  .pl-option.active {
+    border-color: var(--color-signal);
+    background: color-mix(in srgb, var(--color-signal) 8%, transparent);
+  }
+
+  .pl-option-media {
+    grid-template-columns: 1.25rem 2.5rem minmax(0, 1fr);
+    align-items: center;
+  }
+
+  .pl-option :is(.provider-mark, .media-art) {
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: none;
+  }
+
+  .pl-option input[type="radio"] {
+    display: grid;
+    width: 1.25rem;
+    height: 1.25rem;
+    min-height: 0;
+    margin: 0;
+    place-items: center;
+    border: 2px solid var(--color-edge-strong);
+    border-radius: 50%;
+    background: transparent;
+    appearance: none;
+    cursor: pointer;
+  }
+
+  .pl-option input[type="radio"]:checked {
+    border-color: var(--color-signal);
+  }
+
+  .pl-option input[type="radio"]:checked::before {
+    width: 0.625rem;
+    height: 0.625rem;
+    border-radius: 50%;
+    background: var(--color-signal);
+    content: "";
+  }
+
+  .pl-option input[type="radio"]:focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+
+  .pl-option-text {
+    display: grid;
+    min-width: 0;
+    gap: 0.125rem;
+  }
+
+  .pl-option-text strong {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+    font-weight: 500;
+    overflow-wrap: anywhere;
+  }
+
+  .pl-option-text small,
+  .pl-row > div:first-child small {
+    color: var(--color-ink-muted);
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+  }
+
+  .pl-chip {
+    border-radius: 999px;
+    background: var(--color-secondary);
+    color: var(--color-secondary-foreground);
+    padding: 0.125rem var(--space-2);
+    font-size: var(--text-xs);
+    line-height: 1rem;
+    font-weight: 500;
+  }
+
+  .pl-search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .pl-search .search-field {
+    display: block;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .pl-search .search-input input {
+    width: 100%;
+    height: var(--control-md);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: var(--color-panel-raised);
+    color: var(--color-ink);
+    padding-inline: 2.5rem 0.875rem;
+    font-size: var(--text-sm);
+  }
+
+  .pl-search .search-input input:focus-visible {
+    border-color: var(--color-signal);
+    outline: 1px solid var(--color-signal);
+  }
+
+  .pl-search .search-input svg {
+    left: 0.875rem;
+    width: 1.125rem;
+    height: 1.125rem;
+    color: var(--color-ink-muted);
+  }
+
+  .pl-more {
+    align-self: flex-start;
+  }
+
+  .pl-summary {
+    display: grid;
+    grid-template-columns: 1.25rem minmax(0, 1fr);
+    column-gap: var(--space-3);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: var(--color-panel-raised);
+    padding: 0.875rem var(--space-4);
+  }
+
+  .pl-summary > svg {
+    color: var(--color-signal);
+  }
+
+  .pl-summary p {
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+  }
+
+  .pl-summary strong {
+    display: block;
+    margin-bottom: 0.125rem;
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+
+  .pl-rows {
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-lg);
+  }
+
+  .pl-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 15.5rem;
+    align-items: center;
+    gap: var(--space-3) var(--space-6);
+    padding: var(--space-4) var(--space-5);
+  }
+
+  .pl-row + .pl-row {
+    border-top: 1px solid var(--color-edge);
+  }
+
+  .pl-row-full {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pl-row > div:first-child {
+    display: grid;
+    min-width: 0;
+    gap: 0.125rem;
+  }
+
+  .pl-row > div:first-child strong {
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+    font-weight: 500;
+  }
+
+  .pl-row .select-root {
+    min-width: 0;
+  }
+
+  .pl-row > [data-slot="button"] {
+    justify-self: end;
+  }
+
+  .pl-checks {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .pl-checks label {
+    display: inline-flex;
+    min-height: 2.5rem;
+    align-items: center;
+    gap: 0.625rem;
+    border: 1px solid var(--color-edge);
+    border-radius: 999px;
+    padding: 0 var(--space-4) 0 var(--space-3);
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+    line-height: 1.25rem;
+    cursor: pointer;
+  }
+}
+
+@media (max-width: 760px) {
+  .pl-option input[type="radio"],
+  .pl-checks [data-slot="checkbox"] {
+    min-height: 0;
+  }
+
+  .pl-step-label {
+    font-size: var(--text-sm);
+  }
+}
+
+@media (max-width: 650px) {
+  .pl-dialog {
+    --pl-gutter: var(--space-4);
+  }
+
+  .pl-options-two,
+  .pl-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pl-row {
+    padding: var(--space-4);
+  }
+
+  .pl-row > [data-slot="button"] {
+    justify-self: stretch;
+  }
+
+  .playlist-add-body,
+  .playlist-settings-body {
+    gap: var(--space-6);
+  }
+
+  .playlist-add-steps {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .playlist-add-steps button {
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.375rem;
+    padding-top: var(--space-1);
+    text-align: center;
+  }
+
+  .playlist-add-steps button::after {
+    display: none;
+  }
+
+  .pl-step-label {
+    white-space: normal;
+    font-size: var(--text-xs);
+    line-height: 1rem;
   }
 }

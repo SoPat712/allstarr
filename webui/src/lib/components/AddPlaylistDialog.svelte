@@ -2,7 +2,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
-  import { X } from "@lucide/svelte";
+  import { Check, Info, X } from "@lucide/svelte";
   import {
     playlistLinks,
     type MediaTarget,
@@ -67,7 +67,6 @@
   let addBody = $state<HTMLElement>();
 
   const orderedAccounts = $derived(orderPlaylistSources(accounts, providerOrder));
-  const providerIds = $derived([...new Set(orderedAccounts.map((item) => item.providerId))]);
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
   const sourceName = $derived(selectedAccount?.displayName ?? "the source service");
@@ -124,6 +123,16 @@
 
   function definition(id: string) {
     return providers.find((item) => item.id.toLowerCase() === id.toLowerCase());
+  }
+
+  function accountTitle(account: PlaylistSourceAccount) {
+    return definition(account.providerId)?.name ?? providerNames[account.providerId] ?? account.displayName;
+  }
+
+  function accountDetail(account: PlaylistSourceAccount) {
+    const title = accountTitle(account);
+    return [account.displayName === title ? "" : account.displayName, account.ownerDisplayName, account.accessLabel]
+      .filter(Boolean).join(" · ");
   }
 
   $effect(() => {
@@ -315,18 +324,17 @@
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay" />
-    <Dialog.Content class="source-dialog playlist-add-dialog">
+    <Dialog.Content class="source-dialog playlist-add-dialog pl-dialog">
       <header>
         <div>
-          <p class="eyebrow">Library intake</p>
           <Dialog.Title>Import a playlist</Dialog.Title>
-          <Dialog.Description>Choose your source, where the playlist appears, and whether Allstarr should keep it updated.</Dialog.Description>
+          <Dialog.Description>Bring a playlist from another service into Allstarr.</Dialog.Description>
         </div>
         <Dialog.Close class="icon-button" aria-label="Close playlist setup"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
 
       <nav class="playlist-add-steps" aria-label="Playlist setup progress">
-        {#each ["Source", "What listeners see", "Where it appears", "Updates"] as label, index}
+        {#each ["Source", "Listeners see", "Destination", "Updates"] as label, index}
           <button
             class:active={step === index + 1}
             class:complete={step > index + 1}
@@ -336,7 +344,8 @@
             aria-label={index + 1 < step ? `Back to ${label}` : label}
             onclick={() => step = index + 1}
           >
-            <span>{index + 1}</span>{label}
+            <span class="pl-step-dot" aria-hidden="true">{#if step > index + 1}<Check size={14} strokeWidth={3} />{:else}{index + 1}{/if}</span>
+            <span class="pl-step-label">{label}</span>
           </button>
         {/each}
       </nav>
@@ -351,120 +360,117 @@
             <strong>Playlist setup is unavailable</strong>
             <Button variant="secondary" onclick={() => void load()}>Try again</Button>
           </div>
-        {:else if step === 3}
-          <section class="playlist-add-step">
-            <div class="dialog-section-heading">
-              <div><strong>Choose where listeners find this playlist</strong><small>Show it through Allstarr, add songs to a playlist in {targetName}, or do both.</small></div>
-            </div>
-            <fieldset class="audience-options playlist-mode-options">
-              <legend>Where it appears</legend>
-              {#each destinationOptions as option}
-                <label class:active={mode === option.id}>
-                  <input type="radio" name="playlist-destination" value={option.id} checked={mode === option.id} onchange={() => void chooseDestination(option.id)} />
-                  <span><strong>{option.label}</strong><small>{option.description}</small></span>
-                </label>
-              {/each}
-            </fieldset>
-            <fieldset class="audience-options playlist-targets">
-              <legend>Media server</legend>
-              {#each targets as target}
-                <label class:active={targetId === target.id}>
-                  <input type="radio" name="playlist-target" value={target.id} checked={targetId === target.id} onchange={() => void chooseTarget(target.id)} />
-                  <ProviderMark id={target.protocol} definition={definition(target.protocol)} />
-                  <span><strong>{target.displayName}</strong><small>{target.protocol}</small></span>
-                </label>
-              {:else}<p class="notice-error">No media server is connected to this music library.</p>{/each}
-            </fieldset>
-            {#if targetId}
-              {#if needsTargetPlaylist}
-                <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browseTargets(); }}>
-                  <SearchField class="field" bind:value={targetQuery} label={`Find a playlist in ${targetName}`} placeholder="Playlist name" />
-                  <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
-                </form>
-                <fieldset class="audience-options playlist-add-list">
-                  <legend>Playlists in {targetName}</legend>
-                  {#each targetPlaylists as playlist}
-                    <label class:active={targetPlaylistId === playlist.id}>
-                      <input bind:group={targetPlaylistId} type="radio" value={playlist.id} />
-                      <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                      <span><strong>{playlist.name}</strong><small>{playlist.trackCount ?? "?"} tracks{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
-                    </label>
-                  {:else}{#if !loading}<p class="credential-safety">No writable playlists found.</p>{/if}{/each}
-                </fieldset>
-              {:else}
-                <p class="credential-safety">Allstarr will show this playlist but will not create or change a playlist in {targetName}.</p>
-              {/if}
-            {/if}
-          </section>
         {:else if step === 1}
-          <section class="playlist-add-step">
-            {#if !accounts.length && !loading}
-              <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
-            {:else}
-              <div class="playlist-source-groups">
-                {#each providerIds as providerId}
-                  <fieldset class="audience-options">
-                    <legend>{definition(providerId)?.name ?? providerNames[providerId] ?? providerId}</legend>
-                    {#each orderedAccounts.filter((item) => item.providerId === providerId) as account}
-                      <label class:active={accountId === account.id}>
-                        <input type="radio" name="playlist-source-account" value={account.id} checked={accountId === account.id} onchange={() => void chooseAccount(account.id)} />
-                        <ProviderMark id={providerId} definition={definition(providerId)} />
-                        <span><strong>{account.displayName}</strong><small>{account.ownerDisplayName ? `${account.ownerDisplayName} · ` : ""}{account.accessLabel}</small></span>
-                      </label>
-                    {/each}
-                  </fieldset>
+          {#if !accounts.length && !loading}
+            <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
+          {:else}
+            <section class="pl-section">
+              <h3 id="playlist-add-account">Import from</h3>
+              <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-account">
+                {#each orderedAccounts as account}
+                  <label class="pl-option pl-option-media" class:active={accountId === account.id}>
+                    <input type="radio" name="playlist-source-account" value={account.id} checked={accountId === account.id} onchange={() => void chooseAccount(account.id)} />
+                    <ProviderMark id={account.providerId} definition={definition(account.providerId)} label={accountTitle(account)} />
+                    <span class="pl-option-text"><strong>{accountTitle(account)}</strong><small>{accountDetail(account)}</small></span>
+                  </label>
                 {/each}
-                {#if blocked}<p class="credential-safety">{blocked} shared Source {blocked === 1 ? "is" : "are"} hidden by deployment policy.</p>{/if}
               </div>
-              {#if accountId}
-                <form class="playlist-add-search" onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
-                  <SearchField class="field" bind:value={sourceQuery} label="Find a source playlist" placeholder="Playlist name" />
+              {#if blocked}<p class="pl-help">{blocked} shared {blocked === 1 ? "account is" : "accounts are"} hidden by deployment policy.</p>{/if}
+            </section>
+            {#if accountId}
+              <section class="pl-section">
+                <div><h3 id="playlist-add-source">Choose a playlist</h3><p class="pl-help">Showing playlists from {accountTitle(selectedAccount!)}.</p></div>
+                <form class="pl-search" onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
+                  <SearchField bind:value={sourceQuery} label="Find a source playlist" placeholder="Search playlists" hiddenLabel />
                   <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
                 </form>
-                <fieldset class="audience-options playlist-add-list">
-                  <legend>Source playlists</legend>
+                <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-source">
                   {#each sourcePlaylists as playlist}
-                    <label class:active={sourcePlaylistId === playlist.id}>
-                      <input bind:group={sourcePlaylistId} type="radio" value={playlist.id} />
+                    <label class="pl-option pl-option-media" class:active={sourcePlaylistId === playlist.id}>
+                      <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value={playlist.id} />
                       <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
-                      <span><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount ?? "?"} tracks</small></span>
+                      <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.owner || "Unknown owner"} · {playlist.trackCount ?? "?"} songs</small></span>
                     </label>
-                  {:else}{#if !loading}<p class="credential-safety">Choose a Source account to browse its playlists.</p>{/if}{/each}
-                </fieldset>
-                {#if sourceCursor}<Button variant="secondary" disabled={loading} onclick={() => void browseSources(sourceCursor)}>Load more</Button>{/if}
-              {/if}
+                  {:else}{#if !loading}<p class="pl-help">No playlists found.</p>{/if}{/each}
+                </div>
+                {#if sourceCursor}<Button class="pl-more" variant="secondary" disabled={loading} onclick={() => void browseSources(sourceCursor)}>Load more</Button>{/if}
+              </section>
             {/if}
-          </section>
+          {/if}
         {:else if step === 2}
-          <section class="playlist-add-step playlist-sync-settings">
-            <div class="dialog-section-heading">
-              <div><strong>Choose what listeners see</strong><small>This does not change the original playlist in {sourceName}.</small></div>
-            </div>
-            <fieldset class="audience-options playlist-mode-options">
-              <legend>What listeners see</legend>
+          <section class="pl-section">
+            <div><h3 id="playlist-add-view">What should listeners see?</h3><p class="pl-help">This never changes {sourcePlaylistName} in {sourceName}.</p></div>
+            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-view">
               {#each projectionOptions as option}
-                <label class:active={projectionMode === option.id}>
-                  <input bind:group={projectionMode} type="radio" value={option.id} />
-                  <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                <label class="pl-option" class:active={projectionMode === option.id}>
+                  <input bind:group={projectionMode} type="radio" name="playlist-view" value={option.id} />
+                  <span class="pl-option-text"><strong>{option.label}{#if option.id === "resolved"}<span class="pl-chip">Recommended</span>{/if}</strong><small>{option.description}</small></span>
                 </label>
               {/each}
-            </fieldset>
+            </div>
           </section>
+        {:else if step === 3}
+          <section class="pl-section">
+            <div><h3 id="playlist-add-destination">Where should it appear?</h3><p class="pl-help">Listeners can find it through Allstarr, in a {targetName} playlist, or both.</p></div>
+            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-destination">
+              {#each destinationOptions as option}
+                <label class="pl-option" class:active={mode === option.id}>
+                  <input type="radio" name="playlist-destination" value={option.id} checked={mode === option.id} onchange={() => void chooseDestination(option.id)} />
+                  <span class="pl-option-text"><strong>{option.label}</strong><small>{option.description}</small></span>
+                </label>
+              {/each}
+            </div>
+          </section>
+          {#if targets.length !== 1}
+            <section class="pl-section">
+              <h3 id="playlist-add-target">Media server</h3>
+              <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-target">
+                {#each targets as target}
+                  <label class="pl-option pl-option-media" class:active={targetId === target.id}>
+                    <input type="radio" name="playlist-target" value={target.id} checked={targetId === target.id} onchange={() => void chooseTarget(target.id)} />
+                    <ProviderMark id={target.protocol} definition={definition(target.protocol)} />
+                    <span class="pl-option-text"><strong>{target.displayName}</strong><small>{definition(target.protocol)?.name ?? target.protocol}</small></span>
+                  </label>
+                {:else}<p class="notice-error">No media server is connected to this music library.</p>{/each}
+              </div>
+            </section>
+          {/if}
+          {#if targetId && needsTargetPlaylist}
+            <section class="pl-section">
+              <div><h3 id="playlist-add-target-playlist">{targetName} playlist</h3><p class="pl-help">Pick an existing playlist. You can create a new one on the next step instead.</p></div>
+              <form class="pl-search" onsubmit={(event) => { event.preventDefault(); void browseTargets(); }}>
+                <SearchField bind:value={targetQuery} label={`Find a playlist in ${targetName}`} placeholder={`Search ${targetName} playlists`} hiddenLabel />
+                <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
+              </form>
+              <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-target-playlist">
+                {#each targetPlaylists as playlist}
+                  <label class="pl-option pl-option-media" class:active={targetPlaylistId === playlist.id}>
+                    <input bind:group={targetPlaylistId} type="radio" name="playlist-target-playlist" value={playlist.id} />
+                    <MediaArtwork class="playlist-art" url={playlist.artworkUrl} fallback="♫" />
+                    <span class="pl-option-text"><strong>{playlist.name}</strong><small>{playlist.trackCount ?? "?"} songs{playlist.description ? ` · ${playlist.description}` : ""}</small></span>
+                  </label>
+                {:else}{#if !loading}<p class="pl-help">No playlists you can change were found.</p>{/if}{/each}
+              </div>
+            </section>
+          {/if}
         {:else}
-          <section class="playlist-add-step playlist-sync-settings">
-            <p class="credential-safety">{behaviorSummary}</p>
+          <div class="pl-summary" role="status">
+            <Info size={20} aria-hidden="true" />
+            <p><strong>What will happen</strong>{behaviorSummary}</p>
+          </div>
+          <div class="pl-rows">
             {#if mode !== "virtual"}
-              <div class="setting-field">
-                <span><strong>Which playlist Allstarr changes</strong><small>Change {targetPlaylistName}, or create a new playlist in {targetName} instead.</small></span>
-                <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
-                  { value: "reconcile", label: `Change ${targetPlaylistName}` },
-                  { value: "recreate", label: `Create a new playlist in ${targetName}` },
+              <div class="pl-row">
+                <div><strong>{targetName} playlist</strong><small>Add songs to the playlist you chose, or create a new one.</small></div>
+                <SelectField bind:value={materializationMode} label={`${targetName} playlist`} options={[
+                  { value: "reconcile", label: `Add to ${targetPlaylistName}` },
+                  { value: "recreate", label: "Create a new playlist" },
                 ]} />
               </div>
             {/if}
-            <div class="setting-field">
-              <span><strong>Source updates</strong><small>Choose a one-time import or keep following later changes. Scheduled times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></span>
-              <SelectField bind:value={schedule} label="Source updates" options={[
+            <div class="pl-row">
+              <div><strong>Update schedule</strong><small>Import once, or keep checking {sourceName} for changes. Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></div>
+              <SelectField bind:value={schedule} label="Update schedule" options={[
                 { value: "once", label: "Import once" },
                 { value: "manual", label: "Update when I ask" },
                 { value: "hourly", label: "Every hour" },
@@ -472,35 +478,39 @@
                 { value: "weekly", label: "Mondays at 3:00 AM" },
               ]} />
             </div>
-            <fieldset class="audience-options playlist-mode-options">
-              <legend>Song storage</legend>
-              <label class:active={trackRetention === "onDemand"}>
-                <input bind:group={trackRetention} type="radio" value="onDemand" />
-                <span><strong>Stream when played</strong><small>Use the normal playback cache. Songs are not permanently stored just because they are in this playlist.</small></span>
-              </label>
-              <label class:active={trackRetention === "keepAll"}>
-                <input bind:group={trackRetention} type="radio" value="keepAll" />
-                <span><strong>Keep every song</strong><small>Queue owner-scoped managed downloads for every downloadable song after each import.</small></span>
-              </label>
-            </fieldset>
-            {#if mode !== "virtual"}
-              {#if materializationMode === "reconcile"}
-                <div class="setting-field">
-                  <span><strong>When songs leave {sourcePlaylistName}</strong><small>Choose whether {targetPlaylistName} keeps songs that are no longer in {sourcePlaylistName}.</small></span>
-                  <SelectField bind:value={syncBehavior} label={`Songs no longer in ${sourcePlaylistName}`} options={[
-                    { value: "preserve", label: `Keep them in ${targetPlaylistName}` },
-                    { value: "mirror", label: "Remove songs Allstarr previously added" },
-                  ]} />
-                </div>
-              {/if}
-              <fieldset class="playlist-sync-fields">
-                <legend>{materializationMode === "recreate" ? "Copy these details to the new playlist" : "Keep these details updated"}</legend>
-                <label><Checkbox bind:checked={syncName} /> Playlist name</label>
-                <label><Checkbox bind:checked={syncDescription} /> Description</label>
-                <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
-              </fieldset>
+            {#if mode !== "virtual" && materializationMode === "reconcile"}
+              <div class="pl-row">
+                <div><strong>Songs removed from {sourcePlaylistName}</strong><small>What happens to them in {targetPlaylistName}.</small></div>
+                <SelectField bind:value={syncBehavior} label={`Songs removed from ${sourcePlaylistName}`} options={[
+                  { value: "preserve", label: "Keep them" },
+                  { value: "mirror", label: "Remove songs Allstarr added" },
+                ]} />
+              </div>
             {/if}
-          </section>
+            <div class="pl-row pl-row-full">
+              <div><strong id="playlist-add-storage">Song storage</strong><small>Choose whether Allstarr saves permanent copies of these songs.</small></div>
+              <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-storage">
+                <label class="pl-option" class:active={trackRetention === "onDemand"}>
+                  <input bind:group={trackRetention} type="radio" name="playlist-storage" value="onDemand" />
+                  <span class="pl-option-text"><strong>Stream when played</strong><small>Songs play from their source and are cached briefly. Nothing is saved permanently.</small></span>
+                </label>
+                <label class="pl-option" class:active={trackRetention === "keepAll"}>
+                  <input bind:group={trackRetention} type="radio" name="playlist-storage" value="keepAll" />
+                  <span class="pl-option-text"><strong>Keep a copy of every song</strong><small>After each import, Allstarr downloads every song it can. Uses disk space.</small></span>
+                </label>
+              </div>
+            </div>
+            {#if mode !== "virtual"}
+              <div class="pl-row pl-row-full" role="group" aria-labelledby="playlist-add-details">
+                <div><strong id="playlist-add-details">{materializationMode === "recreate" ? "Copy to the new playlist" : "Keep in sync"}</strong><small>Copy these details from {sourceName} to the {targetName} playlist.</small></div>
+                <div class="pl-checks">
+                  <label><Checkbox bind:checked={syncName} /> Name</label>
+                  <label><Checkbox bind:checked={syncDescription} /> Description</label>
+                  <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
+                </div>
+              </div>
+            {/if}
+          </div>
         {/if}
       </div>
 
