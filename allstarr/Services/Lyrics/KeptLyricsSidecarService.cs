@@ -1,3 +1,4 @@
+using allstarr.Core.Music;
 using System.Text.RegularExpressions;
 using TagLib;
 using allstarr.Models.Domain;
@@ -264,20 +265,7 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
             : value.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
     }
 
-    private static string StripTrackDecorators(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        return value
-            .Replace(" [S]", "", StringComparison.Ordinal)
-            .Replace(" [D]", "", StringComparison.Ordinal)
-            .Replace(" [Q]", "", StringComparison.Ordinal)
-            .Replace(" [E]", "", StringComparison.Ordinal)
-            .Trim();
-    }
+    private static string StripTrackDecorators(string? value) => MusicLyrics.StripPresentationLabels(value);
 
     private sealed class AudioMetadata
     {
