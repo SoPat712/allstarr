@@ -25,13 +25,24 @@ describe("API response normalization", () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({
-      message: "capability: The selected provider does not expose streaming diagnostics.",
+      message: "The selected provider does not expose streaming diagnostics.",
       details: {
         stage: "capability",
         error: "The selected provider does not expose streaming diagnostics.",
         validationDetails: { providerId: "deezer" },
       },
     });
+  });
+
+  it("keeps the stage on short diagnostic codes", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      stage: "resolve",
+      error: "Unavailable",
+    }), { status: 422, statusText: "Unprocessable Entity" })));
+
+    const error = await sources.deepStream("deezer", "account").catch((cause) => cause);
+
+    expect(error.message).toBe("resolve: Unavailable");
   });
 
   it("creates a listening-app key for the selected backend", async () => {

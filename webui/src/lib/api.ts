@@ -1230,7 +1230,8 @@ export class ApiError extends Error {
   ) {
     const body = details as { error?: string; message?: string; stage?: string } | null;
     const message = body?.error || body?.message || `${status} ${statusText}`;
-    super(body?.stage ? `${body.stage}: ${message}` : message);
+    // Short failure codes need their stage for context; full sentences stand on their own.
+    super(body?.stage && !/\s/.test(message) ? `${body.stage}: ${message}` : message);
   }
 }
 

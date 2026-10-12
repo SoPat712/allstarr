@@ -147,22 +147,6 @@ public sealed class ProviderCtsDiagnosticRunner(
         providerAccountId = resolved?.Account.AccountId;
         var routeMilliseconds = total.Elapsed.TotalMilliseconds;
 
-        var automaticTrack = string.IsNullOrWhiteSpace(trackId)
-            ? await trackSelector.SelectAsync(
-                providerId, providerAccountId, cancellationToken)
-            : null;
-        if (string.IsNullOrWhiteSpace(trackId) && automaticTrack == null)
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status409Conflict,
-                providerId,
-                providerAccountId,
-                "track-selection",
-                "No known provider tracks are available for automatic CTS rotation. Refresh playlist metadata first.");
-        }
-
-        trackId = string.IsNullOrWhiteSpace(trackId) ? automaticTrack!.TrackId : trackId.Trim();
-
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var timeout = streaming is ExtensionDownloadStreamingCapabilityAdapter
             ? TimeSpan.FromMinutes(5)
@@ -184,6 +168,39 @@ public sealed class ProviderCtsDiagnosticRunner(
             ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100),
             DateTimeOffset.UtcNow.Add(timeout),
             deadline.Token);
+
+        var selectionMode = "manual";
+        int? corpusSize = null;
+        if (string.IsNullOrWhiteSpace(trackId))
+        {
+            var automaticTrack = await trackSelector.SelectAsync(
+                providerId, providerAccountId, cancellationToken);
+            if (automaticTrack != null)
+            {
+                trackId = automaticTrack.TrackId;
+                selectionMode = "rotating-corpus";
+                corpusSize = automaticTrack.CorpusSize;
+            }
+            else
+            {
+                trackId = await SearchSampleTrackAsync(providerId, execution, cancellationToken);
+                selectionMode = "search";
+            }
+            if (trackId == null)
+            {
+                return ProviderCtsDiagnosticResult.Failure(
+                    StatusCodes.Status409Conflict,
+                    providerId,
+                    providerAccountId,
+                    "track-selection",
+                    $"{providers.GetRequired(providerId).DisplayName} has no song to test with. None of its songs appear in your playlists yet, and its search returned no results.");
+            }
+        }
+        else
+        {
+            trackId = trackId.Trim();
+        }
+
         var track = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, trackId);
 
         try
@@ -304,8 +321,8 @@ public sealed class ProviderCtsDiagnosticRunner(
             return ProviderCtsDiagnosticResult.Success(
                 providerId,
                 providerAccountId,
-                automaticTrack == null ? "manual" : "rotating-corpus",
-                automaticTrack?.CorpusSize,
+                selectionMode,
+                corpusSize,
                 quality,
                 routeMilliseconds,
                 preparationMilliseconds,
@@ -361,6 +378,42 @@ public sealed class ProviderCtsDiagnosticRunner(
         health.Observe(context, ProviderCapabilityKind.Streaming,
             new ProviderError(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromMinutes(1) : null),
             TimeSpan.FromMilliseconds(latencyMilliseconds));
+    }
+
+    private static readonly string[] SampleSearchQueries = ["Daft Punk", "Taylor Swift", "The Beatles"];
+
+    /// <summary>
+    /// Falls back to the provider's own search when no known track is stored for it yet,
+    /// so a freshly connected source can still be measured.
+    /// </summary>
+    private async Task<string?> SearchSampleTrackAsync(
+        string providerId,
+        ProviderExecutionContext execution,
+        CancellationToken cancellationToken)
+    {
+        if (!providers.TryGetCapability<IProviderMetadataCapability>(
+                providerId, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null)
+            return null;
+        foreach (var query in SampleSearchQueries)
+        {
+            try
+            {
+                var outcome = await metadata.SearchTracksAsync(
+                    execution,
+                    new ProviderMetadataSearchRequest(query, new ProviderPageRequest(5)));
+                var match = outcome.IsSuccess
+                    ? outcome.RequireValue().Items.FirstOrDefault(item =>
+                        item.Id.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase))
+                    : null;
+                if (match != null) return match.Id.Value;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException ||
+                                              !cancellationToken.IsCancellationRequested)
+            {
+                // A failed search only means this fallback has nothing to offer.
+            }
+        }
+        return null;
     }
 
     private static HttpClient CreateSampleClient()

@@ -224,6 +224,122 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         providers.VerifyAll();
     }
 
+    [Fact]
+    public async Task Measure_SearchesTheProviderWhenNoKnownTrackIsStored()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var lease = new ProviderStreamLease(
+            "lease",
+            new Uri("https://media.example.test/searched"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            supportsByteRanges: false,
+            supportsSeeking: false,
+            new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3, 4])
+            }));
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "searched-track")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var queries = new List<string>();
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync((ProviderExecutionContext _, ProviderMetadataSearchRequest request) =>
+            {
+                queries.Add(request.Query);
+                return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("amazon", queries.Count == 1
+                    ? []
+                    : [new ProviderTrackMetadata(new("amazon", ProviderResourceKind.Track, "searched-track"),
+                        "Song", [new("Artist")])]));
+            });
+        var providers = AccountFreeRegistry("amazon", streaming.Object, metadata.Object);
+        var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
+        observer.Setup(item => item.Observe(It.IsAny<ProviderExecutionContext>(),
+            ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(
+            providers.Object,
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector,
+            observer.Object);
+
+        var result = await runner.MeasureAsync(
+            Actor(), "amazon", null, ProviderAudioQuality.Lossless, "search-fallback");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("search", result.SelectionMode);
+        Assert.Equal(2, queries.Count);
+        streaming.VerifyAll();
+    }
+
+    [Fact]
+    public async Task Measure_ExplainsWhenTheProviderHasNoSongToTest()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("amazon", [])));
+        var providers = AccountFreeRegistry(
+            "amazon", Mock.Of<IProviderStreamingCapability>(MockBehavior.Strict), metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(
+            providers.Object,
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector,
+            Mock.Of<IProviderOutcomeObserver>(MockBehavior.Strict));
+
+        var result = await runner.MeasureAsync(
+            Actor(), "amazon", null, ProviderAudioQuality.Lossless, "search-empty");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
+        Assert.Equal("track-selection", result.Stage);
+        Assert.Equal(
+            "amazon has no song to test with. None of its songs appear in your playlists yet, and its search returned no results.",
+            result.Error);
+        metadata.Verify(item => item.SearchTracksAsync(
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(3));
+    }
+
+    private static ProviderActorContext Actor() => new(
+        ProviderActorKind.User,
+        Guid.CreateVersion7(),
+        new ProviderBackendPrincipal("jellyfin", "fixture", "principal"));
+
+    private static Mock<IProviderRegistry> AccountFreeRegistry(
+        string providerId,
+        IProviderStreamingCapability streaming,
+        IProviderMetadataCapability metadata)
+    {
+        IProviderStreamingCapability? registeredStreaming = streaming;
+        IProviderMetadataCapability? registeredMetadata = metadata;
+        var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        providers.Setup(item => item.TryGetCapability<IProviderStreamingCapability>(
+                providerId, ProviderCapabilityKind.Streaming, out registeredStreaming))
+            .Returns(true);
+        providers.Setup(item => item.TryGetCapability<IProviderMetadataCapability>(
+                providerId, ProviderCapabilityKind.Metadata, out registeredMetadata))
+            .Returns(true);
+        providers.Setup(item => item.GetRequired(providerId))
+            .Returns(Descriptor(providerId, ProviderAccountRequirement.None));
+        return providers;
+    }
+
+    private sealed class Factory(DbContextOptions<AllstarrDbContext> options)
+        : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
+
+        public Task<AllstarrDbContext> CreateDbContextAsync(
+            CancellationToken cancellationToken = default) => Task.FromResult(new AllstarrDbContext(options));
+    }
+
     private static ProviderDescriptor Descriptor(
         string providerId,
         ProviderAccountRequirement requirement) => new(
