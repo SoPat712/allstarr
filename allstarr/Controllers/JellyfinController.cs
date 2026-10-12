@@ -54,6 +54,7 @@ public partial class JellyfinController : ControllerBase
     private readonly JellyfinVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly MusicSearchService _musicSearch;
+    private readonly ProviderStreamOpener _streamOpener;
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
     private readonly IProtocolLyricsResolver _protocolLyricsResolver;
@@ -68,7 +69,6 @@ public partial class JellyfinController : ControllerBase
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
-    private readonly ManagedTrackCacheService? _managedTrackCache;
     private readonly ILibraryIndexService? _libraryIndex;
 
     public JellyfinController(
@@ -85,6 +85,7 @@ public partial class JellyfinController : ControllerBase
         JellyfinVirtualPlaylistProtocolAdapter virtualPlaylistProtocolAdapter,
         ProtocolStreamingResponseAdapter streamingResponseAdapter,
         MusicSearchService musicSearch,
+        ProviderStreamOpener streamOpener,
         JellyfinProxyService proxyService,
         JellyfinSessionManager sessionManager,
         IApplicationCache cache,
@@ -98,7 +99,6 @@ public partial class JellyfinController : ControllerBase
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
-        ManagedTrackCacheService? managedTrackCache = null,
         IBackendLibraryAccessResolver? libraryAccess = null,
         ILibraryIndexService? libraryIndex = null)
     {
@@ -117,6 +117,7 @@ public partial class JellyfinController : ControllerBase
         _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
         _streamingResponseAdapter = streamingResponseAdapter;
         _musicSearch = musicSearch;
+        _streamOpener = streamOpener;
         _proxyService = proxyService;
         _sessionManager = sessionManager;
         _protocolLyricsResolver = protocolLyricsResolver;
@@ -130,7 +131,6 @@ public partial class JellyfinController : ControllerBase
         _providerGateway = providerGateway;
         _audioMuse = audioMuse;
         _intelligencePolicies = intelligencePolicies;
-        _managedTrackCache = managedTrackCache;
 
         if (string.IsNullOrWhiteSpace(_settings.Url))
         {
