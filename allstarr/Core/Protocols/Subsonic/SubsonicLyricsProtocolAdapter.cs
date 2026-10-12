@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
+using allstarr.Core.Music;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Models.Subsonic;
@@ -38,18 +39,10 @@ public sealed partial class SubsonicLyricsLookup : ISubsonicLyricsLookup
         string externalId,
         CancellationToken cancellationToken)
     {
-        var song = await _providerGateway.GetSongAsync(protocol, provider, externalId);
+        var found = await MusicLyrics.FindForProviderSongAsync(
+            _providerGateway, _lyrics, protocol, provider, externalId, cancellationToken);
         cancellationToken.ThrowIfCancellationRequested();
-        if (song == null)
-        {
-            return null;
-        }
-
-        var lyrics = await _lyrics.FindAsync(
-            protocol, song, $"{provider}:{externalId}", provider, externalId, song.SpotifyId);
-        cancellationToken.ThrowIfCancellationRequested();
-
-        return SubsonicStructuredLyricsMapper.Map(song, lyrics);
+        return found == null ? null : SubsonicStructuredLyricsMapper.Map(found.Song, found.Lyrics);
     }
 }
 
