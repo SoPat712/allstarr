@@ -277,11 +277,16 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData("json")]
-    [InlineData("xml")]
-    public async Task SubsonicArtistInfo2_ProviderArtistGetsAnEmptyValidAnswer(string format)
+    [InlineData("json", false)]
+    [InlineData("json", true)]
+    [InlineData("xml", false)]
+    [InlineData("xml", true)]
+    public async Task SubsonicArtistInfo2_ProviderArtistGetsAnEmptyValidAnswer(string format, bool nullResult)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetSimilarArtistsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "deezer", "7", 20))
+            .ReturnsAsync(nullResult ? null! : []);
         var observed = new List<ObservedRequest>();
         using var factory = CatalogFactory(observed, gateway.Object,
             request => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"));
@@ -306,6 +311,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(XName.Get("artistInfo2", "http://subsonic.org/restapi"), Assert.Single(root.Elements()).Name);
         }
         Assert.Empty(observed);
+        gateway.VerifyAll();
         gateway.VerifyNoOtherCalls();
     }
 
