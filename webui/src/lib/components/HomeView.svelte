@@ -138,7 +138,7 @@
           key: `source:${issue.providerId}`,
           title: `${issue.providerName} can't play songs`,
           detail: humanize(issue.reason),
-          href: `#/integrations/services?source=${encodeURIComponent(issue.providerId)}&section=configuration`,
+          href: `#/integrations/services/${encodeURIComponent(issue.providerId)}`,
           action: `Open ${issue.providerName}`,
         });
     const storageReadiness = snapshot.status?.durableStorage?.readiness;
@@ -156,7 +156,7 @@
           key: `health:${provider.providerId}`,
           title: `${providerName(provider.providerId)} is failing ${plural(provider.failedCapabilityCount, "check")}`,
           detail: `${provider.healthyCapabilityCount} of ${provider.capabilityTotal} checks passed ${relativeTime(provider.lastCheckedAt, "")}`.trim(),
-          href: `#/integrations/services?source=${encodeURIComponent(provider.providerId)}`,
+          href: `#/integrations/services/${encodeURIComponent(provider.providerId)}`,
           action: "Open service",
         });
     return items;
@@ -359,7 +359,7 @@
       {#if snapshot.providers?.length}
         <div class="provider-list">
           {#each snapshot.providers.slice(0, 6) as provider}
-            <div class="provider-line">
+            <a class="provider-line" href={`#/integrations/services/${encodeURIComponent(provider.providerId)}`}>
               <ProviderMark
                 id={provider.providerId}
                 definition={providerDefinition(provider.providerId)}
@@ -378,7 +378,7 @@
                   <small>{relativeTime(provider.lastCheckedAt, "Not checked yet")}</small>
                 {:else}Not checked yet{/if}
               </span>
-            </div>
+            </a>
           {/each}
         </div>
       {:else}

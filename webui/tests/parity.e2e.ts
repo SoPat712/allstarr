@@ -868,10 +868,10 @@ const routes = [
   ["#/library/kept", "Library"],
   ["#/activity", "Activity"],
   ["#/intelligence", "Intelligence"],
-  ["#/integrations/services", "Integrations"],
-  ["#/integrations/accounts", "Integrations"],
-  ["#/integrations/extensions", "Integrations"],
-  ["#/integrations/routing", "Integrations"],
+  ["#/integrations/services", "Sources"],
+  ["#/integrations/accounts", "Sources"],
+  ["#/integrations/extensions", "Sources"],
+  ["#/integrations/routing", "Settings"],
   ["#/settings/general", "Settings"],
 ] as const;
 
@@ -881,7 +881,7 @@ const stateRoutes = [
   ["#/library/mappings", "Library", "Loading match review", "/api/admin/track-matches", ["/api/admin/track-matches"]],
   ["#/library/cached", "Library", "Loading Cached tracks", "/api/admin/downloads", ["/api/admin/downloads"]],
   ["#/activity", "Activity", "Loading Event log", "/api/admin/ui/activity", ["/api/admin/ui/activity"]],
-  ["#/integrations/services", "Integrations", "Loading Services", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
+  ["#/integrations/services", "Sources", "Loading Services", "/api/admin/provider-accounts", ["/api/admin/ui/schema", "/api/admin/provider-accounts"]],
   ["#/settings/general", "Settings", "Loading Settings", "/api/admin/ui/schema", ["/api/admin/ui/schema"]],
 ] as const;
 
@@ -916,9 +916,6 @@ for (const viewport of viewports) {
         await page.goto(route);
         const pageHeading = page.getByRole("heading", { name: heading, level: 1 });
         await expect(pageHeading).toBeVisible();
-        if (route === "#/integrations/extensions") {
-          await expect(page.getByRole("heading", { name: "Extensions", level: 2 })).toBeVisible();
-        }
         await page.evaluate(() => new Promise<void>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
         ));
@@ -1016,18 +1013,18 @@ for (const viewport of viewports) {
       await expect(page.locator("html")).toHaveClass(/dark/);
       await page.keyboard.press("Escape");
       await page.goto("#/settings/accounts");
-      await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
-      await expect(page.getByRole("tab", { name: "Accounts" })).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
+      await expect(page.getByRole("button", { name: /^Accounts/ })).toHaveAttribute("aria-pressed", "true");
       await page.goto("#/sources?source=lumen-audio&section=configuration");
-      await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByRole("tab", { name: "Services" })).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible({ timeout: 15_000 });
+      await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
       await page.getByRole("button", { name: "Connect another account" }).click();
       const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
       await expect(sourceDialog.getByRole("button", { name: "Source", exact: true })).toContainText("Lumen Audio");
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
-      await expect(page.getByRole("tab", { name: "Routing" })).toHaveAttribute("aria-selected", "true");
+      await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
       await expect(page.getByText(/always tried first/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toBeDisabled();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
@@ -1040,21 +1037,19 @@ for (const viewport of viewports) {
       await expect(savePlayback).toBeEnabled();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await page.goto("#/integrations/services/lumen-audio");
+      await expect(page.locator(".service-extension .extension-row .source-row-capabilities span")).toContainText(["Metadata", "Streaming"]);
       await page.goto("#/settings/extensions");
-      await expect(page.getByRole("tab", { name: "Extensions" })).toHaveAttribute("aria-selected", "true");
-      await expect(page.locator(".extension-row .source-row-capabilities span")).toContainText(["Metadata", "Streaming"]);
-      await page.getByRole("tab", { name: /Available/ }).click();
-      await expect(page.getByRole("searchbox", { name: "Search extensions" })).toBeVisible();
-      await page.getByRole("tab", { name: /Catalogs/ }).click();
-      await expect(page.getByText("Add a catalog", { exact: true })).toBeVisible();
-      await page.getByRole("tab", { name: "Activity" }).click();
-      await expect(page.getByRole("list", { name: "Extension activity" })).toBeVisible();
+      await page.getByRole("button", { name: "Add a source" }).click();
+      const addSource = page.getByRole("dialog", { name: "Add a source" });
+      await expect(addSource.getByRole("searchbox", { name: "Search extensions" })).toBeVisible();
+      await addSource.getByRole("tab", { name: /Manage catalogs/ }).click();
+      await expect(addSource.getByText("Add a catalog", { exact: true })).toBeVisible();
+      await addSource.getByRole("tab", { name: "From a URL" }).click();
+      await expect(addSource.getByRole("button", { name: "Verify package" })).toBeInViewport();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-      await page.getByRole("button", { name: "Install extension" }).click();
-      await expect(page.getByRole("dialog", { name: "Install extension" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Verify package" })).toBeInViewport();
-      await page.getByRole("button", { name: "Close installer" }).click();
+      await addSource.getByRole("button", { name: "Close add a source" }).click();
       await page.goto("#/settings/maintenance");
       await expect(page.getByText("Backups include saved sign-ins. Keep downloaded files private.")).toBeVisible();
       await expect(page.getByRole("button", { name: "Create verified backup" })).toBeVisible();
@@ -1380,11 +1375,11 @@ for (const viewport of viewports) {
       await page.goto("#/integrations/services?source=audiomuse-ai&section=configuration");
       const intelligenceLink = page.getByRole("link", { name: "Configure in Intelligence" });
       await expect(intelligenceLink).toHaveAttribute("href", "#/intelligence?section=automation");
-      await expect(page.getByRole("dialog")).toContainText("AudioMuse-AI powers sound-based discovery");
+      await expect(page.locator(".service-page")).toContainText("AudioMuse-AI powers sound-based discovery");
       await page.goto("#/integrations/accounts");
-      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
-      await page.getByRole("tab", { name: "Access" }).click();
-      await page.getByRole("button", { name: "Edit access" }).click();
+      await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+      await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
+      await page.getByRole("menuitem", { name: "Edit access" }).click();
       const access = page.locator(".access-dialog");
       await expect(access).toBeVisible();
       await access.getByRole("radio", { name: "Personal" }).check();
@@ -1393,9 +1388,8 @@ for (const viewport of viewports) {
       await access.getByRole("button", { name: "Save access" }).click();
       await expect(access).toBeHidden();
 
-      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
-      await page.getByRole("tab", { name: "Access" }).click();
-      await page.getByRole("button", { name: "Edit access" }).click();
+      await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
+      await page.getByRole("menuitem", { name: "Edit access" }).click();
       await expect(page.getByRole("radio", { name: "One library" })).toHaveCount(0);
       await page.getByRole("radio", { name: "Shared" }).check();
       await page.getByRole("button", { name: "Save access" }).click();
@@ -1448,20 +1442,17 @@ for (const viewport of viewports) {
       await page.goto("#/integrations/accounts");
       await expect(page.getByRole("dialog", { name: "Connect a Source" })).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Connect Source" })).toHaveCount(0);
-      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
-      await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+      await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
       await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Disable account", exact: true })).toBeVisible();
-      await page.getByRole("tab", { name: "Access" }).click();
-      await expect(page.getByRole("button", { name: "Edit access", exact: true })).toHaveCount(0);
+      await page.locator(".service-account").getByRole("button", { name: /^Actions for / }).click();
+      await expect(page.getByRole("menuitem", { name: "Disable" })).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: "Edit access" })).toHaveCount(0);
+      await page.keyboard.press("Escape");
       shared = true;
       await page.reload();
-      await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
-      await page.getByRole("tab", { name: "Configuration", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
       await expect(page.getByRole("button", { name: "Edit configuration", exact: true })).toHaveCount(0);
-      await expect(page.getByRole("button", { name: "Disable account", exact: true })).toHaveCount(0);
-      await page.getByRole("tab", { name: "Access" }).click();
-      await expect(page.getByRole("button", { name: "Edit access", exact: true })).toHaveCount(0);
+      await expect(page.locator(".service-account").getByRole("button", { name: /^Actions for / })).toHaveCount(0);
       if (viewport.width < 768) await expectContainedMobileGeometry(page);
       else expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
@@ -1534,9 +1525,8 @@ for (const viewport of viewports) {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await mockApi(page);
       await page.goto("#/settings/extensions");
-      await expect(page.getByRole("tab", { name: "Extensions" })).toHaveAttribute("aria-selected", "true");
-      await page.getByRole("button", { name: "Install extension" }).click();
-      const dialog = page.getByRole("dialog", { name: "Install extension" });
+      await page.getByRole("button", { name: "Add a source" }).click();
+      const dialog = page.getByRole("dialog", { name: "Add a source" });
       await expect(dialog).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(dialog).toBeHidden();
@@ -1959,7 +1949,8 @@ test("account titles use provider definitions and keep custom labels in subtitle
   await expect(row.locator(".source-row-copy strong")).toHaveText("Lumen Audio");
   await expect(row.locator(".source-row-copy small")).toContainText("Shared with everyone · Road trip");
   await row.locator(".source-row-main").click();
-  await expect(page.getByRole("dialog").getByRole("heading", { name: "Lumen Audio", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
+  await expect(page.locator(".service-account.focused")).toContainText("Shared with everyone · Road trip");
 });
 
 test("Home stays inside runtime and request budgets", async ({ page }) => {
@@ -2096,7 +2087,7 @@ test("Slim sidebar centers navigation and profile controls", async ({ page }) =>
   await page.goto("#/");
   const sidebar = await page.locator(".sidebar").boundingBox();
   const home = await page.locator(".desktop-navigation").getByRole("link", { name: "Home", exact: true }).boundingBox();
-  const sourcesIcon = await page.locator(".desktop-navigation").getByRole("link", { name: "Integrations" }).locator("svg").boundingBox();
+  const sourcesIcon = await page.locator(".desktop-navigation").getByRole("link", { name: "Sources" }).locator("svg").boundingBox();
   const profile = await page.locator(".profile .avatar").boundingBox();
   expect(sidebar && home && sourcesIcon && profile).toBeTruthy();
   const center = (box: NonNullable<typeof sidebar>) => box.x + box.width / 2;
@@ -2118,10 +2109,10 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   await page.getByLabel("Color theme").click();
   await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
   await page.keyboard.press("Escape");
-  await page.goto("#/integrations/services");
-  const tabs = page.locator(".settings-tabs");
+  await page.goto("#/library/playlists");
+  const tabs = page.locator(".library-tabs");
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
-  const routing = page.getByRole("tab", { name: "Routing" });
+  const routing = page.getByRole("tab", { name: "Mappings" });
   await routing.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
   expect(await routing.evaluate((element) => getComputedStyle(element, "::after").height)).toBe("2px");
@@ -2152,14 +2143,13 @@ test("Legacy Library links open their current shared views", async ({ page }) =>
 test("Legacy integration links open their canonical tabs", async ({ page }) => {
   await mockApi(page);
   for (const [route, tab] of [
-    ["#/sources", "Services"],
-    ["#/settings/accounts", "Accounts"],
-    ["#/settings/extensions", "Extensions"],
-    ["#/settings/routing", "Routing"],
+    ["#/sources", "Sources"],
+    ["#/settings/accounts", "Sources"],
+    ["#/settings/extensions", "Sources"],
+    ["#/settings/routing", "Settings"],
   ] as const) {
     await page.goto(route);
-    await expect(page.getByRole("heading", { name: "Integrations", level: 1 })).toBeVisible();
-    await expect(page.getByRole("tab", { name: tab })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("heading", { name: tab, level: 1 })).toBeVisible();
   }
 });
 
@@ -2403,7 +2393,7 @@ test("uninstall keeps refresh failures on the page after its dialog closes", asy
     await route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...initial, state: "uninstalled", active: false, installed: false, revision: 2 }) });
   });
 
-  await page.goto("#/integrations/extensions");
+  await page.goto("#/integrations/services/lumen-audio");
   const row = page.locator(".extension-row");
   await row.getByRole("button", { name: "Manage extension" }).click();
   await page.getByRole("menuitem", { name: "Uninstall" }).click();
@@ -2435,7 +2425,8 @@ test("removing a registry closes its confirmation before a delayed refresh", asy
   });
 
   await page.goto("#/integrations/extensions");
-  await page.getByRole("tab", { name: /Catalogs/ }).click();
+  await page.getByRole("button", { name: "Add a source" }).click();
+  await page.getByRole("tab", { name: /Manage catalogs/ }).click();
   await page.getByRole("button", { name: "Remove" }).click();
   const removal = page.getByRole("alertdialog", { name: "Remove Community?" });
   await removal.getByRole("button", { name: "Remove registry" }).click();
@@ -2494,7 +2485,7 @@ test("extension sign-in shows automatic renewal without starting verification", 
     state: "signed_in", expiresAt: "2099-06-15T12:00:00Z", renewsAutomatically: true,
     lastRenewalFailure: "provider_unavailable",
   });
-  await page.goto("#/integrations/extensions");
+  await page.goto("#/integrations/services/signed-audio");
   const panel = page.getByRole("region", { name: "Sign-in" });
   await expect(panel.getByText(/Renews automatically.*2099/)).toBeVisible();
   await expect(panel.getByRole("status")).toContainText("Last automatic renewal failed");
@@ -2506,7 +2497,7 @@ test("extension sign-in shows automatic renewal without starting verification", 
 test("extension sign-in explains each verification step and failure", async ({ page }) => {
   await mockApi(page);
   const mock = await mockSignedSessionExtension(page, { state: "signed_out" });
-  await page.goto("#/integrations/extensions");
+  await page.goto("#/integrations/services/signed-audio");
   const panel = page.getByRole("region", { name: "Sign-in" });
   await expect(panel.getByText("Not signed in")).toBeVisible();
 
@@ -2567,7 +2558,7 @@ test("extension sign-in recovers from expiry, cancellation and package changes o
   await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await mockApi(page);
   const mock = await mockSignedSessionExtension(page, "unavailable");
-  await page.goto("#/integrations/extensions");
+  await page.goto("#/integrations/services/signed-audio");
   const panel = page.getByRole("region", { name: "Sign-in" });
   await expect(panel.getByText("Sign-in status is unavailable right now.")).toBeVisible();
 
@@ -2672,7 +2663,8 @@ test("extension updates stay beside the shared management menu", async ({ page }
   const uninstall = page.getByRole("alertdialog", { name: "Uninstall Lumen Audio?" });
   await expect(uninstall).toBeVisible();
   await uninstall.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("tab", { name: /Catalogs/ }).click();
+  await page.getByRole("button", { name: "Add a source" }).click();
+  await page.getByRole("tab", { name: /Manage catalogs/ }).click();
   await expect(page.getByText("Remove 1 installed package version from this catalog first.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 });
@@ -2688,7 +2680,8 @@ test("failed extension registry validation preserves the form", async ({ page })
     });
   });
   await page.goto("#/integrations/extensions");
-  await page.getByRole("tab", { name: /Catalogs/ }).click();
+  await page.getByRole("button", { name: "Add a source" }).click();
+  await page.getByRole("tab", { name: /Manage catalogs/ }).click();
   const name = page.getByLabel("Name");
   const url = page.getByLabel("Registry JSON URL");
   await name.fill("My catalog");
@@ -2713,7 +2706,7 @@ test("extension catalogs explain why an unsigned package cannot be installed", a
     }),
   }));
   await page.goto("#/integrations/extensions");
-  await page.getByRole("tab", { name: /Available/ }).click();
+  await page.getByRole("button", { name: "Add a source" }).click();
 
   const unavailable = page.getByRole("button", { name: "Cannot install Unsigned catalog entry: checksum unavailable" });
   await expect(unavailable).toBeDisabled();
@@ -3545,18 +3538,16 @@ test("Compact count-bearing route tabs stay separated and scroll the active tab 
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
   await page.goto("#/integrations/extensions");
+  await page.getByRole("button", { name: "Add a source" }).click();
 
-  const tabs = page.locator(".extension-tabs");
+  const tabs = page.getByRole("dialog", { name: "Add a source" }).locator(".extension-tabs");
   await expect(tabs).toBeVisible();
   const initial = await tabs.evaluate((element) => ({
-    clientWidth: element.clientWidth,
-    scrollWidth: element.scrollWidth,
     right: element.getBoundingClientRect().right,
   }));
   expect(initial.right).toBeLessThanOrEqual(390);
-  expect(initial.scrollWidth).toBeGreaterThan(initial.clientWidth);
 
-  const activity = tabs.getByRole("tab", { name: /Activity/ });
+  const activity = tabs.getByRole("tab", { name: /Manage catalogs/ });
   await activity.click();
   await expect(activity).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => tabs.evaluate((element) => {
@@ -3647,7 +3638,7 @@ test("Mobile primary navigation stays contained and moves secondary tasks into M
     await more.click();
     const sheet = page.getByRole("dialog", { name: "More" });
     await expect(sheet).toBeVisible();
-    await expect(sheet.getByRole("link", { name: /Integrations/ })).toBeVisible();
+    await expect(sheet.getByRole("link", { name: /Sources/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Settings/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Listening preferences/ })).toBeVisible();
     await expect(sheet.getByRole("link", { name: /Intelligence|Insights/ })).toHaveCount(0);
@@ -3759,12 +3750,11 @@ test("Contextual dialog tabs scroll inside their panels at narrow widths", async
 
   await page.goto("#/integrations/services");
   const lumen = page.locator(".source-row").filter({ hasText: "Lumen Audio" });
-  await lumen.getByRole("button").first().click();
-  const source = page.getByRole("dialog", { name: "Lumen Audio", description: "Source capability and readiness" });
-  await expectContainedActiveTab(source.locator(".contextual-tabs"));
-  expect(await source.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await lumen.getByRole("link").first().click();
+  await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
+  await expectContainedMobileGeometry(page);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
-    await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${screenshotTheme ?? "system"}-mobile-320-source-tabs.png` });
+    await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${screenshotTheme ?? "system"}-mobile-320-source-page.png` });
 });
 
 test("Compact dialogs share symmetric actions and readable progress", async ({ page }) => {
@@ -3806,15 +3796,14 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
   await playlistDialog.getByRole("button", { name: "Cancel" }).click();
 
   await page.goto("#/integrations/services");
-  await expect(page.getByRole("heading", { name: "Services", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
   const serviceActions = await page.locator(".sources-heading-actions button").evaluateAll((buttons) =>
     buttons.map((button) => {
       const rect = button.getBoundingClientRect();
-      return { contained: button.scrollWidth <= button.clientWidth, width: rect.width, y: rect.y };
+      return { contained: button.scrollWidth <= button.clientWidth, right: rect.right };
     }),
   );
-  expect(new Set(serviceActions.map(({ y }) => y)).size).toBe(2);
-  expect(serviceActions.every(({ contained, width }) => contained && width >= 200)).toBe(true);
+  expect(serviceActions.every(({ contained, right }) => contained && right <= 320)).toBe(true);
   await page.getByRole("button", { name: "Connect Source" }).click();
   const sourceDialog = page.getByRole("dialog", { name: "Connect a Source" });
   const sourceActions = await sourceDialog.locator("form > .dialog-actions > *").evaluateAll((actions) =>
@@ -3949,12 +3938,11 @@ test("Apple accounts explain public web-token failures without asking for a deve
     });
   });
   await page.goto("#/integrations/accounts");
-  await page.getByRole("button", { name: "Open Apple Music account" }).click();
-  await expect(page.getByText("Apple's web-player token could not be fetched. Retry this account's Test action later.")).toBeVisible();
+  await page.getByRole("link", { name: "Open Apple Music account" }).click();
+  await expect(page.getByText("Apple's web-player token couldn't be fetched. Run this account's test again later.")).toBeVisible();
   await expect(page.getByLabel(/Developer token/i)).toHaveCount(0);
   await expectContainedMobileGeometry(page);
-  await page.getByRole("tab", { name: "Configuration" }).click();
-  await page.getByRole("button", { name: "Measure CTS" }).click();
+  await page.locator(".service-account").getByRole("button", { name: "Measure CTS" }).click();
   await expect(page.getByText("Apple Music click-to-stream measured.")).toBeVisible();
   expect(appleCtsRequest).toEqual({ providerId: "apple-musickit", providerAccountId: "account", quality: 0 });
 });
@@ -3990,10 +3978,10 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   }));
   await page.goto("#/sources");
   const lumenSource = page.locator(".source-row").filter({ hasText: "Lumen Audio" });
-  await expect(lumenSource.locator(".source-row-timing")).toContainText("Awaiting first CTS sample");
-  await lumenSource.getByRole("button").first().click();
-  const sourceDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Source capability and readiness" });
-  await sourceDetails.getByRole("tab", { name: "Configuration" }).click();
+  await expect(lumenSource.locator(".source-row-timing")).toContainText("Not measured yet");
+  await lumenSource.getByRole("link").first().click();
+  const sourceDetails = page.locator(".service-page");
+  await expect(sourceDetails.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
   await expect(sourceDetails.getByText("Access token")).toBeVisible();
   await expect(sourceDetails.getByText("Stored", { exact: true })).toBeVisible();
   await expect(sourceDetails.getByText("Region")).toBeVisible();
@@ -4004,13 +3992,13 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(sourceEditor.getByRole("button", { name: "Region" })).toHaveText("ca");
   await expect(sourceEditor.getByLabel("Access token")).toHaveValue("");
   await page.keyboard.press("Escape");
+  await page.goto("#/integrations/services");
   const disabledSource = page.locator(".source-row").filter({ hasText: "Disabled Source" });
   const disabledStatus = disabledSource.locator(".source-row-status .badge");
   await expect(disabledStatus).toHaveText("Turned off");
   await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
   await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
-  await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("button").first().click();
-  await page.getByRole("tab", { name: "Configuration" }).click();
+  await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("link").first().click();
   await expect(page.getByRole("button", { name: "Measure CTS" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Optional downloads" })).toBeVisible();
   await expect(page.getByLabel("External provider URL")).toBeVisible();
@@ -4037,16 +4025,14 @@ test("Integrations keep primary actions visible and report scoped degradation", 
     .evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
   expect(appleActionHeights.every((height) => height >= 44)).toBe(true);
   await expect(appleManager.getByRole("link", { name: "Provider settings" }))
-    .toHaveAttribute("href", "#/integrations/services?source=apple-musickit&section=configuration");
+    .toHaveAttribute("href", "#/integrations/services/apple-musickit");
   await page.keyboard.press("Escape");
   await page.goto("#/integrations/accounts");
-  await page.getByRole("button", { name: "Open Lumen Audio account" }).click();
-  const accountDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Personal" });
-  await accountDetails.getByRole("tab", { name: "Configuration" }).click();
-  await expect(accountDetails.getByRole("button", { name: "Disable account" })).toBeVisible();
+  await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+  const accountDetails = page.locator(".service-account.focused");
   await expect(accountDetails.getByRole("button", { name: "Test connection" })).toBeVisible();
   await expect(accountDetails.getByRole("button", { name: "Edit configuration" })).toBeVisible();
-  const metadataCapability = accountDetails.locator(".source-detail-capabilities > span").filter({ hasText: "Metadata" });
+  const metadataCapability = accountDetails.locator(".service-check").filter({ hasText: "Metadata" });
   await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveText("Ready");
   const successColor = await page.evaluate(() => {
     const sample = document.createElement("span");
@@ -4058,7 +4044,6 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   });
   await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveCSS("color", successColor);
   await expect(metadataCapability.getByRole("button", { name: "Test" })).toHaveAttribute("data-slot", "button");
-  await accountDetails.getByRole("button", { name: "Close Source details" }).click();
 
   const listener = await context.newPage();
   await mockApi(listener);
@@ -5037,9 +5022,10 @@ test("Segmented navigation and unified provider filters support keyboard use", a
   await expect(dialog.getByRole("button", { name: /Jellyfin 1/ })).toHaveAttribute("aria-pressed", "true");
 
   await page.goto("#/settings/extensions");
-  await page.getByRole("tab", { name: /Installed/ }).focus();
+  await page.getByRole("button", { name: "Add a source" }).click();
+  await page.getByRole("tab", { name: /^Catalog/ }).focus();
   await page.keyboard.press("ArrowRight");
-  await expect(page.getByRole("tab", { name: /Available/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("tab", { name: "From a URL" })).toHaveAttribute("aria-selected", "true");
 });
 
 test("Responsive boundaries preserve navigation and download identity", async ({ page }) => {
@@ -5293,9 +5279,10 @@ test("retry and refresh controls expose pending work", async ({ page }) => {
 test("Source deep links are consumed once and account actions expose their pending state", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/integrations/services?source=lumen-audio");
-  const sourceDetails = page.getByRole("dialog", { name: "Lumen Audio" });
+  const sourceDetails = page.getByRole("heading", { name: "Lumen Audio", level: 2 });
   await expect(sourceDetails).toBeVisible();
-  await sourceDetails.getByRole("button", { name: "Close Source details" }).click();
+  await page.getByRole("link", { name: "Sources", exact: true }).last().click();
+  await expect(page).toHaveURL(/#\/integrations\/services$/);
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
   await expect(sourceDetails).toBeHidden();

@@ -1,4 +1,5 @@
 <script lang="ts">
+  let { embedded = false }: { embedded?: boolean } = $props();
   import { onMount } from "svelte";
   import { ArrowDown, ArrowUp, GripVertical, Lock } from "@lucide/svelte";
   import { Badge } from "$lib/components/ui/badge";
@@ -131,12 +132,14 @@
   />
 {:else}
   <div class="routing-view" aria-busy={refreshing}>
+    {#if !embedded}
     <header class="sources-heading">
       <div>
         <h2>Routing</h2>
         <p>Allstarr always plays from your media server first when it has the song, then tries these services in the order below.</p>
       </div>
     </header>
+    {/if}
     {#if error}
       <div class="degraded-banner" role="status">
         <span aria-hidden="true">!</span><p><strong>Routing may be out of date.</strong> {error}</p>
@@ -146,7 +149,7 @@
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
     {#if policyFields.length}
       <form class="settings-card routing-policy" aria-label="Playback and matching" oninput={() => { policyDirty = true; }} onsubmit={savePolicy}>
-        <header><div><h3>Playback and matching</h3><small>Earlier services in the order below win close matches: the first gets 5 confidence points, the second 3, the third 1.</small></div></header>
+        <header><div><h3>Quality and matching</h3><small>Earlier services in the order below win close matches: the first gets 5 confidence points, the second 3, the third 1.</small></div></header>
         {#each policyFields as field (field.key)}
           {#if field.type === "audio-quality"}
             <div class="settings-row routing-quality audio-quality-field">

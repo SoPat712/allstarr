@@ -97,16 +97,16 @@ export const sourceOriginLabel = (provider: ProviderDefinition) =>
 
 export function sourceTimingLabel(provider: ProviderDefinition, summary?: ProviderSummary) {
   if (summary?.p95LatencyMilliseconds != null)
-    return `Managed p95 ${summary.p95LatencyMilliseconds} ms`;
+    return `${summary.p95LatencyMilliseconds} ms typical`;
   const latest = (provider.runtimeCapabilities ?? [])
     .filter((item) => item.latencyMilliseconds != null)
     .toSorted((left, right) => String(right.testedAt ?? "").localeCompare(String(left.testedAt ?? "")))[0];
-  if (latest?.latencyMilliseconds != null) return `Latest API ${latest.latencyMilliseconds} ms`;
+  if (latest?.latencyMilliseconds != null) return `${latest.latencyMilliseconds} ms at last check`;
   if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest && item.testedAt))
-    return "Readiness checked";
-  if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Awaiting first sample";
+    return "Checked";
+  if ((provider.runtimeCapabilities ?? []).some((item) => item.canTest)) return "Not measured yet";
   if ((provider.categories ?? []).some((item) => ["streaming", "download"].includes(item.toLowerCase())))
-    return "Awaiting first CTS sample";
+    return "Not measured yet";
   return "Not applicable";
 }
 

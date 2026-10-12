@@ -1,7 +1,4 @@
 <script lang="ts">
-  import ExtensionsView from "$lib/components/ExtensionsView.svelte";
-  import RoutingView from "$lib/components/RoutingView.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SourcesView from "$lib/components/SourcesView.svelte";
 
   let {
@@ -10,41 +7,31 @@
     initialSource = "",
     initialSection = "data",
     initialConnect = false,
+    serviceId = "",
+    from = "",
+    focusAccount = "",
   }: {
     section?: string;
     administrator: boolean;
     initialSource?: string;
     initialSection?: string;
     initialConnect?: boolean;
+    serviceId?: string;
+    from?: string;
+    focusAccount?: string;
   } = $props();
 
-  const allTabs = [
-    { id: "services", label: "Services", href: "#/integrations/services" },
-    { id: "accounts", label: "Accounts", href: "#/integrations/accounts" },
-    { id: "extensions", label: "Extensions", href: "#/integrations/extensions" },
-    { id: "routing", label: "Routing", href: "#/integrations/routing" },
-  ] as const;
-
-  const tabs = $derived(administrator
-    ? allTabs
-    : allTabs.filter((item) => item.id === "services" || item.id === "accounts"));
-  const active = $derived(tabs.some((item) => item.id === section) ? section : "services");
 </script>
 
 <section class="settings-workspace integrations-workspace">
-  <SegmentedNav items={tabs} {active} label="Integration sections" class="route-tabs settings-tabs" />
-
-  {#if active === "services" || active === "accounts"}
-    <SourcesView
-      mode={active}
-      {administrator}
-      {initialSource}
-      {initialSection}
-      {initialConnect}
-    />
-  {:else if active === "extensions"}
-    <ExtensionsView />
-  {:else}
-    <RoutingView />
-  {/if}
+  <SourcesView
+    mode={section === "accounts" ? "accounts" : "services"}
+    {administrator}
+    {initialSource}
+    {initialSection}
+    {initialConnect}
+    {serviceId}
+    {from}
+    {focusAccount}
+  />
 </section>
