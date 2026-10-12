@@ -394,6 +394,7 @@ builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>
 builder.Services.AddSingleton<allstarr.Core.Music.MusicSearchService>();
 builder.Services.AddSingleton<allstarr.Core.Music.ProviderStreamOpener>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();
+builder.Services.AddSingleton<allstarr.Core.Music.MusicCatalogMerge>();
 
 
 if (backendType == BackendType.Jellyfin)

@@ -51,6 +51,7 @@ public partial class SubsonicController : ControllerBase
     private readonly MusicSearchService _musicSearch;
     private readonly ProviderStreamOpener _streamOpener;
     private readonly MusicMixService _musicMix;
+    private readonly MusicCatalogMerge _catalogMerge;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ILibraryIndexService? _libraryIndex;
@@ -75,6 +76,7 @@ public partial class SubsonicController : ControllerBase
         MusicSearchService musicSearch,
         ProviderStreamOpener streamOpener,
         MusicMixService musicMix,
+        MusicCatalogMerge catalogMerge,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
@@ -103,6 +105,7 @@ public partial class SubsonicController : ControllerBase
         _musicSearch = musicSearch;
         _streamOpener = streamOpener;
         _musicMix = musicMix;
+        _catalogMerge = catalogMerge;
         _audioMuse = audioMuse;
         _intelligencePolicies = intelligencePolicies;
 
@@ -521,7 +524,16 @@ public partial class SubsonicController : ControllerBase
             relayEndpoint,
             parameters,
             HttpContext.RequestAborted);
-        return _relayProtocolAdapter.CreateResult(nativeResult, $"application/{format}");
+        return await MergeProviderChildrenAsync(nativeResult, format, "artist", "album", async (name, _, titles) =>
+            (await _catalogMerge.MissingArtistAlbumsAsync(CurrentProtocolContext, name, titles))
+            .Select(album =>
+            {
+                album.Artist ??= name;
+                album.ArtistId = id;
+                return format == "json"
+                    ? (object)_responseBuilder.ConvertAlbumToJson(album)
+                    : _responseBuilder.ConvertAlbumToXml(album, XNamespace.Get("http://subsonic.org/restapi"));
+            }).ToList());
     }
 
     [HttpGet, HttpPost]
@@ -580,7 +592,97 @@ public partial class SubsonicController : ControllerBase
             relayEndpoint,
             parameters,
             HttpContext.RequestAborted);
-        return _relayProtocolAdapter.CreateResult(nativeResult, $"application/{format}");
+        return await MergeProviderChildrenAsync(nativeResult, format, "album", "song", async (name, artist, titles) =>
+            (await _catalogMerge.MissingAlbumSongsAsync(CurrentProtocolContext, name, artist ?? "", titles))
+            .Select(song => format == "json"
+                ? (object)_responseBuilder.ConvertSongToJson(song)
+                : _responseBuilder.ConvertSongToXml(song, XNamespace.Get("http://subsonic.org/restapi")))
+            .ToList());
+    }
+
+    /// <summary>
+    /// Appends provider children (albums of an artist, songs of an album) to a native answer.
+    /// Native fields stay untouched; when providers add nothing or fail, the answer passes through.
+    /// </summary>
+    private async Task<IActionResult> MergeProviderChildrenAsync(
+        SubsonicProxyResponse native,
+        string format,
+        string parentElement,
+        string childElement,
+        Func<string, string?, IReadOnlyCollection<string>, Task<List<object>>> findMissing)
+    {
+        var passthrough = _relayProtocolAdapter.CreateResult(native, $"application/{format}");
+        if (!native.IsSuccessStatusCode || native.Body.Length == 0) return passthrough;
+        var isJson = native.ContentType?.Contains("json") == true;
+        if (isJson != (format == "json")) return passthrough;
+        var childTitle = childElement == "song" ? "title" : "name";
+        try
+        {
+            if (isJson)
+            {
+                var root = System.Text.Json.Nodes.JsonNode.Parse(native.Body)?["subsonic-response"]?.AsObject();
+                if (root?["status"]?.GetValue<string>() != "ok" || root[parentElement] is not System.Text.Json.Nodes.JsonObject parent)
+                    return passthrough;
+                var name = parent["name"]?.GetValue<string>() ?? "";
+                var artist = parent["artist"]?.GetValue<string>();
+                var children = parent[childElement] as System.Text.Json.Nodes.JsonArray ?? [];
+                var titles = children.Select(child => child?[childTitle]?.GetValue<string>() ?? "").ToList();
+                var missing = await FindMissingSafelyAsync(findMissing, name, artist, titles);
+                if (missing.Count == 0) return passthrough;
+                foreach (var item in missing)
+                    children.Add(System.Text.Json.Nodes.JsonNode.Parse(System.Text.Json.JsonSerializer.Serialize(item)));
+                parent[childElement] = children;
+                UpdateCounts(parent, childElement, children.Count);
+                return Content(new System.Text.Json.Nodes.JsonObject { ["subsonic-response"] = root.DeepClone() }.ToJsonString(),
+                    native.ContentType ?? "application/json");
+            }
+
+            var document = XDocument.Parse(System.Text.Encoding.UTF8.GetString(native.Body));
+            var ns = document.Root?.GetDefaultNamespace() ?? XNamespace.None;
+            var parentXml = document.Root?.Element(ns + parentElement);
+            if (document.Root?.Attribute("status")?.Value != "ok" || parentXml == null) return passthrough;
+            var xmlTitles = parentXml.Elements(ns + childElement).Select(child => child.Attribute(childTitle)?.Value ?? "").ToList();
+            var xmlMissing = await FindMissingSafelyAsync(findMissing, parentXml.Attribute("name")?.Value ?? "",
+                parentXml.Attribute("artist")?.Value, xmlTitles);
+            if (xmlMissing.Count == 0) return passthrough;
+            foreach (var element in xmlMissing.OfType<XElement>())
+            {
+                element.Name = ns + childElement;
+                parentXml.Add(element);
+            }
+            var total = parentXml.Elements(ns + childElement).Count();
+            if (childElement == "album") parentXml.SetAttributeValue("albumCount", total);
+            else parentXml.SetAttributeValue("songCount", total);
+            return Content(document.ToString(), native.ContentType ?? "application/xml");
+        }
+        catch (Exception error) when (error is System.Text.Json.JsonException or System.Xml.XmlException or InvalidOperationException)
+        {
+            return passthrough;
+        }
+
+        static void UpdateCounts(System.Text.Json.Nodes.JsonObject parent, string child, int total)
+        {
+            if (child == "album") parent["albumCount"] = total;
+            else parent["songCount"] = total;
+        }
+    }
+
+    private async Task<List<object>> FindMissingSafelyAsync(
+        Func<string, string?, IReadOnlyCollection<string>, Task<List<object>>> findMissing,
+        string name,
+        string? artist,
+        IReadOnlyCollection<string> titles)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return [];
+        try
+        {
+            return await findMissing(name, artist, titles);
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            _logger.LogWarning("Provider additions were unavailable ({ExceptionType})", error.GetType().Name);
+            return [];
+        }
     }
 
     // Virtual playlists are read-only projections; native IDs remain transparent relays.

@@ -22,19 +22,10 @@ public static class MusicTopSongs
         foreach (var song in providerSongs)
         {
             if (added.Count >= count) break;
-            if (!IsLedBy(song.Artist, artistKey)) continue;
+            if (!MusicCatalogMerge.LeadArtistMatches(song.Artist, artistKey)) continue;
             if (!titles.Add(FuzzyMatcher.NormalizeForMatching(song.Title))) continue;
             added.Add(song);
         }
         return added;
-    }
-
-    // "Grimes" does not match "Gary Grimes", but does match "Grimes feat. i_o".
-    private static bool IsLedBy(string? credit, string artistKey)
-    {
-        if (string.IsNullOrWhiteSpace(credit)) return false;
-        if (FuzzyMatcher.NormalizeForMatching(credit) == artistKey) return true;
-        var lead = FuzzyMatcher.SplitCredits(credit).FirstOrDefault();
-        return lead != null && FuzzyMatcher.NormalizeForMatching(lead) == artistKey;
     }
 }
