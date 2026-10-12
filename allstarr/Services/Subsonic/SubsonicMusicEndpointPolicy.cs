@@ -45,7 +45,6 @@ public static class SubsonicMusicEndpointPolicy
         "savePlayQueue",
         "savePlayQueueByIndex",
         "search",
-        "search2",
         "setRating",
         "tokenInfo"
     };

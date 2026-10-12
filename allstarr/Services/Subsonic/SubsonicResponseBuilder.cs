@@ -574,6 +574,43 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
         return element;
     }
 
+    /// <summary>Renders an album as a folder-based directory entry (search2), named by <c>title</c>.</summary>
+    public Dictionary<string, object> ConvertAlbumToDirectoryJson(Album album)
+    {
+        var result = new Dictionary<string, object>
+        {
+            ["id"] = album.Id,
+            ["isDir"] = true,
+            ["title"] = album.Title,
+            ["album"] = album.Title,
+            ["isExternal"] = !album.IsLocal
+        };
+        if (!string.IsNullOrWhiteSpace(album.Artist)) result["artist"] = album.Artist;
+        if (!string.IsNullOrWhiteSpace(album.ArtistId)) result["artistId"] = album.ArtistId;
+        if (album.Year is > 0) result["year"] = album.Year.Value;
+        if (!string.IsNullOrWhiteSpace(album.Genre)) result["genre"] = album.Genre;
+        if (album.IsLocal || !string.IsNullOrWhiteSpace(album.CoverArtUrl)) result["coverArt"] = album.Id;
+        return result;
+    }
+
+    /// <summary>Renders an album as a folder-based directory entry (search2), named by <c>title</c>.</summary>
+    public XElement ConvertAlbumToDirectoryXml(Album album, XNamespace ns)
+    {
+        var element = new XElement(ns + "album",
+            new XAttribute("id", album.Id),
+            new XAttribute("isDir", "true"),
+            new XAttribute("title", album.Title),
+            new XAttribute("album", album.Title),
+            new XAttribute("isExternal", (!album.IsLocal).ToString().ToLowerInvariant()));
+        if (!string.IsNullOrWhiteSpace(album.Artist)) element.Add(new XAttribute("artist", album.Artist));
+        if (!string.IsNullOrWhiteSpace(album.ArtistId)) element.Add(new XAttribute("artistId", album.ArtistId));
+        if (album.Year is > 0) element.Add(new XAttribute("year", album.Year.Value));
+        if (!string.IsNullOrWhiteSpace(album.Genre)) element.Add(new XAttribute("genre", album.Genre));
+        if (album.IsLocal || !string.IsNullOrWhiteSpace(album.CoverArtUrl))
+            element.Add(new XAttribute("coverArt", album.Id));
+        return element;
+    }
+
     public XElement ConvertArtistToXml(Artist artist, XNamespace ns)
     {
         var element = new XElement(ns + "artist",

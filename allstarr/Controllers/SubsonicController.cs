@@ -158,9 +158,16 @@ public partial class SubsonicController : ControllerBase
         _providerGateway.GetArtistAlbumsAsync(CurrentProtocolContext, provider, externalId);
 
     [HttpGet, HttpPost]
+    [Route("rest/search2")]
+    [Route("rest/search2.view")]
+    public Task<IActionResult> Search2() => SearchAsync(SubsonicSearchProtocolAdapter.Search2);
+
+    [HttpGet, HttpPost]
     [Route("rest/search3")]
     [Route("rest/search3.view")]
-    public async Task<IActionResult> Search3()
+    public Task<IActionResult> Search3() => SearchAsync(SubsonicSearchProtocolAdapter.Search3);
+
+    private async Task<IActionResult> SearchAsync(string method)
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
@@ -170,13 +177,13 @@ public partial class SubsonicController : ControllerBase
         if (string.IsNullOrWhiteSpace(cleanQuery))
         {
             var result = await _proxyService.RelayRawAsync(
-                "rest/search3",
+                $"rest/{method}",
                 parameters,
                 HttpContext.RequestAborted);
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
 
-        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format);
+        var native = new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format, method);
         var playlists = _subsonicSettings.EnableExternalPlaylists
             ? new MusicSearchWindow(window.AlbumFetchCount, window.AlbumOffset, window.AlbumCount)
             : MusicSearchWindow.None;
@@ -191,7 +198,11 @@ public partial class SubsonicController : ControllerBase
                 HideProviderArtistsNamedLikeNative: true),
             native,
             HttpContext.RequestAborted);
-        return RenderSearchResult(_modelMapper.RenderSearchResult(merged, native.IsJson), native.IsJson);
+        var rendered = _modelMapper.RenderSearchResult(
+            merged,
+            native.IsJson,
+            SubsonicSearchProtocolAdapter.UsesDirectoryAlbums(method));
+        return RenderSearchResult(rendered, native.IsJson, SubsonicSearchProtocolAdapter.ResultElement(method));
     }
 
     [AcceptVerbs("GET", "POST", "HEAD")]
@@ -289,7 +300,8 @@ public partial class SubsonicController : ControllerBase
         return CreateSongListResponse(format, element, songs);
     }
 
-    // Provider artists have no backend record; answer with an empty, valid artist info.
+    // Provider artists have no backend record; answer with the provider's similar artists, or an empty,
+    // valid artist info when the provider has none.
     [HttpGet, HttpPost]
     [Route("rest/getArtistInfo")]
     [Route("rest/getArtistInfo.view")]
@@ -304,24 +316,41 @@ public partial class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
-        var (isExternal, _, type, _) = _localLibraryService.ParseExternalId(parameters.GetValueOrDefault("id", ""));
+        var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(parameters.GetValueOrDefault("id", ""));
         if (!isExternal || type != "artist")
         {
             var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? $"rest/get{char.ToUpperInvariant(element[0])}{element[1..]}";
             var relayed = await _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
             return _relayProtocolAdapter.CreateResult(relayed, $"application/{format}");
         }
-        return CreateSongListResponse(format, element, [], songsElement: null);
+
+        var count = int.TryParse(parameters.GetValueOrDefault("count"), out var requested) && requested > 0
+            ? Math.Min(requested, 200)
+            : 20;
+        IReadOnlyList<Artist> similarArtists;
+        try
+        {
+            similarArtists = (await _providerGateway.GetSimilarArtistsAsync(CurrentProtocolContext, provider!, externalId!, count))
+                .Take(count).ToList();
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            _logger.LogWarning("Similar artists for {Provider} were unavailable ({ExceptionType})", provider, error.GetType().Name);
+            similarArtists = [];
+        }
+        return CreateSongListResponse(format, element, [], songsElement: null, similarArtists);
     }
 
     private IActionResult CreateSongListResponse(string format, string element, IReadOnlyList<Song> songs,
-        string? songsElement = "song")
+        string? songsElement = "song", IReadOnlyList<Artist>? similarArtists = null)
     {
         var ns = XNamespace.Get("http://subsonic.org/restapi");
         if (format == "json")
         {
             var body = new Dictionary<string, object>();
             if (songsElement != null) body[songsElement] = songs.Select(song => _responseBuilder.ConvertSongToJson(song)).ToList();
+            if (similarArtists is { Count: > 0 })
+                body["similarArtist"] = similarArtists.Select(_responseBuilder.ConvertArtistToJson).ToList();
             return _responseBuilder.CreateJsonResponse(new Dictionary<string, object>
             {
                 ["status"] = "ok",
@@ -332,6 +361,12 @@ public partial class SubsonicController : ControllerBase
         var list = new XElement(ns + element);
         if (songsElement != null)
             foreach (var song in songs) list.Add(_responseBuilder.ConvertSongToXml(song, ns));
+        foreach (var artist in similarArtists ?? [])
+        {
+            var similar = _responseBuilder.ConvertArtistToXml(artist, ns);
+            similar.Name = ns + "similarArtist";
+            list.Add(similar);
+        }
         return Content(new XDocument(new XElement(ns + "subsonic-response",
             new XAttribute("status", "ok"),
             new XAttribute("version", "1.16.1"),
@@ -897,16 +932,17 @@ public partial class SubsonicController : ControllerBase
 
     private IActionResult RenderSearchResult(
         (List<object> Songs, List<object> Albums, List<object> Artists) merged,
-        bool isJson)
+        bool isJson,
+        string resultElement)
     {
         var (mergedSongs, mergedAlbums, mergedArtists) = merged;
         if (isJson)
         {
-            return _responseBuilder.CreateJsonResponse(new
+            return _responseBuilder.CreateJsonResponse(new Dictionary<string, object>
             {
-                status = "ok",
-                version = "1.16.1",
-                searchResult3 = new
+                ["status"] = "ok",
+                ["version"] = "1.16.1",
+                [resultElement] = new
                 {
                     song = mergedSongs,
                     album = mergedAlbums,
@@ -917,26 +953,26 @@ public partial class SubsonicController : ControllerBase
         else
         {
             var ns = XNamespace.Get("http://subsonic.org/restapi");
-            var searchResult3 = new XElement(ns + "searchResult3");
+            var searchResult = new XElement(ns + resultElement);
 
             foreach (var artist in mergedArtists.Cast<XElement>())
             {
-                searchResult3.Add(artist);
+                searchResult.Add(artist);
             }
             foreach (var album in mergedAlbums.Cast<XElement>())
             {
-                searchResult3.Add(album);
+                searchResult.Add(album);
             }
             foreach (var song in mergedSongs.Cast<XElement>())
             {
-                searchResult3.Add(song);
+                searchResult.Add(song);
             }
 
             var doc = new XDocument(
                 new XElement(ns + "subsonic-response",
                     new XAttribute("status", "ok"),
                     new XAttribute("version", "1.16.1"),
-                    searchResult3
+                    searchResult
                 )
             );
 

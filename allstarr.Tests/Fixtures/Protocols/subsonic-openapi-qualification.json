@@ -116,6 +116,7 @@
     "getTopSongs",
     "getTranscodeDecision",
     "scrobble",
+    "search2",
     "search3",
     "star",
     "stream",
@@ -156,7 +157,6 @@
     "savePlayQueue",
     "savePlayQueueByIndex",
     "search",
-    "search2",
     "setRating",
     "tokenInfo"
   ],
