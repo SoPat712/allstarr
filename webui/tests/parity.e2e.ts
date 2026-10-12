@@ -2745,18 +2745,17 @@ test("Import playlist separates source, client view, destination, updates, and s
   expect(dialogBox!.height).toBeLessThanOrEqual(844 * 0.92 + 1);
   await expect(dialog.getByText("Loading playlist sources…")).toBeVisible();
   sources.release();
-  await expect(dialog.locator(".playlist-source-groups legend")).toHaveCount(5);
+  await expect(dialog.getByRole("radiogroup", { name: "Import from" }).getByRole("radio")).toHaveCount(5);
   await expect(dialog.getByRole("button", { name: "Source", exact: true })).toBeDisabled();
-  await expect(dialog.getByRole("button", { name: "What listeners see", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Listeners see", exact: true })).toBeDisabled();
   const stepTops = await dialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
     buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
-  expect(new Set(stepTops).size).toBe(2);
-  expect(stepTops.filter((top) => top === stepTops[0])).toHaveLength(2);
+  expect(new Set(stepTops).size).toBe(1);
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(add).toBeFocused();
   await add.click();
-  const sourceGroups = dialog.locator(".playlist-source-groups legend");
+  const sourceGroups = dialog.getByRole("radiogroup", { name: "Import from" }).locator(".pl-option-text strong");
   await expect(sourceGroups).toHaveCount(5);
   expect(await sourceGroups.allTextContents()).toEqual([
     "Jellyfin", "Subsonic", "Spotify", "Lumen Audio", "Qobuz",
@@ -2768,13 +2767,13 @@ test("Import playlist separates source, client view, destination, updates, and s
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect(dialog.getByRole("button", { name: "Back to Source" })).toBeEnabled();
-  await expect(dialog.getByRole("button", { name: "What listeners see", exact: true })).toHaveAttribute("aria-current", "step");
+  await expect(dialog.getByRole("button", { name: "Listeners see", exact: true })).toHaveAttribute("aria-current", "step");
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-listener-choice.png` });
-  await dialog.getByRole("radio", { name: /Original The same full playlist/ }).check();
+  await dialog.getByRole("radio", { name: /Original The same songs/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
-  await dialog.getByRole("radio", { name: /Show through Allstarr and add songs to.*Allstarr will show/ }).check();
+  await dialog.getByRole("radio", { name: /Both Every .* song shows through Allstarr/ }).check();
   await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Road trip/ }).check();
   if (process.env.ALLSTARR_SCREENSHOT_DIR) {
@@ -2782,12 +2781,12 @@ test("Import playlist separates source, client view, destination, updates, and s
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-appearance-choice.png` });
   }
   await dialog.getByRole("button", { name: "Continue" }).click();
-  await dialog.getByRole("button", { name: "Source updates" }).click();
+  await dialog.getByRole("button", { name: "Update schedule" }).click();
   await expect(page.getByRole("option", { name: "Import once" })).toHaveAttribute("aria-selected", "true");
   await expect(dialog.getByRole("button", { name: "Import playlist" })).toBeVisible();
   await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
   await expect(dialog.getByRole("button", { name: "Import and link" })).toBeVisible();
-  await dialog.getByRole("radio", { name: /Keep every song/ }).check();
+  await dialog.getByRole("radio", { name: /Keep a copy of every song/ }).check();
   await expect(dialog.getByRole("button", { name: "Import and link" })).toBeInViewport();
   await expect(dialog.locator(".playlist-add-body")).toHaveCSS("overflow-y", "auto");
   const create = page.waitForRequest((request) =>
@@ -2852,8 +2851,8 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("menuitem", { name: "Edit settings" }).click();
   let settings = page.getByRole("dialog", { name: "Edit playlist settings" });
   await exactTarget;
-  await settings.getByRole("radio", { name: /Original The same full playlist/ }).check();
-  await settings.getByRole("radio", { name: /Show only through Allstarr Allstarr will show/ }).check();
+  await settings.getByRole("radio", { name: /Original The same songs/ }).check();
+  await settings.getByRole("radio", { name: /Only in Allstarr Listeners see/ }).check();
   const update = page.waitForRequest((request) =>
     request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
   await settings.getByRole("button", { name: "Save settings" }).click();
@@ -3809,7 +3808,7 @@ test("Compact dialogs share symmetric actions and readable progress", async ({ p
       return { height: rect.height, width: rect.width, y: Math.round(rect.y) };
     }),
   );
-  expect(new Set(steps.map(({ y }) => y)).size).toBe(2);
+  expect(new Set(steps.map(({ y }) => y)).size).toBe(1);
   expect(steps.every(({ height }) => height >= 44)).toBe(true);
   expect(Math.max(...steps.map(({ width }) => width)) - Math.min(...steps.map(({ width }) => width))).toBeLessThanOrEqual(1);
   const playlistActions = await playlistDialog.locator(":scope > .dialog-actions > *").evaluateAll((actions) =>

@@ -2,7 +2,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { X } from "@lucide/svelte";
+  import { Info, X } from "@lucide/svelte";
   import {
     playlistLinks,
     type PlaylistDetails,
@@ -196,90 +196,106 @@
 <Dialog.Root bind:open>
   <Dialog.Portal>
     <Dialog.Overlay class="dialog-overlay match-dialog-overlay" />
-    <Dialog.Content class="source-dialog match-dialog playlist-settings-dialog">
+    <Dialog.Content class="source-dialog match-dialog playlist-settings-dialog pl-dialog">
       <header>
         <div>
-          <p class="eyebrow">Playlist behavior</p>
           <Dialog.Title>Edit playlist settings</Dialog.Title>
-          <Dialog.Description>Choose what listeners see and whether Allstarr updates a playlist in {targetName}. The original playlist in {sourceName} is not changed.</Dialog.Description>
+          <Dialog.Description>Changes apply to {sourcePlaylistName} in Allstarr. The original playlist in {sourceName} is not changed.</Dialog.Description>
         </div>
         <Dialog.Close class="icon-button" aria-label="Close playlist settings"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
       <form class="playlist-settings-form" onsubmit={save}>
-        {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+        <div class="playlist-settings-body">
+          {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
-        <fieldset class="audience-options playlist-mode-options">
-          <legend>What listeners see</legend>
-          {#each projectionOptions as option}
-            <label class:active={projectionMode === option.id}>
-              <input type="radio" name="settings-projection" value={option.id} checked={projectionMode === option.id} onchange={() => void chooseProjection(option.id)} />
-              <span><strong>{option.label}</strong><small>{option.description}</small></span>
-            </label>
-          {/each}
-        </fieldset>
-
-        <fieldset class="audience-options playlist-mode-options">
-          <legend>Where it appears</legend>
-          {#each destinationOptions as option}
-            <label class:active={mode === option.id}>
-              <input type="radio" name="settings-destination" value={option.id} checked={mode === option.id} onchange={() => void chooseDestination(option.id)} />
-              <span><strong>{option.label}</strong><small>{option.description}</small></span>
-            </label>
-          {/each}
-        </fieldset>
-
-        {#if needsTarget}
-          <SelectField
-            bind:value={targetPlaylistId}
-            label={`Playlist in ${targetName}`}
-            options={targetPlaylists.map((item) => ({ value: item.id, label: item.name }))}
-            disabled={loading}
-          />
-        {/if}
-
-        {#if mode !== "virtual"}
-          <div class="setting-field">
-            <span><strong>Which playlist Allstarr changes</strong><small>Change {targetPlaylistName}, or create a new playlist in {targetName} instead.</small></span>
-            <SelectField bind:value={materializationMode} label={`How ${targetName} is updated`} options={[
-              { value: "reconcile", label: `Change ${targetPlaylistName}` },
-              { value: "recreate", label: `Create a new playlist in ${targetName}` },
-            ]} />
+          <div class="pl-summary" role="status">
+            <Info size={20} aria-hidden="true" />
+            <p><strong>What will happen</strong>{behaviorSummary}</p>
           </div>
-          {#if materializationMode === "reconcile"}
-            <div class="setting-field">
-              <span><strong>When songs leave {sourcePlaylistName}</strong><small>Choose whether {targetPlaylistName} keeps songs that are no longer in {sourcePlaylistName}.</small></span>
-              <SelectField bind:value={syncBehavior} label={`Songs no longer in ${sourcePlaylistName}`} options={[
-                { value: "preserve", label: `Keep them in ${targetPlaylistName}` },
-                { value: "mirror", label: "Remove songs Allstarr previously added" },
-              ]} />
+
+          <section class="pl-section">
+            <h3 id="playlist-settings-view">What listeners see</h3>
+            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-settings-view">
+              {#each projectionOptions as option}
+                <label class="pl-option" class:active={projectionMode === option.id}>
+                  <input type="radio" name="settings-projection" value={option.id} checked={projectionMode === option.id} onchange={() => void chooseProjection(option.id)} />
+                  <span class="pl-option-text"><strong>{option.label}{#if option.id === "resolved"}<span class="pl-chip">Recommended</span>{/if}</strong><small>{option.description}</small></span>
+                </label>
+              {/each}
             </div>
-          {/if}
-          <fieldset class="playlist-sync-fields">
-            <legend>{materializationMode === "recreate" ? "Copy these details to the new playlist" : "Keep these details updated"}</legend>
-            <label><Checkbox bind:checked={syncName} /> Playlist name</label>
-            <label><Checkbox bind:checked={syncDescription} /> Description</label>
-            <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
-          </fieldset>
-        {/if}
+          </section>
 
-        <fieldset class="audience-options playlist-mode-options">
-          <legend>Song storage</legend>
-          <label class:active={trackRetention === "onDemand"}>
-            <input bind:group={trackRetention} type="radio" value="onDemand" />
-            <span><strong>Stream when played</strong><small>Use normal playback caching without keeping every playlist song permanently.</small></span>
-          </label>
-          <label class:active={trackRetention === "keepAll"}>
-            <input bind:group={trackRetention} type="radio" value="keepAll" />
-            <span><strong>Keep every song</strong><small>Queue owner-scoped managed downloads for every downloadable song after imports.</small></span>
-          </label>
-        </fieldset>
+          <section class="pl-section">
+            <h3 id="playlist-settings-destination">Where it appears</h3>
+            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-settings-destination">
+              {#each destinationOptions as option}
+                <label class="pl-option" class:active={mode === option.id}>
+                  <input type="radio" name="settings-destination" value={option.id} checked={mode === option.id} onchange={() => void chooseDestination(option.id)} />
+                  <span class="pl-option-text"><strong>{option.label}</strong><small>{option.description}</small></span>
+                </label>
+              {/each}
+            </div>
+          </section>
 
-        <div class="setting-field playlist-schedule-setting">
-          <span><strong>Source updates</strong><small>{playlist?.importMode === "oneTime" ? "Imported once · later source changes are ignored" : details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Update when requested"}</small></span>
-          {#if playlist?.importMode !== "oneTime"}<Button variant="secondary" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</Button>{/if}
+          <div class="pl-rows">
+            {#if needsTarget}
+              <div class="pl-row">
+                <div><strong>{targetName} playlist</strong><small>The playlist Allstarr reads from or adds songs to.</small></div>
+                <SelectField
+                  bind:value={targetPlaylistId}
+                  label={`Playlist in ${targetName}`}
+                  options={targetPlaylists.map((item) => ({ value: item.id, label: item.name }))}
+                  disabled={loading}
+                />
+              </div>
+            {/if}
+            {#if mode !== "virtual"}
+              <div class="pl-row">
+                <div><strong>Playlist changes</strong><small>Add songs to {targetPlaylistName}, or create a new playlist each time.</small></div>
+                <SelectField bind:value={materializationMode} label="Playlist changes" options={[
+                  { value: "reconcile", label: `Add to ${targetPlaylistName}` },
+                  { value: "recreate", label: "Create a new playlist" },
+                ]} />
+              </div>
+              {#if materializationMode === "reconcile"}
+                <div class="pl-row">
+                  <div><strong>Songs removed from {sourcePlaylistName}</strong><small>What happens to them in {targetPlaylistName}.</small></div>
+                  <SelectField bind:value={syncBehavior} label={`Songs removed from ${sourcePlaylistName}`} options={[
+                    { value: "preserve", label: "Keep them" },
+                    { value: "mirror", label: "Remove songs Allstarr added" },
+                  ]} />
+                </div>
+              {/if}
+            {/if}
+            <div class="pl-row">
+              <div><strong>Update schedule</strong><small>{playlist?.importMode === "oneTime" ? "Imported once. Later changes are ignored." : details?.schedule ? scheduleCadence(details.schedule.cronExpression) : "Updates only when you ask."}</small></div>
+              {#if playlist?.importMode !== "oneTime"}<Button variant="secondary" onclick={() => { open = false; onEditSchedule(); }}>Edit schedule</Button>{/if}
+            </div>
+            <div class="pl-row pl-row-full">
+              <div><strong id="playlist-settings-storage">Song storage</strong><small>Choose whether Allstarr saves permanent copies of these songs.</small></div>
+              <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-settings-storage">
+                <label class="pl-option" class:active={trackRetention === "onDemand"}>
+                  <input bind:group={trackRetention} type="radio" name="settings-storage" value="onDemand" />
+                  <span class="pl-option-text"><strong>Stream when played</strong><small>Songs play from their source and are cached briefly. Nothing is saved permanently.</small></span>
+                </label>
+                <label class="pl-option" class:active={trackRetention === "keepAll"}>
+                  <input bind:group={trackRetention} type="radio" name="settings-storage" value="keepAll" />
+                  <span class="pl-option-text"><strong>Keep a copy of every song</strong><small>After each import, Allstarr downloads every song it can. Uses disk space.</small></span>
+                </label>
+              </div>
+            </div>
+            {#if mode !== "virtual"}
+              <div class="pl-row pl-row-full" role="group" aria-labelledby="playlist-settings-details">
+                <div><strong id="playlist-settings-details">{materializationMode === "recreate" ? "Copy to the new playlist" : "Keep in sync"}</strong><small>Copy these details from {sourceName} to the {targetName} playlist.</small></div>
+                <div class="pl-checks">
+                  <label><Checkbox bind:checked={syncName} /> Name</label>
+                  <label><Checkbox bind:checked={syncDescription} /> Description</label>
+                  <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
+                </div>
+              </div>
+            {/if}
+          </div>
         </div>
-
-        <p class="credential-safety">{behaviorSummary}</p>
 
         <footer class="dialog-actions">
           <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>

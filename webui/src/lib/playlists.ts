@@ -10,9 +10,9 @@ export function playlistDestinationOptions(
   sourcePlaylistName = "this playlist",
 ) {
   return [
-    { id: "virtual", label: "Show only through Allstarr", description: `Allstarr will show ${sourcePlaylistName} and will not create or change a playlist in ${targetName}.` },
-    { id: "materialized", label: `Add songs to ${playlistName} in ${targetName}`, description: `Allstarr will add playable ${sourcePlaylistName} songs to ${playlistName}, without showing another copy.` },
-    { id: "hybrid", label: `Show through Allstarr and add songs to ${playlistName}`, description: `Allstarr will show every ${sourcePlaylistName} song and add the playable ones to ${playlistName} in ${targetName}.` },
+    { id: "virtual", label: "Only in Allstarr", description: `Listeners see ${sourcePlaylistName} through Allstarr. Nothing changes in ${targetName}.` },
+    { id: "materialized", label: `In a ${targetName} playlist`, description: `Allstarr adds the songs ${targetName} can play to ${playlistName}.` },
+    { id: "hybrid", label: "Both", description: `Every ${sourcePlaylistName} song shows through Allstarr, and the playable ones are also added to ${playlistName}.` },
   ] as const;
 }
 
@@ -22,9 +22,9 @@ export function playlistProjectionOptions(
   playlistName = `the selected ${targetName} playlist`,
 ) {
   return [
-    { id: "resolved", label: "Mapped", description: `Every ${sourceName} song, in order, using local ${targetName} matches or mapped external providers. Unresolved songs stay visible but cannot play.` },
-    { id: "source", label: "Original", description: `The same full playlist with original ${sourceName} titles and artwork. Playback still uses available mappings; unresolved songs cannot play.` },
-    { id: "target", label: "Native", description: `Only the songs currently in ${playlistName}. External and unresolved songs are not added to a native ${targetName} playlist.` },
+    { id: "resolved", label: "Mapped", description: `Every ${sourceName} song, in order. Each plays from your ${targetName} library when you have it, or from another source. Songs Allstarr can't find stay listed but won't play.` },
+    { id: "source", label: "Original", description: `The same songs, keeping ${sourceName}'s own titles and artwork. Playback works the same way.` },
+    { id: "target", label: "Native", description: `Only the songs already in ${playlistName}. Songs from other sources aren't added.` },
   ] as const;
 }
 
@@ -39,7 +39,7 @@ export function playlistBehaviorSummary(
   trackRetention: "onDemand" | "keepAll" = "onDemand",
 ) {
   const retention = trackRetention === "keepAll"
-    ? " Allstarr will also keep a permanent managed copy of every downloadable song."
+    ? " Allstarr will also keep a copy of every song it can download."
     : "";
   if (importMode === "oneTime") {
     const destination = mode === "virtual"

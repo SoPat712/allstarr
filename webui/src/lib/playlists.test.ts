@@ -118,18 +118,18 @@ describe("playlist presentation", () => {
       "resolved", "source", "target",
     ]);
     expect(destinations.map((item) => item.label)).toEqual([
-      "Show only through Allstarr",
-      "Add songs to Road trip in Jellyfin",
-      "Show through Allstarr and add songs to Road trip",
+      "Only in Allstarr",
+      "In a Jellyfin playlist",
+      "Both",
     ]);
-    expect(destinations[0].description).toContain("will not create or change");
-    expect(destinations[1].description).toContain("playable Morning mix songs");
+    expect(destinations[0].description).toContain("Nothing changes in Jellyfin");
+    expect(destinations[1].description).toContain("adds the songs Jellyfin can play to Road trip");
     expect(views.map((item) => item.label)).toEqual([
       "Mapped", "Original", "Native",
     ]);
     expect(views[0].description).toContain("Every Spotify song, in order");
-    expect(views[0].description).toContain("Unresolved songs stay visible");
-    expect(views[2].description).toContain("External and unresolved songs are not added");
+    expect(views[0].description).toContain("stay listed but won't play");
+    expect(views[2].description).toContain("Songs from other sources aren't added");
     expect(playlistBehaviorSummary(
       "materialized", "reconcile", "Morning mix", "Jellyfin", "Road trip",
     )).toContain("only when you run an update");
@@ -140,7 +140,7 @@ describe("playlist presentation", () => {
     expect(playlistBehaviorSummary(
       "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", undefined,
       "oneTime", "keepAll",
-    )).toContain("permanent managed copy");
+    )).toContain("keep a copy of every song it can download");
     expect(playlistBehaviorSummary(
       "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", "every hour",
     )).toContain("will not create or change a playlist in Jellyfin");
