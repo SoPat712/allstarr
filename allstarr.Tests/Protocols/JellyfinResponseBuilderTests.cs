@@ -601,106 +601,70 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
-    public void CreateSearchHintsResponse_IncludesAllTypes()
+    public void SearchHintConverters_IncludeBothIdsForEveryKind()
     {
-        var songs = new List<Song> { new() { Id = "s1", Title = "Track", Artist = "A" } };
-        var albums = new List<Album> { new() { Id = "a1", Title = "Album", Artist = "A" } };
-        var artists = new List<Artist> { new() { Id = "ar1", Name = "Artist" } };
-
-        var result = _builder.CreateSearchHintsResponse(songs, albums, artists);
-
-        var jsonResult = Assert.IsType<JsonResult>(result);
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
-        Assert.All(document.RootElement.GetProperty("SearchHints").EnumerateArray(), hint =>
+        Dictionary<string, object?>[] hints =
+        [
+            _builder.ConvertSongToSearchHint(new Song { Id = "s1", Title = "Track", Artist = "A" }),
+            _builder.ConvertAlbumToSearchHint(new Album { Id = "a1", Title = "Album", Artist = "A" }),
+            _builder.ConvertArtistToSearchHint(new Artist { Id = "ar1", Name = "Artist" })
+        ];
+        Assert.Equal(["Audio", "MusicAlbum", "MusicArtist"], hints.Select(hint => hint["Type"]));
+        Assert.All(hints, hint =>
         {
-            Assert.False(string.IsNullOrWhiteSpace(hint.GetProperty("Id").GetString()));
-            Assert.Equal(hint.GetProperty("Id").GetString(), hint.GetProperty("ItemId").GetString());
+            Assert.False(string.IsNullOrWhiteSpace(Assert.IsType<string>(hint["Id"])));
+            Assert.Equal(hint["Id"], hint["ItemId"]);
         });
     }
 
     [Fact]
-    public void CreateSearchHintsResponse_LabelsExternalResults()
+    public void SearchHintConverters_LabelExternalResults()
     {
-        var result = _builder.CreateSearchHintsResponse(
-            [new Song
-            {
-                Id = "ext-apple-download-song-1",
-                Title = "Track",
-                Album = "Album",
-                ExternalProvider = "apple-download",
-                ExplicitContentLyrics = 1
-            }],
-            [new Album
-            {
-                Id = "ext-deezer-album-1",
-                Title = "Album",
-                ExternalProvider = "deezer"
-            }],
-            [new Artist
-            {
-                Id = "ext-qobuz-artist-1",
-                ExternalProvider = "qobuz"
-            }]);
-
-        var jsonResult = Assert.IsType<JsonResult>(result);
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
-        var hints = document.RootElement.GetProperty("SearchHints").EnumerateArray().ToArray();
-        Assert.Equal("Unknown artist [Q]", hints[0].GetProperty("Name").GetString());
-        Assert.Equal("Album [D]", hints[1].GetProperty("Name").GetString());
-        Assert.Equal("Unknown artist [D]", hints[1].GetProperty("AlbumArtist").GetString());
-        Assert.Equal("Track [A]/[E]", hints[2].GetProperty("Name").GetString());
-        Assert.Equal("Album [AM]", hints[2].GetProperty("Album").GetString());
-        Assert.Equal("Unknown artist [AM]", hints[2].GetProperty("Artists")[0].GetString());
+        var artist = _builder.ConvertArtistToSearchHint(new Artist
+        {
+            Id = "ext-qobuz-artist-1",
+            ExternalProvider = "qobuz"
+        });
+        var album = _builder.ConvertAlbumToSearchHint(new Album
+        {
+            Id = "ext-deezer-album-1",
+            Title = "Album",
+            ExternalProvider = "deezer"
+        });
+        var song = _builder.ConvertSongToSearchHint(new Song
+        {
+            Id = "ext-apple-download-song-1",
+            Title = "Track",
+            Album = "Album",
+            ExternalProvider = "apple-download",
+            ExplicitContentLyrics = 1
+        });
+        Assert.Equal("Unknown artist [Q]", artist["Name"]);
+        Assert.Equal("Album [D]", album["Name"]);
+        Assert.Equal("Unknown artist [D]", album["AlbumArtist"]);
+        Assert.Equal("Track [A]/[E]", song["Name"]);
+        Assert.Equal("Album [AM]", song["Album"]);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(song));
+        Assert.Equal("Unknown artist [AM]", document.RootElement.GetProperty("Artists")[0].GetString());
     }
 
     [Fact]
-    public void CreateSearchHintsResponse_PreservesNativeFieldsAndNormalizesBothIds()
+    public void NativeSearchHintConverter_PreservesFieldsAndNormalizesBothIds()
     {
-        using var native = JsonDocument.Parse(
-            """
-            {
-              "SearchHints": [
-                {
-                  "ItemId": "native-1",
-                  "Name": "Native",
-                  "Type": "Audio",
-                  "AlbumId": "album-1",
-                  "PrimaryImageTag": "image-1",
-                  "IndexNumber": 7
-                }
-              ]
-            }
+        using var native = JsonDocument.Parse("""
+            {"ItemId":"native-1","Name":"Native","Type":"Audio","AlbumId":"album-1",
+             "PrimaryImageTag":"image-1","IndexNumber":7,"Future":{"nested":true}}
             """);
-
-        var result = _builder.CreateSearchHintsResponse([], [], [], native);
-
-        var jsonResult = Assert.IsType<JsonResult>(result);
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
-        var hint = Assert.Single(document.RootElement.GetProperty("SearchHints").EnumerateArray());
+        var result = allstarr.Controllers.JellyfinController.ToNativeSearchHint(native.RootElement);
+        Assert.NotNull(result);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(result));
+        var hint = document.RootElement;
         Assert.Equal("native-1", hint.GetProperty("Id").GetString());
         Assert.Equal("native-1", hint.GetProperty("ItemId").GetString());
         Assert.Equal("album-1", hint.GetProperty("AlbumId").GetString());
         Assert.Equal("image-1", hint.GetProperty("PrimaryImageTag").GetString());
         Assert.Equal(7, hint.GetProperty("IndexNumber").GetInt32());
-    }
-
-    [Fact]
-    public void CreateSearchHintsResponse_AppliesLimitAfterMergingNativeAndExternalHints()
-    {
-        using var native = JsonDocument.Parse(
-            """{"SearchHints":[{"Id":"native-1","Name":"Native","Type":"Audio"}]}""");
-
-        var result = _builder.CreateSearchHintsResponse(
-            [new Song { Id = "song-1", Title = "Song", Artist = "Artist" }],
-            [new Album { Id = "album-1", Title = "Album", Artist = "Artist" }],
-            [new Artist { Id = "artist-1", Name = "Artist" }],
-            native,
-            2);
-
-        var jsonResult = Assert.IsType<JsonResult>(result);
-        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
-        Assert.Equal(2, document.RootElement.GetProperty("SearchHints").GetArrayLength());
-        Assert.Equal(2, document.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        Assert.True(hint.GetProperty("Future").GetProperty("nested").GetBoolean());
     }
 
     [Fact]

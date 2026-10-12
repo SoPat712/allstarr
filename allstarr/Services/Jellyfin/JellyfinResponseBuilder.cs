@@ -180,48 +180,6 @@ public class JellyfinResponseBuilder
         return CreateJsonResponse(albumItem);
     }
 
-    public IActionResult CreateSearchHintsResponse(
-        List<Song> songs,
-        List<Album> albums,
-        List<Artist> artists,
-        JsonDocument? nativeResponse = null,
-        int? limit = null)
-    {
-        var searchHints = new List<Dictionary<string, object?>>();
-
-        if (nativeResponse?.RootElement.TryGetProperty("SearchHints", out var nativeHints) == true)
-        {
-            foreach (var nativeHint in nativeHints.EnumerateArray())
-            {
-                var id = nativeHint.TryGetProperty("Id", out var idProperty)
-                    ? idProperty.GetString()
-                    : nativeHint.TryGetProperty("ItemId", out var itemIdProperty)
-                        ? itemIdProperty.GetString()
-                        : null;
-                if (string.IsNullOrWhiteSpace(id)) continue;
-
-                var preserved = JsonSerializer.Deserialize<Dictionary<string, object?>>(nativeHint.GetRawText())!;
-                preserved["Id"] = id;
-                preserved["ItemId"] = id;
-                searchHints.Add(preserved);
-            }
-        }
-
-        searchHints.AddRange(artists.Select(ConvertArtistToSearchHint));
-        searchHints.AddRange(albums.Select(ConvertAlbumToSearchHint));
-        searchHints.AddRange(songs.Select(ConvertSongToSearchHint));
-
-        var limitedHints = limit.HasValue
-            ? searchHints.Take(Math.Max(0, limit.Value)).ToList()
-            : searchHints;
-
-        return CreateJsonResponse(new
-        {
-            SearchHints = limitedHints,
-            TotalRecordCount = limitedHints.Count
-        });
-    }
-
     public Dictionary<string, object?> ConvertArtistToSearchHint(Artist artist)
     {
         var item = ConvertArtistToJellyfinItem(artist);

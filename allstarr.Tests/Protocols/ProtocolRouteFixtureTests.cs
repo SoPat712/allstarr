@@ -640,6 +640,43 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.VerifyAll();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinSearchHints_RanksAllKindsTogetherWithNativeTiesFirst(bool userScoped)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Oblivion", 2, 2, 2, null))
+            .ReturnsAsync(new SearchResult
+            {
+                Songs = [new Song { Id = "provider-song", Title = "Oblivion", Artist = "Grimes" }],
+                Albums = [new Album { Id = "provider-album", Title = "Other album", Artist = "Other artist" }],
+                Artists = [new Artist { Id = "provider-artist", Name = "Unrelated artist" }]
+            });
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+            request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(200, """{"Id":"user-1"}""")
+                : Json(200, """{"SearchHints":[{"ItemId":"native-song","Name":"Oblivion","Type":"Audio","Future":{"kept":true}}],"TotalRecordCount":1}"""),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+        var prefix = userScoped ? "/Users/user-1" : "";
+
+        using var response = await client.GetAsync($"{prefix}/Search/Hints?SearchTerm=Oblivion&Limit=2&api_key=fixture-key");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var hints = body.RootElement.GetProperty("SearchHints").EnumerateArray().ToArray();
+        Assert.Equal(["native-song", "provider-song"], hints.Select(item => item.GetProperty("Id").GetString()));
+        Assert.True(hints[0].GetProperty("Future").GetProperty("kept").GetBoolean());
+        Assert.Equal("native-song", hints[0].GetProperty("ItemId").GetString());
+        Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        gateway.VerifyAll();
+    }
+
     [Fact]
     public async Task JellyfinAuthBoundary_RejectsBeforeSearchCacheProviderOrExternalActions()
     {

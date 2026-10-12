@@ -526,10 +526,8 @@ public partial class JellyfinController
             native,
             HttpContext.RequestAborted);
 
-        var hints = merged.Artists.Select(RenderSearchHint)
-            .Concat(merged.Albums.Select(RenderSearchHint))
+        var hints = MusicSearchService.RankTogether(cleanQuery, merged).Select(RenderSearchHint)
             .Concat(native.Unranked)
-            .Concat(merged.Songs.Select(RenderSearchHint))
             .Take(Math.Max(0, limit))
             .ToList();
 
