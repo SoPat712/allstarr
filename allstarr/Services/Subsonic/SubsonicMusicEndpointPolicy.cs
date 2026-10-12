@@ -28,7 +28,6 @@ public static class SubsonicMusicEndpointPolicy
         "getIndexes",
         "getLicense",
         "getLyrics",
-        "getMusicDirectory",
         "getMusicFolders",
         "getNowPlaying",
         "getPlayQueue",
