@@ -2,11 +2,42 @@ import type { ActivityItem } from "./api";
 
 export type ActivityFilters = {
   query: string;
-  kind: string;
-  outcome: string;
+  category: string;
   provider: string;
-  severity: string;
+  problemsOnly: boolean;
 };
+
+export const activityCategories = [
+  { id: "listening", label: "Listening", kinds: ["streaming", "scrobble"] },
+  { id: "playlists", label: "Playlists", kinds: ["playlist"] },
+  { id: "matching", label: "Matching", kinds: ["matching", "library"] },
+  { id: "sources", label: "Sources", kinds: ["provider_health", "extension"] },
+  { id: "system", label: "System", kinds: ["job", "caching", "administration"] },
+] as const;
+
+export function activityCategory(kind: string) {
+  return activityCategories.find((category) => (category.kinds as readonly string[]).includes(kind))?.id ?? "system";
+}
+
+export function isProblem(item: ActivityItem) {
+  const severity = (item.severity || "info").toLowerCase();
+  return severity === "error" || severity === "warning" || outcomeClass(item.state) === "rejected";
+}
+
+export function dayLabel(value: string, now = new Date()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Earlier";
+  const startOfDay = (input: Date) => new Date(input.getFullYear(), input.getMonth(), input.getDate()).getTime();
+  const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: days < 7 ? "long" : undefined,
+    month: "long",
+    day: "numeric",
+    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  }).format(date);
+}
 
 export type ActivityGroup = {
   key: string;
@@ -39,10 +70,9 @@ export function relativeTime(value?: string | null, fallback = "Not checked") {
 export function filterActivity(items: ActivityItem[], filters: ActivityFilters) {
   const query = filters.query.trim().toLowerCase();
   return items.filter((item) => {
-    if (filters.kind && item.kind !== filters.kind) return false;
-    if (filters.outcome && item.state !== filters.outcome) return false;
+    if (filters.category && activityCategory(item.kind) !== filters.category) return false;
     if (filters.provider && item.providerId !== filters.provider) return false;
-    if (filters.severity && (item.severity || "info") !== filters.severity) return false;
+    if (filters.problemsOnly && !isProblem(item)) return false;
     return !query || [
       item.label,
       item.detail,
@@ -100,8 +130,8 @@ function groupTitle(entries: ActivityItem[]) {
     const accepted = entries.every((item) =>
       ["accepted", "pinned"].includes(item.state.toLowerCase()));
     const playlists = new Set(entries.map((item) => item.playlistName).filter(Boolean));
-    return `${accepted ? "Matched" : "Evaluated"} ${entries.length} tracks` +
-      (playlists.size ? ` across ${playlists.size} playlist${playlists.size === 1 ? "" : "s"}` : "");
+    return `${accepted ? "Matched" : "Checked"} ${entries.length} songs` +
+      (playlists.size ? ` in ${playlists.size} playlist${playlists.size === 1 ? "" : "s"}` : "");
   }
   if (first.kind === "playlist") return `${humanize(first.label)} · ${entries.length} playlists`;
   return `${humanize(first.label)} · ${entries.length} events`;
@@ -151,6 +181,15 @@ export function activityLink(item: ActivityItem) {
   if (item.providerId && item.providerId !== "library")
     return `#/integrations/services?source=${encodeURIComponent(item.providerId)}`;
   return null;
+}
+
+export function activityAction(item: ActivityItem, providerName: (id: string) => string) {
+  const href = activityLink(item);
+  if (!href) return null;
+  if (item.playlistLinkId) return { href, label: `Open ${item.playlistName || "playlist"}` };
+  if (item.kind === "caching") return { href, label: "Open cached songs" };
+  if (item.kind === "matching") return { href, label: "Review match" };
+  return { href, label: `Open ${providerName(item.providerId ?? "")}` };
 }
 
 export function outcomeClass(state: string) {

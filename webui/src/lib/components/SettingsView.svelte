@@ -12,7 +12,7 @@
     type UiSchema,
   } from "$lib/api";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
-  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
+  import FilePicker from "$lib/components/FilePicker.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -21,6 +21,7 @@
   import { fieldValue } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
+  import { Activity, Archive, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
 
   let {
     section = "general",
@@ -34,10 +35,17 @@
     onOpenSetup: () => void | Promise<void>;
   } = $props();
 
-  const tabs = [
-    { id: "general", label: "General", href: "#/settings/general" },
-    { id: "maintenance", label: "Maintenance", href: "#/settings/maintenance" },
+  const pages = [
+    { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
+    { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
+    { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Where songs are saved and how long cached data is kept." },
+    { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
+    { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
+    { id: "diagnostics", label: "Diagnostics", group: "Maintenance", icon: Activity, title: "Diagnostics", description: "Run checks when playback or playlists aren't working." },
+    { id: "setup", label: "Setup", group: "Maintenance", icon: Rocket, title: "Setup", description: "Reopen the setup guide or import settings from Allstarr v2." },
   ] as const;
+  const navGroups = ["This browser", "Server", "Maintenance"] as const;
+  const sectionPages: Record<string, string> = { general: "general", paths: "storage", cache: "storage", network: "network" };
   const contextualTrackCacheKeys = new Set([
     "STORAGE_MODE",
     "CACHE_DURATION_HOURS",
@@ -67,11 +75,13 @@
   let loadedSection = $state("");
   let dirtyOwners = $state<string[]>([]);
   let serverChanged = $state(false);
-  let openSections = $state(["general"]);
   let themeMode = $state<ThemeMode>("system");
 
-  const active = $derived(section === "maintenance" ? "maintenance" : "general");
-  const generalSections = $derived.by(() => {
+  const active = $derived(section === "maintenance"
+    ? "backups"
+    : pages.some((item) => item.id === section) ? section : "general");
+  const activePage = $derived(pages.find((item) => item.id === active) ?? pages[1]);
+  const configSections = $derived.by(() => {
     return (schema?.configSections ?? [])
       .filter((item) => item.id !== "spotify-import")
       .map((item) => ({
@@ -81,6 +91,7 @@
       }))
       .filter((item) => item.fields.length);
   });
+  const pageSections = $derived(configSections.filter((item) => (sectionPages[item.id] ?? "general") === active));
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
@@ -113,21 +124,15 @@
     if (!dirtyOwners.length) serverChanged = false;
   }
 
-  function disclosureToggled(event: Event, id: string) {
-    const open = (event.currentTarget as HTMLDetailsElement).open;
-    if (open && !openSections.includes(id)) openSections = [...openSections, id];
-    if (!open) openSections = openSections.filter((item) => item !== id);
-  }
-
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
     error = "";
     const requests: Array<[string, Promise<unknown>]> = [["schema", home.schema()]];
-    if (active === "general")
+    if (["general", "storage", "network"].includes(active))
       requests.push(["config", settings.config()]);
-    if (active === "maintenance") requests.push(
-      ["storage", settings.storage()],
+    if (active === "backups") requests.push(["storage", settings.storage()]);
+    if (active === "storage") requests.push(
       ["cache", settings.cache()],
       ["cachePreview", settings.cachePreview()],
     );
@@ -171,7 +176,7 @@
     try {
       await settings.save(updates);
       markSaved(item.id);
-      feedback = `${item.label} saved.`;
+      feedback = `${item.label} settings saved.`;
       await refresh();
     } catch (cause) {
       feedback = cause instanceof Error ? cause.message : `${item.label} could not be saved.`;
@@ -226,11 +231,13 @@
     }
   }
 
+  function deploymentOwned(field: ConfigSection["fields"][number]) {
+    return field.readOnly || field.ownership === "deployment";
+  }
+
   onMount(() => {
     themeMode = readThemeMode();
     const unsubscribeTheme = onThemeModeChange((mode) => { themeMode = mode; });
-    if (initialPanel && !openSections.includes(initialPanel))
-      openSections = [...openSections, initialPanel];
     void refresh();
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
@@ -251,43 +258,62 @@
     onRetry={refresh}
   />
 {:else}
-  <section class="settings-workspace" aria-busy={refreshing}>
-    <SegmentedNav items={tabs} {active} label="Settings sections" class="route-tabs settings-tabs" />
+  <section class="settings-workspace settings-layout" aria-busy={refreshing}>
+    <nav class="settings-nav" aria-label="Settings sections">
+      {#each navGroups as group}
+        <p>{group}</p>
+        {#each pages.filter((item) => item.group === group) as item (item.id)}
+          {@const Icon = item.icon}
+          <a href={`#/settings/${item.id}`} aria-current={active === item.id ? "page" : undefined}>
+            <Icon size={18} aria-hidden="true" />{item.label}
+          </a>
+        {/each}
+      {/each}
+    </nav>
+    <SegmentedNav items={pages.map((item) => ({ id: item.id, label: item.label, href: `#/settings/${item.id}` }))} {active} label="Settings sections" class="route-tabs settings-tabs" />
 
-    {#if error}
-      <div class="degraded-banner" role="status">
-        <span aria-hidden="true">!</span><p><strong>Some settings may be stale.</strong> {error}</p>
-        <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
-      </div>
-    {/if}
-    {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
-    {#if serverChanged}
-      <div class="degraded-banner" role="status">
-        <p><strong>Server settings changed.</strong> Your unsaved edits are preserved.</p>
-        <Button variant="secondary" size="sm" onclick={() => { dirtyOwners = []; serverChanged = false; void refresh(); }}>Reload server values</Button>
-      </div>
-    {/if}
+    <div class="settings-content">
+      <header class="settings-page-head">
+        <h2>{activePage.title}</h2>
+        <p>{activePage.description}</p>
+      </header>
 
-    {#if active === "general"}
-      <div class="settings-stack">
-        <header class="settings-intro"><p class="eyebrow">Runtime configuration</p><h2>General</h2><p>Durable settings apply immediately. Deployment-owned values are identified but cannot be edited here.</p></header>
-        <section class="panel appearance-settings">
-          <div><strong>Appearance</strong><small>Stored in this browser and applied immediately.</small></div>
-          <label class="field"><span>Color theme</span><SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} /></label>
+      {#if error}
+        <div class="degraded-banner" role="status">
+          <span aria-hidden="true">!</span><p><strong>Some settings may be out of date.</strong> {error}</p>
+          <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
+        </div>
+      {/if}
+      {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+      {#if serverChanged}
+        <div class="degraded-banner" role="status">
+          <p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p>
+          <Button variant="secondary" size="sm" onclick={() => { dirtyOwners = []; serverChanged = false; void refresh(); }}>Reload server values</Button>
+        </div>
+      {/if}
+
+      {#if active === "appearance"}
+        <section class="settings-card">
+          <div class="settings-row">
+            <div><strong>Color theme</strong><small>Match your device, or always use light or dark.</small></div>
+            <SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} />
+          </div>
         </section>
-        {#each generalSections as item}
-          <details
-            class="panel settings-disclosure"
-            open={openSections.includes(item.id)}
-            ontoggle={(event) => disclosureToggled(event, item.id)}
-          >
-            <summary><DisclosureLabel title={item.label} description={`${item.fields.filter((field) => !field.readOnly).length} editable settings`} /></summary>
-            <form class="settings-fields" oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
+      {:else if ["general", "storage", "network"].includes(active)}
+        {#each pageSections as item (item.id)}
+          {@const editable = item.fields.filter((field) => !deploymentOwned(field))}
+          <form class="settings-card settings-disclosure" aria-label={`${item.label} settings`} oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
+            <header><h3>{item.label}</h3></header>
+            <div class="settings-fields">
               {#each item.fields as field}
-                <label class="setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
-                  <span><strong>{field.label}</strong>{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</span>
-                  {#if field.readOnly || field.ownership === "deployment"}
-                    <output>{String(fieldValue(config, field))}</output>
+                <label class="setting-field settings-row" class:read-only={deploymentOwned(field)}>
+                  <div>
+                    <strong>{field.label}</strong>
+                    {#if field.helpText}<small>{field.helpText}</small>{/if}
+                    {#if deploymentOwned(field)}<small class="settings-owned"><Lock size={12} aria-hidden="true" />Deployment-owned · change it in your deployment config</small>{/if}
+                  </div>
+                  {#if deploymentOwned(field)}
+                    <output>{String(fieldValue(config, field)) || "Not set"}</output>
                   {:else if field.type === "select"}
                     <SelectField
                       name={field.key}
@@ -297,11 +323,13 @@
                       onchange={() => markDirty(item.id)}
                     />
                   {:else if field.type === "toggle"}
-                    <Checkbox
-                      name={field.key}
-                      checked={Boolean(fieldValue(config, field))}
-                      onCheckedChange={() => markDirty(item.id)}
-                    />
+                    <span class="settings-toggle">
+                      <Checkbox
+                        name={field.key}
+                        checked={Boolean(fieldValue(config, field))}
+                        onCheckedChange={() => markDirty(item.id)}
+                      />
+                    </span>
                   {:else}
                     <input
                       name={field.key}
@@ -311,55 +339,25 @@
                       max={field.max ?? undefined}
                     />
                   {/if}
-                  {#if field.helpText}<small>{field.helpText}</small>{/if}
                 </label>
               {/each}
               {#if item.id === "cache"}
                 <p class="settings-impact">
-                  Estimated ceiling after save: memory cache remains bounded at 16 MiB and disk remains deployment-bounded at {cacheDiskCeiling.toLocaleString()} MiB. Retention changes affect refresh frequency, not those ceilings.
+                  Memory cache stays capped at 16 MiB and disk cache at {cacheDiskCeiling.toLocaleString()} MiB. These times only change how often data is refreshed.
                 </p>
               {/if}
-              {#if item.fields.some((field) => !field.readOnly && field.ownership !== "deployment")}
-                <footer><Button type="submit" disabled={Boolean(action) || !dirtyOwners.includes(item.id)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</Button></footer>
+              {#if editable.length}
+                <footer>
+                  {#if dirtyOwners.includes(item.id)}<span>Unsaved changes</span>{/if}
+                  <Button type="submit" disabled={Boolean(action) || !dirtyOwners.includes(item.id)}>{action === item.id ? "Saving…" : `Save ${item.label}`}</Button>
+                </footer>
               {/if}
-            </form>
-          </details>
+            </div>
+          </form>
+        {:else}
+          <div class="compact-empty"><strong>Nothing to change here</strong><p>This server doesn't expose any settings in this section.</p></div>
         {/each}
-      </div>
-    {:else}
-      <div class="settings-stack">
-        <header class="settings-intro"><p class="eyebrow">Operations</p><h2>Maintenance</h2><p>Readiness, verified backups, bounded cache cleanup, and read-only media diagnostics.</p></header>
-        <section class="maintenance-grid">
-          <article class="panel maintenance-card">
-            <header><div><strong>SQLite</strong><small>Durable application state</small></div><Badge state={storage?.storage.readiness?.toLowerCase() === "ready" ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge></header>
-            <dl><div><dt>Provider</dt><dd>{storage?.storage.provider ?? "SQLite"}</dd></div><div><dt>Verified backups</dt><dd>{storage?.backups.filter((backup) => backup.verifiedAt).length ?? 0}</dd></div></dl>
-            <p>Database and encryption key ring. Keep downloaded backups private.</p>
-            {#if restorePending}
-              <p class="notice-info" role="status">A restore is staged. Restart Allstarr to finish replacing saved state and credentials.</p>
-            {/if}
-            {#if administrator}
-              <Button disabled={Boolean(action) || !storageReady || restorePending} onclick={() => void run("backup", settings.backup, "Backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
-            {/if}
-            {#if (storage?.backups.length ?? 0) > 0}
-              <ul class="backup-list m-0 grid min-w-0 list-none gap-3 p-0" aria-label="Verified backups">
-                {#each storage?.backups ?? [] as backup (backup.id)}
-                  <li class="grid min-w-0 gap-2">
-                    <span class="min-w-0 [overflow-wrap:anywhere]"><strong>{backup.fileName}</strong><small>{backupDate(backup.createdAt)} · {backupSize(backup.bytes)} · Verified</small></span>
-                    <Button variant="secondary" class="justify-self-start" href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button>
-                  </li>
-                {/each}
-              </ul>
-            {:else}
-              <p class="backup-empty">No backups yet.</p>
-            {/if}
-            {#if administrator}
-              <label class="grid min-w-0 gap-2 text-sm font-medium">
-                Restore from backup ZIP (up to 1 GiB)
-                <input type="file" class="w-full min-w-0" disabled={Boolean(action) || restorePending} accept=".zip,application/zip" aria-label="Backup ZIP file" onchange={(event) => { restoreFile = (event.currentTarget as HTMLInputElement).files?.[0] ?? null; }} />
-              </label>
-              <Button variant="secondary" disabled={!restoreFile || Boolean(action) || restorePending} onclick={() => { restoreError = ""; restoreOpen = true; }}>Restore on restart</Button>
-            {/if}
-          </article>
+        {#if active === "storage"}
           <CacheDiagnosticsCard
             snapshot={cache}
             preview={cachePreview}
@@ -367,25 +365,67 @@
             onClean={() => void run("cleanup", settings.cleanCache, "Cache cleanup complete.")}
             onPurge={(target) => { purgeTarget = target; purgeOpen = true; }}
           />
-          <article class="panel maintenance-card">
-            <header><div><strong>Media pipeline</strong><small>Metadata, artwork, and authenticated playback</small></div></header>
-            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</Button>
-          </article>
-          <article class="panel maintenance-card">
-            <header><div><strong>Playlist readiness</strong><small>Source access and songs available to listeners</small></div></header>
-            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</Button>
-          </article>
-          {#if administrator}
-            <article class="panel maintenance-card">
-              <header><div><strong>Setup guide</strong><small>Durable account onboarding</small></div></header>
-              <p>Reopen setup without clearing browser data or changing runtime health.</p>
-              <Button variant="secondary" onclick={() => void onOpenSetup()}>Open setup guide</Button>
-            </article>
+        {/if}
+      {:else if active === "backups"}
+        <article class="settings-card maintenance-card">
+          <header>
+            <div><h3>Database</h3><small>Durable application state, accounts and encryption keys</small></div>
+            <Badge state={storageReady ? "healthy" : "degraded"}>{storage?.storage.readiness ?? "Unknown"}</Badge>
+          </header>
+          {#if restorePending}
+            <p class="notice-info" role="status">A restore is staged. Restart Allstarr to finish replacing saved state and credentials.</p>
           {/if}
-          {#if administrator}<EnvMigrationCard />{/if}
+          <div class="settings-row">
+            <div><strong>Create a backup</strong><small>Backups include saved sign-ins. Keep downloaded files private.</small></div>
+            {#if administrator}
+              <Button disabled={Boolean(action) || !storageReady || restorePending} onclick={() => void run("backup", settings.backup, "Backup created.")}>{action === "backup" ? "Creating…" : "Create verified backup"}</Button>
+            {/if}
+          </div>
+          {#if (storage?.backups.length ?? 0) > 0}
+            <ul class="backup-list" aria-label="Verified backups">
+              {#each storage?.backups ?? [] as backup (backup.id)}
+                <li>
+                  <span><strong>{backup.fileName}</strong><small>{backupDate(backup.createdAt)} · {backupSize(backup.bytes)} · Verified</small></span>
+                  <Button variant="secondary" size="sm" href={settings.backupDownloadUrl(backup.id)} download={backup.fileName}>Download</Button>
+                </li>
+              {/each}
+            </ul>
+          {:else}
+            <p class="backup-empty">No backups yet.</p>
+          {/if}
+          {#if administrator}
+            <div class="settings-row">
+              <div><strong>Restore from a backup</strong><small>Choose a backup ZIP (up to 1 GiB). It replaces saved state the next time Allstarr restarts.</small></div>
+              <div class="backup-restore">
+                <FilePicker label="Backup ZIP file" accept=".zip,application/zip" buttonLabel="Choose backup" disabled={Boolean(action) || restorePending} onselect={(files) => { restoreFile = files[0] ?? null; }} />
+                <Button variant="secondary" disabled={!restoreFile || Boolean(action) || restorePending} onclick={() => { restoreError = ""; restoreOpen = true; }}>Restore on restart</Button>
+              </div>
+            </div>
+          {/if}
+        </article>
+      {:else if active === "diagnostics"}
+        <section class="settings-card">
+          <div class="settings-row maintenance-card">
+            <div><strong>Media pipeline</strong><small>Checks metadata, artwork and authenticated playback.</small></div>
+            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("media", settings.mediaProbe, "Media pipeline checked.")}>{action === "media" ? "Testing…" : "Test media pipeline"}</Button>
+          </div>
+          <div class="settings-row maintenance-card">
+            <div><strong>Playlist readiness</strong><small>Checks source access and which songs listeners can play.</small></div>
+            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void run("playlists", settings.playlistProbe, "Playlist pipeline checked.")}>{action === "playlists" ? "Testing…" : "Test playlist readiness"}</Button>
+          </div>
         </section>
-      </div>
-    {/if}
+      {:else if active === "setup"}
+        {#if administrator}
+          <section class="settings-card">
+            <div class="settings-row maintenance-card">
+              <div><strong>Setup guide</strong><small>Walk through connecting your media server and accounts again. Nothing is reset.</small></div>
+              <Button variant="secondary" onclick={() => void onOpenSetup()}>Open setup guide</Button>
+            </div>
+          </section>
+          <EnvMigrationCard />
+        {/if}
+      {/if}
+    </div>
   </section>
 
   <ConfirmDialog

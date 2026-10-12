@@ -4,7 +4,7 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
+  import FilePicker from "$lib/components/FilePicker.svelte";
 
   let status = $state<Awaited<ReturnType<typeof settings.migrationStatus>> | null>(null);
   let preview = $state<EnvMigrationPreview | null>(null);
@@ -79,46 +79,50 @@
   onMount(() => void loadStatus());
 </script>
 
-<article class="panel maintenance-card">
+<article class="settings-card maintenance-card env-migration-card">
   <header>
-    <div><strong>Legacy v2 import</strong><small>One-time durable migration</small></div>
+    <div><strong>Import from Allstarr v2</strong><small>Bring settings, accounts, playlists and schedules over from an old <code>.env</code> file. Secrets are never shown.</small></div>
     <Badge state={status?.completed ? "healthy" : "suggested"}>
       {status?.completed ? "Imported" : "Optional"}
     </Badge>
   </header>
-  <p>Preview a legacy <code>.env</code> locally, then import supported settings, accounts, playlists, and schedules into PostgreSQL. Secrets are never echoed.</p>
 
   {#if preview}
-    <dl>
-      <div><dt>Runtime settings</dt><dd>{preview.importedSettingCount}</dd></div>
-      <div><dt>Provider accounts</dt><dd>{preview.providerAccountCount}</dd></div>
-      <div><dt>Playlist links</dt><dd>{preview.playlistLinkCount}</dd></div>
+    <dl class="migration-summary">
+      <div><dt>Settings</dt><dd>{preview.importedSettingCount}</dd></div>
+      <div><dt>Accounts</dt><dd>{preview.providerAccountCount}</dd></div>
+      <div><dt>Playlists</dt><dd>{preview.playlistLinkCount}</dd></div>
       <div><dt>Schedules</dt><dd>{preview.scheduleCount}</dd></div>
       <div><dt>Needs review</dt><dd>{preview.manualCount}</dd></div>
     </dl>
-    {#each preview.conflicts as item}<p class="notice-error">{item}</p>{/each}
-    {#each preview.warnings as item}<p class="credential-safety">{item}</p>{/each}
-    <details>
-      <summary class="disclosure-summary"><DisclosureLabel title={`Review ${preview.items.length} parsed settings`} description="Inspect every detected value before importing" /></summary>
-      <ul class="migration-items">
-        {#each preview.items as item}
-          <li><strong>{item.key}</strong><small>Line {item.sourceLine} · {item.action}</small><span>{item.reason}</span></li>
-        {/each}
-      </ul>
-    </details>
-    <label class="permission-confirm">
-      <Checkbox bind:checked={confirmed} />
-      <span>I reviewed this preview and understand that imported accounts remain disabled when required.</span>
-    </label>
-    <div class="maintenance-actions">
+    <div class="migration-notes">
+      {#each preview.conflicts as item}<p class="notice-error">{item}</p>{/each}
+      {#each preview.warnings as item}<p class="credential-safety">{item}</p>{/each}
+      <details class="migration-details">
+        <summary>Review {preview.items.length} parsed settings</summary>
+        <ul class="migration-items">
+          {#each preview.items as item}
+            <li><strong>{item.key}</strong><small>Line {item.sourceLine} · {item.action}</small><span>{item.reason}</span></li>
+          {/each}
+        </ul>
+      </details>
+      <label class="permission-confirm">
+        <Checkbox bind:checked={confirmed} />
+        <span>I reviewed this preview. Imported accounts stay turned off until I check them.</span>
+      </label>
+    </div>
+    <footer>
       <Button variant="secondary" disabled={Boolean(action)} onclick={() => void reset()}>{action === "reset" ? "Discarding…" : "Discard and retry"}</Button>
       <Button disabled={!confirmed || !preview.canApply || Boolean(action)} onclick={() => void apply()}>{action === "apply" ? "Importing…" : "Import preview"}</Button>
-    </div>
+    </footer>
   {:else}
-    <form class="settings-fields" onsubmit={(event) => { event.preventDefault(); void inspect(); }}>
-      <label class="setting-field"><span><strong>Legacy environment file</strong></span><input type="file" onchange={(event) => { file = event.currentTarget.files?.[0] ?? null; }} /></label>
+    <form onsubmit={(event) => { event.preventDefault(); void inspect(); }}>
+      <div class="settings-row">
+        <div><strong>Legacy environment file</strong><small>Nothing is imported until you review a preview.</small></div>
+        <FilePicker label="Legacy environment file" onselect={(files) => { file = files[0] ?? null; }} />
+      </div>
       <footer><Button variant="secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</Button></footer>
     </form>
   {/if}
-  {#if feedback}<p class={failed ? "notice-error" : "action-feedback"} role={failed ? "alert" : "status"}>{feedback}</p>{/if}
+  {#if feedback}<p class={failed ? "notice-error migration-feedback" : "action-feedback migration-feedback"} role={failed ? "alert" : "status"}>{feedback}</p>{/if}
 </article>
