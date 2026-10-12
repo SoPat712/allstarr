@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Subsonic;
 using Microsoft.AspNetCore.Http;
 
 namespace allstarr.Tests;
@@ -531,6 +532,53 @@ public sealed class ProtocolSupportMatrixTests
 
         return operations;
     }
+
+    [Fact]
+    public void SubsonicOpenApi_EveryMethodMatchesReviewedMusicOnlyPolicy()
+    {
+        using var qualification = ReadFixture("subsonic-openapi-qualification.json");
+        var contract = qualification.RootElement;
+        var specPath = Path.Combine(FindRepositoryRoot(), "apis", "specifications", "subsonic", "openapi-3.0.0.json");
+        using var openApi = JsonDocument.Parse(File.ReadAllText(specPath));
+        Assert.Equal(
+            contract.GetProperty("openApi").GetProperty("version").GetString(),
+            openApi.RootElement.GetProperty("info").GetProperty("version").GetString());
+        var methods = openApi.RootElement.GetProperty("paths").EnumerateObject()
+            .Select(path => SubsonicMusicEndpointPolicy.MethodName(path.Name)!)
+            .ToHashSet(StringComparer.Ordinal);
+        Assert.Equal(contract.GetProperty("openApi").GetProperty("methodCount").GetInt32(), methods.Count);
+
+        static string[] Names(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToArray();
+        var intercepted = Names(contract.GetProperty("intercepted"));
+        var relayed = Names(contract.GetProperty("relayed"));
+        var denied = contract.GetProperty("denied").EnumerateObject().SelectMany(group => Names(group.Value)).ToArray();
+        var classified = intercepted.Concat(relayed).Concat(denied).ToArray();
+        Assert.Equal(classified.Length, classified.Distinct(StringComparer.Ordinal).Count());
+        Assert.Equal(methods.Order(StringComparer.Ordinal), classified.Order(StringComparer.Ordinal));
+
+        Assert.Equal(relayed.Order(StringComparer.Ordinal),
+            SubsonicMusicEndpointPolicy.RelayedMethods.Order(StringComparer.Ordinal));
+        Assert.All(denied, method => Assert.False(SubsonicMusicEndpointPolicy.CanRelay($"rest/{method}.view"), method));
+        Assert.Equal(intercepted.Order(StringComparer.Ordinal), SubsonicControllerMethods().Order(StringComparer.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("rest/getArtists", "getArtists")]
+    [InlineData("/rest/getArtists.view", "getArtists")]
+    [InlineData("rest/", null)]
+    [InlineData("rest/getArtists/extra", null)]
+    [InlineData("app/getArtists", null)]
+    [InlineData(null, null)]
+    public void SubsonicMethodName_AcceptsOnlyRestMethodPaths(string? endpoint, string? expected) =>
+        Assert.Equal(expected, SubsonicMusicEndpointPolicy.MethodName(endpoint));
+
+    private static IEnumerable<string> SubsonicControllerMethods() =>
+        typeof(allstarr.Controllers.SubsonicController).GetMethods()
+            .SelectMany(method => method.GetCustomAttributes(typeof(Microsoft.AspNetCore.Mvc.RouteAttribute), false)
+                .Cast<Microsoft.AspNetCore.Mvc.RouteAttribute>())
+            .Select(route => SubsonicMusicEndpointPolicy.MethodName(route.Template))
+            .OfType<string>()
+            .Distinct(StringComparer.Ordinal);
 
     private static JsonDocument ReadFixture(string fileName)
     {
