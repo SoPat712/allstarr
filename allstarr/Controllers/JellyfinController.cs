@@ -1,6 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -170,14 +169,6 @@ public partial class JellyfinController : ControllerBase
         string externalId,
         CancellationToken cancellationToken = default) =>
         _providerGateway.GetArtistTracksAsync(HttpContext.RequireProtocolExecutionContext(), provider, externalId);
-
-    private async Task<IReadOnlyList<Song>> SearchProviderSongsAsync(
-        string provider,
-        string query,
-        int limit,
-        CancellationToken cancellationToken = default) =>
-        (await _providerGateway.SearchAsync(
-            HttpContext.RequireProtocolExecutionContext(), query, limit, 0, 0, provider)).Songs;
 
     private async Task<string?> GetProviderImageUrlAsync(
         string provider,
