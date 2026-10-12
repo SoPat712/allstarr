@@ -131,7 +131,8 @@ public interface ITrackIdentityService
         CancellationToken cancellationToken = default);
 
     Task<int> AddExactAliasesAsync(ProviderExecutionContext context, ProviderExternalResourceId source,
-        IReadOnlyList<ProviderExternalResourceId> aliases, CancellationToken cancellationToken = default);
+        IReadOnlyList<ProviderExternalResourceId> aliases, string verificationMethod = "odesli-link",
+        CancellationToken cancellationToken = default);
 
     Task<TrackIdentityLinkResult> LinkAsync(
         ProviderExecutionContext executionContext,

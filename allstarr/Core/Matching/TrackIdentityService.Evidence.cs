@@ -8,7 +8,8 @@ namespace allstarr.Core.Matching;
 public sealed partial class TrackIdentityService
 {
     public async Task<int> AddExactAliasesAsync(ProviderExecutionContext execution, ProviderExternalResourceId source,
-        IReadOnlyList<ProviderExternalResourceId> aliases, CancellationToken cancellationToken = default)
+        IReadOnlyList<ProviderExternalResourceId> aliases, string verificationMethod = "odesli-link",
+        CancellationToken cancellationToken = default)
     {
         EnsureStorageReady();
         ThrowIfUnavailable(execution, cancellationToken);
@@ -31,7 +32,7 @@ public sealed partial class TrackIdentityService
             if (await FindExactLinkAsync(db, ExactKey(alias), ProviderIdentityScope.Catalog, null, true, cancellationToken) != null)
                 continue;
             AddLink(db, execution, new(identity.CanonicalRecordingId, alias, ProviderIdentityScope.Catalog,
-                ProviderIdentityVerification.Verified, "odesli-link", 1), null, _clock.UtcNow);
+                ProviderIdentityVerification.Verified, verificationMethod, 1), null, _clock.UtcNow);
             added++;
         }
         await db.SaveChangesAsync(cancellationToken);

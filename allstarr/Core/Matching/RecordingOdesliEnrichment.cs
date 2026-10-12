@@ -12,14 +12,14 @@ namespace allstarr.Core.Matching;
 public sealed record RecordingOdesliPayload(Guid SourceIdentityId);
 
 public sealed class RecordingOdesliEnrichmentQueue(
-    DurableJobQueue jobs, IOptions<OdesliSettings> settings, IPlatformClock clock,
+    DurableJobQueue jobs, IPlatformClock clock,
     ILogger<RecordingOdesliEnrichmentQueue> logger)
 {
     public const string JobType = "recording.odesli.enrich";
 
+    // ISRC lookups use the providers already configured, so the job runs whether or not Odesli is enabled.
     public async Task EnqueueAsync(Guid userId, Guid sourceIdentityId, string correlationId, CancellationToken cancellationToken)
     {
-        if (!settings.Value.Enabled) return;
         try
         {
             var week = clock.UtcNow.ToUnixTimeSeconds() / (7 * 24 * 60 * 60);
@@ -44,7 +44,6 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
 
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
-        if (!settings.Value.Enabled) return DurableJobCompletion.Success();
         RecordingOdesliPayload? payload;
         try { payload = execution.Claim.Payload.Deserialize<RecordingOdesliPayload>(); }
         catch (JsonException) { payload = null; }
@@ -67,26 +66,35 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
             if (saved == null) return DurableJobCompletion.Failure("cross_links_account_unavailable", "The source account is unavailable.");
             account = new(saved.Id, saved.ProviderId, saved.Scope, saved.Revision, saved.Enabled, saved.OwnerUserId);
         }
-        var url = OdesliService.BuildTrackUrl(source.ProviderId, source.ExternalId);
-        if (url == null) return DurableJobCompletion.Success();
         try
         {
-            var links = await odesli.GetTrackLinksAsync(url, cancellationToken);
-            var aliases = registry.Providers.Select(provider =>
-                    links.TryGetValue(OdesliService.NormalizeProviderId(provider.Id), out var id)
-                        ? new ProviderExternalResourceId(provider.Id, ProviderResourceKind.Track, id) : null)
-                .OfType<ProviderExternalResourceId>().Take(32).ToArray();
             var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null,
                 durableJobId: execution.Claim.JobId, actingForUserId: execution.Claim.OwnerUserId);
-            var context = new ProviderExecutionContext(actor, source.ProviderId, account,
-                new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
-                    ProviderExplicitContentPolicy.Allow, false, true, false, [source.ProviderId]),
-                "cross-provider-evidence", execution.Claim.CorrelationId, clock.UtcNow.AddSeconds(30), cancellationToken);
-            var added = await identities.AddExactAliasesAsync(context,
-                new(source.ProviderId, ProviderResourceKind.Track, source.ExternalId,
-                    source.CatalogNamespace == "default" ? null : source.CatalogNamespace), aliases, cancellationToken);
+            var context = EvidenceContext(actor, source.ProviderId, account, execution.Claim.CorrelationId, cancellationToken);
+            var sourceTrack = new ProviderExternalResourceId(source.ProviderId, ProviderResourceKind.Track, source.ExternalId,
+                source.CatalogNamespace == "default" ? null : source.CatalogNamespace);
+            var isrc = await db.RecordingIdentifiers.AsNoTracking()
+                .Where(item => item.RecordingId == source.CanonicalRecordingId && item.Kind == RecordingIdentifierKinds.Isrc)
+                .Select(item => item.Value)
+                .FirstOrDefaultAsync(cancellationToken);
+            var added = isrc == null
+                ? 0
+                : await identities.AddExactAliasesAsync(context, sourceTrack,
+                    await FindByIsrcAsync(actor, source.ProviderId, isrc, execution.Claim.CorrelationId, cancellationToken),
+                    "isrc-lookup", cancellationToken);
+            var url = settings.Value.Enabled ? OdesliService.BuildTrackUrl(source.ProviderId, source.ExternalId) : null;
+            if (url != null)
+            {
+                var links = await odesli.GetTrackLinksAsync(url, cancellationToken);
+                var aliases = registry.Providers.Select(provider =>
+                        links.TryGetValue(OdesliService.NormalizeProviderId(provider.Id), out var id)
+                            ? new ProviderExternalResourceId(provider.Id, ProviderResourceKind.Track, id) : null)
+                    .OfType<ProviderExternalResourceId>().Take(32).ToArray();
+                added += await identities.AddExactAliasesAsync(context, sourceTrack, aliases, "odesli-link", cancellationToken);
+            }
             if (added > 0 || await db.ProviderTrackIdentities.AnyAsync(item =>
-                    item.CanonicalRecordingId == source.CanonicalRecordingId && item.VerificationMethod == "odesli-link",
+                    item.CanonicalRecordingId == source.CanonicalRecordingId &&
+                    (item.VerificationMethod == "odesli-link" || item.VerificationMethod == "isrc-lookup"),
                     cancellationToken))
             {
                 var snapshots = await db.ExternalMetadataSnapshots.Where(item =>
@@ -115,4 +123,45 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
             return DurableJobCompletion.Retry("cross_links_unavailable", "Cross-provider evidence will retry.");
         }
     }
+
+    /// <summary>
+    /// The same recording on other account-free providers, found by an exact ISRC match.
+    /// A provider that cannot look up ISRCs, or fails, simply adds nothing.
+    /// </summary>
+    private async Task<IReadOnlyList<ProviderExternalResourceId>> FindByIsrcAsync(
+        ProviderActorContext actor, string sourceProviderId, string isrc, string correlationId,
+        CancellationToken cancellationToken)
+    {
+        var lookups = registry.Providers
+            .Where(provider => provider.Id != sourceProviderId && provider.Capabilities.Any(capability =>
+                capability.Capability == ProviderCapabilityKind.Metadata &&
+                capability.AccountRequirement != ProviderAccountRequirement.Required))
+            .Select(async provider =>
+            {
+                if (!registry.TryGetCapability<IProviderMetadataCapability>(
+                        provider.Id, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null) return null;
+                try
+                {
+                    var outcome = await metadata.LookupByIsrcAsync(
+                        EvidenceContext(actor, provider.Id, null, correlationId, cancellationToken),
+                        new ProviderIsrcLookupRequest(isrc));
+                    return outcome.IsSuccess &&
+                           string.Equals(outcome.RequireValue().Isrc, isrc, StringComparison.OrdinalIgnoreCase)
+                        ? outcome.RequireValue().Id
+                        : null;
+                }
+                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+                {
+                    return null;
+                }
+            });
+        return (await Task.WhenAll(lookups)).OfType<ProviderExternalResourceId>().Take(32).ToArray();
+    }
+
+    private ProviderExecutionContext EvidenceContext(ProviderActorContext actor, string providerId,
+        ProviderAccountContext? account, string correlationId, CancellationToken cancellationToken) =>
+        new(actor, providerId, account,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, false, true, false, [providerId]),
+            "cross-provider-evidence", correlationId, clock.UtcNow.AddSeconds(30), cancellationToken);
 }

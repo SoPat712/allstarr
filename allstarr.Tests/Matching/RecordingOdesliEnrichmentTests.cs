@@ -68,9 +68,8 @@ public sealed partial class TrackIdentityServiceTests
         var settings = Options.Create(new OdesliSettings());
         var options = new DurableJobOptions();
         var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
-        var queue = new RecordingOdesliEnrichmentQueue(jobs, settings, _clock, NullLogger<RecordingOdesliEnrichmentQueue>.Instance);
-        await queue.EnqueueAsync(_userA, sourceId, "disabled", default);
-        await using (var db = await _factory.CreateDbContextAsync()) Assert.Empty(await db.Jobs.ToListAsync());
+        // ISRC lookups need no extra service, so evidence jobs are queued whether or not Odesli is enabled.
+        var queue = new RecordingOdesliEnrichmentQueue(jobs, _clock, NullLogger<RecordingOdesliEnrichmentQueue>.Instance);
         settings.Value.Enabled = true;
         var http = new CrossLinkHandler(status);
         var registry = new Mock<IProviderRegistry>();
