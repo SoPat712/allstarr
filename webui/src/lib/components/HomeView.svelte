@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { Activity, CircleCheck, CircleDashed, HardDrive, Headphones, KeyRound, ListMusic, Mic2, Route, Server, TrendingUp } from "@lucide/svelte";
+  import { ChevronRight, CircleAlert, CircleCheck, CircleDashed, Headphones, KeyRound, Music } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import { home } from "$lib/api";
   import { humanize, relativeTime } from "$lib/activity";
@@ -8,8 +8,6 @@
   import ActivityIcon from "$lib/components/ActivityIcon.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { Progress } from "$lib/components/ui/progress";
-  import { Badge } from "$lib/components/ui/badge";
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -113,11 +111,56 @@
     return name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "?";
   }
 
+  function plural(count: number, one: string, many = `${one}s`) {
+    return `${count.toLocaleString()} ${count === 1 ? one : many}`;
+  }
+
   function listenTrend(current = 0, previous = 0) {
     const change = current - previous;
-    if (!change) return "Same as the prior 7 days";
-    return `${Math.abs(change).toLocaleString()} ${change > 0 ? "more" : "fewer"} than the prior 7 days`;
+    if (!change) return "the same as last week";
+    return `${Math.abs(change).toLocaleString()} ${change > 0 ? "more" : "fewer"} than last week`;
   }
+
+  const attention = $derived.by(() => {
+    if (!snapshot || !summary) return [];
+    const items: Array<{ key: string; title: string; detail: string; href: string; action: string }> = [];
+    if (summary.unresolved > 0)
+      items.push({
+        key: "unresolved",
+        title: `${plural(summary.unresolved, "song")} ${summary.unresolved === 1 ? "is" : "are"} waiting for a match`,
+        detail: "Listeners can see them, but they can't play until a match is confirmed.",
+        href: "#/library/mappings",
+        action: "Review matches",
+      });
+    if (administrator)
+      for (const issue of sourceIssues)
+        items.push({
+          key: `source:${issue.providerId}`,
+          title: `${issue.providerName} can't play songs`,
+          detail: humanize(issue.reason),
+          href: `#/integrations/services?source=${encodeURIComponent(issue.providerId)}&section=configuration`,
+          action: `Open ${issue.providerName}`,
+        });
+    const storageReadiness = snapshot.status?.durableStorage?.readiness;
+    if (administrator && snapshot.status && storageReadiness !== "Ready")
+      items.push({
+        key: "storage",
+        title: "Allstarr's database isn't ready",
+        detail: storageReadiness ? `Current state: ${humanize(storageReadiness)}` : "Its state couldn't be read.",
+        href: "#/settings/backups",
+        action: "Open backups",
+      });
+    for (const provider of snapshot.providers ?? [])
+      if (provider.failedCapabilityCount > 0 && !sourceIssues.some((issue) => issue.providerId === provider.providerId))
+        items.push({
+          key: `health:${provider.providerId}`,
+          title: `${providerName(provider.providerId)} is failing ${plural(provider.failedCapabilityCount, "check")}`,
+          detail: `${provider.healthyCapabilityCount} of ${provider.capabilityTotal} checks passed ${relativeTime(provider.lastCheckedAt, "")}`.trim(),
+          href: `#/integrations/services?source=${encodeURIComponent(provider.providerId)}`,
+          action: "Open service",
+        });
+    return items;
+  });
 
   onMount(() => {
     void refresh();
@@ -146,6 +189,7 @@
     onRetry={refresh}
   />
 {:else if snapshot && summary}
+<div class="home-view">
   {#if snapshot.failures.length}
     <div class="degraded-banner" role="status">
       <span aria-hidden="true">!</span>
@@ -154,33 +198,40 @@
     </div>
   {/if}
 
-  {#if administrator && sourceIssues.length}
-    <div class="degraded-banner" role="status">
-      <span aria-hidden="true">!</span>
-      <p>
-        <strong>{sourceIssues[0].providerName} needs attention.</strong>
-        {humanize(sourceIssues[0].reason)}{sourceIssues.length > 1 ? ` · ${sourceIssues.length - 1} more` : ""}
-      </p>
-      <Button variant="secondary" size="sm" href={`#/integrations/services?source=${encodeURIComponent(sourceIssues[0].providerId)}&section=configuration`}>Open service</Button>
-    </div>
-  {/if}
+  <section class="home-now" aria-label="Now playing" aria-live="off">
+    {#if snapshot.nowPlaying?.length}
+      {#each snapshot.nowPlaying as item, index (`${item.userId ?? "unknown"}:${item.deviceId}`)}
+        <article class="now-playing-card" class:hero={index === 0}>
+          {#if index === 0 && item.artworkUrl}
+            <div class="now-playing-backdrop" aria-hidden="true" style={`--artwork: url("${adminUrl(item.artworkUrl)}")`}></div>
+          {/if}
+          <span class="now-playing-artwork">
+            {#if item.artworkUrl}
+              <img src={adminUrl(item.artworkUrl)} alt="" />
+            {:else}
+              <Music size={index === 0 ? 40 : 24} aria-hidden="true" />
+            {/if}
+          </span>
+          <div class="now-playing-body">
+            <div class="now-playing-title">
+              <h2>{item.title}</h2>
+              <p>{item.artist}{item.album ? ` · ${item.album}` : ""}</p>
+            </div>
 
-  <section class="panel now-playing-panel" aria-label="Now playing">
-      <header>
-        <div>
-          <p class="eyebrow">Listening now</p>
-          <h2>Now playing</h2>
-        </div>
-        <Badge state={snapshot.nowPlaying?.length ? "healthy" : ""}>
-          {snapshot.nowPlaying?.length ?? 0} active
-        </Badge>
-      </header>
+            <div class="playback-progress">
+              <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
+                <span class="playback-bar" role="progressbar" aria-label={`Playback progress for ${item.title}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round((item.progress ?? 0) * 100)}>
+                  <span style={`width: ${Math.min(100, Math.max(0, (item.progress ?? 0) * 100))}%`}></span>
+                </span>
+                {#if item.scrobbleThresholdSeconds}
+                  <i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>
+                {/if}
+              </span>
+              <span class="playback-time">{clockTime(item.positionSeconds)} / {clockTime(item.durationSeconds)}</span>
+            </div>
 
-      {#if snapshot.nowPlaying?.length}
-        <div class="now-playing-rail" aria-label="Active listeners">
-          {#each snapshot.nowPlaying as item (`${item.userId ?? "unknown"}:${item.deviceId}`)}
-            <article class="now-playing-card">
-              <div class="listener-profile">
+            <div class="now-playing-meta">
+              <span class="listener-profile">
                 <span class="listener-avatar" aria-label={`${item.userName} profile`}>
                   <span aria-hidden="true">{initials(item.userName)}</span>
                   {#if item.avatarUrl}
@@ -191,173 +242,117 @@
                   <strong>{item.userName}</strong>
                   <small>{item.client}{item.device ? ` · ${item.device}` : ""}</small>
                 </span>
-              </div>
-
-              <div class="now-playing-track">
-                <span class="now-playing-artwork">
-                  {#if item.artworkUrl}
-                    <img src={adminUrl(item.artworkUrl)} alt="" />
-                  {:else}
-                    <span aria-hidden="true">♫</span>
-                  {/if}
+              </span>
+              <span class="playback-route">
+                <ProviderMark id={item.providerId} definition={providerDefinition(item.providerId)} />
+                <span>
+                  <small title={item.routeReason ?? undefined}>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}</small>
+                  <strong>{providerName(item.providerId)}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</strong>
                 </span>
-                <span class="track-copy">
-                  <strong>{item.title}</strong>
-                  <small>{item.artist}{item.album ? ` · ${item.album}` : ""}</small>
-                </span>
-              </div>
+              </span>
+              <span class="scrobble-state" class:complete={item.scrobbled}>
+                {#if item.scrobbled}<CircleCheck size={16} aria-hidden="true" />{:else}<CircleDashed size={16} aria-hidden="true" />{/if}
+                {item.scrobbled ? "Scrobbled" : item.scrobbleEligible ? "Scrobbling" : "Listening"}
+              </span>
+            </div>
 
-              <div class="now-playing-facts">
-                <span class="playback-route">
-                  <ProviderMark id={item.providerId} definition={providerDefinition(item.providerId)} />
-                  <span>
-                    <strong>{providerName(item.providerId)}</strong>
-                    <small title={item.routeReason ?? undefined}>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</small>
+            {#if item.scrobbleDeliveries?.length}
+              <div class="scrobble-targets" aria-label="Scrobble delivery targets">
+                {#each item.scrobbleDeliveries as delivery (delivery.targetId)}
+                  <span class:complete={deliveryComplete(delivery.kind, delivery.state)} class:attention={delivery.requiresReauthentication} title={delivery.message || humanize(delivery.state)}>
+                    <ProviderMark id={delivery.targetId} definition={providerDefinition(delivery.targetId)} />
+                    <small>{providerName(delivery.targetId)}</small>
+                    {#if delivery.requiresReauthentication}<KeyRound size={13} aria-label="Reconnect required" />{/if}
+                    {#if deliveryComplete(delivery.kind, delivery.state)}<CircleCheck size={13} aria-label="Delivered" />{/if}
                   </span>
-                </span>
-                <span class="scrobble-state" class:complete={item.scrobbled}>
-                  {#if item.scrobbled}<CircleCheck size={16} aria-hidden="true" />{:else}<CircleDashed size={16} aria-hidden="true" />{/if}
-                  {item.scrobbled ? "Delivered" : item.scrobbleEligible ? "Delivering" : "Listening"}
-                </span>
+                {/each}
               </div>
-
-              <div class="playback-progress">
-                <span class="playback-progress-track" style={`--scrobble-at: ${Math.min(100, ((item.scrobbleThresholdSeconds ?? 0) / (item.durationSeconds || 1)) * 100)}%`}>
-                  <Progress class="min-w-0 flex-1" max={1} value={item.progress ?? 0} aria-label={`Playback progress for ${item.title}`} />
-                  {#if item.scrobbleThresholdSeconds}
-                    <i title={`Scrobble at ${clockTime(item.scrobbleThresholdSeconds)}`} aria-label={`Scrobble threshold at ${clockTime(item.scrobbleThresholdSeconds)}`}></i>
-                  {/if}
-                </span>
-                <span>{clockTime(item.positionSeconds)} / {clockTime(item.durationSeconds)}</span>
-              </div>
-
-              {#if item.scrobbleDeliveries?.length}
-                <div class="scrobble-targets" aria-label="Scrobble delivery targets">
-                  {#each item.scrobbleDeliveries as delivery (delivery.targetId)}
-                    <span class:complete={deliveryComplete(delivery.kind, delivery.state)} class:attention={delivery.requiresReauthentication} title={delivery.message || humanize(delivery.state)}>
-                      <ProviderMark id={delivery.targetId} definition={providerDefinition(delivery.targetId)} />
-                      <small>{providerName(delivery.targetId)}</small>
-                      {#if delivery.requiresReauthentication}<KeyRound size={13} aria-label="Reconnect required" />{/if}
-                      {#if deliveryComplete(delivery.kind, delivery.state)}<CircleCheck size={13} aria-label="Delivered" />{/if}
-                    </span>
-                  {/each}
-                </div>
-              {/if}
-            </article>
-          {/each}
+            {/if}
+          </div>
+        </article>
+      {/each}
+    {:else}
+      <div class="now-playing-empty">
+        <span class="now-playing-artwork" aria-hidden="true"><Headphones size={32} /></span>
+        <div>
+          <h2>Nothing is playing</h2>
+          <p>{administrator ? "When someone plays music through Allstarr, it shows up here." : "When you play music through Allstarr, it shows up here."}</p>
         </div>
-      {:else}
-        <div class="now-playing-empty">
-          <strong>Nothing is playing right now.</strong>
-          <span>{administrator ? "Active Jellyfin music sessions will appear here." : "Your active listening sessions will appear here."}</span>
-        </div>
-      {/if}
+      </div>
+    {/if}
   </section>
 
-  <section class="panel home-overview-panel" aria-label="Allstarr overview" aria-busy={refreshing}>
-    <header>
-      <div>
-        <h2>At a glance</h2>
-        <p>Library reach, current work, and recent listening.</p>
-      </div>
-    </header>
+  {#if attention.length}
+    <section class="panel home-attention" aria-labelledby="home-attention-title">
+      <h2 id="home-attention-title">Needs your attention</h2>
+      <ul>
+        {#each attention as item (item.key)}
+          <li>
+            <CircleAlert size={20} aria-hidden="true" />
+            <span><strong>{item.title}</strong><small>{item.detail}</small></span>
+            <Button variant="secondary" size="sm" href={item.href}>{item.action}</Button>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
 
-    <div class="home-kpis">
-      <article class="home-stat">
-        <span class="metric-icon playlists" aria-hidden="true"><ListMusic size={19} /></span>
-        <div>
-          <p>Linked playlists</p>
-          <strong>{summary.managed}</strong>
-          <small><a href="#/library/playlists">Open playlist control</a></small>
-        </div>
-      </article>
-
-      <article class="home-stat">
-        <span class="metric-icon playable" aria-hidden="true"><Route size={19} /></span>
-        <div>
-          <p>Playable tracks</p>
-          <strong>{summary.playable.toLocaleString()}</strong>
-          <small class:attention={summary.unresolved > 0}>
-            {summary.unresolved
-              ? `${summary.unresolved.toLocaleString()} awaiting a match`
-              : "Every indexed track has a route"}
-          </small>
-        </div>
-      </article>
-
-      <article class="home-stat">
-        <span class="metric-icon jobs" aria-hidden="true"><Activity size={19} /></span>
-        <div>
-          <p>Active work</p>
-          <strong>{summary.activeJobs}</strong>
-          <small class:attention={summary.activeJobs > 0}>
-            {summary.activeJobs ? "Operations are running" : "Queue is clear"}
-          </small>
-        </div>
-      </article>
-
-      <article class="home-stat">
-        <span class="metric-icon listening" aria-hidden="true"><Headphones size={19} /></span>
-        <div>
-          <p>Completed listens · 24h</p>
-          <strong>{snapshot.stats?.completedListens.toLocaleString() ?? "—"}</strong>
-          <small>{snapshot.stats?.scrobbleDeliveries.toLocaleString() ?? 0} scrobble deliveries</small>
-        </div>
-      </article>
+  <section class="panel home-overview-panel" aria-label="Overview" aria-busy={refreshing}>
+    <div class="home-listening">
+      <h2>This week</h2>
+      {#if !snapshot.stats}
+        <p class="home-sentence">Listening stats aren't available right now.</p>
+      {:else if !snapshot.stats.currentWeekListens}
+        <p class="home-sentence">No songs finished this week yet.</p>
+      {:else}
+        <p class="home-sentence">
+          <strong>{plural(snapshot.stats.currentWeekListens, "song")}</strong> finished this week,
+          {listenTrend(snapshot.stats.currentWeekListens, snapshot.stats.previousWeekListens)}.
+          {#if snapshot.stats.topArtist?.name}
+            Most played this month: <strong>{snapshot.stats.topArtist.name}</strong>, {plural(snapshot.stats.topArtist.listens, "play")}.
+          {/if}
+        </p>
+      {/if}
+      {#if snapshot.stats}
+        <p class="home-sentence-detail">{plural(snapshot.stats.completedListens, "song")} in the last 24 hours · {plural(snapshot.stats.scrobbleDeliveries, "scrobble")} sent</p>
+      {/if}
     </div>
 
-    <div class="home-facts">
+    <dl class="home-facts">
+      <a href="#/library/playlists">
+        <dt>Playlists</dt>
+        <dd>{plural(summary.managed, "playlist")}</dd>
+        <ChevronRight size={16} aria-hidden="true" />
+      </a>
+      <a href="#/library/mappings">
+        <dt>Playable songs</dt>
+        <dd>{summary.playable.toLocaleString()} of {(summary.playable + summary.unresolved).toLocaleString()}</dd>
+        <ChevronRight size={16} aria-hidden="true" />
+      </a>
+      <a href="#/activity">
+        <dt>Background work</dt>
+        <dd>{summary.activeJobs ? `${plural(summary.activeJobs, "job")} running` : "Idle"}</dd>
+        <ChevronRight size={16} aria-hidden="true" />
+      </a>
       {#if administrator}
-        <article>
-          <span class="metric-icon backend" aria-hidden="true"><Server size={18} /></span>
-          <div>
-            <p>Media server</p>
-            <strong>{snapshot.status?.backendType ?? "Unknown"}</strong>
-            <Badge state={snapshot.status?.durableStorage?.readiness === "Ready" ? "healthy" : "degraded"}>
-              {snapshot.status?.durableStorage?.readiness ?? "Unavailable"}
-            </Badge>
-          </div>
-        </article>
+        <a href="#/library/cached">
+          <dt>Stored songs</dt>
+          <dd>{snapshot.stats?.cacheTracks == null ? "—" : `${(snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()} (${snapshot.stats.cacheTracks} cached, ${snapshot.stats.keptTracks ?? 0} kept)`}</dd>
+          <ChevronRight size={16} aria-hidden="true" />
+        </a>
+        <a href="#/integrations/services">
+          <dt>Media server</dt>
+          <dd>{snapshot.status?.backendType ?? "Unknown"}</dd>
+          <ChevronRight size={16} aria-hidden="true" />
+        </a>
       {/if}
-
-      {#if administrator}
-        <article>
-          <span class="metric-icon cache" aria-hidden="true"><HardDrive size={18} /></span>
-          <div>
-            <p>Managed audio</p>
-            <strong>{snapshot.stats?.cacheTracks == null ? "—" : (snapshot.stats.cacheTracks + (snapshot.stats.keptTracks ?? 0)).toLocaleString()}</strong>
-            <small>{snapshot.stats?.cacheTracks == null ? "Administrator view only" : `${snapshot.stats.cacheTracks} cached · ${snapshot.stats.keptTracks ?? 0} kept`}</small>
-          </div>
-        </article>
-      {/if}
-
-      <article>
-        <span class="metric-icon artist" aria-hidden="true"><Mic2 size={18} /></span>
-        <div>
-          <p>Top artist · 30d</p>
-          <strong class="metric-name">{snapshot.stats?.topArtist?.name || "No history yet"}</strong>
-          <small>{snapshot.stats?.topArtist ? `${snapshot.stats.topArtist.listens.toLocaleString()} completed listens` : "Import or save listening history"}</small>
-        </div>
-      </article>
-
-      <article>
-        <span class="metric-icon trend" aria-hidden="true"><TrendingUp size={18} /></span>
-        <div>
-          <p>Completed listens · 7d</p>
-          <strong>{snapshot.stats?.currentWeekListens.toLocaleString() ?? "—"}</strong>
-          <small>{listenTrend(snapshot.stats?.currentWeekListens, snapshot.stats?.previousWeekListens)}</small>
-        </div>
-      </article>
-    </div>
+    </dl>
   </section>
 
   <section class="home-columns">
     <article class="panel home-panel">
       <header>
-        <div>
-          <p class="eyebrow">Sources</p>
-          <h2>Provider readiness</h2>
-        </div>
+        <h2>Sources</h2>
         <a href="#/integrations/services">Manage</a>
       </header>
 
@@ -374,12 +369,12 @@
                 <small>
                   {provider.connectedAccounts?.length
                     ? provider.connectedAccounts.map(accountSubtitle).join("; ")
-                    : `${provider.enabledAccountCount} connected account${provider.enabledAccountCount === 1 ? "" : "s"}`}
+                    : plural(provider.enabledAccountCount, "connected account")}
                 </small>
               </span>
-              <span class:attention={provider.failedCapabilityCount > 0} class="provider-result">
+              <span class="provider-result" class:attention={provider.failedCapabilityCount > 0} class:healthy={provider.capabilityTotal > 0 && provider.failedCapabilityCount === 0}>
                 {#if provider.capabilityTotal}
-                  {provider.healthyCapabilityCount}/{provider.capabilityTotal}
+                  {provider.failedCapabilityCount ? `${provider.failedCapabilityCount} failing` : "Working"}
                   <small>{relativeTime(provider.lastCheckedAt, "Not checked yet")}</small>
                 {:else}Not checked yet{/if}
               </span>
@@ -388,19 +383,16 @@
         </div>
       {:else}
         <div class="compact-empty">
-          <strong>No provider checks yet</strong>
-          <p>Connect a Source to see its capability health here.</p>
-          <a href="#/integrations/services">Open Services</a>
+          <strong>No sources connected</strong>
+          <p>Connect a music service to play songs you don't have locally.</p>
+          <Button variant="secondary" size="sm" href="#/integrations/services">Connect a source</Button>
         </div>
       {/if}
     </article>
 
     <article class="panel home-panel">
       <header>
-        <div>
-          <p class="eyebrow">Now</p>
-          <h2>Recent activity</h2>
-        </div>
+        <h2>Recent activity</h2>
         <a href="#/activity">View all</a>
       </header>
 
@@ -424,10 +416,11 @@
         </div>
       {:else}
         <div class="compact-empty">
-          <strong>No recent activity</strong>
-          <p>{administrator ? "Provider checks, matches, and background work will appear here." : "Your listening, playlist, matching, and background activity will appear here."}</p>
+          <strong>No activity yet</strong>
+          <p>{administrator ? "Matches, playlist updates and source checks will show up here." : "Your listening, playlists and matches will show up here."}</p>
         </div>
       {/if}
     </article>
   </section>
+</div>
 {/if}

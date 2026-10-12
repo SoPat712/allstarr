@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  activityAction,
   activityLink,
+  dayLabel,
   filterActivity,
   groupActivity,
   groupOutcome,
@@ -30,7 +32,7 @@ describe("event log presentation", () => {
       { ...item("3", "Song B"), playlistName: "Second" },
     ]);
     expect(grouped).toMatchObject([{
-      title: "Matched 2 tracks across 2 playlists",
+      title: "Matched 2 songs in 2 playlists",
       entries: [{ id: "1" }, { id: "3" }],
     }]);
     expect(groupActivity([item("0", "New Song"), ...[
@@ -62,18 +64,32 @@ describe("event log presentation", () => {
   it("filters provider-neutral event fields and humanizes enums", () => {
     expect(filterActivity([item("1", "Song A")], {
       query: "future",
-      kind: "",
-      outcome: "accepted",
+      category: "",
       provider: "",
-      severity: "",
+      problemsOnly: false,
     })).toHaveLength(1);
     expect(filterActivity([item("1", "Song A")], {
       query: "",
-      kind: "",
-      outcome: "",
+      category: "",
       provider: "future-extension",
-      severity: "",
+      problemsOnly: false,
     })).toHaveLength(0);
+    expect(filterActivity([item("1", "Song A")], {
+      query: "",
+      category: "",
+      provider: "",
+      problemsOnly: true,
+    })).toHaveLength(0);
+    expect(filterActivity([{ ...item("2", "Song B"), state: "failed" }], {
+      query: "",
+      category: "matching",
+      provider: "",
+      problemsOnly: true,
+    })).toHaveLength(1);
+    expect(dayLabel("2026-10-12T10:00:00", new Date("2026-10-12T20:00:00"))).toBe("Today");
+    expect(dayLabel("2026-10-11T10:00:00", new Date("2026-10-12T20:00:00"))).toBe("Yesterday");
+    expect(activityAction({ ...item("5", "Song A"), sourceTitle: "Song A" }, () => "Lumen")?.label)
+      .toBe("Review match");
     expect(humanize("provider_health.failed")).toBe("Provider Health Failed");
     expect(humanize("reviewrequired")).toBe("Review Required");
     expect(relativeTime(null, "Never")).toBe("Never");

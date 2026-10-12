@@ -927,14 +927,7 @@ for (const viewport of viewports) {
         await expect.poll(() => page.evaluate(() =>
           document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
         if (viewport.width <= 760) await expectContainedMobileGeometry(page);
-        if (route === "#/activity") {
-          if (viewport.width <= 650) {
-            await expect(page.getByText("Filters", { exact: true })).toBeVisible();
-            await expect(page.getByLabel("Search")).toBeHidden();
-          } else {
-            await expect(page.getByLabel("Search")).toBeVisible();
-          }
-        }
+        if (route === "#/activity") await expect(page.getByLabel("Search")).toBeVisible();
         expect(errors).toEqual([]);
         if (process.env.ALLSTARR_SCREENSHOT_DIR) {
           const name = route.replace(/^#\/?/, "").replaceAll(/[^a-z0-9]+/gi, "-") || "home";
@@ -1016,6 +1009,7 @@ for (const viewport of viewports) {
       await mockApi(page);
       await page.goto("#/settings/general");
       await expect(page.getByText("Public URL", { exact: true }).locator("..").getByText("Deployment-owned")).toBeVisible();
+      await page.goto("#/settings/appearance");
       await page.getByLabel("Color theme").click();
       await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
       await page.getByRole("option", { name: "Dark" }).click();
@@ -1064,12 +1058,13 @@ for (const viewport of viewports) {
       await expect(page.getByRole("button", { name: "Verify package" })).toBeInViewport();
       await page.getByRole("button", { name: "Close installer" }).click();
       await page.goto("#/settings/maintenance");
-      await expect(page.getByText("Database and encryption key ring. Keep downloaded backups private.")).toBeVisible();
+      await expect(page.getByText("Backups include saved sign-ins. Keep downloaded files private.")).toBeVisible();
       await expect(page.getByRole("button", { name: "Create verified backup" })).toBeVisible();
       await expect(page.getByText("No backups yet.")).toBeVisible();
       await expect(page.locator(".transfer-card")).toHaveCount(0);
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+      await page.goto("#/settings/storage");
       await page.getByRole("button", { name: "Purge all cache" }).click();
       const dialog = page.getByRole("alertdialog", { name: "Purge the application cache?" });
       await expect(dialog).toBeVisible();
@@ -1989,7 +1984,7 @@ test("Home stays inside runtime and request budgets", async ({ page }) => {
   await mockApi(page);
   await page.goto("#/");
   await expect(page.getByLabel("Loading Home")).toBeHidden();
-  await expect(page.getByText("Linked playlists", { exact: true })).toBeVisible();
+  await expect(page.locator(".home-facts dt", { hasText: "Playlists" })).toBeVisible();
   await expect(page.getByText("Legacy .env import")).toHaveCount(0);
   await expect(page.locator(".provider-line strong", { hasText: "Lumen Audio" })).toBeVisible();
   await expect(page.getByText("Playlist Check", { exact: true })).toBeVisible();
@@ -2121,6 +2116,7 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
     getComputedStyle(element).backgroundColor);
   await selectedNav.hover();
   await expect(selectedNav).toHaveCSS("background-color", selectedNavBackground);
+  await page.goto("#/settings/appearance");
   await page.getByLabel("Color theme").click();
   await expect(page.locator(".select-content")).toHaveCSS("animation-name", "dropdown-in");
   await page.keyboard.press("Escape");
@@ -2128,11 +2124,9 @@ test("Shared selects and settings tabs animate without remounting", async ({ pag
   const tabs = page.locator(".settings-tabs");
   await tabs.evaluate((element) => element.setAttribute("data-instance", "stable"));
   const routing = page.getByRole("tab", { name: "Routing" });
-  await routing.hover();
-  await expect(routing).toHaveCSS("border-top-left-radius", "8px");
   await routing.click();
   await expect(tabs).toHaveAttribute("data-instance", "stable");
-  expect(await routing.evaluate((element) => getComputedStyle(element, "::after").height)).toBe("3px");
+  expect(await routing.evaluate((element) => getComputedStyle(element, "::after").height)).toBe("2px");
   expect(await routing.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
     .toBe(await page.evaluate(() => {
       const sample = document.createElement("span");
@@ -3208,7 +3202,6 @@ test("Shared search fields reserve icon space", async ({ page }) => {
     ["#/activity", "Search"],
   ] as const) {
     await page.goto(route);
-    if (route === "#/activity") await page.getByText("Filters", { exact: true }).click();
     const input = page.getByRole("searchbox", { name: label });
     await expect(input).toBeVisible();
     const spacing = await input.evaluate((element) => {
@@ -3272,23 +3265,21 @@ test("Event log groups matching work and preserves actionable history", async ({
   });
   await page.goto("#/activity");
 
-  await expect(page.getByText("Matched 3 tracks across 2 playlists")).toBeVisible();
+  await expect(page.getByText("Matched 3 songs in 2 playlists")).toBeVisible();
   await expect(page.locator(".event-log-group summary .event-kind-icon img")).toHaveCount(0);
   await expect(page.locator(".event-log-group summary .event-kind-icon svg")).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-populated-390.png`, fullPage: true });
-  await expect(page.getByLabel("Search")).toBeHidden();
-  await page.getByText("Filters", { exact: true }).click();
   await expect(page.getByLabel("Search")).toBeVisible();
   await page.getByLabel("Search").fill("missing event");
-  await expect(page.getByText("No events match these filters")).toBeVisible();
-  await page.getByRole("button", { name: "Reset filters" }).click();
+  await expect(page.getByText("Nothing matches these filters")).toBeVisible();
+  await page.getByRole("button", { name: "Clear filters" }).click();
 
   await page.getByRole("button", { name: "Load earlier events" }).click();
-  await expect(page.getByText("4 events retained in this view")).toBeVisible();
-  const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 tracks" });
+  await expect(page.getByText("Playlist sync", { exact: true }).first()).toBeVisible();
+  const group = page.locator(".event-log-group").filter({ hasText: "Matched 3 songs" });
   await group.locator(":scope > summary").focus();
   await page.keyboard.press("Enter");
   await expect(group.locator(".event-child .event-art > span").first()).toBeVisible();
@@ -3300,10 +3291,10 @@ test("Event log groups matching work and preserves actionable history", async ({
   await expect(page.getByText("Title Similarity").first()).toBeVisible();
   await page.getByRole("button", { name: "Refresh" }).click();
   await expect(page.locator(".event-log-group.streaming")).toHaveCount(1);
-  const streamedGroup = page.locator(".event-log-group").filter({ hasText: "New Live Event" });
-  await expect(streamedGroup.locator(":scope > summary").getByText("New Live Event", { exact: true })).toBeVisible();
+  const streamedGroup = page.locator(".event-log-group").filter({ hasText: "New live event" });
+  await expect(streamedGroup.locator(":scope > summary").getByText("New live event", { exact: true })).toBeVisible();
   await expect(group).toHaveAttribute("open", "");
-  await group.getByRole("link", { name: "Open related view" }).first().click();
+  await group.getByRole("link", { name: "Review match" }).first().click();
   await expect(page).toHaveURL(/#\/library\/mappings\?search=Song%200$/);
 });
 
@@ -3425,21 +3416,20 @@ test("Settings fields share columns, control baselines, and a compact action rai
   }));
 
   await page.goto("#/settings/general");
-  const section = page.locator("details.settings-disclosure").filter({ hasText: "General" });
+  const section = page.getByRole("form", { name: "General settings" });
   const fields = section.locator(".setting-field");
   await expect(fields).toHaveCount(3);
 
   const fieldBoxes = await fields.evaluateAll((items) => items.map((item) => {
     const box = item.getBoundingClientRect();
-    return { x: box.x, y: box.y, width: box.width };
+    return { x: box.x, width: box.width };
   }));
-  expect(Math.max(...fieldBoxes.map((box) => box.y)) - Math.min(...fieldBoxes.map((box) => box.y))).toBeLessThanOrEqual(1);
+  expect(Math.max(...fieldBoxes.map((box) => box.x)) - Math.min(...fieldBoxes.map((box) => box.x))).toBeLessThanOrEqual(1);
   expect(Math.max(...fieldBoxes.map((box) => box.width)) - Math.min(...fieldBoxes.map((box) => box.width))).toBeLessThanOrEqual(1);
 
   const controls = section.locator(".setting-field :is(output, .select-trigger)");
-  const controlBoxes = await controls.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().y));
+  const controlBoxes = await controls.evaluateAll((items) => items.map((item) => item.getBoundingClientRect().x));
   expect(Math.max(...controlBoxes) - Math.min(...controlBoxes)).toBeLessThanOrEqual(1);
-  expect((await section.boundingBox())?.height ?? Infinity).toBeLessThan(320);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/settings-aligned-fields.png`, fullPage: true });
 
@@ -3451,9 +3441,7 @@ test("Settings fields share columns, control baselines, and a compact action rai
   expect(Math.max(...mobileBoxes.map((box) => box.x)) - Math.min(...mobileBoxes.map((box) => box.x))).toBeLessThanOrEqual(1);
   expect(Math.max(...mobileBoxes.map((box) => box.width)) - Math.min(...mobileBoxes.map((box) => box.width))).toBeLessThanOrEqual(1);
   const saveButton = section.getByRole("button", { name: "Save General" });
-  const footer = section.locator(".settings-fields > footer");
   await expect(saveButton).toBeDisabled();
-  expect(Math.abs(((await saveButton.boundingBox())?.width ?? 0) - ((await footer.boundingBox())?.width ?? 0))).toBeLessThanOrEqual(1);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/settings-aligned-fields-mobile.png`, fullPage: true });
   await section.getByRole("button", { name: "Download mode" }).click();
@@ -3488,7 +3476,6 @@ test("Dashboard primary tracks stay geometrically aligned", async ({ page }) => 
 
   await page.goto("#/settings/general");
   await expect(page.locator(".settings-workspace")).toBeVisible();
-  await expectSameTrack(".settings-workspace", ".settings-tabs");
 
   await page.goto("#/library/playlists");
   await expect(page.locator(".library-tabs")).toBeVisible();
@@ -3530,7 +3517,6 @@ test("Compact panel headings share one full-width action track", async ({ page }
   for (const { route, heading, actions } of [
     { route: "#/library/playlists", heading: ".playlist-toolbar", actions: ".playlist-toolbar-actions" },
     { route: "#/library/mappings", heading: ".mapping-heading", actions: ".mapping-heading-actions" },
-    { route: "#/activity", heading: ".event-log-heading", actions: ':scope > [data-slot="button"]' },
     { route: "#/library/cached", heading: ".downloads-heading", actions: ".downloads-heading-actions" },
     { route: "#/integrations/services", heading: ".sources-heading", actions: ".sources-heading-actions" },
   ]) {
@@ -4117,14 +4103,23 @@ test("Settings loads only the active section owners", async ({ page }) => {
   expect(requests).not.toContain("/api/admin/cache");
 
   requests.length = 0;
-  await page.getByRole("tab", { name: "Maintenance" }).click();
-  await expect(page.getByRole("heading", { name: "Maintenance", level: 2 })).toBeVisible();
+  await page.locator(".settings-nav").getByRole("link", { name: "Storage" }).click();
+  await expect(page.getByRole("heading", { name: "Storage", level: 2 })).toBeVisible();
   await expect.poll(() => requests.includes("/api/admin/cache/maintenance/preview")).toBe(true);
-  await expect.poll(() => requests.includes("/api/admin/config/migration/status")).toBe(true);
-  expect(requests).toContain("/api/admin/storage");
   expect(requests).toContain("/api/admin/cache");
-  expect(requests).not.toContain("/api/admin/config");
+  expect(requests).not.toContain("/api/admin/storage");
   expect(requests).not.toContain("/api/admin/provider-accounts");
+
+  requests.length = 0;
+  await page.locator(".settings-nav").getByRole("link", { name: "Backups" }).click();
+  await expect(page.getByRole("heading", { name: "Backups", level: 2 })).toBeVisible();
+  await expect.poll(() => requests.includes("/api/admin/storage")).toBe(true);
+  expect(requests).not.toContain("/api/admin/config");
+  expect(requests).not.toContain("/api/admin/cache");
+
+  requests.length = 0;
+  await page.locator(".settings-nav").getByRole("link", { name: "Setup" }).click();
+  await expect.poll(() => requests.includes("/api/admin/config/migration/status")).toBe(true);
 });
 
 test("Maintenance creates verified backups, lists downloads, and reports failures", async ({ page }) => {
@@ -4330,9 +4325,8 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
       cache: { searchResultsMinutes: serverValue, mediaMaximumMegabytes: 512 },
     }),
   }));
-  await page.goto("#/settings/general");
-  const cache = page.locator(".settings-disclosure").filter({ hasText: "Cache" });
-  await cache.locator("summary").click();
+  await page.goto("#/settings/storage");
+  const cache = page.getByRole("form", { name: "Cache settings" });
   const input = cache.getByLabel("Search results minutes");
   await input.fill("27");
   await input.evaluate((element) => element.setAttribute("data-instance", "draft"));
@@ -4340,8 +4334,7 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
   serverValue = 9;
   await page.evaluate(() => window.__emitAllstarrUpdate?.());
 
-  await expect(page.getByText("Your unsaved edits are preserved.")).toBeVisible();
-  await expect(cache).toHaveAttribute("open", "");
+  await expect(page.getByText("Your unsaved edits are kept.")).toBeVisible();
   await expect(input).toHaveValue("27");
   await expect(input).toHaveAttribute("data-instance", "draft");
   await expect(input).toBeFocused();
@@ -4354,17 +4347,12 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
     return { height: box.height, fontSize: Number.parseFloat(getComputedStyle(item).fontSize) };
   }));
   expect(tabSizes.every(({ height, fontSize }) => height >= 44 && fontSize >= 14)).toBe(true);
-  const generalTab = tabs.getByRole("tab", { name: "General" });
-  const selectedBackground = await generalTab.evaluate((element) => getComputedStyle(element).backgroundColor);
-  const selectedUnderline = await generalTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor);
-  await generalTab.hover();
-  await expect.poll(() => generalTab.evaluate((element) => getComputedStyle(element).backgroundColor))
-    .not.toBe(selectedBackground);
-  await tabs.getByRole("tab", { name: "Maintenance" }).click();
-  await expect(tabs.getByRole("tab", { name: "Maintenance" })).toHaveAttribute("aria-selected", "true");
-  const maintenanceTab = tabs.getByRole("tab", { name: "Maintenance" });
-  await maintenanceTab.hover();
-  await expect.poll(() => maintenanceTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
+  const storageTab = tabs.getByRole("tab", { name: "Storage" });
+  const selectedUnderline = await storageTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor);
+  await tabs.getByRole("tab", { name: "Setup" }).click();
+  await expect(tabs.getByRole("tab", { name: "Setup" })).toHaveAttribute("aria-selected", "true");
+  const setupTab = tabs.getByRole("tab", { name: "Setup" });
+  await expect.poll(() => setupTab.evaluate((element) => getComputedStyle(element, "::after").backgroundColor))
     .toBe(selectedUnderline);
   await expect.poll(() => tabs.evaluate((element) => {
     const active = element.querySelector<HTMLElement>('[aria-selected="true"]');
@@ -4378,8 +4366,8 @@ test("Settings preserves dirty drafts during live refresh and scrolls mobile tab
 test("Maintenance previews, retries, and applies a legacy import on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
-  await page.goto("#/settings/maintenance");
-  const card = page.locator(".maintenance-card").filter({ hasText: "Legacy v2 import" });
+  await page.goto("#/settings/setup");
+  const card = page.locator(".maintenance-card").filter({ hasText: "Import from Allstarr v2" });
   const legacyFile = {
     name: "allstarr.env",
     mimeType: "text/plain",
@@ -4408,15 +4396,13 @@ test("Maintenance reports cache budgets and confirms category purge", async ({ p
   const requests: string[] = [];
   page.on("request", (request) => requests.push(new URL(request.url()).pathname));
   await mockApi(page);
-  await page.goto("#/settings/general");
-  const cacheSettings = page.locator("details").filter({ hasText: "Cache" });
-  await cacheSettings.locator("summary").click();
-  await expect(cacheSettings.getByText(/memory cache remains bounded at 16 MiB/)).toBeVisible();
-  await page.goto("#/settings/maintenance");
+  await page.goto("#/settings/storage");
+  const cacheSettings = page.getByRole("form", { name: "Cache settings" });
+  await expect(cacheSettings.getByText(/Memory cache stays capped at 16 MiB/)).toBeVisible();
   const card = page.locator(".cache-diagnostics-card");
 
   await expect(card.getByText("Memory hit / miss")).toBeVisible();
-  await expect(card.getByText("Upstream avoided")).toBeVisible();
+  await expect(card.getByText("Downloads avoided")).toBeVisible();
   await card.getByText("Limits and cleanup preview").click();
   await expect(card.getByText("Stale account scopes")).toBeVisible();
   await card.getByText("Category budgets").click();
@@ -4549,7 +4535,7 @@ test("authentication operations expose pending state and recover from sign-out f
 test("Administrators can reopen durable setup from Maintenance", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await mockApi(page);
-  await page.goto("#/settings/maintenance");
+  await page.goto("#/settings/setup");
   await page.getByRole("button", { name: "Open setup guide" }).click();
   const setup = page.getByRole("dialog", { name: "Set up Allstarr" });
   await expect(setup).toBeVisible();
@@ -5304,7 +5290,7 @@ test("retry and refresh controls expose pending work", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
   retry.release();
   delayedRequest = null;
-  await expect(page.getByRole("heading", { name: "Event log" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Event log" })).toBeVisible();
 
   const refresh = routeRelease();
   delayedRequest = refresh.promise;

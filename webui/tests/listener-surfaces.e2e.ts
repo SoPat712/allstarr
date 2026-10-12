@@ -175,7 +175,7 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
 
   requests.length = 0;
   await page.goto("/#/activity");
-  await expect(page.getByRole("heading", { name: "Listening activity" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Your activity" })).toBeVisible();
   await expect(page.getByText(/My Playback/i).first()).toBeVisible();
   expect(requests.some((request) => request.includes("/api/admin/ui/schema"))).toBe(true);
 
