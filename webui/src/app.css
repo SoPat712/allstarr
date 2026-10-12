@@ -7333,7 +7333,17 @@
   }
 
   .settings-card footer {
+    flex-wrap: wrap;
     padding: var(--space-3) var(--space-4);
+  }
+
+  .settings-card footer > [data-slot="button"] {
+    min-width: 0;
+    max-width: 100%;
+    height: auto;
+    min-height: var(--control-md);
+    flex: 1 1 auto;
+    white-space: normal;
   }
 
   .backup-list {
