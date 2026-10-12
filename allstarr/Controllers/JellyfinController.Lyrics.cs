@@ -1,6 +1,8 @@
 using System.Text.Json;
-using allstarr.Models.Domain;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
+using allstarr.Models.Lyrics;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -47,75 +49,49 @@ public partial class JellyfinController
                 statusCode);
         }
 
-        Song? song = null;
-        string? spotifyTrackId = null;
-
+        var protocol = HttpContext.RequireProtocolExecutionContext();
+        LyricsInfo? lyrics;
         if (isExternal)
         {
-            song = await GetProviderSongAsync(provider!, externalId!);
-
-            if (song != null && !string.IsNullOrEmpty(song.SpotifyId))
+            var found = await MusicLyrics.FindForProviderSongAsync(
+                _providerGateway, _protocolLyricsResolver, protocol, provider!, externalId!);
+            if (found == null)
             {
-                spotifyTrackId = song.SpotifyId;
-                _logger.LogInformation("Using Spotify ID {SpotifyId} from song metadata for {Provider}/{ExternalId}",
-                    spotifyTrackId, provider, externalId);
+                return NotFound(new { error = "Song not found" });
             }
+
+            lyrics = found.Lyrics;
         }
         else
         {
             var (item, _) = await _proxyService.GetItemAsync(itemId, Request.Headers);
-            if (item != null && item.RootElement.TryGetProperty("Type", out var typeEl) &&
-                typeEl.GetString() == "Audio")
+            if (item == null || !item.RootElement.TryGetProperty("Type", out var typeEl) ||
+                typeEl.GetString() != "Audio")
             {
-                song = new Song
-                {
-                    Title = item.RootElement.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
-                    Artist = item.RootElement.TryGetProperty("AlbumArtist", out var artist)
-                        ? artist.GetString() ?? ""
-                        : "",
-                    Album = item.RootElement.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",
-                    Duration = item.RootElement.TryGetProperty("RunTimeTicks", out var ticks)
-                        ? (int)(ticks.GetInt64() / 10000000)
-                        : 0
-                };
-
-                if (item.RootElement.TryGetProperty("ProviderIds", out var providerIds))
-                {
-                    if (providerIds.TryGetProperty("Spotify", out var spotifyId))
-                    {
-                        spotifyTrackId = spotifyId.GetString();
-                    }
-                }
+                return NotFound(new { error = "Song not found" });
             }
+
+            var song = new Song
+            {
+                Title = item.RootElement.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
+                Artist = item.RootElement.TryGetProperty("AlbumArtist", out var artist)
+                    ? artist.GetString() ?? ""
+                    : "",
+                Album = item.RootElement.TryGetProperty("Album", out var album) ? album.GetString() ?? "" : "",
+                Duration = item.RootElement.TryGetProperty("RunTimeTicks", out var ticks)
+                    ? (int)(ticks.GetInt64() / 10000000)
+                    : 0
+            };
+            string? spotifyTrackId = null;
+            if (item.RootElement.TryGetProperty("ProviderIds", out var providerIds) &&
+                providerIds.TryGetProperty("Spotify", out var spotifyId))
+            {
+                spotifyTrackId = spotifyId.GetString();
+            }
+
+            lyrics = await MusicLyrics.FindForLibrarySongAsync(
+                _protocolLyricsResolver, protocol, song, itemId, spotifyTrackId);
         }
-
-        if (song == null)
-        {
-            return NotFound(new { error = "Song not found" });
-        }
-
-        // Provider labels are presentation-only and degrade lyric matching.
-        var searchTitle = StripTrackDecorators(song.Title);
-        var searchArtist = StripTrackDecorators(song.Artist);
-        var searchAlbum = StripTrackDecorators(song.Album);
-        var searchArtists = song.Artists.Select(StripTrackDecorators).ToList();
-
-        if (searchArtists.Count == 0 && !string.IsNullOrEmpty(searchArtist))
-        {
-            searchArtists.Add(searchArtist);
-        }
-
-        song.Title = searchTitle;
-        song.Artist = searchArtist;
-        song.Artists = searchArtists;
-        song.Album = searchAlbum;
-        var lyrics = await _protocolLyricsResolver.FindAsync(
-            HttpContext.RequireProtocolExecutionContext(),
-            song,
-            itemId,
-            isExternal ? provider : null,
-            isExternal ? externalId : null,
-            spotifyTrackId);
 
         if (lyrics == null)
         {
@@ -126,27 +102,11 @@ public partial class JellyfinController
 
         _logger.LogInformation(
             "Lyrics for {Artist} - {Track}: synced={HasSynced}, plainLength={PlainLen}, syncedLength={SyncLen}",
-            song.Artist, song.Title, isSynced, lyrics.PlainLyrics?.Length ?? 0, lyrics.SyncedLyrics?.Length ?? 0);
+            lyrics.ArtistName, lyrics.TrackName, isSynced, lyrics.PlainLyrics?.Length ?? 0, lyrics.SyncedLyrics?.Length ?? 0);
 
         var response = _lyricsProtocolAdapter.Shape(lyrics);
         _logger.LogDebug("Returning lyrics response: synced={IsSynced}", isSynced);
         return Content(response.Body, response.ContentType, System.Text.Encoding.UTF8);
-    }
-
-    private static string StripTrackDecorators(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return string.Empty;
-        }
-
-        return value
-            .Replace(" [S]", "", StringComparison.Ordinal)
-            .Replace(" [D]", "", StringComparison.Ordinal)
-            .Replace(" [Q]", "", StringComparison.Ordinal)
-            .Replace(" [AM]", "", StringComparison.Ordinal)
-            .Replace(" [E]", "", StringComparison.Ordinal)
-            .Trim();
     }
 
     #endregion
