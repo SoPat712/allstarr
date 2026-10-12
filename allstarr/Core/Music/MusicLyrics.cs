@@ -15,7 +15,8 @@ public sealed record TimedLyricLine(long StartMilliseconds, string Text);
 /// </summary>
 public static partial class MusicLyrics
 {
-    private static readonly string[] PresentationLabels = [" [S]", " [D]", " [Q]", " [AM]", " [E]"];
+    // Current external labels first, then older source labels still found in saved titles.
+    private static readonly string[] PresentationLabels = [" [A]/[E]", " [A]", " [E]", " [S]", " [D]", " [Q]", " [AM]"];
 
     /// <summary>Returns null when the provider has no such song; otherwise the song and any lyrics found.</summary>
     public static async Task<ProviderSongLyrics?> FindForProviderSongAsync(
