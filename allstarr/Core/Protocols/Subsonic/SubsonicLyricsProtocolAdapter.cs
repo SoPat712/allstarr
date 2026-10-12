@@ -86,37 +86,8 @@ public static partial class SubsonicStructuredLyricsMapper
         synced,
         lines);
 
-    private static List<SubsonicLyricLine> ParseSynced(string value)
-    {
-        var lines = new List<SubsonicLyricLine>();
-        foreach (var rawLine in value.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
-        {
-            var matches = TimestampRegex().Matches(rawLine);
-            if (matches.Count == 0)
-            {
-                continue;
-            }
-
-            var text = TimestampRegex().Replace(rawLine, string.Empty).Trim();
-            foreach (Match match in matches)
-            {
-                var minutes = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
-                var seconds = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
-                var milliseconds = match.Groups[3].Success
-                    ? int.Parse(match.Groups[3].Value.PadRight(3, '0')[..3], CultureInfo.InvariantCulture)
-                    : 0;
-                lines.Add(new SubsonicLyricLine(
-                    (((long)minutes * 60) + seconds) * 1000 + milliseconds,
-                    text));
-            }
-        }
-
-        lines.Sort((left, right) => left.StartMilliseconds.CompareTo(right.StartMilliseconds));
-        return lines;
-    }
-
-    [GeneratedRegex(@"\[(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?\]", RegexOptions.Compiled)]
-    private static partial Regex TimestampRegex();
+    private static List<SubsonicLyricLine> ParseSynced(string value) =>
+        MusicLyrics.ParseSyncedLines(value).Select(line => new SubsonicLyricLine(line.StartMilliseconds, line.Text)).ToList();
 }
 
 public sealed class SubsonicLyricsProtocolAdapter

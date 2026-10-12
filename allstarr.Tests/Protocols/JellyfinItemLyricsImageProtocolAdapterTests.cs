@@ -27,7 +27,7 @@ public sealed class JellyfinItemLyricsImageProtocolAdapterTests
     }
 
     [Fact]
-    public void LyricsAdapter_PreservesPascalCaseSyncedResponseAndCurrentTickConversion()
+    public void LyricsAdapter_PreservesPascalCaseSyncedResponseAndReadsFractionsAsWritten()
     {
         var adapter = new JellyfinLyricsProtocolAdapter();
 
@@ -47,7 +47,8 @@ public sealed class JellyfinItemLyricsImageProtocolAdapterTests
         Assert.True(root.GetProperty("Metadata").GetProperty("IsSynced").GetBoolean());
         Assert.Equal("first", root.GetProperty("Lyrics")[0].GetProperty("Text").GetString());
         Assert.Equal(12_500_000, root.GetProperty("Lyrics")[0].GetProperty("Start").GetInt64());
-        Assert.Equal(32_500_000, root.GetProperty("Lyrics")[1].GetProperty("Start").GetInt64());
+        // ".125" is 125 ms; it used to be read as hundredths and land a second late.
+        Assert.Equal(21_250_000, root.GetProperty("Lyrics")[1].GetProperty("Start").GetInt64());
     }
 
     [Fact]

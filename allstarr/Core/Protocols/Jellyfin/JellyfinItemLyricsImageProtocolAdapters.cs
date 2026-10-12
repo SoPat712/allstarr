@@ -1,3 +1,4 @@
+using allstarr.Core.Music;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Models.Domain;
@@ -120,30 +121,12 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
             JsonSerializer.Serialize(response, SerializerOptions));
     }
 
-    private static IReadOnlyList<Dictionary<string, object>> ParseSyncedLines(string lyrics)
-    {
-        var result = new List<Dictionary<string, object>>();
-        foreach (var line in lyrics.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+    private static IReadOnlyList<Dictionary<string, object>> ParseSyncedLines(string lyrics) =>
+        MusicLyrics.ParseSyncedLines(lyrics).Select(line => new Dictionary<string, object>
         {
-            var match = Regex.Match(line, @"^\[(\d+):(\d+)\.(\d+)\]\s*(.*)$");
-            if (!match.Success)
-            {
-                continue;
-            }
-
-            var minutes = int.Parse(match.Groups[1].Value);
-            var seconds = int.Parse(match.Groups[2].Value);
-            var centiseconds = int.Parse(match.Groups[3].Value);
-            var totalMilliseconds = (minutes * 60 + seconds) * 1000 + centiseconds * 10;
-            result.Add(new Dictionary<string, object>
-            {
-                ["Text"] = match.Groups[4].Value,
-                ["Start"] = totalMilliseconds * 10_000L
-            });
-        }
-
-        return result;
-    }
+            ["Text"] = line.Text,
+            ["Start"] = line.StartMilliseconds * 10_000L
+        }).ToList();
 
     private static IReadOnlyList<Dictionary<string, object>> ParsePlainLines(string? lyrics)
     {
