@@ -116,6 +116,10 @@ public static class ObservedProviderCapabilities
         public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
             ProviderExecutionContext context, ProviderArtistItemsRequest request) =>
             InvokeAsync(context, () => Implementation.GetArtistTracksAsync(context, request));
+
+        public Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetSimilarTracksAsync(
+            ProviderExecutionContext context, ProviderSimilarTracksRequest request) =>
+            InvokeAsync(context, () => Implementation.GetSimilarTracksAsync(context, request));
     }
 
     private sealed class Playlist(IProviderPlaylistCapability implementation, IProviderOutcomeObserver observer)
