@@ -1753,6 +1753,10 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task JellyfinExternalSimilarAndInstantMix_StayOnTheTypedProvider()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        // No provider recommendations: both routes fall back to the seed artist's catalog.
+        gateway.Setup(service => service.GetSimilarSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 2))
+            .ReturnsAsync([]);
         gateway.Setup(service => service.GetSongAsync(
                 It.IsAny<ProtocolExecutionContext>(), "deezer", "42"))
             .ReturnsAsync(new Song
@@ -2437,13 +2441,17 @@ public sealed partial class ProtocolRouteFixtureTests
             JsonDocument.Parse(body).RootElement.GetRawText());
     }
 
+    // getSong never consults providers; getArtist and getAlbum ask them for missing
+    // children and must keep the native body byte for byte when none are found.
     [Theory]
-    [InlineData("getArtist", "artist", "local-artist")]
-    [InlineData("getAlbum", "album", "local-album")]
-    public async Task SubsonicNativeMusicDetail_IsRelayedWithoutProviderEnrichment(
+    [InlineData("getSong", "song", "local-song", false)]
+    [InlineData("getArtist", "artist", "local-artist", true)]
+    [InlineData("getAlbum", "album", "local-album", true)]
+    public async Task SubsonicNativeMusicDetail_IsRelayedUnchangedWithoutProviderAdditions(
         string endpoint,
         string itemType,
-        string itemId)
+        string itemId,
+        bool consultsProviders)
     {
         var itemBody = JsonSerializer.Serialize(new Dictionary<string, object>
         {
@@ -2455,12 +2463,20 @@ public sealed partial class ProtocolRouteFixtureTests
                 {
                     ["id"] = itemId,
                     ["name"] = "Native Item",
+                    ["artist"] = "Native Artist",
                     ["unknownNativeField"] = "preserved"
                 }
             }
         });
         var observed = new List<ObservedRequest>();
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        if (consultsProviders)
+        {
+            gateway.Setup(service => service.SearchAsync(
+                    It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(),
+                    It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), null))
+                .ReturnsAsync(new SearchResult());
+        }
         using var factory = new ProtocolFactory(
             "Subsonic",
             request =>
@@ -2486,6 +2502,10 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(
             $"/rest/{endpoint}.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json&id={itemId}",
             observed[1].PathAndQuery);
+        gateway.Verify(service => service.SearchAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(),
+                It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>(), null),
+            consultsProviders ? Times.Once() : Times.Never());
         gateway.VerifyNoOtherCalls();
     }
 
