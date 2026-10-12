@@ -1119,14 +1119,23 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             .ReturnsAsync(["apple-download"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
+        const int rematches = 8;
         var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var entered = 0;
+        var joined = 0;
+        // Rematches of one snapshot share a single in-flight run. Searching stays blocked until
+        // every caller has joined, so none can arrive after a run finished and start another.
+        void ReleaseWhenAllJoined()
+        {
+            if (Volatile.Read(ref entered) >= snapshotIds.Length && Volatile.Read(ref joined) == rematches)
+                release.TrySetResult();
+        }
         gateway.Setup(item => item.SearchPlayableSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Concurrent external", 60))
             .Returns(async () =>
             {
-                if (Interlocked.Increment(ref entered) == snapshotIds.Length)
-                    release.SetResult();
+                Interlocked.Increment(ref entered);
+                ReleaseWhenAllJoined();
                 await release.Task;
                 return
                 [
@@ -1155,13 +1164,16 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 matcher,
                 NullLogger<TrackMatchPlayableSearch>.Instance));
 
-        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
+        var results = await Task.WhenAll(Enumerable.Range(0, rematches).Select(async index =>
         {
-            var result = await trackMatches.RematchSnapshotAsync(
+            var pending = trackMatches.RematchSnapshotAsync(
                 Context(),
                 snapshotIds[index % snapshotIds.Length],
                 $"concurrent-external-{index}",
                 "concurrent-policy");
+            Interlocked.Increment(ref joined);
+            ReleaseWhenAllJoined();
+            var result = await pending;
             overlap.ReleaseAfterFirstSave();
             return result;
         }));
