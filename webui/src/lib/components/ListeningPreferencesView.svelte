@@ -208,7 +208,7 @@
   .preferences-view { display: grid; min-width: 0; gap: var(--section-gap); }
   :global(.preferences-loading) { min-height: 24rem; }
   .preferences-intro { padding-block: .2rem; }
-  .preferences-intro h2 { margin: .15rem 0 .35rem; font-family: var(--font-display); font-size: 1.35rem; }
+  .preferences-intro h2 { margin: 0 0 .25rem; font-size: 1.375rem; line-height: 1.75rem; font-weight: 600; }
   .preferences-intro p:last-child, .preferences-heading p:last-child, .label-options p, .preferences-actions p {
     margin: 0; color: var(--color-ink-muted); line-height: 1.55;
   }
@@ -218,7 +218,9 @@
   .filter-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); margin: 0; border: 0; padding: var(--surface-gutter); }
   .filter-options legend { width: 100%; margin-bottom: var(--space-3); font-weight: 750; }
   .filter-options label { display: grid; min-width: 0; min-height: 5rem; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-3); cursor: pointer; }
-  .filter-options label.active { border-color: color-mix(in srgb, var(--color-signal) 55%, var(--color-edge)); background: var(--color-signal-muted); }
+  .filter-options label.active { border-color: var(--color-signal); background: color-mix(in srgb, var(--color-signal) 8%, transparent); }
+  .preferences-panel { border-radius: var(--radius-lg); }
+  .preferences-heading h3, .label-options h3 { font-size: 1rem; font-weight: 600; }
   .filter-options input { width: 1.15rem; height: 1.15rem; margin-top: .1rem; accent-color: var(--color-signal); }
   .filter-options strong, .filter-options small, .label-options strong, .label-options small { display: block; overflow-wrap: anywhere; }
   .filter-options small, .label-options small { margin-top: .2rem; color: var(--color-ink-muted); line-height: 1.4; }

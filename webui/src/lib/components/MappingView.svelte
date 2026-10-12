@@ -1,5 +1,4 @@
 <script lang="ts">
-  import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -8,6 +7,7 @@
   import {
     ArrowRight,
     Ban,
+    ChevronDown,
     CircleQuestionMark,
     Clock3,
     Hand,
@@ -421,23 +421,23 @@
 
       <SegmentedNav
         items={[
-          { id: "all", label: "All", count: data.stats.total, icon: List },
-          { id: "manual", label: "Manual", count: data.stats.manualMatches ?? 0, icon: Hand },
-          { id: "rejected", label: "Rejected", count: data.stats.manualRejections ?? 0, icon: Ban },
+          {
+            id: "review",
+            label: "Needs review",
+            count: data.stats.ambiguous ?? Math.max(0, data.stats.review - data.stats.suggested),
+            icon: ScanSearch,
+          },
+          { id: "tentative", label: "Unsure", count: data.stats.suggested, icon: Clock3 },
+          { id: "unresolved", label: "No match", count: data.stats.unresolved, icon: CircleQuestionMark },
           {
             id: "automatic",
             label: "Automatic",
             count: data.stats.automatic ?? Math.max(0, data.stats.accepted - (data.stats.manualMatches ?? 0)),
             icon: Sparkles,
           },
-          { id: "tentative", label: "Tentative", count: data.stats.suggested, icon: Clock3 },
-          {
-            id: "review",
-            label: "Review",
-            count: data.stats.ambiguous ?? Math.max(0, data.stats.review - data.stats.suggested),
-            icon: ScanSearch,
-          },
-          { id: "unresolved", label: "Unresolved", count: data.stats.unresolved, icon: CircleQuestionMark },
+          { id: "manual", label: "By hand", count: data.stats.manualMatches ?? 0, icon: Hand },
+          { id: "rejected", label: "Rejected", count: data.stats.manualRejections ?? 0, icon: Ban },
+          { id: "all", label: "All", count: data.stats.total, icon: List },
         ]}
         active={view}
         label="Mapping views"
@@ -445,17 +445,17 @@
         onchange={setView}
       />
 
-      <form class="playlist-filters mapping-filters" onsubmit={(event) => { event.preventDefault(); submitFilters(); }}>
-        <SearchField bind:value={searchInput} label="Search" placeholder="Title, artist, album, or provider" />
-        <label>
-          <span>Library scope</span>
-          <input bind:value={backendLibraryId} placeholder="All libraries" />
+      <form class="mapping-filters" onsubmit={(event) => { event.preventDefault(); submitFilters(); }}>
+        <SearchField bind:value={searchInput} label="Search" placeholder="Search by song, artist, album or source" hiddenLabel />
+        <label class="mapping-scope">
+          <span class="sr-only">Library scope</span>
+          <input bind:value={backendLibraryId} placeholder="All libraries" aria-label="Library scope" />
         </label>
-        <div class="filter-field"><span>Confidence</span><SelectField bind:value={sort} label="Confidence" onchange={() => { page = 1; void load(); }} options={[
-          { value: "", label: "Default order" }, { value: "confidence_desc", label: "Highest first" },
-          { value: "confidence_asc", label: "Lowest first" },
-        ]} /></div>
-        <Button type="submit">Apply</Button>
+        <SelectField bind:value={sort} label="Confidence" class="mapping-sort" onchange={() => { page = 1; void load(); }} options={[
+          { value: "", label: "Default order" }, { value: "confidence_desc", label: "Most confident first" },
+          { value: "confidence_asc", label: "Least confident first" },
+        ]} />
+        <Button type="submit" variant="secondary">Apply</Button>
       </form>
 
       {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
@@ -487,12 +487,11 @@
                 <span class="mapping-party-copy">
                   <span class="mapping-provider">
                     <ProviderMark id={match.providerId} definition={provider(match.providerId)} />
-                    {providerName(match.providerId)} source
+                    From {providerName(match.providerId)}
                   </span>
-                  <strong>{match.title || "Unknown track"}</strong>
-                  <small>{match.artist || "Unknown artist"}</small>
-                  <small>{match.album || "Unknown album"}</small>
-                  <small>{formatDuration(match.durationMilliseconds)} · Snapshot {match.externalSnapshotId}</small>
+                  <strong>{match.title || "Unknown song"}</strong>
+                  <small>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""}</small>
+                  <small>{formatDuration(match.durationMilliseconds)}</small>
                 </span>
               </div>
 
@@ -517,55 +516,24 @@
                       />
                     {/if}
                     {target
-                      ? `${providerName(target.providerId)} match`
+                      ? `Plays from ${providerName(target.providerId)}`
                       : candidate
-                        ? `${providerName(candidateProviderId)} candidate`
-                        : "No candidate"}
+                        ? `Best guess · ${providerName(candidateProviderId)}`
+                        : "No match yet"}
                   </span>
-                  <strong>{target?.title || candidate?.title || "Unmatched"}</strong>
-                  <small>{target?.artist || candidate?.artist || "No playable candidate"}</small>
-                  <small>{target?.album || candidate?.album || "Rematch or search interactively"}</small>
-                  <small>
-                    {formatDuration(target?.durationMilliseconds ?? candidate?.durationMilliseconds)}
-                    {#if target?.identity || candidate?.libraryTrackId || candidateExternalId}
-                      · {target?.identity || candidate?.libraryTrackId || candidateExternalId}
-                    {/if}
-                  </small>
+                  <strong>{target?.title || candidate?.title || "Nothing found"}</strong>
+                  <small>{target?.artist || candidate?.artist || "Rematch, or search for the right song yourself."}{(target?.album || candidate?.album) ? ` · ${target?.album || candidate?.album}` : ""}</small>
+                  {#if target || candidate}<small>{formatDuration(target?.durationMilliseconds ?? candidate?.durationMilliseconds)}</small>{/if}
                 </span>
               </div>
             </div>
 
-            {#if visibleAuthorities.length}
-              <div class="manual-authority-list" aria-label={`Manual decisions for ${match.title || "track"}`}>
-                {#each visibleAuthorities as authority (authority.id)}
-                  <div class="manual-authority-row">
-                    <span>
-                      <strong>{authorityLabel(authority)}</strong>
-                      <small>
-                        {authority.reason}
-                        · {authorityState(match, authority)}
-                      </small>
-                    </span>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={Boolean(action) || !canEditAuthority(authority)}
-                      onclick={() => confirmAuthority("manual_rematch", match, authority)}
-                    >Clear {authorityScopeOf(authority)} and rematch</Button>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      disabled={Boolean(action) || !canEditAuthority(authority)}
-                      onclick={() => confirmAuthority("manual_delete", match, authority)}
-                    >Clear {authorityScopeOf(authority)}</Button>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
             <div class="mapping-row-footer">
               <div class="mapping-evidence">
                 <Badge state={match.state}>{reviewStateLabel(match.state)}</Badge>
+                {#if candidate || target}
+                  <span class="mapping-confidence" aria-hidden="true"><span style={`width: ${Math.round((match.confidence ?? 0) * 100)}%`}></span>{#if match.threshold != null}<i style={`left: ${Math.round(match.threshold * 100)}%`}></i>{/if}</span>
+                {/if}
                 <span class="mapping-evidence-summary">
                   {candidate || target ? `${percent(match.confidence)} confidence` : "Not scored"}
                   {#if match.threshold != null} · {percent(match.threshold)} auto threshold{/if}
@@ -581,18 +549,18 @@
 
               <div class="mapping-row-actions">
                 {#if !target && resolution}
-                  <span class="mapping-action-confidence">
+                  <span class="mapping-action-confidence sr-only">
                     <strong>{percent(candidate?.confidence ?? match.confidence)}</strong>
                     <small>Confidence</small>
                   </span>
                   <Button disabled={Boolean(action) || !canEditAuthorityScope(match, "personal")} onclick={() => void accept(match)}>{action === `accept:${match.externalSnapshotId}` ? "Accepting…" : "Accept"}</Button>
                 {/if}
+                <Button class="mapping-search-action" variant={!target && resolution ? "secondary" : "default"} onclick={() => openMatch(match)}>
+                  {target ? "Review match" : "Interactive search"}
+                </Button>
                 {#if !target}
                   <Button class="mapping-rematch-action" variant="secondary" disabled={Boolean(action)} onclick={() => void rematch(match)}>{action === `rematch:${match.externalSnapshotId}` ? "Rematching…" : "Rematch"}</Button>
                 {/if}
-                <Button class="mapping-search-action" onclick={() => openMatch(match)}>
-                  {target ? "Review match" : "Interactive search"}
-                </Button>
                 <DropdownMenu.Root>
                   <DropdownMenu.Trigger class="track-menu-trigger" disabled={Boolean(action)} aria-label={`More actions for ${match.title || "track"}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
                   <DropdownMenu.Portal>
@@ -611,44 +579,74 @@
                   </DropdownMenu.Portal>
                 </DropdownMenu.Root>
               </div>
-
-              <details class="mapping-details">
-                <summary class="disclosure-summary compact"><DisclosureLabel title="Why this score?" description="See every matching signal" /></summary>
-                <p>
-                  Base evidence uses available title, artist, album, duration, ISRC, artwork,
-                  and verified provider identity. Missing evidence is omitted rather than
-                  scored as zero. The acceptance threshold is {percent(match.threshold)};
-                  ambiguity and warnings keep a close result in review. Configured local and
-                  extension preferences apply only after compatible evidence is scored.
-                </p>
-                <dl>
-                  {#if candidate}
-                    {#each scoreComponents(candidate) as [name, value]}
-                      <div><dt>{name.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{percent(value)}</dd></div>
-                    {/each}
-                  {/if}
-                  <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
-                  {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
-                  {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
-                  {#if match.isrc}<div><dt>ISRC</dt><dd>{match.isrc}</dd></div>{/if}
-                  {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
-                  {#each match.providerIdentities as identity}
-                    <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
-                  {/each}
-                </dl>
-              </details>
             </div>
+
+            {#if visibleAuthorities.length}
+              <div class="manual-authority-list" aria-label={`Manual decisions for ${match.title || "track"}`}>
+                {#each visibleAuthorities as authority (authority.id)}
+                  <div class="manual-authority-row">
+                    <Hand size={16} aria-hidden="true" />
+                    <span>
+                      <strong>{authorityLabel(authority)}</strong>
+                      <small>
+                        {authority.reason}
+                        · {authorityState(match, authority)}
+                      </small>
+                    </span>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={Boolean(action) || !canEditAuthority(authority)}
+                      onclick={() => confirmAuthority("manual_rematch", match, authority)}
+                    >Clear {authorityScopeOf(authority)} and rematch</Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={Boolean(action) || !canEditAuthority(authority)}
+                      onclick={() => confirmAuthority("manual_delete", match, authority)}
+                    >Clear {authorityScopeOf(authority)}</Button>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+
+            <details class="mapping-details">
+              <summary>Why this score? <ChevronDown size={16} aria-hidden="true" /></summary>
+              <p>
+                Allstarr compares the title, artist, album, length, ISRC, artwork and
+                verified source IDs when they're available. Missing details are skipped, not
+                counted as zero. A match is accepted automatically at {percent(match.threshold)}
+                or higher, unless it's ambiguous or has warnings. Your local and extension
+                preferences only apply after that.
+              </p>
+              <dl>
+                {#if candidate}
+                  {#each scoreComponents(candidate) as [name, value]}
+                    <div><dt>{name.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ")}</dt><dd>{percent(value)}</dd></div>
+                  {/each}
+                {/if}
+                <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
+                {#if target?.identity || candidate?.libraryTrackId || candidateExternalId}<div><dt>Matched item</dt><dd>{target?.identity || candidate?.libraryTrackId || candidateExternalId}</dd></div>{/if}
+                {#if match.canonicalRecordingId}<div><dt>Canonical recording</dt><dd>{match.canonicalRecordingId}</dd></div>{/if}
+                {#if match.libraryTrackId}<div><dt>Library track</dt><dd>{match.libraryTrackId}</dd></div>{/if}
+                {#if match.isrc}<div><dt>ISRC</dt><dd>{match.isrc}</dd></div>{/if}
+                {#if match.algorithmVersion}<div><dt>Algorithm</dt><dd>{match.algorithmVersion}</dd></div>{/if}
+                {#each match.providerIdentities as identity}
+                  <div><dt>{providerName(identity.providerId)}</dt><dd>{identity.externalId} · {identity.verification}</dd></div>
+                {/each}
+              </dl>
+            </details>
           </article>
         {:else}
           <div class="compact-empty">
-            <strong>No mappings found</strong>
-            <p>Try another filter, or wait for the next playlist match.</p>
+            <strong>Nothing here</strong>
+            <p>{view === "review" ? "No songs need your review right now." : "Try another filter, or wait for the next playlist match."}</p>
           </div>
         {/each}
       </div>
 
       <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages">
-        <span>{data.pagination.total} tracks</span>
+        <span>{data.pagination.total} {data.pagination.total === 1 ? "song" : "songs"}</span>
         <div>
           <Button variant="secondary" size="sm" disabled={data.pagination.page <= 1} onclick={() => { page -= 1; void load(); }}>Previous</Button>
           <span>Page {data.pagination.page} of {data.pagination.totalPages}</span>

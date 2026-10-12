@@ -3013,7 +3013,7 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
     route.fulfill({ status: 204, body: "" }));
   await page.goto("#/library/mappings");
 
-  await page.getByRole("tab", { name: /^Manual 1$/ }).click();
+  await page.getByRole("tab", { name: /^By hand 1$/ }).click();
   const manualMatch = page.locator(".manual-authority-row");
   await expect(manualMatch).toContainText("Manual Jellyfin match");
   const rematch = page.waitForRequest((request) =>
@@ -3133,17 +3133,17 @@ test("Tentative mappings sort by confidence and deep links open review", async (
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("sort") === "confidence_desc");
   await page.getByRole("button", { name: "Confidence", exact: true }).click();
-  await page.getByRole("option", { name: "Highest first" }).click();
+  await page.getByRole("option", { name: "Most confident first" }).click();
   await request;
   const unresolved = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("state") === "unresolved");
-  await page.getByRole("tab", { name: "Unresolved 0" }).click();
+  await page.getByRole("tab", { name: "No match 0" }).click();
   await unresolved;
   const tentative = page.waitForRequest((item) =>
     item.url().includes("/api/admin/track-matches") &&
     new URL(item.url()).searchParams.get("state") === "suggested");
-  await page.getByRole("tab", { name: "Tentative 1" }).click();
+  await page.getByRole("tab", { name: "Unsure 1" }).click();
   await tentative;
   await expect(page.getByRole("button", { name: "Accept" })).toBeVisible();
   await page.getByRole("button", { name: "Accept" }).click();

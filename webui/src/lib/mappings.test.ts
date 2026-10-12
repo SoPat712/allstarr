@@ -36,7 +36,7 @@ describe("mapping review presentation", () => {
   it("keeps scoring evidence ordered and state semantics stable", () => {
     expect(isAttention("Ambiguous")).toBe(true);
     expect(isAttention("accepted")).toBe(false);
-    expect(reviewStateLabel("suggested")).toBe("Tentative");
+    expect(reviewStateLabel("suggested")).toBe("Unsure");
     expect(percent(0.9346)).toBe("93.5%");
     expect(scoreComponents({ components: { title: 0.9, artist: 0.75 } })).toEqual([
       ["title", 0.9],
