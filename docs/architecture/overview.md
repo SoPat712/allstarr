@@ -33,6 +33,8 @@ Jellyfin or Subsonic protocol controller
     |
     +--> local backend proxy
     |
+    +--> shared music core: search, provider streams, mixes, catalog merges
+    |
     +--> playlist, matching, playback, lyrics, and artwork orchestration
              |
              +--> provider router --> built-in or extension capability
@@ -42,6 +44,19 @@ Jellyfin or Subsonic protocol controller
 
 The public protocol controllers preserve client compatibility. Provider metadata and streams pass through the required `IProtocolProviderGateway`; controllers and playback metadata do not select legacy provider services. Public activity metadata and unlinked-principal catalog reads use the same typed router with a public-read actor and cannot resolve account credentials. Only executable typed streaming routes make a provider eligible for playable search. New application behavior belongs in the typed core, not in protocol-specific controller branches.
 
+## Shared music core
+
+`allstarr/Core/Music` holds the music behavior both protocols offer, written once against the provider gateway:
+
+| Owner | Responsibility |
+| --- | --- |
+| `MusicSearchService` | Integrated search: backend and provider rows are fetched together, provider songs the listener already owns are replaced by the native copy, and each kind is ranked by relevance with native rows winning ties. Each protocol supplies its backend half through an `INativeMusicSearch` adapter under `Core/Protocols`, which returns native rows exactly as the backend sent them. A failed backend search contributes no rows instead of failing the search. |
+| `ProviderStreamOpener` | Opens a provider song once through the routed source, wraps the managed cache, and returns a range- and HEAD-aware response. |
+| `MusicMixService` | Similar songs and instant mixes seeded from provider songs, albums, or artists. Song seeds use a provider's similar-tracks capability first when it offers one (Deezer uses the seed artist's radio), then the seed artist's albums and songs. Order is stable for the same seed. |
+| `MusicCatalogMerge`, `MusicTopSongs` | Provider albums missing from a library artist, provider songs missing from a library album, and provider songs that extend an artist's top songs. |
+
+Each protocol dialect keeps what is specific to it: authentication, request parsing, paging and per-type result windows, native backend transport and relays, response rendering, and how failures are described to its clients. Native seeds and native items never enter the shared core; they keep the backend's own answer.
+
 ## Code ownership
 
 | Concern | Current owner |
@@ -49,6 +64,8 @@ The public protocol controllers preserve client compatibility. Provider metadata
 | Composition and middleware | `allstarr/Program.cs` |
 | Provider contracts and registration | `allstarr/Providers/Contracts` |
 | Provider selection and routing policy | `allstarr/Providers/Contracts` |
+| Shared music behavior across protocols | `allstarr/Core/Music` |
+| Protocol gateway, search adapters, and relay shaping | `allstarr/Core/Protocols` |
 | Canonical track identity and matching | `allstarr/Core/Matching` |
 | Playlist ownership and synchronization | `allstarr/Core/Playlists` |
 | Durable jobs and schedules | `allstarr/Core/Jobs` |
@@ -96,13 +113,13 @@ Audience changes rebind the encrypted secret in the same database transaction an
 
 Jellyfin and Subsonic/OpenSubsonic remain the behavioral and data authorities for native objects. Allstarr relays native authentication, browse, item detail, artwork, playlists, playback metadata, streams, user data, and session traffic without reshaping their responses. Unknown upstream fields are part of this contract and pass through unchanged.
 
-Allstarr changes a native response only when a documented feature requires it: external search results, provider-neutral matching and routes, virtual or linked playlists, external playback, lyrics fallback, music-only surface enforcement, or the proxy address used during server discovery. Each changed surface must preserve native rows and identities, declare its added or filtered fields, and have a direct-server-versus-Allstarr parity test. A new interception without that contract is a regression.
+Allstarr changes a native response only when a documented feature requires it: external search results, provider-neutral matching and routes, virtual or linked playlists, external playback, lyrics fallback, provider additions to Subsonic artist, album, and top-song answers, music-only surface enforcement, or the proxy address used during server discovery. Both protocols relay only music methods: Jellyfin through its music-surface policy, Subsonic through an allowlist that refuses every other method with error 70. Each changed surface must preserve native rows and identities, declare its added or filtered fields, and have a direct-server-versus-Allstarr parity test. A new interception without that contract is a regression.
 
 ## Track identity and matching
 
 `TrackIdentityService`, backend library indexing, persisted provider routes, and the playlist orchestration layer are the shared path. Manual match authority is stored separately from automatic catalog evidence, keyed by source provider and source track hash. A nullable owner distinguishes personal and household choices; reads select personal, then household, then automatic. Provider pins store a target route without rewriting canonical identities. Every projection applies the current viewer’s library access and account-aware provider order. Accepted decisions are reusable by automatic matching, interactive matching, synchronization, playback, and event projections. Candidates that satisfy confidence and artist-evidence requirements are selected by local-first/configured streaming priority, not relative confidence windows. Only tentative selection retains preference windows. Cached provider reuse passes through the same decision engine with current local candidates and rejections; it does not force acceptance or overwrite confidence. All rematching runs through one durable `track-match.rematch` job with a scope: one song, one playlist, everything, or an algorithm change. A matching-algorithm change enqueues one owner-scoped job per version (restarts don't queue it again); it replaces stale automatic decisions in bounded batches while preserving manual authority and append-only history. Playlist refresh and materialization run through durable playlist links and the `playlist.materialize` job; there is no provider-specific matching coordinator. A one-time import reuses its first published source snapshot and no longer requires the source account for later projection or rebuilds. Keep-all retention fans resolved external routes into idempotent `playlist.retain-track` jobs, reauthorizes download accounts for the exact owner and capability at execution time, and publishes verified files through the managed-file owner.
 
-Jellyfin search fetches native results with the current viewer’s credentials on every request. The merged native/provider response is not cached, so changing viewers or revoking backend access cannot replay another authorized response. Provider-owned metadata caches remain independent of native authorization. Both protocols rank native and provider results with the same relevance score, computed before display labels are added. Stronger matches lead regardless of source; native results win equal scores, with each source’s original order retained within ties.
+Jellyfin search fetches native results with the current viewer’s credentials on every request. The merged native/provider response is not cached, so changing viewers or revoking backend access cannot replay another authorized response. Provider-owned metadata caches remain independent of native authorization. Both protocols run integrated search through `MusicSearchService` and rank native and provider results with the same relevance score, computed before display labels are added. Stronger matches lead regardless of source; native results win equal scores, with each source’s original order retained within ties.
 
 Library indexing discovers all music libraries, optionally restricted by the deployment's selected library IDs. Local-copy selection uses the current viewer's backend library permissions rather than the identity that indexed the item. Permission results are isolated by backend, viewer and authentication context, expire after 30 seconds, and are invalidated on sign-in. Lookup failures deny indexed local routes; independently authorized provider routes remain eligible. Native playback metadata and artwork require a fresh viewer-filtered item lookup.
 
@@ -119,8 +136,9 @@ Playlist snapshot persistence serializes writes for each provider account with a
 MusicBrainz recording IDs today). Identifier writes go through that owner;
 exact signals find or enrich one recording. When a used source's existing public ID
 and verified ISRC resolve to separate compatible recordings, the identity owner
-merges them with an audit entry. A conflicting MusicBrainz identity leaves that
-playlist entry's canonical identity unset while collection continues.
+merges them with an audit entry. A conflicting MusicBrainz identity, or a provider
+reporting a different ISRC for a track it served before, leaves that playlist
+entry's canonical identity unset while collection continues.
 Explicit merges retain the earliest-created recording and its public ID, preserve
 the losing public IDs as redirects, and move identifiers and durable recording
 references to the survivor without changing provider-account scopes.
@@ -156,7 +174,7 @@ plus one row per created or changed track.
 
 ## External playback selection
 
-`ProtocolProviderGateway.OpenStreamAsync` owns both protocol surfaces' external selection. The existing `ProviderRouter` authorizes candidates and translates only verified canonical identities. Authorized managed-cache hits are checked before remote opens; `ManagedTrackCacheService` publishes remote bytes under the actual serving provider/track. Controllers no longer open a warm external file before routing, nor fall through to legacy global credentials after an actor-scoped route miss.
+`ProtocolProviderGateway.OpenStreamAsync` owns both protocol surfaces' external selection. Both protocols reach it through `ProviderStreamOpener`; each still parses its own quality request and describes failures in its own format. The existing `ProviderRouter` authorizes candidates and translates only verified canonical identities. Authorized managed-cache hits are checked before remote opens; `ManagedTrackCacheService` publishes remote bytes under the actual serving provider/track. Controllers no longer open a warm external file before routing, nor fall through to legacy global credentials after an actor-scoped route miss.
 
 `EffectiveProviderPolicyResolver` reads household provider order, disabled providers, audio quality, and local-preference policy and returns an immutable snapshot. Personal explicit-content and display preferences override their household defaults for the requesting user. Authenticated protocol search, playlist discovery, matching, projection, lyrics, activity, playback selection, and dashboard presentation use that snapshot. `DurableRuntimeSettingsService` validates and commits settings and projects live options through one implementation. Process configuration supplies bootstrap defaults. Provider-order keys and defaults are defined once in `ProviderOrderPolicyCatalog`. A disabled provider cannot be restored merely because it was the catalog source of the requested track.
 
@@ -174,7 +192,7 @@ The bounded `PlaybackDeliveryActivityStore` retains disposable, one-hour stream-
 
 State-changing background work uses the durable job queue, schedules, leases, retries, cancellation, and owner authorization under `Core/Jobs`. A process-local task is not an acceptable owner for matching, downloads, playlist synchronization, scrobbling, or extension lifecycle work.
 
-Every queued job has an explicit initiating user, including scheduled work using a Shared account. Enqueue and each execution attempt verify that the user is active and the exact saved account remains enabled, owned or Shared, at the saved revision, registered for the requested capability, and bound to a valid credential purpose. Retries never substitute another account. The encrypted secret store rechecks the account and credential again when opening a lease. Listener activity, progress, and event feeds use the recorded user; a shared correlation ID grants no access. Revoked sessions close their live event stream.
+Every queued job has an explicit initiating user, including scheduled work using a Shared account. Enqueue and each execution attempt verify that the user is active and the exact saved account remains enabled, owned or Shared, at the saved revision, registered for the requested capability, and bound to a valid credential purpose. Retries never substitute another account. The encrypted secret store rechecks the account and credential again when opening a lease. Listener activity, progress, and event feeds use the recorded user; a shared correlation ID grants no access. Revoked sessions close their live event stream. Each playback report is its own job; finished playback jobs and their attempts expire with the event-log retention period (see [storage](../operations/storage.md#event-log-and-job-retention)).
 
 Startup opens the SQLite file on local disk, enables WAL, applies the baseline migration, and checks schema compatibility and integrity before marking storage ready. Every connection enables foreign keys, normal synchronization, and a five-second busy timeout. Durable workers wait for readiness. Run one application process per deployment; network filesystems are unsupported.
 

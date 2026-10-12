@@ -34,6 +34,8 @@ Read [README.md](README.md) for supported behavior, the [documentation map](docs
 | `allstarr/Controllers/` | Admin APIs and Jellyfin/Subsonic protocol surfaces |
 | `allstarr/Providers/Contracts/` | Provider contracts, registration, and account selection |
 | `allstarr/Providers/` | Built-in provider adapters and source settings |
+| `allstarr/Core/Music/` | Search, provider streams, mixes, and catalog merges shared by both protocols |
+| `allstarr/Core/Protocols/` | Provider gateway, per-protocol search adapters, and relay shaping |
 | `allstarr/Core/Matching/` | Canonical identity, evidence, and match decisions |
 | `allstarr/Core/Playlists/` | Playlist ingestion, projection, and synchronization |
 | `allstarr/Core/Playback/` | Playback observations and client sessions |

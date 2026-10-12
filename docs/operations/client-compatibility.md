@@ -15,7 +15,7 @@ These clients have been used successfully with the Jellyfin surface:
 - [Finamp](https://github.com/jmshrv/finamp) on Android and iOS
 - [Finer Player](https://monk-studio.com/finer) on Apple platforms
 
-The proxy preserves normal Jellyfin authentication and relays unhandled routes. Integrated search, external streams, range requests, artwork, lyrics, favorites, playlists, playback sessions, and InstantMix have explicit compatibility handling, but a client may not expose all of them in its UI.
+The proxy preserves normal Jellyfin authentication and relays unhandled routes. Integrated search, external streams, range requests, artwork, lyrics, favorites, playlists, playback sessions, and InstantMix have explicit compatibility handling, but a client may not expose all of them in its UI. Similar items for a provider song and instant mixes seeded from a provider song, album or artist use the same mix owner as Subsonic: provider recommendations lead a song seed when the provider offers them, then Last.fm suggestions for listeners with a connected Last.fm account, followed by the seed artist's albums and songs. Similar items for a provider artist are the provider's related artists, or none when the provider offers none. Native seeds are relayed to Jellyfin unchanged.
 
 ## Subsonic And OpenSubsonic Clients
 
@@ -38,7 +38,20 @@ These clients have been used with a Navidrome or other Subsonic-compatible backe
 - Narjo
 - Arpeggi
 
-The Subsonic surface accepts normal query and form-post request styles and preserves XML or JSON responses. It supports integrated search, item lookup, streaming, cover art, structured lyrics, stars, playlists and playback observations, and relays the backend's other music methods unchanged. OpenSubsonic `getTranscodeDecision` answers direct play for provider songs, so clients such as Feishin stream them without an error; native songs, including owned copies of provider songs, keep the backend's own decision. `getTopSongs` keeps the library's own top songs first and fills the remaining room with provider songs credited to that artist, alone or leading the credit, skipping titles already listed; when providers add nothing or are unavailable, the backend's answer passes through unchanged. `getTopSongs` keeps the library's own top songs first and fills the remaining room with provider songs credited to that artist, alone or leading the credit, skipping titles already listed; when providers add nothing or are unavailable, the backend's answer passes through unchanged. `getTopSongs` keeps the library's own top songs first and fills the remaining room with provider songs credited to that artist, alone or leading the credit, skipping titles already listed; when providers add nothing or are unavailable, the backend's answer passes through unchanged. Methods outside music library access (video, podcasts, internet radio, shares, chat, user administration, library scans and jukebox control) return Subsonic error 70 and never reach the backend. Some clients filter provider playlists out of their dedicated playlist screen even when the same results are visible through global search.
+The Subsonic surface accepts normal query and form-post request styles and preserves XML or JSON responses. It supports integrated search, item lookup, streaming, cover art, structured lyrics, stars, playlists and playback observations, and relays the backend's other music methods unchanged. Methods outside music library access (video, podcasts, internet radio, shares, chat, user administration, starting library scans and jukebox control) return Subsonic error 70 with HTTP 404 and never reach the backend.
+
+Allstarr adds provider content to these methods:
+
+- `search2` merges provider songs, albums, artists and playlists with the library like `search3`; provider albums and playlists appear as directory entries.
+- OpenSubsonic `getTranscodeDecision` answers direct play for provider songs, so clients such as Feishin stream them without an error. Native songs, including owned copies of provider songs, keep the backend's own decision.
+- `getTopSongs` keeps the library's own top songs first and fills the remaining room with provider songs credited to that artist, alone or leading the credit, skipping titles already listed.
+- `getArtist` for a library artist appends provider albums the library does not hold. They come only from a provider artist of the same name that shares at least one album with the library, so a namesake's discography is not mixed in; a library artist with no albums takes the same-named provider artist with the most albums.
+- `getAlbum` for a library album appends the provider songs it is missing when a provider album has the same title, or the same title with an edition suffix such as "Deluxe Edition", and the same lead artist. Album and song counts are updated; native rows and fields are unchanged.
+- `getSimilarSongs` with a provider song, album or artist ID, and `getSimilarSongs2` with a provider artist ID, return a mix built from that provider: its recommendations for a song seed when available, then Last.fm suggestions for listeners with a connected Last.fm account, then the artist's albums and songs. `getArtistInfo` and `getArtistInfo2` for provider artists list the provider's similar artists, or return an empty, valid artist info when there are none.
+
+For transcode decisions, similar songs and artist info, native IDs keep the backend's answer unchanged. For top songs, artists and albums, the backend's response passes through unchanged when providers add nothing or are unavailable; an unavailable provider mix returns an empty song list.
+
+Some clients filter provider playlists out of their dedicated playlist screen even when the same results are visible through global search.
 
 ## External song labels and playback sources
 
