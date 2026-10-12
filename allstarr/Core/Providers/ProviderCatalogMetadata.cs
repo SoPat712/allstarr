@@ -24,6 +24,10 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
     public abstract Task<ExternalPlaylist?> GetPlaylistAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
     public abstract Task<List<Song>> GetPlaylistTracksAsync(string externalProvider, string externalId, CancellationToken cancellationToken = default);
 
+    /// <summary>Provider recommendations after a seed track; providers without them return null.</summary>
+    public virtual Task<List<Song>?> GetSimilarTracksAsync(string externalId, int limit, CancellationToken cancellationToken = default) =>
+        Task.FromResult<List<Song>?>(null);
+
     internal virtual Task<T> UseCatalogAsync<T>(
         ProviderExecutionContext context, Func<ProviderCatalogMetadata, Task<T>> operation) => operation(this);
 
@@ -136,6 +140,23 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         request,
         (catalog, token) => catalog.GetArtistTracksAsync(ProviderId, request.Id.Value, token),
         MapTrack);
+
+    public async Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetSimilarTracksAsync(
+        ProviderExecutionContext context,
+        ProviderSimilarTracksRequest request)
+    {
+        request.Seed.RequireOwner(ProviderId, ProviderResourceKind.Track);
+        var supported = true;
+        var outcome = await ExecutePageAsync(context, new ProviderPageRequest(request.Limit), async (catalog, token) =>
+        {
+            var tracks = await catalog.GetSimilarTracksAsync(request.Seed.Value, request.Limit, token);
+            supported = tracks != null;
+            return tracks ?? [];
+        }, MapTrack);
+        return supported
+            ? outcome
+            : ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
+    }
 
     private async Task<ProviderOutcome<ProviderPage<TTarget>>> ExecutePageAsync<TLegacy, TTarget>(
         ProviderExecutionContext context,

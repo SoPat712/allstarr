@@ -489,6 +489,27 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         return tracks;
     }
 
+    // Deezer recommends through the seed artist's radio, which mixes in related artists.
+    public override async Task<List<Song>?> GetSimilarTracksAsync(string externalId, int limit, CancellationToken cancellationToken = default)
+    {
+        using var trackResponse = await GetAsync($"{BaseUrl}/track/{Uri.EscapeDataString(externalId)}", cancellationToken);
+        if (!trackResponse.IsSuccessStatusCode) return [];
+        using var track = JsonDocument.Parse(await trackResponse.Content.ReadAsStringAsync(cancellationToken));
+        if (!track.RootElement.TryGetProperty("artist", out var artist) ||
+            !artist.TryGetProperty("id", out var artistId)) return [];
+
+        using var radioResponse = await GetAsync(
+            $"{BaseUrl}/artist/{artistId.GetInt64()}/radio?limit={Math.Clamp(limit + 1, 1, 100)}", cancellationToken);
+        if (!radioResponse.IsSuccessStatusCode) return [];
+        using var radio = JsonDocument.Parse(await radioResponse.Content.ReadAsStringAsync(cancellationToken));
+        if (!radio.RootElement.TryGetProperty("data", out var data)) return [];
+        return data.EnumerateArray()
+            .Select(item => ParseDeezerTrack(item))
+            .Where(song => song.ExternalId != externalId)
+            .Take(limit)
+            .ToList();
+    }
+
     private Song ParseDeezerTrack(JsonElement track, int? fallbackTrackNumber = null, string? albumArtist = null)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();

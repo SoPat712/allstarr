@@ -77,6 +77,12 @@ public interface IProtocolProviderGateway
         string providerId,
         string externalId);
 
+    Task<List<Song>> GetSimilarSongsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        int limit) => Task.FromResult(new List<Song>());
+
     Task<List<ExternalPlaylist>> SearchPlaylistsAsync(
         ProtocolExecutionContext protocol,
         string query,
@@ -736,6 +742,29 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         return [];
+    }
+
+    public async Task<List<Song>> GetSimilarSongsAsync(
+        ProtocolExecutionContext protocol,
+        string providerId,
+        string externalId,
+        int limit)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        var routedProviderId = NormalizeProvider(providerId);
+        var routed = await PlanExactAsync<IProviderMetadataCapability>(
+            protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-similar-tracks");
+        if (routed.Candidate == null) return [];
+        var outcome = await routed.Candidate.Implementation.GetSimilarTracksAsync(
+            routed.Candidate.Context,
+            new ProviderSimilarTracksRequest(
+                new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Track, externalId),
+                Math.Clamp(limit, 1, 200)));
+        if (!outcome.IsSuccess) return [];
+        var tracks = outcome.RequireValue().Items.Select(Map).ToList();
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks);
+        return tracks.Where(song => policy?.Includes(song) != false).ToList();
     }
 
     public async Task<List<Song>> GetArtistTracksAsync(

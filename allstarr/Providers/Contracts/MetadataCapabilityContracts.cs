@@ -376,6 +376,24 @@ public sealed record ProviderIsrcLookupRequest
     public string? Market { get; }
 }
 
+/// <summary>Songs a provider recommends after a seed track, best match first.</summary>
+public sealed record ProviderSimilarTracksRequest
+{
+    public ProviderSimilarTracksRequest(ProviderExternalResourceId seed, int limit)
+    {
+        ArgumentNullException.ThrowIfNull(seed);
+        seed.RequireOwner(seed.ProviderId, ProviderResourceKind.Track);
+        if (limit is < 1 or > 200)
+            throw new ArgumentOutOfRangeException(nameof(limit), "Similar-track limits must be between 1 and 200.");
+        Seed = seed;
+        Limit = limit;
+    }
+
+    public ProviderExternalResourceId Seed { get; }
+
+    public int Limit { get; }
+}
+
 public interface IProviderMetadataCapability : IProviderCapability
 {
     Task<ProviderOutcome<ProviderArtworkReference>> GetPlaylistArtworkAsync(
@@ -420,6 +438,12 @@ public interface IProviderMetadataCapability : IProviderCapability
     Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetArtistTracksAsync(
         ProviderExecutionContext context,
         ProviderArtistItemsRequest request) => Task.FromResult(
+            ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(
+                new ProviderError(ProviderErrorKind.CapabilityUnavailable)));
+
+    Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>> GetSimilarTracksAsync(
+        ProviderExecutionContext context,
+        ProviderSimilarTracksRequest request) => Task.FromResult(
             ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(
                 new ProviderError(ProviderErrorKind.CapabilityUnavailable)));
 }

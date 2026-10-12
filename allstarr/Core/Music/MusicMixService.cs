@@ -7,6 +7,8 @@ namespace allstarr.Core.Music;
 
 /// <summary>
 /// Similar songs and instant mixes seeded from provider items, shared by every protocol.
+/// Provider recommendations come first when the provider offers them; otherwise the seed
+/// artist's catalog stands in.
 /// Native seeds never reach this service; each protocol relays them to its backend.
 /// </summary>
 public sealed class MusicMixService(IProtocolProviderGateway providers)
@@ -21,6 +23,10 @@ public sealed class MusicMixService(IProtocolProviderGateway providers)
         string publicId,
         int limit)
     {
+        var recommended = await providers.GetSimilarSongsAsync(context, providerId, externalId, limit);
+        if (recommended.Count > 0)
+            return recommended.Where(candidate => candidate.Id != publicId && candidate.ExternalId != externalId)
+                .Take(limit).ToList();
         var song = await providers.GetSongAsync(context, providerId, externalId);
         if (song == null || string.IsNullOrWhiteSpace(song.Artist)) return [];
         var candidates = await SearchSongsAsync(context, providerId, song.Artist, limit);
@@ -68,6 +74,8 @@ public sealed class MusicMixService(IProtocolProviderGateway providers)
                 var song = await providers.GetSongAsync(context, providerId, externalId);
                 if (song == null) return [];
                 artistName = song.Artist;
+                // Provider recommendations lead a song mix; the artist's albums only fill the rest.
+                mix.AddRange(await providers.GetSimilarSongsAsync(context, providerId, externalId, limit));
                 if (!string.IsNullOrEmpty(song.ExternalProvider) && !string.IsNullOrEmpty(song.ArtistId))
                 {
                     await AddArtistAlbumsAsync(context, song.ExternalProvider,
