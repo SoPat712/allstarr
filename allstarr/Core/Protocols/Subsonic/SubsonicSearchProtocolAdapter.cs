@@ -24,7 +24,17 @@ public sealed record SubsonicSearchWindow(
 
 public sealed class SubsonicSearchProtocolAdapter
 {
+    public const string Search2 = "search2";
+    public const string Search3 = "search3";
     private const int MaximumWindow = 500;
+
+    /// <summary>Names the response element of a search method: searchResult2 or searchResult3.</summary>
+    public static string ResultElement(string method) =>
+        string.Equals(method, Search2, StringComparison.OrdinalIgnoreCase) ? "searchResult2" : "searchResult3";
+
+    /// <summary>search2 answers in folder form, so its albums are directory entries rather than ID3 albums.</summary>
+    public static bool UsesDirectoryAlbums(string method) =>
+        string.Equals(method, Search2, StringComparison.OrdinalIgnoreCase);
 
     public SubsonicSearchWindow Parse(
         SubsonicRequestParameters parameters,
@@ -83,24 +93,28 @@ public sealed class SubsonicSearchProtocolAdapter
 }
 
 /// <summary>
-/// The backend half of a Subsonic integrated search: the client's own search3 request and
-/// single-song lookups, kept in whatever format the backend answered with.
+/// The backend half of a Subsonic integrated search: the client's own search2 or search3 request
+/// and single-song lookups, kept in whatever format the backend answered with.
 /// </summary>
 public sealed class SubsonicNativeMusicSearch(
     SubsonicProxyService proxy,
     SubsonicModelMapper mapper,
     SubsonicResponseBuilder responses,
     SubsonicRequestParameters parameters,
-    string format) : INativeMusicSearch<object>
+    string format,
+    string method = SubsonicSearchProtocolAdapter.Search3) : INativeMusicSearch<object>
 {
     public bool IsJson { get; private set; } = format == "json";
 
     public async Task<IReadOnlyList<NativeMusicItem<object>>> SearchAsync(CancellationToken cancellationToken)
     {
-        var response = await proxy.RelaySafeAsync("rest/search3", parameters, cancellationToken);
+        var response = await proxy.RelaySafeAsync($"rest/{method}", parameters, cancellationToken);
         IsJson = format == "json" || response.ContentType?.Contains("json") == true;
         if (!response.Success || response.Body == null) return [];
-        var (songs, albums, artists) = mapper.ParseSearchResponse(response.Body, response.ContentType);
+        var (songs, albums, artists) = mapper.ParseSearchResponse(
+            response.Body,
+            response.ContentType,
+            SubsonicSearchProtocolAdapter.ResultElement(method));
         return songs.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Song))
             .Concat(albums.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Album)))
             .Concat(artists.Select(item => SubsonicModelMapper.ToNativeItem(item, MusicItemKind.Artist)))
