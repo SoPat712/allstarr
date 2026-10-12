@@ -48,3 +48,14 @@ The former command-line storage tools and portable state transfer are unavailabl
 The encryption key ring defaults to `{Storage:DataDirectory}/keyring.json`; `Secrets__KeyRingPath` overrides that location for existing secret mounts. On first startup, an empty database gets a randomly generated key ring with private file permissions. Normal startup never overwrites an existing key ring. If encrypted secrets exist but the key ring is missing, restore the original key ring: Allstarr leaves saved credentials unavailable and continues native proxy access. It does not generate a replacement key that would make those credentials unreadable.
 
 Audio, artwork, extension packages, and the encryption key ring remain files. Original backend music is read-only. Keep the configured encryption key ring together with any offline copy of the database: losing it makes the corresponding encrypted provider credentials unreadable. Stop Allstarr before making an offline copy of its data directory, and include any WAL sidecar files. Never copy or replace the active database piecemeal.
+
+## Event log and job retention
+
+A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempts are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under `Operations:EventLog` (for example `Operations__EventLog__RetentionDays` in the container environment):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `Operations__EventLog__RetentionDays` | `30` | Age after which unreferenced events and finished playback jobs are removed (1–3650) |
+| `Operations__EventLog__MaximumRows` | `250000` | Oldest unreferenced events beyond this count are removed (1000–5000000) |
+| `Operations__EventLog__CleanupIntervalMinutes` | `360` | Time between cleanup passes; one also runs at startup (5–10080) |
+| `Operations__EventLog__CleanupBatchSize` | `1000` | Rows deleted per batch (100–10000) |
