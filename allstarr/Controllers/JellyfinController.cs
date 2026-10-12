@@ -1173,13 +1173,31 @@ public partial class JellyfinController : ControllerBase
         {
             if (itemId.Contains("-artist-", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogDebug("Similar artists not supported for external artist {ItemId}", itemId);
-                return _responseBuilder.CreateJsonResponse(new
+                try
                 {
-                    Items = Array.Empty<object>(),
-                    TotalRecordCount = 0,
-                    StartIndex = 0
-                });
+                    var similarArtists = (await _providerGateway.GetSimilarArtistsAsync(
+                            HttpContext.RequireProtocolExecutionContext(), provider!, externalId!, limit))
+                        .Take(Math.Max(limit, 0))
+                        .Select(_responseBuilder.ConvertArtistToJellyfinItem)
+                        .ToList();
+
+                    return _responseBuilder.CreateJsonResponse(new
+                    {
+                        Items = similarArtists,
+                        TotalRecordCount = similarArtists.Count,
+                        StartIndex = 0
+                    });
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to get similar artists for external artist {ItemId}", itemId);
+                    return _responseBuilder.CreateJsonResponse(new
+                    {
+                        Items = Array.Empty<object>(),
+                        TotalRecordCount = 0,
+                        StartIndex = 0
+                    });
+                }
             }
 
             try
