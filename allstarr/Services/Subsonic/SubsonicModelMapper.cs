@@ -91,6 +91,36 @@ public class SubsonicModelMapper
         return (songs, albums, artists);
     }
 
+    /// <summary>Reads the songs of a successful native getTopSongs answer; null when it is not one.</summary>
+    public List<object>? ParseTopSongs(byte[] body, string? contentType)
+    {
+        try
+        {
+            var content = Encoding.UTF8.GetString(body);
+            if (contentType?.Contains("json") == true)
+            {
+                using var document = JsonDocument.Parse(content);
+                if (!document.RootElement.TryGetProperty("subsonic-response", out var response) ||
+                    !response.TryGetProperty("status", out var status) || status.GetString() != "ok" ||
+                    !response.TryGetProperty("topSongs", out var topSongs)) return null;
+                return topSongs.TryGetProperty("song", out var songs) && songs.ValueKind == JsonValueKind.Array
+                    ? songs.EnumerateArray().Select(song => _responseBuilder.ConvertSubsonicJsonElement(song, true)).ToList()
+                    : [];
+            }
+            var xml = XDocument.Parse(content);
+            var ns = xml.Root?.GetDefaultNamespace() ?? XNamespace.None;
+            var top = xml.Root?.Element(ns + "topSongs");
+            if (xml.Root?.Attribute("status")?.Value != "ok" || top == null) return null;
+            return top.Elements(ns + "song").Select(song => (object)_responseBuilder.ConvertSubsonicXmlElement(song, "song")).ToList();
+        }
+        catch (Exception error) when (error is JsonException or System.Xml.XmlException)
+        {
+            return null;
+        }
+    }
+
+    public static string SongTitle(object item) => GetSearchField(item, "title");
+
     /// <summary>Describes a native search row for the shared search core without changing it.</summary>
     public static NativeMusicItem<object> ToNativeItem(object item, MusicItemKind kind) => new(
         kind,

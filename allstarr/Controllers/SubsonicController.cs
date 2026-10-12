@@ -243,6 +243,69 @@ public partial class SubsonicController : ControllerBase
         }
     }
 
+    // Library top songs come first; provider songs led by the same artist fill the remaining room.
+    [HttpGet, HttpPost]
+    [Route("rest/getTopSongs")]
+    [Route("rest/getTopSongs.view")]
+    public async Task<IActionResult> GetTopSongs()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var artist = parameters.GetValueOrDefault("artist", "").Trim();
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getTopSongs";
+        var nativeTask = _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+        if (artist.Length == 0)
+            return _relayProtocolAdapter.CreateResult(await nativeTask, $"application/{format}");
+
+        var count = int.TryParse(parameters.GetValueOrDefault("count"), out var requested) && requested > 0
+            ? Math.Min(requested, 500)
+            : 50;
+        var providerTask = SearchArtistSongsAsync(artist, Math.Min(Math.Max(count, 20) * 2, 100));
+        var native = await nativeTask;
+        var providerSongs = await providerTask;
+        var nativeSongs = native.IsSuccessStatusCode ? _modelMapper.ParseTopSongs(native.Body, native.ContentType) : null;
+        var added = nativeSongs == null
+            ? []
+            : MusicTopSongs.Extend(artist, nativeSongs.Select(SubsonicModelMapper.SongTitle), providerSongs,
+                count - nativeSongs.Count);
+        if (nativeSongs == null || added.Count == 0)
+            return _relayProtocolAdapter.CreateResult(native, $"application/{format}");
+
+        var isJson = native.ContentType?.Contains("json") == true;
+        var ns = XNamespace.Get("http://subsonic.org/restapi");
+        var songs = nativeSongs.Concat(added.Select(song => isJson
+            ? (object)_responseBuilder.ConvertSongToJson(song)
+            : _responseBuilder.ConvertSongToXml(song, ns))).ToList();
+        if (isJson)
+        {
+            return _responseBuilder.CreateJsonResponse(new
+            {
+                status = "ok",
+                version = "1.16.1",
+                topSongs = new { song = songs }
+            });
+        }
+        foreach (var element in songs.OfType<XElement>()) element.Name = ns + "song";
+        return Content(new XDocument(new XElement(ns + "subsonic-response",
+            new XAttribute("status", "ok"),
+            new XAttribute("version", "1.16.1"),
+            new XElement(ns + "topSongs", songs))).ToString(), "application/xml");
+    }
+
+    // A provider outage must not cost the listener the library's own top songs.
+    private async Task<IReadOnlyList<Song>> SearchArtistSongsAsync(string artist, int limit)
+    {
+        try
+        {
+            return (await _providerGateway.SearchAsync(CurrentProtocolContext, artist, limit, 0, 0)).Songs;
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            _logger.LogWarning("Provider songs for top songs were unavailable ({ExceptionType})", error.GetType().Name);
+            return [];
+        }
+    }
+
     // OpenSubsonic clients such as Feishin ask before streaming. Provider songs always play
     // directly; native songs, including owned copies of provider songs, keep the backend's answer.
     [HttpGet, HttpPost]

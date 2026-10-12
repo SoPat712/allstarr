@@ -42,7 +42,6 @@ public static class SubsonicMusicEndpointPolicy
         "getSongsByGenre",
         "getStarred",
         "getStarred2",
-        "getTopSongs",
         "getTranscodeStream",
         "getUser",
         "ping",
