@@ -59,15 +59,15 @@ describe("source presentation", () => {
     expect(sourceTimingLabel({
       ...provider,
       runtimeCapabilities: [{ id: "metadata", ready: true, canAttempt: true, canTest: true, latencyMilliseconds: 42 }],
-    })).toBe("Latest API 42 ms");
+    })).toBe("42 ms at last check");
     expect(sourceTimingLabel(provider, { providerId: provider.id, enabledAccountCount: 1, capabilityTotal: 1, healthyCapabilityCount: 1, failedCapabilityCount: 0, p95LatencyMilliseconds: 17 }))
-      .toBe("Managed p95 17 ms");
+      .toBe("17 ms typical");
     expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: false, canAttempt: true, canTest: true }] }))
-      .toBe("Awaiting first sample");
+      .toBe("Not measured yet");
     expect(sourceTimingLabel({ ...provider, runtimeCapabilities: [{ id: "metadata", ready: true, canAttempt: true, canTest: true, testedAt: "2026-08-07T00:00:00Z" }] }))
-      .toBe("Readiness checked");
-    expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Awaiting first CTS sample");
-    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("Awaiting first CTS sample");
+      .toBe("Checked");
+    expect(sourceTimingLabel({ ...provider, categories: ["streaming"] })).toBe("Not measured yet");
+    expect(sourceTimingLabel({ ...provider, categories: ["download"] })).toBe("Not measured yet");
     expect(sourceTimingLabel(provider)).toBe("Not applicable");
   });
 

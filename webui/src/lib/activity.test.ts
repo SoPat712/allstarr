@@ -101,7 +101,7 @@ describe("event log presentation", () => {
       ...item("3", "Provider unhealthy"),
       kind: "provider_health",
       providerId: "lumen-audio",
-    })).toBe("#/integrations/services?source=lumen-audio");
+    })).toBe("#/integrations/services/lumen-audio");
     expect(activityLink({
       ...item("4", "Local library"),
       kind: "library",

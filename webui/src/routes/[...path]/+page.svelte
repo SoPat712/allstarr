@@ -16,7 +16,7 @@
     { href: "#/", label: "Home", mobileLabel: "Home", icon: "home", mobile: true },
     { href: "#/library/playlists", prefix: "/library/", label: "Library", mobileLabel: "Library", icon: "library", mobile: true },
     { href: "#/intelligence", label: "Intelligence", mobileLabel: "Insights", icon: "headphones", mobile: true },
-    { href: "#/integrations/services", prefix: "/integrations/", label: "Integrations", mobileLabel: "Integrations", icon: "sources", mobile: false },
+    { href: "#/integrations/services", prefix: "/integrations/", label: "Sources", mobileLabel: "Sources", icon: "sources", mobile: false },
     { href: "#/activity", label: "Activity", mobileLabel: "Activity", icon: "activity", mobile: true },
     { href: "#/settings", label: "Settings", mobileLabel: "Settings", icon: "settings", mobile: false },
   ];
@@ -85,8 +85,9 @@
     if (["/library/missing", "/library/migration"].includes(path)) return "/library/mappings";
     if (path === "/sources") return "/integrations/services";
     if (path === "/settings/accounts") return "/integrations/accounts";
-    if (path === "/settings/extensions") return "/integrations/extensions";
-    if (path === "/settings/routing") return "/integrations/routing";
+    if (path === "/settings/extensions") return "/integrations/services";
+    if (path === "/settings/routing" || path === "/integrations/routing") return "/settings/playback";
+    if (path === "/integrations/extensions") return "/integrations/services";
     return path;
   }
 
@@ -95,8 +96,6 @@
     route.startsWith("/settings") ||
     route === "/library/cached" ||
     route === "/library/kept" ||
-    route === "/integrations/extensions" ||
-    route === "/integrations/routing" ||
     route === "/intelligence"
   ));
   const routeQuery = $derived(new URLSearchParams(page.url.hash.split("?", 2)[1] ?? ""));
@@ -141,6 +140,9 @@
                       initialSource: routeQuery.get("source") ?? "",
                       initialSection: routeQuery.get("section") ?? "data",
                       initialConnect: routeQuery.get("connect") === "1",
+                      serviceId: route.split("/")[2] === "services" ? decodeURIComponent(route.split("/")[3] ?? "") : "",
+                      from: routeQuery.get("from") ?? "",
+                      focusAccount: routeQuery.get("account") ?? "",
                     }
                   : route.startsWith("/settings")
                     ? {
@@ -685,7 +687,7 @@
                 <span class="nav-icon"><UiIcon name={destination.icon} /></span>
                 <span>
                   <strong>{destination.label}</strong>
-                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.label === "Integrations" ? (administrator ? "Services, accounts, extensions, and routing" : "Services and your connected accounts") : "Deployment and operator controls"}</small>
+                  <small>{destination.href === "#/preferences" ? "Content and track labels for your account" : destination.label === "Sources" ? (administrator ? "Music services, accounts and extensions" : "Music services and your accounts") : "Deployment and operator controls"}</small>
                 </span>
               </a>
             {/each}

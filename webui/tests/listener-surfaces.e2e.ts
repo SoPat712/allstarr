@@ -158,13 +158,11 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
   await page.getByRole("button", { name: "More destinations" }).click();
   const more = page.getByRole("navigation", { name: "More destinations" });
   await expect(more.getByRole("link", { name: /Listening preferences/ })).toBeVisible();
-  await expect(more.getByRole("link", { name: /Integrations/ })).toBeVisible();
+  await expect(more.getByRole("link", { name: /Sources/ })).toBeVisible();
   await expect(more.getByRole("link", { name: /Settings/ })).toHaveCount(0);
-  await more.getByRole("link", { name: /Integrations/ }).click();
-  await expect(page.getByRole("navigation", { name: "Integration sections" })).toContainText("Services");
-  await expect(page.getByRole("navigation", { name: "Integration sections" })).toContainText("Accounts");
-  await expect(page.getByRole("navigation", { name: "Integration sections" })).not.toContainText("Extensions");
-  await expect(page.getByRole("navigation", { name: "Integration sections" })).not.toContainText("Routing");
+  await more.getByRole("link", { name: /Sources/ }).click();
+  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add a source" })).toHaveCount(0);
 
   await page.goto("/#/library/playlists");
   const library = page.getByRole("navigation", { name: "Library sections" });
@@ -179,7 +177,7 @@ test("listener navigation exposes personal surfaces and blocks operator workspac
   await expect(page.getByText(/My Playback/i).first()).toBeVisible();
   expect(requests.some((request) => request.includes("/api/admin/ui/schema"))).toBe(true);
 
-  for (const route of ["settings/general", "library/cached", "integrations/extensions", "settings/extensions"]) {
+  for (const route of ["settings/general", "library/cached", "integrations/routing", "settings/playback"]) {
     requests.length = 0;
     await page.goto(`/#/${route}`);
     await expect(page.getByRole("heading", { name: "This workspace is for administrators." })).toBeVisible();
@@ -206,7 +204,7 @@ test("administrator navigation and household now-playing remain available", asyn
   await expect(page.getByRole("navigation", { name: "Library sections" })).toContainText("Kept");
 
   await page.goto("/#/integrations/services");
-  const integrations = page.getByRole("navigation", { name: "Integration sections" });
-  await expect(integrations).toContainText("Extensions");
-  await expect(integrations).toContainText("Routing");
+  await expect(page.getByRole("button", { name: "Add a source" })).toBeVisible();
+  await page.goto("/#/settings/playback");
+  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
 });

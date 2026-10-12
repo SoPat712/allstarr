@@ -179,7 +179,7 @@ export function activityLink(item: ActivityItem) {
     return `#/library/mappings?search=${encodeURIComponent(search)}`;
   }
   if (item.providerId && item.providerId !== "library")
-    return `#/integrations/services?source=${encodeURIComponent(item.providerId)}`;
+    return `#/integrations/services/${encodeURIComponent(item.providerId)}`;
   return null;
 }
 

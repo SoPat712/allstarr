@@ -13,6 +13,7 @@
   } from "$lib/api";
   import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
   import FilePicker from "$lib/components/FilePicker.svelte";
+  import RoutingView from "$lib/components/RoutingView.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -21,7 +22,7 @@
   import { fieldValue } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
-  import { Activity, Archive, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
+  import { Activity, Archive, AudioLines, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
 
   let {
     section = "general",
@@ -39,6 +40,7 @@
     { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Where songs are saved and how long cached data is kept." },
+    { id: "playback", label: "Playback", group: "Server", icon: AudioLines, title: "Playback", description: "Audio quality, matching, and the order Allstarr tries sources when your media server doesn't have a song." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
     { id: "diagnostics", label: "Diagnostics", group: "Maintenance", icon: Activity, title: "Diagnostics", description: "Run checks when playback or playlists aren't working." },
@@ -366,6 +368,8 @@
             onPurge={(target) => { purgeTarget = target; purgeOpen = true; }}
           />
         {/if}
+      {:else if active === "playback"}
+        <RoutingView embedded />
       {:else if active === "backups"}
         <article class="settings-card maintenance-card">
           <header>
