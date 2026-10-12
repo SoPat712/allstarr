@@ -49,9 +49,9 @@ public partial class SubsonicController : ControllerBase
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly MusicSearchService _musicSearch;
+    private readonly ProviderStreamOpener _streamOpener;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
-    private readonly ManagedTrackCacheService? _managedTrackCache;
     private readonly ILibraryIndexService? _libraryIndex;
 
     public SubsonicController(
@@ -72,11 +72,11 @@ public partial class SubsonicController : ControllerBase
         IProtocolProviderGateway providerGateway,
         ProtocolStreamingResponseAdapter streamingResponseAdapter,
         MusicSearchService musicSearch,
+        ProviderStreamOpener streamOpener,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
-        ManagedTrackCacheService? managedTrackCache = null,
         ILibraryIndexService? libraryIndex = null)
     {
         _subsonicSettings = subsonicSettings.Value;
@@ -99,9 +99,9 @@ public partial class SubsonicController : ControllerBase
         _providerGateway = providerGateway;
         _streamingResponseAdapter = streamingResponseAdapter;
         _musicSearch = musicSearch;
+        _streamOpener = streamOpener;
         _audioMuse = audioMuse;
         _intelligencePolicies = intelligencePolicies;
-        _managedTrackCache = managedTrackCache;
 
         if (string.IsNullOrWhiteSpace(_subsonicSettings.Url))
         {
@@ -223,42 +223,12 @@ public partial class SubsonicController : ControllerBase
             parameters.GetValueOrDefault("maxBitRate"));
         try
         {
-            var routed = await _providerGateway.OpenStreamAsync(
+            return await _streamOpener.OpenAsync(
+                HttpContext,
                 CurrentProtocolContext with { RequestedItemId = id },
                 provider!,
                 externalId!,
-                requestedQuality,
-                Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
-                headOnly: HttpMethods.IsHead(Request.Method));
-            if (routed != null)
-            {
-                if (!routed.Response.IsSuccessStatusCode)
-                {
-                    var status = (int)routed.Response.StatusCode;
-                    routed.Response.Dispose();
-                    return StatusCode(status);
-                }
-                if (_managedTrackCache != null)
-                {
-                    await _managedTrackCache.WrapAsync(
-                        routed,
-                        CurrentProtocolContext,
-                        routed.ServingProviderId,
-                        routed.ServingExternalId ?? externalId!,
-                        HttpMethods.IsHead(Request.Method),
-                        () =>
-        _providerGateway.GetSongAsync(CurrentProtocolContext, routed.ServingProviderId,
-                            routed.ServingExternalId ?? externalId!),
-                        HttpContext.RequestAborted);
-                }
-                return await _streamingResponseAdapter.CreateAsync(
-                    HttpContext,
-                    routed.Response,
-                    HttpContext.RequestAborted,
-                    enableRangeProcessing: routed.IsCached);
-            }
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                new { error = "No verified playback source is available." });
+                requestedQuality);
         }
         catch (Exception ex)
         {

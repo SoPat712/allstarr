@@ -392,6 +392,7 @@ builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadataResolver>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicSearchService>();
+builder.Services.AddSingleton<allstarr.Core.Music.ProviderStreamOpener>();
 
 
 if (backendType == BackendType.Jellyfin)

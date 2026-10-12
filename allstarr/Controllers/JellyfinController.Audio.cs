@@ -140,41 +140,7 @@ public partial class JellyfinController
                 StreamQuality.High => ProviderAudioQuality.Lossy,
                 _ => ProviderAudioQuality.Any
             };
-            var routed = await _providerGateway.OpenStreamAsync(
-                protocol,
-                provider,
-                externalId,
-                requestedQuality,
-                Request.Headers.Range.ToString() is { Length: > 0 } range ? range : null,
-                headOnly: HttpMethods.IsHead(Request.Method));
-            if (routed != null)
-            {
-                if (!routed.Response.IsSuccessStatusCode)
-                {
-                    var status = (int)routed.Response.StatusCode;
-                    routed.Response.Dispose();
-                    return StatusCode(status);
-                }
-                if (_managedTrackCache != null)
-                {
-                    await _managedTrackCache.WrapAsync(
-                        routed,
-                        protocol,
-                        routed.ServingProviderId,
-                        routed.ServingExternalId ?? externalId,
-                        HttpMethods.IsHead(Request.Method),
-                        () => _providerGateway.GetSongAsync(protocol, routed.ServingProviderId,
-                            routed.ServingExternalId ?? externalId),
-                        HttpContext.RequestAborted);
-                }
-                return await _streamingResponseAdapter.CreateAsync(
-                    HttpContext,
-                    routed.Response,
-                    HttpContext.RequestAborted,
-                    enableRangeProcessing: routed.IsCached);
-            }
-            return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                new { error = "No verified playback source is available." });
+            return await _streamOpener.OpenAsync(HttpContext, protocol, provider, externalId, requestedQuality);
         }
         catch (Exception ex)
         {
