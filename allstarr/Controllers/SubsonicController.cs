@@ -243,6 +243,38 @@ public partial class SubsonicController : ControllerBase
         }
     }
 
+    // OpenSubsonic clients such as Feishin ask before streaming. Provider songs always play
+    // directly; native songs, including owned copies of provider songs, keep the backend's answer.
+    [HttpGet, HttpPost]
+    [Route("rest/getTranscodeDecision")]
+    [Route("rest/getTranscodeDecision.view")]
+    public async Task<IActionResult> GetTranscodeDecision()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var mediaId = parameters.GetValueOrDefault("mediaId", "");
+        var (isExternal, _, _) = _localLibraryService.ParseSongId(mediaId);
+        if (isExternal && _libraryIndex != null &&
+            await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, mediaId, HttpContext.RequestAborted) is { } nativeId)
+        {
+            parameters = parameters.SetValue("mediaId", nativeId);
+            isExternal = false;
+        }
+
+        if (isExternal)
+        {
+            return _responseBuilder.CreateDirectPlayDecisionResponse(format);
+        }
+
+        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getTranscodeDecision";
+        var result = await _proxyService.RelayRawAsync(
+            relayEndpoint,
+            parameters,
+            HttpContext.RequestAborted,
+            Request.Headers);
+        return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
+    }
+
     [HttpGet, HttpPost]
     [Route("rest/getSong")]
     [Route("rest/getSong.view")]

@@ -56,6 +56,35 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
+    /// <summary>
+    /// OpenSubsonic transcode decision for a provider song: it always streams as-is.
+    /// The container is only known once a source is opened, so no stream details are claimed.
+    /// </summary>
+    public IActionResult CreateDirectPlayDecisionResponse(string format)
+    {
+        if (format == "json")
+        {
+            return CreateJsonResponse(new
+            {
+                status = "ok",
+                version = SubsonicVersion,
+                openSubsonic = true,
+                transcodeDecision = new { canDirectPlay = true, canTranscode = false }
+            });
+        }
+
+        var ns = XNamespace.Get(SubsonicNamespace);
+        var doc = new XDocument(
+            new XElement(ns + "subsonic-response",
+                new XAttribute("status", "ok"),
+                new XAttribute("version", SubsonicVersion),
+                new XAttribute("openSubsonic", "true"),
+                new XElement(ns + "transcodeDecision",
+                    new XAttribute("canDirectPlay", "true"),
+                    new XAttribute("canTranscode", "false"))));
+        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+    }
+
     public IActionResult CreateSongResponse(string format, Song song)
     {
         if (format == "json")
