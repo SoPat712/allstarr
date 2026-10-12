@@ -50,6 +50,7 @@ public partial class SubsonicController : ControllerBase
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly MusicSearchService _musicSearch;
     private readonly ProviderStreamOpener _streamOpener;
+    private readonly MusicMixService _musicMix;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ILibraryIndexService? _libraryIndex;
@@ -73,6 +74,7 @@ public partial class SubsonicController : ControllerBase
         ProtocolStreamingResponseAdapter streamingResponseAdapter,
         MusicSearchService musicSearch,
         ProviderStreamOpener streamOpener,
+        MusicMixService musicMix,
         IFavoriteActionPipeline? favoriteActions = null,
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
@@ -100,6 +102,7 @@ public partial class SubsonicController : ControllerBase
         _streamingResponseAdapter = streamingResponseAdapter;
         _musicSearch = musicSearch;
         _streamOpener = streamOpener;
+        _musicMix = musicMix;
         _audioMuse = audioMuse;
         _intelligencePolicies = intelligencePolicies;
 
@@ -241,6 +244,95 @@ public partial class SubsonicController : ControllerBase
                 ex.GetType().Name);
             return StatusCode(error.StatusCode, new { error = error.Message });
         }
+    }
+
+    // Provider seeds get a mix from the shared mix owner; native seeds keep the backend's answer.
+    [HttpGet, HttpPost]
+    [Route("rest/getSimilarSongs")]
+    [Route("rest/getSimilarSongs.view")]
+    public Task<IActionResult> GetSimilarSongs() => GetProviderMixAsync("similarSongs", artistOnly: false);
+
+    [HttpGet, HttpPost]
+    [Route("rest/getSimilarSongs2")]
+    [Route("rest/getSimilarSongs2.view")]
+    public Task<IActionResult> GetSimilarSongs2() => GetProviderMixAsync("similarSongs2", artistOnly: true);
+
+    private async Task<IActionResult> GetProviderMixAsync(string element, bool artistOnly)
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var id = parameters.GetValueOrDefault("id", "");
+        var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(id);
+        if (!isExternal || (artistOnly && type != "artist") || type is not ("song" or "album" or "artist"))
+        {
+            var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? $"rest/get{char.ToUpperInvariant(element[0])}{element[1..]}";
+            var relayed = await _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+            return _relayProtocolAdapter.CreateResult(relayed, $"application/{format}");
+        }
+
+        var count = int.TryParse(parameters.GetValueOrDefault("count"), out var requested) && requested > 0
+            ? Math.Min(requested, 500)
+            : 50;
+        IReadOnlyList<Song> songs;
+        try
+        {
+            songs = await _musicMix.InstantMixAsync(CurrentProtocolContext, provider!, type!, externalId!, id, count);
+        }
+        catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
+        {
+            _logger.LogWarning("Provider mix for {Provider} was unavailable ({ExceptionType})", provider, error.GetType().Name);
+            songs = [];
+        }
+        return CreateSongListResponse(format, element, songs);
+    }
+
+    // Provider artists have no backend record; answer with an empty, valid artist info.
+    [HttpGet, HttpPost]
+    [Route("rest/getArtistInfo")]
+    [Route("rest/getArtistInfo.view")]
+    public Task<IActionResult> GetArtistInfo() => GetArtistInfoAsync("artistInfo");
+
+    [HttpGet, HttpPost]
+    [Route("rest/getArtistInfo2")]
+    [Route("rest/getArtistInfo2.view")]
+    public Task<IActionResult> GetArtistInfo2() => GetArtistInfoAsync("artistInfo2");
+
+    private async Task<IActionResult> GetArtistInfoAsync(string element)
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var (isExternal, _, type, _) = _localLibraryService.ParseExternalId(parameters.GetValueOrDefault("id", ""));
+        if (!isExternal || type != "artist")
+        {
+            var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? $"rest/get{char.ToUpperInvariant(element[0])}{element[1..]}";
+            var relayed = await _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+            return _relayProtocolAdapter.CreateResult(relayed, $"application/{format}");
+        }
+        return CreateSongListResponse(format, element, [], songsElement: null);
+    }
+
+    private IActionResult CreateSongListResponse(string format, string element, IReadOnlyList<Song> songs,
+        string? songsElement = "song")
+    {
+        var ns = XNamespace.Get("http://subsonic.org/restapi");
+        if (format == "json")
+        {
+            var body = new Dictionary<string, object>();
+            if (songsElement != null) body[songsElement] = songs.Select(song => _responseBuilder.ConvertSongToJson(song)).ToList();
+            return _responseBuilder.CreateJsonResponse(new Dictionary<string, object>
+            {
+                ["status"] = "ok",
+                ["version"] = "1.16.1",
+                [element] = body
+            });
+        }
+        var list = new XElement(ns + element);
+        if (songsElement != null)
+            foreach (var song in songs) list.Add(_responseBuilder.ConvertSongToXml(song, ns));
+        return Content(new XDocument(new XElement(ns + "subsonic-response",
+            new XAttribute("status", "ok"),
+            new XAttribute("version", "1.16.1"),
+            list)).ToString(), "application/xml");
     }
 
     // Library top songs come first; provider songs led by the same artist fill the remaining room.

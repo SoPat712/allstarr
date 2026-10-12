@@ -55,6 +55,7 @@ public partial class JellyfinController : ControllerBase
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly MusicSearchService _musicSearch;
     private readonly ProviderStreamOpener _streamOpener;
+    private readonly MusicMixService _musicMix;
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSessionManager _sessionManager;
     private readonly IProtocolLyricsResolver _protocolLyricsResolver;
@@ -86,6 +87,7 @@ public partial class JellyfinController : ControllerBase
         ProtocolStreamingResponseAdapter streamingResponseAdapter,
         MusicSearchService musicSearch,
         ProviderStreamOpener streamOpener,
+        MusicMixService musicMix,
         JellyfinProxyService proxyService,
         JellyfinSessionManager sessionManager,
         IApplicationCache cache,
@@ -118,6 +120,7 @@ public partial class JellyfinController : ControllerBase
         _streamingResponseAdapter = streamingResponseAdapter;
         _musicSearch = musicSearch;
         _streamOpener = streamOpener;
+        _musicMix = musicMix;
         _proxyService = proxyService;
         _sessionManager = sessionManager;
         _protocolLyricsResolver = protocolLyricsResolver;
@@ -1181,25 +1184,8 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                var song = await GetProviderSongAsync(provider!, externalId!);
-                if (song == null)
-                {
-                    return _responseBuilder.CreateJsonResponse(new
-                    {
-                        Items = Array.Empty<object>(),
-                        TotalRecordCount = 0,
-                        StartIndex = 0
-                    });
-                }
-
-                var searchQuery = $"{song.Artist}";
-                var searchResult = await SearchProviderSongsAsync(
-                    provider!, searchQuery, limit, HttpContext.RequestAborted);
-
-                var similarSongs = searchResult
-                    .Where(s => !string.Equals(s.ExternalId, externalId, StringComparison.OrdinalIgnoreCase)
-                                && !string.Equals(s.Id, itemId, StringComparison.OrdinalIgnoreCase))
-                    .Take(limit)
+                var similarSongs = (await _musicMix.SimilarSongsAsync(
+                        HttpContext.RequireProtocolExecutionContext(), provider!, externalId!, itemId, limit))
                     .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
                     .ToList();
 
@@ -1276,78 +1262,8 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                var mixSongs = new List<Song>();
-                string? artistName;
-                if (resourceType?.Equals("album", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    var album = await GetProviderAlbumAsync(
-                        provider!, externalId!, HttpContext.RequestAborted);
-                    if (album == null) return CreateProtocolResponse(
-                        _interactionProtocolAdapter.ShapeInstantMix([]));
-                    mixSongs.AddRange(album.Songs);
-                    artistName = album.Artist;
-                }
-                else if (resourceType?.Equals("artist", StringComparison.OrdinalIgnoreCase) == true)
-                {
-                    var artist = await GetProviderArtistAsync(
-                        provider!, externalId!, HttpContext.RequestAborted);
-                    if (artist == null) return CreateProtocolResponse(
-                        _interactionProtocolAdapter.ShapeInstantMix([]));
-                    artistName = artist.Name;
-                    var albums = await GetProviderArtistAlbumsAsync(
-                        provider!, externalId!, HttpContext.RequestAborted);
-                    foreach (var album in albums.Take(3))
-                    {
-                        if (string.IsNullOrWhiteSpace(album.ExternalId)) continue;
-                        var fullAlbum = await GetProviderAlbumAsync(
-                            provider!, album.ExternalId, HttpContext.RequestAborted);
-                        if (fullAlbum != null) mixSongs.AddRange(fullAlbum.Songs);
-                        if (mixSongs.Count >= limit) break;
-                    }
-                }
-                else
-                {
-                    var song = await GetProviderSongAsync(
-                        provider!, externalId!, HttpContext.RequestAborted);
-                    if (song == null) return CreateProtocolResponse(
-                        _interactionProtocolAdapter.ShapeInstantMix([]));
-                    artistName = song.Artist;
-                    if (!string.IsNullOrEmpty(song.ExternalProvider) &&
-                        !string.IsNullOrEmpty(song.ArtistId))
-                    {
-                        var artistExternalId = song.ArtistId.Replace(
-                            $"ext-{song.ExternalProvider}-artist-", "");
-                        var albums = await GetProviderArtistAlbumsAsync(
-                            song.ExternalProvider,
-                            artistExternalId,
-                            HttpContext.RequestAborted);
-                        foreach (var album in albums.Take(3))
-                        {
-                            if (string.IsNullOrWhiteSpace(album.ExternalId)) continue;
-                            var fullAlbum = await GetProviderAlbumAsync(
-                                song.ExternalProvider,
-                                album.ExternalId,
-                                HttpContext.RequestAborted);
-                            if (fullAlbum != null) mixSongs.AddRange(fullAlbum.Songs);
-                            if (mixSongs.Count >= limit) break;
-                        }
-                    }
-                }
-
-                if (mixSongs.Count < limit && !string.IsNullOrWhiteSpace(artistName))
-                {
-                    var searchResult = await SearchProviderSongsAsync(
-                        provider!, artistName, limit, HttpContext.RequestAborted);
-                    mixSongs.AddRange(searchResult.Where(song =>
-                        mixSongs.All(existing => existing.Id != song.Id)));
-                }
-
-                // Keep the same seed stable across retries and process restarts.
-                var shuffledMix = mixSongs
-                    .Where(song => resourceType is "album" or "artist" ||
-                                   song.Id != itemId && song.ExternalId != externalId)
-                    .OrderBy(songItem => StableInstantMixOrder(itemId, songItem.Id), StringComparer.Ordinal)
-                    .Take(limit)
+                var shuffledMix = (await _musicMix.InstantMixAsync(
+                        HttpContext.RequireProtocolExecutionContext(), provider!, resourceType!, externalId!, itemId, limit))
                     .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
                     .ToList();
 
@@ -1399,10 +1315,6 @@ public partial class JellyfinController : ControllerBase
             ? Task.FromResult<IActionResult>(StatusCode(StatusCodes.Status403Forbidden))
             : GetInstantMix(id, limit, fields, userId);
     }
-
-    private static string StableInstantMixOrder(string seedItemId, string candidateItemId) =>
-        Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{seedItemId}\n{candidateItemId}")));
 
     private bool CanRunOptionalUserScopedWork() =>
         _interactionProtocolAdapter.CanRunOptionalUserWork(HttpContext.GetProtocolExecutionContext());
