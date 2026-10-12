@@ -30,13 +30,11 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
         if (song == null) return [];
         var recommended = await RecommendedAsync(context, providerId, song, limit);
         if (recommended.Count > 0)
-            return recommended.Where(candidate => candidate.Id != publicId && candidate.ExternalId != externalId)
-                .Take(limit).ToList();
+            return recommended.Where(candidate => !IsSeed(candidate, externalId, publicId)).Take(limit).ToList();
         if (string.IsNullOrWhiteSpace(song.Artist)) return [];
         var candidates = await SearchSongsAsync(context, providerId, song.Artist, limit);
         return candidates
-            .Where(candidate => !string.Equals(candidate.ExternalId, externalId, StringComparison.OrdinalIgnoreCase) &&
-                                !string.Equals(candidate.Id, publicId, StringComparison.OrdinalIgnoreCase))
+            .Where(candidate => !IsSeed(candidate, externalId, publicId))
             .Take(limit)
             .ToList();
     }
@@ -97,7 +95,9 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
 
         var seedIsSong = resourceType is not ("album" or "artist");
         return mix
-            .Where(song => !seedIsSong || song.Id != publicId && song.ExternalId != externalId)
+            .Where(song => !seedIsSong || !IsSeed(song, externalId, publicId))
+            .GroupBy(song => song.Id, StringComparer.Ordinal)
+            .Select(group => group.First())
             .OrderBy(song => StableOrder(publicId, song.Id), StringComparer.Ordinal)
             .Take(limit)
             .ToList();
@@ -113,7 +113,7 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
         Song seed,
         int limit)
     {
-        var recommended = await providers.GetSimilarSongsAsync(context, providerId, seed.ExternalId ?? "", limit);
+        var recommended = await providers.GetSimilarSongsAsync(context, providerId, seed.ExternalId ?? "", limit) ?? [];
         if (recommended.Count > 0 || lastFm == null) return recommended;
         var suggestions = await lastFm.FindAsync(context, seed.Artist, seed.Title, Math.Min(limit, SuggestionLookups),
             context.CancellationToken);
@@ -144,6 +144,10 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
             return null;
         }
     }
+
+    private static bool IsSeed(Song song, string externalId, string publicId) =>
+        string.Equals(song.ExternalId, externalId, StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(song.Id, publicId, StringComparison.OrdinalIgnoreCase);
 
     private async Task AddArtistAlbumsAsync(
         ProtocolExecutionContext context,

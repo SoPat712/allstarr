@@ -310,7 +310,7 @@ public partial class SubsonicController : ControllerBase
                     name = artist.Name;
                     foreach (var album in await GetProviderArtistAlbumsAsync(provider!, externalId!))
                     {
-                        album.Artist ??= artist.Name;
+                        if (string.IsNullOrEmpty(album.Artist)) album.Artist = artist.Name;
                         album.ArtistId ??= artist.Id;
                         children.Add(format == "json"
                             ? _responseBuilder.ConvertAlbumToDirectoryJson(album)
@@ -350,20 +350,20 @@ public partial class SubsonicController : ControllerBase
     [HttpGet, HttpPost]
     [Route("rest/getSimilarSongs")]
     [Route("rest/getSimilarSongs.view")]
-    public Task<IActionResult> GetSimilarSongs() => GetProviderMixAsync("similarSongs", artistOnly: false);
+    public Task<IActionResult> GetSimilarSongs() => GetProviderMixAsync("similarSongs");
 
     [HttpGet, HttpPost]
     [Route("rest/getSimilarSongs2")]
     [Route("rest/getSimilarSongs2.view")]
-    public Task<IActionResult> GetSimilarSongs2() => GetProviderMixAsync("similarSongs2", artistOnly: true);
+    public Task<IActionResult> GetSimilarSongs2() => GetProviderMixAsync("similarSongs2");
 
-    private async Task<IActionResult> GetProviderMixAsync(string element, bool artistOnly)
+    private async Task<IActionResult> GetProviderMixAsync(string element)
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
         var id = parameters.GetValueOrDefault("id", "");
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(id);
-        if (!isExternal || (artistOnly && type != "artist") || type is not ("song" or "album" or "artist"))
+        if (!isExternal || type is not ("song" or "album" or "artist"))
         {
             var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? $"rest/get{char.ToUpperInvariant(element[0])}{element[1..]}";
             var relayed = await _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
@@ -403,12 +403,13 @@ public partial class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
         var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(parameters.GetValueOrDefault("id", ""));
-        if (!isExternal || type != "artist")
+        if (!isExternal)
         {
             var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? $"rest/get{char.ToUpperInvariant(element[0])}{element[1..]}";
             var relayed = await _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
             return _relayProtocolAdapter.CreateResult(relayed, $"application/{format}");
         }
+        if (type != "artist") return CreateSongListResponse(format, element, [], songsElement: null);
 
         var count = int.TryParse(parameters.GetValueOrDefault("count"), out var requested) && requested > 0
             ? Math.Min(requested, 200)
@@ -649,7 +650,7 @@ public partial class SubsonicController : ControllerBase
             (await _catalogMerge.MissingArtistAlbumsAsync(CurrentProtocolContext, name, titles))
             .Select(album =>
             {
-                album.Artist ??= name;
+                if (string.IsNullOrEmpty(album.Artist)) album.Artist = name;
                 album.ArtistId = id;
                 return format == "json"
                     ? (object)_responseBuilder.ConvertAlbumToJson(album)
@@ -746,7 +747,12 @@ public partial class SubsonicController : ControllerBase
                     return passthrough;
                 var name = parent["name"]?.GetValue<string>() ?? "";
                 var artist = parent["artist"]?.GetValue<string>();
-                var children = parent[childElement] as System.Text.Json.Nodes.JsonArray ?? [];
+                var children = parent[childElement] switch
+                {
+                    System.Text.Json.Nodes.JsonArray array => array,
+                    System.Text.Json.Nodes.JsonObject single => [single.DeepClone()],
+                    _ => []
+                };
                 var titles = children.Select(child => child?[childTitle]?.GetValue<string>() ?? "").ToList();
                 var missing = await FindMissingSafelyAsync(findMissing, name, artist, titles);
                 if (missing.Count == 0) return passthrough;
