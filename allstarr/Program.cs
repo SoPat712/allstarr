@@ -352,7 +352,6 @@ if (backendType == BackendType.Jellyfin)
     builder.Services.AddSingleton<IJellyfinImageProtocolAdapter, JellyfinImageProtocolAdapter>();
     builder.Services.AddSingleton<IJellyfinLyricsProtocolAdapter, JellyfinLyricsProtocolAdapter>();
     builder.Services.AddSingleton<IJellyfinInteractionProtocolAdapter, JellyfinInteractionProtocolAdapter>();
-    builder.Services.AddSingleton<JellyfinModelMapper>();
     builder.Services.AddSingleton<JellyfinSessionManager>();
     builder.Services.AddSingleton<IPlaybackActivitySource, JellyfinPlaybackActivitySource>();
     builder.Services.AddSingleton<IPlaybackMetadataResolver, JellyfinPlaybackMetadataResolver>();

@@ -7,6 +7,7 @@ using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 
@@ -295,13 +296,6 @@ public partial class JellyfinController
         var itemTypes = ParseItemTypes(includeItemTypes);
         var integratedFetchLimit = GetIntegratedSearchFetchLimit(startIndex, limit);
         var externalSearchLimits = GetExternalSearchLimits(itemTypes, integratedFetchLimit, includePlaylistsAsAlbums: true);
-        var jellyfinTask = GetLocalSearchResultForCurrentRequest(
-            cleanQuery,
-            includeItemTypes,
-            integratedFetchLimit,
-            recursive,
-            userId);
-
         _logger.LogInformation(
             "SEARCH TRACE: external limits for query '{Query}' => songs={SongLimit}, albums={AlbumLimit}, artists={ArtistLimit}",
             cleanQuery,
@@ -309,104 +303,28 @@ public partial class JellyfinController
             externalSearchLimits.AlbumLimit,
             externalSearchLimits.ArtistLimit);
 
-        var externalTask = favoritesOnlyRequest
-            ? Task.FromResult(new SearchResult())
-            : _providerGateway.SearchAsync(
-                HttpContext.RequireProtocolExecutionContext(),
+        var context = HttpContext.RequireProtocolExecutionContext();
+        var merged = await _musicSearch.SearchAsync(
+            context,
+            new MusicSearchRequest(
                 cleanQuery,
-                externalSearchLimits.SongLimit,
-                externalSearchLimits.AlbumLimit,
-                externalSearchLimits.ArtistLimit);
+                new MusicSearchWindow(externalSearchLimits.SongLimit),
+                new MusicSearchWindow(externalSearchLimits.AlbumLimit),
+                new MusicSearchWindow(externalSearchLimits.ArtistLimit),
+                _settings.EnableExternalPlaylists ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
+                IncludeProviders: !favoritesOnlyRequest),
+            new JellyfinNativeMusicSearch(
+                cancellationToken => GetLocalSearchResultForCurrentRequest(
+                    cleanQuery, includeItemTypes, integratedFetchLimit, recursive, userId),
+                (id, cancellationToken) => _proxyService.GetJsonAsync(
+                    $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
+                    null, Request.Headers)),
+            HttpContext.RequestAborted);
 
-        var playlistTask = favoritesOnlyRequest || !_settings.EnableExternalPlaylists
-            ? Task.FromResult(new List<ExternalPlaylist>())
-            : _providerGateway.SearchPlaylistsAsync(
-                HttpContext.RequireProtocolExecutionContext(), cleanQuery, integratedFetchLimit);
-
-        _logger.LogDebug("Playlist search enabled: {Enabled}, searching for: '{Query}'",
-            _settings.EnableExternalPlaylists, cleanQuery);
-
-        await Task.WhenAll(jellyfinTask, externalTask, playlistTask);
-
-        var (jellyfinResult, _) = await jellyfinTask;
-        var externalResult = await externalTask;
-        var playlistResult = await playlistTask;
-
-        _logger.LogDebug(
-            "Search results for '{Query}': Jellyfin={JellyfinCount}, External Songs={ExtSongs}, Albums={ExtAlbums}, Artists={ExtArtists}, Playlists={Playlists}",
-            cleanQuery,
-            jellyfinResult != null ? "found" : "null",
-            externalResult.Songs.Count,
-            externalResult.Albums.Count,
-            externalResult.Artists.Count,
-            playlistResult.Count);
-
-        // Local items remain Jellyfin-shaped; only external items are synthesized.
-        var jellyfinSongItems = new List<Dictionary<string, object?>>();
-        var jellyfinAlbumItems = new List<Dictionary<string, object?>>();
-        var jellyfinArtistItems = new List<Dictionary<string, object?>>();
-
-        if (jellyfinResult != null && jellyfinResult.RootElement.TryGetProperty("Items", out var jellyfinItems))
-        {
-            foreach (var item in jellyfinItems.EnumerateArray())
-            {
-                if (!item.TryGetProperty("Type", out var typeEl)) continue;
-                var type = typeEl.GetString();
-                var itemDict = item.Deserialize<Dictionary<string, object?>>() ?? [];
-
-                if (type == "Audio")
-                {
-                    jellyfinSongItems.Add(itemDict);
-                }
-                else if (type == "MusicAlbum")
-                {
-                    jellyfinAlbumItems.Add(itemDict);
-                }
-                else if (type == "MusicArtist")
-                {
-                    jellyfinArtistItems.Add(itemDict);
-                }
-            }
-        }
-
-        await PreferKnownNativeSongsAsync(externalResult.Songs, jellyfinSongItems);
-
-        var localAlbumNamesPreview = string.Join(" | ", jellyfinAlbumItems
-            .Take(10)
-            .Select(GetItemName));
-        _logger.LogInformation(
-            "SEARCH TRACE: Jellyfin local counts for query '{Query}' => songs={SongCount}, albums={AlbumCount}, artists={ArtistCount}; localAlbumPreview=[{AlbumPreview}]",
-            cleanQuery,
-            jellyfinSongItems.Count,
-            jellyfinAlbumItems.Count,
-            jellyfinArtistItems.Count,
-            localAlbumNamesPreview);
-
-        // Score source metadata before adding display labels to the protocol objects.
-        var externalSongItems = externalResult.Songs.Select(song => (
-            Item: _responseBuilder.ConvertSongToJellyfinItem(song),
-            Score: SearchRelevanceRanker.Score(cleanQuery, song.Title, song.Artist)));
-        var externalAlbumItems = externalResult.Albums.Select(album => (
-            Item: _responseBuilder.ConvertAlbumToJellyfinItem(album),
-            Score: SearchRelevanceRanker.Score(cleanQuery, album.Title, album.Artist)));
-        var externalArtistItems = externalResult.Artists.Select(artist => (
-            Item: _responseBuilder.ConvertArtistToJellyfinItem(artist),
-            Score: SearchRelevanceRanker.Score(cleanQuery, artist.Name)));
-
-        // Jellyfin search cannot mix playlists directly, so project them as albums.
-        var playlistItems = playlistResult.Select(playlist => (
-            Item: _responseBuilder.ConvertPlaylistToAlbumItem(playlist),
-            Score: SearchRelevanceRanker.Score(cleanQuery, playlist.Name, playlist.CuratorName)));
-        var allSongs = Rank(jellyfinSongItems, externalSongItems);
-        var allArtists = Rank(jellyfinArtistItems, externalArtistItems);
-        var mergedAlbumsAndPlaylists = Rank(jellyfinAlbumItems, externalAlbumItems.Concat(playlistItems));
-
-        List<Dictionary<string, object?>> Rank(
-            List<Dictionary<string, object?>> local,
-            IEnumerable<(Dictionary<string, object?> Item, double Score)> external) =>
-            SearchRelevanceRanker.Merge(
-                local.Select(item => (Item: item, Score: CalculateItemRelevanceScore(cleanQuery, item))),
-                external, item => item.Score).Select(item => item.Item).ToList();
+        // Native rows stay Jellyfin-shaped; only provider rows are synthesized.
+        var allSongs = merged.Songs.Select(RenderSearchEntry).ToList();
+        var allArtists = merged.Artists.Select(RenderSearchEntry).ToList();
+        var mergedAlbumsAndPlaylists = merged.Albums.Select(RenderSearchEntry).ToList();
 
         _logger.LogDebug(
             "Merged results: Songs={Songs}, Albums+Playlists={AlbumsPlaylists}, Artists={Artists}",
@@ -466,6 +384,66 @@ public partial class JellyfinController
         {
             _logger.LogError(ex, "Error serializing search response");
             throw;
+        }
+    }
+
+    private Dictionary<string, object?> RenderSearchEntry(MusicSearchEntry<Dictionary<string, object?>> entry)
+    {
+        if (entry.Native != null) return entry.Native.Payload;
+        if (entry.Song != null) return _responseBuilder.ConvertSongToJellyfinItem(entry.Song);
+        if (entry.Album != null) return _responseBuilder.ConvertAlbumToJellyfinItem(entry.Album);
+        // Jellyfin search cannot mix playlists directly, so they are shown as albums.
+        if (entry.Playlist != null) return _responseBuilder.ConvertPlaylistToAlbumItem(entry.Playlist);
+        return _responseBuilder.ConvertArtistToJellyfinItem(entry.Artist!);
+    }
+
+    internal static NativeMusicItem<Dictionary<string, object?>>? ToNativeSearchItem(Dictionary<string, object?> item)
+    {
+        MusicItemKind? kind = GetItemType(item) switch
+        {
+            "Audio" => MusicItemKind.Song,
+            "MusicAlbum" => MusicItemKind.Album,
+            "MusicArtist" => MusicItemKind.Artist,
+            _ => null
+        };
+        return kind == null
+            ? null
+            : new(kind.Value, GetItemStringValue(item, "Id"), GetItemName(item), SearchArtistText(item), item);
+    }
+
+    /// <summary>The backend half of a Jellyfin integrated search.</summary>
+    private sealed class JellyfinNativeMusicSearch(
+        Func<CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> search,
+        Func<string, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> getItem)
+        : INativeMusicSearch<Dictionary<string, object?>>
+    {
+        public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> SearchAsync(
+            CancellationToken cancellationToken)
+        {
+            var (document, _) = await search(cancellationToken);
+            using (document)
+            {
+                if (document == null || !document.RootElement.TryGetProperty("Items", out var items)) return [];
+                return items.EnumerateArray()
+                    .Where(item => item.TryGetProperty("Type", out _))
+                    .Select(item => ToNativeSearchItem(item.Deserialize<Dictionary<string, object?>>() ?? []))
+                    .OfType<NativeMusicItem<Dictionary<string, object?>>>()
+                    .ToList();
+            }
+        }
+
+        public async Task<NativeMusicItem<Dictionary<string, object?>>?> GetSongAsync(
+            string id, CancellationToken cancellationToken)
+        {
+            var (document, status) = await getItem(id, cancellationToken);
+            using (document)
+            {
+                if (status != StatusCodes.Status200OK || document == null ||
+                    !document.RootElement.TryGetProperty("Id", out var itemId) || itemId.GetString() != id ||
+                    !document.RootElement.TryGetProperty("Type", out var type) || type.GetString() != "Audio") return null;
+                var item = document.RootElement.Deserialize<Dictionary<string, object?>>();
+                return item == null ? null : ToNativeSearchItem(item);
+            }
         }
     }
 
@@ -651,12 +629,14 @@ public partial class JellyfinController
     }
 
     internal static double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item) =>
-        SearchRelevanceRanker.Score(query, GetItemName(item), GetItemType(item) switch
-        {
-            "Audio" => GetSongArtistText(item),
-            "MusicAlbum" => GetAlbumArtistText(item),
-            _ => null
-        });
+        SearchRelevanceRanker.Score(query, GetItemName(item), SearchArtistText(item));
+
+    private static string? SearchArtistText(Dictionary<string, object?> item) => GetItemType(item) switch
+    {
+        "Audio" => GetSongArtistText(item),
+        "MusicAlbum" => GetAlbumArtistText(item),
+        _ => null
+    };
 
     private static string GetItemName(Dictionary<string, object?> item) => GetItemStringValue(item, "Name");
 
