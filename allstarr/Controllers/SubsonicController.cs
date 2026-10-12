@@ -937,6 +937,17 @@ public partial class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
+        if (!SubsonicMusicEndpointPolicy.CanRelay(endpoint))
+        {
+            // Allstarr only exposes music; video, podcasts, sharing and administration stay behind it.
+            var denied = _responseBuilder.CreateError(format, 70, "This method is not available through Allstarr");
+            switch (denied)
+            {
+                case JsonResult json: json.StatusCode = StatusCodes.Status404NotFound; break;
+                case ContentResult content: content.StatusCode = StatusCodes.Status404NotFound; break;
+            }
+            return denied;
+        }
 
         try
         {

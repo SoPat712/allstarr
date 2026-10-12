@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "openApi": {
+    "title": "OpenSubsonic API",
+    "version": "1.16.1",
+    "methodCount": 87,
+    "defaultAccess": "Denied"
+  },
+  "note": "Every OpenSubsonic method is classified. Intercepted methods are answered by Allstarr; relayed methods pass through to the backend unchanged; denied methods are not music library access and are refused.",
+  "intercepted": [
+    "findSonicPath",
+    "getAlbum",
+    "getArtist",
+    "getCoverArt",
+    "getLyricsBySongId",
+    "getOpenSubsonicExtensions",
+    "getPlaylist",
+    "getPlaylists",
+    "getSong",
+    "getSonicSimilarTracks",
+    "scrobble",
+    "search3",
+    "star",
+    "stream",
+    "unstar",
+    "updatePlaylist"
+  ],
+  "relayed": [
+    "createBookmark",
+    "createPlaylist",
+    "deleteBookmark",
+    "deletePlaylist",
+    "download",
+    "getAlbumInfo",
+    "getAlbumInfo2",
+    "getAlbumList",
+    "getAlbumList2",
+    "getArtistInfo",
+    "getArtistInfo2",
+    "getArtists",
+    "getAvatar",
+    "getBookmarks",
+    "getGenres",
+    "getIndexes",
+    "getLicense",
+    "getLyrics",
+    "getMusicDirectory",
+    "getMusicFolders",
+    "getNowPlaying",
+    "getPlayQueue",
+    "getPlayQueueByIndex",
+    "getRandomSongs",
+    "getScanStatus",
+    "getSimilarSongs",
+    "getSimilarSongs2",
+    "getSongsByGenre",
+    "getStarred",
+    "getStarred2",
+    "getTopSongs",
+    "getTranscodeDecision",
+    "getTranscodeStream",
+    "getUser",
+    "ping",
+    "reportPlayback",
+    "savePlayQueue",
+    "savePlayQueueByIndex",
+    "search",
+    "search2",
+    "setRating",
+    "tokenInfo"
+  ],
+  "denied": {
+    "video": [
+      "getCaptions",
+      "getVideoInfo",
+      "getVideos",
+      "hls.m3u8"
+    ],
+    "podcasts": [
+      "createPodcastChannel",
+      "deletePodcastChannel",
+      "deletePodcastEpisode",
+      "downloadPodcastEpisode",
+      "getNewestPodcasts",
+      "getPodcastEpisode",
+      "getPodcasts",
+      "refreshPodcasts"
+    ],
+    "internetRadio": [
+      "createInternetRadioStation",
+      "deleteInternetRadioStation",
+      "getInternetRadioStations",
+      "updateInternetRadioStation"
+    ],
+    "shares": [
+      "createShare",
+      "deleteShare",
+      "getShares",
+      "updateShare"
+    ],
+    "chat": [
+      "addChatMessage",
+      "getChatMessages"
+    ],
+    "administration": [
+      "changePassword",
+      "createUser",
+      "deleteUser",
+      "getUsers",
+      "jukeboxControl",
+      "startScan",
+      "updateUser"
+    ]
+  }
+}

@@ -2489,6 +2489,57 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData("rest/getVideos.view", "json")]
+    [InlineData("rest/getPodcasts.view", "xml")]
+    [InlineData("rest/createUser", "json")]
+    [InlineData("rest/GETSHARES.view", "json")]
+    [InlineData("app/index.html", "json")]
+    public async Task SubsonicCatchAll_RefusesMethodsOutsideTheMusicAllowlist(string endpoint, string format)
+    {
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request =>
+            {
+                observed.Add(Observe(request));
+                return Json(StatusCodes.Status200OK, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync(
+            $"/{endpoint}?u=fixture&p=secret&v=1.16.1&c=fixture&f={format}");
+
+        Assert.Equal(HttpStatusCode.NotFound, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        Assert.Contains("70", body, StringComparison.Ordinal);
+        Assert.Contains("not available through Allstarr", body, StringComparison.Ordinal);
+        Assert.DoesNotContain(observed, request => !request.PathAndQuery.StartsWith("/rest/ping.view", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task SubsonicCatchAll_RelaysAllowlistedMusicMethodsUnchanged()
+    {
+        const string body = """{"subsonic-response":{"status":"ok","version":"1.16.1","artists":{"index":[],"unknownNativeField":"kept"}}}""";
+        var observed = new List<ObservedRequest>();
+        using var factory = new ProtocolFactory(
+            "Subsonic",
+            request =>
+            {
+                observed.Add(Observe(request));
+                return request.RequestUri!.AbsolutePath == "/rest/ping.view"
+                    ? Json(StatusCodes.Status200OK, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
+                    : Json(StatusCodes.Status200OK, body);
+            });
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/rest/getArtists.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(body, await response.Content.ReadAsStringAsync());
+        Assert.Equal("/rest/getArtists.view?u=fixture&p=secret&v=1.16.1&c=fixture&f=json", observed[^1].PathAndQuery);
+    }
+
     [Fact]
     public async Task SubsonicExternalArtist_UsesTheSharedProviderGateway()
     {
