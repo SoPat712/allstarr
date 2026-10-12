@@ -72,6 +72,44 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         Assert.Equal("event-1004", events[^1].Action);
     }
 
+    [Fact]
+    public async Task PruneNowAsync_RemovesOnlyExpiredFinishedPlaybackJobs()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            var expired = Job("playback.signal.process", DurableJobState.Succeeded, now.AddDays(-31), "expired");
+            database.Jobs.AddRange(
+                expired,
+                Job("playback.signal.process", DurableJobState.Cancelled, now.AddDays(-31), "cancelled"),
+                Job("playback.signal.process", DurableJobState.Succeeded, now.AddDays(-29), "recent"),
+                Job("playback.signal.process", DurableJobState.Failed, now.AddDays(-31), "failed"),
+                Job("playback.signal.process", DurableJobState.Pending, now.AddDays(-31), "pending"),
+                Job("playlist.sync", DurableJobState.Succeeded, now.AddDays(-31), "other-type"));
+            database.JobAttempts.Add(new JobAttemptRecord
+            {
+                Id = Guid.NewGuid(),
+                JobId = expired.Id,
+                AttemptNumber = 1,
+                WorkerId = "worker",
+                StartedAt = now.AddDays(-31),
+                CompletedAt = now.AddDays(-31),
+                Outcome = "succeeded"
+            });
+            await database.SaveChangesAsync();
+        }
+
+        await Worker(retentionDays: 30, maximumRows: 1000).PruneNowAsync();
+
+        await using var verification = provider.CreateAsyncScope();
+        var context = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+        var remaining = await context.Jobs.AsNoTracking()
+            .OrderBy(item => item.IdempotencyKey).Select(item => item.IdempotencyKey).ToListAsync();
+        Assert.Equal(["failed", "other-type", "pending", "recent"], remaining);
+        Assert.Empty(await context.JobAttempts.AsNoTracking().ToListAsync());
+    }
+
     private AuditEventRetentionService Worker(int retentionDays, int maximumRows)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -87,6 +125,21 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
             TimeProvider.System,
             NullLogger<AuditEventRetentionService>.Instance);
     }
+
+    private static DurableJobRecord Job(string type, DurableJobState state, DateTimeOffset finishedAt, string key) => new()
+    {
+        Id = Guid.NewGuid(),
+        ScopeKey = "user:test",
+        Type = type,
+        IdempotencyKey = key,
+        State = state,
+        MaxAttempts = 5,
+        MaxDeferrals = 96,
+        AvailableAt = finishedAt,
+        CompletedAt = state is DurableJobState.Pending ? null : finishedAt,
+        CreatedAt = finishedAt,
+        UpdatedAt = finishedAt
+    };
 
     private static AuditEventRecord Event(DateTimeOffset createdAt, string action) => new()
     {

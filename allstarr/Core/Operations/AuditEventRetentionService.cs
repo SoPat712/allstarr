@@ -1,3 +1,4 @@
+using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -7,7 +8,9 @@ namespace allstarr.Core.Operations;
 /// Keeps the operator-facing event log useful without allowing high-volume
 /// playback and matching activity to grow the operational database forever.
 /// Referenced audit events are retained because they are part of another
-/// durable record's evidence chain.
+/// durable record's evidence chain. Finished playback jobs expire on the same
+/// schedule: every progress report is its own job, and listening history keeps
+/// its own duplicate protection once the job is gone.
 /// </summary>
 public sealed class AuditEventRetentionService(
     IServiceScopeFactory scopeFactory,
@@ -103,6 +106,15 @@ public sealed class AuditEventRetentionService(
                     cutoff,
                     maximumRows);
             }
+
+            var deletedJobs = await PrunePlaybackJobsAsync(cutoff, cancellationToken);
+            if (deletedJobs > 0)
+            {
+                logger.LogInformation(
+                    "Pruned {Count} finished playback jobs older than {Cutoff}.",
+                    deletedJobs,
+                    cutoff);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -111,6 +123,30 @@ public sealed class AuditEventRetentionService(
         {
             logger.LogWarning(exception, "Event-log retention failed; cleanup will retry at the next interval.");
         }
+    }
+
+    private async Task<int> PrunePlaybackJobsAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        var deleted = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            var ids = await database.Jobs.AsNoTracking()
+                .Where(item => item.Type == PlaybackSignalPipeline.JobType &&
+                               (item.State == DurableJobState.Succeeded || item.State == DurableJobState.Cancelled) &&
+                               item.CompletedAt < cutoff)
+                .OrderBy(item => item.CompletedAt)
+                .Select(item => item.Id)
+                .Take(batchSize)
+                .ToListAsync(cancellationToken);
+            if (ids.Count == 0) break;
+
+            await database.JobAttempts.Where(item => ids.Contains(item.JobId)).ExecuteDeleteAsync(cancellationToken);
+            deleted += await database.Jobs.Where(item => ids.Contains(item.Id)).ExecuteDeleteAsync(cancellationToken);
+            if (ids.Count < batchSize) break;
+        }
+        return deleted;
     }
 
     private static IQueryable<AuditEventRecord> Deletable(AllstarrDbContext database) =>
