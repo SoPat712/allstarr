@@ -104,7 +104,6 @@
     <Dialog.Content class="source-dialog connect-source-dialog">
       <header>
         <div>
-          <p class="eyebrow">{account ? "Source setup" : "Source connection"}</p>
           <Dialog.Title>{account ? `Configure ${selected?.name ?? "Source"}` : "Connect a Source"}</Dialog.Title>
           <Dialog.Description>{account
             ? "Replace the encrypted account details. Existing credentials are never displayed."

@@ -470,9 +470,8 @@
 {:else if !playlists.length}
   <section class="panel empty-state">
     <span class="empty-orbit" aria-hidden="true">♫</span>
-    <p class="eyebrow">Library playlists</p>
-    <h2>No imported playlists yet.</h2>
-    <p>Import a playlist from your own connected account. You can copy it once, keep following changes, and choose whether its songs are stored permanently.</p>
+    <h2>No playlists yet</h2>
+    <p>Import a playlist from Spotify or another connected account. Allstarr fills it with songs from your library and streams the rest.</p>
     <Button class="empty-action" onclick={() => addOpen = true}>Import playlist</Button>
   </section>
 {:else}
@@ -488,8 +487,8 @@
     <article class="panel playlist-list">
       <header class="panel-heading playlist-toolbar">
         <div>
-          <p class="eyebrow">Imported playlists</p>
-          <h2>{playlists.length} imported</h2>
+          <h2>Imported playlists</h2>
+          <p>{playlists.length} {playlists.length === 1 ? "playlist" : "playlists"}</p>
         </div>
         <div class="panel-heading-actions playlist-toolbar-actions">
           <Button onclick={() => addOpen = true}>Import playlist</Button>

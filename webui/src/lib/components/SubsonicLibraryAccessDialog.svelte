@@ -68,7 +68,7 @@
     <Dialog.Content class="source-dialog library-access-dialog">
       <header>
         <div>
-          <p class="eyebrow">Private library access</p>
+          
           <Dialog.Title>Connect Subsonic for background features</Dialog.Title>
           <Dialog.Description>Allow Allstarr to index your library and create recommendation playlists when you are not signed in.</Dialog.Description>
         </div>

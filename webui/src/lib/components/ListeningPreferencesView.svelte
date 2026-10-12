@@ -125,7 +125,7 @@
 {:else}
   <section class="preferences-view" aria-busy={busy}>
     <header class="preferences-intro">
-      <p class="eyebrow">Your listening view</p>
+      
       <h2>Choose what your music clients show</h2>
       <p>
         These choices affect only your listener account. Native library titles remain untouched.
@@ -146,7 +146,7 @@
     <form class="panel preferences-panel" onsubmit={(event) => { event.preventDefault(); void save(); }}>
       <header class="panel-heading preferences-heading">
         <div>
-          <p class="eyebrow">Content</p>
+          
           <h3>Explicit releases</h3>
           <p>Control which release versions appear in your Allstarr results. Tracks with unknown explicit status always remain visible.</p>
         </div>

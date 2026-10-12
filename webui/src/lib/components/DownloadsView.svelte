@@ -194,13 +194,12 @@
   <section class="panel downloads-panel" aria-busy={refreshing}>
     <header class="panel-heading playlist-toolbar downloads-heading">
       <div>
-        <p class="eyebrow">Library storage</p>
-        <h2>{label} tracks</h2>
+        <h2>{label} songs</h2>
         <p>{cached
           ? storageMode === "Cache"
-            ? "Completed provider streams and temporary quality overrides. Keep a track to retain it permanently."
-            : "Automatic track caching is off. Managed downloads are retained permanently instead."
-          : "Permanent downloads retained across playback-cache cleanup."}</p>
+            ? "Songs saved after streaming so they start faster next time. Keep a song to hold on to it permanently."
+            : "Automatic caching is off. Downloaded songs are kept permanently instead."
+          : "Songs Allstarr keeps permanently, even when the cache is cleaned."}</p>
       </div>
       <div class="downloads-summary" aria-label={`${label} totals`}>
         <span><small>Indexed</small><strong>{data.managedCount}</strong></span>

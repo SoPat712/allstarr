@@ -51,7 +51,7 @@
     >
       <header class="dialog-heading">
         <div>
-          <p class="eyebrow">Durable onboarding</p>
+          
           <Dialog.Title>Set up Allstarr</Dialog.Title>
           <Dialog.Description>Your progress is saved for this account across browsers.</Dialog.Description>
         </div>
@@ -65,7 +65,7 @@
         </section>
         <section>
           <Badge state={onboardingState.migration.completed ? "healthy" : "suggested"}>{onboardingState.migration.completed ? "Imported" : "Optional"}</Badge>
-          <div><strong>Legacy v2 settings</strong><p>Preview a prior <code>.env</code> from Settings → Maintenance when you need it.</p></div>
+          <div><strong>Legacy v2 settings</strong><p>Import an old <code>.env</code> file from Settings → Setup whenever you need it.</p></div>
         </section>
         <section>
           <Badge state="suggested">Next</Badge>

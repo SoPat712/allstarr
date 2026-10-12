@@ -410,9 +410,8 @@
     <article class="panel mapping-queue">
       <header class="panel-heading playlist-toolbar mapping-heading">
         <div>
-          <p class="eyebrow">Library matching</p>
-          <h2>Match review queue</h2>
-          <p>Automatic and manual decisions share one durable matching pipeline.</p>
+          <h2>Match review</h2>
+          <p>Check how songs from your playlists were matched to your library and other sources.</p>
         </div>
         <div class="panel-heading-actions playlist-toolbar-actions mapping-heading-actions">
           <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
