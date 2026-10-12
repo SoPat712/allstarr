@@ -260,6 +260,92 @@ public partial class SubsonicController : ControllerBase
         }
     }
 
+    // Folder-based clients open provider albums, artists and playlists found through search2 here.
+    [HttpGet, HttpPost]
+    [Route("rest/getMusicDirectory")]
+    [Route("rest/getMusicDirectory.view")]
+    public async Task<IActionResult> GetMusicDirectory()
+    {
+        var parameters = await ExtractAllParameters();
+        var format = parameters.GetValueOrDefault("f", "xml");
+        var id = parameters.GetValueOrDefault("id", "");
+        var ns = XNamespace.Get("http://subsonic.org/restapi");
+        string? name = null;
+        var children = new List<object>();
+
+        if (PlaylistIdHelper.IsExternalPlaylist(id))
+        {
+            var (provider, externalId) = PlaylistIdHelper.ParsePlaylistId(id);
+            var playlist = await _providerGateway.GetPlaylistAsync(CurrentProtocolContext, provider, externalId);
+            if (playlist != null)
+            {
+                name = playlist.Name;
+                var tracks = await _providerGateway.GetPlaylistTracksAsync(CurrentProtocolContext, provider, externalId);
+                children.AddRange(tracks.Select(song => SongChild(song)));
+            }
+        }
+        else
+        {
+            var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(id);
+            if (!isExternal || type is not ("album" or "artist"))
+            {
+                var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getMusicDirectory";
+                var relayed = await _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+                return _relayProtocolAdapter.CreateResult(relayed, $"application/{format}");
+            }
+            if (type == "album")
+            {
+                var album = await GetProviderAlbumAsync(provider!, externalId!);
+                if (album != null)
+                {
+                    name = album.Title;
+                    children.AddRange(album.Songs.Select(song => SongChild(song)));
+                }
+            }
+            else
+            {
+                var artist = await GetProviderArtistAsync(provider!, externalId!);
+                if (artist != null)
+                {
+                    name = artist.Name;
+                    foreach (var album in await GetProviderArtistAlbumsAsync(provider!, externalId!))
+                    {
+                        album.Artist ??= artist.Name;
+                        album.ArtistId ??= artist.Id;
+                        children.Add(format == "json"
+                            ? _responseBuilder.ConvertAlbumToDirectoryJson(album)
+                            : _responseBuilder.ConvertAlbumToDirectoryXml(album, ns));
+                    }
+                }
+            }
+        }
+
+        if (name == null) return _responseBuilder.CreateError(format, 70, "Directory not found");
+        if (format == "json")
+        {
+            return _responseBuilder.CreateJsonResponse(new
+            {
+                status = "ok",
+                version = "1.16.1",
+                directory = new Dictionary<string, object> { ["id"] = id, ["name"] = name, ["child"] = children }
+            });
+        }
+        var directory = new XElement(ns + "directory", new XAttribute("id", id), new XAttribute("name", name));
+        foreach (var child in children.OfType<XElement>())
+        {
+            child.Name = ns + "child";
+            directory.Add(child);
+        }
+        return Content(new XDocument(new XElement(ns + "subsonic-response",
+            new XAttribute("status", "ok"),
+            new XAttribute("version", "1.16.1"),
+            directory)).ToString(), "application/xml");
+
+        object SongChild(Song song) => format == "json"
+            ? _responseBuilder.ConvertSongToJson(song)
+            : _responseBuilder.ConvertSongToXml(song, ns);
+    }
+
     // Provider seeds get a mix from the shared mix owner; native seeds keep the backend's answer.
     [HttpGet, HttpPost]
     [Route("rest/getSimilarSongs")]
