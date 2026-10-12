@@ -417,7 +417,7 @@ public partial class SubsonicController : ControllerBase
         IReadOnlyList<Artist> similarArtists;
         try
         {
-            similarArtists = (await _providerGateway.GetSimilarArtistsAsync(CurrentProtocolContext, provider!, externalId!, count))
+            similarArtists = (await _providerGateway.GetSimilarArtistsAsync(CurrentProtocolContext, provider!, externalId!, count) ?? [])
                 .Take(count).ToList();
         }
         catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)

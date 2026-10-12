@@ -471,7 +471,11 @@ public sealed class ProtocolSupportMatrixTests
 
         Assert.DoesNotContain("Task.Run", search, StringComparison.Ordinal);
         Assert.DoesNotContain("new Random()", controller, StringComparison.Ordinal);
-        Assert.Contains("StableInstantMixOrder", controller, StringComparison.Ordinal);
+        var mix = File.ReadAllText(Path.Combine(root, "allstarr", "Core", "Music", "MusicMixService.cs"));
+        Assert.DoesNotContain("Task.Run", mix, StringComparison.Ordinal);
+        Assert.DoesNotContain("new Random()", mix, StringComparison.Ordinal);
+        Assert.Contains("_musicMix.InstantMixAsync(", controller, StringComparison.Ordinal);
+        Assert.Contains("OrderBy(song => StableOrder(", mix, StringComparison.Ordinal);
         Assert.Equal(
             ["IntelligenceController.AudioMuse.cs"],
             ControllerFiles(root)

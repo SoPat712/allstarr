@@ -18,6 +18,7 @@ public sealed class MusicMixServiceTests
     public async Task SimilarSongs_PreferProviderRecommendationsAndDropTheSeed()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
         gateway.Setup(item => item.GetSimilarSongsAsync(_context, "deezer", "42", 2))
             .ReturnsAsync([Song(SeedId, "42"), Song("ext-deezer-song-43", "43"), Song("ext-deezer-song-44", "44"),
                 Song("ext-deezer-song-45", "45")]);
@@ -33,8 +34,9 @@ public sealed class MusicMixServiceTests
     public async Task SimilarSongs_DropTheSeedByItsPublicIdToo()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42")).ReturnsAsync(Song(SeedId, "42"));
         gateway.Setup(item => item.GetSimilarSongsAsync(_context, "deezer", "42", 5))
-            .ReturnsAsync([Song("native-7", "other-42"), Song("ext-deezer-song-43", "43")]);
+            .ReturnsAsync([Song("NATIVE-7", "other-42"), Song("ext-deezer-song-43", "43")]);
 
         var songs = await new MusicMixService(gateway.Object).SimilarSongsAsync(_context, "deezer", "42", "native-7", 5);
 

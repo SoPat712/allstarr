@@ -56,35 +56,35 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
         switch (resourceType.ToLowerInvariant())
         {
             case "album":
-            {
-                var album = await providers.GetAlbumAsync(context, providerId, externalId);
-                if (album == null) return [];
-                mix.AddRange(album.Songs);
-                artistName = album.Artist;
-                break;
-            }
-            case "artist":
-            {
-                var artist = await providers.GetArtistAsync(context, providerId, externalId);
-                if (artist == null) return [];
-                artistName = artist.Name;
-                await AddArtistAlbumsAsync(context, providerId, externalId, mix, limit);
-                break;
-            }
-            default:
-            {
-                var song = await providers.GetSongAsync(context, providerId, externalId);
-                if (song == null) return [];
-                artistName = song.Artist;
-                // Provider recommendations lead a song mix; the artist's albums only fill the rest.
-                mix.AddRange(await RecommendedAsync(context, providerId, song, limit));
-                if (!string.IsNullOrEmpty(song.ExternalProvider) && !string.IsNullOrEmpty(song.ArtistId))
                 {
-                    await AddArtistAlbumsAsync(context, song.ExternalProvider,
-                        song.ArtistId.Replace($"ext-{song.ExternalProvider}-artist-", ""), mix, limit);
+                    var album = await providers.GetAlbumAsync(context, providerId, externalId);
+                    if (album == null) return [];
+                    mix.AddRange(album.Songs);
+                    artistName = album.Artist;
+                    break;
                 }
-                break;
-            }
+            case "artist":
+                {
+                    var artist = await providers.GetArtistAsync(context, providerId, externalId);
+                    if (artist == null) return [];
+                    artistName = artist.Name;
+                    await AddArtistAlbumsAsync(context, providerId, externalId, mix, limit);
+                    break;
+                }
+            default:
+                {
+                    var song = await providers.GetSongAsync(context, providerId, externalId);
+                    if (song == null) return [];
+                    artistName = song.Artist;
+                    // Provider recommendations lead a song mix; the artist's albums only fill the rest.
+                    mix.AddRange(await RecommendedAsync(context, providerId, song, limit));
+                    if (!string.IsNullOrEmpty(song.ExternalProvider) && !string.IsNullOrEmpty(song.ArtistId))
+                    {
+                        await AddArtistAlbumsAsync(context, song.ExternalProvider,
+                            song.ArtistId.Replace($"ext-{song.ExternalProvider}-artist-", ""), mix, limit);
+                    }
+                    break;
+                }
         }
 
         if (mix.Count < limit && !string.IsNullOrWhiteSpace(artistName))
