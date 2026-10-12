@@ -6,9 +6,17 @@ export function isAttention(state: string) {
 }
 
 export function reviewStateLabel(state: string) {
-  return state.toLowerCase() === "suggested"
-    ? "Tentative"
-    : state.replaceAll("_", " ");
+  const labels: Record<string, string> = {
+    suggested: "Unsure",
+    ambiguous: "Needs review",
+    review: "Needs review",
+    unresolved: "No match",
+    accepted: "Matched",
+    pinned: "Matched by hand",
+    rejected: "Rejected",
+  };
+  const normalized = state.toLowerCase();
+  return labels[normalized] ?? (normalized.charAt(0).toUpperCase() + normalized.slice(1)).replaceAll("_", " ");
 }
 
 export function percent(value?: number | null) {

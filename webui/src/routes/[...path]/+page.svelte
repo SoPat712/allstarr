@@ -410,7 +410,7 @@
 {:else if bootstrapFailed}
   <main class="grid min-h-screen place-items-center p-6">
     <section class="panel bootstrap-error w-full max-w-sm p-6 sm:p-8" aria-labelledby="bootstrap-error-title">
-      <div class="brand-mark mb-6" aria-hidden="true">A</div>
+      <div class="brand-mark login-brand mb-6" aria-hidden="true">A</div>
       <h1 id="bootstrap-error-title" class="mt-2 text-3xl font-semibold tracking-tight">Allstarr could not start.</h1>
       <p class="notice-error mt-4" role="alert">{error}</p>
       <button class="auth-submit mt-6 w-full" type="button" onclick={() => void bootstrap()}>Try again</button>
@@ -419,7 +419,7 @@
 {:else if !session?.authenticated || oidc.linkPending}
   <main class="grid min-h-screen place-items-center p-6">
     <section class="panel w-full max-w-sm p-6 sm:p-8" aria-labelledby="login-title">
-      <div class="brand-mark mb-6" aria-hidden="true">A</div>
+      <div class="brand-mark login-brand mb-6" aria-hidden="true">A</div>
       <h1 id="login-title" class="mt-2 text-3xl font-semibold tracking-tight">Your music, connected.</h1>
       <p class="mt-3 text-sm leading-6 text-ink-muted">
         {#if oidc.linkPending}
