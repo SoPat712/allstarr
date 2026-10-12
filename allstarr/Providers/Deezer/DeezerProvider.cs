@@ -510,6 +510,20 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             .ToList();
     }
 
+    public override async Task<List<Artist>?> GetSimilarArtistsAsync(string externalId, int limit, CancellationToken cancellationToken = default)
+    {
+        using var response = await GetAsync(
+            $"{BaseUrl}/artist/{Uri.EscapeDataString(externalId)}/related?limit={Math.Clamp(limit, 1, 100)}", cancellationToken);
+        if (!response.IsSuccessStatusCode) return [];
+        using var related = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+        if (!related.RootElement.TryGetProperty("data", out var data)) return [];
+        return data.EnumerateArray()
+            .Select(ParseDeezerArtist)
+            .Where(artist => artist.ExternalId != externalId)
+            .Take(limit)
+            .ToList();
+    }
+
     private Song ParseDeezerTrack(JsonElement track, int? fallbackTrackNumber = null, string? albumArtist = null)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();

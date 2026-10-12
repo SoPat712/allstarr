@@ -28,6 +28,10 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
     public virtual Task<List<Song>?> GetSimilarTracksAsync(string externalId, int limit, CancellationToken cancellationToken = default) =>
         Task.FromResult<List<Song>?>(null);
 
+    /// <summary>Artists the provider relates to a seed artist; providers without them return null.</summary>
+    public virtual Task<List<Artist>?> GetSimilarArtistsAsync(string externalId, int limit, CancellationToken cancellationToken = default) =>
+        Task.FromResult<List<Artist>?>(null);
+
     internal virtual Task<T> UseCatalogAsync<T>(
         ProviderExecutionContext context, Func<ProviderCatalogMetadata, Task<T>> operation) => operation(this);
 
@@ -156,6 +160,23 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
         return supported
             ? outcome
             : ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
+    }
+
+    public async Task<ProviderOutcome<ProviderPage<ProviderArtistMetadata>>> GetSimilarArtistsAsync(
+        ProviderExecutionContext context,
+        ProviderSimilarArtistsRequest request)
+    {
+        request.Seed.RequireOwner(ProviderId, ProviderResourceKind.Artist);
+        var supported = true;
+        var outcome = await ExecutePageAsync(context, new ProviderPageRequest(request.Limit), async (catalog, token) =>
+        {
+            var artists = await catalog.GetSimilarArtistsAsync(request.Seed.Value, request.Limit, token);
+            supported = artists != null;
+            return artists ?? [];
+        }, MapArtist);
+        return supported
+            ? outcome
+            : ProviderOutcome<ProviderPage<ProviderArtistMetadata>>.Failure(new(ProviderErrorKind.CapabilityUnavailable));
     }
 
     private async Task<ProviderOutcome<ProviderPage<TTarget>>> ExecutePageAsync<TLegacy, TTarget>(
