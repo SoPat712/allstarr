@@ -393,6 +393,8 @@ builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadat
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicSearchService>();
 builder.Services.AddSingleton<allstarr.Core.Music.ProviderStreamOpener>();
+builder.Services.AddHttpClient(nameof(allstarr.Core.Music.LastFmSimilarTracks));
+builder.Services.AddSingleton<allstarr.Core.Music.LastFmSimilarTracks>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicCatalogMerge>();
 

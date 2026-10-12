@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Music;
 
@@ -11,8 +12,10 @@ namespace allstarr.Core.Music;
 /// artist's catalog stands in.
 /// Native seeds never reach this service; each protocol relays them to its backend.
 /// </summary>
-public sealed class MusicMixService(IProtocolProviderGateway providers)
+public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSimilarTracks? lastFm = null)
 {
+    private const int SuggestionLookups = 10;
+
     private const int AlbumsPerArtist = 3;
 
     /// <summary>Songs by the seed song's artist, excluding the seed itself.</summary>
@@ -23,12 +26,13 @@ public sealed class MusicMixService(IProtocolProviderGateway providers)
         string publicId,
         int limit)
     {
-        var recommended = await providers.GetSimilarSongsAsync(context, providerId, externalId, limit);
+        var song = await providers.GetSongAsync(context, providerId, externalId);
+        if (song == null) return [];
+        var recommended = await RecommendedAsync(context, providerId, song, limit);
         if (recommended.Count > 0)
             return recommended.Where(candidate => candidate.Id != publicId && candidate.ExternalId != externalId)
                 .Take(limit).ToList();
-        var song = await providers.GetSongAsync(context, providerId, externalId);
-        if (song == null || string.IsNullOrWhiteSpace(song.Artist)) return [];
+        if (string.IsNullOrWhiteSpace(song.Artist)) return [];
         var candidates = await SearchSongsAsync(context, providerId, song.Artist, limit);
         return candidates
             .Where(candidate => !string.Equals(candidate.ExternalId, externalId, StringComparison.OrdinalIgnoreCase) &&
@@ -75,7 +79,7 @@ public sealed class MusicMixService(IProtocolProviderGateway providers)
                 if (song == null) return [];
                 artistName = song.Artist;
                 // Provider recommendations lead a song mix; the artist's albums only fill the rest.
-                mix.AddRange(await providers.GetSimilarSongsAsync(context, providerId, externalId, limit));
+                mix.AddRange(await RecommendedAsync(context, providerId, song, limit));
                 if (!string.IsNullOrEmpty(song.ExternalProvider) && !string.IsNullOrEmpty(song.ArtistId))
                 {
                     await AddArtistAlbumsAsync(context, song.ExternalProvider,
@@ -97,6 +101,48 @@ public sealed class MusicMixService(IProtocolProviderGateway providers)
             .OrderBy(song => StableOrder(publicId, song.Id), StringComparer.Ordinal)
             .Take(limit)
             .ToList();
+    }
+
+    /// <summary>
+    /// Songs recommended after a seed: the provider's own recommendations, else Last.fm
+    /// suggestions found on the seed's provider. Suggestions that cannot be found are dropped.
+    /// </summary>
+    private async Task<IReadOnlyList<Song>> RecommendedAsync(
+        ProtocolExecutionContext context,
+        string providerId,
+        Song seed,
+        int limit)
+    {
+        var recommended = await providers.GetSimilarSongsAsync(context, providerId, seed.ExternalId ?? "", limit);
+        if (recommended.Count > 0 || lastFm == null) return recommended;
+        var suggestions = await lastFm.FindAsync(context, seed.Artist, seed.Title, Math.Min(limit, SuggestionLookups),
+            context.CancellationToken);
+        var found = await Task.WhenAll(suggestions.Select(suggestion => FindOnProviderAsync(context, providerId, suggestion)));
+        return found.OfType<Song>()
+            .GroupBy(song => song.Id, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToList();
+    }
+
+    private async Task<Song?> FindOnProviderAsync(
+        ProtocolExecutionContext context,
+        string providerId,
+        SimilarTrackSuggestion suggestion)
+    {
+        try
+        {
+            var artistKey = FuzzyMatcher.NormalizeForMatching(suggestion.Artist);
+            var titleKey = FuzzyMatcher.NormalizeForMatching(suggestion.Title);
+            var candidates = await SearchSongsAsync(context, providerId, $"{suggestion.Artist} {suggestion.Title}", 3);
+            return candidates.FirstOrDefault(song =>
+                MusicCatalogMerge.LeadArtistMatches(song.Artist, artistKey) &&
+                (FuzzyMatcher.NormalizeForMatching(song.Title) == titleKey ||
+                 FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(song.Title)) == titleKey));
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            return null;
+        }
     }
 
     private async Task AddArtistAlbumsAsync(
