@@ -24,6 +24,19 @@ public sealed partial class TrackIdentityServiceTests
     }
 
     [Fact]
+    public async Task RememberSource_ReportsAChangedIsrcAsAMergeConflict()
+    {
+        var actor = Actor(_userA);
+        await _service.CreateRecordingAsync(actor, "first", "USRC17607839", null, publicId: "ext-spotify-song-track");
+
+        await Assert.ThrowsAsync<RecordingMergeConflictException>(() => _service.RememberSourceAsync(
+            Context(actor, "spotify"), Track("spotify", "track"), "ext-spotify-song-track",
+            ProviderIdentityScope.Catalog, "GBAYE6800011"));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ProviderTrackIdentities.ToListAsync());
+    }
+
+    [Fact]
     public async Task RememberSource_RetainsFirstLiteralIdAcrossRestartAndLaterProvider()
     {
         var actor = Actor(_userA);

@@ -32,7 +32,7 @@ public sealed partial class TrackIdentityService
         var previous = await FindRecordingByPublicIdAsync(db, execution.Actor, publicId, cancellationToken);
         if (recording != null && previous != null && recording.Id != previous.Id)
         {
-            EnsureSignalsCompatible(previous, normalizedIsrc, null);
+            EnsureSourceSignalsCompatible(previous, normalizedIsrc);
             recording = await MergeRecordsAsync(db, recording, previous, execution.Actor,
                 execution.CorrelationId, _clock.UtcNow, cancellationToken);
         }
@@ -44,7 +44,7 @@ public sealed partial class TrackIdentityService
             recording = CreateProvisionalRecording(userId, now, publicId: publicId);
             db.CanonicalRecordings.Add(recording);
         }
-        EnsureSignalsCompatible(recording, normalizedIsrc, null);
+        EnsureSourceSignalsCompatible(recording, normalizedIsrc);
         var enriched = AttachIdentifier(db, recording, RecordingIdentifierKinds.Isrc, normalizedIsrc, "source-use", now);
         if (!created && enriched)
         {
@@ -60,6 +60,20 @@ public sealed partial class TrackIdentityService
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return recording.Id;
+    }
+
+    // A provider can report a different ISRC for a track it served before. That leaves the
+    // track unresolved for its caller instead of failing everything collected alongside it.
+    private static void EnsureSourceSignalsCompatible(CanonicalRecordingRecord recording, string? isrc)
+    {
+        try
+        {
+            EnsureSignalsCompatible(recording, isrc, null);
+        }
+        catch (InvalidOperationException exception)
+        {
+            throw new RecordingMergeConflictException(exception.Message);
+        }
     }
 
     public async Task<CanonicalRecordingIdentity?> ResolveRecordingAsync(
