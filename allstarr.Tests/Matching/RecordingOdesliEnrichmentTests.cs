@@ -153,6 +153,109 @@ public sealed partial class TrackIdentityServiceTests
         Assert.Single(await db.ProviderTrackIdentities.ToListAsync());
     }
 
+    [Theory]
+    [InlineData("exact", true)]
+    [InlineData("different", false)]
+    [InlineData("missing", false)]
+    [InlineData("account", false)]
+    [InlineData("failure", false)]
+    [InlineData("exception", false)]
+    public async Task IsrcCrossLinks_RequireExactPublicEvidenceAndQueueAnOwnerRematch(string outcome, bool addsLink)
+    {
+        const string isrc = "USRC17607839";
+        var recording = await _service.CreateRecordingAsync(Actor(_userA), "isrc-source", isrc);
+        var account = await SeedUserAccount("deezer", _userA);
+        await Link(recording.Recording.Id, Context(Actor(_userA), "deezer", account), "42", ProviderIdentityScope.Account);
+        Guid sourceId;
+        var snapshotId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var source = await db.ProviderTrackIdentities.SingleAsync();
+            sourceId = source.Id;
+            db.ExternalMetadataSnapshots.Add(new()
+            {
+                Id = snapshotId,
+                OwnerUserId = _userA,
+                ProviderTrackIdentityId = sourceId,
+                ProviderAccountId = account.Id,
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = _userA.ToString("N"),
+                Protocol = "jellyfin",
+                ProviderId = "deezer",
+                ResourceKind = "track",
+                ExternalIdHash = source.ExternalIdHash,
+                SnapshotVersion = 1,
+                ProviderRevision = "1",
+                PayloadSha256 = source.ExternalIdHash,
+                PayloadJson = "{}",
+                CorrelationId = "isrc-fixture",
+                RetrievedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        if (outcome != "account")
+        {
+            var lookup = metadata.Setup(item => item.LookupByIsrcAsync(
+                It.Is<ProviderExecutionContext>(context => context.ProviderId == "qobuz" && context.Account == null &&
+                    context.Actor.EffectiveUserId == _userA),
+                It.Is<ProviderIsrcLookupRequest>(request => request.Isrc == isrc)));
+            if (outcome == "exception") lookup.ThrowsAsync(new HttpRequestException("fixture"));
+            else lookup.ReturnsAsync(outcome == "failure"
+                ? ProviderOutcome<ProviderTrackMetadata>.Failure(new ProviderError(ProviderErrorKind.NotSupported))
+                : ProviderOutcome<ProviderTrackMetadata>.Success(new(Track("qobuz", "99"), "Fixture", [new ProviderArtistCredit("Fixture artist")],
+                    isrc: outcome == "missing" ? null : outcome == "different" ? "USRC17607840" : isrc)));
+        }
+        IProviderMetadataCapability? registered = metadata.Object;
+        var registry = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        registry.SetupGet(item => item.Providers).Returns([
+            new("qobuz", "Qobuz", "Fixture", ProviderOrigin.BuiltIn, "1", "1",
+                [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
+                    outcome == "account" ? ProviderAccountRequirement.Required : ProviderAccountRequirement.None, "1",
+                    allowedAccountScopes: outcome == "account" ? [ProviderAccountScope.Personal] : [])], new())
+        ]);
+        if (outcome != "account") registry.Setup(item => item.TryGetCapability<IProviderMetadataCapability>(
+            "qobuz", ProviderCapabilityKind.Metadata, out registered)).Returns(true);
+        var options = new DurableJobOptions();
+        var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
+        await new RecordingOdesliEnrichmentQueue(jobs, _clock, NullLogger<RecordingOdesliEnrichmentQueue>.Instance)
+            .EnqueueAsync(_userA, sourceId, "isrc-fixture", default);
+        var claim = await jobs.ClaimNextAsync("isrc-fixture", [RecordingOdesliEnrichmentQueue.JobType]);
+        Assert.NotNull(claim);
+        var http = new CrossLinkHandler(HttpStatusCode.OK);
+        var handler = new RecordingOdesliEnrichmentJobHandler(_factory, OdesliServiceTests.Create(http),
+            Options.Create(new OdesliSettings { Enabled = false }), _service, registry.Object, _clock, jobs);
+
+        var completion = await handler.ExecuteAsync(new(claim, Mock.Of<IServiceProvider>()), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        Assert.Equal(0, http.Calls);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var aliases = await verify.ProviderTrackIdentities.Where(item => item.ProviderId == "qobuz").ToListAsync();
+        var rematches = await verify.Jobs.Where(item => item.Type == TrackRematchJobHandler.Type).ToListAsync();
+        if (addsLink)
+        {
+            var alias = Assert.Single(aliases);
+            Assert.Equal(recording.Recording.Id, alias.CanonicalRecordingId);
+            Assert.Equal("isrc-lookup", alias.VerificationMethod);
+            Assert.Equal(ProviderIdentityVerification.Verified, alias.Verification);
+            Assert.Equal(ProviderIdentityScope.Catalog, alias.Scope);
+            Assert.Equal(_userA, Assert.Single(rematches).OwnerUserId);
+            var replay = await handler.ExecuteAsync(new(claim, Mock.Of<IServiceProvider>()), default);
+            Assert.Equal(DurableJobCompletionKind.Succeeded, replay.Kind);
+            Assert.Equal(1, await verify.Jobs.CountAsync(item => item.Type == TrackRematchJobHandler.Type));
+        }
+        else
+        {
+            Assert.Empty(aliases);
+            Assert.Empty(rematches);
+        }
+        metadata.VerifyAll();
+        metadata.VerifyNoOtherCalls();
+        registry.VerifyAll();
+        registry.VerifyNoOtherCalls();
+    }
+
     private sealed class CrossLinkHandler(HttpStatusCode status) : HttpMessageHandler
     {
         public int Calls { get; private set; }
