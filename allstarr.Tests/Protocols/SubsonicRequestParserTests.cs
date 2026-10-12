@@ -51,6 +51,27 @@ public class SubsonicRequestParserTests
     }
 
     [Fact]
+    public async Task QueryOnlyChanges_KeepANestedJsonBodyExactly()
+    {
+        const string body = "{\"name\":\"Feishin\",\"directPlayProfiles\":[{\"containers\":[\"flac\"]}]}";
+        var context = new DefaultHttpContext();
+        var bytes = Encoding.UTF8.GetBytes(body);
+        context.Request.Method = HttpMethods.Post;
+        context.Request.QueryString = new QueryString("?mediaId=ext-deezer-song-42&mediaType=song");
+        context.Request.Body = new MemoryStream(bytes);
+        context.Request.ContentType = "application/json";
+        context.Request.ContentLength = bytes.Length;
+
+        var parameters = await _parser.ExtractAllParametersAsync(context.Request);
+        var replaced = parameters.ReplaceValue("mediaId", "native-7");
+        var appended = parameters.SetValue("f", "json");
+
+        Assert.Equal("native-7", replaced["mediaId"]);
+        Assert.Equal(body, replaced.RawBody);
+        Assert.Equal(body, appended.RawBody);
+    }
+
+    [Fact]
     public async Task ExtractAllParametersAsync_JsonBody_ExtractsCorrectly()
     {
         var context = new DefaultHttpContext();

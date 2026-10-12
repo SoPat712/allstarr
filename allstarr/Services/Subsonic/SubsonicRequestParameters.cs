@@ -115,7 +115,11 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
                 ? parameter with { Value = value }
                 : parameter)
             .ToList();
-        return new SubsonicRequestParameters(Method, ContentType, BuildBody(replaced), replaced);
+        // A query-only change keeps the original body, including JSON the parameters cannot represent.
+        var bodyChanged = _parameters.Any(parameter =>
+            parameter.Name.Equals(name, StringComparison.OrdinalIgnoreCase) &&
+            parameter.Source != SubsonicParameterSource.Query);
+        return new SubsonicRequestParameters(Method, ContentType, bodyChanged ? BuildBody(replaced) : RawBody, replaced);
     }
 
     public SubsonicRequestParameters SetValue(string name, string value)
@@ -125,7 +129,7 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
         if (ContainsKey(name)) return ReplaceValue(name, value);
         var updated = _parameters.Append(new SubsonicParameter(
             name, value, SubsonicParameterSource.Query)).ToList();
-        return new SubsonicRequestParameters(Method, ContentType, BuildBody(updated), updated);
+        return new SubsonicRequestParameters(Method, ContentType, RawBody, updated);
     }
 
     public static SubsonicRequestParameters FromDictionary(
