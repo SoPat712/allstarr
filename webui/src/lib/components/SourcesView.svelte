@@ -3,7 +3,7 @@
   import { Dialog } from "$lib/components/ui/dialog";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { MoreHorizontal, X } from "@lucide/svelte";
+  import { ChevronRight, MoreHorizontal, Plus, RefreshCw, X } from "@lucide/svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import DisclosureLabel from "$lib/components/DisclosureLabel.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -225,7 +225,20 @@
       return "Browse the public catalog and connect your personal library with a Media User Token and storefront. Optional downloads use the same account.";
     if (item.id === "spotiflac-apple-music")
       return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
-    return item.description || "Configure this Source and its accounts here.";
+    if (item.description) return item.description;
+    const uses: Record<string, string> = {
+      metadata: "song details",
+      streaming: "playback",
+      download: "downloads",
+      playlists: "playlists",
+      lyrics: "lyrics",
+      scrobbling: "scrobbling",
+      intelligence: "recommendations",
+    };
+    const purposes = (item.categories ?? []).map((category) => uses[category.toLowerCase()]).filter(Boolean);
+    if (!purposes.length) return "Open to see what this service provides.";
+    const list = purposes.length === 1 ? purposes[0] : `${purposes.slice(0, -1).join(", ")} and ${purposes.at(-1)}`;
+    return `Used for ${list}.`;
   }
 
   function implementationLabel(item: ProviderDefinition) {
@@ -381,134 +394,116 @@
   {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
   <div class="sources-layout" aria-busy={refreshing}>
     {#if mode === "services"}
-    <section class="panel sources-panel">
-      <header class="panel-heading sources-heading">
-        <div><p class="eyebrow">Provider-neutral services</p><h2>Services</h2><p>Capabilities describe what a Service can do. Latency appears after a health or click-to-stream check reports timing.</p></div>
-        <div class="panel-heading-actions sources-heading-actions">
-          <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
-          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+    <section class="sources-panel" aria-labelledby="services-title">
+      <header class="sources-heading">
+        <div>
+          <h2 id="services-title">Services</h2>
+          <p>Where Allstarr finds music, playlists, lyrics and scrobbling. Open one to see its checks and settings.</p>
+        </div>
+        <div class="sources-heading-actions">
+          <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}><RefreshCw size={16} aria-hidden="true" />{refreshing ? "Refreshing…" : "Refresh"}</Button>
+          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect Source</Button>{/if}
         </div>
       </header>
 
-      <div class="operational-table-scroll">
-        <table class="operational-table sources-table">
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th>Capabilities</th>
-              <th>Readiness</th>
-              <th>Enabled</th>
-              <th>Latency</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each providers as item (item.id)}
-              {@const state = sourceStatus(item, accounts, health)}
-              {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
-              {@const connected = providerAccounts(item.id)}
-              {@const cts = measurements.find((measurement) =>
-                measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
-                (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
-              {@const timing = sourceTimingLabel(item, summary(item.id))}
-              {@const appleReadiness = item.runtimeCapabilities?.find((capability) =>
-                capability.reasonCode?.startsWith("apple-download-"))?.reasonCode}
-              <tr data-state={state}>
-                <td>
-                  <button class="operational-row-identity" type="button" onclick={() => inspectSource(item)}>
-                    <ProviderArtwork id={item.id} definition={item} />
-                    <span><strong>{item.name}</strong><small>{implementationLabel(item)} · {sourcePurpose(item)}</small></span>
-                  </button>
-                  {#if appleReadiness}<small role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
-                  <Badge class="operational-mobile-state" state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge>
-                  <details class="operational-mobile-detail">
-                    <summary class="disclosure-summary compact"><DisclosureLabel title="More details" description="Capabilities and timing" /></summary>
-                    <dl>
-                      <div><dt>Capabilities</dt><dd>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</dd></div>
-                      <div><dt>Latency</dt><dd>{timing}{#if cts}{#if timing} · {/if}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</dd></div>
-                    </dl>
-                  </details>
-                </td>
-                <td>{(item.categories ?? []).map(humanize).join(", ") || "Pending"}</td>
-                <td><Badge state={state}>{state === "needs_config" ? "Needs setup" : humanize(state)}</Badge><small>{metrics.checkedAt ? `${metrics.passing}/${metrics.total || 0} passing · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small></td>
-                <td><Badge state={state === "disabled" ? "suggested" : "healthy"}>{state === "disabled" ? "Disabled" : "Enabled"}</Badge>{connected.length ? ` · ${connected.filter((account) => account.enabled).length} account${connected.length === 1 ? "" : "s"}` : ""}</td>
-                <td>{timing}{#if cts}{#if timing} · {/if}<Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
-              </tr>
-            {:else}
-              <tr><td colspan="5"><div class="compact-empty"><strong>No Sources are registered</strong><p>Enable a built-in provider or install an extension.</p></div></td></tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <ul class="source-list" aria-label="Services">
+        {#each providers as item (item.id)}
+          {@const state = sourceStatus(item, accounts, health)}
+          {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
+          {@const connected = providerAccounts(item.id)}
+          {@const cts = measurements.find((measurement) =>
+            measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
+            (!measurement.providerAccountId || connected.some((account) => account.id === measurement.providerAccountId)))}
+          {@const timing = sourceTimingLabel(item, summary(item.id))}
+          {@const appleReadiness = item.runtimeCapabilities?.find((capability) =>
+            capability.reasonCode?.startsWith("apple-download-"))?.reasonCode}
+          <li class="source-row" data-state={state}>
+            <button class="source-row-main" type="button" onclick={() => inspectSource(item)}>
+              <ProviderArtwork id={item.id} definition={item} />
+              <span class="source-row-copy">
+                <strong>{item.name}</strong>
+                <small>{sourcePurpose(item)}</small>
+                {#if appleReadiness}<small class="source-row-warning" role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
+              </span>
+              <span class="source-row-capabilities">
+                {#each (item.categories ?? []).slice(0, 4) as category}<span>{humanize(category)}</span>{/each}
+              </span>
+              <span class="source-row-status">
+                <Badge state={state}>{state === "needs_config" ? "Needs setup" : state === "disabled" ? "Turned off" : humanize(state)}</Badge>
+                <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
+                <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
+              </span>
+              <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />
+            </button>
+          </li>
+        {:else}
+          <li class="compact-empty"><strong>No services yet</strong><p>Turn on a built-in service or install an extension to add one.</p></li>
+        {/each}
+      </ul>
     </section>
     {/if}
 
     {#if mode === "accounts"}
     <PlaylistConsent />
-    <section class="panel connections-panel">
-      <header class="panel-heading connections-heading">
-        <div><p class="eyebrow">Encrypted account access</p><h2>Accounts</h2><p>Personal accounts belong to one user; Shared accounts are available to the household. Credentials are never returned to the browser.</p></div>
-        <div class="panel-heading-actions sources-heading-actions">
-          <span aria-label={`${accounts.length} account${accounts.length === 1 ? "" : "s"}`}>{accounts.length}</span>
-          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+    <section class="sources-panel connections-panel" aria-labelledby="accounts-title">
+      <header class="sources-heading connections-heading">
+        <div>
+          <h2 id="accounts-title">Accounts</h2>
+          <p>Personal accounts belong to one person. Shared accounts work for everyone. Passwords and tokens are never shown again after you save them.</p>
+        </div>
+        <div class="sources-heading-actions">
+          {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}><Plus size={16} aria-hidden="true" />Connect Source</Button>{/if}
         </div>
       </header>
-      <div class="operational-table-scroll">
-        <table class="operational-table accounts-table">
-          <thead><tr><th>Account</th><th>Provider</th><th>Owner</th><th>Audience</th><th>State</th><th>Health</th><th><span class="sr-only">Actions</span></th></tr></thead>
-          <tbody>
-            {#each accounts as account (account.id)}
-              {@const definition = provider(account.providerId)}
-              {@const capabilities = health.filter((item) => item.providerAccountId === account.id)}
-              {@const cts = measurements.find((item) => item.providerAccountId === account.id)}
-              <tr id={`connection-${account.id}`}>
-                <td>
-                  <button class="operational-row-identity" type="button" aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`} onclick={() => inspectAccount(account)}>
-                    <ProviderArtwork id={account.providerId} definition={definition} />
-                    <span><strong>{providerDisplayName(providers, account.providerId)}</strong><small>{accountSubtitle(account)} · {account.secret.configured && !account.secret.revoked ? "Account details stored" : "Setup needed"}</small></span>
-                  </button>
-                  <Badge class="operational-mobile-state" state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge>
-                  <details class="operational-mobile-detail">
-                    <summary class="disclosure-summary compact"><DisclosureLabel title="More details" description="Owner, audience, and health" /></summary>
-                    <dl>
-                      <div><dt>Owner</dt><dd>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</dd></div>
-                      <div><dt>Audience</dt><dd>{audienceLabel(account)}</dd></div>
-                      <div><dt>Health</dt><dd><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge>{#if cts} · <Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</dd></div>
-                    </dl>
-                  </details>
-                </td>
-                <td>{providerDisplayName(providers, account.providerId)}</td>
-                <td>{account.creatorDisplayName || account.ownerDisplayName || "Unknown"}</td>
-                <td>{audienceLabel(account)}</td>
-                <td><Badge state={account.enabled ? "healthy" : "disabled"}>{account.enabled ? "Enabled" : "Disabled"}</Badge></td>
-                <td><Badge state={readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>{capabilities.filter((item) => item.ready).length}/{capabilities.length} ready</Badge>{#if cts} · <Badge state={cts.health === "healthy" ? "healthy" : "degraded"}>CTS {ctsMeasurementLabel(cts)}</Badge>{/if}</td>
-                <td>
-                  {#if account.canManage || account.canChangeAudience}
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger class="icon-button" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
-                    <DropdownMenu.Portal>
-                      <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
-                        {#if account.canChangeAudience}
-                          <DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>
-                        {/if}
-                        {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>{/if}
-                        <DropdownMenu.Separator />
-                        {#if account.canManage}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>{/if}
-                      </DropdownMenu.Content>
-                    </DropdownMenu.Portal>
-                  </DropdownMenu.Root>
-                  {:else}<span class="credential-safety">Read only</span>{/if}
-                </td>
-              </tr>
-            {:else}
-              <tr><td colspan="7"><div class="compact-empty connections-empty">
-                <strong>No Source accounts yet</strong>
-                <p>Connect an account to activate Personal or Shared Source capabilities.</p>
-                {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
-              </div></td></tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
+      <ul class="source-list account-list" aria-label={`${accounts.length} account${accounts.length === 1 ? "" : "s"}`}>
+        {#each accounts as account (account.id)}
+          {@const definition = provider(account.providerId)}
+          {@const capabilities = health.filter((item) => item.providerAccountId === account.id)}
+          {@const cts = measurements.find((item) => item.providerAccountId === account.id)}
+          {@const ready = capabilities.filter((item) => item.ready).length}
+          <li class="source-row" id={`connection-${account.id}`}>
+            <button class="source-row-main" type="button" aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`} onclick={() => inspectAccount(account)}>
+              <ProviderArtwork id={account.providerId} definition={definition} />
+              <span class="source-row-copy">
+                <strong>{providerDisplayName(providers, account.providerId)}</strong>
+                <small>{accountSubtitle(account)}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
+              </span>
+              <span class="source-row-owner">
+                <small>Added by</small>
+                {account.creatorDisplayName || account.ownerDisplayName || "Unknown"}
+              </span>
+              <span class="source-row-status">
+                <Badge state={!account.enabled ? "disabled" : readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>
+                  {!account.enabled ? "Turned off" : capabilities.length && ready === capabilities.length ? "Working" : `${ready} of ${capabilities.length} ready`}
+                </Badge>
+                {#if cts}<small>CTS {ctsMeasurementLabel(cts)}</small>{/if}
+              </span>
+              <ChevronRight class="source-row-chevron" size={18} aria-hidden="true" />
+            </button>
+            {#if account.canManage || account.canChangeAudience}
+              <DropdownMenu.Root>
+                <DropdownMenu.Trigger class="icon-button source-row-menu" disabled={Boolean(action)} aria-label={`Actions for ${account.displayName}`}><MoreHorizontal size={18} aria-hidden="true" /></DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content class="bits-menu" sideOffset={6} align="end">
+                    {#if account.canChangeAudience}
+                      <DropdownMenu.Item class="bits-menu-item" onSelect={() => manageAccess(account)}>Edit access</DropdownMenu.Item>
+                    {/if}
+                    {#if account.canManage}<DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void toggle(account)}>{account.enabled ? "Disable" : "Enable"}</DropdownMenu.Item>{/if}
+                    <DropdownMenu.Separator />
+                    {#if account.canManage}<DropdownMenu.Item class="bits-menu-item danger-item" disabled={Boolean(action)} onSelect={() => { removal = account; removeOpen = true; }}>Remove</DropdownMenu.Item>{/if}
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            {:else}<span class="source-row-readonly">Read only</span>{/if}
+          </li>
+        {:else}
+          <li class="compact-empty connections-empty">
+            <strong>No accounts connected</strong>
+            <p>Connect Spotify, Deezer or another service to import playlists and play songs you don't have locally.</p>
+            {#if canConnectAccounts}<Button onclick={() => { connectProviderId = ""; connectOpen = true; }}>Connect Source</Button>{/if}
+          </li>
+        {/each}
+      </ul>
     </section>
     {/if}
   </div>
