@@ -538,15 +538,26 @@ public sealed class ProtocolSupportMatrixTests
     {
         using var qualification = ReadFixture("subsonic-openapi-qualification.json");
         var contract = qualification.RootElement;
-        var specPath = Path.Combine(FindRepositoryRoot(), "apis", "specifications", "subsonic", "openapi-3.0.0.json");
-        using var openApi = JsonDocument.Parse(File.ReadAllText(specPath));
-        Assert.Equal(
-            contract.GetProperty("openApi").GetProperty("version").GetString(),
-            openApi.RootElement.GetProperty("info").GetProperty("version").GetString());
-        var methods = openApi.RootElement.GetProperty("paths").EnumerateObject()
-            .Select(path => SubsonicMusicEndpointPolicy.MethodName(path.Name)!)
+        var pinned = contract.GetProperty("openApi");
+        var methods = pinned.GetProperty("methods").EnumerateArray()
+            .Select(method => method.GetString()!)
             .ToHashSet(StringComparer.Ordinal);
-        Assert.Equal(contract.GetProperty("openApi").GetProperty("methodCount").GetInt32(), methods.Count);
+        Assert.Equal(pinned.GetProperty("methodCount").GetInt32(), methods.Count);
+
+        // The spec itself is not distributed with the repository; when a local copy exists,
+        // the pinned method list must still match it.
+        var specPath = Path.Combine(FindRepositoryRoot(), pinned.GetProperty("sourcePath").GetString()!);
+        if (File.Exists(specPath))
+        {
+            Assert.Equal(pinned.GetProperty("sha256").GetString(),
+                Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(specPath))).ToLowerInvariant());
+            using var openApi = JsonDocument.Parse(File.ReadAllText(specPath));
+            Assert.Equal(pinned.GetProperty("version").GetString(),
+                openApi.RootElement.GetProperty("info").GetProperty("version").GetString());
+            Assert.Equal(methods.Order(StringComparer.Ordinal), openApi.RootElement.GetProperty("paths").EnumerateObject()
+                .Select(path => SubsonicMusicEndpointPolicy.MethodName(path.Name)!)
+                .Order(StringComparer.Ordinal));
+        }
 
         static string[] Names(JsonElement array) => array.EnumerateArray().Select(item => item.GetString()!).ToArray();
         var intercepted = Names(contract.GetProperty("intercepted"));
