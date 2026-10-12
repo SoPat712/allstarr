@@ -713,7 +713,8 @@ public sealed class ProviderRouterTests
             CancellationToken cancellationToken = default) => throw new NotSupportedException();
 
         public Task<int> AddExactAliasesAsync(ProviderExecutionContext context, ProviderExternalResourceId source,
-            IReadOnlyList<ProviderExternalResourceId> aliases, CancellationToken cancellationToken = default) =>
+            IReadOnlyList<ProviderExternalResourceId> aliases, string verificationMethod = "odesli-link",
+            CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
         public Task<TrackIdentityLinkResult> LinkAsync(
