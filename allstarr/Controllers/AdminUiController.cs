@@ -211,7 +211,13 @@ public class AdminUiController : ControllerBase
                 return new
                 {
                     providerId = group.Key,
-                    connectedAccountName = group.Where(item => item.Enabled).Select(item => item.DisplayName).FirstOrDefault(),
+                    connectedAccountName = group.Where(item => item.Enabled)
+                        .Select(item => ProviderAccountNames.DisplayName(item, _providerRegistry)).FirstOrDefault(),
+                    connectedAccounts = group.Where(item => item.Enabled).OrderBy(item => item.Id).Select(item => new
+                    {
+                        scope = item.Scope.ToString(),
+                        customLabel = ProviderAccountNames.CustomLabel(item, _providerRegistry)
+                    }).ToArray(),
                     enabledAccountCount = group.Count(item => item.Enabled),
                     capabilityTotal = samples.Count,
                     healthyCapabilityCount = healthy,
@@ -1088,6 +1094,17 @@ public class AdminUiController : ControllerBase
             Categories = ["lyrics"]
         }
         ];
+
+        providers.AddRange(CurrentProviderSupportCatalog.All
+            .Where(item => item.Id is "lastfm" or "listenbrainz")
+            .Select(item => new AdminUiProvider
+            {
+                Id = item.Id,
+                Name = item.Name,
+                Icon = item.Id,
+                Status = "available",
+                Categories = ["scrobbling"]
+            }));
 
         foreach (var provider in providers)
         {

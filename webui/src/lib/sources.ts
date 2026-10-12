@@ -28,7 +28,12 @@ export const providerDisplayName = (
   providers: ProviderDefinition[],
   providerId?: string | null,
   fallback = "Unknown source",
-) => providerId ? findProviderDefinition(providers, providerId)?.name ?? providerId : fallback;
+) => providerId ? findProviderDefinition(providers, providerId)?.name ?? fallback : fallback;
+
+export function accountSubtitle(account: { scope: string; customLabel?: string | null }) {
+  const audience = account.scope === "Shared" ? "Shared with everyone" : "Personal";
+  return account.customLabel ? `${audience} · ${account.customLabel}` : audience;
+}
 
 export function audienceLabel(account: ProviderAccount) {
   if (account.scope === "Shared") return "Shared";

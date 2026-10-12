@@ -219,6 +219,24 @@ public sealed class HostCompositionTests
         Assert.Empty(schema.ExtensionStore.Repositories);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AccountProviders_PublishTheirProperNamesInEveryUiSchema(bool administrator)
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        using var scope = factory.Services.CreateScope();
+        var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
+        controller.ControllerContext = Context(administrator);
+        var schema = Assert.IsType<AdminUiSchemaResponse>(
+            Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
+        foreach (var id in new[] { "lastfm", "listenbrainz", "spotify", "deezer", "apple-musickit" })
+        {
+            var expected = Assert.Single(CurrentProviderSupportCatalog.All, item => item.Id == id);
+            Assert.Equal(expected.Name, Assert.Single(schema.Providers, item => item.Id == id).Name);
+        }
+    }
+
     [Fact]
     public async Task AdministratorSchema_RetainsFullManagementSurface()
     {

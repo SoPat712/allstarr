@@ -60,6 +60,8 @@ A Service is an implementation. An Account is a credential and access policy for
 
 Listeners connect **Personal** accounts, which only they may use and manage. Administrators can assign Personal accounts to a user or create **Shared** accounts for the household. A listener’s eligible Personal account is preferred over Shared accounts. Administrators manage Shared accounts; listeners can see their availability without viewing credentials or changing them.
 
+Provider cards and account titles use the provider's display name. The subtitle shows **Personal** or **Shared with everyone**, followed by an optional custom connection name. Leave the connection name blank to use the provider name. Older automatically generated account labels are renamed on startup; custom labels and credentials are preserved. A provider without a health sample shows **Not checked yet**.
+
 Administrators can change an account’s audience in **Access → Edit access**. Sharing makes the account available for supported capabilities, including playlists or scrobbling when supported, and may consume the provider’s limits. Making it Personal stops new shared selections; it cannot retract audio already delivered.
 
 In Settings, **Listeners can connect their own accounts** defaults to on. Turning it off prevents new listener connections while preserving use, configuration and removal of their existing accounts. Connection probes remain administrator-only, so listeners see **Save connection**. See [provider account policy](operations/configuration.md#provider-accounts).

@@ -85,6 +85,7 @@ if (releaseComposition.IntelligenceEnabled)
 builder.Services.AddDurablePlaybackSignals(releaseComposition.IntelligenceEnabled);
 builder.Services.AddPlaylistOrchestration();
 builder.Services.AddExtensionControlPlane();
+builder.Services.AddHostedService<ProviderAccountNameNormalizer>();
 builder.Services.AddPlatformOperations(builder.Configuration);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ProviderCtsTrackSelector>();

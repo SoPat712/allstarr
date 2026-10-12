@@ -152,6 +152,7 @@ export type ActivityResponse = {
 export type ProviderSummary = {
   providerId: string;
   connectedAccountName?: string | null;
+  connectedAccounts?: { scope: "Personal" | "Shared"; customLabel?: string | null }[];
   enabledAccountCount: number;
   capabilityTotal: number;
   healthyCapabilityCount: number;
@@ -435,6 +436,7 @@ export type ProviderAccount = {
   id: string;
   providerId: string;
   displayName: string;
+  customLabel?: string | null;
   sourceDisplayName?: string | null;
   scope: "Personal" | "Shared";
   ownerUserId?: string | null;

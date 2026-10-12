@@ -343,7 +343,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Equal("21", Assert.Single(await db.RuntimeSettings.ToListAsync()).ValueJson);
         var deezer = Assert.Single(await db.ProviderAccounts.ToListAsync());
-        Assert.Equal("Shared Deezer account", deezer.DisplayName);
+        Assert.Equal("Deezer", deezer.DisplayName);
         using var lease = await OpenSecretAsync(deezer.SecretReferenceId!.Value, null, allowShared: true);
         using var secret = JsonDocument.Parse(lease.Value);
         Assert.Equal("second-private-value", secret.RootElement.GetProperty("arl").GetString());
@@ -381,8 +381,8 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Assert.Equal(4, accounts.Count);
             Assert.All(accounts.Where(account => account.Scope == ProviderAccountScope.Shared), account => Assert.False(account.Enabled));
             var listenBrainz = Assert.Single(accounts, account => account.ProviderId == "listenbrainz");
-            Assert.Equal("My ListenBrainz account", listenBrainz.DisplayName);
-            Assert.Equal("Shared Spotify account", Assert.Single(accounts, account => account.ProviderId == "spotify").DisplayName);
+            Assert.Equal("ListenBrainz", listenBrainz.DisplayName);
+            Assert.Equal("Spotify", Assert.Single(accounts, account => account.ProviderId == "spotify").DisplayName);
             Assert.True(listenBrainz.Enabled);
             Assert.Equal(ProviderAccountScope.Personal, listenBrainz.Scope);
             Assert.Equal(_userId, listenBrainz.OwnerUserId);
@@ -458,7 +458,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         Assert.Equal(ProviderAccountScope.Personal, account.Scope);
         Assert.Equal(_userId, account.OwnerUserId);
         Assert.True(account.Enabled);
-        Assert.Equal("My Last.fm account", account.DisplayName);
+        Assert.Equal("Last.fm", account.DisplayName);
         using var lease = await OpenSecretAsync(account.SecretReferenceId!.Value, _userId);
         using var secret = JsonDocument.Parse(lease.Value);
         Assert.Equal("lastfm-api", secret.RootElement.GetProperty("apiKey").GetString());

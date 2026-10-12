@@ -5,6 +5,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Operations;
+using allstarr.Core.Identity;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
@@ -103,6 +105,7 @@ public sealed class LegacyEnvMigrationService
     private readonly EncryptedSecretStore _secrets;
     private readonly IPlatformClock _clock;
     private readonly BackendSelectionAuthority _backendSelection;
+    private readonly IProviderRegistry? _registry;
     private readonly ConcurrentDictionary<string, PreviewState> _previews = new(StringComparer.Ordinal);
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
 
@@ -111,8 +114,9 @@ public sealed class LegacyEnvMigrationService
         DurableRuntimeSettingsService settings,
         EncryptedSecretStore secrets,
         IPlatformClock clock,
-        BackendSelectionAuthority? backendSelection = null) =>
-        (_factory, _settings, _secrets, _clock, _backendSelection) = (
+        BackendSelectionAuthority? backendSelection = null,
+        IProviderRegistry? registry = null) =>
+        (_factory, _settings, _secrets, _clock, _backendSelection, _registry) = (
             factory,
             settings,
             secrets,
@@ -123,7 +127,7 @@ public sealed class LegacyEnvMigrationService
                 "test-default",
                 false,
                 false,
-                null));
+                null), registry);
 
     public async Task<LegacyEnvMigrationStatus> GetStatusAsync(
         CancellationToken cancellationToken = default)
@@ -515,7 +519,7 @@ public sealed class LegacyEnvMigrationService
                     {
                         Id = Guid.CreateVersion7(),
                         ProviderId = provider.ProviderId,
-                        DisplayName = ImportedAccountName(provider.ProviderId, personal: false),
+                        DisplayName = ImportedAccountName(provider.ProviderId),
                         Enabled = false,
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow
@@ -571,7 +575,7 @@ public sealed class LegacyEnvMigrationService
                         Id = Guid.CreateVersion7(),
                         OwnerUserId = state.ActorUserId.Value,
                         ProviderId = providerId,
-                        DisplayName = ImportedAccountName(providerId, personal: true),
+                        DisplayName = ImportedAccountName(providerId),
                         Enabled = true,
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow
@@ -874,19 +878,8 @@ public sealed class LegacyEnvMigrationService
         }
     }
 
-    private static string ImportedAccountName(string providerId, bool personal)
-    {
-        var provider = providerId.ToLowerInvariant() switch
-        {
-            "lastfm" => "Last.fm",
-            "listenbrainz" => "ListenBrainz",
-            "qobuz" => "Qobuz",
-            "deezer" => "Deezer",
-            "spotify" => "Spotify",
-            _ => providerId
-        };
-        return personal ? $"My {provider} account" : $"Shared {provider} account";
-    }
+    private string ImportedAccountName(string providerId) =>
+        ProviderAccountNames.DefaultName(providerId, _registry) ?? "Unknown source";
 
     private async Task<string> ComputeRevisionAsync(
         string sourceSha256,
