@@ -70,14 +70,13 @@
 
 {#if loading}
   <section class="panel consent-panel" aria-label="Loading playlist management" aria-busy="true">
-    <p class="eyebrow">Native playlists</p><p>Checking playlist access…</p>
+    <p class="consent-muted">Checking playlist access…</p>
   </section>
 {:else if status?.supported}
   <section class="panel consent-panel" aria-labelledby="playlist-consent-title" aria-busy={pending}>
     <header>
       <span class="consent-icon" aria-hidden="true"><KeyRound size={20} /></span>
       <div>
-        <p class="eyebrow">Native playlists</p>
         <h2 id="playlist-consent-title">Playlist management</h2>
         <p>Allow Allstarr to create and update playlists for your signed-in Subsonic account. Library reads and sign-in work without this access.</p>
       </div>
@@ -103,23 +102,25 @@
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
   </section>
 {:else if loadFailed}
-  <section class="panel consent-panel" aria-labelledby="playlist-consent-error-title">
+  <section class="panel consent-panel consent-error" aria-labelledby="playlist-consent-error-title">
     <div>
-      <p class="eyebrow">Native playlists</p>
       <h2 id="playlist-consent-error-title">Playlist management unavailable</h2>
+      <p class="consent-muted" role="alert">{error}</p>
     </div>
-    <p class="notice-error" role="alert">{error}</p>
     <Button variant="secondary" onclick={() => void load()}>Retry</Button>
   </section>
 {/if}
 
 <style>
-  .consent-panel{display:grid;gap:1rem;padding:var(--surface-gutter)}
+  .consent-panel{display:grid;gap:1rem;border-radius:var(--radius-lg);padding:var(--space-5) var(--space-6)}
+  .consent-panel h2{font-size:1rem;line-height:1.5rem;font-weight:600}
+  .consent-muted{color:var(--color-ink-muted);font-size:var(--text-sm)}
+  .consent-error{grid-template-columns:minmax(0,1fr) auto;align-items:center}
   .consent-panel header{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:.8rem}
   .consent-panel h2,.consent-panel p{margin:0}.consent-panel header p:last-child{margin-top:.3rem;color:var(--color-ink-muted)}
   .consent-icon{display:grid;place-items:center;width:2.75rem;height:2.75rem;border-radius:50%;background:var(--color-signal-muted);color:var(--color-signal-text)}
   .consent-form,.consent-status{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:1rem}
   .consent-status{align-items:center;border-top:1px solid var(--color-edge);padding-top:1rem}.consent-status div,.consent-status small{display:block}.consent-status small{margin-top:.2rem;color:var(--color-ink-muted)}
   .field small{color:var(--color-ink-muted)}.text-button{min-height:2.75rem;color:var(--color-signal-text);text-decoration:underline}
-  @media(max-width:620px){.consent-form,.consent-status{grid-template-columns:1fr}.consent-form>:global([data-slot="button"]),.consent-status>:global([data-slot="button"]){width:100%}}
+  @media(max-width:620px){.consent-error{grid-template-columns:1fr}.consent-panel{padding:var(--space-4)}.consent-form,.consent-status{grid-template-columns:1fr}.consent-form>:global([data-slot="button"]),.consent-status>:global([data-slot="button"]){width:100%}}
 </style>

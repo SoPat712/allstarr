@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { ArrowDown, ArrowUp } from "@lucide/svelte";
+  import { ArrowDown, ArrowUp, GripVertical, Lock } from "@lucide/svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -130,54 +130,61 @@
     onRetry={refresh}
   />
 {:else}
-  <div class="settings-stack" aria-busy={refreshing}>
-    <header class="settings-intro"><p class="eyebrow">Provider-neutral policy</p><h2>Routing</h2><p>The local media server remains locked first. Move fallback services into the order Allstarr should try them.</p></header>
+  <div class="routing-view" aria-busy={refreshing}>
+    <header class="sources-heading">
+      <div>
+        <h2>Routing</h2>
+        <p>Allstarr always plays from your media server first when it has the song, then tries these services in the order below.</p>
+      </div>
+    </header>
     {#if error}
       <div class="degraded-banner" role="status">
-        <span aria-hidden="true">!</span><p><strong>Routing may be stale.</strong> {error}</p>
+        <span aria-hidden="true">!</span><p><strong>Routing may be out of date.</strong> {error}</p>
         <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
       </div>
     {/if}
     {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
     {#if policyFields.length}
-      <section class="panel routing-group">
-        <header><div><strong>Playback and matching</strong><small>Local uses its configured window. Ordered playback providers receive 5, 3, then 1 confidence point; later providers must lead outright.</small></div></header>
-        <form class="settings-fields routing-policy-fields" oninput={() => { policyDirty = true; }} onsubmit={savePolicy}>
-          {#each policyFields as field (field.key)}
-            {#if field.type === "audio-quality"}
-              <div class="setting-field audio-quality-field">
-                <span><strong>{field.label}</strong></span>
-                <AudioQualityField name={field.key} value={String(fieldValue(config, field))} onchange={() => { policyDirty = true; }} />
-                {#if field.helpText}<small>{field.helpText}</small>{/if}
-              </div>
-            {:else}
-              <label class="setting-field">
-                <span><strong>{field.label}</strong></span>
-                <input
-                  name={field.key}
-                  type="number"
-                  value={String(fieldValue(config, field))}
-                  min={field.min ?? undefined}
-                  max={field.max ?? undefined}
-                />
-                {#if field.helpText}<small>{field.helpText}</small>{/if}
-              </label>
-            {/if}
-          {/each}
-          <footer><Button type="submit" disabled={Boolean(action) || !policyDirty}>{action === "policy" ? "Saving…" : "Save playback and matching"}</Button></footer>
-        </form>
-      </section>
+      <form class="settings-card routing-policy" aria-label="Playback and matching" oninput={() => { policyDirty = true; }} onsubmit={savePolicy}>
+        <header><div><h3>Playback and matching</h3><small>Earlier services in the order below win close matches: the first gets 5 confidence points, the second 3, the third 1.</small></div></header>
+        {#each policyFields as field (field.key)}
+          {#if field.type === "audio-quality"}
+            <div class="settings-row routing-quality audio-quality-field">
+              <div><strong>{field.label}</strong>{#if field.helpText}<small>{field.helpText}</small>{/if}</div>
+              <AudioQualityField name={field.key} value={String(fieldValue(config, field))} onchange={() => { policyDirty = true; }} />
+            </div>
+          {:else}
+            <label class="settings-row">
+              <div><strong>{field.label}</strong>{#if field.helpText}<small>{field.helpText}</small>{/if}</div>
+              <input
+                name={field.key}
+                type="number"
+                value={String(fieldValue(config, field))}
+                min={field.min ?? undefined}
+                max={field.max ?? undefined}
+              />
+            </label>
+          {/if}
+        {/each}
+        <footer>
+          {#if policyDirty}<span>Unsaved changes</span>{/if}
+          <Button type="submit" disabled={Boolean(action) || !policyDirty}>{action === "policy" ? "Saving…" : "Save playback and matching"}</Button>
+        </footer>
+      </form>
     {/if}
     <div class="routing-groups">
       {#each schema.priorityGroups ?? [] as group}
-        <section class="panel routing-group">
-          <header><div><strong>{group.label}</strong><small>{group.description}</small></div><Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button></header>
+        <section class="settings-card routing-group">
+          <header>
+            <div><h3>{group.label} order</h3><small>{group.description || "Drag services, or use the arrows, to change the order Allstarr tries them."}</small></div>
+            <Button aria-label={`Save ${group.label}`} disabled={Boolean(action) || !dirtyOrderIds.includes(group.id)} onclick={() => void saveOrder(group)}>{action === group.id ? "Saving…" : "Save order"}</Button>
+          </header>
           <ol>
             {#if group.pinnedProvider}
               <li class="pinned">
+                <span class="routing-index" aria-hidden="true"><Lock size={14} /></span>
                 <ProviderArtwork id={group.pinnedProvider.id} label={group.pinnedProvider.name} />
-                <span><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason}</small></span>
-                <Badge state="healthy">Local · fixed</Badge>
+                <span class="routing-copy"><strong>{group.pinnedProvider.name}</strong><small>{group.pinnedProvider.reason} · always tried first</small></span>
               </li>
             {/if}
             {#each orders[group.id] ?? group.providers as providerId, index}
@@ -190,11 +197,12 @@
                 ondrop={() => dropProvider(group, index)}
                 ondragend={() => { dragging = null; }}
               >
+                <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
                 <ProviderArtwork id={providerId} definition={definition} />
-                <span><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <span class="routing-copy"><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
                 <span class="routing-actions">
-                  <Button variant="outline" size="icon" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                  <Button variant="outline" size="icon" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
               </li>
             {/each}

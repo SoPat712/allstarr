@@ -917,7 +917,7 @@ for (const viewport of viewports) {
         const pageHeading = page.getByRole("heading", { name: heading, level: 1 });
         await expect(pageHeading).toBeVisible();
         if (route === "#/integrations/extensions") {
-          await expect(page.getByText("Extension manager", { exact: true })).toBeVisible();
+          await expect(page.getByRole("heading", { name: "Extensions", level: 2 })).toBeVisible();
         }
         await page.evaluate(() => new Promise<void>((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
@@ -1028,7 +1028,7 @@ for (const viewport of viewports) {
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
       await expect(page.getByRole("tab", { name: "Routing" })).toHaveAttribute("aria-selected", "true");
-      await expect(page.getByText("Local · fixed")).toBeVisible();
+      await expect(page.getByText(/always tried first/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toBeDisabled();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
       await expect(page.locator(".provider-art").first()).toHaveCSS("border-top-width", "0px");
@@ -1042,15 +1042,13 @@ for (const viewport of viewports) {
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.goto("#/settings/extensions");
       await expect(page.getByRole("tab", { name: "Extensions" })).toHaveAttribute("aria-selected", "true");
-      await expect(page.locator(".extension-row .badge")).toContainText(["Metadata", "Streaming"]);
-      await expect(page.locator(".segmented-tab-count").first()).toHaveCSS("border-style", "solid");
-      await expect(page.getByRole("tab", { name: /Available/ })).toHaveCSS("border-right-width", "0px");
+      await expect(page.locator(".extension-row .source-row-capabilities span")).toContainText(["Metadata", "Streaming"]);
       await page.getByRole("tab", { name: /Available/ }).click();
-      await expect(page.getByText("Available packages", { exact: true })).toBeVisible();
-      await page.getByRole("tab", { name: /Registries/ }).click();
-      await expect(page.getByText("Add registry", { exact: true })).toBeVisible();
+      await expect(page.getByRole("searchbox", { name: "Search extensions" })).toBeVisible();
+      await page.getByRole("tab", { name: /Catalogs/ }).click();
+      await expect(page.getByText("Add a catalog", { exact: true })).toBeVisible();
       await page.getByRole("tab", { name: "Activity" }).click();
-      await expect(page.getByText("Extension activity", { exact: true })).toBeVisible();
+      await expect(page.getByRole("list", { name: "Extension activity" })).toBeVisible();
       await expect.poll(() => page.evaluate(() =>
         document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       await page.getByRole("button", { name: "Install extension" }).click();
@@ -1957,10 +1955,10 @@ test("account titles use provider definitions and keep custom labels in subtitle
       displayName: "Road trip", sourceDisplayName: "Road trip · Tester", customLabel: "Road trip", scope: "Shared" }],
   } }));
   await page.goto("#/integrations/accounts");
-  const row = page.locator(".accounts-table tbody tr").first();
-  await expect(row.locator(".operational-row-identity strong")).toHaveText("Lumen Audio");
-  await expect(row.locator(".operational-row-identity small")).toContainText("Shared with everyone · Road trip");
-  await row.locator(".operational-row-identity").click();
+  const row = page.locator(".account-list .source-row").first();
+  await expect(row.locator(".source-row-copy strong")).toHaveText("Lumen Audio");
+  await expect(row.locator(".source-row-copy small")).toContainText("Shared with everyone · Road trip");
+  await row.locator(".source-row-main").click();
   await expect(page.getByRole("dialog").getByRole("heading", { name: "Lumen Audio", exact: true })).toBeVisible();
 });
 
@@ -2244,7 +2242,7 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   expect(cancellationRequests).toBe(0);
   await page.getByRole("button", { name: "Review permissions" }).click();
   review = page.getByRole("dialog", { name: "Review permissions" });
-  await expect(review.getByText("Update 1.0.0 → 2.0.0. Capability and permission changes are shown below.")).toBeVisible();
+  await expect(review.getByText("Update from 1.0.0 to 2.0.0")).toBeVisible();
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
   await expect(review.getByRole("button", { name: "Save review" })).toBeInViewport();
@@ -2437,7 +2435,7 @@ test("removing a registry closes its confirmation before a delayed refresh", asy
   });
 
   await page.goto("#/integrations/extensions");
-  await page.getByRole("tab", { name: /Registries/ }).click();
+  await page.getByRole("tab", { name: /Catalogs/ }).click();
   await page.getByRole("button", { name: "Remove" }).click();
   const removal = page.getByRole("alertdialog", { name: "Remove Community?" });
   await removal.getByRole("button", { name: "Remove registry" }).click();
@@ -2674,8 +2672,8 @@ test("extension updates stay beside the shared management menu", async ({ page }
   const uninstall = page.getByRole("alertdialog", { name: "Uninstall Lumen Audio?" });
   await expect(uninstall).toBeVisible();
   await uninstall.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("tab", { name: /Registries/ }).click();
-  await expect(page.getByText("1 installed package version must be removed first.")).toBeVisible();
+  await page.getByRole("tab", { name: /Catalogs/ }).click();
+  await expect(page.getByText("Remove 1 installed package version from this catalog first.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Remove" })).toBeDisabled();
 });
 
@@ -2690,7 +2688,7 @@ test("failed extension registry validation preserves the form", async ({ page })
     });
   });
   await page.goto("#/integrations/extensions");
-  await page.getByRole("tab", { name: /Registries/ }).click();
+  await page.getByRole("tab", { name: /Catalogs/ }).click();
   const name = page.getByLabel("Name");
   const url = page.getByLabel("Registry JSON URL");
   await name.fill("My catalog");
@@ -3760,7 +3758,7 @@ test("Contextual dialog tabs scroll inside their panels at narrow widths", async
   await playlist.getByRole("button", { name: "Close playlist details" }).click();
 
   await page.goto("#/integrations/services");
-  const lumen = page.locator(".sources-table tr").filter({ hasText: "Lumen Audio" });
+  const lumen = page.locator(".source-row").filter({ hasText: "Lumen Audio" });
   await lumen.getByRole("button").first().click();
   const source = page.getByRole("dialog", { name: "Lumen Audio", description: "Source capability and readiness" });
   await expectContainedActiveTab(source.locator(".contextual-tabs"));
@@ -3857,21 +3855,17 @@ test("Operational tables adapt before the workspace needs horizontal scrolling",
   await mockApi(page);
   await page.setViewportSize({ width: 820, height: 760 });
 
-  for (const [route, table] of [
-    ["#/integrations/services", ".sources-table"],
-    ["#/integrations/accounts", ".accounts-table"],
-  ] as const) {
+  for (const route of ["#/integrations/services", "#/integrations/accounts"]) {
     await page.goto(route);
-    const surface = page.locator(".operational-table-scroll");
-    await expect(page.locator(`${table} th`).nth(1)).toBeHidden();
-    await expect(page.locator(`${table} .operational-mobile-detail`).first()).toBeVisible();
+    const surface = page.locator(".source-list");
+    await expect(surface.locator(".source-row").first()).toBeVisible();
     await expect.poll(() => surface.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
   }
+  await page.goto("#/integrations/services");
+  await expect(page.locator(".source-row-capabilities").first()).toBeHidden();
 
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto("#/integrations/services");
-  await expect(page.locator(".sources-table th").nth(1)).toBeVisible();
-  await expect(page.locator(".sources-table .operational-mobile-detail").first()).toBeHidden();
+  await expect(page.locator(".source-row-capabilities").first()).toBeVisible();
 });
 
 test("Intelligence cards, table columns, and compact actions stay aligned", async ({ page }) => {
@@ -3995,13 +3989,8 @@ test("Integrations keep primary actions visible and report scoped degradation", 
     }),
   }));
   await page.goto("#/sources");
-  const lumenSource = page.locator(".sources-table tr").filter({ hasText: "Lumen Audio" });
-  await expect(lumenSource.locator(".operational-mobile-detail dd").filter({ hasText: "Awaiting first CTS sample" })).toHaveText("Awaiting first CTS sample");
-  const tableGutters = await page.locator(".sources-panel").evaluate((panel) => ({
-    heading: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-heading")!).paddingLeft),
-    cell: Number.parseFloat(getComputedStyle(panel.querySelector(".sources-table td")!).paddingLeft),
-  }));
-  expect(tableGutters.cell).toBe(tableGutters.heading);
+  const lumenSource = page.locator(".source-row").filter({ hasText: "Lumen Audio" });
+  await expect(lumenSource.locator(".source-row-timing")).toContainText("Awaiting first CTS sample");
   await lumenSource.getByRole("button").first().click();
   const sourceDetails = page.getByRole("dialog", { name: "Lumen Audio", description: "Source capability and readiness" });
   await sourceDetails.getByRole("tab", { name: "Configuration" }).click();
@@ -4015,12 +4004,12 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(sourceEditor.getByRole("button", { name: "Region" })).toHaveText("ca");
   await expect(sourceEditor.getByLabel("Access token")).toHaveValue("");
   await page.keyboard.press("Escape");
-  const disabledSource = page.locator(".sources-table tr").filter({ hasText: "Disabled Source" });
-  const disabledStatus = disabledSource.locator(".operational-mobile-state");
-  await expect(disabledStatus).toHaveText("Disabled");
+  const disabledSource = page.locator(".source-row").filter({ hasText: "Disabled Source" });
+  const disabledStatus = disabledSource.locator(".source-row-status .badge");
+  await expect(disabledStatus).toHaveText("Turned off");
   await expect(disabledStatus).toHaveCSS("border-top-width", "1px");
   await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
-  await page.locator(".sources-table tr").filter({ hasText: "Apple Music" }).getByRole("button").first().click();
+  await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("button").first().click();
   await page.getByRole("tab", { name: "Configuration" }).click();
   await expect(page.getByRole("button", { name: "Measure CTS" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Optional downloads" })).toBeVisible();
