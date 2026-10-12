@@ -207,54 +207,9 @@ public class JellyfinResponseBuilder
             }
         }
 
-        foreach (var artist in artists)
-        {
-            var item = ConvertArtistToJellyfinItem(artist);
-            searchHints.Add(new Dictionary<string, object?>
-            {
-                ["Id"] = item["Id"],
-                ["ItemId"] = item["Id"],
-                ["Name"] = item["Name"],
-                ["Type"] = "MusicArtist",
-                ["RunTimeTicks"] = 0,
-                ["PrimaryImageAspectRatio"] = item["PrimaryImageAspectRatio"],
-                ["ImageTags"] = item["ImageTags"]
-            });
-        }
-
-        foreach (var album in albums)
-        {
-            var item = ConvertAlbumToJellyfinItem(album);
-            searchHints.Add(new Dictionary<string, object?>
-            {
-                ["Id"] = item["Id"],
-                ["ItemId"] = item["Id"],
-                ["Name"] = item["Name"],
-                ["Type"] = "MusicAlbum",
-                ["Album"] = item["Name"],
-                ["AlbumArtist"] = item["AlbumArtist"],
-                ["ProductionYear"] = item["ProductionYear"],
-                ["RunTimeTicks"] = 0,
-                ["ImageTags"] = item["ImageTags"]
-            });
-        }
-
-        foreach (var song in songs)
-        {
-            var item = ConvertSongToJellyfinItem(song);
-            searchHints.Add(new Dictionary<string, object?>
-            {
-                ["Id"] = item["Id"],
-                ["ItemId"] = item["Id"],
-                ["Name"] = item["Name"],
-                ["Type"] = "Audio",
-                ["Album"] = item["Album"],
-                ["AlbumArtist"] = item["AlbumArtist"],
-                ["Artists"] = item["Artists"],
-                ["RunTimeTicks"] = item["RunTimeTicks"],
-                ["ImageTags"] = item["ImageTags"]
-            });
-        }
+        searchHints.AddRange(artists.Select(ConvertArtistToSearchHint));
+        searchHints.AddRange(albums.Select(ConvertAlbumToSearchHint));
+        searchHints.AddRange(songs.Select(ConvertSongToSearchHint));
 
         var limitedHints = limit.HasValue
             ? searchHints.Take(Math.Max(0, limit.Value)).ToList()
@@ -265,6 +220,55 @@ public class JellyfinResponseBuilder
             SearchHints = limitedHints,
             TotalRecordCount = limitedHints.Count
         });
+    }
+
+    public Dictionary<string, object?> ConvertArtistToSearchHint(Artist artist)
+    {
+        var item = ConvertArtistToJellyfinItem(artist);
+        return new Dictionary<string, object?>
+        {
+            ["Id"] = item["Id"],
+            ["ItemId"] = item["Id"],
+            ["Name"] = item["Name"],
+            ["Type"] = "MusicArtist",
+            ["RunTimeTicks"] = 0,
+            ["PrimaryImageAspectRatio"] = item["PrimaryImageAspectRatio"],
+            ["ImageTags"] = item["ImageTags"]
+        };
+    }
+
+    public Dictionary<string, object?> ConvertAlbumToSearchHint(Album album)
+    {
+        var item = ConvertAlbumToJellyfinItem(album);
+        return new Dictionary<string, object?>
+        {
+            ["Id"] = item["Id"],
+            ["ItemId"] = item["Id"],
+            ["Name"] = item["Name"],
+            ["Type"] = "MusicAlbum",
+            ["Album"] = item["Name"],
+            ["AlbumArtist"] = item["AlbumArtist"],
+            ["ProductionYear"] = item["ProductionYear"],
+            ["RunTimeTicks"] = 0,
+            ["ImageTags"] = item["ImageTags"]
+        };
+    }
+
+    public Dictionary<string, object?> ConvertSongToSearchHint(Song song)
+    {
+        var item = ConvertSongToJellyfinItem(song);
+        return new Dictionary<string, object?>
+        {
+            ["Id"] = item["Id"],
+            ["ItemId"] = item["Id"],
+            ["Name"] = item["Name"],
+            ["Type"] = "Audio",
+            ["Album"] = item["Album"],
+            ["AlbumArtist"] = item["AlbumArtist"],
+            ["Artists"] = item["Artists"],
+            ["RunTimeTicks"] = item["RunTimeTicks"],
+            ["ImageTags"] = item["ImageTags"]
+        };
     }
 
     public IActionResult CreateError(int statusCode, string message)

@@ -500,12 +500,6 @@ public partial class JellyfinController
         var cleanQuery = searchTerm.Trim().Trim('"');
         var requestedTypes = ParseItemTypes(includeItemTypes);
         var externalSearchLimits = GetExternalSearchLimits(requestedTypes, limit, includePlaylistsAsAlbums: false);
-        var includesSongs = requestedTypes == null || requestedTypes.Length == 0 ||
-                            requestedTypes.Contains("Audio", StringComparer.OrdinalIgnoreCase);
-        var includesAlbums = requestedTypes == null || requestedTypes.Length == 0 ||
-                             requestedTypes.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);
-        var includesArtists = requestedTypes == null || requestedTypes.Length == 0 ||
-                              requestedTypes.Contains("MusicArtist", StringComparer.OrdinalIgnoreCase);
 
         _logger.LogInformation(
             "SEARCH TRACE: hint limits for query '{Query}' => songs={SongLimit}, albums={AlbumLimit}, artists={ArtistLimit}",
@@ -514,36 +508,135 @@ public partial class JellyfinController
             externalSearchLimits.AlbumLimit,
             externalSearchLimits.ArtistLimit);
 
-        var externalTask = _providerGateway.SearchAsync(
-            HttpContext.RequireProtocolExecutionContext(),
-            cleanQuery,
-            externalSearchLimits.SongLimit,
-            externalSearchLimits.AlbumLimit,
-            externalSearchLimits.ArtistLimit);
+        var context = HttpContext.RequireProtocolExecutionContext();
+        var native = new JellyfinNativeHintSearch(
+            cancellationToken => GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId),
+            (id, cancellationToken) => _proxyService.GetJsonAsync(
+                $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
+                null, Request.Headers));
+        // A kind the client did not ask for has a zero limit, so none of its provider rows join.
+        var merged = await _musicSearch.SearchAsync(
+            context,
+            new MusicSearchRequest(
+                cleanQuery,
+                new MusicSearchWindow(externalSearchLimits.SongLimit, Take: externalSearchLimits.SongLimit),
+                new MusicSearchWindow(externalSearchLimits.AlbumLimit, Take: externalSearchLimits.AlbumLimit),
+                new MusicSearchWindow(externalSearchLimits.ArtistLimit, Take: externalSearchLimits.ArtistLimit),
+                MusicSearchWindow.None),
+            native,
+            HttpContext.RequestAborted);
 
-        var jellyfinTask = GetLocalSearchHintsResultForCurrentRequest(cleanQuery, userId);
+        var hints = merged.Artists.Select(RenderSearchHint)
+            .Concat(merged.Albums.Select(RenderSearchHint))
+            .Concat(native.Unranked)
+            .Concat(merged.Songs.Select(RenderSearchHint))
+            .Take(Math.Max(0, limit))
+            .ToList();
 
-        await Task.WhenAll(jellyfinTask, externalTask);
+        return _responseBuilder.CreateJsonResponse(new
+        {
+            SearchHints = hints,
+            TotalRecordCount = hints.Count
+        });
+    }
 
-        var (jellyfinResult, _) = await jellyfinTask;
-        var externalResult = await externalTask;
+    private Dictionary<string, object?> RenderSearchHint(MusicSearchEntry<Dictionary<string, object?>> entry)
+    {
+        if (entry.Native != null) return entry.Native.Payload;
+        if (entry.Song != null) return _responseBuilder.ConvertSongToSearchHint(entry.Song);
+        if (entry.Album != null) return _responseBuilder.ConvertAlbumToSearchHint(entry.Album);
+        return _responseBuilder.ConvertArtistToSearchHint(entry.Artist!);
+    }
 
-        var externalSongs = includesSongs
-            ? externalResult.Songs.Take(limit).ToList()
-            : new List<Song>();
-        var externalAlbums = includesAlbums
-            ? externalResult.Albums.Take(limit).ToList()
-            : new List<Album>();
-        var externalArtists = includesArtists
-            ? externalResult.Artists.Take(limit).ToList()
-            : new List<Artist>();
+    /// <summary>A native SearchHint with every field kept and Id and ItemId both set.</summary>
+    internal static Dictionary<string, object?>? ToNativeSearchHint(JsonElement hint)
+    {
+        if (hint.ValueKind != JsonValueKind.Object) return null;
+        var id = StringProperty(hint, "Id") ?? StringProperty(hint, "ItemId");
+        if (string.IsNullOrWhiteSpace(id)) return null;
 
-        return _responseBuilder.CreateSearchHintsResponse(
-            externalSongs,
-            externalAlbums,
-            externalArtists,
-            jellyfinResult,
-            limit);
+        var preserved = hint.Deserialize<Dictionary<string, object?>>() ?? [];
+        preserved["Id"] = id;
+        preserved["ItemId"] = id;
+        return preserved;
+
+        static string? StringProperty(JsonElement element, string name) =>
+            element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+                ? value.GetString()
+                : null;
+    }
+
+    private static readonly string[] SearchHintItemFields =
+    [
+        "Id", "Name", "Type", "MediaType", "IsFolder", "RunTimeTicks", "ProductionYear", "IndexNumber",
+        "ParentIndexNumber", "Album", "AlbumId", "AlbumArtist", "Artists", "PrimaryImageAspectRatio",
+        "ChannelId", "ChannelName"
+    ];
+
+    /// <summary>Projects a full Jellyfin item onto the fields a native SearchHint carries.</summary>
+    internal static Dictionary<string, object?> ToSearchHintFromItem(Dictionary<string, object?> item)
+    {
+        var hint = SearchHintItemFields
+            .Where(item.ContainsKey)
+            .ToDictionary(key => key, key => item[key]);
+        hint["ItemId"] = GetItemStringValue(item, "Id");
+        if (item.TryGetValue("ImageTags", out var tags) &&
+            tags is JsonElement { ValueKind: JsonValueKind.Object } imageTags &&
+            imageTags.TryGetProperty("Primary", out var primary) &&
+            primary.ValueKind == JsonValueKind.String)
+        {
+            hint["PrimaryImageTag"] = primary.GetString();
+        }
+        return hint;
+    }
+
+    /// <summary>The backend half of a Jellyfin hint search; rows stay in SearchHint shape.</summary>
+    private sealed class JellyfinNativeHintSearch(
+        Func<CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> search,
+        Func<string, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> getItem)
+        : INativeMusicSearch<Dictionary<string, object?>>
+    {
+        // Native hints of kinds search does not rank, such as playlists and genres.
+        public List<Dictionary<string, object?>> Unranked { get; } = [];
+
+        public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> SearchAsync(
+            CancellationToken cancellationToken)
+        {
+            var (document, _) = await search(cancellationToken);
+            using (document)
+            {
+                if (document == null ||
+                    document.RootElement.ValueKind != JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty("SearchHints", out var hints) ||
+                    hints.ValueKind != JsonValueKind.Array) return [];
+
+                var rows = new List<NativeMusicItem<Dictionary<string, object?>>>();
+                foreach (var hint in hints.EnumerateArray())
+                {
+                    var preserved = ToNativeSearchHint(hint);
+                    if (preserved == null) continue;
+                    var row = ToNativeSearchItem(preserved);
+                    if (row == null) Unranked.Add(preserved);
+                    else rows.Add(row);
+                }
+                return rows;
+            }
+        }
+
+        public async Task<NativeMusicItem<Dictionary<string, object?>>?> GetSongAsync(
+            string id, CancellationToken cancellationToken)
+        {
+            var (document, status) = await getItem(id, cancellationToken);
+            using (document)
+            {
+                if (status != StatusCodes.Status200OK || document == null ||
+                    document.RootElement.ValueKind != JsonValueKind.Object ||
+                    !document.RootElement.TryGetProperty("Id", out var itemId) || itemId.GetString() != id ||
+                    !document.RootElement.TryGetProperty("Type", out var type) || type.GetString() != "Audio") return null;
+                var item = document.RootElement.Deserialize<Dictionary<string, object?>>();
+                return item == null ? null : ToNativeSearchItem(ToSearchHintFromItem(item));
+            }
+        }
     }
 
     private async Task<(JsonDocument? Body, int StatusCode)> GetLocalSearchHintsResultForCurrentRequest(
