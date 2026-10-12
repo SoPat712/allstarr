@@ -14,6 +14,67 @@ export const providerReadinessLabel = (reason: string) =>
   reason === "apple-download-sign-in-required" ? "Apple download needs sign-in" :
     reason === "apple-download-gateway-update-required" ? "Apple download gateway needs an update" : humanize(reason);
 
+export interface SourceCheck {
+  id: string;
+  ready: boolean;
+  health?: string | null;
+  reasonCode?: string | null;
+  configuration?: string | null;
+}
+
+export function checkStatusLabel(check: Omit<SourceCheck, "id">) {
+  if (check.ready) return "Ready";
+  if (check.reasonCode) return providerReadinessLabel(check.reasonCode);
+  if (check.configuration === "needs_configuration") return "Needs setup";
+  if (check.configuration === "unsupported") return "Not supported";
+  if (check.health === "testing") return "Checking…";
+  if (check.health === "degraded") return "Not working";
+  if (check.health === "unavailable") return "Unavailable";
+  return "Not checked yet";
+}
+
+export function checkStatusState(check: Omit<SourceCheck, "id">) {
+  if (check.ready) return "healthy";
+  if (check.health === "degraded" || check.health === "unavailable") return "degraded";
+  if (check.reasonCode || check.configuration === "needs_configuration") return "suggested";
+  return "";
+}
+
+const checkNames: Record<string, string> = {
+  metadata: "Metadata",
+  streaming: "Streaming",
+  download: "Downloads",
+  playlist: "Playlists",
+  lyrics: "Lyrics",
+  intelligence: "Recommendations",
+  health: "Health",
+};
+
+export const checkName = (id: string) => checkNames[id.toLowerCase()] ?? humanize(id);
+
+const listLabel = (items: string[]) =>
+  items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
+
+/** Merges checks that fail for the same reason so one cause is shown once. */
+export function groupSourceChecks<T extends SourceCheck>(checks: T[]) {
+  const groups: { label: string; checks: T[] }[] = [];
+  for (const check of checks) {
+    const group = !check.ready && check.reasonCode
+      ? groups.find((item) => !item.checks[0].ready && item.checks[0].reasonCode === check.reasonCode)
+      : undefined;
+    if (group) group.checks.push(check);
+    else groups.push({ label: "", checks: [check] });
+  }
+  for (const group of groups) {
+    const names = group.checks.map((item, index) => {
+      const name = checkName(item.id);
+      return index === 0 ? name : name.toLowerCase();
+    });
+    group.label = listLabel(names);
+  }
+  return groups;
+}
+
 export const canonicalProviderId = (id: string) => ["apple-download", "applemusic", "apple-music", "apple_music"].includes(id.toLowerCase())
   ? "apple-musickit" : id.toLowerCase();
 

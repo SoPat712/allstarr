@@ -39,6 +39,11 @@
     ctsMeasurementLabel,
     humanize,
     providerReadinessLabel,
+    checkName,
+    checkStatusLabel,
+    checkStatusState,
+    groupSourceChecks,
+    type SourceCheck,
     sourceMetrics,
     sourceNeedsAccount,
     sourceOriginLabel,
@@ -425,10 +430,10 @@
       </ul>
 {/snippet}
 
-{#snippet checkRow(label: string, ready: boolean, healthState: string | null | undefined, reason: string | null | undefined, result?: ConnectivityResult, onTest?: () => void, canTest = false)}
+{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false)}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
-    <Badge state={readinessClass(ready, healthState)}>{ready ? "Ready" : providerReadinessLabel(reason || healthState || "Unavailable")}</Badge>
+    <Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
     {#if canTest && onTest}<Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={onTest}>Test</Button>{/if}
   </li>
@@ -529,7 +534,7 @@
               {#if capabilities.length}
                 <ul class="service-checks" aria-label={`Checks for ${account.displayName}`}>
                   {#each capabilities as capability}
-                    {@render checkRow(humanize(capability.capability), capability.ready, capability.health, capability.reasonCode || capability.configuration, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled)}
+                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled)}
                   {/each}
                 </ul>
               {/if}
@@ -548,10 +553,13 @@
         <section class="settings-card" aria-labelledby="service-checks-title">
           <header><div><h3 id="service-checks-title">Checks</h3><small>What this service can do right now.</small></div></header>
           <ul class="service-checks">
-            {#each source.runtimeCapabilities ?? [] as capability}
-              {@render checkRow(humanize(capability.id), capability.ready, capability.health, capability.reasonCode || capability.configuration)}
+            {#each groupSourceChecks(source.runtimeCapabilities ?? []) as group}
+              {@render checkRow(group.label, group.checks[0])}
             {/each}
           </ul>
+          {#if (source.runtimeCapabilities ?? []).some((item) => item.reasonCode === "apple-download-gateway-update-required")}
+            <p class="service-note" role="status">The Apple download gateway runs an older version than Allstarr supports. Update the gateway, then refresh this page. Catalog and playlists keep working meanwhile.</p>
+          {/if}
         </section>
       {/if}
 

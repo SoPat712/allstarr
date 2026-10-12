@@ -13,6 +13,8 @@ import {
   supportsPlaybackDiagnostic,
   humanize,
   providerReadinessLabel,
+  checkStatusLabel,
+  groupSourceChecks,
   settingDefault,
   sourceTimingLabel,
 } from "./sources";
@@ -193,4 +195,21 @@ it("explains a missing Apple download session", () => {
   expect(providerReadinessLabel("apple-download-sign-in-required")).toBe("Apple download needs sign-in");
   expect(providerReadinessLabel("apple-download-gateway-update-required")).toBe("Apple download gateway needs an update");
   expect(providerReadinessLabel("endpoint_unreachable")).toBe("Endpoint Unreachable");
+});
+
+it("labels unchecked capabilities plainly and merges checks that share a cause", () => {
+  expect(checkStatusLabel({ ready: false, health: "unknown", configuration: "not_required" })).toBe("Not checked yet");
+  expect(checkStatusLabel({ ready: false, health: "unknown", configuration: "configured" })).toBe("Not checked yet");
+  expect(checkStatusLabel({ ready: false, configuration: "needs_configuration" })).toBe("Needs setup");
+  expect(checkStatusLabel({ ready: true, configuration: "not_required" })).toBe("Ready");
+  const gateway = "apple-download-gateway-update-required";
+  const groups = groupSourceChecks([
+    { id: "metadata", ready: false, health: "unknown", configuration: "not_required" },
+    { id: "playlist", ready: false, health: "unknown", configuration: "not_required" },
+    { id: "streaming", ready: false, health: "degraded", reasonCode: gateway },
+    { id: "download", ready: false, health: "degraded", reasonCode: gateway },
+    { id: "lyrics", ready: false, health: "degraded", reasonCode: gateway },
+  ]);
+  expect(groups.map((group) => group.label)).toEqual(["Metadata", "Playlists", "Streaming, downloads and lyrics"]);
+  expect(checkStatusLabel(groups[2].checks[0])).toBe("Apple download gateway needs an update");
 });
