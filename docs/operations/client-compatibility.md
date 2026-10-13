@@ -19,6 +19,8 @@ The proxy preserves normal Jellyfin authentication and relays unhandled routes. 
 
 Jellyfin library artist album lists and library album track lists include missing provider releases after owned items. Namesakes must share an owned album before their discography is added. Provider additions follow the listener’s external-label preference; native rows retain their fields. Provider failure or no additions leaves the backend response unchanged.
 
+Jellyfin search hides provider artists whose names match a library artist, because that library artist’s page includes missing provider albums.
+
 Jellyfin search hints compare song, album, and artist relevance before applying the shared result limit. Native results win ties, so unrelated artist or album rows cannot crowd out an exact song match.
 
 ## Subsonic And OpenSubsonic Clients
@@ -43,6 +45,8 @@ These clients have been used with a Navidrome or other Subsonic-compatible backe
 - Arpeggi
 
 The Subsonic surface accepts normal query and form-post request styles and preserves XML or JSON responses. It supports integrated search, item lookup, streaming, cover art, structured lyrics, stars, playlists and playback observations, and relays the backend's other music methods unchanged. Methods outside music library access (video, podcasts, internet radio, shares, chat, user administration, starting library scans and jukebox control) return Subsonic error 70 with HTTP 404 and never reach the backend.
+
+Subsonic `star` and `unstar` handle provider songs, albums, artists, and external playlists through the shared favorites workflow. Provider songs queue the same kept-copy download as a Jellyfin heart. Mixed requests relay only native IDs, preserving the remaining parameters and body data. Provider actions require a linked Allstarr user.
 
 Allstarr adds provider content to these methods:
 

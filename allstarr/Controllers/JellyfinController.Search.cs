@@ -318,7 +318,8 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.AlbumLimit),
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit),
                 _settings.EnableExternalPlaylists ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
-                IncludeProviders: !favoritesOnlyRequest),
+                IncludeProviders: !favoritesOnlyRequest,
+                HideProviderArtistsNamedLikeNative: true),
             new JellyfinNativeMusicSearch(
                 cancellationToken => GetLocalSearchResultForCurrentRequest(
                     cleanQuery, includeItemTypes, integratedFetchLimit, recursive, userId),
@@ -528,7 +529,8 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.SongLimit, Take: externalSearchLimits.SongLimit),
                 new MusicSearchWindow(externalSearchLimits.AlbumLimit, Take: externalSearchLimits.AlbumLimit),
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit, Take: externalSearchLimits.ArtistLimit),
-                MusicSearchWindow.None),
+                MusicSearchWindow.None,
+                HideProviderArtistsNamedLikeNative: true),
             native,
             HttpContext.RequestAborted);
 
