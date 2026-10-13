@@ -652,9 +652,16 @@ public partial class SubsonicController : ControllerBase
             {
                 if (string.IsNullOrEmpty(album.Artist)) album.Artist = name;
                 album.ArtistId = id;
-                return format == "json"
-                    ? (object)_responseBuilder.ConvertAlbumToJson(album)
-                    : _responseBuilder.ConvertAlbumToXml(album, XNamespace.Get("http://subsonic.org/restapi"));
+                var title = ExternalTrackPresentation.Title(album.Title, false, CurrentProtocolContext.Policy?.Preferences);
+                if (format == "json")
+                {
+                    var rendered = _responseBuilder.ConvertAlbumToJson(album);
+                    rendered["name"] = title;
+                    return (object)rendered;
+                }
+                var xml = _responseBuilder.ConvertAlbumToXml(album, XNamespace.Get("http://subsonic.org/restapi"));
+                xml.SetAttributeValue("name", title);
+                return xml;
             }).ToList());
     }
 

@@ -55,7 +55,7 @@ The public protocol controllers preserve client compatibility. Provider metadata
 | `MusicMixService` | Similar songs and instant mixes seeded from provider songs, albums, or artists. Song seeds use a provider's similar-tracks capability first when it offers one (Deezer uses the seed artist's radio), then the seed artist's albums and songs. Order is stable for the same seed. |
 | `MusicCatalogMerge`, `MusicTopSongs` | Provider albums missing from a library artist, provider songs missing from a library album, and provider songs that extend an artist's top songs. |
 
-Each protocol dialect keeps what is specific to it: authentication, request parsing, paging and per-type result windows, native backend transport and relays, response rendering, and how failures are described to its clients. Native seeds and native items never enter the shared core; they keep the backend's own answer.
+Each protocol dialect keeps what is specific to it: authentication, request parsing, paging and per-type result windows, native backend transport and relays, response rendering, and how failures are described to its clients. Native playback and mix seeds keep the backend's own answer. Library artist and album pages use the shared catalog merger to append missing provider children after owned rows; native fields remain intact, and an empty or failed provider lookup preserves the original response bytes.
 
 ## Code ownership
 
