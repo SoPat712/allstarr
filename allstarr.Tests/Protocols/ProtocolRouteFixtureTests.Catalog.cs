@@ -65,7 +65,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(expected, albums.Select(album => album.GetProperty("id").GetString()));
             Assert.Equal("kept", albums[0].GetProperty("futureField").GetString());
             Assert.All(albums.Skip(1), album => Assert.Equal("native-artist", album.GetProperty("artistId").GetString()));
-            Assert.Equal(["Art Angels", "Miss Anthropocene"], albums.Skip(1).Select(album => album.GetProperty("name").GetString()));
+            Assert.Equal(["Art Angels [A]", "Miss Anthropocene [A]"], albums.Skip(1).Select(album => album.GetProperty("name").GetString()));
         }
         else
         {
@@ -80,6 +80,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal(expected, albums.Select(album => album.Attribute("id")?.Value));
             Assert.Equal("kept", albums[0].Attribute("futureField")?.Value);
             Assert.All(albums.Skip(1), album => Assert.Equal("native-artist", album.Attribute("artistId")?.Value));
+            Assert.Equal(["Art Angels [A]", "Miss Anthropocene [A]"], albums.Skip(1).Select(album => album.Attribute("name")?.Value));
         }
         Assert.Equal(
             $"/rest/getArtist.view?u=fixture&p=secret&v=1.16.1&c=fixture&f={format}&id=native-artist",

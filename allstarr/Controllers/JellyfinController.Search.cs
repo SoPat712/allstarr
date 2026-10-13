@@ -161,6 +161,12 @@ public partial class JellyfinController
             }
         }
 
+        if (string.IsNullOrWhiteSpace(searchTerm) && !favoritesOnlyRequest)
+        {
+            var catalog = await TryReadNativeCatalogAsync(effectiveArtistIds, parentId, includeItemTypes, userId);
+            if (catalog != null) return catalog;
+        }
+
         if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
         {
             _logger.LogDebug("Library artist filter requested, proxying to Jellyfin");
