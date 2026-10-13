@@ -122,6 +122,53 @@ public sealed class SubsonicRequestParameters : IReadOnlyDictionary<string, stri
         return new SubsonicRequestParameters(Method, ContentType, bodyChanged ? BuildBody(replaced) : RawBody, replaced);
     }
 
+    public SubsonicRequestParameters RemoveValues(string name, IReadOnlySet<string> values)
+    {
+        var removed = _parameters.Where(parameter =>
+            parameter.Name.Equals(name, StringComparison.OrdinalIgnoreCase) && values.Contains(parameter.Value)).ToList();
+        if (removed.Count == 0) return this;
+        var remaining = _parameters.Where(parameter => !removed.Contains(parameter)).ToList();
+        var body = RawBody;
+        if (removed.Any(parameter => parameter.Source == SubsonicParameterSource.Form) && body != null)
+        {
+            body = string.Join('&', body.Split('&').Where(pair =>
+            {
+                var parts = pair.Split('=', 2);
+                return !System.Net.WebUtility.UrlDecode(parts[0]).Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                       !values.Contains(parts.Length == 2 ? System.Net.WebUtility.UrlDecode(parts[1]) : "");
+            }));
+        }
+        else if (removed.Any(parameter => parameter.Source == SubsonicParameterSource.Json) && body != null)
+        {
+            // Rewrite only the selected values; retain nested objects, primitive types and repeated properties.
+            using var document = JsonDocument.Parse(body);
+            using var stream = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                foreach (var property in document.RootElement.EnumerateObject())
+                {
+                    if (!property.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) property.WriteTo(writer);
+                    else if (property.Value.ValueKind == JsonValueKind.Array)
+                    {
+                        var retained = property.Value.EnumerateArray().Where(item =>
+                            item.ValueKind != JsonValueKind.String || !values.Contains(item.GetString()!)).ToArray();
+                        if (retained.Length == 0) continue;
+                        writer.WritePropertyName(property.Name);
+                        writer.WriteStartArray();
+                        foreach (var item in retained) item.WriteTo(writer);
+                        writer.WriteEndArray();
+                    }
+                    else if (property.Value.ValueKind != JsonValueKind.String || !values.Contains(property.Value.GetString()!))
+                        property.WriteTo(writer);
+                }
+                writer.WriteEndObject();
+            }
+            body = System.Text.Encoding.UTF8.GetString(stream.ToArray());
+        }
+        return new SubsonicRequestParameters(Method, ContentType, body, remaining);
+    }
+
     public SubsonicRequestParameters SetValue(string name, string value)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);

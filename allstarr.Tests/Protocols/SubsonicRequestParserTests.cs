@@ -13,6 +13,37 @@ public class SubsonicRequestParserTests
         _parser = new SubsonicRequestParser();
     }
 
+    [Theory]
+    [InlineData("application/json", "{ \"nested\": {\"values\":[true,7]}, \"id\": \"native\" }")]
+    [InlineData("application/octet-stream", "opaque-body")]
+    public void RemoveQueryValues_PreservesUnrepresentableBodyBytes(string contentType, string body)
+    {
+        var parameters = new SubsonicRequestParameters("POST", contentType, body,
+        [new("id", "external", SubsonicParameterSource.Query), new("id", "native", SubsonicParameterSource.Query)]);
+        var result = parameters.RemoveValues("ID", new HashSet<string> { "external" });
+        Assert.Equal(body, result.RawBody);
+        Assert.Equal(["native"], result.GetAllValues("id"));
+        Assert.Equal("POST", result.Method);
+        Assert.Equal(contentType, result.ContentType);
+    }
+
+    [Fact]
+    public async Task RemoveFormValues_PreservesOtherPairsAndTheirOriginalEncoding()
+    {
+        const string body = "id=ext-deezer-song-1&id=native&untouched=hello+world&duplicate=%2f&duplicate=%2F";
+        var context = new DefaultHttpContext();
+        context.Request.Method = "POST";
+        context.Request.ContentType = "application/x-www-form-urlencoded";
+        context.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
+        context.Request.ContentLength = Encoding.UTF8.GetByteCount(body);
+        var parameters = await _parser.ExtractAllParametersAsync(context.Request);
+        var result = parameters.RemoveValues("id", new HashSet<string> { "ext-deezer-song-1" });
+        Assert.Equal("id=native&untouched=hello+world&duplicate=%2f&duplicate=%2F", result.RawBody);
+        Assert.Equal(["native"], result.GetAllValues("id"));
+        Assert.Equal(["/", "/"], result.GetAllValues("duplicate"));
+        Assert.Same(result, result.RemoveValues("id", new HashSet<string> { "absent" }));
+    }
+
     [Fact]
     public async Task ExtractAllParametersAsync_QueryParameters_ExtractsCorrectly()
     {

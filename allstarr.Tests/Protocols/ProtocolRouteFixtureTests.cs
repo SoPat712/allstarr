@@ -677,6 +677,38 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.VerifyAll();
     }
 
+    [Theory]
+    [InlineData("Items")]
+    [InlineData("Search/Hints")]
+    public async Task JellyfinSearch_HidesProviderArtistWhenTheLibraryArtistHasTheSameName(string endpoint)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "Grimes", 0, 0, It.IsAny<int>(), null))
+            .ReturnsAsync(new SearchResult
+            {
+                Artists = [new Artist { Id = "provider-duplicate", Name = "grimes" },
+                    new Artist { Id = "provider-other", Name = "Other Artist" }]
+            });
+        var key = endpoint == "Items" ? "Items" : "SearchHints";
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+            request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(200, """{"Id":"user-1"}""")
+                : Json(200, $$"""{"{{key}}":[{"Id":"native-artist","Name":"Grimes","Type":"MusicArtist","Future":true}],"TotalRecordCount":1}"""),
+            services =>
+            {
+                services.RemoveAll<IProtocolProviderGateway>();
+                services.AddSingleton(gateway.Object);
+            });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync($"/{endpoint}?SearchTerm=Grimes&IncludeItemTypes=MusicArtist&Limit=10&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var rows = body.RootElement.GetProperty(key).EnumerateArray().ToArray();
+        Assert.Equal(["native-artist", "provider-other"], rows.Select(row => row.GetProperty("Id").GetString()).Order());
+        Assert.True(rows.Single(row => row.GetProperty("Id").GetString() == "native-artist").GetProperty("Future").GetBoolean());
+        gateway.VerifyAll();
+    }
+
     [Fact]
     public async Task JellyfinAuthBoundary_RejectsBeforeSearchCacheProviderOrExternalActions()
     {

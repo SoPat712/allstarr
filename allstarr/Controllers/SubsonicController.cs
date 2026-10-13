@@ -1084,73 +1084,43 @@ public partial class SubsonicController : ControllerBase
     [HttpGet, HttpPost]
     [Route("rest/star")]
     [Route("rest/star.view")]
-    public async Task<IActionResult> Star()
-    {
-        var parameters = await ExtractAllParameters();
-        var format = parameters.GetValueOrDefault("f", "xml");
-
-        var playlistId = parameters.GetValueOrDefault("id", "");
-
-        if (!string.IsNullOrEmpty(playlistId) && PlaylistIdHelper.IsExternalPlaylist(playlistId))
-        {
-            if (CurrentProtocolContext.Actor == null)
-            {
-                return _responseBuilder.CreateError(
-                    format,
-                    50,
-                    "A linked Allstarr user is required for external favorite actions");
-            }
-
-            await RecordFavoriteEventSafelyAsync(playlistId, FavoriteOperation.Favorite);
-
-            return _responseBuilder.CreateResponse(format, "starred", new { });
-        }
-
-        try
-        {
-            var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/star";
-            var result = await _proxyService.RelayRawAsync(
-                relayEndpoint,
-                parameters,
-                HttpContext.RequestAborted,
-                Request.Headers);
-            if ((int)result.StatusCode is >= 200 and < 300)
-            {
-                await RecordFavoriteEventsAsync(parameters, FavoriteOperation.Favorite);
-            }
-            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(
-                "Error connecting to Subsonic server for star operation ({ExceptionType})",
-                ex.GetType().Name);
-            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
-        }
-    }
+    public Task<IActionResult> Star() => ChangeFavoritesAsync(FavoriteOperation.Favorite);
 
     [HttpGet, HttpPost]
     [Route("rest/unstar")]
     [Route("rest/unstar.view")]
-    public async Task<IActionResult> Unstar()
+    public Task<IActionResult> Unstar() => ChangeFavoritesAsync(FavoriteOperation.Unfavorite);
+
+    private async Task<IActionResult> ChangeFavoritesAsync(FavoriteOperation operation)
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
-        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/unstar";
+        string[] keys = ["id", "albumId", "artistId"];
+        var externalIds = keys.SelectMany(parameters.GetAllValues)
+            .Where(id => PlaylistIdHelper.IsExternalPlaylist(id) || _localLibraryService.ParseExternalId(id).isExternal)
+            .ToHashSet(StringComparer.Ordinal);
+        if (externalIds.Count > 0 && !CurrentProtocolContext.CanRunUserScopedWork)
+            return _responseBuilder.CreateError(format, 50, "A linked Allstarr user is required for external favorite actions");
+        var native = parameters;
+        foreach (var key in keys) native = native.RemoveValues(key, externalIds);
+        var hasNative = keys.Any(native.HasNonEmptyValue);
+        if (externalIds.Count > 0 && !hasNative)
+        {
+            foreach (var id in externalIds) await RecordFavoriteEventSafelyAsync(id, operation);
+            return _responseBuilder.CreateResponse(format, "starred", new { });
+        }
         try
         {
-            var result = await _proxyService.RelayRawAsync(
-                relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+            var endpoint = Request.Path.Value?.TrimStart('/') ??
+                           (operation == FavoriteOperation.Favorite ? "rest/star" : "rest/unstar");
+            var result = await _proxyService.RelayRawAsync(endpoint, native, HttpContext.RequestAborted, Request.Headers);
             if ((int)result.StatusCode is >= 200 and < 300)
-            {
-                await RecordFavoriteEventsAsync(parameters, FavoriteOperation.Unfavorite);
-            }
+                await RecordFavoriteEventsAsync(parameters, operation);
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
-        catch (HttpRequestException ex)
+        catch (HttpRequestException error)
         {
-            _logger.LogError("Error connecting to Subsonic server for unstar operation ({ExceptionType})",
-                ex.GetType().Name);
+            _logger.LogError("Error connecting to Subsonic server for favorite operation ({ExceptionType})", error.GetType().Name);
             return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
         }
     }
@@ -1254,7 +1224,8 @@ public partial class SubsonicController : ControllerBase
 
     private async Task RecordFavoriteEventsAsync(SubsonicRequestParameters parameters, FavoriteOperation operation)
     {
-        foreach (var itemId in parameters.GetAllValues("id").Where(item => !string.IsNullOrWhiteSpace(item)))
+        foreach (var itemId in new[] { "id", "albumId", "artistId" }.SelectMany(parameters.GetAllValues)
+                     .Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.Ordinal))
         {
             await RecordFavoriteEventSafelyAsync(itemId, operation);
         }
