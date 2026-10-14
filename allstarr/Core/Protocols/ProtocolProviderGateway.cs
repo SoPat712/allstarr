@@ -1044,11 +1044,11 @@ public sealed partial class ProtocolProviderGateway(
         {
             if (!hasPlaybackIdentity && providerId == "allstarr")
                 throw new HttpRequestException("Restart playback before seeking this recording.", null,
-                    HttpStatusCode.RequestedRangeNotSatisfiable);
+                    HttpStatusCode.Conflict);
             // Byte offsets cannot be transferred between two encodings of the same recording.
             if (hasPlaybackIdentity && playbackActivity != null && previous == null)
                 throw new HttpRequestException("Restart playback before seeking this external track.", null,
-                    HttpStatusCode.RequestedRangeNotSatisfiable);
+                    HttpStatusCode.Conflict);
             var resumeProvider = previous?.ProviderId ?? providerId;
             if (!providerOrder.Contains(resumeProvider, StringComparer.Ordinal)) return null;
             providerOrder = [resumeProvider];
@@ -1095,7 +1095,7 @@ public sealed partial class ProtocolProviderGateway(
             if (resuming && previous != null &&
                 (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId))
                 throw new HttpRequestException("The previous playback source is no longer available. Restart playback.", null,
-                    HttpStatusCode.RequestedRangeNotSatisfiable);
+                    HttpStatusCode.Conflict);
             var routeReason = string.Join(':',
                 fallbackReason ?? "provider-priority",
                 candidate.Context.Account?.ResolutionReason ?? "account-free");
@@ -1129,13 +1129,7 @@ public sealed partial class ProtocolProviderGateway(
                 using var request = new HttpRequestMessage(
                     headOnly ? HttpMethod.Head : HttpMethod.Get,
                     lease.ProtectedSourceUri);
-                if (parsedRange != null)
-                {
-                    if (!lease.SupportsByteRanges && rangeStart != 0)
-                        throw new HttpRequestException(ProviderError.StreamRangeUnavailable().SafeMessage, null,
-                            HttpStatusCode.RequestedRangeNotSatisfiable);
-                    if (lease.SupportsByteRanges) request.Headers.Range = parsedRange;
-                }
+                if (parsedRange != null && lease.SupportsByteRanges) request.Headers.Range = parsedRange;
                 return lease.ProtectedResponseFactory != null
                     ? await lease.ProtectedResponseFactory(request, protocol.CancellationToken)
                     : await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
@@ -1215,8 +1209,13 @@ public sealed partial class ProtocolProviderGateway(
                 {
                     if (!headOnly && !StreamByteRanges.Matches(response, requestedRange))
                     {
-                        error = ProviderError.StreamRangeUnavailable();
+                        error = new(ProviderErrorKind.IncompatibleMedia);
                         break;
+                    }
+                    if (response.StatusCode == HttpStatusCode.OK && (!lease.SupportsByteRanges || requestedRange != null))
+                    {
+                        response.Headers.AcceptRanges.Clear();
+                        response.Content.Headers.ContentRange = null;
                     }
                     response.Content.Headers.ContentType ??= new MediaTypeHeaderValue(lease.Media.MimeType);
                     var mediaType = response.Content.Headers.ContentType?.MediaType;
@@ -1228,6 +1227,15 @@ public sealed partial class ProtocolProviderGateway(
                         return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Success((response, lease));
                     }
                     error = new(ProviderErrorKind.IncompatibleMedia);
+                    break;
+                }
+                if (response.StatusCode == HttpStatusCode.RequestedRangeNotSatisfiable)
+                {
+                    var range = response.Content.Headers.ContentRange;
+                    error = requestedRange != null && range is { HasRange: false, Length: { } length } &&
+                        range.Unit.Equals("bytes", StringComparison.OrdinalIgnoreCase) &&
+                        !StreamByteRanges.TryResolve(requestedRange, length, out _, out _)
+                            ? ProviderError.StreamRangeUnavailable() : new(ProviderErrorKind.IncompatibleMedia);
                     break;
                 }
                 error = StreamError(response.StatusCode);
@@ -1251,7 +1259,6 @@ public sealed partial class ProtocolProviderGateway(
 
     private static ProviderError StreamError(HttpStatusCode status) => status switch
     {
-        HttpStatusCode.RequestedRangeNotSatisfiable => ProviderError.StreamRangeUnavailable(),
         HttpStatusCode.NotFound or HttpStatusCode.Gone => new(ProviderErrorKind.NotFound),
         HttpStatusCode.Unauthorized => new(ProviderErrorKind.Unauthorized),
         HttpStatusCode.Forbidden => new(ProviderErrorKind.Forbidden),

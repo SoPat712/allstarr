@@ -54,6 +54,10 @@ public sealed class SubsonicExceptionFilter(
                 (0, "Request was canceled.", 499),
             TimeoutException or OperationCanceledException =>
                 (0, "Request timed out.", StatusCodes.Status504GatewayTimeout),
+            HttpRequestException { StatusCode: HttpStatusCode.BadRequest } =>
+                (0, "Invalid byte range request.", StatusCodes.Status400BadRequest),
+            HttpRequestException { StatusCode: HttpStatusCode.Conflict } =>
+                (0, "Restart playback to restore the previous source selection.", StatusCodes.Status409Conflict),
             HttpRequestException { StatusCode: HttpStatusCode.RequestedRangeNotSatisfiable } =>
                 (0, "The requested byte range is unavailable. Restart playback before seeking.", StatusCodes.Status416RangeNotSatisfiable),
             HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } =>

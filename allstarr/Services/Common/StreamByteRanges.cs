@@ -10,7 +10,7 @@ internal static class StreamByteRanges
         if (string.IsNullOrWhiteSpace(value)) return null;
         if (!RangeHeaderValue.TryParse(value, out var range) || !IsSingleByteRange(range))
             throw new HttpRequestException("Only one valid byte range may be requested.", null,
-                HttpStatusCode.RequestedRangeNotSatisfiable);
+                HttpStatusCode.BadRequest);
         return range;
     }
 
@@ -36,8 +36,7 @@ internal static class StreamByteRanges
 
     public static bool Matches(HttpResponseMessage response, RangeHeaderValue? request)
     {
-        if (response.StatusCode != HttpStatusCode.PartialContent)
-            return request == null || request.Ranges.Single().From == 0;
+        if (response.StatusCode != HttpStatusCode.PartialContent) return true;
         var actual = response.Content.Headers.ContentRange;
         if (request == null || !HasValidContentRange(actual, response.Content.Headers.ContentLength)) return false;
         if (actual!.Length is { } length)
