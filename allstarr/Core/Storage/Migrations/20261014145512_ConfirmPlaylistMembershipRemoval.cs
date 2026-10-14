@@ -15,6 +15,12 @@ namespace allstarr.Core.Storage.Migrations
                 table: "playlist_target_memberships",
                 type: "INTEGER",
                 nullable: true);
+
+            migrationBuilder.Sql("""
+                UPDATE playlist_target_memberships
+                SET RemovalConfirmedAt = UpdatedAt
+                WHERE Active = 0;
+                """);
         }
 
         /// <inheritdoc />
