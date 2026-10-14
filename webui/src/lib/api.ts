@@ -1824,6 +1824,10 @@ export const playlistLinks = {
     blockedAccounts: PlaylistSourceAccount[];
     providers: Array<{ id: string; displayName: string; supportsPublicRead?: boolean }>;
   }>("/api/admin/playlist-sources"),
+  missingSongs: async (id: string, format: "csv" | "json") => {
+    const response = await request(`/api/admin/playlist-links/${encodeURIComponent(id)}/missing-songs?format=${format}`);
+    return response.blob();
+  },
   publicUserPlaylists: (providerId: string, sourceUserId: string, cursor = "") => {
     const params = new URLSearchParams({ limit: "100", sourceUserId });
     if (cursor) params.set("cursor", cursor);

@@ -10,9 +10,9 @@ using System.Net.Http.Json;
 namespace allstarr.Core.Providers.Spotify;
 
 /// <summary>
-/// Account-bound Spotify playlist transport backed by the web player's persisted
-/// Pathfinder queries. The typed playlist capability supplies authentication for
-/// the selected account on each operation.
+/// Spotify playlist transport backed by persisted web-player queries and public
+/// profile reads. The typed playlist capability supplies scoped authentication
+/// for each operation.
 /// </summary>
 public sealed class SpotifyPathfinderPlaylistClient
 {

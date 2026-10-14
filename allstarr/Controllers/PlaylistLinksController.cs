@@ -580,6 +580,19 @@ public sealed class PlaylistLinksController(
         });
     }
 
+    [HttpGet("{id:guid}/missing-songs")]
+    public Task<IActionResult> ExportMissingSongs(Guid id, [FromQuery] string format = "json",
+        CancellationToken cancellationToken = default) => Execute(async session =>
+    {
+        await LoadScopedLink(session, id, cancellationToken);
+        var projection = await projections.ReadByLinkIdAsync(session.IsAdministrator ? null : session.AllstarrUserId,
+            id, cancellationToken, session.AllstarrUserId);
+        if (projection == null) return NotFound();
+        var export = PlaylistMissingSongsExport.Create(projection, format);
+        Response.Headers.CacheControl = "no-store";
+        return File(export.Content, export.ContentType, export.FileName);
+    });
+
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreatePlaylistLinkRequest request, CancellationToken cancellationToken)
     {
