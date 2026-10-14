@@ -352,16 +352,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                         read.ErrorCode ?? read.Status.ToString(), before?.Fingerprint, backendWriteAttempted: false,
                         cancellationToken);
             }
-            else
-            {
-                var found = await target.FindByNameAsync(targetContext, snapshot.Name, cancellationToken);
-                if (found.IsSuccess) before = found.Value;
-                else if (found.Status is not BackendPlaylistTargetStatus.NotFound)
-                    return await RecordFailureAsync(runId, plan,
-                        found.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
-                        found.ErrorCode ?? found.Status.ToString(), null, backendWriteAttempted: false,
-                        cancellationToken);
-            }
 
             var write = await target.WriteAsync(targetContext, new BackendPlaylistWriteRequest(
                 plan.Mode == PlaylistPlanMode.Recreate ? BackendPlaylistWriteMode.Recreate : BackendPlaylistWriteMode.Reconcile,
@@ -1260,6 +1250,19 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             item.Id == runId && item.OwnerUserId == link.OwnerUserId &&
             item.PlaylistLinkId == link.Id && item.State == PlaylistSyncState.Running,
             cancellationToken);
+        var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
+        if (trackedLink.Revision != link.Revision)
+        {
+            run.State = PlaylistSyncState.Conflicted;
+            run.ConflictCode = "playlist_link_changed";
+            run.TargetRevisionBefore = before?.Fingerprint;
+            run.TargetRevisionAfter = receipt.Snapshot.Fingerprint;
+            run.CompletedAt = _clock.UtcNow;
+            run.Revision++;
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return new(plan, run.Id, run.State, true, false, run.ConflictCode);
+        }
         var memberships = await db.PlaylistTargetMemberships
             .Where(item => item.PlaylistLinkId == link.Id)
             .ToListAsync(cancellationToken);
@@ -1327,7 +1330,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 stale.UpdatedAt = _clock.UtcNow;
                 stale.Revision++;
             }
-        var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
         trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
         return new(plan, run.Id, state, true, false,

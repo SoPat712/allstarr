@@ -380,6 +380,23 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RepeatedCreateReusesTheLinkButRejectsDifferentImportChoices()
+    {
+        var context = Context(_userA, "principal-a");
+        var input = Link() with { ImportMode = PlaylistImportMode.OneTime, TargetPlaylistId = "chosen" };
+        var created = await _playlists.CreateLinkAsync(context, input);
+        Assert.Equal(created.Id, (await _playlists.CreateLinkAsync(context, input)).Id);
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.CreateLinkAsync(context,
+            input with { ImportMode = PlaylistImportMode.Linked }));
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.CreateLinkAsync(context,
+            input with { TargetPlaylistId = "different" }));
+        await using var verify = await _factory.CreateDbContextAsync();
+        var persisted = await verify.PlaylistLinks.SingleAsync();
+        Assert.Equal("chosen", persisted.TargetPlaylistId);
+        Assert.Equal(PlaylistImportMode.OneTime, persisted.ImportMode);
+    }
+
+    [Fact]
     public async Task ImportAndRetentionPolicies_PersistAndLegacyUpdatesPreserveThem()
     {
         var context = Context(_userA, "principal-a");

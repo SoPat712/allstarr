@@ -542,8 +542,9 @@ public sealed class PlaylistLinksController(
                 !TryProjectionMode(request.ProjectionMode, out var projectionMode, out error) ||
                 !TryPlaylistPolicies(request.ImportMode, request.TrackRetention, out var importMode, out var trackRetention, out error))
                 return BadRequest(new { error });
-            if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
-                return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
+            if (!IsSupportedPlaylistWorkflow(mode, materialization, projectionMode,
+                    request.MirrorStaleEntries, request.PreserveManualEntries))
+                return BadRequest(new { error = "The playlist workflow requires a mapped backend playlist with preservation of manual songs and removal of stale synchronized songs." });
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
                 return BadRequest(new { error = "A one-time import cannot have an update schedule" });
             if (!ValidTargetProtocol(request.TargetProtocol)) return BadRequest(new { error = "TargetProtocol must be jellyfin or subsonic" });
@@ -597,9 +598,10 @@ public sealed class PlaylistLinksController(
                     request.TrackRetention ?? existing.TrackRetention.ToString(), out var importMode,
                     out var trackRetention, out error)) return BadRequest(new { error });
             if (importMode != existing.ImportMode)
-                return Conflict(new { error = "Import behavior cannot be changed after creation. Import the playlist again instead." });
-            if (projectionMode == PlaylistProjectionMode.Target && string.IsNullOrWhiteSpace(request.TargetPlaylistId))
-                return BadRequest(new { error = "ProjectionMode target requires TargetPlaylistId" });
+                return Conflict(new { error = "Import behavior cannot be changed after creation. Remove its link and import the playlist again instead." });
+            if (!IsSupportedPlaylistWorkflow(mode, materialization, projectionMode,
+                    request.MirrorStaleEntries, request.PreserveManualEntries))
+                return BadRequest(new { error = "The playlist workflow requires a mapped backend playlist with preservation of manual songs and removal of stale synchronized songs." });
             if (importMode == PlaylistImportMode.OneTime && request.ScheduleId.HasValue)
                 return BadRequest(new { error = "Remove the update schedule before changing this to a one-time import" });
             var context = await CreateExecutionAsync(session, cancellationToken);
@@ -1159,6 +1161,12 @@ public sealed class PlaylistLinksController(
             item.OwnerUserId == ownerUserId, cancellationToken);
     }
 
+    private static bool IsSupportedPlaylistWorkflow(PlaylistLinkMode mode,
+        PlaylistMaterializationMode materialization, PlaylistProjectionMode projection,
+        bool mirrorStaleEntries, bool preserveManualEntries) =>
+        mode == PlaylistLinkMode.Hybrid && materialization == PlaylistMaterializationMode.Reconcile &&
+        projection == PlaylistProjectionMode.Resolved && mirrorStaleEntries && preserveManualEntries;
+
     private static bool TryEnums(string modeValue, string materializationValue, out PlaylistLinkMode mode, out PlaylistMaterializationMode materialization, out string? error)
     { error = null; if (!Enum.TryParse(modeValue, true, out mode) || !Enum.IsDefined(mode)) { materialization = default; error = "Mode must be virtual, materialized, or hybrid"; return false; } if (!Enum.TryParse(materializationValue, true, out materialization) || !Enum.IsDefined(materialization)) { error = "MaterializationMode must be reconcile or recreate"; return false; } return true; }
     private static bool TryProjectionMode(string value, out PlaylistProjectionMode mode, out string? error)
@@ -1544,7 +1552,7 @@ public sealed class PlaylistLinksController(
 public sealed record CreatePlaylistLinkRequest(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId,
     string TargetProtocol, string TargetBackendInstanceId, string Mode, string MaterializationMode,
     Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null,
-    bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true,
+    bool MirrorStaleEntries = true, bool PreserveManualEntries = true, bool SyncName = true,
     bool SyncDescription = true, bool SyncArtwork = true, string ProjectionMode = "resolved",
     string ImportMode = "linked", string TrackRetention = "onDemand");
 public sealed record UpdatePlaylistLinkRequest(long ExpectedRevision, string Mode, string MaterializationMode,

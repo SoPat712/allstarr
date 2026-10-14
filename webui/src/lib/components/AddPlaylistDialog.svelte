@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { Checkbox } from "$lib/components/ui/checkbox";
   import { Check, Info, X } from "@lucide/svelte";
   import {
     playlistLinks,
@@ -18,12 +18,10 @@
   import {
     orderPlaylistSources,
     playlistBehaviorSummary,
-    playlistDestinationOptions,
-    playlistProjectionOptions,
   } from "$lib/playlists";
 
-  type DestinationMode = "virtual" | "materialized" | "hybrid";
-  type ProjectionMode = "resolved" | "source" | "target";
+  type ImportMode = "oneTime" | "linked";
+  type TargetMode = "new" | "existing";
 
   let {
     open = $bindable(false),
@@ -51,15 +49,10 @@
   let sourceQuery = $state("");
   let sourcePlaylists = $state<PlaylistDiscoveryItem[]>([]);
   let sourceCursor = $state("");
-  let schedule = $state("once");
+  let importMode = $state<ImportMode>("oneTime");
+  let schedule = $state<"hourly" | "daily" | "weekly">("daily");
+  let targetMode = $state<TargetMode>("new");
   let trackRetention = $state<"onDemand" | "keepAll">("onDemand");
-  let mode = $state<DestinationMode>("materialized");
-  let projectionMode = $state<ProjectionMode>("resolved");
-  let materializationMode = $state<"reconcile" | "recreate">("reconcile");
-  let syncBehavior = $state("preserve");
-  let syncName = $state(true);
-  let syncDescription = $state(true);
-  let syncArtwork = $state(true);
   let loading = $state(false);
   let saving = $state(false);
   let error = $state("");
@@ -81,38 +74,31 @@
         : selectedTarget?.displayName ?? "your media server",
   );
   const targetPlaylistName = $derived(
-    targetPlaylists.find((item) => item.id === targetPlaylistId)?.name ?? `the selected ${targetName} playlist`,
+    targetMode === "new"
+      ? `a new ${targetName} playlist`
+      : targetPlaylists.find((item) => item.id === targetPlaylistId)?.name ?? `the selected ${targetName} playlist`,
   );
-  const destinationOptions = $derived(playlistDestinationOptions(
-    targetName,
-    targetPlaylistName,
-    sourcePlaylistName,
-  ));
-  const projectionOptions = $derived(playlistProjectionOptions(sourceName, targetName, targetPlaylistName));
-  const updateCadence = $derived(schedule === "hourly"
-    ? "every hour"
-    : schedule === "daily"
-      ? "every day at 3:00 AM"
-      : schedule === "weekly"
-        ? "every Monday at 3:00 AM"
-        : undefined);
-  const importMode = $derived<"oneTime" | "linked">(schedule === "once" ? "oneTime" : "linked");
+  const updateCadence = $derived(importMode === "linked"
+    ? schedule === "hourly"
+      ? "every hour"
+      : schedule === "daily"
+        ? "every day at 3:00 AM"
+        : "every Monday at 3:00 AM"
+    : undefined);
   const behaviorSummary = $derived(playlistBehaviorSummary(
-    mode,
-    materializationMode,
+    importMode,
+    targetMode,
     sourcePlaylistName,
     targetName,
     targetPlaylistName,
     updateCadence,
-    importMode,
     trackRetention,
   ));
-  const needsTargetPlaylist = $derived(mode !== "virtual" || projectionMode === "target");
   const stepReady = $derived(
     step === 1
       ? Boolean(sourcePlaylistId)
       : step === 3
-        ? Boolean(targetId) && (!needsTargetPlaylist || Boolean(targetPlaylistId))
+        ? Boolean(targetId) && (targetMode === "new" || Boolean(targetPlaylistId))
         : true,
   );
 
@@ -137,6 +123,7 @@
 
   $effect(() => {
     if (!open) {
+      browseRequest++;
       prepared = false;
       return;
     }
@@ -164,15 +151,10 @@
     sourceQuery = "";
     sourcePlaylists = [];
     sourceCursor = "";
-    schedule = "once";
+    importMode = "oneTime";
+    schedule = "daily";
+    targetMode = "new";
     trackRetention = "onDemand";
-    mode = "materialized";
-    projectionMode = "resolved";
-    materializationMode = "reconcile";
-    syncBehavior = "preserve";
-    syncName = true;
-    syncDescription = true;
-    syncArtwork = true;
     try {
       const [sourceResponse, targetResponse] = await Promise.all([
         playlistLinks.sources(), playlistLinks.targets(),
@@ -195,12 +177,19 @@
     targetPlaylistId = "";
     targetQuery = "";
     targetPlaylists = [];
-    if (needsTargetPlaylist) await browseTargets();
+    if (targetMode === "existing") await browseTargets();
   }
 
-  async function chooseDestination(value: DestinationMode) {
-    mode = value;
-    if (needsTargetPlaylist && targetId && !targetPlaylists.length) await browseTargets();
+  async function chooseTargetMode(value: TargetMode) {
+    browseRequest++;
+    loading = false;
+    targetMode = value;
+    if (value === "new") {
+      targetPlaylistId = "";
+      targetPlaylists = [];
+      return;
+    }
+    if (targetId && !targetPlaylists.length) await browseTargets();
   }
 
   async function browseTargets() {
@@ -213,7 +202,7 @@
     error = "";
     try {
       const response = await playlistLinks.targetPlaylists(requestedTarget, targetQuery.trim());
-      if (request !== browseRequest || requestedTarget !== targetId) return;
+      if (request !== browseRequest || requestedTarget !== targetId || targetMode !== "existing" || !open) return;
       targetPlaylists = response.items.filter((item) => item.writable);
     } catch (cause) {
       if (request !== browseRequest) return;
@@ -263,13 +252,13 @@
   async function next() {
     if (!stepReady) return;
     step = Math.min(4, step + 1);
-    if (step === 3 && needsTargetPlaylist && targetId && !targetPlaylists.length)
+    if (step === 3 && targetMode === "existing" && targetId && !targetPlaylists.length)
       await browseTargets();
   }
 
   async function save() {
     if (!selectedAccount || !selectedTarget || !sourcePlaylistId ||
-        (needsTargetPlaylist && !targetPlaylistId) || saving) return;
+        (targetMode === "existing" && !targetPlaylistId) || saving) return;
     saving = true;
     error = "";
     try {
@@ -280,19 +269,19 @@
         targetProtocol: selectedTarget.protocol,
         targetBackendInstanceId: selectedTarget.backendInstanceId,
         targetCredentialReferenceId: selectedTarget.credentialReferenceId,
-        targetPlaylistId: needsTargetPlaylist ? targetPlaylistId : null,
-        mode,
-        projectionMode,
-        materializationMode,
+        targetPlaylistId: targetMode === "existing" ? targetPlaylistId : null,
+        mode: "hybrid",
+        projectionMode: "resolved",
+        materializationMode: "reconcile",
         importMode,
         trackRetention,
-        mirrorStaleEntries: syncBehavior === "mirror",
-        preserveManualEntries: syncBehavior === "preserve",
-        syncName,
-        syncDescription,
-        syncArtwork,
+        mirrorStaleEntries: true,
+        preserveManualEntries: true,
+        syncName: true,
+        syncDescription: true,
+        syncArtwork: true,
       });
-      if (!["once", "manual"].includes(schedule)) {
+      if (importMode === "linked") {
         const cronExpression = ({
           hourly: "0 * * * *",
           daily: "0 3 * * *",
@@ -334,7 +323,7 @@
       </header>
 
       <nav class="playlist-add-steps" aria-label="Playlist setup progress">
-        {#each ["Source", "Listeners see", "Destination", "Updates"] as label, index}
+        {#each ["Source", "Import", "Destination", "Updates"] as label, index}
           <button
             class:active={step === index + 1}
             class:complete={step > index + 1}
@@ -399,26 +388,30 @@
           {/if}
         {:else if step === 2}
           <section class="pl-section">
-            <div><h3 id="playlist-add-view">What should listeners see?</h3><p class="pl-help">This never changes {sourcePlaylistName} in {sourceName}.</p></div>
-            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-view">
-              {#each projectionOptions as option}
-                <label class="pl-option" class:active={projectionMode === option.id}>
-                  <input bind:group={projectionMode} type="radio" name="playlist-view" value={option.id} />
-                  <span class="pl-option-text"><strong>{option.label}{#if option.id === "resolved"}<span class="pl-chip">Recommended</span>{/if}</strong><small>{option.description}</small></span>
-                </label>
-              {/each}
+            <div><h3 id="playlist-add-import">Import behavior</h3><p class="pl-help">Allstarr keeps the original playlist unchanged and can show every song through its resolved view.</p></div>
+            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-import">
+              <label class="pl-option" class:active={importMode === "oneTime"}>
+                <input bind:group={importMode} type="radio" name="playlist-import-mode" value="oneTime" />
+                <span class="pl-option-text"><strong>Import once</strong><small>Take a snapshot now and ignore later changes from {sourceName}.</small></span>
+              </label>
+              <label class="pl-option" class:active={importMode === "linked"}>
+                <input bind:group={importMode} type="radio" name="playlist-import-mode" value="linked" />
+                <span class="pl-option-text"><strong>Keep in sync</strong><small>Check {sourceName} for changes on the schedule you choose.</small></span>
+              </label>
             </div>
           </section>
         {:else if step === 3}
           <section class="pl-section">
-            <div><h3 id="playlist-add-destination">Where should it appear?</h3><p class="pl-help">Listeners can find it through Allstarr, in a {targetName} playlist, or both.</p></div>
-            <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-destination">
-              {#each destinationOptions as option}
-                <label class="pl-option" class:active={mode === option.id}>
-                  <input type="radio" name="playlist-destination" value={option.id} checked={mode === option.id} onchange={() => void chooseDestination(option.id)} />
-                  <span class="pl-option-text"><strong>{option.label}</strong><small>{option.description}</small></span>
-                </label>
-              {/each}
+            <div><h3 id="playlist-add-destination">Destination</h3><p class="pl-help">Listeners can find every source song through Allstarr, and playable songs are also kept in a {targetName} playlist.</p></div>
+            <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-destination">
+              <label class="pl-option" class:active={targetMode === "new"}>
+                <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="new" onchange={() => void chooseTargetMode("new")} />
+                <span class="pl-option-text"><strong>New playlist</strong><small>Create a new playlist in {targetName} using the source name.</small></span>
+              </label>
+              <label class="pl-option" class:active={targetMode === "existing"}>
+                <input bind:group={targetMode} type="radio" name="playlist-target-mode" value="existing" onchange={() => void chooseTargetMode("existing")} />
+                <span class="pl-option-text"><strong>Existing playlist</strong><small>Keep the playable songs in a playlist you already manage.</small></span>
+              </label>
             </div>
           </section>
           {#if targets.length !== 1}
@@ -435,9 +428,9 @@
               </div>
             </section>
           {/if}
-          {#if targetId && needsTargetPlaylist}
+          {#if targetId && targetMode === "existing"}
             <section class="pl-section">
-              <div><h3 id="playlist-add-target-playlist">{targetName} playlist</h3><p class="pl-help">Pick an existing playlist. You can create a new one on the next step instead.</p></div>
+              <div><h3 id="playlist-add-target-playlist">{targetName} playlist</h3><p class="pl-help">Pick the existing playlist that Allstarr should keep updated.</p></div>
               <form class="pl-search" onsubmit={(event) => { event.preventDefault(); void browseTargets(); }}>
                 <SearchField bind:value={targetQuery} label={`Find a playlist in ${targetName}`} placeholder={`Search ${targetName} playlists`} hiddenLabel />
                 <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
@@ -459,57 +452,24 @@
             <p><strong>What will happen</strong>{behaviorSummary}</p>
           </div>
           <div class="pl-rows">
-            {#if mode !== "virtual"}
-              <div class="pl-row">
-                <div><strong>{targetName} playlist</strong><small>Add songs to the playlist you chose, or create a new one.</small></div>
-                <SelectField bind:value={materializationMode} label={`${targetName} playlist`} options={[
-                  { value: "reconcile", label: `Add to ${targetPlaylistName}` },
-                  { value: "recreate", label: "Create a new playlist" },
-                ]} />
-              </div>
-            {/if}
             <div class="pl-row">
-              <div><strong>Update schedule</strong><small>Import once, or keep checking {sourceName} for changes. Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}.</small></div>
-              <SelectField bind:value={schedule} label="Update schedule" options={[
-                { value: "once", label: "Import once" },
-                { value: "manual", label: "Update when I ask" },
-                { value: "hourly", label: "Every hour" },
-                { value: "daily", label: "Daily at 3:00 AM" },
-                { value: "weekly", label: "Mondays at 3:00 AM" },
-              ]} />
-            </div>
-            {#if mode !== "virtual" && materializationMode === "reconcile"}
-              <div class="pl-row">
-                <div><strong>Songs removed from {sourcePlaylistName}</strong><small>What happens to them in {targetPlaylistName}.</small></div>
-                <SelectField bind:value={syncBehavior} label={`Songs removed from ${sourcePlaylistName}`} options={[
-                  { value: "preserve", label: "Keep them" },
-                  { value: "mirror", label: "Remove songs Allstarr added" },
+              <div><strong>Update schedule</strong><small>{importMode === "oneTime" ? `Import once. Later changes from ${sourceName} are ignored.` : `Keep checking ${sourceName} for changes. Times use ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`}</small></div>
+              {#if importMode === "linked"}
+                <SelectField bind:value={schedule} label="Update schedule" options={[
+                  { value: "hourly", label: "Every hour" },
+                  { value: "daily", label: "Daily at 3:00 AM" },
+                  { value: "weekly", label: "Mondays at 3:00 AM" },
                 ]} />
-              </div>
-            {/if}
-            <div class="pl-row pl-row-full">
-              <div><strong id="playlist-add-storage">Song storage</strong><small>Choose whether Allstarr saves permanent copies of these songs.</small></div>
-              <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-storage">
-                <label class="pl-option" class:active={trackRetention === "onDemand"}>
-                  <input bind:group={trackRetention} type="radio" name="playlist-storage" value="onDemand" />
-                  <span class="pl-option-text"><strong>Stream when played</strong><small>Songs play from their source and are cached briefly. Nothing is saved permanently.</small></span>
-                </label>
-                <label class="pl-option" class:active={trackRetention === "keepAll"}>
-                  <input bind:group={trackRetention} type="radio" name="playlist-storage" value="keepAll" />
-                  <span class="pl-option-text"><strong>Keep a copy of every song</strong><small>After each import, Allstarr downloads every song it can. Uses disk space.</small></span>
-                </label>
-              </div>
+              {:else}
+                <strong>Import once</strong>
+              {/if}
             </div>
-            {#if mode !== "virtual"}
-              <div class="pl-row pl-row-full" role="group" aria-labelledby="playlist-add-details">
-                <div><strong id="playlist-add-details">{materializationMode === "recreate" ? "Copy to the new playlist" : "Keep in sync"}</strong><small>Copy these details from {sourceName} to the {targetName} playlist.</small></div>
-                <div class="pl-checks">
-                  <label><Checkbox bind:checked={syncName} /> Name</label>
-                  <label><Checkbox bind:checked={syncDescription} /> Description</label>
-                  <label><Checkbox bind:checked={syncArtwork} /> Artwork</label>
-                </div>
-              </div>
-            {/if}
+            <div class="pl-row pl-row-full">
+              <label class="pl-retention-toggle">
+                <Checkbox checked={trackRetention === "keepAll"} onCheckedChange={(checked) => { trackRetention = checked ? "keepAll" : "onDemand"; }} />
+                <span><strong>Keep downloaded copies</strong><small>Save permanent copies of external songs Allstarr can download. Local songs are already permanent.</small></span>
+              </label>
+            </div>
           </div>
         {/if}
       </div>
@@ -519,7 +479,7 @@
         {#if step < 4}
           <Button disabled={!stepReady || loading} onclick={() => void next()}>Continue</Button>
         {:else}
-          <Button disabled={!sourcePlaylistId || !targetId || (needsTargetPlaylist && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : importMode === "oneTime" ? "Import playlist" : "Import and link"}</Button>
+          <Button disabled={!sourcePlaylistId || !targetId || (targetMode === "existing" && !targetPlaylistId) || saving} onclick={() => void save()}>{saving ? "Starting import…" : importMode === "oneTime" ? "Import playlist" : "Import and link"}</Button>
         {/if}
       </footer>
     </Dialog.Content>

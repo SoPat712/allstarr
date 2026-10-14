@@ -18,6 +18,34 @@ namespace allstarr.Tests;
 
 public sealed class PlaylistLinksControllerContractTests
 {
+    [Theory]
+    [InlineData("virtual", "reconcile", "resolved", true, true)]
+    [InlineData("hybrid", "recreate", "resolved", true, true)]
+    [InlineData("hybrid", "reconcile", "source", true, true)]
+    [InlineData("hybrid", "reconcile", "resolved", false, true)]
+    [InlineData("hybrid", "reconcile", "resolved", true, false)]
+    public async Task CreateRejectsRetiredWorkflowChoicesBeforeAccessingTheBackend(
+        string mode, string materialization, string projection, bool mirror, bool preserve)
+    {
+        var controller = Controller();
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            UserId = "backend-user",
+            UserName = "User",
+            IsAdministrator = false,
+            JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = Guid.NewGuid(),
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+            LastSeenUtc = DateTime.UtcNow
+        };
+        var result = await controller.Create(new CreatePlaylistLinkRequest(Guid.NewGuid(), "fixture", "playlist",
+            "jellyfin", "backend", mode, materialization, ProjectionMode: projection,
+            MirrorStaleEntries: mirror, PreserveManualEntries: preserve), default);
+        var response = Assert.IsType<BadRequestObjectResult>(result);
+        Assert.Contains("playlist workflow", JsonSerializer.Serialize(response.Value), StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Routes_MatchTheWebUiContract()
     {
@@ -191,8 +219,8 @@ public sealed class PlaylistLinksControllerContractTests
             ExpiresAtUtc = now.UtcDateTime.AddHours(1)
         };
         var result = Assert.IsAssignableFrom<ObjectResult>(await controller.Update(link.Id,
-            new UpdatePlaylistLinkRequest(1, "materialized", "reconcile", null, "target-list", null,
-                false, true, true, true, true), CancellationToken.None));
+            new UpdatePlaylistLinkRequest(1, "hybrid", "reconcile", null, "target-list", null,
+                true, true, true, true, true), CancellationToken.None));
         Assert.Equal(expectedStatus, result.StatusCode);
         persistence.Verify(service => service.UpdateLinkAsync(It.IsAny<ProtocolExecutionContext>(), link.Id,
                 It.IsAny<PlaylistLinkUpdate>(), It.IsAny<CancellationToken>()),
@@ -238,7 +266,7 @@ public sealed class PlaylistLinksControllerContractTests
             .Single(item => item.Name == "TrackRetention").DefaultValue);
         var controllerSource = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "PlaylistLinksController.cs"));
-        Assert.Contains("ProjectionMode target requires TargetPlaylistId", controllerSource, StringComparison.Ordinal);
+        Assert.Contains("IsSupportedPlaylistWorkflow", controllerSource, StringComparison.Ordinal);
         Assert.DoesNotContain(create, name => name.Contains("Password", StringComparison.OrdinalIgnoreCase) ||
                                                name.Contains("Token", StringComparison.OrdinalIgnoreCase) ||
                                                name.Contains("Cookie", StringComparison.OrdinalIgnoreCase) ||

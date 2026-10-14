@@ -942,8 +942,8 @@ for (const viewport of viewports) {
       await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
       const details = page.getByRole("dialog", { name: "Test playlist" });
       await expect(details).not.toContainText(/hybrid|materialized|write-back|projection mode/i);
-      await details.getByRole("tab", { name: "Native", exact: true }).click();
-      await expect(details.getByText("target track", { exact: true })).toBeVisible();
+      await expect(details.getByRole("tab", { name: /Original|Native/ })).toHaveCount(0);
+      await expect(details.getByText("Test song", { exact: true })).toBeVisible();
       await expect(details).toHaveCSS("overflow", "hidden");
       await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
       await expect.poll(() => details.locator(".track-scroll").evaluate((scroll) =>
@@ -975,6 +975,12 @@ for (const viewport of viewports) {
       const settings = page.getByRole("dialog", { name: "Edit playlist settings" });
       await expect(settings).not.toContainText(/native playlist|hybrid|materialized|write-back|projection mode|backend/i);
       await expect(settings.locator(".playlist-settings-form")).toHaveCSS("overflow-y", "auto");
+      const importCards = settings.locator(".pl-option-static");
+      await expect(importCards).toHaveCount(2);
+      expect(await importCards.evaluateAll((cards) => cards.every((card) => {
+        const text = card.querySelector(".pl-option-text")!;
+        return text.getBoundingClientRect().width >= card.getBoundingClientRect().width - 40;
+      }))).toBe(true);
       await expect(settings.getByRole("button", { name: "Save settings" })).toBeInViewport();
       const settingsScreenshot = await page.screenshot({
         path: screenshotDirectory ? `${screenshotDirectory}/playlist-${viewport.width}-settings.png` : undefined,
@@ -2714,7 +2720,7 @@ test("extension catalogs explain why an unsigned package cannot be installed", a
   await expect(unavailable).toHaveAttribute("title", /required for a safe install/);
 });
 
-test("Import playlist separates source, client view, destination, updates, and storage on mobile", async ({ page }) => {
+test("Import playlist separates source, import mode, destination, updates, and storage on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const sources = routeRelease();
   await mockApi(page, { releasePath: "/api/admin/playlist-sources", release: sources.promise });
@@ -2732,7 +2738,7 @@ test("Import playlist separates source, client view, destination, updates, and s
   sources.release();
   await expect(dialog.getByRole("radiogroup", { name: "Import from" }).getByRole("radio")).toHaveCount(5);
   await expect(dialog.getByRole("button", { name: "Source", exact: true })).toBeDisabled();
-  await expect(dialog.getByRole("button", { name: "Listeners see", exact: true })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toBeDisabled();
   const stepTops = await dialog.locator(".playlist-add-steps button").evaluateAll((buttons) =>
     buttons.map((button) => Math.round(button.getBoundingClientRect().top)));
   expect(new Set(stepTops).size).toBe(1);
@@ -2752,13 +2758,15 @@ test("Import playlist separates source, client view, destination, updates, and s
   await dialog.getByRole("radio", { name: /Source Mix/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect(dialog.getByRole("button", { name: "Back to Source" })).toBeEnabled();
-  await expect(dialog.getByRole("button", { name: "Listeners see", exact: true })).toHaveAttribute("aria-current", "step");
+  await expect(dialog.getByRole("button", { name: "Import", exact: true })).toHaveAttribute("aria-current", "step");
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/playlist-390-listener-choice.png` });
-  await dialog.getByRole("radio", { name: /Original The same songs/ }).check();
+  await expect(dialog.getByRole("radio", { name: /Import once/ })).toBeChecked();
+  await dialog.getByRole("radio", { name: /Keep in sync/ }).check();
   await dialog.getByRole("button", { name: "Continue" }).click();
   await expect.poll(() => dialog.locator(".playlist-add-body").evaluate((body) => body.scrollTop)).toBe(0);
-  await dialog.getByRole("radio", { name: /Both Every .* song shows through Allstarr/ }).check();
+  await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
+  await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
   await expect(dialog.getByRole("radio", { name: /Road trip/ })).toBeVisible();
   await dialog.getByRole("radio", { name: /Road trip/ }).check();
   if (process.env.ALLSTARR_SCREENSHOT_DIR) {
@@ -2767,11 +2775,11 @@ test("Import playlist separates source, client view, destination, updates, and s
   }
   await dialog.getByRole("button", { name: "Continue" }).click();
   await dialog.getByRole("button", { name: "Update schedule" }).click();
-  await expect(page.getByRole("option", { name: "Import once" })).toHaveAttribute("aria-selected", "true");
-  await expect(dialog.getByRole("button", { name: "Import playlist" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Daily at 3:00 AM" })).toHaveAttribute("aria-selected", "true");
   await page.getByRole("option", { name: "Daily at 3:00 AM" }).click();
   await expect(dialog.getByRole("button", { name: "Import and link" })).toBeVisible();
-  await dialog.getByRole("radio", { name: /Keep a copy of every song/ }).check();
+  await expect(dialog.getByRole("checkbox", { name: /Keep downloaded copies/ })).not.toBeChecked();
+  await dialog.getByRole("checkbox", { name: /Keep downloaded copies/ }).check();
   await expect(dialog.getByRole("button", { name: "Import and link" })).toBeInViewport();
   await expect(dialog.locator(".playlist-add-body")).toHaveCSS("overflow-y", "auto");
   const create = page.waitForRequest((request) =>
@@ -2784,7 +2792,10 @@ test("Import playlist separates source, client view, destination, updates, and s
     targetPlaylistId: "jellyfin-playlist",
     sourcePlaylistId: "playlist",
     mode: "hybrid",
-    projectionMode: "source",
+    projectionMode: "resolved",
+    materializationMode: "reconcile",
+    mirrorStaleEntries: true,
+    preserveManualEntries: true,
     importMode: "linked",
     trackRetention: "keepAll",
   });
@@ -2819,14 +2830,8 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const details = page.getByRole("dialog", { name: "Test playlist" });
   await expect(details).toBeVisible();
-  const resolved = details.getByRole("tab", { name: "Mapped", exact: true });
-  await resolved.focus();
-  await page.keyboard.press("ArrowRight");
-  await expect(details.getByRole("tab", { name: "Original", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(details.getByText("source track", { exact: true })).toBeVisible();
-  await page.keyboard.press("ArrowRight");
-  await expect(details.getByRole("tab", { name: "Native", exact: true })).toHaveAttribute("aria-selected", "true");
-  await expect(details.getByText("target track", { exact: true })).toBeVisible();
+  await expect(details.getByRole("tab", { name: /Mapped|Original|Native/ })).toHaveCount(0);
+  await expect(details.getByText("Test song", { exact: true })).toBeVisible();
   await expect(details).toHaveCSS("overflow", "hidden");
   await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
 
@@ -2836,15 +2841,20 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await page.getByRole("menuitem", { name: "Edit settings" }).click();
   let settings = page.getByRole("dialog", { name: "Edit playlist settings" });
   await exactTarget;
-  await settings.getByRole("radio", { name: /Original The same songs/ }).check();
-  await settings.getByRole("radio", { name: /Only in Allstarr Listeners see/ }).check();
+  const newTarget = settings.getByRole("radio", { name: /New playlist/ });
+  await newTarget.focus();
+  await page.keyboard.press("Space");
+  await expect(newTarget).toBeChecked();
   const update = page.waitForRequest((request) =>
     request.method() === "PUT" && request.url().endsWith("/api/admin/playlist-links/playlist-link"));
   await settings.getByRole("button", { name: "Save settings" }).click();
   expect((await update).postDataJSON()).toMatchObject({
     expectedRevision: 1,
-    mode: "virtual",
-    projectionMode: "source",
+    mode: "hybrid",
+    projectionMode: "resolved",
+    materializationMode: "reconcile",
+    mirrorStaleEntries: true,
+    preserveManualEntries: true,
     targetPlaylistId: null,
   });
   await expect(settings).toBeHidden();
@@ -2874,16 +2884,17 @@ test("Playlist views and revisioned settings stay keyboard-safe", async ({ page 
   await expect(settings).toBeHidden();
   await expect(details).toBeVisible();
 
-  await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=source", (route) => route.fulfill({
-    status: 503,
-    contentType: "application/json",
-    body: JSON.stringify({ error: "Projection fixture unavailable" }),
-  }), { times: 1 });
-  await details.getByRole("tab", { name: "Original" }).click();
+  await details.getByRole("button", { name: "Close playlist details" }).click();
+  let projectionUnavailable = true;
+  await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=resolved", (route) => projectionUnavailable
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Projection fixture unavailable" }) })
+    : route.fallback());
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const projectionError = details.getByRole("alert");
   await expect(projectionError).toContainText("Projection fixture unavailable");
+  projectionUnavailable = false;
   await projectionError.getByRole("button", { name: "Try again" }).click();
-  await expect(details.getByText("source track", { exact: true })).toBeVisible();
+  await expect(details.getByText("Test song", { exact: true })).toBeVisible();
 });
 
 for (const viewport of [
@@ -3742,7 +3753,8 @@ test("Contextual dialog tabs scroll inside their panels at narrow widths", async
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const playlist = page.getByRole("dialog", { name: "Test playlist" });
-  await expectContainedActiveTab(playlist.locator(".playlist-view-switcher .contextual-tabs"));
+  await expect(playlist.locator(".playlist-view-switcher")).toContainText("Mapped for listeners");
+  await expect(playlist.locator(".playlist-view-switcher .contextual-tabs")).toHaveCount(0);
   expect(await playlist.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${screenshotTheme ?? "system"}-mobile-320-playlist-tabs.png` });
@@ -5337,22 +5349,21 @@ test("playlist projections, operations, and cancellation keep the selected playl
   await expect(cancel.getByRole("button", { name: "Cancel operation" })).toBeEnabled();
   await cancel.getByRole("button", { name: "Keep running" }).click();
 
-  const projection = routeRelease();
-  await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=source", async (route) => {
-    await projection.promise;
-    return route.fallback();
-  });
-  await details.getByRole("tab", { name: "Original" }).click();
-  await details.getByRole("tab", { name: "Native" }).click();
-  await expect(details.getByRole("tab", { name: "Native" })).toHaveAttribute("aria-selected", "true");
-  await expect(details.getByText("target track", { exact: true })).toBeVisible();
-  projection.release();
-  await expect(details.getByRole("tab", { name: "Native" })).toHaveAttribute("aria-selected", "true");
-
   await details.getByRole("button", { name: "Actions" }).click();
   await page.getByRole("menuitem", { name: "Update playlist now" }).click();
   await expect(details.getByRole("button", { name: /Operation details:/ })).toBeVisible();
   await details.getByRole("button", { name: "Close playlist details" }).click();
+
+  const projection = routeRelease();
+  await page.route("**/api/admin/playlist-links/playlist-link?projectionMode=resolved", async (route) => {
+    await projection.promise;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({ ...fixture, name: "Stale playlist" }) });
+  });
+  const staleRequest = page.waitForRequest((request) => request.url().endsWith("/playlist-link?projectionMode=resolved"));
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  await staleRequest;
+  await page.keyboard.press("Escape");
+  await expect(details).toBeHidden();
 
   await page.route("**/api/admin/playlist-links/playlist-2?*", (route) => route.fulfill({
     contentType: "application/json",
@@ -5362,4 +5373,74 @@ test("playlist projections, operations, and cancellation keep the selected playl
   const second = page.getByRole("dialog", { name: "Second playlist" });
   await expect(second).toBeVisible();
   await expect(second.getByRole("button", { name: /Operation details:/ })).toHaveCount(0);
+  const staleResponse = page.waitForResponse((response) => response.url().endsWith("/playlist-link?projectionMode=resolved"));
+  projection.release();
+  await staleResponse;
+  await expect(second).toBeVisible();
+  await expect(second).not.toContainText("Stale playlist");
 });
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const importMode of ["oneTime", "linked"] as const) {
+      for (const destination of ["new", "existing"] as const) {
+        test(`Playlist import ${importMode} into ${destination} at ${width}px ${colorScheme}`, async ({ page }) => {
+          await page.setViewportSize({ width, height: 844 });
+          await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+          await mockApi(page);
+          const creates: Record<string, unknown>[] = [];
+          const schedules: Record<string, unknown>[] = [];
+          await page.route("**/api/admin/playlist-links", (route) => {
+            if (route.request().method() !== "POST") return route.fallback();
+            creates.push(route.request().postDataJSON());
+            return route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "new-playlist" }) });
+          });
+          await page.route("**/api/admin/playlist-links/new-playlist/schedules", (route) => {
+            schedules.push(route.request().postDataJSON());
+            return route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "schedule" }) });
+          });
+          await page.goto("#/library/playlists");
+          await page.getByRole("button", { name: "Import playlist" }).click();
+          const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+          await dialog.getByRole("radio", { name: /Spotify/ }).check();
+          await dialog.getByRole("radio", { name: /Source Mix/ }).check();
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          await dialog.getByRole("radio", { name: importMode === "oneTime" ? /Import once/ : /Keep in sync/ }).check();
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          if (destination === "existing") {
+            await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
+            await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+            await dialog.getByRole("radio", { name: /Road trip/ }).check();
+          } else {
+            await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
+          }
+          await dialog.getByRole("button", { name: "Continue" }).click();
+          const keep = dialog.getByRole("checkbox", { name: /Keep downloaded copies/ });
+          await expect(keep).not.toBeChecked();
+          await keep.focus();
+          await page.keyboard.press("Space");
+          await expect(keep).toBeChecked();
+          if (importMode === "oneTime") {
+            await expect(dialog.getByRole("button", { name: "Update schedule" })).toHaveCount(0);
+          } else {
+            await expect(dialog.getByRole("button", { name: "Update schedule" })).toContainText("Daily at 3:00 AM");
+          }
+          const save = dialog.getByRole("button", { name: importMode === "oneTime" ? "Import playlist" : "Import and link", exact: true });
+          await expect(save).toBeInViewport();
+          expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+          await save.click();
+          await expect(dialog).toBeHidden();
+          expect(creates).toHaveLength(1);
+          expect(creates[0]).toMatchObject({
+            importMode, targetPlaylistId: destination === "new" ? null : "jellyfin-playlist",
+            mode: "hybrid", projectionMode: "resolved", materializationMode: "reconcile",
+            mirrorStaleEntries: true, preserveManualEntries: true, trackRetention: "keepAll",
+          });
+          expect(schedules).toHaveLength(importMode === "linked" ? 1 : 0);
+          if (importMode === "linked") expect(schedules[0].cronExpression).toBe("0 3 * * *");
+        });
+      }
+    }
+  }
+}
