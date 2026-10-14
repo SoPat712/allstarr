@@ -103,6 +103,8 @@ Apply deployment changes through the saved profile:
 ./allstarr.sh status
 ```
 
+`up` rebuilds the gateway from the local files whenever the Apple profile is enabled, in both release and source modes. A failed build stops startup.
+
 For later application and gateway updates, use `./allstarr.sh update`. It preserves the Apple profile and its
 session volumes. Run `prepare-apple` again only when the verified wrapper inputs need to change; use
 `install-apple` when you want that verification, build, and startup handled in one command.
