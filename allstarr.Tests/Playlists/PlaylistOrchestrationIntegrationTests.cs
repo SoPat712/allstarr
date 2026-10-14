@@ -1317,9 +1317,11 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(0, _target.FindCalls);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task MembershipRemovalUpgradeConfirmsOnlyLegacyInactiveRemovals()
+    public async Task MembershipRemovalUpgradeConfirmsOnlyLegacyInactiveRemovals(bool confirmationMigrationAlreadyApplied)
     {
         _source.Snapshot = Snapshot("legacy-owned",
             Entry(0, "one", "source-1", "One"), Entry(1, "two", "source-2", "Two"));
@@ -1328,7 +1330,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var membership = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-1");
         membership.Active = false;
         await db.SaveChangesAsync();
-        await db.GetService<IMigrator>().MigrateAsync("20261010083000_CancelLegacyRematchJobs");
+        await db.GetService<IMigrator>().MigrateAsync(confirmationMigrationAlreadyApplied
+            ? "20261014162517_PreservePlaylistDestinationMode"
+            : "20261010083000_CancelLegacyRematchJobs");
         await db.Database.MigrateAsync();
         db.ChangeTracker.Clear();
         var migrated = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-1");
@@ -1341,11 +1345,36 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Null(active.RemovalConfirmedAt);
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
+    [Fact]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task UpgradePreservesAManuallyReaddedFormerSyncSong(bool sourceStillContainsSong)
+    public async Task RemovalBackfillPreservesActiveAndAlreadyConfirmedMemberships()
+    {
+        _source.Snapshot = Snapshot("confirmed-owned",
+            Entry(0, "one", "source-1", "One"), Entry(1, "two", "source-2", "Two"));
+        await _service.RunAsync(Context(), new(_link, 1060));
+        await using var db = await _factory.CreateDbContextAsync();
+        await db.GetService<IMigrator>().MigrateAsync("20261014170945_PublicPlaylistSources");
+        var confirmed = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-1");
+        confirmed.Active = false;
+        confirmed.RemovalConfirmedAt = _now.AddMinutes(-5);
+        await db.SaveChangesAsync();
+        await db.Database.MigrateAsync();
+        db.ChangeTracker.Clear();
+        var preserved = await db.PlaylistTargetMemberships.SingleAsync(item => item.Id == confirmed.Id);
+        Assert.Equal(confirmed.UpdatedAt, preserved.UpdatedAt);
+        Assert.Equal(confirmed.RemovalConfirmedAt, preserved.RemovalConfirmedAt);
+        var active = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-2");
+        Assert.True(active.Active);
+        Assert.Null(active.RemovalConfirmedAt);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task UpgradePreservesAManuallyReaddedFormerSyncSong(bool sourceStillContainsSong, bool confirmationMigrationAlreadyApplied)
     {
         await using (var setup = await _factory.CreateDbContextAsync())
         {
@@ -1359,7 +1388,11 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await using (var upgrade = await _factory.CreateDbContextAsync())
         {
             Assert.False((await upgrade.PlaylistTargetMemberships.SingleAsync()).Active);
-            await upgrade.GetService<IMigrator>().MigrateAsync("20261010083000_CancelLegacyRematchJobs");
+            await upgrade.GetService<IMigrator>().MigrateAsync(confirmationMigrationAlreadyApplied
+                ? "20261014162517_PreservePlaylistDestinationMode"
+                : "20261010083000_CancelLegacyRematchJobs");
+            if (confirmationMigrationAlreadyApplied)
+                await upgrade.Database.ExecuteSqlRawAsync("UPDATE playlist_target_memberships SET RemovalConfirmedAt = NULL WHERE Active = 0");
             _target.Seed("target-created", ["local-1"]);
             await upgrade.Database.MigrateAsync();
         }
