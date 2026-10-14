@@ -15,6 +15,29 @@ public sealed class MusicMixServiceTests
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
     [Fact]
+    public async Task SimilarSongs_ResolveOptionalRecordingSuggestionsAndDropUnresolvedOnes()
+    {
+        var context = MusicObservationsTests.Context();
+        using var handler = new ListenBrainzSimilarTracksTests.Handler("ok");
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetSongAsync(context, "deezer", "42"))
+            .ReturnsAsync(new Song { Id = "seed", ExternalId = "42", Artist = "Seed artist", Title = "Seed" });
+        gateway.Setup(item => item.GetSimilarSongsAsync(context, "deezer", "42", 2)).ReturnsAsync([]);
+        gateway.Setup(item => item.SearchAsync(context, "Artist First", 3, 0, 0, "deezer"))
+            .ReturnsAsync(new SearchResult { Songs = [new Song { Id = "found", Title = "First", Artist = "Artist" }] });
+        gateway.Setup(item => item.SearchAsync(context, "Artist Second", 3, 0, 0, "deezer"))
+            .ReturnsAsync(new SearchResult());
+
+        var result = await new MusicMixService(gateway.Object, listenBrainz: ListenBrainzSimilarTracksTests.Create(handler))
+            .SimilarSongsAsync(context, "deezer", "42", "seed", 2);
+
+        Assert.Equal("found", Assert.Single(result).Id);
+        Assert.Equal(1, handler.Calls);
+        gateway.VerifyAll();
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task SimilarSongs_PreferProviderRecommendationsAndDropTheSeed()
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);

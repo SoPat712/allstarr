@@ -12,7 +12,8 @@ namespace allstarr.Core.Music;
 /// artist's catalog stands in.
 /// Native seeds never reach this service; each protocol relays them to its backend.
 /// </summary>
-public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSimilarTracks? lastFm = null)
+public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSimilarTracks? lastFm = null,
+    ListenBrainzSimilarTracks? listenBrainz = null)
 {
     private const int SuggestionLookups = 10;
 
@@ -104,8 +105,8 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
     }
 
     /// <summary>
-    /// Songs recommended after a seed: the provider's own recommendations, else Last.fm
-    /// suggestions found on the seed's provider. Suggestions that cannot be found are dropped.
+    /// Songs recommended after a seed: the provider's recommendations, then optional Last.fm
+    /// or ListenBrainz suggestions resolved on the seed's provider. Unresolved suggestions are dropped.
     /// </summary>
     private async Task<IReadOnlyList<Song>> RecommendedAsync(
         ProtocolExecutionContext context,
@@ -114,9 +115,11 @@ public sealed class MusicMixService(IProtocolProviderGateway providers, LastFmSi
         int limit)
     {
         var recommended = await providers.GetSimilarSongsAsync(context, providerId, seed.ExternalId ?? "", limit) ?? [];
-        if (recommended.Count > 0 || lastFm == null) return recommended;
-        var suggestions = await lastFm.FindAsync(context, seed.Artist, seed.Title, Math.Min(limit, SuggestionLookups),
-            context.CancellationToken);
+        if (recommended.Count > 0) return recommended;
+        IReadOnlyList<SimilarTrackSuggestion> suggestions = lastFm == null ? [] :
+            await lastFm.FindAsync(context, seed.Artist, seed.Title, Math.Min(limit, SuggestionLookups), context.CancellationToken);
+        if (suggestions.Count == 0 && listenBrainz != null)
+            suggestions = await listenBrainz.FindAsync(context, seed.Id, Math.Min(limit, SuggestionLookups), context.CancellationToken);
         var found = await Task.WhenAll(suggestions.Select(suggestion => FindOnProviderAsync(context, providerId, suggestion)));
         return found.OfType<Song>()
             .GroupBy(song => song.Id, StringComparer.Ordinal)
