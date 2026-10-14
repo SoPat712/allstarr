@@ -395,6 +395,8 @@ builder.Services.AddSingleton<allstarr.Core.Music.MusicSearchService>();
 builder.Services.AddSingleton<allstarr.Core.Music.ProviderStreamOpener>();
 builder.Services.AddHttpClient(nameof(allstarr.Core.Music.LastFmSimilarTracks));
 builder.Services.AddSingleton<allstarr.Core.Music.LastFmSimilarTracks>();
+builder.Services.AddHttpClient(nameof(allstarr.Core.Music.ListenBrainzSimilarTracks));
+builder.Services.AddSingleton<allstarr.Core.Music.ListenBrainzSimilarTracks>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicMixService>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicCatalogMerge>();
 
