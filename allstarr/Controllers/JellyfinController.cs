@@ -1164,10 +1164,8 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                var similarSongs = (await _musicMix.SimilarSongsAsync(
-                        HttpContext.RequireProtocolExecutionContext(), provider!, externalId!, itemId, limit))
-                    .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
-                    .ToList();
+                var similarSongs = await ProjectMixSongsAsync(await _musicMix.SimilarSongsAsync(
+                        HttpContext.RequireProtocolExecutionContext(), provider!, externalId!, itemId, limit));
 
                 return _responseBuilder.CreateJsonResponse(new
                 {
@@ -1201,6 +1199,18 @@ public partial class JellyfinController : ControllerBase
         var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
 
         return HandleProxyResponse(result, statusCode);
+    }
+
+    private async Task<List<Dictionary<string, object?>>> ProjectMixSongsAsync(IReadOnlyList<Song> songs)
+    {
+        var context = HttpContext.RequireProtocolExecutionContext();
+        var entries = await _musicSearch.ProjectSongsAsync(context, songs,
+            new JellyfinNativeMusicSearch(
+                _ => Task.FromResult<(JsonDocument?, int)>((null, 200)),
+                (id, _) => _proxyService.GetJsonAsync(
+                    $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
+                    null, Request.Headers)), HttpContext.RequestAborted);
+        return entries.Select(RenderSearchEntry).ToList();
     }
 
     [HttpGet("Songs/{itemId}/InstantMix")]
@@ -1242,10 +1252,8 @@ public partial class JellyfinController : ControllerBase
 
             try
             {
-                var shuffledMix = (await _musicMix.InstantMixAsync(
-                        HttpContext.RequireProtocolExecutionContext(), provider!, resourceType!, externalId!, itemId, limit))
-                    .Select(s => _responseBuilder.ConvertSongToJellyfinItem(s))
-                    .ToList();
+                var shuffledMix = await ProjectMixSongsAsync(await _musicMix.InstantMixAsync(
+                        HttpContext.RequireProtocolExecutionContext(), provider!, resourceType!, externalId!, itemId, limit));
 
                 return CreateProtocolResponse(_interactionProtocolAdapter.ShapeInstantMix(shuffledMix));
             }

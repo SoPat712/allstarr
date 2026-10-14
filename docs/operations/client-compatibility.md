@@ -92,3 +92,5 @@ Please include:
 Do not post passwords, cookies, API keys, tokens, signed media URLs, or an unredacted `.env`. A reproducible report is welcome even when the client is not listed above.
 
 Similar-song and instant-mix suggestions can use the public [ListenBrainz similar-recordings dataset](https://labs.api.listenbrainz.org/similar-recordings) when the listener’s seed already has a MusicBrainz recording ID. No account or identity-discovery request is needed. The lookup has a five-second deadline, bounded response size and a fifteen-minute metadata cache. Missing identity, unavailable service or unresolved suggestions leave the existing artist fallback available. Native seeds still use the backend.
+
+Provider mixes prefer a known, accessible library copy and retain its complete native metadata. If that copy cannot be read, the provider song remains available. Verified recording aliases collapse; matching names alone never collapse songs.
