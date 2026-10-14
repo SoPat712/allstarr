@@ -588,6 +588,7 @@ async function mockApi(page: Page, options: {
             durationDeltaMilliseconds: 250,
             providerTrackIds: { "lumen-audio": "provider-track", "apple-download": "apple-track" },
             confidence: 0.82, durationMilliseconds: 180_000, components: { title: 1 },
+            reasons: ["title_fuzzy", "artist_exact"], warnings: ["semantic_version_mismatch_review"],
           }, {
             libraryTrackId: "metadata-only", isLocal: false, title: "MusicBrainz album",
             artist: "Metadata only", providerTrackIds: { musicbrainzalbum: "release-id" },

@@ -125,8 +125,17 @@
       : "";
   }
 
+  const evidenceLabels: Record<string, string> = {
+    title_case_folded: "Title matches ignoring case",
+    title_normalized: "Title matches after normalization",
+    title_decorators_ignored: "Title matches without release labels",
+    title_fuzzy: "Fuzzy title comparison",
+    semantic_version_mismatch: "Different recording version",
+    semantic_version_mismatch_review: "Different version needs review",
+  };
+
   function evidenceLabel(value: string) {
-    return value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
+    return evidenceLabels[value] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
   }
 
   function candidateFacts(candidate: MatchReviewItem["candidates"][number]) {

@@ -135,7 +135,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v20";
+    public const string AlgorithmVersion = "accepted-routing-v21";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -286,7 +286,11 @@ public sealed class TrackMatchDecisionEngine
     private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
         score.Confidence >= _policy.AcceptThreshold &&
         HasStrongArtistEvidence(score) &&
-        HasDurationWithinTolerance(score);
+        HasDurationWithinTolerance(score) &&
+        HasSameSemanticVersion(score);
+
+    private static bool HasSameSemanticVersion(TrackMatchCandidateScore score) =>
+        score.Components == null || !score.Components.TryGetValue("versionTags", out var match) || match > 0;
 
     private static bool HasDurationWithinTolerance(TrackMatchCandidateScore score) =>
         score.Components == null ||
@@ -369,6 +373,7 @@ public sealed class TrackMatchDecisionEngine
         var selectedPriority = Priority(selected, providerPriority);
         var runnerUp = rankedScores.FirstOrDefault(score =>
             score.LibraryTrackId != best.LibraryTrackId &&
+            (!IsAcceptanceQualified(best) || HasSameSemanticVersion(score)) &&
             Priority(
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId),
                 providerPriority).Rank == selectedPriority.Rank &&
@@ -391,10 +396,9 @@ public sealed class TrackMatchDecisionEngine
 
         var decisionScore = best.Confidence;
         var strongArtistEvidence = HasStrongArtistEvidence(best);
-        var durationWithinTolerance = HasDurationWithinTolerance(best);
-        var state = decisionScore >= _policy.AcceptThreshold && strongArtistEvidence && durationWithinTolerance
+        var state = IsAcceptanceQualified(best)
             ? TrackMatchReviewState.Accepted
-            : decisionScore >= _policy.SuggestThreshold && strongArtistEvidence
+            : decisionScore >= _policy.SuggestThreshold && strongArtistEvidence && HasSameSemanticVersion(best)
                 ? TrackMatchReviewState.Suggested
                 : TrackMatchReviewState.Unresolved;
         return Result(
@@ -407,6 +411,9 @@ public sealed class TrackMatchDecisionEngine
             best.Reasons,
             state switch
             {
+                TrackMatchReviewState.Unresolved when !HasSameSemanticVersion(best) && decisionScore < _policy.AcceptThreshold =>
+                    ["below_accept_threshold_review", "semantic_version_mismatch_review"],
+                TrackMatchReviewState.Unresolved when !HasSameSemanticVersion(best) => ["semantic_version_mismatch_review"],
                 TrackMatchReviewState.Suggested => ["below_accept_threshold_review"],
                 TrackMatchReviewState.Unresolved when
                     decisionScore >= _policy.SuggestThreshold && !strongArtistEvidence => ["weak_artist_evidence_review"],
@@ -642,8 +649,9 @@ public static class TrackMatchOverridePolicy
             return false;
         if (!manual.LibraryTrackId.HasValue)
             return true;
-        if (manual.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion)
-            return false;
+        if (decision?.State == TrackMatchState.Accepted ||
+            decision?.LibraryTrackId.HasValue == true && decision.State != TrackMatchState.Rejected)
+            return decision.LibraryTrackId == manual.LibraryTrackId;
         return decision == null ||
                decision.State == TrackMatchState.Rejected ||
                decision.LibraryTrackId == manual.LibraryTrackId ||
