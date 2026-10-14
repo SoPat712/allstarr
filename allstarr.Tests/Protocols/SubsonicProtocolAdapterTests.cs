@@ -150,7 +150,7 @@ public sealed class SubsonicProtocolAdapterTests
         var controller = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Controllers", "SubsonicController.cs"));
 
-        Assert.Contains("new[] { \"id\", \"albumId\", \"artistId\" }.SelectMany(parameters.GetAllValues)", controller, StringComparison.Ordinal);
+        Assert.Contains("parameters.GetAllValues(\"id\")", controller, StringComparison.Ordinal);
         Assert.DoesNotContain("var itemId = parameters.GetValueOrDefault(\"id\", \"\");\n                if (!string.IsNullOrWhiteSpace(itemId))", controller, StringComparison.Ordinal);
     }
 

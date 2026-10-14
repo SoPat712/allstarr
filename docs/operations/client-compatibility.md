@@ -46,7 +46,7 @@ These clients have been used with a Navidrome or other Subsonic-compatible backe
 
 The Subsonic surface accepts normal query and form-post request styles and preserves XML or JSON responses. It supports integrated search, item lookup, streaming, cover art, structured lyrics, stars, playlists and playback observations, and relays the backend's other music methods unchanged. Methods outside music library access (video, podcasts, internet radio, shares, chat, user administration, starting library scans and jukebox control) return Subsonic error 70 with HTTP 404 and never reach the backend.
 
-Subsonic `star` and `unstar` handle provider songs, albums, artists, and external playlists through the shared favorites workflow. Provider songs queue the same kept-copy download as a Jellyfin heart. Mixed requests relay only native IDs, preserving the remaining parameters and body data. Provider actions require a linked Allstarr user.
+Subsonic `star` and `unstar` handle provider songs, albums, artists, and external playlists through the shared favorites workflow. Provider songs queue the same kept-copy download as a Jellyfin heart. Mixed requests relay only native IDs, preserving the remaining parameters and body data. Provider actions require a linked Allstarr user. For an unlinked user, mixed requests relay native IDs and return error 50 for the refused provider actions. Provider-only successful requests return a plain `ok` envelope. Native `id` favorites remain recorded locally; native `albumId` and `artistId` actions are only relayed.
 
 Allstarr adds provider content to these methods:
 

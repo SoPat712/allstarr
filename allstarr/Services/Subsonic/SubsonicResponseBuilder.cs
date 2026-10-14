@@ -12,7 +12,9 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
     private const string SubsonicNamespace = "http://subsonic.org/restapi";
     private const string SubsonicVersion = "1.16.1";
 
-    public IActionResult CreateResponse(string format, string elementName, object data)
+    public IActionResult CreateOkResponse(string format) => CreateResponse(format, null, new { });
+
+    public IActionResult CreateResponse(string format, string? elementName, object data)
     {
         if (format == "json")
         {
@@ -24,7 +26,7 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
             new XElement(ns + "subsonic-response",
                 new XAttribute("status", "ok"),
                 new XAttribute("version", SubsonicVersion),
-                new XElement(ns + elementName)
+                elementName == null ? null : new XElement(ns + elementName)
             )
         );
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
