@@ -101,6 +101,90 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
     [Theory]
     [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task FailedWriteRetainsTheExactDestinationAndOnlyConfirmedAddedMemberships(bool existing, bool formerSyncSong)
+    {
+        var targetId = existing ? "manual-target" : "created-before-metadata-failure";
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            var link = await setup.PlaylistLinks.SingleAsync();
+            link.TargetPlaylistId = existing ? targetId : null;
+            link.MirrorStaleEntries = true;
+            link.DestinationMode = existing ? PlaylistDestinationMode.Existing : PlaylistDestinationMode.New;
+            await setup.SaveChangesAsync();
+        }
+        if (formerSyncSong)
+        {
+            _target.Seed(targetId, []);
+            _source.Snapshot = Snapshot("original-owned", Entry(0, "one", "source-1", "One"));
+            await _service.RunAsync(Context(), new(_link, 1097));
+            _source.Snapshot = Snapshot("original-removed");
+            await _service.RunAsync(Context(), new(_link, 1098));
+            await using var verify = await _factory.CreateDbContextAsync();
+            var removed = await verify.PlaylistTargetMemberships.SingleAsync();
+            Assert.False(removed.Active);
+            Assert.NotNull(removed.RemovalConfirmedAt);
+        }
+        if (existing) _target.Seed(targetId, ["local-1", "manual"]);
+        _source.Snapshot = Snapshot("partial-membership-write",
+            Entry(0, "one", "source-1", "One"), Entry(1, "two", "source-2", "Two"));
+        _target.WriteStatus = BackendPlaylistTargetStatus.BackendFailure;
+        _target.ErrorCode = "metadata-write-failed";
+        _target.RecoveryPlaylistId = targetId;
+        _target.FailedWriteMembers = existing ? ["local-1", "local-2", "manual"] : ["local-2", "manual"];
+        var failed = await _service.RunAsync(Context(), new(_link, 1101));
+        Assert.Equal(PlaylistSyncState.Failed, failed.State);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            var link = await verify.PlaylistLinks.SingleAsync();
+            Assert.Equal(targetId, link.TargetPlaylistId);
+            Assert.Equal(existing ? PlaylistDestinationMode.Existing : PlaylistDestinationMode.New, link.DestinationMode);
+            Assert.Equal([_trackTwo], await verify.PlaylistTargetMemberships.Where(item => item.Active)
+                .Select(item => item.LibraryTrackId).ToListAsync());
+        }
+        _target.WriteStatus = BackendPlaylistTargetStatus.Success;
+        await _service.RunAsync(Context(), new(_link, 1101));
+        Assert.Equal(targetId, _target.LastWrite!.BackendPlaylistId);
+        Assert.Equal(existing ? 0 : 1, _target.CreateCalls);
+        _source.Snapshot = Snapshot("remove-only-confirmed-owned");
+        await _service.RunAsync(Context(), new(_link, 1102));
+        var after = await _target.ReadAsync(new("backend", "principal"), targetId, default);
+        Assert.Equal(existing ? ["local-1", "manual"] : new[] { "manual" },
+            after.Value!.Members.Select(item => item.BackendItemId));
+        Assert.Equal(existing ? 0 : 1, _target.CreateCalls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedRecoveryReadRetainsCreatedIdWithoutClaimingUnverifiedMemberships(bool mismatchedId)
+    {
+        _source.Snapshot = Snapshot("failed-read-recovery", Entry(0, "one", "source-1", "One"));
+        _target.WriteStatus = BackendPlaylistTargetStatus.BackendFailure;
+        _target.ReadStatus = mismatchedId ? BackendPlaylistTargetStatus.Success : BackendPlaylistTargetStatus.BackendFailure;
+        _target.ReadReturnedPlaylistId = mismatchedId ? "unrelated-target" : null;
+        _target.RecoveryPlaylistId = "created-with-unverified-members";
+        _target.FailedWriteMembers = ["local-1"];
+        var failed = await _service.RunAsync(Context(), new(_link, 1103));
+        Assert.Equal(PlaylistSyncState.Failed, failed.State);
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            Assert.Equal(_target.RecoveryPlaylistId, (await verify.PlaylistLinks.SingleAsync()).TargetPlaylistId);
+            Assert.Empty(await verify.PlaylistTargetMemberships.ToListAsync());
+        }
+        _target.ReadReturnedPlaylistId = null;
+        _target.ReadStatus = BackendPlaylistTargetStatus.Success;
+        _target.WriteStatus = BackendPlaylistTargetStatus.Success;
+        await _service.RunAsync(Context(), new(_link, 1103));
+        Assert.Equal(_target.RecoveryPlaylistId, _target.LastWrite!.BackendPlaylistId);
+        Assert.Equal(1, _target.CreateCalls);
+        await using var final = await _factory.CreateDbContextAsync();
+        Assert.Empty(await final.PlaylistTargetMemberships.ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
     public async Task DisabledMetadataSyncPreservesManualTargetFields(bool syncName, bool syncDescription)
@@ -1273,14 +1357,22 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             item.ExternalIdHash == Hash("apple-concurrent")));
     }
 
-    [Fact]
-    public async Task DestinationEditDuringBackendWriteKeepsTheNewSelectionAndRetiresTheStaleRun()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DestinationEditDuringBackendWriteKeepsTheNewSelectionAndRetiresTheStaleRun(bool writeFails)
     {
         _source.Snapshot = Snapshot("destination-race", Entry(0, "one", "source-1", "One"));
         var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _target.WriteStarted = started;
         _target.WriteBlock = released.Task;
+        if (writeFails)
+        {
+            _target.WriteStatus = BackendPlaylistTargetStatus.BackendFailure;
+            _target.RecoveryPlaylistId = "stale-created-target";
+            _target.FailedWriteMembers = ["local-1"];
+        }
         var run = _service.RunAsync(Context(), new(_link, 1045));
         await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         try
@@ -2655,6 +2747,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public int FindCalls { get; private set; }
         public int ReadCalls { get; private set; }
         public int WriteCalls { get; private set; }
+        public int CreateCalls { get; private set; }
+        public string? RecoveryPlaylistId { get; set; }
+        public string[]? FailedWriteMembers { get; set; }
+        public string? ReadReturnedPlaylistId { get; set; }
         public int TotalCalls => FindCalls + ReadCalls + WriteCalls;
         public int ReportedTrackCountAdjustment { get; set; }
         public long ReportedDurationAdjustmentMilliseconds { get; set; }
@@ -2693,11 +2789,14 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                     ? last
                     : Backend(backendPlaylistId)
                 : null;
+            if (snapshot != null && ReadReturnedPlaylistId != null)
+                snapshot = snapshot with { BackendPlaylistId = ReadReturnedPlaylistId };
             return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot>(ReadStatus, snapshot, ErrorCode: ErrorCode));
         }
         public async Task<BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>> WriteAsync(BackendPlaylistTargetContext context, BackendPlaylistWriteRequest request, CancellationToken cancellationToken)
         {
             WriteCalls++; Contexts.Add(context); LastWrite = request;
+            if (request.BackendPlaylistId == null) CreateCalls++;
             WriteStarted?.TrySetResult();
             if (WriteBlock != null)
                 await WriteBlock.WaitAsync(cancellationToken);
@@ -2706,12 +2805,12 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 .Where(id => IgnoreRemovals || !request.RemoveStaleSyncOwnedItems || !request.SyncOwnedBackendItemIds.Contains(id));
             LastSnapshot = WriteStatus == BackendPlaylistTargetStatus.Success
                 ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds.Concat(retained).Distinct())
-                : null;
-            var receipt = LastSnapshot == null
+                : FailedWriteMembers == null ? null : Backend(RecoveryPlaylistId!, FailedWriteMembers);
+            var receipt = WriteStatus != BackendPlaylistTargetStatus.Success || LastSnapshot == null
                 ? null
                 : new BackendPlaylistWriteReceipt(LastSnapshot, true, []);
             return new BackendPlaylistTargetResult<BackendPlaylistWriteReceipt>(
-                WriteStatus, receipt, ErrorCode: ErrorCode);
+                WriteStatus, receipt, ErrorCode: ErrorCode, RecoveryPlaylistId: RecoveryPlaylistId);
         }
         private BackendPlaylistSnapshot Backend(string id, IEnumerable<string>? members = null)
         {

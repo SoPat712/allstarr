@@ -354,9 +354,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 var read = await target.ReadAsync(targetContext, link.TargetPlaylistId, cancellationToken);
                 if (read.IsSuccess) before = read.Value;
                 else if (read.Status is not BackendPlaylistTargetStatus.NotFound)
-                    return await RecordFailureAsync(runId, plan,
+                    return await RecordFailureAsync(runId, link, plan,
                         read.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
-                        read.ErrorCode ?? read.Status.ToString(), before?.Fingerprint, backendWriteAttempted: false,
+                        read.ErrorCode ?? read.Status.ToString(), before, backendWriteAttempted: false,
                         cancellationToken);
             }
 
@@ -370,10 +370,23 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 before?.NativeRevision, before?.Fingerprint,
                 owned, link.MirrorStaleEntries), cancellationToken);
             if (!write.IsSuccess || write.Value == null)
-                return await RecordFailureAsync(runId, plan,
+            {
+                var recoveryId = plan.Mode == PlaylistPlanMode.Reconcile &&
+                                 (link.TargetPlaylistId == null || link.TargetPlaylistId == write.RecoveryPlaylistId)
+                    ? write.RecoveryPlaylistId
+                    : null;
+                BackendPlaylistSnapshot? recovered = null;
+                if (recoveryId != null)
+                {
+                    var recoveryRead = await target.ReadAsync(targetContext, recoveryId, cancellationToken);
+                    if (recoveryRead.IsSuccess && recoveryRead.Value?.BackendPlaylistId == recoveryId)
+                        recovered = recoveryRead.Value;
+                }
+                return await RecordFailureAsync(runId, link, plan,
                     write.Status == BackendPlaylistTargetStatus.Conflict ? PlaylistSyncState.Conflicted : PlaylistSyncState.Failed,
-                    write.ErrorCode ?? write.Status.ToString(), before?.Fingerprint, backendWriteAttempted: true,
-                    cancellationToken);
+                    write.ErrorCode ?? write.Status.ToString(), before, backendWriteAttempted: true,
+                    cancellationToken, recoveryId, recovered);
+            }
 
             var receipt = artworkIssue == null
                 ? write.Value
@@ -1299,13 +1312,29 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         run.VerifiedAt = _clock.UtcNow;
         run.CompletedAt = _clock.UtcNow;
         run.Revision++;
+        PersistMembershipEvidence(db, run.Id, link, plan, before, receipt.Snapshot, memberships,
+            verificationError == null, requireObservedAdditions: false);
+        trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
+        await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
+        return new(plan, run.Id, state, true, false,
+            verification.Code == "verified" ? metadataIssue : verification.Code);
+    }
+
+    private void PersistMembershipEvidence(
+        AllstarrDbContext db, Guid runId, PlaylistLinkRecord link, PlaylistMaterializationPlan plan,
+        BackendPlaylistSnapshot? before, BackendPlaylistSnapshot after,
+        IReadOnlyCollection<PlaylistTargetMembershipRecord> memberships, bool removalVerified,
+        bool requireObservedAdditions)
+    {
+        var presentIds = after.Members.Select(item => item.BackendItemId).ToHashSet(StringComparer.Ordinal);
         var included = plan.Entries.Where(item => item.Status == PlaylistPreviewEntryStatus.Included && item.LibraryTrackId.HasValue).ToArray();
         var membershipByLibraryTrack = memberships.ToDictionary(item => item.LibraryTrackId);
-        var preexistingIds = before?.BackendPlaylistId == receipt.Snapshot.BackendPlaylistId
+        var preexistingIds = before?.BackendPlaylistId == after.BackendPlaylistId
             ? before.Members.Select(item => item.BackendItemId).ToHashSet(StringComparer.Ordinal)
             : new HashSet<string>(StringComparer.Ordinal);
         var includedLibraryTrackIds = included.Select(item => item.LibraryTrackId!.Value).ToHashSet();
-        foreach (var entry in included)
+        foreach (var entry in included.Where(item => !requireObservedAdditions ||
+                     presentIds.Contains(item.BackendItemId!)))
         {
             membershipByLibraryTrack.TryGetValue(entry.LibraryTrackId!.Value, out var membership);
             // Existing manual entries, including manually re-added former sync entries, stay manual.
@@ -1318,7 +1347,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     Id = Guid.CreateVersion7(),
                     PlaylistLinkId = link.Id,
                     LibraryTrackId = entry.LibraryTrackId!.Value,
-                    CreatedBySyncRunId = run.Id,
+                    CreatedBySyncRunId = runId,
                     TargetEntryId = entry.BackendItemId!,
                     CreatedAt = _clock.UtcNow
                 };
@@ -1333,17 +1362,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             foreach (var stale in memberships.Where(item =>
                          (item.Active || item.RemovalConfirmedAt == null) && !includedLibraryTrackIds.Contains(item.LibraryTrackId)))
             {
-                var removed = verificationError == null &&
-                              !receipt.Snapshot.Members.Any(item => item.BackendItemId == stale.TargetEntryId);
+                var removed = removalVerified &&
+                              !presentIds.Contains(stale.TargetEntryId);
                 stale.Active = !removed;
                 stale.RemovalConfirmedAt = removed ? _clock.UtcNow : null;
                 stale.UpdatedAt = _clock.UtcNow;
                 stale.Revision++;
             }
-        trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
-        await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
-        return new(plan, run.Id, state, true, false,
-            verification.Code == "verified" ? metadataIssue : verification.Code);
     }
 
     private static async Task<MaterializationVerification> VerifyMaterializationAsync(
@@ -1434,19 +1459,44 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         string Code);
 
     private async Task<PlaylistOrchestrationResult> RecordFailureAsync(
-        Guid runId, PlaylistMaterializationPlan plan, PlaylistSyncState state, string code,
-        string? targetBefore, bool backendWriteAttempted, CancellationToken cancellationToken)
+        Guid runId, PlaylistLinkRecord link, PlaylistMaterializationPlan plan, PlaylistSyncState state, string code,
+        BackendPlaylistSnapshot? before, bool backendWriteAttempted, CancellationToken cancellationToken,
+        string? recoveryPlaylistId = null, BackendPlaylistSnapshot? recovered = null)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var run = await db.PlaylistSyncRuns.SingleAsync(item =>
-            item.Id == runId && item.State == PlaylistSyncState.Running,
+            item.Id == runId && item.OwnerUserId == link.OwnerUserId &&
+            item.PlaylistLinkId == link.Id && item.State == PlaylistSyncState.Running,
             cancellationToken);
+        var trackedLink = await db.PlaylistLinks.SingleAsync(item =>
+            item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
+        if (trackedLink.Revision != link.Revision)
+        {
+            state = PlaylistSyncState.Conflicted;
+            code = "playlist_link_changed";
+        }
+        else if (recoveryPlaylistId != null)
+        {
+            if (recovered != null)
+            {
+                var memberships = await db.PlaylistTargetMemberships
+                    .Where(item => item.PlaylistLinkId == link.Id).ToListAsync(cancellationToken);
+                PersistMembershipEvidence(db, run.Id, link, plan, before, recovered, memberships,
+                    removalVerified: true, requireObservedAdditions: true);
+            }
+            trackedLink.TargetPlaylistId = recoveryPlaylistId;
+            trackedLink.UpdatedAt = _clock.UtcNow;
+            trackedLink.Revision++;
+        }
         run.State = state;
-        run.TargetRevisionBefore = targetBefore;
+        run.TargetRevisionBefore = before?.Fingerprint;
+        run.TargetRevisionAfter = recovered?.Fingerprint;
         run.ConflictCode = code;
         run.CompletedAt = _clock.UtcNow;
         run.Revision++;
         await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         return new(plan, runId, state, backendWriteAttempted, false, code);
     }
 
