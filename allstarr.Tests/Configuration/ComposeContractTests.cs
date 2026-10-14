@@ -147,6 +147,55 @@ public sealed class ComposeContractTests
             $"Expected [{string.Join(", ", expected)}], got [{string.Join(", ", services)}].");
     }
 
+    [Theory]
+    [InlineData("release", false, false)]
+    [InlineData("source", false, false)]
+    [InlineData("release", true, false)]
+    [InlineData("source", true, false)]
+    [InlineData("release", true, true)]
+    public async Task Up_BuildsEnabledGatewayBeforeStarting(string mode, bool apple, bool failBuild)
+    {
+        var root = Path.Combine(Path.GetTempPath(), $"allstarr-compose-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(root);
+        try
+        {
+            File.Copy(Path.Combine(_repositoryRoot, "allstarr.sh"), Path.Combine(root, "allstarr.sh"));
+            await File.WriteAllTextAsync(Path.Combine(root, ".env"), "FIXTURE=true\n");
+            await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-mode"), mode + "\n");
+            await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-profiles"), apple ? "apple\n" : "");
+            var docker = Path.Combine(root, "docker");
+            await File.WriteAllTextAsync(docker, "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_COMMANDS\"\n" +
+                (failBuild ? "[[ \"$*\" != *'build apple-gateway'* ]]\n" : "exit 0\n"));
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(docker,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            var start = new ProcessStartInfo("bash")
+            {
+                WorkingDirectory = root,
+                UseShellExecute = false,
+                RedirectStandardError = true,
+                RedirectStandardOutput = true
+            };
+            start.ArgumentList.Add(Path.Combine(root, "allstarr.sh"));
+            start.ArgumentList.Add("up");
+            start.Environment["PATH"] = root + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
+            start.Environment["FIXTURE_COMMANDS"] = Path.Combine(root, "commands");
+            using var process = Process.Start(start)!;
+            await process.WaitForExitAsync();
+            var commands = await File.ReadAllLinesAsync(Path.Combine(root, "commands"));
+            Assert.Equal(!failBuild, process.ExitCode == 0);
+            Assert.Equal(mode == "source", commands.Any(command => command.EndsWith("build allstarr", StringComparison.Ordinal)));
+            Assert.Equal(apple, commands.Any(command => command.EndsWith("build apple-gateway", StringComparison.Ordinal)));
+            var startIndex = Array.FindIndex(commands, command => command.Contains("up -d", StringComparison.Ordinal));
+            if (failBuild) Assert.Equal(-1, startIndex);
+            else
+            {
+                Assert.True(startIndex >= 0);
+                if (apple) Assert.True(Array.FindIndex(commands, command => command.EndsWith("build apple-gateway", StringComparison.Ordinal)) < startIndex);
+            }
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
     [Fact]
     public void Controller_UsesOneComposeFileAndFailsClosed()
     {

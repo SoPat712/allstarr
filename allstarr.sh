@@ -170,6 +170,9 @@ up() {
   if [[ "$(deployment_mode)" == source ]]; then
     docker compose "${COMPOSE[@]}" build allstarr
   fi
+  if profiles | grep -qx apple; then
+    docker compose "${COMPOSE[@]}" build apple-gateway
+  fi
   start_stack
   docker compose "${COMPOSE[@]}" ps
 }
