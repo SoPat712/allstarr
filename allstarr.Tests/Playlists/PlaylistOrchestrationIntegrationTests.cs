@@ -1196,6 +1196,87 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task SyncDoesNotReclaimASongManuallyReaddedAfterItsOwnedCopyWasRemoved()
+    {
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            (await setup.PlaylistLinks.SingleAsync()).MirrorStaleEntries = true;
+            await setup.SaveChangesAsync();
+        }
+        _source.Snapshot = Snapshot("first-owned", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1011));
+        _source.Snapshot = Snapshot("remove-owned");
+        await _service.RunAsync(Context(), new(_link, 1012));
+        _target.Seed("target-created", ["local-1"]);
+        _source.Snapshot = Snapshot("manual-reappears", Entry(0, "one-again", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1013));
+        await using (var verify = await _factory.CreateDbContextAsync())
+            Assert.Empty(await verify.PlaylistTargetMemberships.Where(item => item.Active).ToListAsync());
+        _source.Snapshot = Snapshot("remove-source-again");
+        await _service.RunAsync(Context(), new(_link, 1014));
+        var after = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-created", default);
+        Assert.Equal(["local-1"], after.Value!.Members.Select(item => item.BackendItemId));
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task AccountlessMaterializationJobOnlyReplaysAFrozenOneTimeImport(bool oneTime, bool imported)
+    {
+        if (oneTime) await SetLink(importMode: PlaylistImportMode.OneTime);
+        _source.Snapshot = Snapshot("frozen-job", Entry(0, "one", "source-1", "One"));
+        if (imported) await _service.RunAsync(Context(), new(_link, 1021));
+        if (oneTime)
+        {
+            await using var setup = await _factory.CreateDbContextAsync();
+            (await setup.ProviderAccounts.SingleAsync()).Enabled = false;
+            await setup.SaveChangesAsync();
+        }
+        _source.FailureCode = "source-must-not-be-read";
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), new Clock(_now));
+        await queue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
+            "playlist.materialize", "frozen-replay", new(_link, 1022), _user));
+        var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("frozen-worker"));
+        var completion = await new PlaylistMaterializationJobHandler(_factory, _service, new Clock(_now))
+            .ExecuteAsync(new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
+        Assert.Equal(oneTime && imported ? DurableJobCompletionKind.Succeeded : DurableJobCompletionKind.Failed, completion.Kind);
+        Assert.Equal(imported ? 1 : 0, _source.CollectCalls);
+        Assert.Equal(imported ? oneTime ? 2 : 1 : 0, _target.WriteCalls);
+    }
+
+    [Fact]
+    public async Task SyncNeverClaimsOrRemovesAPreexistingManualSong()
+    {
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            var link = await setup.PlaylistLinks.SingleAsync();
+            link.TargetPlaylistId = "existing";
+            link.MirrorStaleEntries = true;
+            await setup.SaveChangesAsync();
+        }
+        _target.Seed("existing", ["local-1"]);
+        _source.Snapshot = Snapshot("with-both",
+            Entry(0, "first", "source-1", "One"), Entry(1, "second", "source-2", "Two"));
+        await _service.RunAsync(Context(), new(_link, 1001));
+        await using (var verify = await _factory.CreateDbContextAsync())
+        {
+            var owned = await verify.PlaylistTargetMemberships.Where(item => item.Active).ToListAsync();
+            Assert.Equal("local-2", Assert.Single(owned).TargetEntryId);
+        }
+
+        _source.Snapshot = Snapshot("removed-both");
+        await _service.RunAsync(Context(), new(_link, 1002));
+
+        Assert.Equal(["local-2"], _target.LastWrite!.SyncOwnedBackendItemIds);
+        var after = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "existing", default);
+        Assert.Equal(["local-1"], after.Value!.Members.Select(item => item.BackendItemId));
+        await using var final = await _factory.CreateDbContextAsync();
+        Assert.Empty(await final.PlaylistTargetMemberships.Where(item => item.Active).ToListAsync());
+    }
+
+    [Fact]
     public async Task Reconcile_writes_order_records_skips_propagates_credential_and_same_generation_is_idempotent()
     {
         _source.Snapshot = Snapshot("revision-reconcile", Entry(0, "entry-0", "source-2", "Two"), Entry(1, "entry-1", "source-1", "One"), Entry(2, "entry-2", "missing", "Missing"));
@@ -2291,6 +2372,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public Task? WriteBlock { get; set; }
         public BackendPlaylistWriteRequest? LastWrite { get; private set; }
         private BackendPlaylistSnapshot? LastSnapshot { get; set; }
+        public void Seed(string id, IEnumerable<string> members) => LastSnapshot = Backend(id, members);
         public List<BackendPlaylistTargetContext> Contexts { get; } = [];
         public Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(BackendPlaylistTargetContext context, string? query, int limit, CancellationToken cancellationToken) =>
             Task.FromResult(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>(BackendPlaylistTargetStatus.Success, []));
@@ -2317,8 +2399,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             WriteStarted?.TrySetResult();
             if (WriteBlock != null)
                 await WriteBlock.WaitAsync(cancellationToken);
+            var retained = (LastSnapshot?.Members ?? []).Select(item => item.BackendItemId)
+                .Where(id => !request.RemoveStaleSyncOwnedItems || !request.SyncOwnedBackendItemIds.Contains(id));
             LastSnapshot = WriteStatus == BackendPlaylistTargetStatus.Success
-                ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds)
+                ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds.Concat(retained).Distinct())
                 : null;
             var receipt = LastSnapshot == null
                 ? null

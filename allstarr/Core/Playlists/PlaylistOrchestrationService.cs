@@ -253,13 +253,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         PersistenceGuard.RequireOwner(actor, link.OwnerUserId);
         RequireLinkExecutionContext(execution, actor, link);
         if (!link.Enabled) throw new InvalidOperationException("The playlist is paused. Resume it before synchronizing.");
-        var account = await initial.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
-            cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
-        if (account.Scope == ProviderAccountScope.Personal &&
-            (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
-            throw new UnauthorizedAccessException("The playlist account is outside the execution owner.");
-
         var frozenSnapshotId = link.ImportMode == PlaylistImportMode.OneTime
             ? await initial.PlaylistSourceSnapshots.AsNoTracking()
                 .Where(item => item.OwnerUserId == link.OwnerUserId && item.PlaylistLinkId == link.Id && item.PublishedAt.HasValue)
@@ -272,6 +265,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             request.SourceSnapshotId != frozenSnapshotId)
             throw new InvalidOperationException("A one-time import is frozen to its first published snapshot.");
         var reusingOneTimeImport = frozenSnapshotId.HasValue;
+        var account = await initial.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && (item.Enabled || reusingOneTimeImport),
+            cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+        if (account.Scope == ProviderAccountScope.Personal &&
+            (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
+            throw new UnauthorizedAccessException("The playlist account is outside the execution owner.");
         var sourceSnapshotId = frozenSnapshotId ?? request.SourceSnapshotId;
         var snapshot = sourceSnapshotId.HasValue
             ? await LoadSnapshotAsync(initial, link, sourceSnapshotId.Value, cancellationToken)
@@ -1289,10 +1288,16 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         run.Revision++;
         var included = plan.Entries.Where(item => item.Status == PlaylistPreviewEntryStatus.Included && item.LibraryTrackId.HasValue).ToArray();
         var membershipByLibraryTrack = memberships.ToDictionary(item => item.LibraryTrackId);
+        var preexistingIds = before?.BackendPlaylistId == receipt.Snapshot.BackendPlaylistId
+            ? before.Members.Select(item => item.BackendItemId).ToHashSet(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal);
         var includedLibraryTrackIds = included.Select(item => item.LibraryTrackId!.Value).ToHashSet();
         foreach (var entry in included)
         {
-            if (!membershipByLibraryTrack.TryGetValue(entry.LibraryTrackId!.Value, out var membership))
+            membershipByLibraryTrack.TryGetValue(entry.LibraryTrackId!.Value, out var membership);
+            // Existing manual entries, including manually re-added former sync entries, stay manual.
+            if (preexistingIds.Contains(entry.BackendItemId!) && membership is not { Active: true }) continue;
+            if (membership == null)
             {
                 membership = new PlaylistTargetMembershipRecord
                 {
@@ -1557,13 +1562,19 @@ public sealed class PlaylistMaterializationJobHandler(
                     scheduled.ScheduledFor.UtcTicks);
         }
         if (payload == null || payload.PlaylistLinkId == Guid.Empty || payload.Generation <= 0 ||
-            !context.Claim.OwnerUserId.HasValue || !context.Claim.ProviderAccountId.HasValue)
+            !context.Claim.OwnerUserId.HasValue)
             return DurableJobCompletion.Failure("playlist_payload_invalid", "The playlist materialization payload is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.Id == payload.PlaylistLinkId &&
-            item.OwnerUserId == context.Claim.OwnerUserId &&
-            item.ProviderAccountId == context.Claim.ProviderAccountId, cancellationToken);
-        if (link == null) return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
+            item.OwnerUserId == context.Claim.OwnerUserId, cancellationToken);
+        if (link == null || context.Claim.ProviderAccountId.HasValue &&
+            link.ProviderAccountId != context.Claim.ProviderAccountId)
+            return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
+        if (!context.Claim.ProviderAccountId.HasValue &&
+            (link.ImportMode != PlaylistImportMode.OneTime ||
+             !await db.PlaylistSourceSnapshots.AnyAsync(item => item.PlaylistLinkId == link.Id &&
+                 item.OwnerUserId == link.OwnerUserId && item.PublishedAt.HasValue, cancellationToken)))
+            return DurableJobCompletion.Failure("playlist_payload_invalid", "A source account is required before the playlist snapshot is imported.");
         if (!link.Enabled) return DurableJobCompletion.Success();
         var playlistName = await db.PlaylistSourceSnapshots.AsNoTracking()
             .Where(item => item.PlaylistLinkId == link.Id)
