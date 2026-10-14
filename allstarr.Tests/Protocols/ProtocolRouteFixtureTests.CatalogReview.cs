@@ -34,14 +34,73 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.StartsWith("/Items?", relay.PathAndQuery, StringComparison.Ordinal);
     }
 
+    // Request parameters from Jellyfin Web's itemDetails controller and Finamp issue #1537.
+    [Theory]
+    [InlineData("album", "ParentId=native-parent&Fields=ItemCounts,PrimaryImageAspectRatio,CanDelete,MediaSourceCount&SortBy=ParentIndexNumber,IndexNumber,SortName")]
+    [InlineData("artist", "IncludeItemTypes=MusicAlbum&Recursive=true&ExcludeItemIds=native-parent&SortBy=PremiereDate,ProductionYear,SortName&SortOrder=Descending&ContributingArtistIds=native-parent")]
+    [InlineData("album", "IncludeItemTypes=Audio&ParentId=native-parent&Recursive=true&SortBy=ParentIndexNumber%2CIndexNumber%2CSortName&Fields=ChildCount%2CDateCreated%2CDateLastMediaAdded%2CEtag%2CGenres%2CIndexNumber%2CParentId%2CProviderIds%2CTags%2CalbumPrimaryImageTag%2CparentPrimaryImageItemId%2CsongCount")]
+    [InlineData("album", "ParentId=native-parent&SortBy=SortName&SortOrder=Ascending&CollapseBoxSetItems=false&ExcludeLocationTypes=Virtual&IsMissing=false")]
+    [InlineData("artist", "AlbumArtistIds=native-parent&IncludeItemTypes=MusicAlbum&SortBy=DateCreated&SortOrder=Descending&CollapseBoxSetItems=true&ExcludeLocationTypes=Virtual&IsMissing=false")]
+    public async Task JellyfinCatalog_ClientBrowseOptionsKeepNativeOrderThenAppendProviders(string kind, string query)
+    {
+        var gateway = JellyfinCatalogGateway(kind, false);
+        var name = kind == "artist" ? "Visions" : "Oblivion";
+        var type = kind == "artist" ? "MusicAlbum" : "Audio";
+        var native = $$"""{"Items":[{"Id":"native-z","Name":"{{name}}","Type":"{{type}}","Future":true},{"Id":"native-a","Name":"Owned","Type":"{{type}}"}],"TotalRecordCount":2}""";
+        using var factory = JellyfinCatalogFactory(gateway.Object, kind, native, request =>
+            Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query)
+                .TryGetValue("ParentId", out var parentId) && parentId == "library"
+                ? """{"Items":[{"Id":"native-parent","Type":"MusicAlbum","Name":"Visions"}],"TotalRecordCount":1}"""
+                : null);
+        using var client = factory.CreateClient();
+        if (kind == "album")
+        {
+            var parentPath = query.StartsWith("IncludeItemTypes=Audio", StringComparison.Ordinal)
+                ? "/Users/user-1/Items?ParentId=library&IncludeItemTypes=MusicAlbum&SortBy=SortName&api_key=fixture-key"
+                : "/Users/user-1/Items/native-parent?api_key=fixture-key";
+            using var parent = await client.GetAsync(parentPath);
+            Assert.Equal(HttpStatusCode.OK, parent.StatusCode);
+        }
+        using var response = await client.GetAsync($"/Users/user-1/Items?{query}&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(new[] { "native-z", "native-a", kind == "artist" ? "ext-deezer-album-missing" : "ext-deezer-song-missing" }, rows.Select(row => row.GetProperty("Id").GetString()));
+        Assert.True(rows[0].GetProperty("Future").GetBoolean());
+        Assert.Equal(3, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
+        gateway.VerifyAll();
+    }
+
+    [Fact]
+    public async Task JellyfinCatalog_BrowseRemembersOnlyAlbumTypes()
+    {
+        var cache = new TestMemoryApplicationCache();
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+            request.RequestUri!.AbsolutePath == "/Users/Me"
+                ? Json(200, """{"Id":"user-1"}""")
+                : Json(200, """{"Items":[{"Id":"album","Type":"MusicAlbum"},{"Id":"artist","Type":"MusicArtist"},{"Id":"song","Type":"Audio"},{"Id":"folder","Type":"Folder"},{"Id":"playlist","Type":"Playlist"}],"TotalRecordCount":5}"""),
+            services =>
+            {
+                services.RemoveAll<allstarr.Services.Common.IApplicationCache>();
+                services.AddSingleton<allstarr.Services.Common.IApplicationCache>(cache);
+            });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Items?Recursive=true&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var key = Assert.Single(cache.GetKeysByPattern("jellyfin:catalog-type:*"));
+        Assert.EndsWith(":album", key);
+        Assert.Equal("MusicAlbum", await cache.GetStringAsync(key));
+    }
+
     [Theory]
     [InlineData("Filters=IsPlayed")]
     [InlineData("IsPlayed=false")]
     [InlineData("Genres=Rock")]
     [InlineData("GenreIds=genre-1")]
-    [InlineData("SortBy=DateCreated&SortOrder=Descending")]
     [InlineData("Years=2020")]
     [InlineData("Tags=Favorite")]
+    [InlineData("IsMissing=true")]
+    [InlineData("ExcludeItemIds=native-child")]
     public async Task JellyfinCatalog_FilteredViewsPreserveNativeResponseAndMakeNoDetailLookup(string filter)
     {
         foreach (var kind in new[] { "artist", "album" })
