@@ -315,6 +315,8 @@ builder.Services.Configure<AppleDownloadSettings>(
     builder.Configuration.GetSection("AppleDownload"));
 builder.Services.Configure<CacheSettings>(
     builder.Configuration.GetSection("Cache"));
+builder.Services.Configure<PlaybackSettings>(
+    builder.Configuration.GetSection("Playback"));
 builder.Services.Configure<SpotifyImportSettings>(options =>
 {
     builder.Configuration.GetSection("SpotifyImport").Bind(options);

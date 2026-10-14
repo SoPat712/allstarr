@@ -148,6 +148,10 @@ public static class RuntimeSettingCatalog
             "Playback:ShowExternalLabel", DefaultValue: "true"));
         items.Add(new("Playback:ShowExplicitLabel", RuntimeSettingValueType.Boolean,
             "Playback:ShowExplicitLabel", DefaultValue: "true"));
+        items.Add(new("Playback:LastFmSimilarEnabled", RuntimeSettingValueType.Boolean,
+            "Playback:LastFmSimilarEnabled", DefaultValue: "true"));
+        items.Add(new("Playback:ListenBrainzSimilarEnabled", RuntimeSettingValueType.Boolean,
+            "Playback:ListenBrainzSimilarEnabled", DefaultValue: "true"));
         items.Add(new("Library:DownloadMode", RuntimeSettingValueType.String, "Jellyfin:DownloadMode", Choices: new HashSet<string>(["Track", "Album"], Comparer)));
         items.Add(new("Library:StorageMode", RuntimeSettingValueType.String, "Jellyfin:StorageMode", Choices: new HashSet<string>(["Cache", "Permanent"], Comparer)));
         Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");
@@ -627,6 +631,7 @@ public sealed class RuntimeSettingsLiveOptions
     private readonly SpotifyImportSettings _spotifyImport;
     private readonly MusicBrainzSettings _musicBrainz;
     private readonly ScrobblingSettings _scrobbling;
+    private readonly PlaybackSettings _playback;
     private readonly JellyfinSettings _jellyfin;
     private readonly SubsonicSettings _subsonic;
     private readonly string? _bootstrapAppleBaseUrl;
@@ -637,7 +642,7 @@ public sealed class RuntimeSettingsLiveOptions
         IOptions<SpotifyApiSettings> spotifyApi, IOptions<SpotifyImportSettings> spotifyImport,
         IOptions<MusicBrainzSettings> musicBrainz, IOptions<ScrobblingSettings> scrobbling,
         IOptions<JellyfinSettings> jellyfin, IOptions<SubsonicSettings> subsonic,
-        ProviderAccountOptions providerAccounts)
+        ProviderAccountOptions providerAccounts, IOptions<PlaybackSettings>? playback = null)
     {
         (_configuration, _providerAccounts) = (configuration, providerAccounts);
         _bootstrapAppleBaseUrl = configuration["AppleDownload:BaseUrl"];
@@ -645,6 +650,7 @@ public sealed class RuntimeSettingsLiveOptions
         (_spotifyApi, _spotifyImport, _musicBrainz, _scrobbling) =
             (spotifyApi.Value, spotifyImport.Value, musicBrainz.Value, scrobbling.Value);
         (_jellyfin, _subsonic) = (jellyfin.Value, subsonic.Value);
+        _playback = playback?.Value ?? new();
     }
 
     public async Task ProjectAsync(IDurableRuntimeSettings settings, CancellationToken cancellationToken)
@@ -719,6 +725,8 @@ public sealed class RuntimeSettingsLiveOptions
             case "Scrobbling:SyntheticLocalPlayedSignalEnabled": _scrobbling.SyntheticLocalPlayedSignalEnabled = (bool)value; break;
             case "Scrobbling:LastFm:Enabled": _scrobbling.LastFm.Enabled = (bool)value; break;
             case "Scrobbling:ListenBrainz:Enabled": _scrobbling.ListenBrainz.Enabled = (bool)value; break;
+            case "Playback:LastFmSimilarEnabled": _playback.LastFmSimilarEnabled = (bool)value; break;
+            case "Playback:ListenBrainzSimilarEnabled": _playback.ListenBrainzSimilarEnabled = (bool)value; break;
             case "Library:EnableExternalPlaylists": SetBoth(item => item.EnableExternalPlaylists = (bool)value, item => item.EnableExternalPlaylists = (bool)value); break;
             case "Library:PlaylistsDirectory": SetBoth(item => item.PlaylistsDirectory = (string)value, item => item.PlaylistsDirectory = (string)value); break;
             case "Library:DownloadMode": SetBoth(item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value), item => item.DownloadMode = Enum.Parse<DownloadMode>((string)value)); break;

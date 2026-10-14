@@ -256,6 +256,34 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
+    public async Task AdministratorSchema_ExposesIndependentSimilarSongFallbackSettings()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        using var scope = factory.Services.CreateScope();
+        var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
+        controller.ControllerContext = Context(administrator: true);
+
+        var schema = Assert.IsType<AdminUiSchemaResponse>(
+            Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
+        var general = Assert.Single(schema.ConfigSections, item => item.Id == "general");
+
+        Assert.Collection(
+            general.Fields.Where(item => item.Key.StartsWith("PLAYBACK_", StringComparison.Ordinal)),
+            lastFm =>
+            {
+                Assert.Equal("PLAYBACK_LASTFM_SIMILAR_ENABLED", lastFm.Key);
+                Assert.Equal("toggle", lastFm.Type);
+                Assert.Equal("playback.lastFmSimilarEnabled", lastFm.ValuePath);
+            },
+            listenBrainz =>
+            {
+                Assert.Equal("PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED", listenBrainz.Key);
+                Assert.Equal("toggle", listenBrainz.Type);
+                Assert.Equal("playback.listenBrainzSimilarEnabled", listenBrainz.ValuePath);
+            });
+    }
+
+    [Fact]
     public async Task AdministratorSchema_UsesHouseholdProviderPolicy()
     {
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(

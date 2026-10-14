@@ -2,7 +2,10 @@ using System.Net;
 using allstarr.Core.Matching;
 using allstarr.Core.Music;
 using allstarr.Core.Capabilities;
+using allstarr.Models.Settings;
+using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace allstarr.Tests;
@@ -10,6 +13,23 @@ namespace allstarr.Tests;
 public sealed class ListenBrainzSimilarTracksTests
 {
     internal const string Mbid = "8a49dba0-253a-4535-b87f-78bb035336ce";
+
+    [Fact]
+    public async Task DisabledDoesNotResolveIdentityReadCacheOrCreateAnHttpClient()
+    {
+        var clients = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var cache = new Mock<IApplicationCache>(MockBehavior.Strict);
+        var service = new ListenBrainzSimilarTracks(clients.Object, identities.Object, cache.Object,
+            NullLogger<ListenBrainzSimilarTracks>.Instance,
+            Options.Create(new PlaybackSettings { ListenBrainzSimilarEnabled = false }));
+
+        Assert.Empty(await service.FindAsync(MusicObservationsTests.Context(), "seed", 10, default));
+
+        clients.VerifyNoOtherCalls();
+        identities.VerifyNoOtherCalls();
+        cache.VerifyNoOtherCalls();
+    }
 
     [Theory]
     [InlineData(null)]

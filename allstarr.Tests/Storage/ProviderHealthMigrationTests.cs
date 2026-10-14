@@ -139,7 +139,9 @@ public sealed class ProviderHealthMigrationTests
     {
         const string accounts = "table|provider_accounts|";
         Assert.Equal(before.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal)),
-            after.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal)));
+            after.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal))
+                .Select(row => row.StartsWith("table|playlist_target_memberships|", StringComparison.Ordinal)
+                    ? row.Replace(", \"RemovalConfirmedAt\" INTEGER NULL", "", StringComparison.Ordinal) : row));
         var original = before.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
         var upgraded = after.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
         Assert.Equal(original, upgraded.Replace(", \"SettingsJson\" TEXT NOT NULL DEFAULT '{}'", "", StringComparison.Ordinal));

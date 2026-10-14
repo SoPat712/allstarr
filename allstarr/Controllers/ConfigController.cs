@@ -34,6 +34,7 @@ public class ConfigController : ControllerBase
     private readonly MusicBrainzSettings _musicBrainzSettings;
     private readonly SpotifyImportSettings _spotifyImportSettings;
     private readonly ScrobblingSettings _scrobblingSettings;
+    private readonly PlaybackSettings _playbackSettings;
     private readonly SpotifySessionCookieService _spotifySessionCookieService;
     private readonly IApplicationCache _cache;
 
@@ -50,7 +51,8 @@ public class ConfigController : ControllerBase
         IOptions<SpotifyImportSettings> spotifyImportSettings,
         IOptions<ScrobblingSettings> scrobblingSettings,
         SpotifySessionCookieService spotifySessionCookieService,
-        IApplicationCache cache)
+        IApplicationCache cache,
+        IOptions<PlaybackSettings>? playbackSettings = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -63,6 +65,7 @@ public class ConfigController : ControllerBase
         _musicBrainzSettings = musicBrainzSettings.Value;
         _spotifyImportSettings = spotifyImportSettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
+        _playbackSettings = playbackSettings?.Value ?? new();
         _spotifySessionCookieService = spotifySessionCookieService;
         _cache = cache;
     }
@@ -153,6 +156,13 @@ public class ConfigController : ControllerBase
             matching = new
             {
                 localPreferencePercent = RuntimeInt("Matching:LocalPreferencePercent", 7)
+            },
+            playback = new
+            {
+                lastFmSimilarEnabled = RuntimeBool(
+                    "Playback:LastFmSimilarEnabled", _playbackSettings.LastFmSimilarEnabled),
+                listenBrainzSimilarEnabled = RuntimeBool(
+                    "Playback:ListenBrainzSimilarEnabled", _playbackSettings.ListenBrainzSimilarEnabled)
             },
             audio = new { quality = audioQuality },
             playlistsDirectory = RuntimeString("Library:PlaylistsDirectory", fallbackPlaylistsDirectory),

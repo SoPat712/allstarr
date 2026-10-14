@@ -180,20 +180,27 @@ public sealed class MusicSearchService(
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var provided = songs.ToList();
-        var owned = new List<NativeMusicItem<TPayload>>();
+        IReadOnlyDictionary<string, NativeMusicItem<TPayload>> owned;
         try
         {
-            await PreferOwnedSongsAsync(context, provided, owned, native, cancellationToken);
+            owned = await ResolveOwnedSongsAsync(context, songs, [], native, cancellationToken);
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
-            // An unavailable native lookup must not discard playable provider rows.
+            owned = new Dictionary<string, NativeMusicItem<TPayload>>();
         }
-        return owned.Select(item => new MusicSearchEntry<TPayload> { Native = item })
-            .Concat(provided.DistinctBy(song => song.CanonicalRecordingId is { } recording && recording != Guid.Empty
-                    ? $"recording:{recording:D}" : $"item:{song.Id}")
-                .Select(song => new MusicSearchEntry<TPayload> { Song = song })).ToList();
+        var result = new List<MusicSearchEntry<TPayload>>();
+        var seenItems = new HashSet<string>(StringComparer.Ordinal);
+        var seenRecordings = new HashSet<Guid>();
+        foreach (var song in songs)
+        {
+            owned.TryGetValue(song.Id, out var copy);
+            if (!seenItems.Add(copy == null ? $"provider:{song.Id}" : $"native:{copy.Id}")) continue;
+            if (song.CanonicalRecordingId is { } recording && recording != Guid.Empty &&
+                !seenRecordings.Add(recording)) continue;
+            result.Add(copy == null ? new() { Song = song } : new() { Native = copy });
+        }
+        return result;
     }
 
     private async Task PreferOwnedSongsAsync<TPayload>(
@@ -203,21 +210,42 @@ public sealed class MusicSearchService(
         INativeMusicSearch<TPayload> native,
         CancellationToken cancellationToken)
     {
-        if (libraryIndex == null || songs.Count == 0) return;
+        var owned = await ResolveOwnedSongsAsync(context, songs, nativeSongs, native, cancellationToken);
+        var existing = nativeSongs.Select(item => item.Id).ToHashSet(StringComparer.Ordinal);
+        foreach (var song in songs)
+            if (owned.TryGetValue(song.Id, out var copy) && existing.Add(copy.Id)) nativeSongs.Add(copy);
+        songs.RemoveAll(song => owned.ContainsKey(song.Id));
+    }
+
+    private async Task<IReadOnlyDictionary<string, NativeMusicItem<TPayload>>> ResolveOwnedSongsAsync<TPayload>(
+        ProtocolExecutionContext context, IReadOnlyList<Song> songs,
+        IReadOnlyList<NativeMusicItem<TPayload>> existing,
+        INativeMusicSearch<TPayload> native, CancellationToken cancellationToken)
+    {
+        if (libraryIndex == null || songs.Count == 0) return new Dictionary<string, NativeMusicItem<TPayload>>();
         var matches = await libraryIndex.FindKnownRecordingTracksAsync(context, songs.Select(song =>
                 new LibraryRecordingLookup(song.Id, song.CanonicalRecordingId, song.Isrc, song.ExternalProvider, song.ExternalId))
             .ToArray(), cancellationToken);
-        foreach (var owned in matches.GroupBy(item => item.Value))
+        using var slots = new SemaphoreSlim(4);
+        var fetched = await Task.WhenAll(matches.Values.Distinct(StringComparer.Ordinal).Select(async id =>
         {
-            if (nativeSongs.All(item => item.Id != owned.Key))
+            var present = existing.FirstOrDefault(item => item.Id == id);
+            if (present != null) return present;
+            await slots.WaitAsync(cancellationToken);
+            try
             {
-                var song = await native.GetSongAsync(owned.Key, cancellationToken);
-                if (song == null || song.Id != owned.Key) continue;
-                nativeSongs.Add(song);
+                var copy = await native.GetSongAsync(id, cancellationToken);
+                return copy?.Id == id ? copy : null;
             }
-            var aliases = owned.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
-            songs.RemoveAll(song => aliases.Contains(song.Id));
-        }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                return null;
+            }
+            finally { slots.Release(); }
+        }));
+        var byId = fetched.OfType<NativeMusicItem<TPayload>>().ToDictionary(item => item.Id, StringComparer.Ordinal);
+        return matches.Where(item => byId.ContainsKey(item.Value))
+            .ToDictionary(item => item.Key, item => byId[item.Value], StringComparer.Ordinal);
     }
 
     private static List<MusicSearchEntry<TPayload>> Rank<TPayload>(

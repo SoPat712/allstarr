@@ -285,7 +285,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 ? PlaylistPlanMode.Recreate
                 : PlaylistPlanMode.Reconcile;
         var owned = await initial.PlaylistTargetMemberships.AsNoTracking()
-            .Where(item => item.PlaylistLinkId == link.Id && item.Active)
+            .Where(item => item.PlaylistLinkId == link.Id && (item.Active || item.RemovalConfirmedAt == null))
             .Select(item => item.TargetEntryId).ToListAsync(cancellationToken);
         var rules = new PlaylistPlanningRules(
             link.RuleVersion, request.Generation, link.PreserveManualEntries, link.MirrorStaleEntries,
@@ -1296,7 +1296,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             membershipByLibraryTrack.TryGetValue(entry.LibraryTrackId!.Value, out var membership);
             // Existing manual entries, including manually re-added former sync entries, stay manual.
-            if (preexistingIds.Contains(entry.BackendItemId!) && membership is not { Active: true }) continue;
+            if (preexistingIds.Contains(entry.BackendItemId!) &&
+                (membership == null || (!membership.Active && membership.RemovalConfirmedAt.HasValue))) continue;
             if (membership == null)
             {
                 membership = new PlaylistTargetMembershipRecord
@@ -1312,11 +1313,20 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 membershipByLibraryTrack.Add(membership.LibraryTrackId, membership);
             }
             membership.LastKnownPosition = entry.TargetPosition!.Value; membership.Active = true;
+            membership.RemovalConfirmedAt = null;
             membership.UpdatedAt = _clock.UtcNow; membership.Revision++;
         }
         if (link.MirrorStaleEntries)
-            foreach (var stale in memberships.Where(item => item.Active && !includedLibraryTrackIds.Contains(item.LibraryTrackId)))
-            { stale.Active = false; stale.UpdatedAt = _clock.UtcNow; stale.Revision++; }
+            foreach (var stale in memberships.Where(item =>
+                         (item.Active || item.RemovalConfirmedAt == null) && !includedLibraryTrackIds.Contains(item.LibraryTrackId)))
+            {
+                var removed = verificationError == null &&
+                              !receipt.Snapshot.Members.Any(item => item.BackendItemId == stale.TargetEntryId);
+                stale.Active = !removed;
+                stale.RemovalConfirmedAt = removed ? _clock.UtcNow : null;
+                stale.UpdatedAt = _clock.UtcNow;
+                stale.Revision++;
+            }
         var trackedLink = await db.PlaylistLinks.SingleAsync(item => item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
         trackedLink.TargetPlaylistId = receipt.Snapshot.BackendPlaylistId; trackedLink.UpdatedAt = _clock.UtcNow; trackedLink.Revision++;
         await db.SaveChangesAsync(cancellationToken); await transaction.CommitAsync(cancellationToken);
@@ -1336,7 +1346,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     {
         var planned = plan.OrderedBackendItemIds.ToHashSet(StringComparer.Ordinal);
         var syncOwned = memberships
-            .Where(item => item.Active)
+            .Where(item => item.Active || item.RemovalConfirmedAt == null)
             .Select(item => item.TargetEntryId)
             .ToHashSet(StringComparer.Ordinal);
         var expectedIds = plan.OrderedBackendItemIds

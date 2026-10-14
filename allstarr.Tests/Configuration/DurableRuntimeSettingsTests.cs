@@ -270,11 +270,63 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal(DownloadMode.Album, jellyfin.DownloadMode); Assert.Equal(DownloadMode.Album, subsonic.DownloadMode);
     }
 
+    [Fact]
+    public async Task SimilarFallbackSettings_PersistAndProjectLiveAcrossServiceRestart()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        var playback = new PlaybackSettings();
+        var service = new DurableRuntimeSettingsService(_factory, configuration, _clock,
+            new RuntimeSettingsChangeSignal(), LiveOptions(configuration, playback),
+            NullLogger<DurableRuntimeSettingsService>.Instance);
+
+        await service.StartAsync(CancellationToken.None);
+        Assert.True(playback.LastFmSimilarEnabled);
+        Assert.True(playback.ListenBrainzSimilarEnabled);
+
+        await service.ApplyBatchAsync(
+        [
+            new("Playback:LastFmSimilarEnabled", "false"),
+            new("Playback:ListenBrainzSimilarEnabled", "false")
+        ], "webui", _userId);
+
+        Assert.False(playback.LastFmSimilarEnabled);
+        Assert.False(playback.ListenBrainzSimilarEnabled);
+        Assert.False((bool)(await service.GetAsync("Playback:LastFmSimilarEnabled")).Value);
+        Assert.False((bool)(await service.GetAsync("Playback:ListenBrainzSimilarEnabled")).Value);
+        await service.StopAsync(CancellationToken.None);
+
+        var restartedPlayback = new PlaybackSettings();
+        var restarted = new DurableRuntimeSettingsService(_factory, configuration, _clock,
+            new RuntimeSettingsChangeSignal(), LiveOptions(configuration, restartedPlayback),
+            NullLogger<DurableRuntimeSettingsService>.Instance);
+        await restarted.StartAsync(CancellationToken.None);
+        Assert.False(restartedPlayback.LastFmSimilarEnabled);
+        Assert.False(restartedPlayback.ListenBrainzSimilarEnabled);
+        await restarted.StopAsync(CancellationToken.None);
+    }
+
     private DurableRuntimeSettingsService CreateService(IEnumerable<KeyValuePair<string, string?>> values)
     {
         var config = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         return new(_factory, config, _clock, new RuntimeSettingsChangeSignal());
     }
+
+    private static RuntimeSettingsLiveOptions LiveOptions(
+        IConfiguration configuration,
+        PlaybackSettings playback) =>
+        new(configuration,
+            Options.Create(new CacheSettings()),
+            Options.Create(new DeezerSettings()),
+            Options.Create(new QobuzSettings()),
+            Options.Create(new AppleDownloadSettings()),
+            Options.Create(new SpotifyApiSettings()),
+            Options.Create(new SpotifyImportSettings()),
+            Options.Create(new MusicBrainzSettings()),
+            Options.Create(new ScrobblingSettings()),
+            Options.Create(new JellyfinSettings()),
+            Options.Create(new SubsonicSettings()),
+            new ProviderAccountOptions(),
+            Options.Create(playback));
 
     private static UserRecord User(
         Guid id,

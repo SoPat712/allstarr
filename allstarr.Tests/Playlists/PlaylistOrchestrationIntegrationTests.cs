@@ -16,6 +16,8 @@ using allstarr.Core.Storage;
 using allstarr.Models.Domain;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -1196,6 +1198,62 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task MembershipRemovalUpgradePreservesLegacyInactiveOwnership()
+    {
+        _source.Snapshot = Snapshot("legacy-owned", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1050));
+        await using var db = await _factory.CreateDbContextAsync();
+        var membership = await db.PlaylistTargetMemberships.SingleAsync();
+        membership.Active = false;
+        await db.SaveChangesAsync();
+        await db.GetService<IMigrator>().MigrateAsync("20261010083000_CancelLegacyRematchJobs");
+        await db.Database.MigrateAsync();
+        db.ChangeTracker.Clear();
+        var migrated = await db.PlaylistTargetMemberships.SingleAsync();
+        Assert.Equal(membership.Id, migrated.Id);
+        Assert.Equal("local-1", migrated.TargetEntryId);
+        Assert.False(migrated.Active);
+        Assert.Null(migrated.RemovalConfirmedAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FailedBackendRemovalKeepsOwnershipAndRetriesEvenIfPreviouslyInactive(bool previouslyInactive)
+    {
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            (await setup.PlaylistLinks.SingleAsync()).MirrorStaleEntries = true;
+            await setup.SaveChangesAsync();
+        }
+        _source.Snapshot = Snapshot("removal-owned", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1051));
+        if (previouslyInactive)
+        {
+            await using var setup = await _factory.CreateDbContextAsync();
+            (await setup.PlaylistTargetMemberships.SingleAsync()).Active = false;
+            await setup.SaveChangesAsync();
+        }
+        _target.IgnoreRemovals = true;
+        _source.Snapshot = Snapshot("removal-failed");
+        await _service.RunAsync(Context(), new(_link, 1052));
+        Assert.Equal(["local-1"], _target.LastWrite!.SyncOwnedBackendItemIds);
+        await using (var verify = await _factory.CreateDbContextAsync())
+            Assert.True((await verify.PlaylistTargetMemberships.SingleAsync()).Active);
+
+        _target.IgnoreRemovals = false;
+        await _service.RunAsync(Context(), new(_link, 1053));
+        Assert.Equal(["local-1"], _target.LastWrite!.SyncOwnedBackendItemIds);
+        var after = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-created", default);
+        Assert.Empty(after.Value!.Members);
+        await using var final = await _factory.CreateDbContextAsync();
+        var removed = await final.PlaylistTargetMemberships.SingleAsync();
+        Assert.False(removed.Active);
+        Assert.NotNull(removed.RemovalConfirmedAt);
+    }
+
+    [Fact]
     public async Task SyncDoesNotReclaimASongManuallyReaddedAfterItsOwnedCopyWasRemoved()
     {
         await using (var setup = await _factory.CreateDbContextAsync())
@@ -2358,6 +2416,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     {
         public BackendPlaylistFamily Family => BackendPlaylistFamily.Jellyfin;
         public bool CanWriteArtwork { get; set; }
+        public bool IgnoreRemovals { get; set; }
         public BackendPlaylistTargetCapabilities Capabilities => new(true, true, true, true, true, true, CanWriteArtwork, true, true);
         public BackendPlaylistTargetStatus ReadStatus { get; set; } = BackendPlaylistTargetStatus.Success;
         public BackendPlaylistTargetStatus WriteStatus { get; set; } = BackendPlaylistTargetStatus.Success;
@@ -2400,7 +2459,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             if (WriteBlock != null)
                 await WriteBlock.WaitAsync(cancellationToken);
             var retained = (LastSnapshot?.Members ?? []).Select(item => item.BackendItemId)
-                .Where(id => !request.RemoveStaleSyncOwnedItems || !request.SyncOwnedBackendItemIds.Contains(id));
+                .Where(id => IgnoreRemovals || !request.RemoveStaleSyncOwnedItems || !request.SyncOwnedBackendItemIds.Contains(id));
             LastSnapshot = WriteStatus == BackendPlaylistTargetStatus.Success
                 ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds.Concat(retained).Distinct())
                 : null;
