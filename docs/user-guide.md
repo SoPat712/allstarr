@@ -123,14 +123,15 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 
 ## Add and review a provider playlist
 
-1. Open **Library → Playlists** and import a playlist from your connected playlist-capable account. If no account is available, **Connect Spotify** opens a personal account flow.
-2. Choose the visible source view and destination behavior described by the form.
-3. Choose **Import once**, **Update when I ask**, or a schedule. An imported-once playlist keeps its published snapshot and never reads later source changes, even if the source account is subsequently disabled.
-4. Choose **Stream when played** or **Keep every song**. Keep-all queues durable downloads using the playlist owner's authorized account for every resolved external song; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the playlist import.
-5. Open **Mappings** for ambiguous or unresolved tracks.
+1. Open **Library → Playlists** and choose a playlist from your connected playlist-capable account. If no account is available, **Connect Spotify** opens a personal account flow.
+2. Choose **Import once** to freeze the source snapshot, or **Keep in sync** to follow source changes. Sync defaults to daily, with hourly and weekly schedules available. A frozen import never reads later source changes, even if its source account is disabled.
+3. Choose **New playlist** to create a destination once, or **Existing playlist** to select an exact backend playlist. Future updates use that destination; Allstarr does not adopt a playlist just because its name matches. Changing destinations leaves the old playlist's songs in place and starts ownership tracking separately for the new destination.
+4. Turn on **Keep downloaded copies** to queue permanent downloads of resolved external songs using your authorized accounts. It defaults to off; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the import.
+5. Open **Mappings** for ambiguous or unresolved tracks. Accept only a candidate that represents the same recording; use interactive search when automatic candidates are wrong.
 
-The default **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use their eligible mapped providers in the configured streaming order, and unresolved songs remain visible with a clear not-playable status. **Original** previews the source metadata, while **Native** is only a diagnostic view of the separate playlist written into Jellyfin or Subsonic; it can omit external and unresolved entries that the backend cannot store natively.
-6. Accept only a candidate that represents the same recording. Use interactive search when automatic candidates are wrong.
+The **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use eligible providers in configured streaming order, and unresolved songs remain visible with a clear not-playable status. The backend playlist contains matched local songs so it remains useful when opened directly.
+
+Each source account and playlist has one link per backend. Repeating the same import reuses that link; a different import behavior or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
 
 When synchronization removes stale songs, it removes only memberships it added. A song already present before an import stays yours, including a former synchronized song that you manually add back after its removal.
 

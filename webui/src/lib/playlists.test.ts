@@ -7,9 +7,7 @@ import {
   isReviewTrack,
   orderPlaylistSources,
   playlistBehaviorSummary,
-  playlistDestinationOptions,
   playlistOutcomeLabel,
-  playlistProjectionOptions,
   providerColor,
   runBounded,
   scheduleCadence,
@@ -30,7 +28,7 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
   materializationMode: "reconcile",
   importMode: "linked",
   trackRetention: "onDemand",
-  mirrorStaleEntries: false,
+  mirrorStaleEntries: true,
   preserveManualEntries: true,
   syncName: true,
   syncDescription: true,
@@ -108,45 +106,22 @@ describe("playlist presentation", () => {
     expect(scheduleCadence("15 4 * * 2")).toBe("Cron 15 4 * * 2");
   });
 
-  it("keeps consequence copy and eligibility reasons explicit", () => {
-    const destinations = playlistDestinationOptions("Jellyfin", "Road trip", "Morning mix");
-    const views = playlistProjectionOptions("Spotify", "Jellyfin", "Road trip");
-    expect(destinations.map((item) => item.id)).toEqual([
-      "virtual", "materialized", "hybrid",
-    ]);
-    expect(views.map((item) => item.id)).toEqual([
-      "resolved", "source", "target",
-    ]);
-    expect(destinations.map((item) => item.label)).toEqual([
-      "Only in Allstarr",
-      "In a Jellyfin playlist",
-      "Both",
-    ]);
-    expect(destinations[0].description).toContain("Nothing changes in Jellyfin");
-    expect(destinations[1].description).toContain("adds the songs Jellyfin can play to Road trip");
-    expect(views.map((item) => item.label)).toEqual([
-      "Mapped", "Original", "Native",
-    ]);
-    expect(views[0].description).toContain("Every Spotify song, in order");
-    expect(views[0].description).toContain("stay listed but won't play");
-    expect(views[2].description).toContain("Songs from other sources aren't added");
+  it("keeps fixed hybrid import consequences and eligibility reasons explicit", () => {
     expect(playlistBehaviorSummary(
-      "materialized", "reconcile", "Morning mix", "Jellyfin", "Road trip",
-    )).toContain("only when you run an update");
-    expect(playlistBehaviorSummary(
-      "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", undefined,
-      "oneTime", "keepAll",
+      "oneTime", "new", "Morning mix", "Jellyfin", "", undefined, "keepAll",
     )).toContain("import Morning mix once");
     expect(playlistBehaviorSummary(
-      "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", undefined,
-      "oneTime", "keepAll",
+      "oneTime", "new", "Morning mix", "Jellyfin", "", undefined, "keepAll",
+    )).toContain("create a new playlist in Jellyfin");
+    expect(playlistBehaviorSummary(
+      "oneTime", "new", "Morning mix", "Jellyfin", "", undefined, "keepAll",
     )).toContain("keep a copy of every song it can download");
     expect(playlistBehaviorSummary(
-      "virtual", "reconcile", "Morning mix", "Jellyfin", "Road trip", "every hour",
-    )).toContain("will not create or change a playlist in Jellyfin");
+      "linked", "existing", "Morning mix", "Jellyfin", "Road trip", "every day at 3:00 AM",
+    )).toContain("keep Morning mix in sync every day at 3:00 AM");
     expect(playlistBehaviorSummary(
-      "hybrid", "recreate", "Morning mix", "Jellyfin", "Road trip", "every day at 3:00 AM",
-    )).toContain("create a new playlist in Jellyfin every day at 3:00 AM instead of changing Road trip");
+      "linked", "existing", "Morning mix", "Jellyfin", "Road trip", "every day at 3:00 AM",
+    )).toContain("update Road trip in Jellyfin");
     expect(playlistOutcomeLabel("skipped_wrong_backend_or_library", "Jellyfin playlist")).toBe(
       "Not added to Jellyfin playlist: belongs to a different library",
     );

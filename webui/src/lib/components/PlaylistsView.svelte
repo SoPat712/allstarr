@@ -18,7 +18,6 @@
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import SearchField from "$lib/components/SearchField.svelte";
-  import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import TrackRoutes from "$lib/components/TrackRoutes.svelte";
   import {
@@ -39,7 +38,6 @@
     formatDuration,
     isReviewTrack,
     playlistOutcomeLabel,
-    playlistProjectionOptions,
     runBounded,
     scheduleCadence,
     type PlaylistSort,
@@ -109,7 +107,6 @@
   let scheduleEnabled = $state(true);
   let scheduleSaving = $state(false);
   let scheduleError = $state("");
-  let viewMode = $state<"resolved" | "source" | "target">("resolved");
   let settingsOpen = $state(false);
   let sourceUpdateOpen = $state(false);
   let rematchOpen = $state(false);
@@ -125,9 +122,7 @@
     if (!details?.clientProjection) return [];
     const sourceTracks = new Map(details.tracks.map((track) => [track.sourcePosition, track]));
     return details.clientProjection.tracks.map((track) => {
-      const source = viewMode === "target"
-        ? undefined
-        : sourceTracks.get(track.sourcePosition);
+      const source = sourceTracks.get(track.sourcePosition);
       return {
         sourcePosition: track.sourcePosition,
         position: track.position,
@@ -153,20 +148,6 @@
     filterTracks(projectedTracks, trackQuery, routeFilter, trackSort),
   );
   const selected = $derived(playlists.find((playlist) => playlist.id === selectedId));
-  const detailProjectionOptions = $derived(playlistProjectionOptions(
-    details ? providerName(details.sourceProviderId) : "Source",
-    details ? providerName(details.targetProtocol) : "Media server",
-    details ? `the selected ${providerName(details.targetProtocol)} playlist` : "the selected media-server playlist",
-  ));
-  const selectedProjectionLabel = $derived(
-    detailProjectionOptions.find((option) => option.id === viewMode)?.label ?? "Selected songs",
-  );
-  const savedProjectionLabel = $derived(
-    detailProjectionOptions.find((option) => option.id === selected?.projectionMode)?.label ?? "Mapped",
-  );
-  const selectedProjectionDescription = $derived(
-    detailProjectionOptions.find((option) => option.id === viewMode)?.description,
-  );
   const visibleTrackColumnCount = $derived(
     trackColumnOptions.filter((column) => trackColumns[column.id]).length,
   );
@@ -261,30 +242,22 @@
   async function loadDetails(
     id: string,
     returnFocus?: HTMLElement,
-    projectionMode?: "resolved" | "source" | "target",
   ) {
     const changingPlaylist = id !== selectedId;
-    const playlist = playlists.find((item) => item.id === id);
-    const requestedMode = projectionMode ?? (changingPlaylist
-      ? playlist?.projectionMode ?? "resolved"
-      : viewMode);
     if (returnFocus) detailReturnFocus = returnFocus;
     selectedId = id;
-    viewMode = requestedMode;
     if (changingPlaylist) {
       details = null;
       operationJobId = "";
       trackQuery = "";
       routeFilter = "all";
-    } else if (details && details.clientProjection?.projectionMode !== requestedMode) {
-      details = { ...details, clientProjection: null };
     }
     detailOpen = true;
     detailLoading = true;
     detailError = "";
     const request = ++detailRequest;
     try {
-      const next = await playlistLinks.details(id, requestedMode);
+      const next = await playlistLinks.details(id, "resolved");
       if (request === detailRequest && selectedId === id) details = next;
     } catch (cause) {
       if (request === detailRequest)
@@ -292,11 +265,6 @@
     } finally {
       if (request === detailRequest) detailLoading = false;
     }
-  }
-
-  async function changeView(mode: string) {
-    if (!selectedId || !["resolved", "source", "target"].includes(mode)) return;
-    await loadDetails(selectedId, undefined, mode as typeof viewMode);
   }
 
   async function refresh(passive = false) {
@@ -601,14 +569,14 @@
     <Dialog.Root bind:open={detailOpen}>
       <Dialog.Portal>
         <Dialog.Overlay class="dialog-overlay" />
-        <Dialog.Content class="source-dialog playlist-detail playlist-detail-dialog">
+        <Dialog.Content class="source-dialog playlist-detail playlist-detail-dialog" aria-label={selected?.name ?? "Playlist details"}>
       {#if detailLoading && !details}
         <div class="detail-loading" aria-busy="true">Loading playlist tracks…</div>
       {:else if detailError && !details}
         <div class="compact-empty playlist-projection-empty" role="alert">
           <strong>Playlist details are unavailable</strong>
           <p>{detailError}</p>
-          <Button variant="secondary" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</Button>
+          <Button variant="secondary" onclick={() => void loadDetails(selectedId)}>Try again</Button>
         </div>
       {:else if details && selected}
         <header class="playlist-hero">
@@ -657,14 +625,7 @@
         </header>
 
         <div class="playlist-view-switcher">
-          <span><strong>Playlist view · {savedProjectionLabel} for listeners</strong><small>{selectedProjectionDescription}</small><small>Previewing a tab does not change the saved view.</small></span>
-          <SegmentedNav
-            items={detailProjectionOptions}
-            active={viewMode}
-            label="Playlist preview"
-            class="contextual-tabs"
-            onchange={(mode) => void changeView(mode)}
-          />
+          <span><strong>Playlist view · Mapped for listeners</strong><small>Every source song stays in order and uses its native backend match when available.</small></span>
         </div>
 
         <div class="playlist-detail-coverage">
@@ -763,9 +724,9 @@
 
         {#if detailError}
           <div class="compact-empty playlist-projection-empty" role="alert">
-            <strong>{selectedProjectionLabel} could not be loaded</strong>
+            <strong>Mapped playlist details could not be loaded</strong>
             <p>{detailError}</p>
-            <Button variant="secondary" onclick={() => void loadDetails(selectedId, undefined, viewMode)}>Try again</Button>
+            <Button variant="secondary" onclick={() => void loadDetails(selectedId)}>Try again</Button>
           </div>
         {:else if details.clientProjection}
         <div class="track-toolbar">
@@ -922,8 +883,8 @@
         </div>
         {:else}
           <div class="compact-empty playlist-projection-empty">
-            <strong>{detailLoading ? `Loading ${selectedProjectionLabel}…` : viewMode === "target" ? `No ${providerName(details.targetProtocol)} playlist is selected` : `${selectedProjectionLabel} is unavailable`}</strong>
-            {#if !detailLoading}<p>{viewMode === "target" ? `Choose the playlist Allstarr should use in ${providerName(details.targetProtocol)}, then try again.` : "Refresh the original playlist or check that this media server is still connected."}</p>{/if}
+            <strong>{detailLoading ? "Loading mapped playlist details…" : "Mapped playlist details are unavailable"}</strong>
+            {#if !detailLoading}<p>Refresh the original playlist or check that this media server is still connected.</p>{/if}
           </div>
         {/if}
       {:else}

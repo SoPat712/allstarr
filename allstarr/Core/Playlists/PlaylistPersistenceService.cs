@@ -147,7 +147,13 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         var account = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, input.SourceProviderId, "playlist", input.ProviderAccountId), cancellationToken) ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var existing = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == actor.EffectiveUserId && item.ProviderAccountId == input.ProviderAccountId && item.SourcePlaylistIdHash == input.SourcePlaylistIdHash && item.TargetProtocol == input.TargetProtocol && item.TargetBackendInstanceId == input.TargetBackendInstanceId, cancellationToken);
-        if (existing != null) return existing;
+        if (existing != null)
+        {
+            if (existing.ImportMode != input.ImportMode || existing.TrackRetention != input.TrackRetention ||
+                (input.TargetPlaylistId != null && !string.Equals(existing.TargetPlaylistId, input.TargetPlaylistId, StringComparison.Ordinal)))
+                throw new ArgumentException("This source playlist is already imported with different settings. Edit its destination or storage settings, or remove its link before importing with different behavior.", nameof(input));
+            return existing;
+        }
         var record = new PlaylistLinkRecord
         {
             Id = Guid.CreateVersion7(),
@@ -207,6 +213,19 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             throw new InvalidOperationException("Import behavior cannot be changed after playlist creation.");
         var trackRetention = update.TrackRetention ?? record.TrackRetention;
         ValidateImportPolicy(record.ImportMode, trackRetention, update.ScheduleId);
+        if (!string.Equals(record.TargetPlaylistId, update.TargetPlaylistId, StringComparison.Ordinal))
+        {
+            var memberships = await db.PlaylistTargetMemberships
+                .Where(item => item.PlaylistLinkId == record.Id && (item.Active || item.RemovalConfirmedAt == null))
+                .ToListAsync(cancellationToken);
+            foreach (var membership in memberships)
+            {
+                membership.Active = false;
+                membership.RemovalConfirmedAt = _clock.UtcNow;
+                membership.UpdatedAt = _clock.UtcNow;
+                membership.Revision++;
+            }
+        }
         record.Mode = update.Mode; record.ProjectionMode = update.ProjectionMode; record.MaterializationMode = update.MaterializationMode; record.TrackRetention = trackRetention; record.RuleVersion = update.RuleVersion.Trim(); record.PolicyVersion = update.PolicyVersion.Trim(); record.ScheduleId = update.ScheduleId; record.TargetPlaylistId = update.TargetPlaylistId; record.TargetCredentialReferenceId = update.TargetCredentialReferenceId; record.MirrorStaleEntries = update.MirrorStaleEntries; record.PreserveManualEntries = update.PreserveManualEntries; record.SyncName = update.SyncName; record.SyncDescription = update.SyncDescription; record.SyncArtwork = update.SyncArtwork; record.UpdatedAt = _clock.UtcNow; record.Revision++;
         await db.SaveChangesAsync(cancellationToken); return record;
     }

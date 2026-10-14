@@ -5595,6 +5595,11 @@
     background: color-mix(in srgb, var(--color-signal) 8%, transparent);
   }
 
+  .pl-option-static {
+    grid-template-columns: minmax(0, 1fr);
+    cursor: default;
+  }
+
   .pl-option-media {
     grid-template-columns: 1.25rem 2.5rem minmax(0, 1fr);
     align-items: center;
@@ -5781,30 +5786,35 @@
     justify-self: end;
   }
 
-  .pl-checks {
+  .pl-retention-toggle {
     display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--control-md);
+    cursor: pointer;
   }
 
-  .pl-checks label {
-    display: inline-flex;
-    min-height: 2.5rem;
-    align-items: center;
-    gap: 0.625rem;
-    border: 1px solid var(--color-edge);
-    border-radius: 999px;
-    padding: 0 var(--space-4) 0 var(--space-3);
-    color: var(--color-ink);
+  .pl-retention-toggle > span {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-1);
+  }
+
+  .pl-retention-toggle strong {
     font-size: var(--text-sm);
-    line-height: 1.25rem;
-    cursor: pointer;
+    font-weight: 500;
+  }
+
+  .pl-retention-toggle small {
+    color: var(--color-ink-muted);
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
   }
 }
 
 @media (max-width: 760px) {
   .pl-option input[type="radio"],
-  .pl-checks [data-slot="checkbox"] {
+  .pl-retention-toggle [data-slot="checkbox"] {
     min-height: 0;
   }
 

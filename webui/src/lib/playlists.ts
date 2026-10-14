@@ -3,65 +3,32 @@ import type { PlaylistLink, PlaylistSourceAccount, PlaylistTrack } from "./api";
 export type PlaylistSort = "name" | "tracks" | "coverage" | "updated";
 export type TrackSort = "position" | "title" | "duration" | "route";
 export type TrackRouteFilter = "all" | PlaylistTrack["routeKind"] | "review";
-
-export function playlistDestinationOptions(
-  targetName = "your media server",
-  playlistName = `the selected ${targetName} playlist`,
-  sourcePlaylistName = "this playlist",
-) {
-  return [
-    { id: "virtual", label: "Only in Allstarr", description: `Listeners see ${sourcePlaylistName} through Allstarr. Nothing changes in ${targetName}.` },
-    { id: "materialized", label: `In a ${targetName} playlist`, description: `Allstarr adds the songs ${targetName} can play to ${playlistName}.` },
-    { id: "hybrid", label: "Both", description: `Every ${sourcePlaylistName} song shows through Allstarr, and the playable ones are also added to ${playlistName}.` },
-  ] as const;
-}
-
-export function playlistProjectionOptions(
-  sourceName = "the source service",
-  targetName = "your media server",
-  playlistName = `the selected ${targetName} playlist`,
-) {
-  return [
-    { id: "resolved", label: "Mapped", description: `Every ${sourceName} song, in order. Each plays from your ${targetName} library when you have it, or from another source. Songs Allstarr can't find stay listed but won't play.` },
-    { id: "source", label: "Original", description: `The same songs, keeping ${sourceName}'s own titles and artwork. Playback works the same way.` },
-    { id: "target", label: "Native", description: `Only the songs already in ${playlistName}. Songs from other sources aren't added.` },
-  ] as const;
-}
+export type PlaylistImportMode = "oneTime" | "linked";
+export type PlaylistTargetMode = "new" | "existing";
 
 export function playlistBehaviorSummary(
-  mode: "virtual" | "materialized" | "hybrid",
-  materializationMode: "reconcile" | "recreate",
+  importMode: PlaylistImportMode,
+  targetMode: PlaylistTargetMode,
   sourcePlaylistName: string,
   targetName: string,
   targetPlaylistName: string,
   cadence?: string,
-  importMode: "oneTime" | "linked" = "linked",
   trackRetention: "onDemand" | "keepAll" = "onDemand",
 ) {
   const retention = trackRetention === "keepAll"
     ? " Allstarr will also keep a copy of every song it can download."
     : "";
+  const destination = targetMode === "new"
+    ? `a new playlist in ${targetName}`
+    : `${targetPlaylistName} in ${targetName}`;
+  const targetAction = targetMode === "new"
+    ? `create ${destination} with its playable songs`
+    : `update ${destination} with its playable songs`;
   if (importMode === "oneTime") {
-    const destination = mode === "virtual"
-      ? `show it through Allstarr without changing a playlist in ${targetName}`
-      : materializationMode === "recreate"
-        ? `create a new playlist in ${targetName}`
-        : `add its playable songs to ${targetPlaylistName} in ${targetName}`;
-    return `Allstarr will import ${sourcePlaylistName} once and ${destination}. It will not check the source for later changes.${retention}`;
+    return `Allstarr will import ${sourcePlaylistName} once, show it through Allstarr, and ${targetAction}. It will not check the source for later changes.${retention}`;
   }
-  if (mode === "virtual")
-    return cadence
-      ? `Allstarr will refresh ${sourcePlaylistName} through Allstarr ${cadence} and will not create or change a playlist in ${targetName}.${retention}`
-      : `Allstarr will refresh ${sourcePlaylistName} only when you run an update and will not create or change a playlist in ${targetName}.${retention}`;
-
-  const visibility = mode === "hybrid"
-    ? ` Allstarr will also show every song from ${sourcePlaylistName} to listeners.`
-    : " It will not show a second playlist through Allstarr.";
-  if (materializationMode === "recreate")
-    return `Allstarr will create a new playlist in ${targetName} ${cadence ?? "when you run an update"} instead of changing ${targetPlaylistName}.${visibility}${retention}`;
-  return cadence
-    ? `Allstarr will keep ${targetPlaylistName} in ${targetName} updated ${cadence} with songs from ${sourcePlaylistName} that ${targetName} can play.${visibility}${retention}`
-    : `Allstarr will add songs from ${sourcePlaylistName} to ${targetPlaylistName} in ${targetName} only when you run an update. It will not keep that playlist updated automatically.${visibility}${retention}`;
+  const timing = cadence ? ` ${cadence}` : " when you run an update";
+  return `Allstarr will keep ${sourcePlaylistName} in sync${timing} and ${targetAction}. It will also show every song from ${sourcePlaylistName} through Allstarr.${retention}`;
 }
 
 export function playlistOutcomeLabel(code?: string | null, targetName = "the media server playlist") {

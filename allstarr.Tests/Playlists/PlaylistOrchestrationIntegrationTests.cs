@@ -1198,6 +1198,83 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Fact]
+    public async Task DestinationEditDuringBackendWriteKeepsTheNewSelectionAndRetiresTheStaleRun()
+    {
+        _source.Snapshot = Snapshot("destination-race", Entry(0, "one", "source-1", "One"));
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _target.WriteStarted = started;
+        _target.WriteBlock = released.Task;
+        var run = _service.RunAsync(Context(), new(_link, 1045));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            var persistence = new PlaylistPersistenceService(_factory, new ProviderAccountResolver(_factory),
+                new Clock(_now), Mock.Of<ITrackMatchRepository>(), new TestBackendLibraryAccess(_factory, "music"));
+            var link = await persistence.GetLinkAsync(Context(), _link);
+            await persistence.UpdateLinkAsync(Context(), _link, new PlaylistLinkUpdate(link.Revision,
+                PlaylistLinkMode.Hybrid, PlaylistMaterializationMode.Reconcile, link.RuleVersion, link.PolicyVersion,
+                null, "new-selection", true, true, true, true, true));
+        }
+        finally { released.TrySetResult(); }
+        var result = await run;
+        Assert.Equal(PlaylistSyncState.Conflicted, result.State);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal("new-selection", (await verify.PlaylistLinks.SingleAsync()).TargetPlaylistId);
+        Assert.Empty(await verify.PlaylistTargetMemberships.Where(item => item.Active || item.RemovalConfirmedAt == null).ToListAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ChangingDestinationNeverTransfersOwnershipFromTheOldPlaylist(bool inactiveRemovalPending)
+    {
+        _source.Snapshot = Snapshot("owned-original", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1041));
+        if (inactiveRemovalPending)
+        {
+            await using var pending = await _factory.CreateDbContextAsync();
+            var membership = await pending.PlaylistTargetMemberships.SingleAsync();
+            membership.Active = false;
+            membership.RemovalConfirmedAt = null;
+            await pending.SaveChangesAsync();
+        }
+        var persistence = new PlaylistPersistenceService(_factory, new ProviderAccountResolver(_factory),
+            new Clock(_now), Mock.Of<ITrackMatchRepository>(), new TestBackendLibraryAccess(_factory, "music"));
+        var link = await persistence.GetLinkAsync(Context(), _link);
+        await persistence.UpdateLinkAsync(Context(), _link, new PlaylistLinkUpdate(link.Revision,
+            PlaylistLinkMode.Hybrid, PlaylistMaterializationMode.Reconcile, link.RuleVersion, link.PolicyVersion,
+            null, "chosen-existing", true, true, true, true, true));
+        _target.Seed("chosen-existing", ["local-1"]);
+        _source.Snapshot = Snapshot("empty-source-new-target");
+
+        await _service.RunAsync(Context(), new(_link, 1042));
+
+        Assert.Empty(_target.LastWrite!.SyncOwnedBackendItemIds);
+        var after = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "chosen-existing", default);
+        Assert.Equal(["local-1"], after.Value!.Members.Select(item => item.BackendItemId));
+    }
+
+    [Theory]
+    [InlineData(PlaylistImportMode.OneTime)]
+    [InlineData(PlaylistImportMode.Linked)]
+    public async Task NewDestinationCreatesOnceWithoutAdoptingASameNamedPlaylist(PlaylistImportMode mode)
+    {
+        await SetLink(importMode: mode);
+        _target.Seed("someone-elses-playlist", ["manual"]);
+        _target.FindSeededPlaylist = true;
+        _source.Snapshot = Snapshot("new-target", Entry(0, "one", "source-1", "One"));
+
+        await _service.RunAsync(Context(), new(_link, 1031));
+        Assert.Null(_target.LastWrite!.BackendPlaylistId);
+        Assert.Equal(0, _target.FindCalls);
+        await _service.RunAsync(Context(), new(_link, 1032));
+        Assert.Equal("target-created", _target.LastWrite!.BackendPlaylistId);
+        Assert.Equal(BackendPlaylistWriteMode.Reconcile, _target.LastWrite.Mode);
+        Assert.Equal(0, _target.FindCalls);
+    }
+
+    [Fact]
     [Trait("Lane", "ReleaseCritical")]
     public async Task MembershipRemovalUpgradeConfirmsOnlyLegacyInactiveRemovals()
     {
@@ -2461,6 +2538,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public BackendPlaylistFamily Family => BackendPlaylistFamily.Jellyfin;
         public bool CanWriteArtwork { get; set; }
         public bool IgnoreRemovals { get; set; }
+        public bool FindSeededPlaylist { get; set; }
         public BackendPlaylistTargetCapabilities Capabilities => new(true, true, true, true, true, true, CanWriteArtwork, true, true);
         public BackendPlaylistTargetStatus ReadStatus { get; set; } = BackendPlaylistTargetStatus.Success;
         public BackendPlaylistTargetStatus WriteStatus { get; set; } = BackendPlaylistTargetStatus.Success;
@@ -2484,7 +2562,9 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot?>> FindByNameAsync(BackendPlaylistTargetContext context, string name, CancellationToken cancellationToken)
         {
             FindCalls++; Contexts.Add(context);
-            return Task.FromResult(new BackendPlaylistTargetResult<BackendPlaylistSnapshot?>(BackendPlaylistTargetStatus.NotFound, ErrorCode: ErrorCode));
+            return Task.FromResult(FindSeededPlaylist && LastSnapshot != null
+                ? new BackendPlaylistTargetResult<BackendPlaylistSnapshot?>(BackendPlaylistTargetStatus.Success, LastSnapshot)
+                : new BackendPlaylistTargetResult<BackendPlaylistSnapshot?>(BackendPlaylistTargetStatus.NotFound, ErrorCode: ErrorCode));
         }
         public Task<BackendPlaylistTargetResult<BackendPlaylistSnapshot>> ReadAsync(BackendPlaylistTargetContext context, string backendPlaylistId, CancellationToken cancellationToken)
         {
@@ -2502,7 +2582,8 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             WriteStarted?.TrySetResult();
             if (WriteBlock != null)
                 await WriteBlock.WaitAsync(cancellationToken);
-            var retained = (LastSnapshot?.Members ?? []).Select(item => item.BackendItemId)
+            var retained = (LastSnapshot?.BackendPlaylistId == request.BackendPlaylistId ? LastSnapshot?.Members ?? [] : [])
+                .Select(item => item.BackendItemId)
                 .Where(id => IgnoreRemovals || !request.RemoveStaleSyncOwnedItems || !request.SyncOwnedBackendItemIds.Contains(id));
             LastSnapshot = WriteStatus == BackendPlaylistTargetStatus.Success
                 ? Backend(request.BackendPlaylistId ?? "target-created", request.OrderedBackendItemIds.Concat(retained).Distinct())
