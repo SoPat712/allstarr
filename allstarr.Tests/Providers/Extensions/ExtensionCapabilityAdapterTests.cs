@@ -1022,8 +1022,17 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.DoesNotContain("unknownFeature@1", ExtensionRuntimeCoordinator.SupportedRuntimeFeatures);
     }
 
-    [Fact]
-    public async Task SpotiFlacDownloadProvider_PreparesAStreamAndDeletesItsTransientWorkspace()
+    [Theory]
+    [InlineData(null, false, 200, null, 4, new byte[] { 1, 2, 3, 4 })]
+    [InlineData("bytes=1-2", false, 206, "bytes 1-2/4", 2, new byte[] { 2, 3 })]
+    [InlineData("bytes=-2", false, 206, "bytes 2-3/4", 2, new byte[] { 3, 4 })]
+    [InlineData("bytes=2-99", false, 206, "bytes 2-3/4", 2, new byte[] { 3, 4 })]
+    [InlineData("bytes=4-", false, 416, "bytes */4", 0, new byte[] { })]
+    [InlineData("bytes=1-2,3-", false, 416, "bytes */4", 0, new byte[] { })]
+    [InlineData("items=1-2", false, 416, "bytes */4", 0, new byte[] { })]
+    [InlineData("bytes=1-2", true, 200, null, 4, new byte[] { })]
+    public async Task SpotiFlacDownloadProvider_PreparesAStreamAndDeletesItsTransientWorkspace(
+        string? range, bool head, int status, string? contentRange, int length, byte[] expected)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-stream", Guid.NewGuid().ToString("N"));
         try
@@ -1058,11 +1067,19 @@ public sealed class ExtensionCapabilityAdapterTests
 
             Assert.True(outcome.IsSuccess, outcome.Error?.Kind.ToString());
             var lease = outcome.RequireValue();
-            Assert.False(lease.SupportsByteRanges);
+            Assert.True(lease.SupportsByteRanges);
+            Assert.True(lease.SupportsSeeking);
             Assert.Equal(1337, lease.Media.Bitrate);
-            using (var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri))
-            using (var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None))
-                Assert.Equal([1, 2, 3, 4], await response.Content.ReadAsByteArrayAsync());
+            using (var request = new HttpRequestMessage(head ? HttpMethod.Head : HttpMethod.Get, lease.ProtectedSourceUri))
+            {
+                if (range != null) request.Headers.Range = System.Net.Http.Headers.RangeHeaderValue.Parse(range);
+                using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
+                Assert.Equal(status, (int)response.StatusCode);
+                Assert.Equal(contentRange, response.Content.Headers.ContentRange?.ToString());
+                Assert.Equal(length, response.Content.Headers.ContentLength);
+                Assert.Equal("bytes", Assert.Single(response.Headers.AcceptRanges));
+                Assert.Equal(expected, await response.Content.ReadAsByteArrayAsync());
+            }
             Assert.Empty(Directory.EnumerateDirectories(options.RootPath));
         }
         finally

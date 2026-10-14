@@ -274,7 +274,14 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var second = Streaming("qobuz", (request, _) =>
         {
             observedRange = request.Headers.Range?.ToString();
-            return Task.FromResult(AudioResponse());
+            var response = AudioResponse();
+            if (request.Headers.Range != null)
+            {
+                response.StatusCode = HttpStatusCode.PartialContent;
+                response.Content = new ByteArrayContent([2, 3, 4]);
+                response.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(1, 3, 4);
+            }
+            return Task.FromResult(response);
         });
         var (gateway, router) = FailoverGateway(first, second, activity);
         using var firstResponse = (await gateway.OpenStreamAsync(context, "deezer", "source-track",

@@ -54,6 +54,8 @@ public sealed class SubsonicExceptionFilter(
                 (0, "Request was canceled.", 499),
             TimeoutException or OperationCanceledException =>
                 (0, "Request timed out.", StatusCodes.Status504GatewayTimeout),
+            HttpRequestException { StatusCode: HttpStatusCode.RequestedRangeNotSatisfiable } =>
+                (0, "The requested byte range is unavailable. Restart playback before seeking.", StatusCodes.Status416RangeNotSatisfiable),
             HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } =>
                 (0, "The requested service is temporarily unavailable.", StatusCodes.Status429TooManyRequests),
             NotSupportedException or InvalidOperationException =>

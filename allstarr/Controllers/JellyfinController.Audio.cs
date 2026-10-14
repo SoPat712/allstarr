@@ -201,6 +201,8 @@ public partial class JellyfinController
             return httpRequestException.StatusCode switch
             {
                 HttpStatusCode.NotFound => (StatusCodes.Status404NotFound, "External track not found"),
+                HttpStatusCode.RequestedRangeNotSatisfiable => (StatusCodes.Status416RangeNotSatisfiable,
+                    "The requested byte range is unavailable. Restart playback before seeking."),
                 HttpStatusCode.TooManyRequests => (StatusCodes.Status503ServiceUnavailable, "External provider is rate limiting requests"),
                 HttpStatusCode.BadGateway or
                 HttpStatusCode.ServiceUnavailable or

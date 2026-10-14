@@ -276,27 +276,51 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStrea
             {
                 if (Interlocked.Exchange(ref opened, 1) != 0)
                     throw new InvalidOperationException("A prepared extension stream lease can only be opened once.");
-                if (message.Method == HttpMethod.Head)
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var range = message.Method == HttpMethod.Head ? null : message.Headers.Range;
+                    long start = 0, end = artifact.Length - 1;
+                    HttpResponseMessage response;
+                    if (range != null && !StreamByteRanges.TryResolve(range, artifact.Length, out start, out end))
+                    {
+                        artifacts.DeleteTransientWorkspace(workspace);
+                        response = Response(HttpStatusCode.RequestedRangeNotSatisfiable,
+                            new ByteArrayContent([]), 0, media.MimeType);
+                        response.Content.Headers.ContentRange = new ContentRangeHeaderValue(artifact.Length);
+                    }
+                    else if (message.Method == HttpMethod.Head)
+                    {
+                        artifacts.DeleteTransientWorkspace(workspace);
+                        response = Response(HttpStatusCode.OK, new ByteArrayContent([]), artifact.Length, media.MimeType);
+                    }
+                    else
+                    {
+                        var stream = new FileStream(artifact.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                        stream.Position = start;
+                        var length = end - start + 1;
+                        response = Response(range == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent,
+                            new StreamContent(new CleanupStream(stream, length,
+                                () => artifacts.DeleteTransientWorkspace(workspace))), length, media.MimeType);
+                        if (range != null) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(start, end, artifact.Length);
+                    }
+                    response.Headers.AcceptRanges.Add("bytes");
+                    return Task.FromResult(response);
+                }
+                catch
                 {
                     artifacts.DeleteTransientWorkspace(workspace);
-                    return Task.FromResult(Response(
-                        HttpStatusCode.OK, new ByteArrayContent([]), artifact.Length, media.MimeType));
+                    throw;
                 }
-
-                var stream = new FileStream(artifact.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                return Task.FromResult(Response(HttpStatusCode.OK,
-                    new StreamContent(new CleanupStream(stream, () => artifacts.DeleteTransientWorkspace(workspace))),
-                    artifact.Length,
-                    media.MimeType));
             }
 
             return ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
                 $"download-{jobId:N}",
                 new Uri($"https://extension-download.invalid/{jobId:N}"),
                 DateTimeOffset.UtcNow.AddMinutes(5),
-                supportsByteRanges: false,
-                supportsSeeking: false,
+                supportsByteRanges: true,
+                supportsSeeking: true,
                 media,
                 ProviderStreamRetryBehavior.DoNotRetry,
                 OpenAsync));
@@ -341,17 +365,28 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStrea
         return new HttpResponseMessage(status) { Content = content };
     }
 
-    private sealed class CleanupStream(Stream inner, Action cleanup) : Stream
+    private sealed class CleanupStream(Stream inner, long length, Action cleanup) : Stream
     {
         private int disposed;
+        private readonly long contentLength = length;
+        private long remaining = length;
         public override bool CanRead => inner.CanRead;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
-        public override long Length => inner.Length;
-        public override long Position { get => inner.Position; set => throw new NotSupportedException(); }
-        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
-            inner.ReadAsync(buffer, cancellationToken);
+        public override long Length => contentLength;
+        public override long Position { get => contentLength - remaining; set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var read = inner.Read(buffer, offset, (int)Math.Min(count, remaining));
+            remaining -= read;
+            return read;
+        }
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var read = await inner.ReadAsync(buffer[..(int)Math.Min(buffer.Length, remaining)], cancellationToken);
+            remaining -= read;
+            return read;
+        }
         protected override void Dispose(bool disposing)
         {
             if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)

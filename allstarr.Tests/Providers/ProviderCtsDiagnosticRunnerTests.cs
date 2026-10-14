@@ -15,6 +15,27 @@ namespace allstarr.Tests;
 
 public sealed class ProviderCtsDiagnosticRunnerTests
 {
+    [Theory]
+    [InlineData("bytes 0-9/100", 10, "byte-range")]
+    [InlineData("bytes 0-9/*", 10, "sequential")]
+    [InlineData("bytes 0-9/100", 9, "sequential")]
+    [InlineData("items 0-9/100", 10, "sequential")]
+    [InlineData("bytes */100", 10, "sequential")]
+    [InlineData("invalid", 10, "sequential")]
+    public void SeekRung_RequiresActualBytesAndKnownTotal(string contentRange, long length, string expected)
+    {
+        var result = new ProviderCtsDiagnosticResult
+        {
+            Succeeded = true,
+            LeaseSupportsByteRanges = true,
+            LeaseSupportsSeeking = false,
+            UpstreamStatusCode = 206,
+            ContentRange = contentRange,
+            ContentLength = length
+        };
+        Assert.Equal(expected, result.SeekRung);
+    }
+
     [Fact]
     public async Task Measure_BoundsAndRedactsTheRecordedMediaSample()
     {

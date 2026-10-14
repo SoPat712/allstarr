@@ -482,7 +482,9 @@ public sealed class ProviderCtsDiagnosticResult
     public bool LeaseSupportsByteRanges { get; init; }
     public bool LeaseSupportsSeeking { get; init; }
     public string SeekRung => !Succeeded ? "unavailable" :
-        LeaseSupportsByteRanges && UpstreamStatusCode == 206 && !string.IsNullOrWhiteSpace(ContentRange)
+        LeaseSupportsByteRanges && UpstreamStatusCode == 206 &&
+        ContentRangeHeaderValue.TryParse(ContentRange, out var range) && range.HasLength &&
+        StreamByteRanges.HasValidContentRange(range, ContentLength)
             ? "byte-range" : LeaseSupportsSeeking ? "provider-seek" : "sequential";
     public ProviderMediaFormat? Media { get; init; }
     public string? QualityDowngradeReason { get; init; }

@@ -24,6 +24,7 @@ public sealed class SubsonicExceptionFilterTests
         { new OperationCanceledException("raw"), false, 0, 504 },
         { new TimeoutException("raw"), false, 0, 504 },
         { new HttpRequestException("raw", null, HttpStatusCode.TooManyRequests), false, 0, 429 },
+        { new HttpRequestException("raw", null, HttpStatusCode.RequestedRangeNotSatisfiable), false, 0, 416 },
         { new NotSupportedException("raw"), false, 0, 503 },
         { new InvalidOperationException("raw"), false, 0, 503 },
         { new HttpRequestException("raw secret"), false, 0, 502 },
