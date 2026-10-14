@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Identity;
@@ -895,50 +896,28 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(2, calls);
     }
 
-    [Theory]
-    [InlineData(true, HttpStatusCode.PartialContent, "bytes=10-19")]
-    [InlineData(false, HttpStatusCode.OK, null)]
-    public async Task OpenStream_ForwardsRangesOnlyWhenTheLeaseCanHonorThem(
-        bool supportsRanges,
-        HttpStatusCode expectedStatus,
-        string? expectedRange)
+    [Fact]
+    public async Task OpenStream_ForwardsRangesOnlyWhenTheLeaseCanHonorThem()
     {
         string? observedRange = null;
-        var lease = new ProviderStreamLease(
-            "lease",
-            new Uri("https://media.example.test/track"),
-            DateTimeOffset.UtcNow.AddMinutes(1),
-            supportsRanges,
-            supportsRanges,
-            new ProviderMediaFormat("audio/flac", "flac", "flac"),
-            ProviderStreamRetryBehavior.DoNotRetry,
-            (request, _) =>
-            {
-                observedRange = request.Headers.Range?.ToString();
-                return Task.FromResult(AudioResponse(
-                    observedRange == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent));
-            });
-        var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(lease));
-        var registry = Registry(capability.Object);
-        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
-        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(
-                It.IsAny<ProviderRouteRequest>()))
-            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, capability.Object));
-        var gateway = new ProtocolProviderGateway(
-            router.Object,
-            registry,
-            new HttpClientFactory());
+        var capability = Streaming("qobuz", (request, _) =>
+        {
+            observedRange = request.Headers.Range?.ToString();
+            var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
+            { Content = new ByteArrayContent(new byte[10]) };
+            response.Content.Headers.ContentRange = new ContentRangeHeaderValue(10, 19, 100);
+            return Task.FromResult(response);
+        });
+        var gateway = RangeGateway(capability.Object);
+        using var response = (await gateway.OpenStreamAsync(
+            Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, "bytes=10-19"))!.Response;
 
-        var stream = await gateway.OpenStreamAsync(
-            Context(), "qobuz", "source-track", ProviderAudioQuality.Lossless, "bytes=10-19");
-
-        Assert.NotNull(stream);
-        Assert.Equal(expectedStatus, stream.Response.StatusCode);
-        Assert.Equal(expectedRange, observedRange);
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal("bytes=10-19", observedRange);
+        Assert.Equal(new byte[10], await response.Content.ReadAsByteArrayAsync());
         capability.Verify(item => item.GetStreamLeaseAsync(
             It.IsAny<ProviderExecutionContext>(),
             It.Is<ProviderStreamLeaseRequest>(request => request.RangeStart == 10)), Times.Once);
-        stream.Response.Dispose();
     }
 
     [Fact]

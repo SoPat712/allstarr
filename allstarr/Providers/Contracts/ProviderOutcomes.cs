@@ -70,6 +70,11 @@ public sealed record ProviderError
         "apple-web-token-unavailable",
         "Apple's web-player token could not be fetched. Retry the Apple account test later.");
 
+    public static ProviderError StreamRangeUnavailable() => new(
+        ProviderErrorKind.NotSupported,
+        "stream-range-unavailable",
+        "The playback source cannot serve the requested byte range. Restart playback before seeking.");
+
     public static ProviderError CompatibilityContractChanged() => new(
         ProviderErrorKind.CapabilityUnavailable,
         "provider-contract-changed",

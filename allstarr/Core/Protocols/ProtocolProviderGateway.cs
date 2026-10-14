@@ -1022,7 +1022,7 @@ public sealed partial class ProtocolProviderGateway(
             return null;
         }
 
-        var parsedRange = ParseRange(rangeHeader);
+        var parsedRange = headOnly ? null : StreamByteRanges.Parse(rangeHeader);
         var rangeStart = parsedRange?.Ranges.Single().From;
         var trackId = new ProviderExternalResourceId(
             providerId, ProviderResourceKind.Track, externalId);
@@ -1129,8 +1129,13 @@ public sealed partial class ProtocolProviderGateway(
                 using var request = new HttpRequestMessage(
                     headOnly ? HttpMethod.Head : HttpMethod.Get,
                     lease.ProtectedSourceUri);
-                if (parsedRange != null && lease.SupportsByteRanges)
-                    request.Headers.Range = parsedRange;
+                if (parsedRange != null)
+                {
+                    if (!lease.SupportsByteRanges && rangeStart != 0)
+                        throw new HttpRequestException(ProviderError.StreamRangeUnavailable().SafeMessage, null,
+                            HttpStatusCode.RequestedRangeNotSatisfiable);
+                    if (lease.SupportsByteRanges) request.Headers.Range = parsedRange;
+                }
                 return lease.ProtectedResponseFactory != null
                     ? await lease.ProtectedResponseFactory(request, protocol.CancellationToken)
                     : await httpClientFactory.CreateClient(StreamingClientName).SendAsync(
@@ -1141,7 +1146,7 @@ public sealed partial class ProtocolProviderGateway(
 
             var started = Stopwatch.GetTimestamp();
             var outcome = await OpenCandidateAsync(ResolveLeaseAsync, OpenLeaseAsync,
-                headOnly, protocol.CancellationToken);
+                headOnly, parsedRange, protocol.CancellationToken);
             if (!leaseFailed && (!headOnly || !outcome.IsSuccess))
                 outcomes?.Observe(candidate.Context, ProviderCapabilityKind.Streaming,
                     outcome.Error, Stopwatch.GetElapsedTime(started));
@@ -1187,6 +1192,7 @@ public sealed partial class ProtocolProviderGateway(
         Func<Task<ProviderOutcome<ProviderStreamLease>>> resolve,
         Func<ProviderStreamLease, Task<HttpResponseMessage>> open,
         bool headOnly,
+        RangeHeaderValue? requestedRange,
         CancellationToken cancellationToken)
     {
         ProviderStreamLease? lease = null;
@@ -1207,6 +1213,11 @@ public sealed partial class ProtocolProviderGateway(
                 response = await open(lease);
                 if (response.IsSuccessStatusCode)
                 {
+                    if (!headOnly && !StreamByteRanges.Matches(response, requestedRange))
+                    {
+                        error = ProviderError.StreamRangeUnavailable();
+                        break;
+                    }
                     response.Content.Headers.ContentType ??= new MediaTypeHeaderValue(lease.Media.MimeType);
                     var mediaType = response.Content.Headers.ContentType?.MediaType;
                     if ((mediaType == null || mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
@@ -1240,6 +1251,7 @@ public sealed partial class ProtocolProviderGateway(
 
     private static ProviderError StreamError(HttpStatusCode status) => status switch
     {
+        HttpStatusCode.RequestedRangeNotSatisfiable => ProviderError.StreamRangeUnavailable(),
         HttpStatusCode.NotFound or HttpStatusCode.Gone => new(ProviderErrorKind.NotFound),
         HttpStatusCode.Unauthorized => new(ProviderErrorKind.Unauthorized),
         HttpStatusCode.Forbidden => new(ProviderErrorKind.Forbidden),
@@ -1450,16 +1462,6 @@ public sealed partial class ProtocolProviderGateway(
         idempotencyKey: idempotencyKey,
         cancellationToken: cancellationToken);
 
-    private static RangeHeaderValue? ParseRange(string? rangeHeader)
-    {
-        if (string.IsNullOrWhiteSpace(rangeHeader)) return null;
-        if (!RangeHeaderValue.TryParse(rangeHeader, out var parsed) || parsed.Ranges.Count != 1)
-        {
-            throw new InvalidOperationException("Only one valid byte range may be requested.");
-        }
-        return parsed;
-    }
-
     private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection)
     {
         if (rejection.ReasonCode == ProviderError.AppleDownloadGatewayUpdateRequired().Code)
@@ -1481,6 +1483,8 @@ public sealed partial class ProtocolProviderGateway(
 
     private static void ThrowRouteFailure(ProviderError error) => throw error switch
     {
+        { Code: "stream-range-unavailable" } => new HttpRequestException(error.SafeMessage, null,
+            HttpStatusCode.RequestedRangeNotSatisfiable),
         { Code: "apple-download-sign-in-required" } => new ProtocolProviderUnavailableException(error),
         _ => error.Kind switch
         {
