@@ -10,7 +10,6 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Theory]
-    [InlineData("bytes=10-19", 200, null, 10)]
     [InlineData("bytes=10-19", 206, null, 10)]
     [InlineData("bytes=10-19", 206, "bytes 0-9/100", 10)]
     [InlineData("bytes=10-19", 206, "bytes 10-20/100", 11)]
@@ -32,7 +31,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(
             Context(), "qobuz", "source-track", ProviderAudioQuality.Any, requested));
 
-        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, error.StatusCode);
+        Assert.Equal(new ProviderError(ProviderErrorKind.IncompatibleMedia).SafeMessage, error.Message);
+        Assert.Equal(502, allstarr.Controllers.JellyfinController.MapExternalStreamException(error).statusCode);
+        Assert.Equal(502, allstarr.Filters.SubsonicExceptionFilter.Map(error).StatusCode);
         Assert.False(body.CanRead);
         capability.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
@@ -65,27 +66,53 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var capability = Streaming("qobuz", (_, _) => throw new InvalidOperationException("Must not open."));
         var error = await Assert.ThrowsAsync<HttpRequestException>(() => RangeGateway(capability.Object).OpenStreamAsync(
             Context(), "qobuz", "source-track", ProviderAudioQuality.Any, range));
-        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, error.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, error.StatusCode);
         capability.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
     }
 
-    [Fact]
-    public async Task OpenStream_NonRangeLeaseNeverRestartsANonzeroSeek()
+    [Theory]
+    [InlineData(false, "bytes=10-")]
+    [InlineData(false, "bytes=-10")]
+    [InlineData(false, "bytes=0-")]
+    [InlineData(true, "bytes=10-")]
+    [InlineData(true, "bytes=-10")]
+    public async Task OpenStream_SequentialSourcesReturnFullAudioWithoutRangeHeaders(bool supportsRanges, string range)
     {
-        var opened = false;
+        string? forwardedRange = "not-opened";
         var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/track"),
-            DateTimeOffset.UtcNow.AddMinutes(1), false, false, new ProviderMediaFormat("audio/flac", "flac", "flac"),
-            ProviderStreamRetryBehavior.DoNotRetry, (_, _) =>
+            DateTimeOffset.UtcNow.AddMinutes(1), supportsRanges, supportsRanges, new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry, (request, _) =>
             {
-                opened = true;
-                return Task.FromResult(AudioResponse());
+                forwardedRange = request.Headers.Range?.ToString();
+                var response = AudioResponse();
+                response.Headers.AcceptRanges.Add("bytes");
+                response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, 3, 100);
+                return Task.FromResult(response);
             });
         var capability = Capability("qobuz", ProviderOutcome<ProviderStreamLease>.Success(lease));
+        using var response = (await RangeGateway(capability.Object).OpenStreamAsync(
+            Context(), "qobuz", "source-track", ProviderAudioQuality.Any, range))!.Response;
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+        Assert.Null(response.Content.Headers.ContentRange);
+        Assert.Empty(response.Headers.AcceptRanges);
+        Assert.Equal(supportsRanges ? range : null, forwardedRange);
+    }
+
+    [Theory]
+    [InlineData("bytes=4-", 4L, HttpStatusCode.RequestedRangeNotSatisfiable)]
+    [InlineData("bytes=1-", 4L, null)]
+    [InlineData("bytes=4-", null, null)]
+    public async Task OpenStream_OnlyKnownUnsatisfiableOffsetsReturn416(string requested, long? length, HttpStatusCode? expected)
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.RequestedRangeNotSatisfiable)
+        { Content = new ByteArrayContent([]) };
+        if (length.HasValue) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(length.Value);
+        var capability = Streaming("qobuz", (_, _) => Task.FromResult(response));
         var error = await Assert.ThrowsAsync<HttpRequestException>(() => RangeGateway(capability.Object).OpenStreamAsync(
-            Context(), "qobuz", "source-track", ProviderAudioQuality.Any, "bytes=10-"));
-        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, error.StatusCode);
-        Assert.False(opened);
+            Context(), "qobuz", "source-track", ProviderAudioQuality.Any, requested));
+        Assert.Equal(expected, error.StatusCode);
     }
 
     [Fact]

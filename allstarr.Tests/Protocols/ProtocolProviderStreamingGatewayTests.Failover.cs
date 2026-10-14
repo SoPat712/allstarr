@@ -310,7 +310,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var (gateway, router) = FailoverGateway(first, second, activity);
         var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(ClientContext(),
             "deezer", "source-track", ProviderAudioQuality.Any, "bytes=100-"));
-        Assert.Equal(HttpStatusCode.RequestedRangeNotSatisfiable, error.StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
         router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()), Times.Never);
     }
 

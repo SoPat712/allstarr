@@ -127,6 +127,21 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.DoesNotContain("secret", subsonic.Message);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest, 400)]
+    [InlineData(HttpStatusCode.Conflict, 409)]
+    public void ExternalStream_InvalidRequestsAndMissingSelectionsDoNotClaimAnUnsatisfiableArtifact(
+        HttpStatusCode upstream, int expected)
+    {
+        var error = new HttpRequestException("raw secret", null, upstream);
+        var jellyfin = allstarr.Controllers.JellyfinController.MapExternalStreamException(error);
+        var subsonic = allstarr.Filters.SubsonicExceptionFilter.Map(error);
+        Assert.Equal(expected, jellyfin.statusCode);
+        Assert.Equal(expected, subsonic.StatusCode);
+        Assert.DoesNotContain("secret", jellyfin.errorMessage);
+        Assert.DoesNotContain("secret", subsonic.Message);
+    }
+
     [Fact]
     public void JellyfinExternalStream_ReportsUnavailableAccountAsForbidden()
     {

@@ -1028,8 +1028,8 @@ public sealed class ExtensionCapabilityAdapterTests
     [InlineData("bytes=-2", false, 206, "bytes 2-3/4", 2, new byte[] { 3, 4 })]
     [InlineData("bytes=2-99", false, 206, "bytes 2-3/4", 2, new byte[] { 3, 4 })]
     [InlineData("bytes=4-", false, 416, "bytes */4", 0, new byte[] { })]
-    [InlineData("bytes=1-2,3-", false, 416, "bytes */4", 0, new byte[] { })]
-    [InlineData("items=1-2", false, 416, "bytes */4", 0, new byte[] { })]
+    [InlineData("bytes=1-2,3-", false, 400, null, 0, new byte[] { })]
+    [InlineData("items=1-2", false, 400, null, 0, new byte[] { })]
     [InlineData("bytes=1-2", true, 200, null, 4, new byte[] { })]
     public async Task SpotiFlacDownloadProvider_PreparesAStreamAndDeletesItsTransientWorkspace(
         string? range, bool head, int status, string? contentRange, int length, byte[] expected)

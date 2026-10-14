@@ -285,9 +285,10 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStrea
                     if (range != null && !StreamByteRanges.TryResolve(range, artifact.Length, out start, out end))
                     {
                         artifacts.DeleteTransientWorkspace(workspace);
-                        response = Response(HttpStatusCode.RequestedRangeNotSatisfiable,
+                        var validRange = StreamByteRanges.IsSingleByteRange(range);
+                        response = Response(validRange ? HttpStatusCode.RequestedRangeNotSatisfiable : HttpStatusCode.BadRequest,
                             new ByteArrayContent([]), 0, media.MimeType);
-                        response.Content.Headers.ContentRange = new ContentRangeHeaderValue(artifact.Length);
+                        if (validRange) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(artifact.Length);
                     }
                     else if (message.Method == HttpMethod.Head)
                     {
