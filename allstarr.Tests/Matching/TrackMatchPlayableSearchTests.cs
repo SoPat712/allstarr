@@ -217,7 +217,9 @@ public sealed class TrackMatchPlayableSearchTests
             null,
             CancellationToken.None);
 
-        Assert.Equal(TrackMatchReviewState.Suggested, result.Decision.State);
+        Assert.Equal(TrackMatchReviewState.Unresolved, result.Decision.State);
+        Assert.Null(result.SelectedExternal);
+        Assert.Empty(result.RoutableExternalCandidates);
         Assert.Contains(
             "semantic_version_mismatch",
             Assert.Single(result.Decision.Candidates).Warnings);
@@ -387,8 +389,10 @@ public sealed class TrackMatchPlayableSearchTests
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
     }
 
-    [Fact]
-    public async Task Unique_suggestion_is_used_but_keeps_review_warning()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UniqueSpellingSuggestionIsUsableButADifferentVersionNeedsAManualChoice(bool differentVersion)
     {
         var user = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
@@ -404,7 +408,7 @@ public sealed class TrackMatchPlayableSearchTests
                     {
                         ExternalProvider = "apple-download",
                         ExternalId = "tentative",
-                        Title = "Feels (Live)",
+                        Title = differentVersion ? "Feels (Live)" : "Fiels",
                         Artist = "Calvin Harris",
                         Album = "Funk Wav Bounces Vol. 1",
                         Duration = 223
@@ -427,14 +431,19 @@ public sealed class TrackMatchPlayableSearchTests
             null,
             CancellationToken.None);
 
-        Assert.Equal(TrackMatchReviewState.Suggested, result.Decision.State);
+        Assert.Equal(differentVersion ? TrackMatchReviewState.Unresolved : TrackMatchReviewState.Suggested, result.Decision.State);
         Assert.InRange(
             result.Decision.Confidence,
             result.Decision.SuggestThreshold,
             result.Decision.AcceptThreshold - 0.0001);
         Assert.True(result.Decision.RequiresReview);
         Assert.Contains("below_accept_threshold_review", result.Decision.Warnings);
-        Assert.Equal("tentative", result.SelectedExternal!.ExternalId);
+        if (differentVersion)
+        {
+            Assert.Null(result.SelectedExternal);
+            Assert.Contains("semantic_version_mismatch_review", result.Decision.Warnings);
+        }
+        else Assert.Equal("tentative", result.SelectedExternal!.ExternalId);
     }
 
     [Fact]

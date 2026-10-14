@@ -10,6 +10,93 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void AWrongVersionCannotMakeTheCorrectRecordingAmbiguous()
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "The Long Road Through The Mountains To The Place We Call Home" };
+        var correct = Candidate(scope) with { CanonicalRecordingId = null, Title = source.Title };
+        var wrong = correct with { LibraryTrackId = Guid.CreateVersion7(), BackendItemId = "live-version", Title = source.Title + " (Live)" };
+        var decision = new TrackMatchDecisionEngine(new TrackMatchPolicy
+        { AcceptThreshold = .75, SuggestThreshold = .70, AmbiguityDelta = .25 }).Decide(scope, source, [correct, wrong]);
+        Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
+        Assert.Equal(correct.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Fact]
+    public void AManualPinRemainsAuthoritativeDespiteAVersionLabelMismatch()
+    {
+        var scope = Scope();
+        var source = Source();
+        var candidate = Candidate(scope) with { Title = source.Title + " (Live)" };
+        var decision = new TrackMatchDecisionEngine().Decide(scope, source, [candidate],
+            new ScopedTrackMatchOverride(scope.UserId, source.ProviderId, source.ExternalId, candidate.LibraryTrackId));
+        Assert.Equal(TrackMatchReviewState.Pinned, decision.State);
+        Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData("Live")]
+    [InlineData("Instrumental")]
+    [InlineData("Acoustic")]
+    [InlineData("Remix")]
+    [InlineData("Clean")]
+    [InlineData("Radio Edit")]
+    public void SemanticVersionMismatchCannotBeAutomaticallyAcceptedAtALowerConfiguredThreshold(string version)
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "The Long Road Through The Mountains To The Place We Call Home" };
+        var candidate = Candidate(scope) with { CanonicalRecordingId = null, Title = source.Title + " (" + version + ")" };
+        var decision = new TrackMatchDecisionEngine(new TrackMatchPolicy { AcceptThreshold = .75, SuggestThreshold = .70 })
+            .Decide(scope, source, [candidate]);
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.True(decision.RequiresReview);
+        Assert.Null(decision.SelectedLibraryTrackId);
+        Assert.Contains("semantic_version_mismatch", Assert.Single(decision.Candidates).Warnings);
+    }
+
+    [Theory]
+    [InlineData("spotify", "A SONG", "title_case_folded")]
+    [InlineData("apple-music", "A SONG", "title_case_folded")]
+    [InlineData("deezer", "A-Song!", "title_normalized")]
+    [InlineData("spotify", "A-Song!", "title_normalized")]
+    [InlineData("apple-music", "A Song (Official Audio)", "title_decorators_ignored")]
+    [InlineData("deezer", "A Song (Official Audio)", "title_decorators_ignored")]
+    [InlineData("spotify", "A Sng", "title_fuzzy")]
+    public void FieldTitleExplanationsDescribeTheSameNormalizationAcrossProviders(string provider, string title, string reason)
+    {
+        var scope = Scope();
+        var source = Source() with { ProviderId = provider, Title = title };
+        var score = Assert.Single(new TrackMatchDecisionEngine().ScoreCandidates(source,
+            [Candidate(scope) with { CanonicalRecordingId = null }]));
+        Assert.Contains(reason, score.Reasons);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void AnOlderManualCandidateRejectionDoesNotBlockADifferentAcceptedCandidate(bool externalMatch)
+    {
+        var rejected = Guid.CreateVersion7();
+        var accepted = Guid.CreateVersion7();
+        var manual = new ManualTrackOverrideRecord
+        {
+            Decision = ManualOverrideDecision.Reject,
+            LibraryTrackId = rejected,
+            MatcherVersion = "older-matcher"
+        };
+        Assert.False(TrackMatchOverridePolicy.IsEffectiveRejection(manual,
+            new TrackMatchRecord
+            {
+                State = TrackMatchState.Accepted,
+                LibraryTrackId = externalMatch ? null : accepted,
+                CanonicalRecordingId = Guid.CreateVersion7(),
+                CandidateResultsJson = JsonSerializer.Serialize(new[] { new { LibraryTrackId = rejected } })
+            }));
+        Assert.True(TrackMatchOverridePolicy.IsEffectiveRejection(manual,
+            new TrackMatchRecord { State = TrackMatchState.Accepted, LibraryTrackId = rejected, CandidateResultsJson = "[]" }));
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -1096,7 +1183,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void CandidateRejection_SelectsTheNextMatchAndExpiresWithMatcherVersion()
+    public void CandidateRejection_SelectsTheNextMatchAndSurvivesMatcherUpgrade()
     {
         var scope = Scope();
         var rejected = Candidate(scope) with
@@ -1126,7 +1213,7 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 
         Assert.Equal(TrackMatchReviewState.Accepted, decision.State);
         Assert.Equal(alternate.LibraryTrackId, decision.SelectedLibraryTrackId);
-        Assert.False(TrackMatchOverridePolicy.IsEffectiveRejection(record, null));
+        Assert.True(TrackMatchOverridePolicy.IsEffectiveRejection(record, null));
     }
 
     [Fact]

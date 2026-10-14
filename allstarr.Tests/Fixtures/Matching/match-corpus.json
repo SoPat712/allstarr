@@ -39,7 +39,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -65,6 +66,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -72,6 +74,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -85,6 +88,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -99,29 +103,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "blinding-lights/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "blinding-lights/featured-artist",
@@ -133,6 +133,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -140,6 +141,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -193,6 +195,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -200,6 +203,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -297,7 +301,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -323,6 +328,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -330,6 +336,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -343,6 +350,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -357,29 +365,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "bohemian-rhapsody/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "bohemian-rhapsody/featured-artist",
@@ -391,6 +395,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -398,6 +403,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -451,6 +457,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -458,6 +465,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -555,7 +563,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -581,6 +590,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -588,6 +598,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -601,6 +612,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -615,29 +627,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "halo/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "halo/featured-artist",
@@ -649,6 +657,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -656,6 +665,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -709,6 +719,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -716,6 +727,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -813,7 +825,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -839,6 +852,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -846,6 +860,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -859,6 +874,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -873,29 +889,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "dreams/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "dreams/featured-artist",
@@ -907,6 +919,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -914,6 +927,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -967,6 +981,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -974,6 +989,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -1071,7 +1087,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -1097,6 +1114,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1104,6 +1122,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1117,6 +1136,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -1131,29 +1151,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "levitating/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "levitating/featured-artist",
@@ -1165,6 +1181,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1172,6 +1189,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1225,6 +1243,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1232,6 +1251,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -1329,7 +1349,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -1355,6 +1376,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1362,6 +1384,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1375,6 +1398,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -1389,29 +1413,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "rolling-in-the-deep/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "rolling-in-the-deep/featured-artist",
@@ -1423,6 +1443,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1430,6 +1451,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1483,6 +1505,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1490,6 +1513,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -1587,7 +1611,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -1613,6 +1638,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1620,6 +1646,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1633,6 +1660,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -1647,29 +1675,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "get-lucky/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "get-lucky/featured-artist",
@@ -1681,6 +1705,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1688,6 +1713,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1741,6 +1767,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1748,6 +1775,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -1845,7 +1873,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -1871,6 +1900,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1878,6 +1908,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1891,6 +1922,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -1905,29 +1937,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "sanguine-paradise/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "sanguine-paradise/featured-artist",
@@ -1939,6 +1967,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -1946,6 +1975,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -1999,6 +2029,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2006,6 +2037,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -2103,7 +2135,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -2129,6 +2162,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2136,6 +2170,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2149,6 +2184,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -2163,29 +2199,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "cheek-to-cheek/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "cheek-to-cheek/featured-artist",
@@ -2197,6 +2229,7 @@
       "album_exact",
       "artist_partial",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2204,6 +2237,7 @@
       "album_exact",
       "artist_partial",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2256,12 +2290,14 @@
       "album_artist_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
       "album_artist_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -2359,7 +2395,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -2385,6 +2422,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2392,6 +2430,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2405,6 +2444,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -2419,29 +2459,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "gurenge/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "gurenge/featured-artist",
@@ -2453,6 +2489,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2460,6 +2497,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2513,6 +2551,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2520,6 +2559,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -2617,7 +2657,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -2643,6 +2684,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2650,6 +2692,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2663,6 +2706,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -2677,29 +2721,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "despacito/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "despacito/featured-artist",
@@ -2711,6 +2751,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2718,6 +2759,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2771,6 +2813,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2778,6 +2821,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },
@@ -2875,7 +2919,8 @@
     "decisionReasons": [
       "album_artist_exact",
       "artist_exact",
-      "duration_partial"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -2901,6 +2946,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2908,6 +2954,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -2921,6 +2968,7 @@
       "album_strong",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
@@ -2935,29 +2983,25 @@
       "album_exact",
       "artist_exact",
       "duration_partial",
+      "title_fuzzy",
       "title_strong"
     ],
     "selectedReasons": []
   },
   {
     "case": "smells-like-teen-spirit/instrumental",
-    "state": "Suggested",
-    "selected": "match",
+    "state": "Unresolved",
+    "selected": null,
     "confidence": 0.799,
     "decisionReasons": [
       "album_artist_exact",
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_fuzzy",
       "title_strong"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_strong"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "smells-like-teen-spirit/featured-artist",
@@ -2969,6 +3013,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ],
     "selectedReasons": [
@@ -2976,6 +3021,7 @@
       "album_exact",
       "artist_strong",
       "duration_close",
+      "title_decorators_ignored",
       "title_exact"
     ]
   },
@@ -3029,6 +3075,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ],
     "selectedReasons": [
@@ -3036,6 +3083,7 @@
       "album_exact",
       "artist_exact",
       "duration_close",
+      "title_case_folded",
       "title_exact"
     ]
   },

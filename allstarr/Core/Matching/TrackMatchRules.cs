@@ -194,6 +194,8 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             ["versionTags"] = versionMatch ? 1 : 0
         };
         TrackMatchSignals.AddReason(reasons, "title", title);
+        if (TrackMatchSignals.TitleComparisonReason(source.Title, candidate.Title) is { } titleReason)
+            reasons.Add(titleReason);
         TrackMatchSignals.AddReason(reasons, "artist", artist);
         var weightedScore = (title * 0.42) + (artist * 0.30);
         var totalWeight = 0.72;
@@ -300,6 +302,21 @@ internal static class TrackMatchSignals
         string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)
             ? 0
             : FuzzyMatcher.CalculateSimilarityAggressive(left, right) / 100d;
+
+    public static string? TitleComparisonReason(string? source, string? candidate)
+    {
+        if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(candidate) || source == candidate)
+            return null;
+        if (string.Equals(source, candidate, StringComparison.OrdinalIgnoreCase))
+            return "title_case_folded";
+        if (FuzzyMatcher.NormalizeForMatching(source) == FuzzyMatcher.NormalizeForMatching(candidate))
+            return "title_normalized";
+        var sourceBase = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(source));
+        var candidateBase = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(candidate));
+        return sourceBase.Length > 0 && sourceBase == candidateBase
+            ? "title_decorators_ignored"
+            : "title_fuzzy";
+    }
 
     public static double? ComparableSimilarity(string? left, string? right) =>
         string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right)

@@ -1025,8 +1025,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             item => item.ProviderId == "musicbrainz");
     }
 
-    [Fact]
-    public async Task Automatic_suggestion_persists_ranked_provider_fallbacks_as_one_playable_track()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Automatic_suggestion_persists_ranked_provider_fallbacks_but_wrong_versions_stay_unresolved(bool differentVersion)
     {
         await SetLink(mode: PlaylistLinkMode.Virtual);
         _source.Snapshot = Snapshot(
@@ -1047,7 +1049,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 {
                     ExternalProvider = "apple-download",
                     ExternalId = "apple-feels",
-                    Title = "Feels (Live)",
+                    Title = differentVersion ? "Feels (Live)" : "Fiels",
                     Artist = "Artist",
                     Album = "Album",
                     Duration = 180
@@ -1056,7 +1058,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 {
                     ExternalProvider = "deezer",
                     ExternalId = "deezer-feels",
-                    Title = "Feels (Live)",
+                    Title = differentVersion ? "Feels (Live)" : "Fiels",
                     Artist = "Artist",
                     Album = "Album",
                     Duration = 180
@@ -1085,9 +1087,10 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         await using var db = await _factory.CreateDbContextAsync();
         var decision = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
-        Assert.Equal(TrackMatchState.Suggested, decision.State);
+        Assert.Equal(differentVersion ? TrackMatchState.Unresolved : TrackMatchState.Suggested, decision.State);
         Assert.Null(decision.LibraryTrackId);
-        Assert.NotNull(decision.CanonicalRecordingId);
+        if (differentVersion) Assert.Null(decision.CanonicalRecordingId);
+        else Assert.NotNull(decision.CanonicalRecordingId);
         Assert.Null((await db.ExternalMetadataSnapshots.SingleAsync()).ProviderTrackIdentityId);
         var routes = await db.ProviderTrackIdentities
             .Where(item =>
@@ -1095,16 +1098,17 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                 (item.ProviderId == "apple-download" || item.ProviderId == "deezer"))
             .OrderBy(item => item.ProviderId)
             .ToListAsync();
-        Assert.Equal(2, routes.Count);
+        Assert.Equal(differentVersion ? 0 : 2, routes.Count);
         Assert.All(routes, item => Assert.Equal("automatic-suggestion", item.VerificationMethod));
         var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"), gateway.Object)
             .ReadByLinkIdAsync(_user, _link);
         Assert.NotNull(projection);
         Assert.Equal(1, projection.TotalCount);
-        Assert.Equal(1, projection.PlayableCount);
-        Assert.Equal(1, projection.ExternalCount);
-        Assert.Equal(1, projection.ReviewCount);
-        Assert.Equal(["apple-download", "deezer"],
+        Assert.Equal(differentVersion ? 0 : 1, projection.PlayableCount);
+        Assert.Equal(differentVersion ? 0 : 1, projection.ExternalCount);
+        Assert.Equal(differentVersion ? 0 : 1, projection.ReviewCount);
+        Assert.Equal(differentVersion ? 1 : 0, projection.MissingCount);
+        Assert.Equal(differentVersion ? [] : new[] { "apple-download", "deezer" },
             Assert.Single(projection.Entries).ProviderRoutes.Select(item => item.ProviderId));
     }
 
