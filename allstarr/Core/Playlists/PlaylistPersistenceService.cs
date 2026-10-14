@@ -149,7 +149,8 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         var existing = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == actor.EffectiveUserId && item.ProviderAccountId == input.ProviderAccountId && item.SourcePlaylistIdHash == input.SourcePlaylistIdHash && item.TargetProtocol == input.TargetProtocol && item.TargetBackendInstanceId == input.TargetBackendInstanceId, cancellationToken);
         if (existing != null)
         {
-            if (existing.ImportMode != input.ImportMode || existing.TrackRetention != input.TrackRetention ||
+            if (existing.DestinationMode != (input.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing) ||
+                existing.ImportMode != input.ImportMode || existing.TrackRetention != input.TrackRetention ||
                 (input.TargetPlaylistId != null && !string.Equals(existing.TargetPlaylistId, input.TargetPlaylistId, StringComparison.Ordinal)))
                 throw new ArgumentException("This source playlist is already imported with different settings. Edit its destination or storage settings, or remove its link before importing with different behavior.", nameof(input));
             return existing;
@@ -167,6 +168,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             TargetProtocol = PersistenceGuard.Required(input.TargetProtocol, nameof(input.TargetProtocol)).ToLowerInvariant(),
             TargetBackendInstanceId = PersistenceGuard.Required(input.TargetBackendInstanceId, nameof(input.TargetBackendInstanceId)),
             TargetPlaylistId = input.TargetPlaylistId,
+            DestinationMode = input.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing,
             TargetCredentialReferenceId = input.TargetCredentialReferenceId,
             Mode = input.Mode,
             ProjectionMode = input.ProjectionMode,
@@ -215,6 +217,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         ValidateImportPolicy(record.ImportMode, trackRetention, update.ScheduleId);
         if (!string.Equals(record.TargetPlaylistId, update.TargetPlaylistId, StringComparison.Ordinal))
         {
+            record.DestinationMode = update.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing;
             var memberships = await db.PlaylistTargetMemberships
                 .Where(item => item.PlaylistLinkId == record.Id && (item.Active || item.RemovalConfirmedAt == null))
                 .ToListAsync(cancellationToken);

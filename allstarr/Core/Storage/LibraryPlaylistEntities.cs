@@ -6,6 +6,7 @@ public enum PlaylistLinkMode { Virtual, Materialized, Hybrid }
 public enum PlaylistProjectionMode { Resolved, Source, Target }
 public enum PlaylistMaterializationMode { Reconcile, Recreate }
 public enum PlaylistImportMode { Linked, OneTime }
+public enum PlaylistDestinationMode { Existing, New }
 public enum PlaylistTrackRetention { OnDemand, KeepAll }
 public enum PlaylistSyncState { Pending, Running, Succeeded, PartiallySucceeded, Conflicted, Failed, Cancelled }
 public enum PlaylistEntryOutcome { Matched, Reused, Added, Reordered, Skipped, Rejected, Unsupported, Failed }
@@ -138,6 +139,7 @@ public sealed class PlaylistLinkRecord
     public string TargetBackendInstanceId { get; set; } = string.Empty;
     public Guid? TargetCredentialReferenceId { get; set; }
     public string? TargetPlaylistId { get; set; }
+    public PlaylistDestinationMode DestinationMode { get; set; }
     public PlaylistLinkMode Mode { get; set; }
     public PlaylistProjectionMode ProjectionMode { get; set; } = PlaylistProjectionMode.Resolved;
     public PlaylistMaterializationMode MaterializationMode { get; set; }

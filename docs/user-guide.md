@@ -131,7 +131,7 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 
 The **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use eligible providers in configured streaming order, and unresolved songs remain visible with a clear not-playable status. The backend playlist contains matched local songs so it remains useful when opened directly.
 
-Each source account and playlist has one link per backend. Repeating the same import reuses that link; a different import behavior or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
+Each source account and playlist has one link per backend. Repeating the same import reuses that link; a different import behavior, new/existing destination choice, or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
 
 When synchronization removes stale songs, it removes only memberships it added. A song already present before an import stays yours, including a former synchronized song that you manually add back after its removal.
 

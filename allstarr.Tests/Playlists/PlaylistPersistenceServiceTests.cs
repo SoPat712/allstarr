@@ -8,6 +8,8 @@ using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 namespace allstarr.Tests;
 
@@ -377,6 +379,81 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
 
         var administratorContext = Context(_userA, "principal-a", admin: true);
         Assert.Equal(2, (await _playlists.ListLinksAsync(administratorContext)).Count);
+    }
+
+    [Fact]
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task DestinationModeUpgradePreservesRowsAndClassifiesAssignedTargetsConservatively()
+    {
+        var context = Context(_userA, "principal-a");
+        var pending = await _playlists.CreateLinkAsync(context, Link());
+        var chosen = await _playlists.CreateLinkAsync(context, Link() with
+        {
+            SourcePlaylistId = "second",
+            SourcePlaylistIdHash = Hash("second"),
+            TargetPlaylistId = "chosen-existing"
+        });
+        var created = await _playlists.CreateLinkAsync(context, Link() with
+        {
+            SourcePlaylistId = "third",
+            SourcePlaylistIdHash = Hash("third")
+        });
+        await using var db = await _factory.CreateDbContextAsync();
+        (await db.PlaylistLinks.SingleAsync(item => item.Id == created.Id)).TargetPlaylistId = "created-before-upgrade";
+        await db.SaveChangesAsync();
+        await db.GetService<IMigrator>().MigrateAsync("20261014145512_ConfirmPlaylistMembershipRemoval");
+        await db.Database.MigrateAsync();
+        db.ChangeTracker.Clear();
+        var rows = await db.PlaylistLinks.ToDictionaryAsync(item => item.Id);
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(PlaylistDestinationMode.New, rows[pending.Id].DestinationMode);
+        Assert.Null(rows[pending.Id].TargetPlaylistId);
+        Assert.Equal(PlaylistDestinationMode.Existing, rows[chosen.Id].DestinationMode);
+        Assert.Equal("chosen-existing", rows[chosen.Id].TargetPlaylistId);
+        Assert.Equal(PlaylistDestinationMode.Existing, rows[created.Id].DestinationMode);
+        Assert.Equal("created-before-upgrade", rows[created.Id].TargetPlaylistId);
+        Assert.All(rows.Values, row =>
+        {
+            Assert.Equal(_userA, row.OwnerUserId);
+            Assert.Equal(_accountA, row.ProviderAccountId);
+            Assert.Equal(_now, row.CreatedAt);
+        });
+        Assert.Equal(2, await db.Users.CountAsync());
+        Assert.Equal(1, await db.ProviderAccounts.CountAsync());
+        await db.Database.OpenConnectionAsync();
+        await using var command = db.Database.GetDbConnection().CreateCommand();
+        command.CommandText = "PRAGMA integrity_check";
+        Assert.Equal("ok", await command.ExecuteScalarAsync());
+    }
+
+    [Fact]
+    public async Task NewDestinationRequestNeverReusesAnExistingDestinationImport()
+    {
+        var context = Context(_userA, "principal-a");
+        var input = Link() with { TargetPlaylistId = "chosen-existing" };
+        await _playlists.CreateLinkAsync(context, input);
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.CreateLinkAsync(context,
+            input with { TargetPlaylistId = null }));
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal("chosen-existing", (await verify.PlaylistLinks.SingleAsync()).TargetPlaylistId);
+    }
+
+    [Fact]
+    public async Task NewDestinationIntentSurvivesBackendCreationForDuplicateRequests()
+    {
+        var context = Context(_userA, "principal-a");
+        var input = Link();
+        var created = await _playlists.CreateLinkAsync(context, input);
+        await using (var backendCreated = await _factory.CreateDbContextAsync())
+        {
+            (await backendCreated.PlaylistLinks.SingleAsync()).TargetPlaylistId = "created-target";
+            await backendCreated.SaveChangesAsync();
+        }
+        var repeated = await _playlists.CreateLinkAsync(context, input);
+        Assert.Equal(created.Id, repeated.Id);
+        Assert.Equal("created-target", repeated.TargetPlaylistId);
+        await Assert.ThrowsAsync<ArgumentException>(() => _playlists.CreateLinkAsync(context,
+            input with { TargetPlaylistId = "created-target" }));
     }
 
     [Fact]
