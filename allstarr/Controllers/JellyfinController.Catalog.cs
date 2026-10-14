@@ -26,7 +26,7 @@ public partial class JellyfinController
         var endpoint = userId == null ? "Items" : $"Users/{Uri.EscapeDataString(userId)}/Items";
         var upstream = await _proxyService.SendPassthroughResponseAsync(
             Request, $"{endpoint}{Request.QueryString}", HttpContext.RequestAborted);
-        if (!IsUnfilteredNativeCatalogView()) return new ProtocolRelayResponseResult(upstream);
+        if (!IsUnfilteredNativeCatalogView(artistAlbums ? parent : null)) return new ProtocolRelayResponseResult(upstream);
         try
         {
             if (!upstream.IsSuccessStatusCode) return new ProtocolRelayResponseResult(upstream);
@@ -98,13 +98,20 @@ public partial class JellyfinController
         }
     }
 
-    private bool IsUnfilteredNativeCatalogView()
+    private bool IsUnfilteredNativeCatalogView(string? artistId)
     {
         // Unknown query options stay native until their filtering semantics are understood.
         string[] neutral = ["ArtistIds", "AlbumArtistIds", "ContributingArtistIds", "ParentId", "IncludeItemTypes",
             "UserId", "StartIndex", "Limit", "Fields", "Recursive", "EnableImages", "EnableUserData",
-            "EnableTotalRecordCount", "ImageTypeLimit", "EnableImageTypes", "api_key", "ApiKey", "access_token"];
-        return Request.Query.Keys.All(key => neutral.Contains(key, StringComparer.OrdinalIgnoreCase));
+            "EnableTotalRecordCount", "ImageTypeLimit", "EnableImageTypes", "api_key", "ApiKey", "access_token",
+            "SortBy", "SortOrder", "CollapseBoxSetItems", "ExcludeLocationTypes"];
+        return Request.Query.All(pair => string.IsNullOrWhiteSpace(pair.Value) ||
+            neutral.Contains(pair.Key, StringComparer.OrdinalIgnoreCase) ||
+            pair.Key.Equals("IsMissing", StringComparison.OrdinalIgnoreCase) &&
+                bool.TryParse(pair.Value, out var missing) && !missing ||
+            // Web excludes the artist itself from its album list; no album can have that ID.
+            pair.Key.Equals("ExcludeItemIds", StringComparison.OrdinalIgnoreCase) && artistId != null &&
+                string.Equals(pair.Value, artistId, StringComparison.OrdinalIgnoreCase));
     }
 
     private string NativeCatalogTypeKey(string id)
@@ -122,7 +129,8 @@ public partial class JellyfinController
             return;
         }
         if (item.TryGetProperty("Id", out var id) && id.ValueKind == JsonValueKind.String &&
-            item.TryGetProperty("Type", out var type) && type.ValueKind == JsonValueKind.String)
+            item.TryGetProperty("Type", out var type) && type.ValueKind == JsonValueKind.String &&
+            type.GetString() == "MusicAlbum")
             await _cache.SetStringAsync(NativeCatalogTypeKey(id.GetString()!), type.GetString()!, TimeSpan.FromMinutes(15));
     }
 
