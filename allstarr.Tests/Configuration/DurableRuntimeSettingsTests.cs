@@ -61,6 +61,48 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task SpotifyCompatibilityEditsProjectIntoTheExistingLiveOptions()
+    {
+        var configuration = new ConfigurationBuilder().Build();
+        var spotify = new SpotifyApiSettings();
+        var service = new DurableRuntimeSettingsService(_factory, configuration, _clock,
+            new RuntimeSettingsChangeSignal(), LiveOptions(configuration, new PlaybackSettings(), spotify),
+            NullLogger<DurableRuntimeSettingsService>.Instance);
+        var hash = new string('d', 64);
+        await service.ApplyBatchAsync([
+            new("SpotifyApi:LibraryQueryHash", hash),
+            new("SpotifyApi:PathfinderEndpoint", "https://api-partner.spotify.com/pathfinder/v2/query"),
+            new("SpotifyApi:TokenEndpoint", "https://api-partner.spotify.com/api/token")
+        ], "webui", _userId);
+        Assert.Equal(hash, spotify.LibraryQueryHash);
+        Assert.Equal("https://api-partner.spotify.com/pathfinder/v2/query", spotify.PathfinderEndpoint);
+        Assert.Equal("https://api-partner.spotify.com/api/token", spotify.TokenEndpoint);
+    }
+
+    [Fact]
+    public async Task SpotifyCompatibilitySettingsPersistAndRejectCredentialDestinations()
+    {
+        var service = CreateService([]);
+        Assert.Equal("https://api-partner.spotify.com/pathfinder/v1/query", (await service.GetAsync("SpotifyApi:PathfinderEndpoint")).Value);
+        var hash = new string('a', 64);
+        await service.ApplyBatchAsync([
+            new("SpotifyApi:PathfinderEndpoint", "https://api-partner.spotify.com/pathfinder/v2/query"),
+            new("SpotifyApi:LibraryQueryHash", hash),
+            new("SpotifyApi:LikedSongsQueryHash", hash),
+            new("SpotifyApi:TotpSecretsUrl", "https://example.test/public-secrets.json")
+        ], "webui", _userId);
+        var restarted = CreateService([]);
+        Assert.Equal(hash, (await restarted.GetAsync("SpotifyApi:LibraryQueryHash")).Value);
+        Assert.Equal("https://api-partner.spotify.com/pathfinder/v2/query", (await restarted.GetAsync("SpotifyApi:PathfinderEndpoint")).Value);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("SpotifyApi:PathfinderEndpoint", "https://example.test/query", 1)], "webui", _userId));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("SpotifyApi:PlaylistQueryHash", "invalid")], "webui", _userId));
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("SpotifyApi:TotpSecretsUrl", "http://example.test/secrets", 1)], "webui", _userId));
+    }
+
+    [Fact]
     public async Task ApplyBatch_IsAtomicAndRejectsDeploymentOrSecretKeys()
     {
         var service = CreateService([]);
@@ -313,13 +355,13 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 
     private static RuntimeSettingsLiveOptions LiveOptions(
         IConfiguration configuration,
-        PlaybackSettings playback) =>
+        PlaybackSettings playback, SpotifyApiSettings? spotify = null) =>
         new(configuration,
             Options.Create(new CacheSettings()),
             Options.Create(new DeezerSettings()),
             Options.Create(new QobuzSettings()),
             Options.Create(new AppleDownloadSettings()),
-            Options.Create(new SpotifyApiSettings()),
+            Options.Create(spotify ?? new SpotifyApiSettings()),
             Options.Create(new SpotifyImportSettings()),
             Options.Create(new MusicBrainzSettings()),
             Options.Create(new ScrobblingSettings()),

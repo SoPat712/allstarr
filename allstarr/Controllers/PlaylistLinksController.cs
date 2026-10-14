@@ -567,8 +567,15 @@ public sealed class PlaylistLinksController(
             if (!await ScheduleAllowed(context, session.AllstarrUserId!.Value, request.ScheduleId, cancellationToken))
                 return BadRequest(new { error = "ScheduleId is unavailable for this owner" });
             var source = Required(request.SourcePlaylistId, nameof(request.SourcePlaylistId));
+            var sourceProvider = Required(request.SourceProviderId, nameof(request.SourceProviderId)).ToLowerInvariant();
+            if (sourceProvider == "spotify")
+            {
+                if (!allstarr.Core.Providers.Spotify.SpotifyPlaylistReference.TryNormalize(source, out var normalizedSource))
+                    return BadRequest(new { error = "Enter a Spotify playlist link, URI, or ID." });
+                source = normalizedSource;
+            }
             var record = await playlists.CreateLinkAsync(context, new PlaylistLinkInput(
-                request.ProviderAccountId, Required(request.SourceProviderId, nameof(request.SourceProviderId)).ToLowerInvariant(), source,
+                request.ProviderAccountId, sourceProvider, source,
                 Hash(source), request.TargetProtocol.Trim().ToLowerInvariant(),
                 Required(request.TargetBackendInstanceId, nameof(request.TargetBackendInstanceId)), mode, materialization,
                 "playlist-rules-v1", "playlist-policy-v1", request.ScheduleId, request.TargetPlaylistId,

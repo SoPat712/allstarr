@@ -196,6 +196,12 @@ public class ConfigController : ControllerBase
                 usingGlobalFallback = cookieStatus.UsingGlobalFallback,
                 cacheDurationMinutes = RuntimeInt("SpotifyApi:CacheDurationMinutes", _spotifyApiSettings.CacheDurationMinutes),
                 rateLimitDelayMs = RuntimeInt("SpotifyApi:RateLimitDelayMs", _spotifyApiSettings.RateLimitDelayMs),
+                pathfinderEndpoint = RuntimeString("SpotifyApi:PathfinderEndpoint", _spotifyApiSettings.PathfinderEndpoint),
+                libraryQueryHash = RuntimeString("SpotifyApi:LibraryQueryHash", _spotifyApiSettings.LibraryQueryHash),
+                playlistQueryHash = RuntimeString("SpotifyApi:PlaylistQueryHash", _spotifyApiSettings.PlaylistQueryHash),
+                likedSongsQueryHash = RuntimeString("SpotifyApi:LikedSongsQueryHash", _spotifyApiSettings.LikedSongsQueryHash),
+                totpSecretsUrl = RuntimeString("SpotifyApi:TotpSecretsUrl", _spotifyApiSettings.TotpSecretsUrl),
+                tokenEndpoint = RuntimeString("SpotifyApi:TokenEndpoint", _spotifyApiSettings.TokenEndpoint),
                 preferIsrcMatching = RuntimeBool("SpotifyApi:PreferIsrcMatching", _spotifyApiSettings.PreferIsrcMatching)
             },
             spotifyImport = new

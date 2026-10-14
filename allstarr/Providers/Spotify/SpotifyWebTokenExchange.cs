@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using OtpNet;
+using allstarr.Models.Settings;
 
 namespace allstarr.Core.Providers.Spotify;
 
@@ -12,14 +13,17 @@ internal sealed record SpotifyWebTokenResult(string? AccessToken, bool IsAnonymo
 
 internal static class SpotifyWebTokenExchange
 {
-    private static readonly Uri SecretsUri = new("https://raw.githubusercontent.com/xyloflake/spot-secrets-go/refs/heads/main/secrets/secretBytes.json");
     private static readonly Uri SpotifyOrigin = new("https://open.spotify.com/");
 
-    public static async Task<SpotifyWebTokenResult> ExchangeAsync(HttpClient http, string cookie, CancellationToken cancellationToken)
+    public static async Task<SpotifyWebTokenResult> ExchangeAsync(HttpClient http, string cookie, CancellationToken cancellationToken, SpotifyApiSettings? settings = null)
     {
+        settings ??= new();
+        if (!Uri.TryCreate(settings.TotpSecretsUrl, UriKind.Absolute, out var secretsUri) || secretsUri.Scheme != Uri.UriSchemeHttps ||
+            !string.IsNullOrEmpty(secretsUri.UserInfo) || settings.TokenEndpoint is not (SpotifyApiSettings.DefaultTokenEndpoint or "https://api-partner.spotify.com/api/token"))
+            return new(null, false, "invalid_compatibility_settings");
         try
         {
-            using var secretsRequest = new HttpRequestMessage(HttpMethod.Get, SecretsUri);
+            using var secretsRequest = new HttpRequestMessage(HttpMethod.Get, secretsUri);
             SpotifyWebRequestProfile.Apply(secretsRequest);
             using var secretsResponse = await http.SendAsync(secretsRequest, cancellationToken);
             if (!secretsResponse.IsSuccessStatusCode) return new(null, false, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
@@ -37,7 +41,7 @@ internal static class SpotifyWebTokenExchange
             var key = Encoding.UTF8.GetBytes(string.Concat(transformed.Select(value => value.ToString())));
             var otp = new Totp(key, step: 30, totpSize: 6).ComputeTotp(DateTime.UnixEpoch.AddSeconds(serverTime.Value));
             var clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var uri = new Uri($"https://open.spotify.com/api/token?reason=init&productType=web-player&totp={otp}&totpServer={otp}&totpVer={secret.Version}&sTime={serverTime}&cTime={clientTime}");
+            var uri = new Uri($"{settings.TokenEndpoint}?reason=init&productType=web-player&totp={otp}&totpServer={otp}&totpVer={secret.Version}&sTime={serverTime}&cTime={clientTime}");
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={cookie}");
             SpotifyWebRequestProfile.Apply(request);

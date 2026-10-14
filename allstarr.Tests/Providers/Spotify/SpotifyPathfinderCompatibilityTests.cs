@@ -4,6 +4,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Spotify;
 using Microsoft.Extensions.Logging;
+using allstarr.Models.Settings;
 
 namespace allstarr.Tests;
 
@@ -131,19 +132,116 @@ public sealed class SpotifyPathfinderCompatibilityTests
         AssertOperation(handler.LastRequestUri, "fetchPlaylist", SpotifyPathfinderPlaylistClient.PlaylistQueryHash);
     }
 
+    [Theory]
+    [InlineData("3fCEBvwpzqBGeSiRq7yTs3")]
+    [InlineData("spotify:playlist:3fCEBvwpzqBGeSiRq7yTs3")]
+    [InlineData("https://open.spotify.com/playlist/3fCEBvwpzqBGeSiRq7yTs3?si=fixture#ignored")]
+    public async Task PlaylistReferencesNormalizeBeforeTheProviderRequest(string reference)
+    {
+        var handler = new JsonHandler("""{"data":{"playlistV2":{"name":"Public mix","revisionId":"revision","content":{"totalCount":0,"items":[]}}}}""");
+        using var http = new HttpClient(handler);
+        var client = new SpotifyPathfinderPlaylistClient(http);
+        var outcome = await client.GetPlaylistTracksAsync("token", new(
+            new("spotify", ProviderResourceKind.Playlist, reference), new ProviderPageRequest()), default);
+        Assert.True(outcome.IsSuccess);
+        using var variables = JsonDocument.Parse(Query(handler.LastRequestUri)["variables"]);
+        Assert.Equal("spotify:playlist:3fCEBvwpzqBGeSiRq7yTs3", variables.RootElement.GetProperty("uri").GetString());
+        Assert.Equal("3fCEBvwpzqBGeSiRq7yTs3", outcome.RequireValue().Playlist.Id.Value);
+    }
+
+    [Theory]
+    [InlineData("https://example.test/playlist/3fCEBvwpzqBGeSiRq7yTs3")]
+    [InlineData("spotify:track:3fCEBvwpzqBGeSiRq7yTs3")]
+    [InlineData("not a playlist")]
+    public async Task InvalidPlaylistReferencesFailBeforeSendingCredentials(string reference)
+    {
+        var handler = new JsonHandler("{}");
+        using var http = new HttpClient(handler);
+        var client = new SpotifyPathfinderPlaylistClient(http);
+        var outcome = await client.GetPlaylistTracksAsync("token", new(
+            new("spotify", ProviderResourceKind.Playlist, reference), new ProviderPageRequest()), default);
+        Assert.False(outcome.IsSuccess);
+        Assert.Null(handler.LastRequestUri);
+        Assert.Equal(ProviderErrorKind.PermanentFailure, outcome.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task LikedSongsUsesLibraryTracksAndPreservesGlobalSourcePositions()
+    {
+        var handler = new JsonHandler("""
+            {"data":{"me":{"library":{"tracks":{"totalCount":4,"items":[
+              {"addedAt":{"isoString":"2026-10-13T00:00:00Z"},"itemV2":{"data":{"uri":"spotify:track:first","name":"First","artists":{"items":[{"profile":{"name":"Artist"}}]},"trackDuration":{"totalMilliseconds":180000}}}},
+              {"addedAt":{"isoString":"2026-10-12T00:00:00Z"},"itemV2":{"data":{"uri":"spotify:track:second","name":"Second","artists":{"items":[{"profile":{"name":"Artist"}}]},"trackDuration":{"totalMilliseconds":190000}}}}
+            ]}}}}}
+            """);
+        using var http = new HttpClient(handler);
+        var client = new SpotifyPathfinderPlaylistClient(http);
+        var outcome = await client.GetPlaylistTracksAsync("token", new(
+            new("spotify", ProviderResourceKind.Playlist, "liked-songs"), new ProviderPageRequest(2, "1")), default, "account-fingerprint");
+        Assert.True(outcome.IsSuccess);
+        var page = outcome.RequireValue();
+        Assert.Equal("Liked Songs", page.Playlist.Name);
+        Assert.Equal(4, page.Playlist.TrackCount);
+        Assert.Equal([1, 2], page.Tracks.Items.Select(item => item.Position));
+        Assert.Equal(["first", "second"], page.Tracks.Items.Select(item => item.TrackId.Value));
+        Assert.Equal("3", page.Tracks.NextCursor);
+        AssertOperation(handler.LastRequestUri, "fetchLibraryTracks", "087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240");
+        using var variables = JsonDocument.Parse(Query(handler.LastRequestUri)["variables"]);
+        Assert.Equal(1, variables.RootElement.GetProperty("offset").GetInt32());
+        Assert.False(variables.RootElement.TryGetProperty("uri", out _));
+    }
+
+    [Fact]
+    public async Task ConfiguredQueriesUseTheSelectedEndpointAndObserveLiveHashChanges()
+    {
+        var handler = new JsonHandler("""{"data":{"me":{"libraryV3":{"items":[],"totalCount":0}}}}""");
+        using var http = new HttpClient(handler);
+        var settings = new SpotifyApiSettings { PathfinderEndpoint = "https://api-partner.spotify.com/pathfinder/v2/query", LibraryQueryHash = new string('b', 64) };
+        var client = new SpotifyPathfinderPlaylistClient(http, null, null, settings);
+        Assert.True((await client.GetUserPlaylistsAsync("token", new ProviderPageRequest(), null, default)).IsSuccess);
+        Assert.Equal(HttpMethod.Post, handler.LastMethod);
+        Assert.Equal(settings.PathfinderEndpoint, handler.LastRequestUri!.AbsoluteUri);
+        using var first = JsonDocument.Parse(handler.LastBody!);
+        Assert.Equal("libraryV3", first.RootElement.GetProperty("operationName").GetString());
+        Assert.Equal(settings.LibraryQueryHash, first.RootElement.GetProperty("extensions").GetProperty("persistedQuery").GetProperty("sha256Hash").GetString());
+        settings.LibraryQueryHash = new string('c', 64);
+        await client.GetUserPlaylistsAsync("token", new ProviderPageRequest(), null, default);
+        using var second = JsonDocument.Parse(handler.LastBody!);
+        Assert.Equal(settings.LibraryQueryHash, second.RootElement.GetProperty("extensions").GetProperty("persistedQuery").GetProperty("sha256Hash").GetString());
+    }
+
+    [Theory]
+    [InlineData("https://example.test/query", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]
+    [InlineData("https://api-partner.spotify.com/pathfinder/v1/query", "invalid")]
+    public async Task InvalidCompatibilitySettingsNeverSendTheBearerToken(string endpoint, string hash)
+    {
+        var handler = new JsonHandler("{}");
+        using var http = new HttpClient(handler);
+        var client = new SpotifyPathfinderPlaylistClient(http, null, null,
+            new SpotifyApiSettings { PathfinderEndpoint = endpoint, LibraryQueryHash = hash });
+        var outcome = await client.GetUserPlaylistsAsync("token", new ProviderPageRequest(), null, default);
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, outcome.Error!.Kind);
+        Assert.Null(handler.LastRequestUri);
+    }
+
     private sealed class JsonHandler(string json) : HttpMessageHandler
     {
         public Uri? LastRequestUri { get; private set; }
+        public HttpMethod? LastMethod { get; private set; }
+        public string? LastBody { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             LastRequestUri = request.RequestUri;
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            LastMethod = request.Method;
+            LastBody = request.Content == null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent(json, Encoding.UTF8, "application/json")
-            });
+            };
         }
     }
 

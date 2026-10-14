@@ -1017,7 +1017,13 @@ public class AdminUiController : ControllerBase
             [
                 Field("SPOTIFY_API_ENABLED", "Enabled", "toggle", "spotifyApi.enabled"),
                 Field("SPOTIFY_API_CACHE_DURATION_MINUTES", "Cache minutes", "number", "spotifyApi.cacheDurationMinutes", min: 1),
-                Field("SPOTIFY_API_PREFER_ISRC_MATCHING", "Prefer ISRC matching", "toggle", "spotifyApi.preferIsrcMatching")
+                Field("SPOTIFY_API_PREFER_ISRC_MATCHING", "Prefer ISRC matching", "toggle", "spotifyApi.preferIsrcMatching"),
+                Field("SPOTIFY_PATHFINDER_ENDPOINT", "Pathfinder endpoint", "text", "spotifyApi.pathfinderEndpoint"),
+                Field("SPOTIFY_LIBRARY_QUERY_HASH", "Library query hash", "text", "spotifyApi.libraryQueryHash"),
+                Field("SPOTIFY_PLAYLIST_QUERY_HASH", "Playlist query hash", "text", "spotifyApi.playlistQueryHash"),
+                Field("SPOTIFY_LIKED_SONGS_QUERY_HASH", "Liked Songs query hash", "text", "spotifyApi.likedSongsQueryHash"),
+                Field("SPOTIFY_TOTP_SECRETS_URL", "Public TOTP secrets URL", "text", "spotifyApi.totpSecretsUrl"),
+                Field("SPOTIFY_TOKEN_ENDPOINT", "Token endpoint", "text", "spotifyApi.tokenEndpoint")
             ]
         },
         new()
