@@ -1,7 +1,9 @@
 using System.Text.Json;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
+using allstarr.Models.Settings;
 using allstarr.Services.Common;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Music;
 
@@ -10,13 +12,16 @@ public sealed class ListenBrainzSimilarTracks(
     IHttpClientFactory clients,
     ITrackIdentityService identities,
     IApplicationCache cache,
-    ILogger<ListenBrainzSimilarTracks> logger)
+    ILogger<ListenBrainzSimilarTracks> logger,
+    IOptions<PlaybackSettings>? playback = null)
 {
     private const string Algorithm = "session_based_days_7500_session_300_contribution_5_threshold_15_limit_50_skip_30_top_n_listeners_1000";
+    private readonly PlaybackSettings _playback = playback?.Value ?? new();
 
     public async Task<IReadOnlyList<SimilarTrackSuggestion>> FindAsync(ProtocolExecutionContext context, string publicId,
         int limit, CancellationToken cancellationToken)
     {
+        if (!_playback.ListenBrainzSimilarEnabled) return [];
         cancellationToken.ThrowIfCancellationRequested();
         if (context.Actor == null || limit <= 0) return [];
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

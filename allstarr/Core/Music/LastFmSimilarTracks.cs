@@ -1,6 +1,8 @@
 using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Protocols;
+using allstarr.Models.Settings;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Music;
 
@@ -13,10 +15,12 @@ public sealed record SimilarTrackSuggestion(string Artist, string Title);
 public sealed class LastFmSimilarTracks(
     IHttpClientFactory httpClients,
     IScopedRecommendationAccountAccessor accounts,
-    ILogger<LastFmSimilarTracks> logger)
+    ILogger<LastFmSimilarTracks> logger,
+    IOptions<PlaybackSettings>? playback = null)
 {
     private const string ProviderId = "lastfm";
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(5);
+    private readonly PlaybackSettings _playback = playback?.Value ?? new();
 
     public async Task<IReadOnlyList<SimilarTrackSuggestion>> FindAsync(
         ProtocolExecutionContext context,
@@ -25,6 +29,7 @@ public sealed class LastFmSimilarTracks(
         int limit,
         CancellationToken cancellationToken)
     {
+        if (!_playback.LastFmSimilarEnabled) return [];
         if (context.Actor?.EffectiveUserId is not { } owner ||
             string.IsNullOrWhiteSpace(artist) || string.IsNullOrWhiteSpace(title)) return [];
         var scope = new IntelligenceScope(owner, context.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId);

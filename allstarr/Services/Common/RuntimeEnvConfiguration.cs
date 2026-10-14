@@ -87,6 +87,9 @@ public static class RuntimeEnvConfiguration
 
             ["AUDIO_QUALITY"] = ["Audio:Quality"],
 
+            ["PLAYBACK_LASTFM_SIMILAR_ENABLED"] = ["Playback:LastFmSimilarEnabled"],
+            ["PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED"] = ["Playback:ListenBrainzSimilarEnabled"],
+
             ["DEEZER_ARL"] = ["Deezer:Arl"],
             ["DEEZER_ARL_FALLBACK"] = ["Deezer:ArlFallback"],
             ["DEEZER_QUALITY"] = ["Deezer:Quality"],

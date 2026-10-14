@@ -24,6 +24,18 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
         Assert.Equal("7", mapping.Value);
     }
 
+    [Theory]
+    [InlineData("PLAYBACK_LASTFM_SIMILAR_ENABLED", "Playback:LastFmSimilarEnabled")]
+    [InlineData("PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED", "Playback:ListenBrainzSimilarEnabled")]
+    public void MapEnvVarToConfiguration_MapsSimilarFallbackSettings(
+        string environmentKey,
+        string configurationKey)
+    {
+        var mapping = Assert.Single(RuntimeEnvConfiguration.MapEnvVarToConfiguration(environmentKey, "false"));
+        Assert.Equal(configurationKey, mapping.Key);
+        Assert.Equal("false", mapping.Value);
+    }
+
     [Fact]
     public void MapEnvVarToConfiguration_MapsReleaseProfile()
     {

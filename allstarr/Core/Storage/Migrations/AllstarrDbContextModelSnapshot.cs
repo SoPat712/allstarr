@@ -3189,6 +3189,9 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("PlaylistLinkId")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("RemovalConfirmedAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
                         .HasColumnType("INTEGER");

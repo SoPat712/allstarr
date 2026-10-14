@@ -20,6 +20,44 @@ public sealed partial class ProtocolRouteFixtureTests
     private const string MixNativeSongId = "native-song-43";
 
     [Theory]
+    [InlineData("Similar", "ext-deezer-song-44,native-song-43,ext-deezer-song-45")]
+    [InlineData("InstantMix", "ext-deezer-song-45,native-song-43,ext-deezer-song-44")]
+    public async Task JellyfinMixNativeReplacementPreservesRecommendationAndShuffleOrder(string method, string expected)
+    {
+        var gateway = MixGateway();
+        gateway.Setup(service => service.GetSimilarSongsAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", 3))
+            .ReturnsAsync([MixSong("ext-deezer-song-44", "First"), MixSong(MixProviderSongId, "Second"),
+                MixSong("ext-deezer-song-45", "Third")]);
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(service => service.FindKnownRecordingTracksAsync(It.IsAny<ProtocolExecutionContext>(),
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { [MixProviderSongId] = MixNativeSongId });
+        var interaction = new Mock<IJellyfinInteractionProtocolAdapter>();
+        interaction.Setup(adapter => adapter.CanRunOptionalUserWork(It.IsAny<ProtocolExecutionContext?>())).Returns(true);
+        interaction.Setup(adapter => adapter.ShapeInstantMix(It.IsAny<IReadOnlyList<Dictionary<string, object?>>>()))
+            .Returns((IReadOnlyList<Dictionary<string, object?>> items) => new JellyfinInteractionProtocolAdapter().ShapeInstantMix(items));
+        using var factory = new ProtocolFactory("Jellyfin", request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, "{\"Id\":\"user-1\"}"),
+            "/Users/user-1/Items/native-song-43" => Json(200,
+                "{\"Id\":\"native-song-43\",\"Type\":\"Audio\",\"Name\":\"Native second\",\"FutureField\":\"retained\"}"),
+            _ => throw new InvalidOperationException("Unexpected backend request")
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>(); services.AddSingleton(gateway.Object);
+            services.RemoveAll<ILibraryIndexService>(); services.AddSingleton(index.Object);
+            services.RemoveAll<IJellyfinInteractionProtocolAdapter>(); services.AddSingleton(interaction.Object);
+        });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync($"/Items/ext-deezer-song-42/{method}?Limit=3&api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var items = document.RootElement.GetProperty("Items").EnumerateArray().ToArray();
+        Assert.Equal(expected.Split(','), items.Select(item => item.GetProperty("Id").GetString()));
+        Assert.Equal("retained", items[1].GetProperty("FutureField").GetString());
+    }
+
+    [Theory]
     [InlineData("/Items/ext-deezer-song-42/Similar?Limit=1&api_key=fixture-key", true)]
     [InlineData("/Items/ext-deezer-song-42/Similar?Limit=1&api_key=fixture-key", false)]
     [InlineData("/Items/ext-deezer-song-42/InstantMix?Limit=1&api_key=fixture-key", true)]

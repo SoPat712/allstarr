@@ -1431,7 +1431,19 @@ public class AdminUiController : ControllerBase
                 "matching.localPreferencePercent",
                 helpText: "Only used when no candidate qualifies for automatic acceptance. Accepted matches always use local first, then Streaming priority. This window never raises confidence. Default: 7 points.",
                 min: 0,
-                max: 20)
+                max: 20),
+            Field(
+                "PLAYBACK_LASTFM_SIMILAR_ENABLED",
+                "Last.fm similar-song fallback",
+                "toggle",
+                "playback.lastFmSimilarEnabled",
+                helpText: "Uses a connected Last.fm account for similar-song and Instant Mix suggestions when the provider has none. Default: on."),
+            Field(
+                "PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED",
+                "ListenBrainz similar-song fallback",
+                "toggle",
+                "playback.listenBrainzSimilarEnabled",
+                helpText: "Uses the public ListenBrainz similar-recordings fallback when the provider and Last.fm have none. Default: on.")
         ]),
         Section("paths", "Library paths",
         [

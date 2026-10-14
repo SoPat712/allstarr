@@ -2,7 +2,9 @@ using System.Net;
 using System.Text.Json;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Music;
+using allstarr.Models.Settings;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace allstarr.Tests;
@@ -25,6 +27,21 @@ public sealed class LastFmSimilarTracksTests
         Assert.Empty(await service.FindAsync(context, "Artist", "Title", 5, default));
 
         accounts.VerifyAll();
+        accounts.VerifyNoOtherCalls();
+        clients.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task DisabledDoesNotReadAccountOrCreateAnHttpClient()
+    {
+        var accounts = new Mock<IScopedRecommendationAccountAccessor>(MockBehavior.Strict);
+        var clients = new Mock<IHttpClientFactory>(MockBehavior.Strict);
+        var service = new LastFmSimilarTracks(clients.Object, accounts.Object,
+            NullLogger<LastFmSimilarTracks>.Instance,
+            Options.Create(new PlaybackSettings { LastFmSimilarEnabled = false }));
+
+        Assert.Empty(await service.FindAsync(MusicObservationsTests.Context(), "Artist", "Title", 5, default));
+
         accounts.VerifyNoOtherCalls();
         clients.VerifyNoOtherCalls();
     }

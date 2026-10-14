@@ -235,6 +235,7 @@ public sealed class PlaylistTargetMembershipRecord
     public string TargetEntryId { get; set; } = string.Empty;
     public int LastKnownPosition { get; set; }
     public bool Active { get; set; }
+    public DateTimeOffset? RemovalConfirmedAt { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long Revision { get; set; }

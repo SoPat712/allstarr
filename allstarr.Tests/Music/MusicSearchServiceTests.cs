@@ -14,6 +14,60 @@ public sealed class MusicSearchServiceTests
         ProtocolKind.Subsonic, "backend", "principal", null, "search-test",
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
+    [Fact]
+    public async Task MixProjectionReplacesNativeSongsInTheirOriginalPositions()
+    {
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { ["second"] = "native-second", ["fourth"] = "native-fourth" });
+        var native = new FakeNative([],
+            new NativeMusicItem<string>(MusicItemKind.Song, "native-second", "Second", null, "complete second"),
+            new NativeMusicItem<string>(MusicItemKind.Song, "native-fourth", "Fourth", null, "complete fourth"));
+        var result = await new MusicSearchService(Mock.Of<IProtocolProviderGateway>(), index.Object)
+            .ProjectSongsAsync(_context, [new Song { Id = "first" }, new Song { Id = "second" },
+                new Song { Id = "third" }, new Song { Id = "fourth" }], native);
+        Assert.Equal(["first", "native-second", "third", "native-fourth"], result.Select(Id));
+        Assert.Equal("complete second", result[1].Native!.Payload);
+    }
+
+    [Fact]
+    public async Task MixNativeLookupsRunConcurrentlyWithAtMostFourInFlight()
+    {
+        var songs = Enumerable.Range(0, 12).Select(number => new Song { Id = $"external-{number}" }).ToArray();
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(songs.ToDictionary(song => song.Id, song => song.Id.Replace("external", "native")));
+        var firstWave = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var active = 0;
+        var peak = 0;
+        var sync = new object();
+        var native = new Mock<INativeMusicSearch<string>>(MockBehavior.Strict);
+        native.Setup(item => item.GetSongAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string id, CancellationToken token) =>
+            {
+                lock (sync) { active++; peak = Math.Max(peak, active); if (active == 4) firstWave.TrySetResult(); }
+                try
+                {
+                    await release.Task.WaitAsync(token);
+                    return new NativeMusicItem<string>(MusicItemKind.Song, id, id, null, id);
+                }
+                finally { lock (sync) active--; }
+            });
+        var pending = new MusicSearchService(Mock.Of<IProtocolProviderGateway>(), index.Object)
+            .ProjectSongsAsync(_context, songs, native.Object);
+        var concurrent = false;
+        try { await firstWave.Task.WaitAsync(TimeSpan.FromSeconds(5)); concurrent = true; }
+        catch (TimeoutException) { }
+        finally { release.TrySetResult(); }
+        var result = await pending;
+        Assert.True(concurrent, "Four lookups should start before any completes.");
+        Assert.Equal(4, peak);
+        Assert.Equal(songs.Select(song => song.Id.Replace("external", "native")), result.Select(Id));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
