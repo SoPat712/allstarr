@@ -100,6 +100,35 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
     }
 
     [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task DisabledMetadataSyncPreservesManualTargetFields(bool syncName, bool syncDescription)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.TargetPlaylistId = "manual-target";
+            link.SyncName = syncName;
+            link.SyncDescription = syncDescription;
+            link.SyncArtwork = false;
+            await db.SaveChangesAsync();
+        }
+        _target.SeedMetadata("manual-target", "My own name", "My own description", ["local-1"]);
+        _source.Snapshot = Snapshot("metadata-source", Entry(0, "one", "source-1", "One")) with
+        {
+            Name = "Source name",
+            Description = "Source description",
+            ArtworkReferenceKey = "source-art"
+        };
+        await _service.RunAsync(Context(), new(_link, 1090));
+        Assert.Equal(syncName ? "Source name" : "My own name", _target.LastWrite!.Metadata.Name);
+        Assert.Equal(syncDescription ? "Source description" : "My own description", _target.LastWrite.Metadata.Description);
+        Assert.Null(_target.LastWrite.Metadata.Artwork);
+        Assert.Equal(0, _source.ArtworkCalls);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task PublicImportUsesNoAccountAndProtectsManualTargetMembersIncludingJobReplay(bool oneTime)
@@ -2630,6 +2659,16 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         public BackendPlaylistWriteRequest? LastWrite { get; private set; }
         private BackendPlaylistSnapshot? LastSnapshot { get; set; }
         public void Seed(string id, IEnumerable<string> members) => LastSnapshot = Backend(id, members);
+        public void SeedMetadata(string id, string name, string? description, IEnumerable<string> members)
+        {
+            var snapshot = Backend(id, members);
+            LastSnapshot = snapshot with
+            {
+                Name = name,
+                Description = description,
+                Fingerprint = BackendPlaylistSnapshot.ComputeFingerprint(id, name, snapshot.Members, description)
+            };
+        }
         public List<BackendPlaylistTargetContext> Contexts { get; } = [];
         public Task<BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>> ListAsync(BackendPlaylistTargetContext context, string? query, int limit, CancellationToken cancellationToken) =>
             Task.FromResult(new BackendPlaylistTargetResult<IReadOnlyList<BackendPlaylistSummary>>(BackendPlaylistTargetStatus.Success, []));

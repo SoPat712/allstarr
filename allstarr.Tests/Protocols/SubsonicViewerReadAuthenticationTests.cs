@@ -148,14 +148,17 @@ public sealed class SubsonicViewerReadAuthenticationTests
         var target = new SubsonicPlaylistTarget(client, new Uri("https://backend.test/"), authentication);
 
         var result = await target.WriteAsync(TargetContext(), new BackendPlaylistWriteRequest(
-            BackendPlaylistWriteMode.Recreate, new BackendPlaylistMetadata("Mix"), ["song"], "fixture"), default);
+            BackendPlaylistWriteMode.Recreate, new BackendPlaylistMetadata("Mix", "Source description"), ["song"], "fixture"), default);
 
         Assert.True(result.IsSuccess);
-        Assert.Equal(1, authentication.WriteCalls);
+        Assert.Equal(2, authentication.WriteCalls);
         Assert.Equal(2, authentication.ReadCalls);
-        Assert.Equal("write-token", Assert.Single(handler.Requests, request => request.Endpoint == "createPlaylist").Parameters["t"]);
-        Assert.All(handler.Requests.Where(request => request.Endpoint != "createPlaylist"),
+        Assert.Equal(["createPlaylist", "getPlaylist", "updatePlaylist", "getPlaylist"], handler.Requests.Select(request => request.Endpoint));
+        Assert.All(handler.Requests.Where(request => request.Endpoint is "createPlaylist" or "updatePlaylist"),
+            request => Assert.Equal("write-token", request.Parameters["t"]));
+        Assert.All(handler.Requests.Where(request => request.Endpoint == "getPlaylist"),
             request => Assert.Equal("read-token", request.Parameters["t"]));
+        Assert.Equal("Source description", Assert.Single(handler.Requests, request => request.Endpoint == "updatePlaylist").Parameters["comment"]);
     }
 
     [Fact]
@@ -243,6 +246,7 @@ public sealed class SubsonicViewerReadAuthenticationTests
 
     private sealed class RecordingBackend : HttpMessageHandler
     {
+        private string? _description;
         public List<(string Endpoint, Dictionary<string, string> Parameters)> Requests { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -253,10 +257,12 @@ public sealed class SubsonicViewerReadAuthenticationTests
             Requests.Add((endpoint, parameters));
             if (endpoint == "getCoverArt")
                 return new(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+            if (endpoint == "updatePlaylist") _description = parameters["comment"];
             object response = endpoint switch
             {
+                "createPlaylist" => new { status = "ok", playlist = new { id = "playlist", name = "Mix" } },
                 "getPlaylists" => new { status = "ok", playlists = new { playlist = new[] { new { id = "playlist", name = "Mix" } } } },
-                "getPlaylist" => new { status = "ok", playlist = new { id = "playlist", name = "Mix", entry = new[] { new { id = "song", duration = 180 } } } },
+                "getPlaylist" => new { status = "ok", playlist = new { id = "playlist", name = "Mix", comment = _description, entry = new[] { new { id = "song", duration = 180 } } } },
                 "getSong" => new { status = "ok", song = new { id = "song", title = "Fixture", duration = 180 } },
                 _ => new { status = "ok" }
             };

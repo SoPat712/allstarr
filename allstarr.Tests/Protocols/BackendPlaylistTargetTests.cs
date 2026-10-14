@@ -259,6 +259,104 @@ public sealed class BackendPlaylistTargetTests
     }
 
     [Fact]
+    public async Task SubsonicNewDestinationUsesTheCreatedIdAndNeverAdoptsAnOlderSameNamedPlaylist()
+    {
+        var backend = new SubsonicFakeBackend("p1", "Source name", ["manual"]);
+        backend.Playlists["p1"].Description = "Manual description";
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new("Source name", "Imported description"),
+            ["a"], "new-destination"), default);
+        Assert.True(result.IsSuccess);
+        Assert.Equal("p2", result.Value!.Snapshot.BackendPlaylistId);
+        Assert.Equal(["a"], result.Value.Snapshot.Members.Select(item => item.BackendItemId));
+        Assert.Equal("Manual description", backend.Playlists["p1"].Description);
+        Assert.Equal(["manual"], backend.Playlists["p1"].Members);
+        Assert.DoesNotContain(backend.Requests, item => item.Path == "getPlaylists");
+    }
+
+    [Fact]
+    public async Task SubsonicMissingCreatedIdFailsWithoutAdoptingOrEditingAnExistingPlaylist()
+    {
+        var backend = new SubsonicFakeBackend("p1", "Source name", ["manual"]) { ReturnCreatedId = false };
+        backend.Playlists["p1"].Description = "Manual description";
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new("Source name", "Imported description"), ["a"], "missing-id"), default);
+        Assert.Equal(BackendPlaylistTargetStatus.Unsupported, result.Status);
+        Assert.Equal("created-playlist-id-missing", result.ErrorCode);
+        Assert.Equal("Manual description", backend.Playlists["p1"].Description);
+        Assert.Equal(["manual"], backend.Playlists["p1"].Members);
+        Assert.DoesNotContain(backend.Requests, item => item.Path is "getPlaylists" or "updatePlaylist");
+    }
+
+    [Fact]
+    public async Task SubsonicMetadataFailureStopsBeforeMembershipReplacement()
+    {
+        var backend = new SubsonicFakeBackend("p1", "Manual name", ["manual"]) { UpdateFailureCode = 50 };
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+        var before = (await target.ReadAsync(Context(), "p1", default)).Value!;
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new("Source name", "Source description"), ["a"], "metadata-denied",
+            "p1", expectedFingerprint: before.Fingerprint), default);
+        Assert.False(result.IsSuccess);
+        Assert.Equal("subsonic-50", result.ErrorCode);
+        Assert.Equal("Manual name", backend.Playlists["p1"].Name);
+        Assert.Equal(["manual"], backend.Playlists["p1"].Members);
+        Assert.DoesNotContain(backend.Requests, item => item.Path == "createPlaylist");
+    }
+
+    [Fact]
+    public async Task SubsonicClearsDescriptionOnceAndThenReconcilesWithoutAnotherWrite()
+    {
+        var backend = new SubsonicFakeBackend("p1", "Mix", ["manual"]);
+        backend.Playlists["p1"].Description = "Old description";
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+        var before = (await target.ReadAsync(Context(), "p1", default)).Value!;
+        var request = new BackendPlaylistWriteRequest(BackendPlaylistWriteMode.Reconcile,
+            new("Mix"), ["manual"], "clear-description", "p1", expectedFingerprint: before.Fingerprint);
+        var cleared = await target.WriteAsync(Context(), request, default);
+        Assert.True(cleared.IsSuccess);
+        Assert.Equal(string.Empty, cleared.Value!.Snapshot.Description ?? string.Empty);
+        var mutations = backend.MutationCount;
+        var retry = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, request.Metadata, request.OrderedBackendItemIds,
+            "clear-retry", "p1", expectedFingerprint: cleared.Value.Snapshot.Fingerprint), default);
+        Assert.True(retry.IsSuccess);
+        Assert.False(retry.Value!.Changed);
+        Assert.Equal(mutations, backend.MutationCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SubsonicWritesNameAndDescriptionWithoutChangingManualMembers(bool newPlaylist)
+    {
+        var backend = new SubsonicFakeBackend("p1", "Manual name", ["manual"]);
+        var target = new SubsonicPlaylistTarget(new HttpClient(backend), new Uri("https://subsonic.test/"));
+        var before = newPlaylist ? null : (await target.ReadAsync(Context(), "p1", default)).Value!;
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new("Source name", "Source description"),
+            newPlaylist ? [] : ["manual"], "metadata-write", newPlaylist ? null : "p1",
+            expectedFingerprint: before?.Fingerprint), default);
+        Assert.True(result.IsSuccess);
+        Assert.Equal("Source name", result.Value!.Snapshot.Name);
+        Assert.Equal("Source description", result.Value.Snapshot.Description);
+        Assert.Empty(result.Value.UnsupportedMetadataFields);
+        Assert.Equal(newPlaylist ? [] : new[] { "manual" }, result.Value.Snapshot.Members.Select(item => item.BackendItemId));
+        Assert.Contains(backend.Requests, request => request.Path == "updatePlaylist" &&
+            request.Parameters["name"].Single() == "Source name" && request.Parameters["comment"].Single() == "Source description");
+        var mutations = backend.MutationCount;
+        var retry = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new("Source name", "Source description"),
+            result.Value.Snapshot.Members.Select(item => item.BackendItemId).ToArray(), "metadata-retry",
+            result.Value.Snapshot.BackendPlaylistId, expectedFingerprint: result.Value.Snapshot.Fingerprint), default);
+        Assert.True(retry.IsSuccess);
+        Assert.False(retry.Value!.Changed);
+        Assert.Equal(mutations, backend.MutationCount);
+    }
+
+    [Fact]
     public async Task Subsonic_reconcile_preserves_order_auth_and_reports_metadata_capabilities()
     {
         var backend = new SubsonicFakeBackend("p1", "Mix", ["b", "manual", "a", "stale"]);
@@ -270,7 +368,7 @@ public sealed class BackendPlaylistTargetTests
         var before = (await target.ReadAsync(context, "p1", default)).Value!;
         var request = new BackendPlaylistWriteRequest(
             BackendPlaylistWriteMode.Reconcile,
-            new BackendPlaylistMetadata("Mix", "not-supported", [4, 5], "image/jpeg"),
+            new BackendPlaylistMetadata("Mix", "Local matches", [4, 5], "image/jpeg"),
             ["a", "b", "c", "a"], "sub-sync-1", "p1", expectedRevision: before.NativeRevision,
             syncOwnedBackendItemIds: ["a", "b", "stale"], removeStaleSyncOwnedItems: true);
 
@@ -280,7 +378,8 @@ public sealed class BackendPlaylistTargetTests
         Assert.Equal(["a", "b", "c", "manual"], result.Value!.Snapshot.Members.Select(member => member.BackendItemId));
         Assert.Equal(4, result.Value.Snapshot.ReportedTrackCount);
         Assert.Equal(720_000, result.Value.Snapshot.DurationMilliseconds);
-        Assert.Equal(["description", "artwork"], result.Value.UnsupportedMetadataFields);
+        Assert.Equal(["artwork"], result.Value.UnsupportedMetadataFields);
+        Assert.Equal("Local matches", result.Value.Snapshot.Description);
         Assert.All(backend.Requests, requestRecord =>
         {
             Assert.Equal("alice", requestRecord.Parameters["u"].Single());
@@ -555,6 +654,8 @@ public sealed class BackendPlaylistTargetTests
         public int MutationCount { get; private set; }
         public int? ProtocolFailureCode { get; set; }
         public string PlaylistOwner { get; set; } = "user-1";
+        public bool ReturnCreatedId { get; set; } = true;
+        public int? UpdateFailureCode { get; set; }
         public HttpStatusCode? ForcedStatus { get; set; }
         private int _nextId = 2;
         private int _revision = 1;
@@ -580,6 +681,7 @@ public sealed class BackendPlaylistTargetTests
                     {
                         id,
                         name = state.Name,
+                        comment = state.Description,
                         changed = $"r{state.Revision}",
                         owner = PlaylistOwner,
                         songCount = state.Members.Count,
@@ -616,6 +718,16 @@ public sealed class BackendPlaylistTargetTests
                     }
                 });
             }
+            if (endpoint == "updatePlaylist")
+            {
+                if (UpdateFailureCode != null) return Json(new { status = "failed", error = new { code = UpdateFailureCode } });
+                MutationCount++;
+                var state = Playlists[parameters["playlistId"].Single()];
+                if (parameters.TryGetValue("name", out var names)) state.Name = names.Single();
+                if (parameters.TryGetValue("comment", out var comments)) state.Description = comments.Single();
+                state.Revision = ++_revision;
+                return Json(new { status = "ok" });
+            }
             if (endpoint == "createPlaylist")
             {
                 MutationCount++;
@@ -630,6 +742,7 @@ public sealed class BackendPlaylistTargetTests
                 {
                     var id = $"p{_nextId++}";
                     Playlists[id] = new(parameters["name"].Single(), members) { Revision = ++_revision };
+                    return ReturnCreatedId ? Json(new { status = "ok", playlist = Summary(id, Playlists[id]) }) : Json(new { status = "ok" });
                 }
                 return Json(new { status = "ok" });
             }

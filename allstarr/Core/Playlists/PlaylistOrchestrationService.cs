@@ -362,8 +362,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
 
             var write = await target.WriteAsync(targetContext, new BackendPlaylistWriteRequest(
                 plan.Mode == PlaylistPlanMode.Recreate ? BackendPlaylistWriteMode.Recreate : BackendPlaylistWriteMode.Reconcile,
-                new BackendPlaylistMetadata(plan.Metadata.Name ?? snapshot.Name,
-                    plan.Metadata.Description, resolvedArtwork?.Bytes, resolvedArtwork?.ContentType),
+                new BackendPlaylistMetadata(plan.Metadata.Name ?? before?.Name ?? snapshot.Name,
+                    link.SyncDescription ? plan.Metadata.Description : before?.Description,
+                    resolvedArtwork?.Bytes, resolvedArtwork?.ContentType),
                 plan.OrderedBackendItemIds, plan.IdempotencyKey,
                 before?.BackendPlaylistId ?? link.TargetPlaylistId,
                 before?.NativeRevision, before?.Fingerprint,

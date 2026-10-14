@@ -38,7 +38,7 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         CanReconcileMembership: true,
         PreservesRequestedOrder: true,
         CanWriteName: true,
-        CanWriteDescription: false,
+        CanWriteDescription: true,
         CanWriteArtwork: false,
         HasNativeRevision: true,
         HasStagedReplacement: true);
@@ -253,15 +253,35 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
                     cancellationToken);
                 if (!create.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(create);
                 if (!TryProtocolSuccess(create, out var failure)) return ConvertFailure<BackendPlaylistWriteReceipt>(failure!);
-                var found = await FindByNameAsync(context, request.Metadata.Name, cancellationToken);
+                using var createdResponse = JsonDocument.Parse(create.Body!);
+                var createdId = createdResponse.RootElement.GetPropertyOrDefault("subsonic-response")
+                    .GetPropertyOrDefault("playlist").StringOrNull("id");
+                if (string.IsNullOrWhiteSpace(createdId))
+                    return new(BackendPlaylistTargetStatus.Unsupported, UpstreamStatus: create.Status,
+                        ErrorCode: "created-playlist-id-missing");
+                var found = await ReadAsync(context, createdId, cancellationToken);
                 if (!found.IsSuccess || found.Value == null)
-                    return new(BackendPlaylistTargetStatus.BackendFailure, UpstreamStatus: found.UpstreamStatus, ErrorCode: "created-playlist-not-readable");
+                    return ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(found, createdId);
+                if (found.Value.BackendPlaylistId != createdId)
+                    return new(BackendPlaylistTargetStatus.BackendFailure, UpstreamStatus: found.UpstreamStatus,
+                        ErrorCode: "created-playlist-id-mismatch", RecoveryPlaylistId: createdId);
+                var createdSnapshot = found.Value;
+                if (!MetadataMatches(createdSnapshot, request.Metadata))
+                {
+                    var metadata = await WriteMetadataAsync(context, found.Value.BackendPlaylistId, request.Metadata, cancellationToken);
+                    if (!metadata.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(metadata, found.Value.BackendPlaylistId);
+                    if (!TryProtocolSuccess(metadata, out var metadataFailure))
+                        return ConvertFailure<BackendPlaylistWriteReceipt>(metadataFailure!, found.Value.BackendPlaylistId);
+                    var refreshed = await ReadAsync(context, found.Value.BackendPlaylistId, cancellationToken);
+                    if (!refreshed.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(refreshed, found.Value.BackendPlaylistId);
+                    createdSnapshot = refreshed.Value!;
+                }
                 return new(BackendPlaylistTargetStatus.Success,
-                    new(found.Value, true, unsupported,
+                    new(createdSnapshot, true, unsupported,
                         ReplacementRequiresCleanup: request.Mode == BackendPlaylistWriteMode.Recreate && request.BackendPlaylistId != null,
                         ReplacedPlaylistId: request.BackendPlaylistId),
                     create.Status,
-                    RecoveryPlaylistId: found.Value.BackendPlaylistId);
+                    RecoveryPlaylistId: createdSnapshot.BackendPlaylistId);
             }
 
             var currentResult = await ReadAsync(context, request.BackendPlaylistId, cancellationToken);
@@ -270,20 +290,35 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
             if (Conflicts(request, current))
                 return new(BackendPlaylistTargetStatus.Conflict, UpstreamStatus: currentResult.UpstreamStatus, ErrorCode: "target-revision-conflict");
             var desired = BuildFinalOrder(current, request);
-            if (current.Members.Select(member => member.BackendItemId).SequenceEqual(desired))
+            var membershipMatches = current.Members.Select(member => member.BackendItemId).SequenceEqual(desired);
+            var metadataMatches = MetadataMatches(current, request.Metadata);
+            if (membershipMatches && metadataMatches)
                 return new(BackendPlaylistTargetStatus.Success, new(current, false, unsupported), currentResult.UpstreamStatus);
 
             // OpenSubsonic createPlaylist with playlistId replaces the ordered membership in one operation.
             // This is deterministic on retry and avoids index-based duplicate/removal drift.
-            var replace = await CallAsync(context, "createPlaylist",
-                [Pair("playlistId", current.BackendPlaylistId), .. desired.Select(id => Pair("songId", id))],
-                cancellationToken);
-            if (!replace.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(replace, current.BackendPlaylistId);
-            if (!TryProtocolSuccess(replace, out var protocolFailure))
-                return ConvertFailure<BackendPlaylistWriteReceipt>(protocolFailure!, current.BackendPlaylistId);
+            var status = currentResult.UpstreamStatus;
+            if (!metadataMatches)
+            {
+                var metadata = await WriteMetadataAsync(context, current.BackendPlaylistId, request.Metadata, cancellationToken);
+                if (!metadata.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(metadata, current.BackendPlaylistId);
+                if (!TryProtocolSuccess(metadata, out var metadataFailure))
+                    return ConvertFailure<BackendPlaylistWriteReceipt>(metadataFailure!, current.BackendPlaylistId);
+                status = metadata.Status;
+            }
+            if (!membershipMatches)
+            {
+                var replace = await CallAsync(context, "createPlaylist",
+                    [Pair("playlistId", current.BackendPlaylistId), .. desired.Select(id => Pair("songId", id))],
+                    cancellationToken);
+                if (!replace.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(replace, current.BackendPlaylistId);
+                if (!TryProtocolSuccess(replace, out var protocolFailure))
+                    return ConvertFailure<BackendPlaylistWriteReceipt>(protocolFailure!, current.BackendPlaylistId);
+                status = replace.Status;
+            }
             var final = await ReadAsync(context, current.BackendPlaylistId, cancellationToken);
             return final.IsSuccess
-                ? new(BackendPlaylistTargetStatus.Success, new(final.Value!, true, unsupported), replace.Status)
+                ? new(BackendPlaylistTargetStatus.Success, new(final.Value!, true, unsupported), status)
                 : ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(final, current.BackendPlaylistId);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -373,10 +408,17 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
     private static IReadOnlyList<string> UnsupportedFields(BackendPlaylistMetadata metadata)
     {
         var fields = new List<string>();
-        if (metadata.Description != null) fields.Add("description");
         if (metadata.Artwork != null) fields.Add("artwork");
         return fields;
     }
+
+    private static bool MetadataMatches(BackendPlaylistSnapshot snapshot, BackendPlaylistMetadata metadata) =>
+        snapshot.Name == metadata.Name && (snapshot.Description ?? string.Empty) == (metadata.Description ?? string.Empty);
+
+    private Task<HttpResult> WriteMetadataAsync(BackendPlaylistTargetContext context, string playlistId,
+        BackendPlaylistMetadata metadata, CancellationToken cancellationToken) => CallAsync(context, "updatePlaylist",
+            [Pair("playlistId", playlistId), Pair("name", metadata.Name), Pair("comment", metadata.Description ?? string.Empty)],
+            cancellationToken);
 
     private static bool Conflicts(BackendPlaylistWriteRequest request, BackendPlaylistSnapshot current) =>
         request.ExpectedFingerprint != null && request.ExpectedFingerprint != current.Fingerprint ||
