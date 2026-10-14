@@ -45,8 +45,8 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     private static readonly Uri WebApiOrigin = new("https://api.spotify.com/");
     private readonly SpotifyApiSettings _settings;
     private readonly HttpClient _http;
-    private readonly IProviderAccountSecretAccessor _secrets;
     private readonly SpotifyPathfinderPlaylistClient _pathfinder;
+    private readonly SpotifyWebTokenExchange _tokenExchange;
     private readonly ILogger<SpotifyPathfinderPlaylistClient>? _logger;
 
     [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
@@ -63,13 +63,14 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         IProviderAccountSecretAccessor secrets,
         ILogger<SpotifyPathfinderPlaylistClient>? logger = null,
         IApplicationCache? cache = null,
-        SpotifyApiSettings? settings = null)
+        SpotifyApiSettings? settings = null,
+        TimeProvider? timeProvider = null)
     {
         _settings = settings ?? new();
         _http = http;
-        _secrets = secrets;
         _logger = logger;
         _pathfinder = new SpotifyPathfinderPlaylistClient(http, cache, logger, _settings);
+        _tokenExchange = new SpotifyWebTokenExchange(http, secrets, _settings, timeProvider ?? TimeProvider.System);
     }
 
     public string ProviderId => StableProviderId;
@@ -360,26 +361,23 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         if (contextError != null) return ProviderOutcome<T>.Failure(contextError);
         try
         {
-            if (context.Actor.Kind == ProviderActorKind.PublicRead)
+            var token = await _tokenExchange.GetAsync(context.Account, context.CancellationToken);
+            if (!token.Success)
             {
-                var token = await SpotifyWebTokenExchange.ExchangeAsync(_http, null, context.CancellationToken, _settings, allowAnonymous: true);
-                return token.Success
-                    ? await operation(token.AccessToken!, context.CancellationToken)
-                    : ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure));
+                var kind = context.Actor.Kind == ProviderActorKind.PublicRead ? ProviderErrorKind.TransientFailure :
+                    token.ReasonCode switch
+                    {
+                        "account_needs_configuration" => ProviderErrorKind.AccountNeedsConfiguration,
+                        "provider_unauthorized" or "anonymous_session" or "expired_session" => ProviderErrorKind.Unauthorized,
+                        "provider_forbidden" => ProviderErrorKind.Forbidden,
+                        _ => ProviderErrorKind.TransientFailure
+                    };
+                return ProviderOutcome<T>.Failure(new(kind));
             }
-            return await _secrets.UseAsync(
-                context.Account!,
-                async secret =>
-                {
-                    var cookie = SpotifySessionCookie.Normalize(Encoding.UTF8.GetString(secret.Span));
-                    if (string.IsNullOrWhiteSpace(cookie))
-                        return ProviderOutcome<T>.Failure(new ProviderError(ProviderErrorKind.AccountNeedsConfiguration));
-                    var token = await ExchangeCookieAsync(cookie, context.CancellationToken);
-                    return token.Outcome.IsSuccess
-                        ? await operation(token.Token!, context.CancellationToken)
-                        : ProviderOutcome<T>.Failure(token.Outcome.Error!);
-                },
-                context.CancellationToken);
+            var outcome = await operation(token.AccessToken!, context.CancellationToken);
+            if (outcome.Error?.Kind == ProviderErrorKind.Unauthorized)
+                await _tokenExchange.InvalidateAsync(context.Account, token.AccessToken!, context.CancellationToken);
+            return outcome;
         }
         catch (OperationCanceledException)
         {
@@ -397,20 +395,6 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 context.OperationId);
             return ProviderOutcome<T>.Failure(new ProviderError(ProviderErrorKind.TransientFailure));
         }
-    }
-
-    private async Task<TokenResult> ExchangeCookieAsync(string cookie, CancellationToken cancellationToken)
-    {
-        var result = await SpotifyWebTokenExchange.ExchangeAsync(_http, SpotifySessionCookie.Normalize(cookie)!, cancellationToken, _settings);
-        if (result.Success) return new(ProviderOutcome<byte[]>.Success([]), result.AccessToken);
-        var kind = result.ReasonCode switch
-        {
-            "provider_unauthorized" or "anonymous_session" or "expired_session" =>
-                ProviderErrorKind.Unauthorized,
-            "provider_forbidden" => ProviderErrorKind.Forbidden,
-            _ => ProviderErrorKind.TransientFailure
-        };
-        return new(ProviderOutcome<byte[]>.Failure(new ProviderError(kind)), null);
     }
 
     private static string AccountFingerprint(Guid accountId) =>
@@ -486,5 +470,4 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         ProviderPlaylistSummary Summary,
         IReadOnlyList<ProviderExternalResourceId> TrackIds);
     private sealed record MutationHttpResult(ProviderOutcome<byte[]> Outcome, byte[]? Body);
-    private sealed record TokenResult(ProviderOutcome<byte[]> Outcome, string? Token);
 }
