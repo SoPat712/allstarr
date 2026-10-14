@@ -72,34 +72,19 @@ public sealed class ProviderPlaylistSourceGateway(
     {
         var actor = context.RequireActor();
         RequireLinkExecutionContext(context, actor, link);
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
-            cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
-        if (account.Scope == ProviderAccountScope.Personal &&
-            (account.OwnerUserId != link.OwnerUserId ||
-             account.OwnerUserId != actor.EffectiveUserId))
-            throw new UnauthorizedAccessException("The playlist account is outside the link scope.");
-
-        var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(
-            link.SourceProviderId, ProviderCapabilityKind.Playlist);
-        var accountContext = new ProviderAccountContext(
-            account.Id, account.ProviderId, account.Scope, account.Revision, account.Enabled,
-            account.OwnerUserId, "playlist-link", account.SecretReferenceId);
-        var providerContext = new ProviderExecutionContext(
-            actor, account.ProviderId, accountContext,
-            new ProviderExecutionPolicy(
-                new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
-                ProviderExplicitContentPolicy.Allow, false, account.Scope == ProviderAccountScope.Shared, false,
-                [account.ProviderId]),
-            "playlist-snapshot", context.CorrelationId, clock.UtcNow.AddMinutes(5), cancellationToken);
+        var providerContext = await SourceContextAsync(context, actor, link, "playlist-snapshot", cancellationToken)
+            ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+        var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(link.SourceProviderId, ProviderCapabilityKind.Playlist);
         var result = await collector.CollectAsync(
             capability, providerContext,
             new ProviderPlaylistSnapshotRequest(new ProviderExternalResourceId(
-                account.ProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId)));
+                link.SourceProviderId, ProviderResourceKind.Playlist, link.SourcePlaylistId)));
         if (!result.IsSuccess || result.Snapshot == null)
             throw new PlaylistSourceUnavailableException(result.Error?.Kind.ToString() ?? "source_unavailable");
         if (identities == null) return result.Snapshot;
+        var identityContext = link.ProviderAccountId.HasValue ? providerContext : new ProviderExecutionContext(
+            actor, providerContext.ProviderId, null, providerContext.Policy, "playlist-source-identity",
+            providerContext.CorrelationId, providerContext.Deadline, cancellationToken);
         var remembered = new Dictionary<ProviderExternalResourceId, Guid?>();
         var entries = new List<CollectedPlaylistSourceEntry>(result.Snapshot.Entries.Count);
         foreach (var entry in result.Snapshot.Entries)
@@ -113,8 +98,9 @@ public sealed class ProviderPlaylistSourceGateway(
             {
                 try
                 {
-                    recordingId = await identities.RememberSourceAsync(providerContext, track,
-                        $"ext-{track.ProviderId}-song-{track.Value}", ProviderIdentityScope.Account,
+                    recordingId = await identities.RememberSourceAsync(identityContext, track,
+                        $"ext-{track.ProviderId}-song-{track.Value}",
+                        link.ProviderAccountId.HasValue ? ProviderIdentityScope.Account : ProviderIdentityScope.Catalog,
                         entry.Isrc, cancellationToken);
                 }
                 catch (RecordingMergeConflictException)
@@ -135,26 +121,40 @@ public sealed class ProviderPlaylistSourceGateway(
     {
         var actor = context.RequireActor();
         RequireLinkExecutionContext(context, actor, link);
-        await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
-            cancellationToken);
-        if (account == null) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
-        if (account.Scope == ProviderAccountScope.Personal &&
-            (account.OwnerUserId != link.OwnerUserId ||
-             account.OwnerUserId != actor.EffectiveUserId))
-            return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.Forbidden));
-        var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(
-            link.SourceProviderId, ProviderCapabilityKind.Playlist);
-        var accountContext = new ProviderAccountContext(account.Id, account.ProviderId, account.Scope,
-            account.Revision, account.Enabled, account.OwnerUserId,
-            "playlist-link-artwork", account.SecretReferenceId);
-        var providerContext = new ProviderExecutionContext(actor, account.ProviderId, accountContext,
-            new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any,
-                    ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow, false,
-                account.Scope == ProviderAccountScope.Shared, false, [account.ProviderId]),
-            "playlist-artwork", context.CorrelationId, clock.UtcNow.AddMinutes(2), cancellationToken);
+        ProviderExecutionContext? providerContext;
+        try { providerContext = await SourceContextAsync(context, actor, link, "playlist-artwork", cancellationToken); }
+        catch (UnauthorizedAccessException) { return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.Forbidden)); }
+        if (providerContext == null) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(new(ProviderErrorKind.AccountNeedsConfiguration));
+        var capability = registry.GetRequiredCapability<IProviderPlaylistCapability>(link.SourceProviderId, ProviderCapabilityKind.Playlist);
         return await capability.ResolveArtworkAsync(providerContext, request);
+    }
+
+    private async Task<ProviderExecutionContext?> SourceContextAsync(ProtocolExecutionContext context,
+        ProviderActorContext actor, PlaylistLinkRecord link, string operation, CancellationToken cancellationToken)
+    {
+        ProviderAccountContext? accountContext = null;
+        if (link.ProviderAccountId.HasValue)
+        {
+            await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+            var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && item.Enabled,
+                cancellationToken);
+            if (account == null) return null;
+            if (account.Scope == ProviderAccountScope.Personal &&
+                (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
+                throw new UnauthorizedAccessException("The playlist account is outside the link scope.");
+            accountContext = new(account.Id, account.ProviderId, account.Scope, account.Revision, account.Enabled,
+                account.OwnerUserId, operation, account.SecretReferenceId);
+        }
+        else
+        {
+            PersistenceGuard.RequirePublicPlaylistSource(registry, link.SourceProviderId);
+            actor = new ProviderActorContext(ProviderActorKind.PublicRead, null);
+        }
+        return new(actor, link.SourceProviderId, accountContext,
+            new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, false, accountContext?.Scope == ProviderAccountScope.Shared, false, [link.SourceProviderId]),
+            operation, context.CorrelationId, clock.UtcNow.AddMinutes(5), cancellationToken);
     }
 
     private static void RequireLinkExecutionContext(
@@ -213,6 +213,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly KeyedAsyncLock _locks;
     private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly IProviderRegistry? _registry;
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
 
     public PlaylistOrchestrationService(
@@ -227,7 +228,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         IBackendLibraryAccessResolver libraryAccess,
         ILogger<PlaylistOrchestrationService>? logger = null,
         IEffectiveProviderPolicyResolver? effectivePolicies = null,
-        IProtocolProviderGateway? providerGateway = null)
+        IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
@@ -235,6 +236,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         _locks = locks;
         _libraryAccess = libraryAccess;
         _providerGateway = providerGateway;
+        _registry = registry;
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -265,12 +267,17 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             request.SourceSnapshotId != frozenSnapshotId)
             throw new InvalidOperationException("A one-time import is frozen to its first published snapshot.");
         var reusingOneTimeImport = frozenSnapshotId.HasValue;
-        var account = await initial.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && (item.Enabled || reusingOneTimeImport),
-            cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
-        if (account.Scope == ProviderAccountScope.Personal &&
-            (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
-            throw new UnauthorizedAccessException("The playlist account is outside the execution owner.");
+        if (link.ProviderAccountId.HasValue)
+        {
+            var account = await initial.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == link.ProviderAccountId && item.ProviderId == link.SourceProviderId && (item.Enabled || reusingOneTimeImport),
+                cancellationToken) ?? throw new UnauthorizedAccessException("The selected playlist account is unavailable.");
+            if (account.Scope == ProviderAccountScope.Personal &&
+                (account.OwnerUserId != link.OwnerUserId || account.OwnerUserId != actor.EffectiveUserId))
+                throw new UnauthorizedAccessException("The playlist account is outside the execution owner.");
+        }
+        else if (!reusingOneTimeImport)
+            PersistenceGuard.RequirePublicPlaylistSource(_registry, link.SourceProviderId);
         var sourceSnapshotId = frozenSnapshotId ?? request.SourceSnapshotId;
         var snapshot = sourceSnapshotId.HasValue
             ? await LoadSnapshotAsync(initial, link, sourceSnapshotId.Value, cancellationToken)
@@ -545,7 +552,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     cancellationToken);
             _logger?.LogWarning(
                 "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}. ReasonCode: {ReasonCode}",
-                Hash(link.ProviderAccountId.ToString("N"))[..12],
+                Hash(link.ProviderAccountId?.ToString("N") ?? $"public:{link.OwnerUserId:N}:{link.SourceProviderId}")[..12],
                 Hash(link.Id.ToString("N"))[..12],
                 retained == null ? "none" : Hash(retained.ProviderRevision)[..12],
                 retained?.PayloadSha256[..Math.Min(12, retained.PayloadSha256.Length)] ?? "none",
@@ -598,8 +605,10 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         ProtocolExecutionContext execution, PlaylistLinkRecord link, Guid? jobId, CancellationToken cancellationToken)
     {
         var collected = await _source.CollectAsync(execution, link, cancellationToken);
+        if (collected.ProviderId != link.SourceProviderId || collected.ProviderAccountId != link.ProviderAccountId)
+            throw new UnauthorizedAccessException("The collected playlist is outside the selected source scope.");
         await using var accountLock = await _locks.AcquireAsync(
-            $"playlist-account:{link.ProviderAccountId:N}", cancellationToken);
+            link.ProviderAccountId.HasValue ? $"playlist-account:{link.ProviderAccountId:N}" : $"playlist-public:{link.OwnerUserId:N}:{link.SourceProviderId}", cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var now = _clock.UtcNow;
@@ -653,7 +662,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             _logger?.LogInformation(
                 "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}",
-                Hash(link.ProviderAccountId.ToString("N"))[..12],
+                Hash(link.ProviderAccountId?.ToString("N") ?? $"public:{link.OwnerUserId:N}:{link.SourceProviderId}")[..12],
                 Hash(link.Id.ToString("N"))[..12],
                 Hash(collected.SourceRevision)[..12],
                 playlistPayloadHash[..12],
@@ -676,7 +685,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         {
             storedExternals.AddRange(await db.ExternalMetadataSnapshots.AsNoTracking()
                 .Where(item => item.OwnerUserId == link.OwnerUserId &&
-                               item.ProviderAccountId == link.ProviderAccountId &&
+                               item.ProviderAccountId == link.ProviderAccountId && item.ProviderId == link.SourceProviderId &&
                                item.ResourceKind == "track" &&
                                hashes.Contains(item.ExternalIdHash))
                 .ToListAsync(cancellationToken));
@@ -779,7 +788,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         await transaction.CommitAsync(cancellationToken);
         _logger?.LogInformation(
             "Provider playlist snapshot decision. Account: {Account}. PlaylistLink: {PlaylistLink}. ProviderRevision: {ProviderRevision}. ContentFingerprint: {ContentFingerprint}. SnapshotVersion: {SnapshotVersion}. MappedCount: {MappedCount}. PersistedCount: {PersistedCount}. Decision: {Decision}",
-            Hash(link.ProviderAccountId.ToString("N"))[..12],
+            Hash(link.ProviderAccountId?.ToString("N") ?? $"public:{link.OwnerUserId:N}:{link.SourceProviderId}")[..12],
             Hash(link.Id.ToString("N"))[..12],
             Hash(collected.SourceRevision)[..12],
             playlistPayloadHash[..12],
@@ -1582,7 +1591,7 @@ public sealed class PlaylistMaterializationJobHandler(
         if (link == null || context.Claim.ProviderAccountId.HasValue &&
             link.ProviderAccountId != context.Claim.ProviderAccountId)
             return DurableJobCompletion.Failure("playlist_link_unavailable", "The playlist link is unavailable.");
-        if (!context.Claim.ProviderAccountId.HasValue &&
+        if (link.ProviderAccountId.HasValue && !context.Claim.ProviderAccountId.HasValue &&
             (link.ImportMode != PlaylistImportMode.OneTime ||
              !await db.PlaylistSourceSnapshots.AnyAsync(item => item.PlaylistLinkId == link.Id &&
                  item.OwnerUserId == link.OwnerUserId && item.PublishedAt.HasValue, cancellationToken)))

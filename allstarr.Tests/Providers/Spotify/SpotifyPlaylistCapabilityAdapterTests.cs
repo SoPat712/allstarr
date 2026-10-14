@@ -13,6 +13,53 @@ namespace allstarr.Tests;
 public sealed class SpotifyPlaylistCapabilityAdapterTests
 {
     [Fact]
+    public async Task PublicPlaylistReadUsesAnAnonymousTokenWithoutCookiesOrAccountSecrets()
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var secrets = new FakeSecretAccessor("must-not-be-used");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), secrets);
+        var outcome = await adapter.GetPlaylistTracksAsync(PublicContext(), new(
+            new("spotify", ProviderResourceKind.Playlist, "playlist-opaque"), new ProviderPageRequest(2)));
+        Assert.True(outcome.IsSuccess);
+        Assert.Empty(secrets.AccountIds);
+        Assert.Null(handler.CookieHeader);
+        Assert.NotEmpty(handler.ApiAuthorizationHeaders);
+        Assert.Empty(handler.MutationRequests);
+    }
+
+    [Fact]
+    public async Task PublicTokenExchangeRejectsAnUnexpectedAuthenticatedSession()
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = false };
+        var secrets = new FakeSecretAccessor("must-not-be-used");
+        var outcome = await new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), secrets)
+            .GetPlaylistTracksAsync(PublicContext(), new(new("spotify", ProviderResourceKind.Playlist, "playlist-opaque"), new ProviderPageRequest()));
+        Assert.False(outcome.IsSuccess);
+        Assert.Empty(handler.ApiPaths);
+        Assert.Null(handler.CookieHeader);
+        Assert.Empty(secrets.AccountIds);
+    }
+
+    [Fact]
+    public async Task PublicReadsCannotAccessThePersonalLibraryLikedSongsOrMutations()
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var secrets = new FakeSecretAccessor("must-not-be-used");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), secrets);
+        var context = PublicContext();
+        Assert.False((await adapter.GetUserPlaylistsAsync(context, new(new ProviderPageRequest()))).IsSuccess);
+        Assert.False((await adapter.GetPlaylistTracksAsync(context, new(
+            new("spotify", ProviderResourceKind.Playlist, "liked-songs"), new ProviderPageRequest()))).IsSuccess);
+        Assert.False((await adapter.MutatePlaylistAsync(context, new("spotify", "Public mutation", [], ProviderPlaylistConflictBehavior.FailIfChanged))).IsSuccess);
+        Assert.Empty(handler.Paths);
+        Assert.Empty(secrets.AccountIds);
+    }
+
+    private static ProviderExecutionContext PublicContext() => new(
+        new ProviderActorContext(ProviderActorKind.PublicRead, null), "spotify", null, Context().Policy,
+        "public-playlist-read", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);
+
+    [Fact]
     public async Task Selected_account_secret_fetches_deterministic_track_page_without_exposing_credentials()
     {
         var handler = new SpotifyFakeHandler();
@@ -389,7 +436,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         var playlist = validated.Descriptor.Capabilities.Single(capability => capability.Capability == ProviderCapabilityKind.Playlist);
 
         Assert.Equal(ProviderCapabilitySupportState.Supported, playlist.SupportState);
-        Assert.Equal(ProviderAccountRequirement.Required, playlist.AccountRequirement);
+        Assert.Equal(ProviderAccountRequirement.Optional, playlist.AccountRequirement);
+        Assert.True(playlist.SupportsPublicRead);
         Assert.Contains("mutatePlaylist", playlist.Hooks);
         Assert.Same(adapter, validated.Implementations.Single(item => item.Capability == ProviderCapabilityKind.Playlist));
         Assert.Same(lyrics, validated.Implementations.Single(item => item.Capability == ProviderCapabilityKind.Lyrics));
@@ -488,7 +536,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                     time.Headers.Date = DateTimeOffset.UtcNow;
                     return Task.FromResult(time);
                 }
-                CookieHeader = request.Headers.GetValues("Cookie").Single();
+                CookieHeader = request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single() : null;
                 return Task.FromResult(Json(TokenStatus, new
                 {
                     accessToken = "account-access-token",

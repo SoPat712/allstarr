@@ -57,7 +57,7 @@ public sealed record DurablePlaylistProjection(
     string Name,
     string SourceProviderId,
     string SourcePlaylistId,
-    Guid ProviderAccountId,
+    Guid? ProviderAccountId,
     string TargetProtocol,
     string? TargetPlaylistId,
     string? ArtworkReferenceKey,
@@ -271,8 +271,8 @@ public sealed class DurablePlaylistProjectionReader(
             {
                 if (linkedSourceIdentities.TryGetValue(item.Id, out var linked))
                     return (item.Id, Identity: linked);
-                var fallback = accountSourceIdentities.GetValueOrDefault((
-                    item.ProviderId.ToLowerInvariant(), item.ProviderAccountId, item.ExternalIdHash));
+                var fallback = item.ProviderAccountId.HasValue ? accountSourceIdentities.GetValueOrDefault((
+                    item.ProviderId.ToLowerInvariant(), item.ProviderAccountId.Value, item.ExternalIdHash)) : null;
                 fallback ??= catalogSourceIdentities.GetValueOrDefault((
                     item.ProviderId.ToLowerInvariant(), item.ExternalIdHash));
                 if (fallback != null && !MatchesSourceIdentity(item, fallback))

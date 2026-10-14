@@ -43,6 +43,40 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PublicSourcesStayOwnerAndProviderScopedWithoutSelectingAnAccount()
+    {
+        var registry = PublicPlaylistTestRegistry.Create("fixture", "other");
+        var resolver = new ProviderAccountResolver(_factory);
+        var matches = new TrackMatchCommandService(_factory, new TrackMatchDecisionEngine(), resolver,
+            new PersistenceClock(_now), _access, registry: registry);
+        var playlists = new PlaylistPersistenceService(_factory, resolver, new PersistenceClock(_now), matches,
+            _access, registry: registry);
+        var context = Context(_userA, "principal-a");
+        var input = Link() with { ProviderAccountId = null };
+        var link = await playlists.CreateLinkAsync(context, input);
+        Assert.Null(link.ProviderAccountId);
+        Assert.Equal(link.Id, (await playlists.CreateLinkAsync(context, input)).Id);
+        var otherLink = await playlists.CreateLinkAsync(context, input with { SourceProviderId = "other" });
+        Assert.NotEqual(link.Id, otherLink.Id);
+        var external = await matches.CaptureSnapshotAsync(context, Snapshot(1, "same-track") with { ProviderAccountId = null });
+        var other = await matches.CaptureSnapshotAsync(context, Snapshot(1, "same-track") with { ProviderAccountId = null, ProviderId = "other" });
+        Assert.NotEqual(external.Id, other.Id);
+        Assert.Null(external.ProviderAccountId);
+        var sourceInput = new PlaylistSourceSnapshotInput(1, "public-revision", null, "Public mix", null, null,
+            Hash("source"), [new(0, external.Id, Hash("entry"))]);
+        var source = await playlists.CaptureSourceSnapshotAsync(context, link.Id, sourceInput);
+        Assert.Null(source.ProviderAccountId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => playlists.CaptureSourceSnapshotAsync(
+            context, otherLink.Id, sourceInput));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => playlists.GetLinkAsync(Context(_userB, "principal-b"), link.Id));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => playlists.CreateLinkAsync(context,
+            input with { SourceProviderId = "account-required" }));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(_accountA, (await db.ProviderAccounts.SingleAsync()).Id);
+        Assert.Equal(2, await db.ExternalMetadataSnapshots.CountAsync());
+    }
+
+    [Fact]
     public async Task LocalMatches_UseViewerPermissionsAcrossIndexOwnersAndStopAfterRevocation()
     {
         await using (var db = await _factory.CreateDbContextAsync())

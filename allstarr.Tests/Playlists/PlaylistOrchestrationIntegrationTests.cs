@@ -99,6 +99,49 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await db.SaveChangesAsync();
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PublicImportUsesNoAccountAndProtectsManualTargetMembersIncludingJobReplay(bool oneTime)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var link = await db.PlaylistLinks.SingleAsync();
+            link.ProviderAccountId = null;
+            link.ImportMode = oneTime ? PlaylistImportMode.OneTime : PlaylistImportMode.Linked;
+            link.TargetPlaylistId = "target-existing";
+            link.MirrorStaleEntries = true;
+            await db.SaveChangesAsync();
+        }
+        _source.Snapshot = Snapshot("public-revision", Entry(0, "entry-public", "source-1", "One")) with { ProviderAccountId = null };
+        _target.Seed("target-existing", ["local-2"]);
+        var registry = PublicPlaylistTestRegistry.Create("fixture");
+        var service = new PlaylistOrchestrationService(_factory, _source, new FakeTargetResolver(_target),
+            new PlaylistMaterializationPlanner(), new TrackMatchDecisionEngine(), _trackMatches,
+            new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"), registry: registry);
+        var result = await service.RunAsync(Context(), new(_link, 1));
+        Assert.True(result.State is PlaylistSyncState.Succeeded or PlaylistSyncState.PartiallySucceeded);
+        Assert.Equal(1, _source.CollectCalls);
+        var target = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-existing", default);
+        Assert.Contains("local-2", target.Value!.Members.Select(item => item.BackendItemId));
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Null((await verify.PlaylistSourceSnapshots.SingleAsync()).ProviderAccountId);
+        Assert.All(await verify.ExternalMetadataSnapshots.ToListAsync(), item => Assert.Null(item.ProviderAccountId));
+        Assert.DoesNotContain(await verify.PlaylistTargetMemberships.ToListAsync(), item => item.LibraryTrackId == _trackTwo);
+        Assert.Equal(_account, (await verify.ProviderAccounts.SingleAsync()).Id);
+        if (oneTime) _source.FailureCode = "must-not-read-frozen-source";
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), new Clock(_now));
+        await queue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistMaterializationJobPayload>(
+            "playlist.materialize", "public-replay", new(_link, 2), _user));
+        var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("public-worker"));
+        Assert.Null(claim.ProviderAccountId);
+        var completion = await new PlaylistMaterializationJobHandler(_factory, service, new Clock(_now))
+            .ExecuteAsync(new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        Assert.Equal(oneTime ? 1 : 2, _source.CollectCalls);
+    }
+
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
     public async Task Sqlite_playlist_baseline_has_bounded_reads_and_linear_writes_at_100_1000_and_10000_tracks()

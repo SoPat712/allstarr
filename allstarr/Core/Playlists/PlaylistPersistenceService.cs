@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 namespace allstarr.Core.Playlists;
 
 public sealed record ExternalSnapshotInput(
-    Guid ProviderAccountId, string ProviderId, string ResourceKind,
+    Guid? ProviderAccountId, string ProviderId, string ResourceKind,
     string ExternalIdHash, int SnapshotVersion, string ProviderRevision, string PayloadJson,
     string PayloadSha256, Guid? ProviderTrackIdentityId = null, Guid? SourceJobId = null);
 public sealed record MatchDecisionInput(
@@ -69,7 +69,7 @@ public sealed record ManualOverrideInput(
     Guid ExternalSnapshotId, ManualOverrideDecision Decision,
     Guid? LibraryTrackId, string Reason, ManualAuthorityRevision? ExpectedAuthority = null);
 
-public sealed record PlaylistLinkInput(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId, string SourcePlaylistIdHash, string TargetProtocol, string TargetBackendInstanceId, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null, bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true, bool SyncDescription = true, bool SyncArtwork = true, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode ImportMode = PlaylistImportMode.Linked, PlaylistTrackRetention TrackRetention = PlaylistTrackRetention.OnDemand);
+public sealed record PlaylistLinkInput(Guid? ProviderAccountId, string SourceProviderId, string SourcePlaylistId, string SourcePlaylistIdHash, string TargetProtocol, string TargetBackendInstanceId, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null, bool MirrorStaleEntries = false, bool PreserveManualEntries = true, bool SyncName = true, bool SyncDescription = true, bool SyncArtwork = true, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode ImportMode = PlaylistImportMode.Linked, PlaylistTrackRetention TrackRetention = PlaylistTrackRetention.OnDemand);
 public sealed record PlaylistLinkUpdate(long ExpectedRevision, PlaylistLinkMode Mode, PlaylistMaterializationMode MaterializationMode, string RuleVersion, string PolicyVersion, Guid? ScheduleId, string? TargetPlaylistId, bool MirrorStaleEntries, bool PreserveManualEntries, bool SyncName, bool SyncDescription, bool SyncArtwork, Guid? TargetCredentialReferenceId = null, PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved, PlaylistImportMode? ImportMode = null, PlaylistTrackRetention? TrackRetention = null);
 public sealed record PlaylistSourceEntryInput(int Position, Guid ExternalMetadataSnapshotId, string SourceEntryIdHash);
 public sealed record PlaylistSourceSnapshotInput(int SnapshotVersion, string ProviderRevision, string? ETag, string Name, string? Description, string? ArtworkReferenceKey, string PayloadSha256, IReadOnlyList<PlaylistSourceEntryInput> Entries, Guid? SourceJobId = null);
@@ -127,6 +127,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     private readonly PlaylistMaterializationPlanner _planner;
     private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly IProtocolProviderGateway? _providerGateway;
+    private readonly IProviderRegistry? _registry;
     public PlaylistPersistenceService(
         IDbContextFactory<AllstarrDbContext> factory,
         ProviderAccountResolver accounts,
@@ -134,9 +135,9 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         ITrackMatchRepository trackMatches,
         IBackendLibraryAccessResolver libraryAccess,
         PlaylistMaterializationPlanner? planner = null,
-        IProtocolProviderGateway? providerGateway = null) =>
-        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway) =
-        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway);
+        IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null) =>
+        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway, _registry) =
+        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway, registry);
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -144,9 +145,18 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         PersistenceGuard.Required(input.RuleVersion, nameof(input.RuleVersion)); PersistenceGuard.Required(input.PolicyVersion, nameof(input.PolicyVersion)); PersistenceGuard.ValidateStableReference(input.TargetPlaylistId, nameof(input.TargetPlaylistId));
         ValidateImportPolicy(input.ImportMode, input.TrackRetention, input.ScheduleId);
         if (input.SourcePlaylistIdHash.Length != 64) throw new ArgumentException("A source playlist hash is required.", nameof(input));
-        var account = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, input.SourceProviderId, "playlist", input.ProviderAccountId), cancellationToken) ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
+        var providerId = PersistenceGuard.Required(input.SourceProviderId, nameof(input.SourceProviderId)).ToLowerInvariant();
+        if (input.ProviderAccountId.HasValue)
+            _ = await _accounts.ResolveAsync(new ProviderAccountResolutionRequest(principal, providerId, "playlist", input.ProviderAccountId), cancellationToken)
+                ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
+        else
+        {
+            PersistenceGuard.RequirePublicPlaylistSource(_registry, providerId);
+            if (providerId == "spotify" && input.SourcePlaylistId == Core.Providers.Spotify.SpotifyPlaylistReference.LikedSongsId)
+                throw new UnauthorizedAccessException("Liked Songs requires a selected Spotify account.");
+        }
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        var existing = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == actor.EffectiveUserId && item.ProviderAccountId == input.ProviderAccountId && item.SourcePlaylistIdHash == input.SourcePlaylistIdHash && item.TargetProtocol == input.TargetProtocol && item.TargetBackendInstanceId == input.TargetBackendInstanceId, cancellationToken);
+        var existing = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item => item.OwnerUserId == actor.EffectiveUserId && item.ProviderAccountId == input.ProviderAccountId && item.SourceProviderId == providerId && item.SourcePlaylistIdHash == input.SourcePlaylistIdHash && item.TargetProtocol == input.TargetProtocol && item.TargetBackendInstanceId == input.TargetBackendInstanceId, cancellationToken);
         if (existing != null)
         {
             if (existing.DestinationMode != (input.TargetPlaylistId == null ? PlaylistDestinationMode.New : PlaylistDestinationMode.Existing) ||
@@ -159,10 +169,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         {
             Id = Guid.CreateVersion7(),
             OwnerUserId = actor.EffectiveUserId!.Value,
-            ProviderAccountId = account.Account.Id,
+            ProviderAccountId = input.ProviderAccountId,
             ScheduleId = input.ScheduleId,
             Enabled = true,
-            SourceProviderId = account.Account.ProviderId,
+            SourceProviderId = providerId,
             SourcePlaylistId = PersistenceGuard.Required(input.SourcePlaylistId, nameof(input.SourcePlaylistId)),
             SourcePlaylistIdHash = input.SourcePlaylistIdHash,
             TargetProtocol = PersistenceGuard.Required(input.TargetProtocol, nameof(input.TargetProtocol)).ToLowerInvariant(),
@@ -618,6 +628,18 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
 internal static class PersistenceGuard
 {
     private static readonly string[] ForbiddenNames = ["password", "secret", "token", "cookie", "authorization", "credential", "audio", "mediaBytes", "base64"];
+    public static bool IsPublicPlaylistSource(IProviderRegistry? registry, string providerId) =>
+        registry != null && registry.TryGet(providerId, out var descriptor) && descriptor!.Origin == ProviderOrigin.BuiltIn &&
+        descriptor.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Playlist &&
+            item.SupportsPublicRead && item.SupportState == ProviderCapabilitySupportState.Supported) &&
+        registry.TryGetCapability<IProviderPlaylistCapability>(providerId, ProviderCapabilityKind.Playlist, out _);
+
+    public static void RequirePublicPlaylistSource(IProviderRegistry? registry, string providerId)
+    {
+        if (!IsPublicPlaylistSource(registry, providerId))
+            throw new UnauthorizedAccessException("The source provider does not support public playlist reads.");
+    }
+
     public static (AllstarrPrincipal Principal, ProviderActorContext Actor) Require(ProtocolExecutionContext context) { var actor = context.RequireActor(); var principal = context.Principal ?? throw new UnauthorizedAccessException("A linked actor is required."); if (!actor.EffectiveUserId.HasValue) throw new UnauthorizedAccessException("A user owner is required."); return (principal, actor); }
     public static void RequireOwner(ProviderActorContext actor, Guid owner) { if (actor.Kind != ProviderActorKind.Administrator && actor.EffectiveUserId != owner) throw new UnauthorizedAccessException("The record belongs to another user."); }
     public static string Required(string value, string name) { if (string.IsNullOrWhiteSpace(value)) throw new ArgumentException("A value is required.", name); return value.Trim(); }

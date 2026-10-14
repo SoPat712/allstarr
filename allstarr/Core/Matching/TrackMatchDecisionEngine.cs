@@ -20,7 +20,7 @@ public enum TrackMatchReviewState
 public sealed record TrackMatchScope(
     Guid UserId,
     string BackendInstanceId,
-    Guid ProviderAccountId,
+    Guid? ProviderAccountId,
     int PolicyVersion,
     long SourceSnapshotVersion,
     IReadOnlySet<string> AccessibleLibraryIds);

@@ -39,7 +39,7 @@ public static class PlaylistMaterializationOutcomeCodes
 
 public sealed record PlaylistSourceIdentity(
     string ProviderId,
-    Guid ProviderAccountId,
+    Guid? ProviderAccountId,
     string ExternalIdHash,
     string SourceRevision,
     int SnapshotVersion,

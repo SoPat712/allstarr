@@ -9,6 +9,20 @@ namespace allstarr.Tests;
 public sealed class ProviderPlaylistSnapshotCollectorTests
 {
     [Fact]
+    public async Task CollectorAcceptsAnExplicitPublicReadWithoutAnAccount()
+    {
+        var playlist = PlaylistId("public-playlist");
+        var capability = new FakePlaylistCapability("spotify", Page(Summary(playlist, 1), [Track(0, "public-track")]));
+        var context = new ProviderExecutionContext(new ProviderActorContext(ProviderActorKind.PublicRead, null),
+            "spotify", null, Context("spotify").Policy, "public-playlist", "correlation", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var result = await new ProviderPlaylistSnapshotCollector().CollectAsync(capability, context, new(playlist));
+        Assert.Equal(PlaylistSnapshotCollectionStatus.Fresh, result.Status);
+        object? accountId = result.Snapshot!.ProviderAccountId;
+        Assert.Null(accountId);
+        Assert.Equal("public-track", Assert.Single(result.Snapshot.Entries).TrackId!.Value);
+    }
+
+    [Fact]
     public async Task Collector_pages_in_order_preserves_duplicates_metadata_revision_etag_and_hashes_opaque_ids()
     {
         var playlistId = PlaylistId("opaque-playlist-secret");

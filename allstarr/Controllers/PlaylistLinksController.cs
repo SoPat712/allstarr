@@ -123,7 +123,8 @@ public sealed class PlaylistLinksController(
                             id = provider.Id,
                             displayName = provider.DisplayName,
                             origin = provider.Origin.ToString().ToLowerInvariant(),
-                            accountRequirement = capability.AccountRequirement.ToString().ToLowerInvariant()
+                            accountRequirement = capability.AccountRequirement.ToString().ToLowerInvariant(),
+                            supportsPublicRead = PersistenceGuard.IsPublicPlaylistSource(providerRegistry, provider.Id)
                         };
                     }),
                 policy = new
@@ -298,43 +299,62 @@ public sealed class PlaylistLinksController(
             if (candidate == null)
                 return Conflict(new { error = "The selected account cannot currently load playlist artwork" });
             var providerId = account.ProviderId.Trim().ToLowerInvariant();
-            var reference = new ProviderArtworkReference(
-                new ProviderExternalResourceId(providerId, ProviderResourceKind.Playlist, Required(playlistId, nameof(playlistId))),
-                revision: revision);
-            ProviderError? failure = null;
-            var asset = await mediaAssets.ResolveAsync(
-                new MediaAssetIdentity(
-                    session.AllstarrUserId,
-                    account.Id,
-                    providerId,
-                    "playlist",
-                    playlistId,
-                    revision,
-                    Width: 512),
-                async token =>
-                {
-                    var outcome = await candidate.Implementation.ResolveArtworkAsync(
-                        candidate.Context,
-                        new ProviderPlaylistArtworkRequest(reference, maximumBytes: 4 * 1024 * 1024));
-                    if (!outcome.IsSuccess)
-                    {
-                        failure = outcome.Error;
-                        return null;
-                    }
-                    var artwork = outcome.RequireValue();
-                    return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
-                },
-                4 * 1024 * 1024,
-                cancellationToken);
-            if (asset == null)
-                return NotFound(new { error = "Playlist artwork is unavailable", reasonCode = failure?.Code });
-            Response.Headers.CacheControl = "private, max-age=300";
-            var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
-            Response.Headers.ETag = etag;
-            if (ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag))
-                return StatusCode(StatusCodes.Status304NotModified);
-            return File(asset.Bytes, asset.ContentType);
+            return await RenderSourcePlaylistArtworkAsync(candidate, session.AllstarrUserId, account.Id,
+                providerId, playlistId, revision, cancellationToken);
         });
+    }
+
+    [HttpGet("/api/admin/playlist-sources/public/{providerId}/playlists/{playlistId}/artwork")]
+    public Task<IActionResult> PublicSourcePlaylistArtwork(string providerId, string playlistId,
+        [FromQuery] string? revision, CancellationToken cancellationToken) => Execute(async session =>
+    {
+        providerId = Required(providerId, nameof(providerId)).ToLowerInvariant();
+        PersistenceGuard.RequirePublicPlaylistSource(providerRegistry, providerId);
+        var candidate = await PlanPublicPlaylistSourceAsync(providerId, "playlist-artwork", cancellationToken);
+        if (candidate == null) return Conflict(new { error = "Public playlist artwork is unavailable." });
+        return await RenderSourcePlaylistArtworkAsync(candidate, session.AllstarrUserId, null,
+            providerId, playlistId, revision, cancellationToken);
+    });
+
+    private async Task<IActionResult> RenderSourcePlaylistArtworkAsync(ProviderRouteCandidate<IProviderPlaylistCapability> candidate,
+        Guid? ownerUserId, Guid? accountId, string providerId, string playlistId, string? revision, CancellationToken cancellationToken)
+    {
+        var reference = new ProviderArtworkReference(
+            new ProviderExternalResourceId(providerId, ProviderResourceKind.Playlist, Required(playlistId, nameof(playlistId))),
+            revision: revision);
+        ProviderError? failure = null;
+        var asset = await mediaAssets.ResolveAsync(
+            new MediaAssetIdentity(
+                ownerUserId,
+                accountId,
+                providerId,
+                "playlist",
+                playlistId,
+                revision,
+                Width: 512),
+            async token =>
+            {
+                var outcome = await candidate.Implementation.ResolveArtworkAsync(
+                    candidate.Context,
+                    new ProviderPlaylistArtworkRequest(reference, maximumBytes: 4 * 1024 * 1024));
+                if (!outcome.IsSuccess)
+                {
+                    failure = outcome.Error;
+                    return null;
+                }
+                var artwork = outcome.RequireValue();
+                return new MediaAssetSource(artwork.Bytes, artwork.ContentType);
+            },
+            4 * 1024 * 1024,
+            cancellationToken);
+        if (asset == null)
+            return NotFound(new { error = "Playlist artwork is unavailable", reasonCode = failure?.Code });
+        Response.Headers.CacheControl = "private, max-age=300";
+        var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
+        Response.Headers.ETag = etag;
+        if (ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag))
+            return StatusCode(StatusCodes.Status304NotModified);
+        return File(asset.Bytes, asset.ContentType);
     }
 
     [HttpGet("/api/admin/media-targets")]
@@ -1035,6 +1055,18 @@ public sealed class PlaylistLinksController(
     private static void EnsureSessionScope(AdminAuthSession session, Guid ownerUserId)
     { if (!session.IsAdministrator && session.AllstarrUserId != ownerUserId) throw new UnauthorizedAccessException(); }
 
+    private async Task<ProviderRouteCandidate<IProviderPlaylistCapability>?> PlanPublicPlaylistSourceAsync(
+        string providerId, string operationId, CancellationToken cancellationToken)
+    {
+        var policy = new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any,
+                ProviderAudioQuality.HighResolution, false), ProviderExplicitContentPolicy.Allow,
+            allowFallback: false, allowSharedAccount: false, allowManagedDownloads: false, allowedProviderIds: [providerId]);
+        var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
+            ProviderCapabilityKind.Playlist, new ProviderActorContext(ProviderActorKind.PublicRead, null), policy,
+            operationId, HttpContext.TraceIdentifier, clock.UtcNow.AddMinutes(2), [providerId], cancellationToken: cancellationToken));
+        return plan.Candidates.FirstOrDefault();
+    }
+
     private async Task<ProviderRouteCandidate<IProviderPlaylistCapability>?> PlanPlaylistSourceAsync(
         AdminAuthSession session,
         ProviderAccountRecord account,
@@ -1270,6 +1302,10 @@ public sealed class PlaylistLinksController(
     }
     private static string EncodeOffsetCursor(int offset) =>
         Convert.ToBase64String(Encoding.UTF8.GetBytes(offset.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+    private static string SourceArtworkUrl(Guid? accountId, string providerId, string playlistId) => accountId.HasValue
+        ? $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(playlistId)}/artwork"
+        : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(providerId)}/playlists/{Uri.EscapeDataString(playlistId)}/artwork";
+
     private static object ToDto(PlaylistLinkRecord value, Guid? initialJobId = null, int? retentionQueued = null) => new { id = value.Id, enabled = value.Enabled, providerAccountId = value.ProviderAccountId, sourceProviderId = value.SourceProviderId, sourcePlaylistId = value.SourcePlaylistId, targetProtocol = value.TargetProtocol, targetBackendInstanceId = value.TargetBackendInstanceId, mode = value.Mode.ToString().ToLowerInvariant(), projectionMode = value.ProjectionMode.ToString().ToLowerInvariant(), materializationMode = value.MaterializationMode.ToString().ToLowerInvariant(), importMode = LowerCamel(value.ImportMode.ToString()), trackRetention = LowerCamel(value.TrackRetention.ToString()), scheduleId = value.ScheduleId, targetPlaylistId = value.TargetPlaylistId, targetCredentialReferenceId = value.TargetCredentialReferenceId, mirrorStaleEntries = value.MirrorStaleEntries, preserveManualEntries = value.PreserveManualEntries, syncName = value.SyncName, syncDescription = value.SyncDescription, syncArtwork = value.SyncArtwork, ruleVersion = value.RuleVersion, policyVersion = value.PolicyVersion, revision = value.Revision, virtualPlaylistId = PlaylistVirtualizationService.CreateProtocolId(value.Id), initialJobId, retentionQueued };
     private object ToListDto(PlaylistLinkRecord value, DurablePlaylistProjection? projection) => new
     {
@@ -1278,11 +1314,11 @@ public sealed class PlaylistLinksController(
         name = projection?.Name ?? "Playlist",
         description = projection?.Description,
         artworkUrl = projection?.ArtworkReferenceKey == null ? null :
-            $"/api/admin/playlist-sources/{value.ProviderAccountId}/playlists/{Uri.EscapeDataString(value.SourcePlaylistId)}/artwork",
+            SourceArtworkUrl(value.ProviderAccountId, value.SourceProviderId, value.SourcePlaylistId),
         providerAccountId = value.ProviderAccountId,
         sourceProviderId = value.SourceProviderId,
         sourcePlaylistId = value.SourcePlaylistId,
-        sourceUpdateAvailable = value.ImportMode == PlaylistImportMode.Linked && value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
+        sourceUpdateAvailable = value.ProviderAccountId.HasValue && value.ImportMode == PlaylistImportMode.Linked && value.TargetPlaylistId != null && providerUpdates.CanReplaceSource(value.SourceProviderId),
         targetProtocol = value.TargetProtocol,
         targetBackendInstanceId = value.TargetBackendInstanceId,
         mode = value.Mode.ToString().ToLowerInvariant(),
@@ -1351,7 +1387,7 @@ public sealed class PlaylistLinksController(
         targetProtocol = value.TargetProtocol,
         targetPlaylistId = value.TargetPlaylistId,
         artworkUrl = value.ArtworkReferenceKey == null ? null :
-            $"/api/admin/playlist-sources/{value.ProviderAccountId}/playlists/{Uri.EscapeDataString(value.SourcePlaylistId)}/artwork",
+            SourceArtworkUrl(value.ProviderAccountId, value.SourceProviderId, value.SourcePlaylistId),
         retrievedAt = value.RetrievedAt,
         lastRematchedAt = value.LastMatchedAt,
         completedAt = value.CompletedAt,
@@ -1556,7 +1592,7 @@ public sealed class PlaylistLinksController(
     private static string LowerCamel(string value) => char.ToLowerInvariant(value[0]) + value[1..];
 }
 
-public sealed record CreatePlaylistLinkRequest(Guid ProviderAccountId, string SourceProviderId, string SourcePlaylistId,
+public sealed record CreatePlaylistLinkRequest(Guid? ProviderAccountId, string SourceProviderId, string SourcePlaylistId,
     string TargetProtocol, string TargetBackendInstanceId, string Mode, string MaterializationMode,
     Guid? ScheduleId = null, string? TargetPlaylistId = null, Guid? TargetCredentialReferenceId = null,
     bool MirrorStaleEntries = true, bool PreserveManualEntries = true, bool SyncName = true,

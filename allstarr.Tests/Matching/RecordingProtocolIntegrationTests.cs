@@ -63,30 +63,37 @@ public sealed partial class TrackIdentityServiceTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task PlaylistImport_RemembersSourceIdsOnlyAfterCompleteCollection(bool partial)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task PlaylistImport_RemembersSourceIdsOnlyAfterCompleteCollection(bool partial, bool publicRead)
     {
         var account = await SeedUserAccount("spotify", _userA);
         var playlist = new ProviderExternalResourceId("spotify", ProviderResourceKind.Playlist, "playlist");
         var track = Track("spotify", "track");
         var capability = new Mock<IProviderPlaylistCapability>(MockBehavior.Strict);
         capability.SetupGet(item => item.ProviderId).Returns("spotify");
-        capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(),
-            It.IsAny<ProviderPlaylistTracksRequest>())).ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
-                new(playlist, "Playlist", new("Owner"), "revision", trackCount: 2),
-                new("spotify", [new(0, track), new(1, track)], isPartial: partial))));
         var registry = new Mock<IProviderRegistry>(MockBehavior.Strict);
         registry.Setup(item => item.GetRequiredCapability<IProviderPlaylistCapability>("spotify", ProviderCapabilityKind.Playlist))
             .Returns(capability.Object);
-        var gateway = new ProviderPlaylistSourceGateway(registry.Object, new(), _factory, _clock, _service);
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        ProviderExecutionContext? observed = null;
+        capability.Setup(item => item.GetPlaylistTracksAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderPlaylistTracksRequest>())).Callback<ProviderExecutionContext, ProviderPlaylistTracksRequest>((context, _) => observed = context)
+            .ReturnsAsync(ProviderOutcome<ProviderPlaylistTrackPage>.Success(new(
+                new(playlist, "Playlist", new("Owner"), "revision", trackCount: 2),
+                new("spotify", [new(0, track), new(1, track)], isPartial: partial))));
+        IProviderRegistry sourceRegistry = publicRead
+            ? new ProviderRegistry([PublicPlaylistTestRegistry.Registration("spotify", capability.Object)]) : registry.Object;
+        var gateway = new ProviderPlaylistSourceGateway(sourceRegistry, new(), _factory, _clock, _service);
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", _userA.ToString("N"),
             new AllstarrPrincipal(_userA, "jellyfin", "fixture", _userA.ToString("N"), "User", false),
             "playlist-import", _clock.UtcNow.AddMinutes(5), default);
         var link = new PlaylistLinkRecord
         {
             OwnerUserId = _userA,
-            ProviderAccountId = account.Id,
+            ProviderAccountId = publicRead ? null : account.Id,
             SourceProviderId = "spotify",
             SourcePlaylistId = "playlist",
             TargetProtocol = "jellyfin",
@@ -107,9 +114,23 @@ public sealed partial class TrackIdentityServiceTests
             Assert.Equal("ext-spotify-song-track", recording.PublicId);
             Assert.All(snapshot.Entries, item => Assert.Equal(recording.Id, item.CanonicalRecordingId));
             var identity = await db.ProviderTrackIdentities.SingleAsync();
-            Assert.Equal(ProviderIdentityScope.Account, identity.Scope);
-            Assert.Equal(account.Id, identity.ProviderAccountId);
-            Assert.Null(await _service.ResolveTargetAsync(Context(Actor(_userB), "spotify"), recording.Id, new("spotify")));
+            Assert.Equal(publicRead ? ProviderIdentityScope.Catalog : ProviderIdentityScope.Account, identity.Scope);
+            Assert.Equal(publicRead ? (Guid?)null : account.Id, identity.ProviderAccountId);
+            Assert.NotNull(observed);
+            Assert.Equal(publicRead ? ProviderActorKind.PublicRead : ProviderActorKind.User, observed.Actor.Kind);
+            if (publicRead)
+            {
+                Assert.Null(observed.Account);
+                Assert.Null(observed.Actor.EffectiveUserId);
+            }
+            var sharedIdentity = await _service.ResolveTargetAsync(Context(Actor(_userB), "spotify"), recording.Id, new("spotify"));
+            if (publicRead)
+            {
+                Assert.NotNull(sharedIdentity);
+                Assert.Equal(ProviderIdentityScope.Catalog, sharedIdentity.Scope);
+                Assert.Null(sharedIdentity.ProviderAccountId);
+            }
+            else Assert.Null(sharedIdentity);
         }
     }
 

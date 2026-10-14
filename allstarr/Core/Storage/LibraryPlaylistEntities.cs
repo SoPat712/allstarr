@@ -48,7 +48,7 @@ public sealed class ExternalMetadataSnapshotRecord
 {
     public Guid Id { get; set; }
     public Guid OwnerUserId { get; set; }
-    public Guid ProviderAccountId { get; set; }
+    public Guid? ProviderAccountId { get; set; }
     public Guid? ProviderTrackIdentityId { get; set; }
     public Guid? SourceJobId { get; set; }
     public string BackendInstanceId { get; set; } = string.Empty;
@@ -129,7 +129,7 @@ public sealed class PlaylistLinkRecord
 {
     public Guid Id { get; set; }
     public Guid OwnerUserId { get; set; }
-    public Guid ProviderAccountId { get; set; }
+    public Guid? ProviderAccountId { get; set; }
     public Guid? ScheduleId { get; set; }
     public bool Enabled { get; set; } = true;
     public string SourceProviderId { get; set; } = string.Empty;
@@ -162,7 +162,7 @@ public sealed class PlaylistSourceSnapshotRecord
     public Guid Id { get; set; }
     public Guid OwnerUserId { get; set; }
     public Guid PlaylistLinkId { get; set; }
-    public Guid ProviderAccountId { get; set; }
+    public Guid? ProviderAccountId { get; set; }
     public Guid? SourceJobId { get; set; }
     public int SnapshotVersion { get; set; }
     public string ProviderRevision { get; set; } = string.Empty;

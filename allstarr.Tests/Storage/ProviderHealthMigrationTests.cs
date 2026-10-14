@@ -89,7 +89,7 @@ public sealed class ProviderHealthMigrationTests
             """);
         var beforeSchema = await Schema(db);
         var beforeRows = await Rows(db);
-        Assert.Equal(32, beforeSchema.Count(row => row.StartsWith("trigger|", StringComparison.Ordinal)));
+        Assert.Equal(32, beforeSchema.Count(row => row.Type == "trigger"));
         var originalKeyRing = await File.ReadAllBytesAsync(keys.KeyRingPath);
         var oldArchive = await CreateBaselineBackup(db, keys, database.StorageOptions.DataDirectory);
 
@@ -132,33 +132,67 @@ public sealed class ProviderHealthMigrationTests
         public Task<AllstarrDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) => Task.FromResult(CreateDbContext());
     }
 
-    private static void AssertSchemaPreserved(string[] before, string[] after)
+    private static void AssertSchemaPreserved(SchemaObject[] before, SchemaObject[] after)
     {
-        const string accounts = "table|provider_accounts|";
-        Assert.Equal(before.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal)),
-            after.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal))
-                .Select(row => row.StartsWith("table|playlist_target_memberships|", StringComparison.Ordinal)
-                    ? row.Replace(", \"RemovalConfirmedAt\" INTEGER NULL", "", StringComparison.Ordinal)
-                    : row.StartsWith("table|playlist_links|", StringComparison.Ordinal)
-                        ? row.Replace(", \"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'", "", StringComparison.Ordinal)
-                        : row));
-        var original = before.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
-        var upgraded = after.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
-        Assert.Equal(original, upgraded.Replace(", \"SettingsJson\" TEXT NOT NULL DEFAULT '{}'", "", StringComparison.Ordinal));
+        const string publicLinkIndex = "IX_playlist_link_public_source_target";
+        const string publicSnapshotIndex = "IX_external_snapshot_public_version";
+        Assert.DoesNotContain(before, row => row.Name is publicLinkIndex or publicSnapshotIndex);
+
+        var oldSchema = before
+            .Select(NormalizeSchemaObject)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        var newSchema = after
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex)
+            .Select(NormalizeSchemaObject)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(oldSchema, newSchema);
+
+        var publicIndexes = after
+            .Where(row => row.Name is publicLinkIndex or publicSnapshotIndex)
+            .Select(row => CollapseSql(row.Sql))
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        Assert.Equal(
+            [
+                "CREATE UNIQUE INDEX \"IX_external_snapshot_public_version\" ON \"external_metadata_snapshots\" (\"OwnerUserId\", \"ProviderId\", \"ResourceKind\", \"ExternalIdHash\", \"SnapshotVersion\") WHERE \"ProviderAccountId\" IS NULL",
+                "CREATE UNIQUE INDEX \"IX_playlist_link_public_source_target\" ON \"playlist_links\" (\"OwnerUserId\", \"SourceProviderId\", \"SourcePlaylistIdHash\", \"TargetProtocol\", \"TargetBackendInstanceId\") WHERE \"ProviderAccountId\" IS NULL"
+            ],
+            publicIndexes);
     }
 
-    private static async Task<string[]> Schema(AllstarrDbContext db)
+    private static async Task<SchemaObject[]> Schema(AllstarrDbContext db)
     {
-        var schema = await db.Database.SqlQueryRaw<string>("""
-            SELECT type || '|' || name || '|' || coalesce(sql,'') AS Value FROM sqlite_master
+        const string sql = """
+            SELECT type, name, coalesce(sql,'') FROM sqlite_master
             WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE '__EFMigrations%'
               AND tbl_name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples',
                 'canonical_artists','canonical_catalog_aliases','canonical_recording_artists',
                 'canonical_release_group_artists','canonical_release_groups','canonical_releases',
                 'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings')
             ORDER BY type,name
-            """).ToArrayAsync();
-        return schema;
+            """;
+        var connection = db.Database.GetDbConnection();
+        var closeWhenDone = connection.State != System.Data.ConnectionState.Open;
+        if (closeWhenDone)
+            await connection.OpenAsync();
+
+        try
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = sql;
+            await using var reader = await command.ExecuteReaderAsync();
+            var schema = new List<SchemaObject>();
+            while (await reader.ReadAsync())
+                schema.Add(new SchemaObject(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+            return schema.ToArray();
+        }
+        finally
+        {
+            if (closeWhenDone)
+                await connection.CloseAsync();
+        }
     }
 
     private static async Task<string[]> Rows(AllstarrDbContext db)
@@ -171,25 +205,124 @@ public sealed class ProviderHealthMigrationTests
                 'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings')
             ORDER BY name
             """).ToArrayAsync();
-        await db.Database.OpenConnectionAsync();
+        var connection = db.Database.GetDbConnection();
+        var closeWhenDone = connection.State != System.Data.ConnectionState.Open;
+        if (closeWhenDone)
+            await connection.OpenAsync();
         var rows = new List<string>();
-        foreach (var name in names)
+        try
         {
-            await using var command = db.Database.GetDbConnection().CreateCommand();
-            command.CommandText = $"SELECT * FROM \"{name.Replace("\"", "\"\"")}\"";
-            await using var reader = await command.ExecuteReaderAsync();
-            while (await reader.ReadAsync())
+            foreach (var name in names)
             {
-                var values = Enumerable.Range(0, reader.FieldCount)
-                    .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
-                                    !(name == "playlist_links" && reader.GetName(index) == "DestinationMode"))
-                    .Select(reader.GetValue)
-                    .ToArray();
-                rows.Add(name + ":" + JsonSerializer.Serialize(values));
+                await using var command = connection.CreateCommand();
+                command.CommandText = $"SELECT * FROM \"{name.Replace("\"", "\"\"")}\"";
+                await using var reader = await command.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                {
+                    var values = Enumerable.Range(0, reader.FieldCount)
+                        .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
+                                        !(name == "playlist_links" && reader.GetName(index) == "DestinationMode"))
+                        .Select(index => $"{reader.GetName(index)}={CanonicalValue(reader.GetValue(index))}")
+                        .Order(StringComparer.Ordinal)
+                        .ToArray();
+                    rows.Add(name + ":" + string.Join(",", values));
+                }
             }
+        }
+        finally
+        {
+            if (closeWhenDone)
+                await connection.CloseAsync();
         }
         return rows.Order(StringComparer.Ordinal).ToArray();
     }
+
+    private static string NormalizeSchemaObject(SchemaObject row)
+    {
+        if (row.Type != "table")
+            return $"{row.Type}|{row.Name}|{CollapseSql(row.Sql)}";
+
+        var open = row.Sql.IndexOf('(');
+        var close = row.Sql.LastIndexOf(')');
+        if (open < 0 || close <= open)
+            return $"{row.Type}|{row.Name}|{CollapseSql(row.Sql)}";
+
+        var components = SplitTopLevel(row.Sql[(open + 1)..close])
+            .Select(CollapseSql)
+            .Where(component => !IsDeliberateNewColumn(row.Name, component))
+            .Select(component => NormalizeNullability(row.Name, component))
+            .Order(StringComparer.Ordinal);
+        var normalizedSql = $"{CollapseSql(row.Sql[..open])}({string.Join(",", components)}){CollapseSql(row.Sql[(close + 1)..])}";
+        return $"{row.Type}|{row.Name}|{normalizedSql}";
+    }
+
+    private static bool IsDeliberateNewColumn(string table, string component) =>
+        (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
+        (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL") ||
+        (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL");
+
+    private static string NormalizeNullability(string table, string component)
+    {
+        if ((table is "external_metadata_snapshots" or "playlist_links" or "playlist_source_snapshots") &&
+            component.StartsWith("\"ProviderAccountId\" ", StringComparison.Ordinal))
+            return component.Replace(" NOT NULL", string.Empty, StringComparison.Ordinal)
+                .Replace(" NULL", string.Empty, StringComparison.Ordinal);
+        return component;
+    }
+
+    private static string CollapseSql(string sql) =>
+        string.Join(" ", sql.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
+    private static string[] SplitTopLevel(string sql)
+    {
+        var components = new List<string>();
+        var start = 0;
+        var depth = 0;
+        char quote = '\0';
+        for (var index = 0; index < sql.Length; index++)
+        {
+            var current = sql[index];
+            if (quote != '\0')
+            {
+                if (current == quote)
+                {
+                    if (index + 1 < sql.Length && sql[index + 1] == quote)
+                        index++;
+                    else
+                        quote = '\0';
+                }
+                continue;
+            }
+
+            if (current is '\'' or '"' or '`')
+            {
+                quote = current;
+                continue;
+            }
+
+            if (current == '(')
+                depth++;
+            else if (current == ')')
+                depth--;
+            else if (current == ',' && depth == 0)
+            {
+                components.Add(sql[start..index]);
+                start = index + 1;
+            }
+        }
+
+        components.Add(sql[start..]);
+        return components.ToArray();
+    }
+
+    private static string CanonicalValue(object value) => value switch
+    {
+        DBNull => "<null>",
+        byte[] bytes => Convert.ToHexString(bytes),
+        _ => Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty
+    };
+
+    private sealed record SchemaObject(string Type, string Name, string Sql);
 
     private static async Task<string> CreateBaselineBackup(AllstarrDbContext db, SecretStoreOptions keys, string root)
     {

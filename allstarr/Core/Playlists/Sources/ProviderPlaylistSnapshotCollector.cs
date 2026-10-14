@@ -31,7 +31,7 @@ public sealed record CollectedPlaylistSourceEntry(
 
 public sealed record CollectedPlaylistSourceSnapshot(
     string ProviderId,
-    Guid ProviderAccountId,
+    Guid? ProviderAccountId,
     string PlaylistIdHash,
     string SourceRevision,
     string? SourceETag,
@@ -68,10 +68,10 @@ public sealed class ProviderPlaylistSnapshotCollector
         ArgumentNullException.ThrowIfNull(capability);
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(request);
-        if (context.Account == null)
-            throw new InvalidOperationException("Playlist snapshot collection requires one explicit provider account.");
+        if (context.Account == null && context.Actor.Kind != ProviderActorKind.PublicRead)
+            throw new InvalidOperationException("Playlist snapshot collection requires an explicit account or public-read context.");
         if (!context.ProviderId.Equals(capability.ProviderId, StringComparison.Ordinal) ||
-            !context.Account.ProviderId.Equals(capability.ProviderId, StringComparison.Ordinal))
+            context.Account != null && !context.Account.ProviderId.Equals(capability.ProviderId, StringComparison.Ordinal))
             throw new ArgumentException("The capability, execution context, and selected account must belong to the same provider.");
         context.RequireResourceOwner(request.PlaylistId, ProviderResourceKind.Playlist);
         if (request.PageSize is < 1 or > 200)
@@ -143,7 +143,7 @@ public sealed class ProviderPlaylistSnapshotCollector
         var artwork = StableArtworkReference(summary.Artwork);
         var snapshot = new CollectedPlaylistSourceSnapshot(
             capability.ProviderId,
-            context.Account.AccountId,
+            context.Account?.AccountId,
             playlistIdHash,
             summary.SourceRevision,
             summary.SourceETag,
@@ -233,7 +233,7 @@ public sealed class ProviderPlaylistSnapshotCollector
     {
         if (lastKnownGood != null && IsRetryable(error.Kind) &&
             lastKnownGood.ProviderId == context.ProviderId &&
-            lastKnownGood.ProviderAccountId == context.Account!.AccountId &&
+            lastKnownGood.ProviderAccountId == context.Account?.AccountId &&
             lastKnownGood.PlaylistIdHash == playlistIdHash)
             return new(PlaylistSnapshotCollectionStatus.LastKnownGood, lastKnownGood, error, pagesRead);
         return new(PlaylistSnapshotCollectionStatus.Failed, null, error, pagesRead);
@@ -251,7 +251,7 @@ public sealed class ProviderPlaylistSnapshotCollector
     {
         if (snapshot == null) return;
         if (snapshot.ProviderId != context.ProviderId ||
-            snapshot.ProviderAccountId != context.Account!.AccountId ||
+            snapshot.ProviderAccountId != context.Account?.AccountId ||
             snapshot.PlaylistIdHash != playlistIdHash)
             throw new ArgumentException("The last-known-good snapshot belongs to another provider account or playlist.");
     }

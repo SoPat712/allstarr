@@ -32,30 +32,31 @@ public sealed partial class TrackMatchCommandService
                 "Snapshot version, provider revision, and resource kind are required.",
                 nameof(input));
         PersistenceGuard.ValidateSafeJson(input.PayloadJson, nameof(input.PayloadJson));
-        var account = await accountResolver.ResolveAsync(new ProviderAccountResolutionRequest(
-                principal,
-                input.ProviderId,
-                "metadata",
-                input.ProviderAccountId),
-            cancellationToken) ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
+        var providerId = input.ProviderId.Trim().ToLowerInvariant();
+        if (input.ProviderAccountId.HasValue)
+            _ = await accountResolver.ResolveAsync(new ProviderAccountResolutionRequest(principal, providerId,
+                "metadata", input.ProviderAccountId), cancellationToken)
+                ?? throw new UnauthorizedAccessException("The provider account is unavailable.");
+        else
+            PersistenceGuard.RequirePublicPlaylistSource(registry, providerId);
 
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var resourceKind = input.ResourceKind.Trim().ToLowerInvariant();
         if (input.ProviderTrackIdentityId.HasValue &&
             (resourceKind != "track" || !await db.ProviderTrackIdentities.AnyAsync(item =>
                 item.Id == input.ProviderTrackIdentityId.Value &&
-                item.ProviderId == account.Account.ProviderId &&
+                item.ProviderId == providerId &&
                 item.ResourceKind == ProviderResourceKind.Track &&
                 item.CatalogNamespace == "default" &&
                 item.ExternalIdHash == input.ExternalIdHash &&
                 (item.Scope == ProviderIdentityScope.Catalog && item.ProviderAccountId == null ||
-                 item.Scope == ProviderIdentityScope.Account && item.ProviderAccountId == account.Account.Id),
+                 item.Scope == ProviderIdentityScope.Account && item.ProviderAccountId == input.ProviderAccountId),
                 cancellationToken)))
             throw new UnauthorizedAccessException("The source identity is outside the snapshot scope.");
 
         var existing = await db.ExternalMetadataSnapshots.AsNoTracking().SingleOrDefaultAsync(item =>
             item.OwnerUserId == actor.EffectiveUserId &&
-            item.ProviderAccountId == account.Account.Id &&
+            item.ProviderAccountId == input.ProviderAccountId && item.ProviderId == providerId &&
             item.ResourceKind == resourceKind &&
             item.ExternalIdHash == input.ExternalIdHash &&
             item.SnapshotVersion == input.SnapshotVersion,
@@ -78,14 +79,14 @@ public sealed partial class TrackMatchCommandService
             Id = Guid.CreateVersion7(),
 
             OwnerUserId = actor.EffectiveUserId!.Value,
-            ProviderAccountId = account.Account.Id,
+            ProviderAccountId = input.ProviderAccountId,
             ProviderTrackIdentityId = input.ProviderTrackIdentityId,
             SourceJobId = input.SourceJobId,
 
             BackendInstanceId = context.BackendInstanceId,
             BackendPrincipalId = context.VerifiedBackendPrincipalId,
             Protocol = context.Protocol.ToString().ToLowerInvariant(),
-            ProviderId = account.Account.ProviderId,
+            ProviderId = providerId,
             ResourceKind = resourceKind,
             ExternalIdHash = input.ExternalIdHash,
             SnapshotVersion = input.SnapshotVersion,
