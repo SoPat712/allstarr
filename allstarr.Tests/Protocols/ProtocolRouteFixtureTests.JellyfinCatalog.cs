@@ -29,6 +29,11 @@ public sealed partial class ProtocolRouteFixtureTests
         using var factory = JellyfinCatalogFactory(gateway.Object, kind,
             $$"""{ "Items":[{{native}}], "TotalRecordCount":1, "StartIndex":0, "FutureEnvelope":true }""");
         using var client = factory.CreateClient();
+        if (kind == "album")
+        {
+            using var parent = await client.GetAsync("/Users/user-1/Items/native-parent?api_key=fixture-key");
+            Assert.Equal(HttpStatusCode.OK, parent.StatusCode);
+        }
         var prefix = userScoped ? "/Users/user-1" : "";
         var filter = kind == "artist" ? "ArtistIds=native-parent&IncludeItemTypes=MusicAlbum" : "ParentId=native-parent";
 
@@ -59,6 +64,11 @@ public sealed partial class ProtocolRouteFixtureTests
         var native = $$"""{ "Items": [ {"Id":"native-child","Name":"{{name}}","Type":"{{type}}","Future":true} ], "TotalRecordCount":1 }""";
         using var factory = JellyfinCatalogFactory(gateway.Object, kind, native);
         using var client = factory.CreateClient();
+        if (kind == "album")
+        {
+            using var parent = await client.GetAsync("/Users/user-1/Items/native-parent?api_key=fixture-key");
+            Assert.Equal(HttpStatusCode.OK, parent.StatusCode);
+        }
         var filter = kind == "artist" ? "ArtistIds=native-parent&IncludeItemTypes=MusicAlbum" : "ParentId=native-parent";
 
         using var response = await client.GetAsync($"/Items?{filter}&api_key=fixture-key");
@@ -84,6 +94,11 @@ public sealed partial class ProtocolRouteFixtureTests
             request => QueryHelpers.ParseQuery(request.RequestUri!.Query)["StartIndex"] == "0" ? owned : null,
             showLabel);
         using var client = factory.CreateClient();
+        if (kind == "album")
+        {
+            using var parent = await client.GetAsync("/Users/user-1/Items/native-parent?api_key=fixture-key");
+            Assert.Equal(HttpStatusCode.OK, parent.StatusCode);
+        }
         var filter = kind == "artist" ? "ArtistIds=native-parent&IncludeItemTypes=MusicAlbum" : "ParentId=native-parent";
 
         using var response = await client.GetAsync($"/Items?{filter}&StartIndex=1&Limit=1&api_key=fixture-key");
@@ -134,7 +149,12 @@ public sealed partial class ProtocolRouteFixtureTests
             "/Users/user-1/Items/native-parent" => Json(200, kind == "artist"
                 ? """{"Id":"native-parent","Type":"MusicArtist","Name":"Grimes"}"""
                 : """{"Id":"native-parent","Type":"MusicAlbum","Name":"Visions","AlbumArtist":"Grimes"}"""),
-            "/Items" or "/Users/user-1/Items" => Json(200, page?.Invoke(request) ?? native),
+            "/Items" or "/Users/user-1/Items" => Json(200,
+                QueryHelpers.ParseQuery(request.RequestUri.Query).ContainsKey("ids")
+                    ? kind == "artist"
+                        ? """{"Items":[{"Id":"native-parent","Type":"MusicArtist","Name":"Grimes"}],"TotalRecordCount":1}"""
+                        : """{"Items":[{"Id":"native-parent","Type":"MusicAlbum","Name":"Visions","AlbumArtist":"Grimes"}],"TotalRecordCount":1}"""
+                    : page?.Invoke(request) ?? native),
             _ => throw new InvalidOperationException($"Unexpected fixture path: {request.RequestUri.AbsolutePath}")
         }, services =>
         {

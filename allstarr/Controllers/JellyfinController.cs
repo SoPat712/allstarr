@@ -263,6 +263,7 @@ public partial class JellyfinController : ControllerBase
         }
 
         var (result, statusCode) = await _proxyService.GetJsonAsync(endpoint, null, Request.Headers);
+        if (statusCode == 200 && result != null) await RememberNativeCatalogTypesAsync(result.RootElement);
 
         return HandleProxyResponse(result, statusCode);
     }
