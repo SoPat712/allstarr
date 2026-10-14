@@ -257,6 +257,8 @@ public partial class JellyfinController
                 return HandleProxyResponse(browseResult, statusCode);
             }
 
+            if (statusCode == 200) await RememberNativeCatalogTypesAsync(browseResult.RootElement);
+
             if (ShouldProcessSpotifyPlaylistCounts(browseResult, includeItemTypes))
             {
                 _logger.LogDebug("Browse result has Items, checking for Spotify playlists to update counts");

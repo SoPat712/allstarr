@@ -19,9 +19,14 @@ public partial class JellyfinController
         if (!artistAlbums && !albumSongs) return null;
         var parent = artistAlbums ? artistIds! : parentId!;
         var context = HttpContext.RequireProtocolExecutionContext();
+        // ArtistIds is an explicit artist relation. ParentId alone does not identify an album.
+        if (albumSongs && (parent == _settings.LibraryId ||
+            _virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(parent) ||
+            await _cache.GetStringAsync(NativeCatalogTypeKey(parent)) != "MusicAlbum")) return null;
         var endpoint = userId == null ? "Items" : $"Users/{Uri.EscapeDataString(userId)}/Items";
         var upstream = await _proxyService.SendPassthroughResponseAsync(
             Request, $"{endpoint}{Request.QueryString}", HttpContext.RequestAborted);
+        if (!IsUnfilteredNativeCatalogView()) return new ProtocolRelayResponseResult(upstream);
         try
         {
             if (!upstream.IsSuccessStatusCode) return new ProtocolRelayResponseResult(upstream);
@@ -91,6 +96,34 @@ public partial class JellyfinController
             _logger.LogDebug("Provider catalog additions were unavailable ({ExceptionType})", error.GetType().Name);
             return new ProtocolRelayResponseResult(upstream);
         }
+    }
+
+    private bool IsUnfilteredNativeCatalogView()
+    {
+        // Unknown query options stay native until their filtering semantics are understood.
+        string[] neutral = ["ArtistIds", "AlbumArtistIds", "ContributingArtistIds", "ParentId", "IncludeItemTypes",
+            "UserId", "StartIndex", "Limit", "Fields", "Recursive", "EnableImages", "EnableUserData",
+            "EnableTotalRecordCount", "ImageTypeLimit", "EnableImageTypes", "api_key", "ApiKey", "access_token"];
+        return Request.Query.Keys.All(key => neutral.Contains(key, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private string NativeCatalogTypeKey(string id)
+    {
+        var context = HttpContext.RequireProtocolExecutionContext();
+        return $"jellyfin:catalog-type:{Uri.EscapeDataString(context.BackendInstanceId)}:{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}:{Uri.EscapeDataString(id)}";
+    }
+
+    private async Task RememberNativeCatalogTypesAsync(JsonElement item)
+    {
+        if (item.ValueKind != JsonValueKind.Object) return;
+        if (item.TryGetProperty("Items", out var items) && items.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var child in items.EnumerateArray()) await RememberNativeCatalogTypesAsync(child);
+            return;
+        }
+        if (item.TryGetProperty("Id", out var id) && id.ValueKind == JsonValueKind.String &&
+            item.TryGetProperty("Type", out var type) && type.ValueKind == JsonValueKind.String)
+            await _cache.SetStringAsync(NativeCatalogTypeKey(id.GetString()!), type.GetString()!, TimeSpan.FromMinutes(15));
     }
 
     private async Task<List<JsonNode>?> ReadAllNativeCatalogRowsAsync(string endpoint, JsonObject? envelope, JsonArray original)
