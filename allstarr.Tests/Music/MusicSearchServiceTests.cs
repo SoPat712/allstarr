@@ -14,6 +14,83 @@ public sealed class MusicSearchServiceTests
         ProtocolKind.Subsonic, "backend", "principal", null, "search-test",
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MixProjectionUsesTheCompleteAccessibleNativeCopy(bool readable)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var index = new Mock<ILibraryIndexService>(MockBehavior.Strict);
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { ["external"] = "native" });
+        var payload = "{ complete native fields }";
+        var native = new FakeNative([], readable
+            ? [new NativeMusicItem<string>(MusicItemKind.Song, "native", "Song", "Artist", payload)]
+            : []);
+        var providerSong = new Song { Id = "external", Title = "Song" };
+
+        var result = await new MusicSearchService(gateway.Object, index.Object)
+            .ProjectSongsAsync(_context, [providerSong], native);
+
+        var entry = Assert.Single(result);
+        if (readable) Assert.Same(payload, entry.Native!.Payload);
+        else Assert.Same(providerSong, entry.Song);
+        Assert.Equal(["native"], native.FetchedSongs);
+        gateway.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task MixProjectionCollapsesVerifiedRecordingsButKeepsUnverifiedLookalikes()
+    {
+        var recording = Guid.NewGuid();
+        var result = await new MusicSearchService(Mock.Of<IProtocolProviderGateway>())
+            .ProjectSongsAsync(_context,
+            [
+                new Song { Id = "first", Title = "Song", CanonicalRecordingId = recording },
+                new Song { Id = "alias", Title = "Song", CanonicalRecordingId = recording },
+                new Song { Id = "lookalike", Title = "Song" }
+            ], new FakeNative([]));
+        Assert.Equal(["first", "lookalike"], result.Select(Id));
+    }
+
+    [Fact]
+    public async Task MixProjectionCollapsesAliasesForOneAccessibleNativeRecording()
+    {
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Dictionary<string, string> { ["first"] = "native", ["second"] = "native" });
+        var native = new FakeNative([], new NativeMusicItem<string>(MusicItemKind.Song, "native", "Song", null, "payload"));
+        var result = await new MusicSearchService(Mock.Of<IProtocolProviderGateway>(), index.Object)
+            .ProjectSongsAsync(_context, [new Song { Id = "first" }, new Song { Id = "second" }], native);
+        Assert.Equal("native", Assert.Single(result).Native!.Id);
+        Assert.Equal(["native"], native.FetchedSongs);
+    }
+
+    [Fact]
+    public async Task MixProjectionRetainsProviderRowsWhenTheNativeLookupFails()
+    {
+        var index = new Mock<ILibraryIndexService>();
+        index.Setup(item => item.FindKnownRecordingTracksAsync(_context,
+                It.IsAny<IReadOnlyList<LibraryRecordingLookup>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Unavailable"));
+        var song = new Song { Id = "external" };
+        var result = await new MusicSearchService(Mock.Of<IProtocolProviderGateway>(), index.Object)
+            .ProjectSongsAsync(_context, [song], new FakeNative([]));
+        Assert.Same(song, Assert.Single(result).Song);
+    }
+
+    [Fact]
+    public async Task MixProjectionHonorsCallerCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new MusicSearchService(Mock.Of<IProtocolProviderGateway>()).ProjectSongsAsync(
+                _context, [new Song { Id = "external" }], new FakeNative([]), cancellation.Token));
+    }
+
     [Fact]
     public async Task OwnedProviderSongIsReplacedByTheNativeCopy()
     {

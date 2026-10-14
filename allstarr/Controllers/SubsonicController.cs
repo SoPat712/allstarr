@@ -383,7 +383,11 @@ public partial class SubsonicController : ControllerBase
             _logger.LogWarning("Provider mix for {Provider} was unavailable ({ExceptionType})", provider, error.GetType().Name);
             songs = [];
         }
-        return CreateSongListResponse(format, element, songs);
+        var entries = await _musicSearch.ProjectSongsAsync(CurrentProtocolContext, songs,
+            new SubsonicNativeMusicSearch(_proxyService, _modelMapper, _responseBuilder, parameters, format),
+            HttpContext.RequestAborted);
+        var rendered = _modelMapper.RenderSearchResult(new MusicSearchResult<object>(entries, [], []), format == "json");
+        return CreateSongListResponse(format, element, rendered.Songs);
     }
 
     // Provider artists have no backend record; answer with the provider's similar artists, or an empty,
@@ -428,14 +432,14 @@ public partial class SubsonicController : ControllerBase
         return CreateSongListResponse(format, element, [], songsElement: null, similarArtists);
     }
 
-    private IActionResult CreateSongListResponse(string format, string element, IReadOnlyList<Song> songs,
+    private IActionResult CreateSongListResponse(string format, string element, IReadOnlyList<object> songs,
         string? songsElement = "song", IReadOnlyList<Artist>? similarArtists = null)
     {
         var ns = XNamespace.Get("http://subsonic.org/restapi");
         if (format == "json")
         {
             var body = new Dictionary<string, object>();
-            if (songsElement != null) body[songsElement] = songs.Select(song => _responseBuilder.ConvertSongToJson(song)).ToList();
+            if (songsElement != null) body[songsElement] = songs;
             if (similarArtists is { Count: > 0 })
                 body["similarArtist"] = similarArtists.Select(_responseBuilder.ConvertArtistToJson).ToList();
             return _responseBuilder.CreateJsonResponse(new Dictionary<string, object>
@@ -447,7 +451,7 @@ public partial class SubsonicController : ControllerBase
         }
         var list = new XElement(ns + element);
         if (songsElement != null)
-            foreach (var song in songs) list.Add(_responseBuilder.ConvertSongToXml(song, ns));
+            list.Add(songs);
         foreach (var artist in similarArtists ?? [])
         {
             var similar = _responseBuilder.ConvertArtistToXml(artist, ns);

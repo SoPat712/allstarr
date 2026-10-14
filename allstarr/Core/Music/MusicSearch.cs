@@ -174,6 +174,28 @@ public sealed class MusicSearchService(
             })
             .ThenBy(entry => entry.Native == null);
 
+    /// <summary>Projects a provider mix through the same accessible native recording choices as search.</summary>
+    public async Task<IReadOnlyList<MusicSearchEntry<TPayload>>> ProjectSongsAsync<TPayload>(
+        ProtocolExecutionContext context, IReadOnlyList<Song> songs, INativeMusicSearch<TPayload> native,
+        CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var provided = songs.ToList();
+        var owned = new List<NativeMusicItem<TPayload>>();
+        try
+        {
+            await PreferOwnedSongsAsync(context, provided, owned, native, cancellationToken);
+        }
+        catch (Exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            // An unavailable native lookup must not discard playable provider rows.
+        }
+        return owned.Select(item => new MusicSearchEntry<TPayload> { Native = item })
+            .Concat(provided.DistinctBy(song => song.CanonicalRecordingId is { } recording && recording != Guid.Empty
+                    ? $"recording:{recording:D}" : $"item:{song.Id}")
+                .Select(song => new MusicSearchEntry<TPayload> { Song = song })).ToList();
+    }
+
     private async Task PreferOwnedSongsAsync<TPayload>(
         ProtocolExecutionContext context,
         List<Song> songs,
