@@ -1199,22 +1199,66 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
-    public async Task MembershipRemovalUpgradePreservesLegacyInactiveOwnership()
+    public async Task MembershipRemovalUpgradeConfirmsOnlyLegacyInactiveRemovals()
     {
-        _source.Snapshot = Snapshot("legacy-owned", Entry(0, "one", "source-1", "One"));
+        _source.Snapshot = Snapshot("legacy-owned",
+            Entry(0, "one", "source-1", "One"), Entry(1, "two", "source-2", "Two"));
         await _service.RunAsync(Context(), new(_link, 1050));
         await using var db = await _factory.CreateDbContextAsync();
-        var membership = await db.PlaylistTargetMemberships.SingleAsync();
+        var membership = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-1");
         membership.Active = false;
         await db.SaveChangesAsync();
         await db.GetService<IMigrator>().MigrateAsync("20261010083000_CancelLegacyRematchJobs");
         await db.Database.MigrateAsync();
         db.ChangeTracker.Clear();
-        var migrated = await db.PlaylistTargetMemberships.SingleAsync();
+        var migrated = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-1");
         Assert.Equal(membership.Id, migrated.Id);
         Assert.Equal("local-1", migrated.TargetEntryId);
         Assert.False(migrated.Active);
-        Assert.Null(migrated.RemovalConfirmedAt);
+        Assert.Equal(membership.UpdatedAt, migrated.RemovalConfirmedAt);
+        var active = await db.PlaylistTargetMemberships.SingleAsync(item => item.TargetEntryId == "local-2");
+        Assert.True(active.Active);
+        Assert.Null(active.RemovalConfirmedAt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task UpgradePreservesAManuallyReaddedFormerSyncSong(bool sourceStillContainsSong)
+    {
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            (await setup.PlaylistLinks.SingleAsync()).MirrorStaleEntries = true;
+            await setup.SaveChangesAsync();
+        }
+        _source.Snapshot = Snapshot("before-upgrade-owned", Entry(0, "one", "source-1", "One"));
+        await _service.RunAsync(Context(), new(_link, 1061));
+        _source.Snapshot = Snapshot("before-upgrade-removed");
+        await _service.RunAsync(Context(), new(_link, 1062));
+        await using (var upgrade = await _factory.CreateDbContextAsync())
+        {
+            Assert.False((await upgrade.PlaylistTargetMemberships.SingleAsync()).Active);
+            await upgrade.GetService<IMigrator>().MigrateAsync("20261010083000_CancelLegacyRematchJobs");
+            _target.Seed("target-created", ["local-1"]);
+            await upgrade.Database.MigrateAsync();
+        }
+
+        _source.Snapshot = sourceStillContainsSong
+            ? Snapshot("after-upgrade-present", Entry(0, "one-again", "source-1", "One"))
+            : Snapshot("after-upgrade-absent");
+        await _service.RunAsync(Context(), new(_link, 1063));
+        Assert.Empty(_target.LastWrite!.SyncOwnedBackendItemIds);
+        await using (var verify = await _factory.CreateDbContextAsync())
+            Assert.Empty(await verify.PlaylistTargetMemberships.Where(item => item.Active).ToListAsync());
+        var after = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-created", default);
+        Assert.Equal(["local-1"], after.Value!.Members.Select(item => item.BackendItemId));
+
+        _source.Snapshot = Snapshot("after-upgrade-source-removed");
+        await _service.RunAsync(Context(), new(_link, 1064));
+        Assert.Empty(_target.LastWrite!.SyncOwnedBackendItemIds);
+        var final = await _target.ReadAsync(new BackendPlaylistTargetContext("backend", "principal"), "target-created", default);
+        Assert.Equal(["local-1"], final.Value!.Members.Select(item => item.BackendItemId));
     }
 
     [Theory]

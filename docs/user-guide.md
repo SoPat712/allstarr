@@ -154,7 +154,7 @@ Virtual playlists do not silently mutate the source service. Backend materializa
 
 Import behavior is fixed when a playlist is created so a later settings edit cannot accidentally turn a frozen copy into a live source link. Song retention can be enabled later; Allstarr immediately queues the already-imported downloadable songs and applies the same policy to later linked updates. Kept files remain permanent until they are explicitly released or removed and must be backed up separately from database archives.
 
-Playlist synchronization retains ownership of songs whose removal has not been confirmed by a backend read and retries their removal on the next sync. Once removal is confirmed, a manually re-added copy stays manual. Older inactive memberships without removal confirmation are retried as sync-owned.
+Playlist synchronization retains ownership of songs whose removal has not been confirmed by a backend read and retries their removal on the next sync. Once removal is confirmed, a manually re-added copy stays manual. On upgrade, older inactive memberships are treated as completed removals, preserving songs you manually added back.
 
 ## Cached versus kept
 
