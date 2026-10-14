@@ -53,6 +53,93 @@ public sealed class SpotifyPathfinderPlaylistClient
         this.settings = settings ?? new();
     }
 
+    private const int MaximumPublicProfilePlaylists = 1000;
+
+    public async Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetPublicUserPlaylistsAsync(
+        string token, string userId, ProviderPageRequest page, CancellationToken cancellationToken)
+    {
+        if (!SpotifyUserReference.TryNormalize(userId, out userId) || !TryOffset(page.Cursor, out var offset) ||
+            offset >= MaximumPublicProfilePlaylists)
+            return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.PermanentFailure));
+        var cacheKey = CacheKeyBuilder.BuildPublicUserPlaylistDiscoveryKey(ProviderId, userId);
+        var profile = cache == null ? null : await cache.GetAsync<PublicProfileCacheEntry>(cacheKey);
+        if (profile == null)
+        {
+            var response = await PublicProfileAsync(token, userId, 1, cancellationToken);
+            if (!response.IsSuccess) return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(response.Error!);
+            try
+            {
+                using var initial = JsonDocument.Parse(response.RequireValue());
+                if (!initial.RootElement.TryGetProperty("total_public_playlists_count", out var countValue) ||
+                    !countValue.TryGetInt32(out var count) || count < 0)
+                    return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(ProviderError.CompatibilityContractChanged());
+                if (count > 1)
+                {
+                    response = await PublicProfileAsync(token, userId, Math.Min(count, MaximumPublicProfilePlaylists), cancellationToken);
+                    if (!response.IsSuccess) return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(response.Error!);
+                }
+                using var document = JsonDocument.Parse(response.RequireValue());
+                if (!document.RootElement.TryGetProperty("public_playlists", out var values) ||
+                    values.ValueKind != JsonValueKind.Array || values.GetArrayLength() < Math.Min(count, MaximumPublicProfilePlaylists) ||
+                    values.GetArrayLength() > MaximumPublicProfilePlaylists)
+                    return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(ProviderError.CompatibilityContractChanged());
+                var items = new List<ProviderPlaylistSummary>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var value in values.EnumerateArray())
+                {
+                    if (!SpotifyPlaylistReference.TryNormalize(String(value, "uri")!, out var playlistId) ||
+                        playlistId == SpotifyPlaylistReference.LikedSongsId ||
+                        !SpotifyUserReference.TryNormalize(String(value, "owner_uri")!, out var ownerId) ||
+                        ContractText(String(value, "name"), 500) is not { } name)
+                        return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(ProviderError.CompatibilityContractChanged());
+                    if (!seen.Add(playlistId)) continue;
+                    var resource = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Playlist, playlistId);
+                    var revision = ContractText(String(value, "revisionId"), 300) ??
+                                   $"public-profile:{ProviderPlaylistSnapshotCollector.HashResource(resource)}";
+                    items.Add(new(resource, name, new(ownerId), revision));
+                }
+                profile = new(items.ToArray(), count > MaximumPublicProfilePlaylists);
+                if (cache != null) await cache.SetAsync(cacheKey, profile, TimeSpan.FromMinutes(2));
+            }
+            catch (Exception exception) when (exception is JsonException or ArgumentException or InvalidOperationException)
+            {
+                return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(ProviderError.CompatibilityContractChanged());
+            }
+        }
+        var nextOffset = offset + page.Limit;
+        var nextCursor = nextOffset < profile.Items.Length ? nextOffset.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
+        return ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new(ProviderId,
+            profile.Items.Skip(offset).Take(page.Limit), nextCursor, nextCursor != null || profile.Truncated));
+    }
+
+    private async Task<ProviderOutcome<byte[]>> PublicProfileAsync(
+        string token, string userId, int limit, CancellationToken cancellationToken)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get,
+            $"https://spclient.wg.spotify.com/user-profile-view/v3/profile/{Uri.EscapeDataString(userId)}?playlist_limit={limit}&artist_limit=0&episode_limit=0&market=from_token");
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        SpotifyWebRequestProfile.Apply(request);
+        try
+        {
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (!response.IsSuccessStatusCode) return ProviderOutcome<byte[]>.Failure(HttpFailure(response));
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var body = new MemoryStream();
+            var buffer = new byte[8192];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+            {
+                if (body.Length + read > 4 * 1024 * 1024)
+                    return ProviderOutcome<byte[]>.Failure(ProviderError.CompatibilityContractChanged());
+                body.Write(buffer, 0, read);
+            }
+            return ProviderOutcome<byte[]>.Success(body.ToArray());
+        }
+        catch (HttpRequestException) { return ProviderOutcome<byte[]>.Failure(new(ProviderErrorKind.TransientFailure)); }
+    }
+
+    private sealed record PublicProfileCacheEntry(ProviderPlaylistSummary[] Items, bool Truncated);
+
     public async Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
         string token,
         ProviderPageRequest page,

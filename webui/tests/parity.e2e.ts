@@ -5502,3 +5502,91 @@ test("Liked Songs uses the selected Spotify account", async ({ page }) => {
   await expect(dialog).toBeHidden();
   expect(created).toMatchObject({ providerAccountId: "spotify", sourceProviderId: "spotify", sourcePlaylistId: "liked-songs" });
 });
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`Public Spotify user playlists at ${width}px ${colorScheme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await mockApi(page);
+      await page.route("**/api/admin/playlist-sources", (route) => route.fulfill({
+        contentType: "application/json", body: JSON.stringify({ accounts: [], blockedAccounts: [],
+          providers: [{ id: "spotify", displayName: "Spotify", supportsPublicRead: true }] }),
+      }));
+      const requests: URL[] = [];
+      await page.route("**/api/admin/playlist-sources/public/spotify/playlists?*", (route) => {
+        const url = new URL(route.request().url());
+        requests.push(url);
+        const more = url.searchParams.has("cursor");
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          items: [{ id: more ? "second" : "first", name: more ? "Followed public mix" : "First public mix", owner: "Profile owner" }],
+          nextCursor: more ? null : "1", isPartial: !more,
+        }) });
+      });
+      let created: Record<string, unknown> | undefined;
+      await page.route("**/api/admin/playlist-links", (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        created = route.request().postDataJSON();
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "profile-link" }) });
+      });
+      await page.goto("#/library/playlists");
+      await page.getByRole("button", { name: "Import playlist" }).click();
+      const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+      await dialog.getByRole("radio", { name: /Public Spotify playlist/ }).check();
+      await dialog.getByRole("searchbox", { name: "Spotify user link, URI or ID" }).fill("spotify:user:profile-owner");
+      await dialog.getByRole("button", { name: "Browse playlists" }).click();
+      await expect(dialog.getByRole("radio", { name: /First public mix/ })).toBeVisible();
+      await dialog.getByRole("button", { name: "Load more" }).click();
+      await dialog.getByRole("radio", { name: /Followed public mix/ }).check();
+      expect(requests).toHaveLength(2);
+      expect(requests[0].searchParams.get("sourceUserId")).toBe("spotify:user:profile-owner");
+      expect(requests[1].searchParams.get("cursor")).toBe("1");
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/public-profile-${width}-${colorScheme}.png`, fullPage: true });
+      for (let step = 0; step < 3; step++) await dialog.getByRole("button", { name: "Continue" }).click();
+      await dialog.getByRole("button", { name: "Import playlist", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      expect(created).toMatchObject({ providerAccountId: null, sourceProviderId: "spotify", sourcePlaylistId: "second" });
+    });
+  }
+}
+
+test("Public Spotify profile edits invalidate stale discovery and selection", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/playlist-sources", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify({ accounts: [], blockedAccounts: [],
+      providers: [{ id: "spotify", displayName: "Spotify", supportsPublicRead: true }] }),
+  }));
+  let releaseOld!: () => void;
+  const oldReady = new Promise<void>((resolve) => { releaseOld = resolve; });
+  let sawOld!: () => void;
+  const oldStarted = new Promise<void>((resolve) => { sawOld = resolve; });
+  await page.route("**/api/admin/playlist-sources/public/spotify/playlists?*", async (route) => {
+    const old = new URL(route.request().url()).searchParams.get("sourceUserId") === "old-user";
+    if (old) { sawOld(); await oldReady; }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      items: [{ id: old ? "old-mix" : "new-mix", name: old ? "Stale public mix" : "Current public mix", owner: "Owner" }], isPartial: false,
+    }) });
+  });
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Import playlist" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  await dialog.getByRole("radio", { name: /Public Spotify playlist/ }).check();
+  const user = dialog.getByRole("searchbox", { name: "Spotify user link, URI or ID" });
+  await user.fill("old-user");
+  await dialog.getByRole("button", { name: "Browse playlists" }).click();
+  await oldStarted;
+  await user.fill("new-user");
+  await dialog.getByRole("button", { name: "Browse playlists" }).click();
+  await dialog.getByRole("radio", { name: /Current public mix/ }).check();
+  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+  const oldResponse = page.waitForResponse((response) => new URL(response.url()).searchParams.get("sourceUserId") === "old-user");
+  releaseOld();
+  await (await oldResponse).finished();
+  await expect(dialog.getByRole("radio", { name: /Stale public mix/ })).toHaveCount(0);
+  await expect(dialog.getByRole("radio", { name: /Current public mix/ })).toBeChecked();
+  await user.fill("third-user");
+  await expect(dialog.getByRole("radio", { name: /Current public mix/ })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+});

@@ -1,3 +1,6 @@
+using allstarr.Core.Capabilities;
+using allstarr.Core.Routing;
+using allstarr.Core.Providers.Spotify;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Identity;
@@ -18,6 +21,57 @@ namespace allstarr.Tests;
 
 public sealed class PlaylistLinksControllerContractTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PublicUserDiscoveryRequiresALinkedSessionButNeverLoadsStoredAccounts(bool administrator)
+    {
+        var capability = new Mock<IProviderPlaylistCapability>();
+        capability.SetupGet(item => item.ProviderId).Returns("spotify");
+        capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Playlist);
+        ProviderExecutionContext? invokedContext = null;
+        ProviderUserPlaylistsRequest? invokedRequest = null;
+        capability.Setup(item => item.GetUserPlaylistsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderUserPlaylistsRequest>()))
+            .Callback<ProviderExecutionContext, ProviderUserPlaylistsRequest>((context, request) =>
+            { invokedContext = context; invokedRequest = request; })
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Success(new("spotify",
+                [new(new("spotify", ProviderResourceKind.Playlist, "public-mix"), "Public mix", new("profile-owner"), "revision")])));
+        var lyrics = Mock.Of<IProviderLyricsCapability>(item => item.ProviderId == "spotify" && item.Capability == ProviderCapabilityKind.Lyrics);
+        var descriptor = SpotifyPlaylistCapabilityAdapter.CreateRegistration(
+            new(new HttpClient(), Mock.Of<IProviderAccountSecretAccessor>()), lyrics).Descriptor;
+        var registry = new ProviderRegistry([new(descriptor, [capability.Object, lyrics])]);
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()))
+            .Returns<ProviderRouteRequest>(request => Task.FromResult(new ProviderRoutePlan<IProviderPlaylistCapability>(
+                request, [new(0, descriptor, descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Playlist),
+                    capability.Object, new(request.Actor, "spotify", null, request.Policy, request.OperationId,
+                        request.CorrelationId, request.Deadline, request.CancellationToken), null)],
+                new(request.CorrelationId, ProviderCapabilityKind.Playlist, "spotify", null, []))));
+        var controller = Controller(clock: Mock.Of<IPlatformClock>(item => item.UtcNow == DateTimeOffset.UtcNow),
+            registry: registry, router: router.Object);
+        Assert.IsType<UnauthorizedObjectResult>(await controller.BrowsePublicUserPlaylists("spotify", "profile-owner", null));
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            UserId = "backend-user",
+            UserName = "User",
+            IsAdministrator = administrator,
+            JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = Guid.CreateVersion7(),
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+            LastSeenUtc = DateTime.UtcNow
+        };
+        var result = Assert.IsType<OkObjectResult>(await controller.BrowsePublicUserPlaylists("spotify", "spotify:user:profile-owner", "1", 500));
+        Assert.Contains("public-mix", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        Assert.Equal(ProviderActorKind.PublicRead, invokedContext!.Actor.Kind);
+        Assert.Null(invokedContext.Actor.EffectiveUserId);
+        Assert.Null(invokedContext.Account);
+        Assert.Equal("spotify:user:profile-owner", invokedRequest!.SourceUserId);
+        Assert.Equal(100, invokedRequest.Page.Limit);
+        Assert.Equal("1", invokedRequest.Page.Cursor);
+        router.Verify(item => item.PlanAsync<IProviderPlaylistCapability>(It.IsAny<ProviderRouteRequest>()), Times.Once);
+    }
+
     [Theory]
     [InlineData("virtual", "reconcile", "resolved", true, true)]
     [InlineData("hybrid", "recreate", "resolved", true, true)]
@@ -389,10 +443,11 @@ public sealed class PlaylistLinksControllerContractTests
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
         IPlaylistPersistenceService? playlists = null,
         IPlatformClock? clock = null,
-        AdminProtocolExecutionContextFactory? protocolContexts = null)
+        AdminProtocolExecutionContextFactory? protocolContexts = null,
+        IProviderRegistry? registry = null, IProviderRouter? router = null)
     {
         var controller = new PlaylistLinksController(
-            contextFactory!, playlists!, null!, null!, null!, null!, null!, null!, null!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
+            contextFactory!, playlists!, null!, null!, null!, null!, null!, registry!, router!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }

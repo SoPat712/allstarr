@@ -27,6 +27,12 @@ The audit clones are temporary working copies outside this repository. Allstarr 
 | [AudioMuse `e78c87d`](https://github.com/NeptuneHub/AudioMuse-AI/tree/e78c87dccc2afbfb22b3d3264a8b36a50f3e9d3f) | AGPL-3.0 | Local-server identity, content-derived evidence, and recommendation features can be separated | AGPL reuse is acceptable with the same provenance, notice, source-offer, and modification records. Use AudioMuse only as optional evidence/enrichment through the existing Intelligence boundary. Never make it the catalog or routing authority. |
 | [DroppedNeedle `5a337fc`](https://github.com/DroppedNeedle/DroppedNeedle/tree/5a337fc94b3b2edb0b00742dbccce605d93ee1ef) | AGPL-3.0 | Acquired files need verification, quarantine, provenance, atomic catalog admission, and eventual native-library reconciliation | Apply those lessons to Allstarr's existing download/keep pipeline instead of introducing a second library manager. Lidarr remains optional. |
 
+## Playlist import
+
+| Project and audited revision | License found | What it proves | Allstarr decision |
+| --- | --- | --- | --- |
+| [Jellyfin Spotify Import `93265c3`](https://github.com/Viperinius/jellyfin-plugin-spotify-import/tree/93265c3834744f4c92b5c6e2f3d8460b8c2b19cb) | GPL-3.0 | Web-player queries support public playlist/profile discovery with anonymous tokens and account-bound library/Liked Songs reads. Public profiles expose ordered playlist URI, owner, name, and revision fields. | Independently implement these verified wire shapes through the existing typed playlist capability and matcher. Do not copy implementation code or add its separate matcher or Premium Web API path. Free-account behavior still requires live qualification. |
+
 ## Listening and scrobbling
 
 | Project and audited revision | License found | What it proves | Allstarr decision |

@@ -12,6 +12,19 @@ namespace allstarr.Tests;
 public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
 {
     [Fact]
+    public async Task UnsupportedSourceUserDiscoveryCannotSilentlyReadTheSelectedPersonalLibrary()
+    {
+        var handler = new AppleHandler();
+        var secrets = new SecretAccessor(new("user-secret", "us"));
+        var result = await AppleProviderTestFactory.Playlist(new HttpClient(handler), secrets)
+            .GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest(), "other-user"));
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ProviderErrorKind.CapabilityUnavailable, result.Error!.Kind);
+        Assert.Empty(handler.Paths);
+        Assert.Empty(secrets.AccountIds);
+    }
+
+    [Fact]
     public async Task Selected_user_account_preserves_source_order_duplicates_and_stable_artwork()
     {
         var handler = new AppleHandler();

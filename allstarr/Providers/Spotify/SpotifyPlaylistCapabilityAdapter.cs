@@ -77,11 +77,18 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     public ProviderPlaylistMutationSupport MutationSupport { get; } = new(true, true);
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
-        ProviderExecutionContext context,
-        ProviderUserPlaylistsRequest request) => ExecuteAsync(
-        context,
-        (token, cancellationToken) =>
-            _pathfinder.GetUserPlaylistsAsync(token, request.Page, null, cancellationToken));
+        ProviderExecutionContext context, ProviderUserPlaylistsRequest request)
+    {
+        if (request.SourceUserId == null)
+            return ExecuteAsync(context, (token, cancellationToken) =>
+                _pathfinder.GetUserPlaylistsAsync(token, request.Page, null, cancellationToken));
+        if (context.Actor.Kind != ProviderActorKind.PublicRead ||
+            !SpotifyUserReference.TryNormalize(request.SourceUserId, out var userId))
+            return Task.FromResult(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(
+                new ProviderError(ProviderErrorKind.Forbidden)));
+        return ExecuteAsync(context, (token, cancellationToken) =>
+            _pathfinder.GetPublicUserPlaylistsAsync(token, userId, request.Page, cancellationToken), allowPublic: true);
+    }
 
     public Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(
         ProviderExecutionContext context,
