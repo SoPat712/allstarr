@@ -133,8 +133,9 @@ class StreamFixture(BaseHTTPRequestHandler):
         if self.path == "/timeout":
             time.sleep(1.2)
             return
-        progressive = self.path == "/progressive"
-        body = b"a" * (131072 if progressive else 65536)
+        progressive = self.path in ("/progressive", "/short-progressive")
+        body = b"a" * (1024 if self.path == "/short-progressive" else
+                       131072 if progressive or self.path == "/oversized-range" else 65536)
         self.send_response(200 if progressive else 206)
         self.send_header("Content-Type", "text/html" if self.path == "/html" else "audio/flac")
         if self.path != "/missing-provider":
@@ -239,6 +240,12 @@ class JellyfinSmokeTests(unittest.TestCase):
 
     def test_progressive_retains_only_prefix_and_marks_seek_blocked(self):
         self.assertIn("RESULT 0 1 0 qobuz", self.stream("/progressive"))
+
+    def test_short_progressive_body_fails(self):
+        self.assertIn("RESULT 1 0 0", self.stream("/short-progressive"))
+
+    def test_oversized_range_body_fails(self):
+        self.assertIn("RESULT 1 0 0", self.stream("/oversized-range"))
 
     def test_html_is_not_accepted_as_audio(self):
         self.assertIn("RESULT 1 0 0", self.stream("/html"))

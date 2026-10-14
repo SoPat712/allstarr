@@ -619,7 +619,11 @@ check_external_stream() {
     curl -s --max-time "$TIMEOUT_SECONDS" "${auth[@]}" --range "$range" \
         -D "$direct_headers_file" -o - \
         -w '%{stderr}%{http_code}\t%{content_type}\t%{size_download}\t%{time_starttransfer}\t%{time_total}' \
-        "$url" 2>"$stream_metrics_file" | head -c 65536 >"$response_file" || true
+        "$url" 2>"$stream_metrics_file" | {
+            head -c 65536 >"$response_file"
+            # Drain within curl's deadline so a closed pipe cannot undercount delivered bytes.
+            cat >/dev/null
+        } || true
     result="$(<"$stream_metrics_file")"
     IFS=$'\t' read -r code content_type bytes ttfb total <<<"$result"
     code="${code:-000}"
