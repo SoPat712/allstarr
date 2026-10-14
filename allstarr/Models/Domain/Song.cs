@@ -17,6 +17,8 @@ public sealed class Song
     public string Album { get; set; } = string.Empty;
     public string? AlbumId { get; set; }
     public int? Duration { get; set; } // In seconds
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TimeSpan? PreciseDuration { get; set; }
     public int? Bitrate { get; set; } // In bits per second
     public int? Track { get; set; }
     public int? DiscNumber { get; set; }

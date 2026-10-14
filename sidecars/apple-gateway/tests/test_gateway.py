@@ -16,7 +16,6 @@ from fastapi.responses import StreamingResponse
 
 from apple_gateway.app import (
     API_VERSION,
-    FLAC_GUIDANCE_PREFIX,
     create_app,
 )
 from apple_gateway.config import Settings
@@ -85,6 +84,9 @@ class FakeRunner:
         self.transcodes.append("file")
         target.write_bytes(b"fLaCfixture")
         return target.resolve()
+
+    async def audio_duration(self, source: Path):
+        return 2.5
 
     async def stream_flac(self, source: Path):
         self.transcodes.append("stream")
@@ -173,7 +175,7 @@ def test_song_download_uses_safe_id_quality_mapping_and_flac_contract(client):
     streamed = client[0].get("/api/stream/102", params={"quality": "aac-320"})
     assert streamed.status_code == 200
     assert streamed.headers["content-type"].startswith("audio/flac")
-    assert streamed.content == FLAC_GUIDANCE_PREFIX + b"fLaCfixture"
+    assert streamed.content == b"fLaCfixture"
     assert client[2].transcodes == ["file", "stream"]
     assert client[2].calls[-1] == ("https://music.apple.com/us/song/102", "aac")
     assert client[0].get("/api/download/not-an-id").status_code == 400
@@ -193,7 +195,7 @@ def test_song_stream_head_reports_only_known_facts_without_preparing_media(clien
 
 
 @pytest.mark.asyncio
-async def test_song_stream_opens_before_preparing_configured_quality(settings: Settings):
+async def test_song_stream_prepares_configured_quality_before_opening(settings: Settings):
     runner = FakeRunner()
     app = create_app(settings, FakeWrapper(), runner)
     route = next(
@@ -207,20 +209,21 @@ async def test_song_stream_opens_before_preparing_configured_quality(settings: S
     assert isinstance(response, StreamingResponse)
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["x-accel-buffering"] == "no"
-    assert runner.calls == []
+    assert runner.calls == [("https://music.apple.com/us/song/102", "alac")]
     assert b"".join(
         [chunk async for chunk in response.body_iterator]
-    ) == FLAC_GUIDANCE_PREFIX + b"fLaCfixture"
+    ) == b"fLaCfixture"
     assert runner.calls[-1][1] == "alac"
 
 
-def test_flac_guidance_prefix_is_an_empty_id3v24_tag():
-    assert FLAC_GUIDANCE_PREFIX == b"ID3\x04\x00\x00\x00\x00\x00\x00"
-    assert len(FLAC_GUIDANCE_PREFIX) == 10
+def test_stream_reports_precise_duration_for_core_guidance(client):
+    response = client[0].get("/api/stream/102")
+    assert response.headers["x-allstarr-duration-seconds"] == "2.5"
+    assert response.content == b"fLaCfixture"
 
 
 @pytest.mark.asyncio
-async def test_song_stream_sends_guidance_prefix_before_apple_preparation(settings: Settings):
+async def test_song_stream_waits_for_preparation_then_sends_actual_flac(settings: Settings):
     class BlockingRunner(FakeRunner):
         def __init__(self):
             super().__init__()
@@ -241,16 +244,13 @@ async def test_song_stream_sends_guidance_prefix_before_apple_preparation(settin
         for route in app.routes
         if getattr(route, "path", None) == "/api/stream/{song_id}"
     )
-    response = await route.endpoint("102", "aac-320", ACCOUNT)
-
-    assert await anext(response.body_iterator) == FLAC_GUIDANCE_PREFIX
-    assert not runner.started.is_set()
-
-    first_audio = asyncio.create_task(anext(response.body_iterator))
+    preparation = asyncio.create_task(route.endpoint("102", "aac-320", ACCOUNT))
     await asyncio.wait_for(runner.started.wait(), timeout=0.5)
-    assert not first_audio.done()
+    assert not preparation.done()
     runner.release.set()
-    assert await asyncio.wait_for(first_audio, timeout=0.5) == b"fLaC"
+    response = await asyncio.wait_for(preparation, timeout=0.5)
+    assert response.headers["x-allstarr-duration-seconds"] == "2.5"
+    assert await anext(response.body_iterator) == b"fLaC"
 
 
 def test_song_stream_falls_back_to_web_aac_when_lossless_is_unavailable(settings):
@@ -301,7 +301,7 @@ async def test_simultaneous_song_streams_share_preparation(settings):
         route.endpoint("102", "aac-320", ACCOUNT),
     )
     prefixes = await asyncio.gather(*(anext(response.body_iterator) for response in responses))
-    assert prefixes == [FLAC_GUIDANCE_PREFIX, FLAC_GUIDANCE_PREFIX]
+    assert prefixes == [b"fLaC", b"fLaC"]
     await asyncio.gather(*(anext(response.body_iterator) for response in responses))
 
     assert len(runner.calls) == 1
@@ -384,7 +384,7 @@ async def test_process_runner_streams_exact_flac_stdout(settings: Settings, tmp_
 
 
 @pytest.mark.asyncio
-async def test_process_runner_stamps_piped_flac_duration_without_changing_frames(
+async def test_process_runner_leaves_piped_flac_duration_to_core(
     settings: Settings, tmp_path: Path
 ):
     packed = (48_000 << 44) | (1 << 41) | (15 << 36)
@@ -409,23 +409,9 @@ async def test_process_runner_stamps_piped_flac_duration_without_changing_frames
 
     output = b"".join([chunk async for chunk in runner.stream_flac(source)])
 
-    assert output[:18] == header[:18]
-    assert int.from_bytes(output[18:26], "big") & ((1 << 36) - 1) == 120_000
-    assert output[26:] == b"unchanged-frames"
+    assert await runner.audio_duration(source) == 2.5
+    assert output == header + b"unchanged-frames"
 
-
-def test_piped_flac_header_only_stamps_unknown_valid_duration():
-    packed = (44_100 << 44) | (1 << 41) | (15 << 36)
-    header = b"fLaC\x00\x00\x00\x22" + b"\x00" * 10 + packed.to_bytes(8, "big")
-
-    assert BoundedProcessRunner._flac_header_with_duration(header, 2) == (
-        header[:18] + (packed | 88_200).to_bytes(8, "big")
-    )
-    assert BoundedProcessRunner._flac_header_with_duration(header, None) == header
-    assert BoundedProcessRunner._flac_header_with_duration(header[:11], 2) == header[:11]
-    assert BoundedProcessRunner._flac_header_with_duration(header[:18] + (packed | 1).to_bytes(8, "big"), 2) == (
-        header[:18] + (packed | 1).to_bytes(8, "big")
-    )
 
 
 @pytest.mark.asyncio
@@ -554,9 +540,8 @@ async def test_simultaneous_accounts_do_not_share_preparation(settings):
     app = create_app(settings, FakeWrapper(), runner)
     route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}" and "GET" in route.methods)
     other = media_account("other-account-token", "us", "b" * 64)
-    responses = [await route.endpoint("101", "aac", account) for account in (ACCOUNT, other)]
-    assert await asyncio.gather(*(anext(response.body_iterator) for response in responses)) == [FLAC_GUIDANCE_PREFIX] * 2
-    await asyncio.wait_for(asyncio.gather(*(anext(response.body_iterator) for response in responses)), 2)
+    responses = await asyncio.wait_for(asyncio.gather(*(route.endpoint("101", "aac", account) for account in (ACCOUNT, other))), 2)
+    assert await asyncio.gather(*(anext(response.body_iterator) for response in responses)) == [b"fLaC"] * 2
     assert set(runner.tokens) == {"fixture-account-token", "other-account-token"}
     assert len(runner.calls) == 2
     for response in responses:
@@ -578,9 +563,7 @@ async def test_last_canceled_stream_waiter_cancels_account_preparation(settings)
 
     app = create_app(settings, FakeWrapper(), BlockingRunner())
     route = next(route for route in app.routes if getattr(route, "path", None) == "/api/stream/{song_id}" and "GET" in route.methods)
-    response = await route.endpoint("101", "aac", ACCOUNT)
-    assert await anext(response.body_iterator) == FLAC_GUIDANCE_PREFIX
-    preparation = asyncio.create_task(anext(response.body_iterator))
+    preparation = asyncio.create_task(route.endpoint("101", "aac", ACCOUNT))
     await asyncio.wait_for(started.wait(), 1)
     preparation.cancel()
     with pytest.raises(asyncio.CancelledError):

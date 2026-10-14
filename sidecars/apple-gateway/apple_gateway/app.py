@@ -31,7 +31,6 @@ CAPABILITIES = (
 )
 PREPARED_CACHE_TTL_SECONDS = 6 * 60 * 60
 PREPARED_CACHE_MAX_TRACKS = 32
-FLAC_GUIDANCE_PREFIX = b"ID3\x04\x00\x00\x00\x00\x00\x00"
 
 
 def _version(distribution: str) -> str:
@@ -323,18 +322,21 @@ def create_app(
     ) -> StreamingResponse:
         _song_request(account, song_id, quality)
 
+        source = await prepare_song(account, song_id, quality, "aac-web")
+        duration = await process_runner.audio_duration(source)
+
         async def content() -> AsyncIterator[bytes]:
-            # Keep the existing immediate empty tag while this account prepares media.
-            yield FLAC_GUIDANCE_PREFIX
-            source = await prepare_song(account, song_id, quality, "aac-web")
             async for chunk in process_runner.stream_flac(source):
                 yield chunk
 
-        return StreamingResponse(content(), media_type="audio/flac", headers={
+        headers = {
             "Content-Disposition": f'inline; filename="{song_id}.flac"',
             "Cache-Control": "no-store",
             "X-Accel-Buffering": "no",
-        })
+        }
+        if duration is not None:
+            headers["X-Allstarr-Duration-Seconds"] = format(duration, ".17g")
+        return StreamingResponse(content(), media_type="audio/flac", headers=headers)
 
     @application.head("/api/download/{song_id}")
     @application.head("/api/stream/{song_id}")

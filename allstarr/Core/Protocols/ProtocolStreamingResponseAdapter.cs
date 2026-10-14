@@ -50,6 +50,12 @@ public sealed class ProtocolStreamingResponseAdapter
             }
         }
 
+        if (HttpMethods.IsHead(context.Request.Method))
+        {
+            context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
+            return new EmptyResult();
+        }
+
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return new FileStreamResult(
             stream,
