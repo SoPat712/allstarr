@@ -45,23 +45,18 @@ public sealed class ProviderHealthMigrationTests
             INSERT INTO provider_accounts (Id,OwnerUserId,ProviderId,DisplayName,Enabled,CreatedAt,UpdatedAt,Revision)
             VALUES ({account},{user},'spotify','Saved account',1,{now.UtcTicks},{now.UtcTicks},9);
             """);
-        db.PlaylistLinks.Add(new PlaylistLinkRecord
-        {
-            Id = Guid.CreateVersion7(),
-            OwnerUserId = user,
-            ProviderAccountId = account,
-            SourceProviderId = "spotify",
-            SourcePlaylistId = "saved-source",
-            SourcePlaylistIdHash = new string('a', 64),
-            TargetProtocol = "jellyfin",
-            TargetBackendInstanceId = "fixture",
-            TargetPlaylistId = "saved-destination",
-            Revision = 7,
-            CreatedAt = now,
-            UpdatedAt = now,
-            RuleVersion = "1",
-            PolicyVersion = "1"
-        });
+        var playlistId = Guid.CreateVersion7();
+        var sourceHash = new string('a', 64);
+        await db.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO playlist_links
+                (Id,OwnerUserId,ProviderAccountId,SourceProviderId,SourcePlaylistId,SourcePlaylistIdHash,
+                 TargetProtocol,TargetBackendInstanceId,TargetPlaylistId,Mode,MaterializationMode,
+                 MirrorStaleEntries,PreserveManualEntries,SyncName,SyncDescription,SyncArtwork,
+                 RuleVersion,PolicyVersion,CreatedAt,UpdatedAt,Revision)
+            VALUES ({playlistId},{user},{account},'spotify','saved-source',{sourceHash},
+                    'jellyfin','fixture','saved-destination','Virtual','Reconcile',0,1,1,1,1,
+                    '1','1',{now.UtcTicks},{now.UtcTicks},7);
+            """);
         db.RuntimeSettings.Add(new RuntimeSettingRecord
         {
             Id = Guid.CreateVersion7(),
@@ -101,6 +96,7 @@ public sealed class ProviderHealthMigrationTests
         await db.Database.MigrateAsync();
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.Equal(beforeRows, await Rows(db));
+        Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
         Assert.Equal("{}", await db.Database.SqlQuery<string>($"SELECT SettingsJson AS Value FROM provider_accounts").SingleAsync());
         foreach (var table in Removed)
             Assert.False(await db.Database.SqlQuery<bool>($"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name={table}) AS Value").SingleAsync());
@@ -123,6 +119,7 @@ public sealed class ProviderHealthMigrationTests
         await using var restored = await factory.CreateDbContextAsync();
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.Equal(beforeRows, await Rows(restored));
+        Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
         Assert.Equal(originalKeyRing, await File.ReadAllBytesAsync(keys.KeyRingPath));
         using var restoredCredential = await new EncryptedSecretStore(factory, new FileSecretKeyRingProvider(keys), keys,
             new SystemPlatformClock()).OpenAsync(secret.Id, new SecretAccessContext(user, purpose));
@@ -141,7 +138,10 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(before.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal)),
             after.Where(row => !row.StartsWith(accounts, StringComparison.Ordinal))
                 .Select(row => row.StartsWith("table|playlist_target_memberships|", StringComparison.Ordinal)
-                    ? row.Replace(", \"RemovalConfirmedAt\" INTEGER NULL", "", StringComparison.Ordinal) : row));
+                    ? row.Replace(", \"RemovalConfirmedAt\" INTEGER NULL", "", StringComparison.Ordinal)
+                    : row.StartsWith("table|playlist_links|", StringComparison.Ordinal)
+                        ? row.Replace(", \"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'", "", StringComparison.Ordinal)
+                        : row));
         var original = before.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
         var upgraded = after.Single(row => row.StartsWith(accounts, StringComparison.Ordinal));
         Assert.Equal(original, upgraded.Replace(", \"SettingsJson\" TEXT NOT NULL DEFAULT '{}'", "", StringComparison.Ordinal));
@@ -181,7 +181,8 @@ public sealed class ProviderHealthMigrationTests
             while (await reader.ReadAsync())
             {
                 var values = Enumerable.Range(0, reader.FieldCount)
-                    .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson"))
+                    .Where(index => !(name == "provider_accounts" && reader.GetName(index) == "SettingsJson") &&
+                                    !(name == "playlist_links" && reader.GetName(index) == "DestinationMode"))
                     .Select(reader.GetValue)
                     .ToArray();
                 rows.Add(name + ":" + JsonSerializer.Serialize(values));
