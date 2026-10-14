@@ -80,8 +80,15 @@ public sealed partial class ProtocolRouteFixtureTests
         {
             using var document = JsonDocument.Parse(body);
             Assert.Equal("ok", document.RootElement.GetProperty("subsonic-response").GetProperty("status").GetString());
+            if (!mixed) Assert.False(document.RootElement.GetProperty("subsonic-response").TryGetProperty("starred", out _));
         }
-        else Assert.Equal("ok", XDocument.Parse(body).Root!.Attribute("status")?.Value);
+        else
+        {
+            var root = XDocument.Parse(body).Root!;
+            Assert.Equal("ok", root.Attribute("status")?.Value);
+            if (!mixed) Assert.Empty(root.Elements());
+        }
+        Assert.Equal(mixed ? new[] { "native-song" } : [], recorded.Where(item => !item.ItemId.StartsWith("ext-", StringComparison.Ordinal)).Select(item => item.ItemId));
         var external = recorded.Where(item => item.ItemId.StartsWith("ext-", StringComparison.Ordinal)).ToArray();
         Assert.Equal(new[] { "ext-deezer-song-1", "ext-deezer-album-2", "ext-deezer-artist-3", "ext-playlist-deezer-4" }.Order(),
             external.Select(item => item.ItemId).Order());
@@ -110,21 +117,25 @@ public sealed partial class ProtocolRouteFixtureTests
         }
     }
     [Theory]
-    [InlineData("star", "json")]
-    [InlineData("unstar", "xml")]
-    public async Task SubsonicFavorites_UnlinkedProviderRequestCannotReachTheBackend(string operation, string format)
+    [InlineData("star", "json", true)]
+    [InlineData("unstar", "xml", true)]
+    [InlineData("star", "xml", false)]
+    [InlineData("unstar", "json", false)]
+    public async Task SubsonicFavorites_UnlinkedRequestRelaysOnlyNativeAndRefusesProviders(string operation, string format, bool mixed)
     {
         var pipeline = new Mock<IFavoriteActionPipeline>(MockBehavior.Strict);
+        var observed = new List<ObservedRequest>();
         using var factory = new ProtocolFactory("Subsonic", request =>
-            request.RequestUri!.AbsolutePath == "/rest/ping.view"
-                ? Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""")
-                : throw new InvalidOperationException("Unexpected native relay"), services =>
+        {
+            if (request.RequestUri!.AbsolutePath != "/rest/ping.view") observed.Add(Observe(request));
+            return Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+        }, services =>
         {
             services.RemoveAll<IFavoriteActionPipeline>();
             services.AddSingleton(pipeline.Object);
         });
         using var client = factory.CreateClient();
-        using var response = await client.GetAsync($"/rest/{operation}.view?u=fixture&p=secret&v=1.16.1&c=fixture&f={format}&id=ext-deezer-song-1&id=native");
+        using var response = await client.GetAsync($"/rest/{operation}.view?u=fixture&p=secret&v=1.16.1&c=fixture&f={format}&id=ext-deezer-song-1" + (mixed ? "&id=native" : ""));
         var body = await response.Content.ReadAsStringAsync();
         if (format == "json")
         {
@@ -139,6 +150,13 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("failed", root.Attribute("status")?.Value);
             Assert.Equal("50", Assert.Single(root.Elements()).Attribute("code")?.Value);
         }
+        if (mixed)
+        {
+            var relay = Assert.Single(observed);
+            Assert.Contains("id=native", relay.PathAndQuery, StringComparison.Ordinal);
+            Assert.DoesNotContain("ext-", relay.PathAndQuery, StringComparison.Ordinal);
+        }
+        else Assert.Empty(observed);
         pipeline.VerifyNoOtherCalls();
     }
 

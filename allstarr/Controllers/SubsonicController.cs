@@ -1099,15 +1099,16 @@ public partial class SubsonicController : ControllerBase
         var externalIds = keys.SelectMany(parameters.GetAllValues)
             .Where(id => PlaylistIdHelper.IsExternalPlaylist(id) || _localLibraryService.ParseExternalId(id).isExternal)
             .ToHashSet(StringComparer.Ordinal);
-        if (externalIds.Count > 0 && !CurrentProtocolContext.CanRunUserScopedWork)
-            return _responseBuilder.CreateError(format, 50, "A linked Allstarr user is required for external favorite actions");
+        var refuseProvider = externalIds.Count > 0 && !CurrentProtocolContext.CanRunUserScopedWork;
         var native = parameters;
         foreach (var key in keys) native = native.RemoveValues(key, externalIds);
         var hasNative = keys.Any(native.HasNonEmptyValue);
         if (externalIds.Count > 0 && !hasNative)
         {
+            if (refuseProvider)
+                return _responseBuilder.CreateError(format, 50, "A linked Allstarr user is required for external favorite actions");
             foreach (var id in externalIds) await RecordFavoriteEventSafelyAsync(id, operation);
-            return _responseBuilder.CreateResponse(format, "starred", new { });
+            return _responseBuilder.CreateOkResponse(format);
         }
         try
         {
@@ -1115,7 +1116,12 @@ public partial class SubsonicController : ControllerBase
                            (operation == FavoriteOperation.Favorite ? "rest/star" : "rest/unstar");
             var result = await _proxyService.RelayRawAsync(endpoint, native, HttpContext.RequestAborted, Request.Headers);
             if ((int)result.StatusCode is >= 200 and < 300)
-                await RecordFavoriteEventsAsync(parameters, operation);
+            {
+                if (refuseProvider)
+                    return _responseBuilder.CreateError(format, 50, "Native favorites were relayed; a linked Allstarr user is required for external favorite actions");
+                await RecordFavoriteEventsAsync(native, operation);
+                foreach (var id in externalIds) await RecordFavoriteEventSafelyAsync(id, operation);
+            }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
         catch (HttpRequestException error)
@@ -1224,7 +1230,7 @@ public partial class SubsonicController : ControllerBase
 
     private async Task RecordFavoriteEventsAsync(SubsonicRequestParameters parameters, FavoriteOperation operation)
     {
-        foreach (var itemId in new[] { "id", "albumId", "artistId" }.SelectMany(parameters.GetAllValues)
+        foreach (var itemId in parameters.GetAllValues("id")
                      .Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.Ordinal))
         {
             await RecordFavoriteEventSafelyAsync(itemId, operation);
