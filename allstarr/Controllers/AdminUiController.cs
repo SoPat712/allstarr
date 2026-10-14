@@ -500,7 +500,7 @@ public class AdminUiController : ControllerBase
                 PlaylistName: snapshot?.Name ?? "Playlist",
                 ArtworkUrl: snapshot?.ArtworkReferenceKey == null || link == null
                     ? null
-                    : PlaylistArtworkUrl(link.ProviderAccountId, link.SourcePlaylistId));
+                    : PlaylistArtworkUrl(link));
         }));
         var effectivePolicy = _effectivePolicies == null
             ? null
@@ -808,8 +808,9 @@ public class AdminUiController : ControllerBase
         return long.TryParse(value, out var parsed) && parsed > 0 ? parsed : null;
     }
 
-    private static string PlaylistArtworkUrl(Guid providerAccountId, string playlistId) =>
-        $"/api/admin/playlist-sources/{providerAccountId}/playlists/{Uri.EscapeDataString(playlistId)}/artwork";
+    private static string PlaylistArtworkUrl(PlaylistLinkRecord link) => link.ProviderAccountId.HasValue
+        ? $"/api/admin/playlist-sources/{link.ProviderAccountId}/playlists/{Uri.EscapeDataString(link.SourcePlaylistId)}/artwork"
+        : $"/api/admin/playlist-sources/public/{Uri.EscapeDataString(link.SourceProviderId)}/playlists/{Uri.EscapeDataString(link.SourcePlaylistId)}/artwork";
 
     private static string LocalArtworkUrl(string backendItemId) =>
         $"/api/admin/downloads/artwork/{Uri.EscapeDataString(backendItemId)}";

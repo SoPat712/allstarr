@@ -10,7 +10,8 @@ public static class SpotifyPlaylistCapabilityRegistration
     public static IServiceCollection AddSpotifyPlaylistCapability(this IServiceCollection services)
     {
         services.AddSingleton<IProviderAccountSecretAccessor, EncryptedProviderAccountSecretAccessor>();
-        services.AddHttpClient(SpotifyPlaylistCapabilityAdapter.HttpClientName);
+        services.AddHttpClient(SpotifyPlaylistCapabilityAdapter.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
         services.AddSingleton(provider => new SpotifyPlaylistCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<IProviderAccountSecretAccessor>(),

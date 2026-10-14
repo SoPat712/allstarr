@@ -8,14 +8,14 @@ namespace allstarr.Core.Providers.Spotify;
 
 internal sealed record SpotifyWebTokenResult(string? AccessToken, bool IsAnonymous, string? ReasonCode)
 {
-    public bool Success => !string.IsNullOrWhiteSpace(AccessToken) && !IsAnonymous;
+    public bool Success => !string.IsNullOrWhiteSpace(AccessToken);
 }
 
 internal static class SpotifyWebTokenExchange
 {
     private static readonly Uri SpotifyOrigin = new("https://open.spotify.com/");
 
-    public static async Task<SpotifyWebTokenResult> ExchangeAsync(HttpClient http, string cookie, CancellationToken cancellationToken, SpotifyApiSettings? settings = null)
+    public static async Task<SpotifyWebTokenResult> ExchangeAsync(HttpClient http, string? cookie, CancellationToken cancellationToken, SpotifyApiSettings? settings = null, bool allowAnonymous = false)
     {
         settings ??= new();
         if (!Uri.TryCreate(settings.TotpSecretsUrl, UriKind.Absolute, out var secretsUri) || secretsUri.Scheme != Uri.UriSchemeHttps ||
@@ -43,7 +43,8 @@ internal static class SpotifyWebTokenExchange
             var clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var uri = new Uri($"{settings.TokenEndpoint}?reason=init&productType=web-player&totp={otp}&totpServer={otp}&totpVer={secret.Version}&sTime={serverTime}&cTime={clientTime}");
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-            request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={cookie}");
+            if (!string.IsNullOrWhiteSpace(cookie))
+                request.Headers.TryAddWithoutValidation("Cookie", $"sp_dc={cookie}");
             SpotifyWebRequestProfile.Apply(request);
             using var response = await http.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
@@ -58,12 +59,14 @@ internal static class SpotifyWebTokenExchange
                 var token = JsonSerializer.Deserialize<TokenResponse>(await response.Content.ReadAsStringAsync(cancellationToken));
                 if (token == null || string.IsNullOrWhiteSpace(token.AccessToken))
                     return new(null, false, "invalid_response");
-                if (token.IsAnonymous)
+                if (token.IsAnonymous && !allowAnonymous)
                     return new(null, true, "anonymous_session");
+                if (allowAnonymous && string.IsNullOrWhiteSpace(cookie) && !token.IsAnonymous)
+                    return new(null, false, "unexpected_authenticated_session");
                 if (token.AccessTokenExpirationTimestampMs is { } expiresAt &&
                     expiresAt <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
                     return new(null, false, "expired_session");
-                return new(token.AccessToken, false, null);
+                return new(token.AccessToken, token.IsAnonymous, null);
             }
             catch (JsonException) { return new(null, false, "invalid_response"); }
         }

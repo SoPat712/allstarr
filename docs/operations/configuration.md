@@ -51,7 +51,7 @@ Shared accounts are eligible for household use only while enabled and authorized
 
 ## Spotify playlist compatibility
 
-Spotify playlist reads use the selected encrypted account. Import requests accept a playlist ID, `spotify:playlist:` URI, or an `https://open.spotify.com/playlist/…` link; tracking parameters and fragments are discarded before persistence. The logical source ID `liked-songs` reads that account's Liked Songs through the same paged playlist pipeline and preserves Spotify's returned order.
+Public Spotify playlist reads use an anonymous web session with no account or cookies. Private playlists and Liked Songs use only the selected encrypted account. Import requests accept a playlist ID, `spotify:playlist:` URI, or an `https://open.spotify.com/playlist/…` link; tracking parameters and fragments are discarded before persistence. The logical source ID `liked-songs` reads that account's Liked Songs through the same paged playlist pipeline and preserves Spotify's returned order.
 
 Administrators can edit compatibility fields under **Integrations → Services → Spotify** without restarting: Pathfinder endpoint, library/playlist/Liked Songs query hashes, token endpoint, and the public TOTP secrets URL. The shipped v1 endpoint and existing hashes remain the defaults. Selecting Spotify's v2 endpoint sends the corresponding POST query envelope. Query hashes require 64 hexadecimal characters; token-bearing endpoints are restricted to the supported Spotify URLs, and the public secrets URL requires HTTPS without embedded credentials. Credentials remain in Accounts.
 

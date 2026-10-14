@@ -2102,7 +2102,7 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ProviderAccountId")
+                    b.Property<Guid?>("ProviderAccountId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderId")
@@ -2143,6 +2143,11 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("OwnerUserId", "ProviderAccountId", "ResourceKind", "ExternalIdHash", "SnapshotVersion")
                         .IsUnique()
                         .HasDatabaseName("IX_external_snapshot_version");
+
+                    b.HasIndex("OwnerUserId", "ProviderId", "ResourceKind", "ExternalIdHash", "SnapshotVersion")
+                        .IsUnique()
+                        .HasDatabaseName("IX_external_snapshot_public_version")
+                        .HasFilter("\"ProviderAccountId\" IS NULL");
 
                     b.ToTable("external_metadata_snapshots", null, t =>
                         {
@@ -2798,7 +2803,7 @@ namespace allstarr.Core.Storage.Migrations
                         .HasColumnType("TEXT")
                         .HasDefaultValue("Resolved");
 
-                    b.Property<Guid>("ProviderAccountId")
+                    b.Property<Guid?>("ProviderAccountId")
                         .HasColumnType("TEXT");
 
                     b.Property<long>("Revision")
@@ -2869,6 +2874,11 @@ namespace allstarr.Core.Storage.Migrations
                     b.HasIndex("ScheduleId");
 
                     b.HasIndex("ProviderAccountId", "SourceProviderId");
+
+                    b.HasIndex("OwnerUserId", "SourceProviderId", "SourcePlaylistIdHash", "TargetProtocol", "TargetBackendInstanceId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_playlist_link_public_source_target")
+                        .HasFilter("\"ProviderAccountId\" IS NULL");
 
                     b.HasIndex("OwnerUserId", "SourceProviderId", "ProviderAccountId", "SourcePlaylistIdHash", "TargetProtocol", "TargetBackendInstanceId")
                         .IsUnique()
@@ -2964,7 +2974,7 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("PlaylistLinkId")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid>("ProviderAccountId")
+                    b.Property<Guid?>("ProviderAccountId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderRevision")
@@ -4067,7 +4077,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("ProviderAccountId", "ProviderId")
                         .HasPrincipalKey("Id", "ProviderId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_external_snapshot_provider_account");
                 });
 
@@ -4215,7 +4224,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("ProviderAccountId", "SourceProviderId")
                         .HasPrincipalKey("Id", "ProviderId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_playlist_link_provider_account");
                 });
 
@@ -4262,7 +4270,6 @@ namespace allstarr.Core.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("ProviderAccountId")
                         .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired()
                         .HasConstraintName("FK_playlist_snapshot_provider_account");
 
                     b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)

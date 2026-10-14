@@ -17,7 +17,8 @@ public sealed class MigrationModelSnapshotTests
         Assert.Equal(["20261008235223_UsersBaseline", "20261009043555_VolatileProviderHealth",
             "20261010035223_ProviderAccountSettings", "20261010061013_RecordingIdentifiers",
             "20261010083000_CancelLegacyRematchJobs", "20261014145512_ConfirmPlaylistMembershipRemoval",
-            "20261014162517_PreservePlaylistDestinationMode"],
+            "20261014162517_PreservePlaylistDestinationMode",
+            "20261014170945_PublicPlaylistSources"],
             context.Database.GetMigrations());
     }
 }

@@ -42,7 +42,7 @@ public sealed record TrackRematchAllJobPayload(
 public sealed class TrackRematchAllService(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableJobQueue jobs,
-    IPlatformClock clock)
+    IPlatformClock clock, IProviderRegistry? registry = null)
 {
     internal const string ForcePolicyVersion = "bulk-rematch-v1";
     internal const string RolloutPolicyVersion = "algorithm-rollout-v1";
@@ -203,6 +203,8 @@ public sealed class TrackRematchAllService(
         CancellationToken cancellationToken)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
+        var publicProviders = registry?.Providers.Where(item => Core.Playlists.PersistenceGuard.IsPublicPlaylistSource(registry, item.Id))
+            .Select(item => item.Id).ToArray() ?? [];
         var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
             .Where(item => (!ownerUserId.HasValue || item.OwnerUserId == ownerUserId.Value) &&
                            item.ResourceKind == "track" &&
@@ -211,9 +213,10 @@ public sealed class TrackRematchAllService(
                                user.BackendType == (item.Protocol == "opensubsonic" ? "subsonic" : item.Protocol) &&
                                user.BackendInstanceId == item.BackendInstanceId &&
                                user.BackendPrincipalId == item.BackendPrincipalId) &&
-                           db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
+                           (item.ProviderAccountId == null && publicProviders.Contains(item.ProviderId) ||
+                            item.ProviderAccountId != null && db.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId &&
                                account.Enabled && account.ProviderId == item.ProviderId &&
-                               (account.OwnerUserId == null || account.OwnerUserId == item.OwnerUserId)))
+                               (account.OwnerUserId == null || account.OwnerUserId == item.OwnerUserId))))
             .Select(item => new TrackRematchSnapshot(
                 item.Id,
                 item.OwnerUserId,
@@ -383,7 +386,7 @@ internal sealed record TrackRematchSnapshot(
     Guid Id,
     Guid OwnerUserId,
     Guid? ProviderTrackIdentityId,
-    Guid ProviderAccountId,
+    Guid? ProviderAccountId,
     string ProviderId,
     string ExternalIdHash,
     string Protocol,

@@ -520,7 +520,7 @@ export type PlaylistLink = {
   sourceProviderId: string;
   sourcePlaylistId: string;
   sourceUpdateAvailable?: boolean;
-  providerAccountId: string;
+  providerAccountId: string | null;
   targetProtocol: string;
   targetBackendInstanceId: string;
   targetPlaylistId?: string | null;
@@ -1822,7 +1822,7 @@ export const playlistLinks = {
   sources: () => json<{
     accounts: PlaylistSourceAccount[];
     blockedAccounts: PlaylistSourceAccount[];
-    providers: Array<{ id: string; displayName: string }>;
+    providers: Array<{ id: string; displayName: string; supportsPublicRead?: boolean }>;
   }>("/api/admin/playlist-sources"),
   sourcePlaylists: (accountId: string, query = "", cursor = "") => {
     const params = new URLSearchParams({ limit: "100" });
@@ -1852,7 +1852,7 @@ export const playlistLinks = {
     );
   },
   create: (input: {
-    providerAccountId: string;
+    providerAccountId: string | null;
     sourceProviderId: string;
     sourcePlaylistId: string;
       targetProtocol: string;

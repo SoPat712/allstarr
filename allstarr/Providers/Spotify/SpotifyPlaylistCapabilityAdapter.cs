@@ -94,8 +94,8 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 token,
                 request,
                 cancellationToken,
-                AccountFingerprint(context.Account!.AccountId));
-        });
+                context.Account == null ? "public" : AccountFingerprint(context.Account.AccountId));
+        }, allowPublic: SpotifyPlaylistReference.TryNormalize(request.PlaylistId.Value, out var sourceId) && sourceId != SpotifyPlaylistReference.LikedSongsId);
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(
         ProviderExecutionContext context,
@@ -117,7 +117,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
             return artwork.IsSuccess
                 ? await DownloadArtworkAsync(_http, artwork.RequireValue(), request.MaximumBytes, cancellationToken)
                 : ProviderOutcome<ProviderPlaylistArtwork>.Failure(artwork.Error!);
-        });
+        }, allowPublic: true);
 
     public Task<ProviderOutcome<ProviderPlaylistMutationReceipt>> MutatePlaylistAsync(
         ProviderExecutionContext context,
@@ -131,7 +131,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         new ProviderDescriptor(
             StableProviderId,
             "Spotify",
-            "Account-bound Spotify playlist reads through the selected encrypted provider account.",
+            "Public Spotify playlists and personal library reads through the selected encrypted account.",
             ProviderOrigin.BuiltIn,
             sdkVersion: "1",
             compatibilityVersion: "spotify-web-playlist-v1",
@@ -140,10 +140,10 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Playlist,
                     ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.Required,
+                    ProviderAccountRequirement.Optional,
                     "1",
                     ["getUserPlaylists", "getPlaylistTracks", "searchPlaylists", "resolveArtwork", "mutatePlaylist"],
-                    [Core.Storage.ProviderAccountScope.Shared, Core.Storage.ProviderAccountScope.Personal]),
+                    [Core.Storage.ProviderAccountScope.Shared, Core.Storage.ProviderAccountScope.Personal], supportsPublicRead: true),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Lyrics,
                     ProviderCapabilitySupportState.Supported,
@@ -347,12 +347,19 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 
     private async Task<ProviderOutcome<T>> ExecuteAsync<T>(
         ProviderExecutionContext context,
-        Func<string, CancellationToken, Task<ProviderOutcome<T>>> operation)
+        Func<string, CancellationToken, Task<ProviderOutcome<T>>> operation, bool allowPublic = false)
     {
-        var contextError = ValidateContext(context);
+        var contextError = ValidateContext(context, allowPublic);
         if (contextError != null) return ProviderOutcome<T>.Failure(contextError);
         try
         {
+            if (context.Actor.Kind == ProviderActorKind.PublicRead)
+            {
+                var token = await SpotifyWebTokenExchange.ExchangeAsync(_http, null, context.CancellationToken, _settings, allowAnonymous: true);
+                return token.Success
+                    ? await operation(token.AccessToken!, context.CancellationToken)
+                    : ProviderOutcome<T>.Failure(new(ProviderErrorKind.TransientFailure));
+            }
             return await _secrets.UseAsync(
                 context.Account!,
                 async secret =>
@@ -422,9 +429,11 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         return TimeSpan.FromSeconds(30);
     }
 
-    private static ProviderError? ValidateContext(ProviderExecutionContext context)
+    private static ProviderError? ValidateContext(ProviderExecutionContext context, bool allowPublic)
     {
         if (!context.ProviderId.Equals(StableProviderId, StringComparison.Ordinal)) return new(ProviderErrorKind.Forbidden);
+        if (context.Actor.Kind == ProviderActorKind.PublicRead)
+            return allowPublic && context.Account == null ? null : new(ProviderErrorKind.Forbidden);
         if (context.Account == null || context.Account.SecretReferenceId == null) return new(ProviderErrorKind.AccountNeedsConfiguration);
         return null;
     }

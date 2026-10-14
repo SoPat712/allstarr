@@ -73,6 +73,8 @@ public sealed partial class AllstarrDbContext
             Required(entity.Property(item => item.PayloadSha256), 64);
             Required(entity.Property(item => item.CorrelationId), 100);
             entity.HasIndex(item => new { item.OwnerUserId, item.ProviderAccountId, item.ResourceKind, item.ExternalIdHash, item.SnapshotVersion }).IsUnique().HasDatabaseName("IX_external_snapshot_version");
+            entity.HasIndex(item => new { item.OwnerUserId, item.ProviderId, item.ResourceKind, item.ExternalIdHash, item.SnapshotVersion })
+                .IsUnique().HasFilter("\"ProviderAccountId\" IS NULL").HasDatabaseName("IX_external_snapshot_public_version");
             OwnedByUser(entity, item => item.OwnerUserId);
             entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(item => new { item.ProviderAccountId, item.ProviderId })
                 .HasPrincipalKey(item => new { item.Id, item.ProviderId }).HasConstraintName("FK_external_snapshot_provider_account").OnDelete(DeleteBehavior.Restrict);
@@ -196,6 +198,8 @@ public sealed partial class AllstarrDbContext
             Required(entity.Property(item => item.PolicyVersion), 100);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.OwnerUserId, item.SourceProviderId, item.ProviderAccountId, item.SourcePlaylistIdHash, item.TargetProtocol, item.TargetBackendInstanceId }).IsUnique().HasDatabaseName("IX_playlist_link_source_target");
+            entity.HasIndex(item => new { item.OwnerUserId, item.SourceProviderId, item.SourcePlaylistIdHash, item.TargetProtocol, item.TargetBackendInstanceId })
+                .IsUnique().HasFilter("\"ProviderAccountId\" IS NULL").HasDatabaseName("IX_playlist_link_public_source_target");
             OwnedByUser(entity, item => item.OwnerUserId);
             entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(item => new { item.ProviderAccountId, item.SourceProviderId })
                 .HasPrincipalKey(item => new { item.Id, item.ProviderId }).HasConstraintName("FK_playlist_link_provider_account").OnDelete(DeleteBehavior.Restrict);

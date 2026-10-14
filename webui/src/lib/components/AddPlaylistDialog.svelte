@@ -38,6 +38,9 @@
   let accounts = $state<PlaylistSourceAccount[]>([]);
   let providerOrder = $state<string[]>([]);
   let providerNames = $state<Record<string, string>>({});
+  let publicProviders = $state<Array<{ id: string; displayName: string }>>([]);
+  let publicProviderId = $state("");
+  let sourceReference = $state("");
   let blocked = $state(0);
   let targets = $state<MediaTarget[]>([]);
   let targetId = $state("");
@@ -62,7 +65,7 @@
   const orderedAccounts = $derived(orderPlaylistSources(accounts, providerOrder));
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
-  const sourceName = $derived(selectedAccount?.displayName ?? "the source service");
+  const sourceName = $derived(selectedAccount?.displayName ?? providerNames[publicProviderId] ?? "the source service");
   const sourcePlaylistName = $derived(
     sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ?? "this playlist",
   );
@@ -133,13 +136,16 @@
   });
 
   async function load() {
-    browseRequest++;
+    const request = ++browseRequest;
     loading = true;
     error = "";
     step = 1;
     accounts = [];
     providerOrder = [];
     providerNames = {};
+    publicProviders = [];
+    publicProviderId = "";
+    sourceReference = "";
     blocked = 0;
     targets = [];
     targetId = "";
@@ -159,16 +165,19 @@
       const [sourceResponse, targetResponse] = await Promise.all([
         playlistLinks.sources(), playlistLinks.targets(),
       ]);
+      if (!open || request !== browseRequest) return;
       accounts = sourceResponse.accounts;
+      publicProviders = sourceResponse.providers.filter((item) => item.supportsPublicRead);
       providerOrder = sourceResponse.providers.map((item) => item.id);
       providerNames = Object.fromEntries(sourceResponse.providers.map((item) => [item.id, item.displayName]));
       blocked = sourceResponse.blockedAccounts.length;
       targets = targetResponse.targets;
       targetId = targets[0]?.id ?? "";
     } catch (cause) {
+      if (request !== browseRequest || !open) return;
       error = cause instanceof Error ? cause.message : "Playlist setup is unavailable.";
     } finally {
-      loading = false;
+      if (request === browseRequest) loading = false;
     }
   }
 
@@ -213,6 +222,8 @@
   }
 
   async function chooseAccount(id: string) {
+    publicProviderId = "";
+    sourceReference = "";
     accountId = id;
     sourcePlaylistId = "";
     sourceQuery = "";
@@ -224,6 +235,25 @@
       targetPlaylists = [];
     }
     await browseSources();
+  }
+
+  function choosePublicProvider(id: string) {
+    browseRequest++;
+    loading = false;
+    accountId = "";
+    publicProviderId = id;
+    sourcePlaylistId = "";
+    sourceReference = "";
+    sourcePlaylists = [];
+    sourceCursor = "";
+    error = "";
+  }
+
+  function useReference() {
+    browseRequest++;
+    loading = false;
+    sourcePlaylistId = sourceReference.trim();
+    error = "";
   }
 
   async function browseSources(cursor = "") {
@@ -257,14 +287,14 @@
   }
 
   async function save() {
-    if (!selectedAccount || !selectedTarget || !sourcePlaylistId ||
+    if ((!selectedAccount && !publicProviderId) || !selectedTarget || !sourcePlaylistId ||
         (targetMode === "existing" && !targetPlaylistId) || saving) return;
     saving = true;
     error = "";
     try {
       const link = await playlistLinks.create({
-        providerAccountId: selectedAccount.id,
-        sourceProviderId: selectedAccount.providerId,
+        providerAccountId: selectedAccount?.id ?? null,
+        sourceProviderId: selectedAccount?.providerId ?? publicProviderId,
         sourcePlaylistId,
         targetProtocol: selectedTarget.protocol,
         targetBackendInstanceId: selectedTarget.backendInstanceId,
@@ -342,20 +372,27 @@
       <div class="playlist-add-body" bind:this={addBody} aria-busy={loading}>
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
-        {#if loading && step === 1 && !accounts.length}
+        {#if loading && step === 1 && !accounts.length && !publicProviders.length}
           <div class="detail-loading" aria-busy="true">Loading playlist sources…</div>
-        {:else if error && step === 1 && !accounts.length}
+        {:else if error && step === 1 && !accounts.length && !publicProviders.length}
           <div class="compact-empty">
             <strong>Playlist setup is unavailable</strong>
             <Button variant="secondary" onclick={() => void load()}>Try again</Button>
           </div>
         {:else if step === 1}
-          {#if !accounts.length && !loading}
+          {#if !accounts.length && !publicProviders.length && !loading}
             <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
           {:else}
             <section class="pl-section">
               <h3 id="playlist-add-account">Import from</h3>
               <div class="pl-options pl-options-two" role="radiogroup" aria-labelledby="playlist-add-account">
+                {#each publicProviders as provider}
+                  <label class="pl-option pl-option-media" class:active={publicProviderId === provider.id}>
+                    <input type="radio" name="playlist-source-account" value={`public:${provider.id}`} checked={publicProviderId === provider.id} onchange={() => choosePublicProvider(provider.id)} />
+                    <ProviderMark id={provider.id} definition={definition(provider.id)} />
+                    <span class="pl-option-text"><strong>Public {provider.displayName} playlist</strong><small>Paste a playlist link. No account needed.</small></span>
+                  </label>
+                {/each}
                 {#each orderedAccounts as account}
                   <label class="pl-option pl-option-media" class:active={accountId === account.id}>
                     <input type="radio" name="playlist-source-account" value={account.id} checked={accountId === account.id} onchange={() => void chooseAccount(account.id)} />
@@ -366,6 +403,17 @@
               </div>
               {#if blocked}<p class="pl-help">{blocked} shared {blocked === 1 ? "account is" : "accounts are"} hidden by deployment policy.</p>{/if}
             </section>
+            {#if publicProviderId || selectedAccount?.providerId === "spotify"}
+              <section class="pl-section">
+                <h3>Use a playlist link</h3>
+                <p class="pl-help">{publicProviderId ? "Only public playlists can be read without an account." : "Private playlists use only the selected account."}</p>
+                <form class="pl-search" onsubmit={(event) => { event.preventDefault(); useReference(); }}>
+                  <SearchField bind:value={sourceReference} label="Playlist link, URI or ID" placeholder="Playlist link, URI or ID" hiddenLabel />
+                  <Button variant="secondary" type="submit" disabled={!sourceReference.trim()}>Use playlist</Button>
+                </form>
+                {#if sourcePlaylistId && sourcePlaylistId === sourceReference.trim()}<p class="pl-help">Playlist selected. Access will be checked when the import runs.</p>{/if}
+              </section>
+            {/if}
             {#if accountId}
               <section class="pl-section">
                 <div><h3 id="playlist-add-source">Choose a playlist</h3><p class="pl-help">Showing playlists from {accountTitle(selectedAccount!)}.</p></div>
@@ -374,6 +422,12 @@
                   <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
                 </form>
                 <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-source">
+                  {#if selectedAccount?.providerId === "spotify"}
+                    <label class="pl-option" class:active={sourcePlaylistId === "liked-songs"}>
+                      <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value="liked-songs" />
+                      <span class="pl-option-text"><strong>Liked Songs</strong><small>Saved songs from this Spotify account.</small></span>
+                    </label>
+                  {/if}
                   {#each sourcePlaylists as playlist}
                     <label class="pl-option pl-option-media" class:active={sourcePlaylistId === playlist.id}>
                       <input bind:group={sourcePlaylistId} type="radio" name="playlist-source" value={playlist.id} />

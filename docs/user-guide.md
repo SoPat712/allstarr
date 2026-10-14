@@ -123,7 +123,7 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 
 ## Add and review a provider playlist
 
-1. Open **Library → Playlists** and choose a playlist from your connected playlist-capable account. If no account is available, **Connect Spotify** opens a personal account flow.
+1. Open **Library → Playlists → Import playlist**. Choose **Public Spotify playlist** and paste a link, URI or ID without connecting an account. For a private playlist or **Liked Songs**, select your connected Spotify account; you can browse its playlists or paste a link. Public imports never use a saved account.
 2. Choose **Import once** to freeze the source snapshot, or **Keep in sync** to follow source changes. Sync defaults to daily, with hourly and weekly schedules available. A frozen import never reads later source changes, even if its source account is disabled.
 3. Choose **New playlist** to create a destination once, or **Existing playlist** to select an exact backend playlist. Future updates use that destination; Allstarr does not adopt a playlist just because its name matches. Changing destinations leaves the old playlist's songs in place and starts ownership tracking separately for the new destination.
 4. Turn on **Keep downloaded copies** to queue permanent downloads of resolved external songs using your authorized accounts. It defaults to off; local songs are already permanent. An unavailable or unresolved song is reported in Activity without rolling back the import.
@@ -131,7 +131,7 @@ Imports stay private inside Allstarr unless a separate listening-app or scrobbli
 
 The **Mapped** view preserves source order among tracks visible under your listening preferences. Local matches play from the media server, external `[A]` tracks use eligible providers in configured streaming order, and unresolved songs remain visible with a clear not-playable status. The backend playlist contains matched local songs so it remains useful when opened directly.
 
-Each source account and playlist has one link per backend. Repeating the same import reuses that link; a different import behavior, new/existing destination choice, or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
+Each source account and playlist has one link per backend; public sources have a separate account-free scope for each owner. Repeating the same import reuses that link; a different import behavior, new/existing destination choice, or selected existing destination is rejected with instructions to edit or remove the current link. Removing a link leaves its backend playlist intact.
 
 When synchronization removes stale songs, it removes only memberships it added. A song already present before an import stays yours, including a former synchronized song that you manually add back after its removal.
 
