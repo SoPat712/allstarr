@@ -1528,6 +1528,7 @@ public sealed partial class ProtocolProviderGateway(
             Album = item.AlbumTitle ?? string.Empty,
             AlbumId = item.AlbumId is { } albumId ? ProtocolItemId(albumId) : null,
             Duration = item.Duration.HasValue ? (int)item.Duration.Value.TotalSeconds : null,
+            PreciseDuration = item.Duration,
             Bitrate = item.Bitrate,
             Isrc = item.Isrc,
             CoverArtUrl = item.Artwork?.PublicUri?.ToString(),

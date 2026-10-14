@@ -4,6 +4,9 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
+using allstarr.Core.Music;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -107,22 +110,20 @@ public sealed class ManagedTrackCacheServiceTests
             var service = CreateService(root, "Cache", local.Object);
             using var response = Response(HttpStatusCode.OK, payload);
 
-            await service.WrapAsync(
-                ProviderStream(response) with
-                {
-                    ServingProviderId = "apple-download",
-                    ServingExternalId = "song-1"
-                },
-                Context(), "apple-download", "song-1", headOnly: false,
-                () => Task.FromResult<Song?>(new Song
-                {
-                    Title = "Song",
-                    Artist = "Artist",
-                    Album = "Album"
-                }),
-                CancellationToken.None);
-
-            Assert.Equal(payload, await response.Content.ReadAsByteArrayAsync());
+            var protocol = Context();
+            var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+            gateway.Setup(item => item.OpenStreamAsync(protocol, "apple-download", "song-1", ProviderAudioQuality.Any, null, false))
+                .ReturnsAsync(new ProtocolProviderStream(response,
+                    new("sequential", new Uri("https://media.example.test/track"), DateTimeOffset.UtcNow.AddMinutes(1),
+                        false, false, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry),
+                    "apple-download", "song-1"));
+            gateway.Setup(item => item.GetSongAsync(protocol, "apple-download", "song-1"))
+                .ReturnsAsync(new Song { Title = "Song", Artist = "Artist", Album = "Album" });
+            var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), service)
+                .OpenAsync(new DefaultHttpContext(), protocol, "apple-download", "song-1", ProviderAudioQuality.Any);
+            using var firstDelivery = new MemoryStream();
+            await Assert.IsType<FileStreamResult>(result).FileStream.CopyToAsync(firstDelivery);
+            Assert.Equal(flac, firstDelivery.ToArray());
             Assert.NotNull(registeredPath);
             Assert.Equal(flac, await File.ReadAllBytesAsync(registeredPath));
             var cached = await service.TryOpenAsync(

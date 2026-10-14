@@ -47,21 +47,19 @@ public sealed class ProviderStreamOpener(
         }
 
         var servingId = routed.ServingExternalId ?? externalId;
-        if (cache != null)
+        Task<allstarr.Models.Domain.Song?>? metadataTask = null;
+        Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(context, routed.ServingProviderId, servingId);
+        try
         {
-            await cache.WrapAsync(
-                routed,
-                context,
-                routed.ServingProviderId,
-                servingId,
-                headOnly,
-                () => providers.GetSongAsync(context, routed.ServingProviderId, servingId),
-                http.RequestAborted);
+            if (!headOnly) await StreamDurationGuidance.PrepareAsync(routed, Metadata, http.RequestAborted);
+            if (cache != null)
+                await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
+            return await responses.CreateAsync(http, routed.Response, http.RequestAborted, enableRangeProcessing: routed.IsCached);
         }
-        return await responses.CreateAsync(
-            http,
-            routed.Response,
-            http.RequestAborted,
-            enableRangeProcessing: routed.IsCached);
+        catch
+        {
+            routed.Response.Dispose();
+            throw;
+        }
     }
 }

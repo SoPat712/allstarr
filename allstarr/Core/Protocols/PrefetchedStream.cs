@@ -1,9 +1,9 @@
 namespace allstarr.Core.Protocols;
 
 // Verify the first byte before committing response headers, then replay it without buffering the song.
-internal sealed class PrefetchedStream(Stream source, HttpContent owner, byte first) : Stream
+internal sealed class PrefetchedStream(Stream source, HttpContent owner, ReadOnlyMemory<byte> prefix) : Stream
 {
-    private bool pending = true;
+    private int position;
     public override bool CanRead => source.CanRead;
     public override bool CanSeek => false;
     public override bool CanWrite => false;
@@ -16,7 +16,7 @@ internal sealed class PrefetchedStream(Stream source, HttpContent owner, byte fi
         var source = await content.ReadAsStreamAsync(cancellationToken);
         var prefix = new byte[1];
         if (await source.ReadAsync(prefix, cancellationToken) == 0) return false;
-        var replacement = new StreamContent(new PrefetchedStream(source, content, prefix[0]));
+        var replacement = new StreamContent(new PrefetchedStream(source, content, prefix));
         foreach (var header in content.Headers)
             replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         response.Content = replacement;
@@ -27,20 +27,22 @@ internal sealed class PrefetchedStream(Stream source, HttpContent owner, byte fi
     {
         var destination = buffer.AsSpan(offset, count);
         if (destination.IsEmpty) return 0;
-        if (!pending) return source.Read(buffer, offset, count);
-        destination[0] = first;
-        pending = false;
-        return 1;
+        if (position == prefix.Length) return source.Read(buffer, offset, count);
+        var read = Math.Min(count, prefix.Length - position);
+        prefix.Span.Slice(position, read).CopyTo(destination);
+        position += read;
+        return read;
     }
 
     public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (buffer.IsEmpty) return ValueTask.FromResult(0);
-        if (!pending) return source.ReadAsync(buffer, cancellationToken);
-        buffer.Span[0] = first;
-        pending = false;
-        return ValueTask.FromResult(1);
+        if (position == prefix.Length) return source.ReadAsync(buffer, cancellationToken);
+        var read = Math.Min(buffer.Length, prefix.Length - position);
+        prefix.Span.Slice(position, read).CopyTo(buffer.Span);
+        position += read;
+        return ValueTask.FromResult(read);
     }
 
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>

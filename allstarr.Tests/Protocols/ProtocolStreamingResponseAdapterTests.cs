@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace allstarr.Tests;
 
@@ -54,6 +55,27 @@ public sealed class ProtocolStreamingResponseAdapterTests
         Assert.Equal("bytes 8-11/32", context.Response.Headers.ContentRange);
         Assert.Equal("bytes", context.Response.Headers.AcceptRanges);
         Assert.Equal("\"fixture-etag\"", context.Response.Headers.ETag);
+    }
+
+    [Fact]
+    public async Task HeadPreservesKnownArtifactLengthWithoutReadingAnEmptyBody()
+    {
+        using var services = new ServiceCollection().AddLogging().AddControllers().Services.BuildServiceProvider();
+        var context = new DefaultHttpContext { RequestServices = services };
+        context.Request.Method = HttpMethods.Head;
+        context.Response.Body = new MemoryStream();
+        using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([]) };
+        response.Content.Headers.ContentLength = 42;
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/flac");
+        response.Headers.AcceptRanges.Add("bytes");
+
+        var result = await _adapter.CreateAsync(context, response, CancellationToken.None, true);
+        await result.ExecuteResultAsync(new ActionContext(context, new(), new()));
+
+        Assert.Equal(42, context.Response.ContentLength);
+        Assert.Equal("audio/flac", context.Response.ContentType);
+        Assert.Equal("bytes", context.Response.Headers.AcceptRanges);
+        Assert.Equal(0, context.Response.Body.Length);
     }
 
     [Fact]
