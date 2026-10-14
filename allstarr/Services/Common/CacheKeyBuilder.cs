@@ -61,6 +61,9 @@ public static class CacheKeyBuilder
             DigestIdentity(query, cursor, limit));
     }
 
+    public static string BuildPublicUserPlaylistDiscoveryKey(string providerId, string sourceUserId) =>
+        $"playlist:discovery:v3:public-user:{Normalize(providerId)}:{DigestIdentity(sourceUserId)}";
+
     public static string BuildProviderPlaylistDiscoveryAccountPattern(Guid accountId) =>
         $"playlist:discovery:v3:*:{accountId:N}:*";
 

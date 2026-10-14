@@ -220,34 +220,7 @@ public sealed class PlaylistLinksController(
                         },
                         cancellationToken);
                     if (!outcome.IsSuccess)
-                    {
-                        var failure = outcome.Error!;
-                        var status = failure.Kind switch
-                        {
-                            ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
-                            ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
-                            ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
-                            ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
-                            ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
-                            _ => StatusCodes.Status502BadGateway
-                        };
-                        var retryAfterSeconds = failure.RetryAfter is { } retryAfter
-                            ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
-                            : (int?)null;
-                        if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
-                        {
-                            Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
-                                System.Globalization.CultureInfo.InvariantCulture);
-                        }
-                        return StatusCode(status, new
-                        {
-                            error = failure.SafeMessage,
-                            reasonCode = failure.Code,
-                            providerId,
-                            accountId = account.Id,
-                            retryAfterSeconds
-                        });
-                    }
+                        return DiscoveryFailure(outcome.Error!, providerId, account.Id);
                     page = ToDiscoveryCacheEntry(outcome.RequireValue());
                 }
 
@@ -278,6 +251,60 @@ public sealed class PlaylistLinksController(
                 isPartial,
                 snapshotVersion
             });
+        });
+    }
+
+    [HttpGet("/api/admin/playlist-sources/public/{providerId}/playlists")]
+    public Task<IActionResult> BrowsePublicUserPlaylists(string providerId,
+        [FromQuery] string sourceUserId, [FromQuery] string? cursor, [FromQuery] int limit = 100,
+        CancellationToken cancellationToken = default) => Execute(async _ =>
+    {
+        providerId = Required(providerId, nameof(providerId)).ToLowerInvariant();
+        PersistenceGuard.RequirePublicPlaylistSource(providerRegistry, providerId);
+        var request = new ProviderUserPlaylistsRequest(new(Math.Clamp(limit, 1, 100), cursor),
+            Required(sourceUserId, nameof(sourceUserId)));
+        var candidate = await PlanPublicPlaylistSourceAsync(providerId, "public-user-playlist-discovery", cancellationToken);
+        if (candidate == null) return Conflict(new { error = "Public profile discovery is unavailable." });
+        var outcome = await candidate.Implementation.GetUserPlaylistsAsync(candidate.Context, request);
+        if (!outcome.IsSuccess) return DiscoveryFailure(outcome.Error!, providerId, null);
+        var page = ToDiscoveryCacheEntry(outcome.RequireValue());
+        return Ok(new
+        {
+            providerId,
+            accountId = (Guid?)null,
+            items = page.Items.Select(item => ToPlaylistSummaryDto(item, null)),
+            page.NextCursor,
+            page.IsPartial,
+            page.SnapshotVersion
+        });
+    });
+
+    private IActionResult DiscoveryFailure(ProviderError failure, string providerId, Guid? accountId)
+    {
+        var status = failure.Kind switch
+        {
+            ProviderErrorKind.AccountNeedsConfiguration => StatusCodes.Status409Conflict,
+            ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.Unauthorized => StatusCodes.Status401Unauthorized,
+            ProviderErrorKind.Forbidden => StatusCodes.Status403Forbidden,
+            ProviderErrorKind.RateLimited => StatusCodes.Status429TooManyRequests,
+            ProviderErrorKind.NotFound => StatusCodes.Status404NotFound,
+            _ => StatusCodes.Status502BadGateway
+        };
+        var retryAfterSeconds = failure.RetryAfter is { } retryAfter
+            ? Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds))
+            : (int?)null;
+        if (status == StatusCodes.Status429TooManyRequests && retryAfterSeconds.HasValue)
+        {
+            Response.Headers.RetryAfter = retryAfterSeconds.Value.ToString(
+                System.Globalization.CultureInfo.InvariantCulture);
+        }
+        return StatusCode(status, new
+        {
+            error = failure.SafeMessage,
+            reasonCode = failure.Code,
+            providerId,
+            accountId,
+            retryAfterSeconds
         });
     }
 
@@ -1262,7 +1289,7 @@ public sealed class PlaylistLinksController(
         page.IsPartial,
         page.SnapshotVersion);
 
-    private static object ToPlaylistSummaryDto(PlaylistDiscoveryItemCacheEntry value, Guid accountId) => new
+    private static object ToPlaylistSummaryDto(PlaylistDiscoveryItemCacheEntry value, Guid? accountId) => new
     {
         id = value.Id,
         providerId = value.ProviderId,
@@ -1275,7 +1302,7 @@ public sealed class PlaylistLinksController(
         sourceETag = value.SourceETag,
         artworkUrl = !value.HasArtwork
             ? null
-            : $"/api/admin/playlist-sources/{accountId}/playlists/{Uri.EscapeDataString(value.Id)}/artwork?revision={Uri.EscapeDataString(value.ArtworkRevision ?? value.SourceRevision)}",
+            : SourceArtworkUrl(accountId, value.ProviderId, value.Id) + $"?revision={Uri.EscapeDataString(value.ArtworkRevision ?? value.SourceRevision)}",
         artworkReference = value.ArtworkResourceId == null ? null : new
         {
             providerId = value.ArtworkProviderId,

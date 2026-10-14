@@ -1238,6 +1238,24 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.DoesNotContain("x", outcome.Error.SafeMessage, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("source-user")]
+    public async Task PlaylistDiscoveryPassesAnExplicitSourceUserWithoutChangingDefaultAccountRequests(string? sourceUser)
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Playlist, "getUserPlaylists");
+        var sandbox = Sandbox(manifest, """
+            registerExtension({ getUserPlaylists: function(request) {
+              if (request.limit !== 2 || request.cursor !== '3') throw new Error('wrong page');
+              return { items: [{ id: 'playlist-1', name: 'Mix', owner: { providerUserId: request.sourceUserId || 'selected-account' }, sourceRevision: 'r1' }] };
+            } });
+            """);
+        var result = await new ExtensionPlaylistCapabilityAdapter(sandbox, manifest).GetUserPlaylistsAsync(
+            Context(includeAccount: true), new(new ProviderPageRequest(2, "3"), sourceUser));
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        Assert.Equal(sourceUser ?? "selected-account", Assert.Single(result.RequireValue().Items).Owner.ProviderUserId);
+    }
+
     [Fact]
     public async Task Playlist_ReadRequiresSelectedAccountBeforeInvokingExtension()
     {

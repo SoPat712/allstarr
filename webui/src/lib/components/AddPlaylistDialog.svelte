@@ -41,6 +41,9 @@
   let publicProviders = $state<Array<{ id: string; displayName: string }>>([]);
   let publicProviderId = $state("");
   let sourceReference = $state("");
+  let publicUserReference = $state("");
+  let listedPublicUser = $state("");
+  let publicListTruncated = $state(false);
   let blocked = $state(0);
   let targets = $state<MediaTarget[]>([]);
   let targetId = $state("");
@@ -146,6 +149,9 @@
     publicProviders = [];
     publicProviderId = "";
     sourceReference = "";
+    publicUserReference = "";
+    listedPublicUser = "";
+    publicListTruncated = false;
     blocked = 0;
     targets = [];
     targetId = "";
@@ -224,6 +230,9 @@
   async function chooseAccount(id: string) {
     publicProviderId = "";
     sourceReference = "";
+    publicUserReference = "";
+    listedPublicUser = "";
+    publicListTruncated = false;
     accountId = id;
     sourcePlaylistId = "";
     sourceQuery = "";
@@ -244,6 +253,9 @@
     publicProviderId = id;
     sourcePlaylistId = "";
     sourceReference = "";
+    publicUserReference = "";
+    listedPublicUser = "";
+    publicListTruncated = false;
     sourcePlaylists = [];
     sourceCursor = "";
     error = "";
@@ -256,9 +268,22 @@
     error = "";
   }
 
+  function clearPublicProfile() {
+    browseRequest++;
+    loading = false;
+    listedPublicUser = "";
+    sourcePlaylistId = "";
+    sourcePlaylists = [];
+    sourceCursor = "";
+    publicListTruncated = false;
+    error = "";
+  }
+
   async function browseSources(cursor = "") {
-    if (!accountId) return;
     const requestedAccount = accountId;
+    const requestedProvider = publicProviderId;
+    const requestedUser = publicUserReference.trim();
+    if (!requestedAccount && (!requestedProvider || !requestedUser)) return;
     const request = ++browseRequest;
     if (!cursor) {
       sourcePlaylistId = "";
@@ -267,10 +292,15 @@
     loading = true;
     error = "";
     try {
-      const response = await playlistLinks.sourcePlaylists(requestedAccount, sourceQuery.trim(), cursor);
-      if (request !== browseRequest || requestedAccount !== accountId) return;
+      const response = requestedProvider
+        ? await playlistLinks.publicUserPlaylists(requestedProvider, requestedUser, cursor)
+        : await playlistLinks.sourcePlaylists(requestedAccount, sourceQuery.trim(), cursor);
+      if (request !== browseRequest || requestedAccount !== accountId || requestedProvider !== publicProviderId ||
+        (requestedProvider && requestedUser !== publicUserReference.trim())) return;
       sourcePlaylists = cursor ? [...sourcePlaylists, ...response.items] : response.items;
       sourceCursor = response.nextCursor ?? "";
+      listedPublicUser = requestedProvider ? requestedUser : "";
+      publicListTruncated = !!requestedProvider && !!response.isPartial && !response.nextCursor;
     } catch (cause) {
       if (request !== browseRequest) return;
       error = cause instanceof Error ? cause.message : "Source playlists could not be loaded.";
@@ -414,13 +444,22 @@
                 {#if sourcePlaylistId && sourcePlaylistId === sourceReference.trim()}<p class="pl-help">Playlist selected. Access will be checked when the import runs.</p>{/if}
               </section>
             {/if}
-            {#if accountId}
+            {#if publicProviderId === "spotify"}
               <section class="pl-section">
-                <div><h3 id="playlist-add-source">Choose a playlist</h3><p class="pl-help">Showing playlists from {accountTitle(selectedAccount!)}.</p></div>
-                <form class="pl-search" onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
+                <div><h3>Browse a Spotify user</h3><p class="pl-help">Choose a public playlist from a user you follow or another public profile.</p></div>
+                <form class="pl-search" oninput={clearPublicProfile} onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
+                  <SearchField bind:value={publicUserReference} label="Spotify user link, URI or ID" placeholder="Spotify user link, URI or ID" hiddenLabel />
+                  <Button variant="secondary" type="submit" disabled={loading || !publicUserReference.trim()}>Browse playlists</Button>
+                </form>
+              </section>
+            {/if}
+            {#if accountId || listedPublicUser}
+              <section class="pl-section">
+                <div><h3 id="playlist-add-source">Choose a playlist</h3><p class="pl-help">{listedPublicUser ? "Showing public playlists from this Spotify profile." : `Showing playlists from ${accountTitle(selectedAccount!)}.`}</p></div>
+                {#if accountId}<form class="pl-search" onsubmit={(event) => { event.preventDefault(); void browseSources(); }}>
                   <SearchField bind:value={sourceQuery} label="Find a source playlist" placeholder="Search playlists" hiddenLabel />
                   <Button variant="secondary" type="submit" disabled={loading}>Search</Button>
-                </form>
+                </form>{/if}
                 <div class="pl-options" role="radiogroup" aria-labelledby="playlist-add-source">
                   {#if selectedAccount?.providerId === "spotify"}
                     <label class="pl-option" class:active={sourcePlaylistId === "liked-songs"}>
@@ -436,6 +475,7 @@
                     </label>
                   {:else}{#if !loading}<p class="pl-help">No playlists found.</p>{/if}{/each}
                 </div>
+                {#if publicListTruncated}<p class="pl-help">Only the first 1,000 public playlists can be listed. You can paste another playlist link above.</p>{/if}
                 {#if sourceCursor}<Button class="pl-more" variant="secondary" disabled={loading} onclick={() => void browseSources(sourceCursor)}>Load more</Button>{/if}
               </section>
             {/if}

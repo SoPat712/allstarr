@@ -32,7 +32,7 @@ package, while waiting host calls allow other providers to make progress.
 - Metadata returns normalized song, album, artist, identifiers, and artwork facts.
 - Streaming returns an expiring playable response for the requested external track.
 - Download writes through the managed download lifecycle and reports media facts.
-- Playlist lists user-visible playlists and ordered tracks for the selected account.
+- Playlist lists user-visible playlists and ordered tracks for the selected account. The existing `getUserPlaylists` hook receives `limit` and `cursor`, plus optional `sourceUserId` when a caller explicitly requests a source user. Requests without that field keep their original shape.
 - Lyrics returns normalized timed or plain lyrics.
 - Intelligence starts and observes analysis jobs, returns clusters and recommendations, searches
   text or lyrics, finds ordered song paths, blends positive/negative song seeds, pages map points,

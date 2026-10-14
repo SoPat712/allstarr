@@ -1824,11 +1824,18 @@ export const playlistLinks = {
     blockedAccounts: PlaylistSourceAccount[];
     providers: Array<{ id: string; displayName: string; supportsPublicRead?: boolean }>;
   }>("/api/admin/playlist-sources"),
+  publicUserPlaylists: (providerId: string, sourceUserId: string, cursor = "") => {
+    const params = new URLSearchParams({ limit: "100", sourceUserId });
+    if (cursor) params.set("cursor", cursor);
+    return json<{ items: PlaylistDiscoveryItem[]; nextCursor?: string; isPartial: boolean }>(
+      `/api/admin/playlist-sources/public/${encodeURIComponent(providerId)}/playlists?${params}`,
+    );
+  },
   sourcePlaylists: (accountId: string, query = "", cursor = "") => {
     const params = new URLSearchParams({ limit: "100" });
     if (query) params.set("query", query);
     if (cursor) params.set("cursor", cursor);
-    return json<{ items: PlaylistDiscoveryItem[]; nextCursor?: string | null }>(
+    return json<{ items: PlaylistDiscoveryItem[]; nextCursor?: string | null; isPartial?: boolean }>(
       `/api/admin/playlist-sources/${encodeURIComponent(accountId)}/playlists?${params}`,
     );
   },

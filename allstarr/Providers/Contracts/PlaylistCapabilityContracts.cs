@@ -156,12 +156,14 @@ public sealed record ProviderPlaylistTrackPage
 
 public sealed record ProviderUserPlaylistsRequest
 {
-    public ProviderUserPlaylistsRequest(ProviderPageRequest page)
+    public ProviderUserPlaylistsRequest(ProviderPageRequest page, string? sourceUserId = null)
     {
         Page = page ?? throw new ArgumentNullException(nameof(page));
+        SourceUserId = ProviderContractValidation.OptionalText(sourceUserId, nameof(sourceUserId), 500);
     }
 
     public ProviderPageRequest Page { get; }
+    public string? SourceUserId { get; }
 }
 
 public sealed record ProviderPlaylistTracksRequest

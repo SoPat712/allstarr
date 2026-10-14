@@ -29,7 +29,9 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     public ProviderPlaylistMutationSupport MutationSupport { get; } = new(false, false);
 
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(
-        ProviderExecutionContext context, ProviderUserPlaylistsRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
+        ProviderExecutionContext context, ProviderUserPlaylistsRequest request) => request.SourceUserId != null
+        ? Task.FromResult(ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>.Failure(new(ProviderErrorKind.CapabilityUnavailable)))
+        : ExecuteAsync(context, async (credential, storefront, ct) =>
     {
         if (!TryOffset(request.Page.Cursor, out var offset)) return FailurePage();
         var limit = Math.Clamp(request.Page.Limit, 1, 25);

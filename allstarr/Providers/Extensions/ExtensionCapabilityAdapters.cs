@@ -594,7 +594,9 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
         IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Playlist, secrets) { }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(ProviderExecutionContext context, ProviderUserPlaylistsRequest request) =>
-        InvokeAsync(context, "getUserPlaylists", PageRequest(request.Page), value => MapPlaylistPage(value), true);
+        InvokeAsync(context, "getUserPlaylists", request.SourceUserId == null
+            ? PageRequest(request.Page)
+            : new { request.Page.Limit, request.Page.Cursor, request.SourceUserId }, value => MapPlaylistPage(value), true);
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(ProviderExecutionContext context, ProviderPlaylistSearchRequest request) =>
         InvokeAsync(context, "searchPlaylists", new { request.Query, page = PageRequest(request.Page) }, value => MapPlaylistPage(value), true);
     public Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(ProviderExecutionContext context, ProviderPlaylistTracksRequest request)

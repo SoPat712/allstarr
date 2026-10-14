@@ -13,6 +13,106 @@ namespace allstarr.Tests;
 public sealed class SpotifyPlaylistCapabilityAdapterTests
 {
     [Fact]
+    public async Task LargePublicProfilesHaveBoundedTransportAndAnHonestPartialResult()
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true, ProfileCount = 1001, GenerateProfilePlaylists = true };
+        var result = (await new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("unused"))
+            .GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(200, "800"), "profile-owner"))).RequireValue();
+        Assert.Equal(200, result.Items.Count);
+        Assert.Equal("playlist-800", result.Items[0].Id.Value);
+        Assert.Null(result.NextCursor);
+        Assert.True(result.IsPartial);
+        Assert.Equal([1, 1000], handler.ProfileLimits);
+    }
+
+    [Fact]
+    public async Task OversizedPublicProfileResponseFailsSafely()
+    {
+        var handler = new SpotifyFakeHandler
+        {
+            TokenIsAnonymous = true,
+            ProfilePayload = "{\"total_public_playlists_count\":0,\"public_playlists\":[],\"extra\":\"" + new string('x', 4 * 1024 * 1024) + "\"}"
+        };
+        var result = await new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("unused"))
+            .GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(), "profile-owner"));
+        Assert.False(result.IsSuccess);
+        Assert.Equal("provider-contract-changed", result.Error!.Code);
+        Assert.Equal([1], handler.ProfileLimits);
+    }
+
+    [Fact]
+    public async Task PublicProfilePagesReuseOnlyPublicMetadataAndNeverBorrowAnAccount()
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var secrets = new FakeSecretAccessor("unused");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), secrets, cache: new TestMemoryApplicationCache());
+        var first = (await adapter.GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(2), "profile-owner"))).RequireValue();
+        var second = (await adapter.GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(2, first.NextCursor), "profile-owner"))).RequireValue();
+        Assert.Equal(["first", "second"], first.Items.Select(item => item.Id.Value));
+        Assert.Equal("2", first.NextCursor);
+        Assert.True(first.IsPartial);
+        Assert.Equal("third", Assert.Single(second.Items).Id.Value);
+        Assert.Null(second.NextCursor);
+        Assert.Equal([1, 4], handler.ProfileLimits);
+        Assert.False((await adapter.GetUserPlaylistsAsync(Context(), new(new ProviderPageRequest(), "profile-owner"))).IsSuccess);
+        Assert.Empty(secrets.AccountIds);
+        Assert.Null(handler.CookieHeader);
+    }
+
+    [Theory]
+    [InlineData("profile-owner")]
+    [InlineData("spotify:user:profile-owner")]
+    [InlineData("https://open.spotify.com/user/profile-owner?si=ignored")]
+    public async Task PublicUserProfileDiscoveryUsesAnonymousScopeAndStableOrderedPages(string sourceUser)
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var secrets = new FakeSecretAccessor("must-not-be-used");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), secrets);
+        var result = await adapter.GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(2, "1"), sourceUser));
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        var page = result.RequireValue();
+        Assert.Equal(["second", "third"], page.Items.Select(item => item.Id.Value));
+        Assert.Equal(["Second", "Third"], page.Items.Select(item => item.Name));
+        Assert.Equal(["profile-owner", "other-owner"], page.Items.Select(item => item.Owner.ProviderUserId));
+        Assert.Null(page.NextCursor);
+        Assert.False(page.IsPartial);
+        Assert.Equal([1, 4], handler.ProfileLimits);
+        Assert.Empty(secrets.AccountIds);
+        Assert.Null(handler.CookieHeader);
+        Assert.All(handler.ApiPaths, path => Assert.Equal("https://spclient.wg.spotify.com/user-profile-view/v3/profile/profile-owner", path));
+        Assert.Empty(handler.MutationRequests);
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"total_public_playlists_count\":-1,\"public_playlists\":[]}")]
+    [InlineData("{\"total_public_playlists_count\":1}")]
+    [InlineData("{\"total_public_playlists_count\":1,\"public_playlists\":[{\"uri\":\"spotify:playlist:first\",\"name\":\"Missing owner\"}]}")]
+    public async Task PublicUserProfileShapeFailuresReturnSafeCompatibilityErrors(string payload)
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true, ProfilePayload = payload };
+        var outcome = await new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("unused"))
+            .GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(), "profile-owner"));
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal("provider-contract-changed", outcome.Error!.Code);
+        Assert.DoesNotContain(payload, outcome.Error.SafeMessage, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("https://open.spotify.com.evil.test/user/profile-owner")]
+    [InlineData("https://open.spotify.com/user/owner/extra")]
+    [InlineData("spotify:playlist:wrong-resource")]
+    [InlineData("../owner")]
+    public async Task InvalidPublicUserReferenceFailsBeforeAnyTokenRequest(string reference)
+    {
+        var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var outcome = await new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), new FakeSecretAccessor("unused"))
+            .GetUserPlaylistsAsync(PublicContext(), new(new ProviderPageRequest(), reference));
+        Assert.False(outcome.IsSuccess);
+        Assert.Empty(handler.Paths);
+    }
+
+    [Fact]
     public async Task PublicPlaylistReadUsesAnAnonymousTokenWithoutCookiesOrAccountSecrets()
     {
         var handler = new SpotifyFakeHandler { TokenIsAnonymous = true };
@@ -504,6 +604,10 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         public bool TokenIsAnonymous { get; set; }
         public long? TokenExpirationTimestampMs { get; set; }
         public int PlaylistTotalCount { get; set; } = 8;
+        public List<int> ProfileLimits { get; } = [];
+        public string? ProfilePayload { get; set; }
+        public int ProfileCount { get; set; } = 4;
+        public bool GenerateProfilePlaylists { get; set; }
         public List<RequestProfile> WebPlayerProfiles { get; } = [];
         public List<string> MutationRequests { get; } = [];
         public List<string> MutationBodies { get; } = [];
@@ -569,6 +673,30 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                         ? new System.Net.Http.Headers.RetryConditionHeaderValue(DateTimeOffset.UtcNow.AddSeconds(12))
                         : new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(12));
                 return Task.FromResult(failure);
+            }
+            if (request.RequestUri.Host == "spclient.wg.spotify.com")
+            {
+                var limit = int.Parse(request.RequestUri.Query.TrimStart('?').Split('&')
+                    .Single(item => item.StartsWith("playlist_limit=", StringComparison.Ordinal)).Split('=')[1]);
+                ProfileLimits.Add(limit);
+                if (ProfilePayload != null)
+                    return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = new StringContent(ProfilePayload, Encoding.UTF8, "application/json") });
+                if (GenerateProfilePlaylists)
+                    return Task.FromResult(Json(HttpStatusCode.OK, new
+                    {
+                        total_public_playlists_count = ProfileCount,
+                        public_playlists = Enumerable.Range(0, Math.Min(limit, ProfileCount)).Select(index => new
+                        { uri = $"spotify:playlist:playlist-{index}", owner_uri = "spotify:user:profile-owner", name = $"Playlist {index}" })
+                    }));
+                var playlists = new[]
+                {
+                    new { uri = "spotify:playlist:first", owner_uri = "spotify:user:profile-owner", name = "First", revisionId = "first-revision" },
+                    new { uri = "spotify:playlist:second", owner_uri = "spotify:user:profile-owner", name = "Second", revisionId = "second-revision" },
+                    new { uri = "spotify:playlist:second", owner_uri = "spotify:user:profile-owner", name = "Second", revisionId = "second-revision" },
+                    new { uri = "spotify:playlist:third", owner_uri = "spotify:user:other-owner", name = "Third", revisionId = "third-revision" }
+                };
+                return Task.FromResult(Json(HttpStatusCode.OK, new { total_public_playlists_count = ProfileCount, public_playlists = playlists.Take(Math.Min(limit, ProfileCount)) }));
             }
             if (ReturnPersistedQueryError)
                 return Task.FromResult(Json(HttpStatusCode.OK, new
