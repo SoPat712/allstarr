@@ -63,6 +63,7 @@
   let loading = $state(true);
   let detailLoading = $state(false);
   let detailError = $state("");
+  let exportError = $state("");
   let refreshing = $state(false);
   let passiveRefreshing = $state(false);
   let error = $state("");
@@ -249,6 +250,7 @@
     if (changingPlaylist) {
       details = null;
       operationJobId = "";
+      exportError = "";
       trackQuery = "";
       routeFilter = "all";
     }
@@ -333,6 +335,28 @@
     } finally {
       action = "";
     }
+  }
+
+  async function exportMissingSongs(format: "csv" | "json") {
+    if (!selectedId || action) return;
+    const id = selectedId;
+    action = "export";
+    exportError = "";
+    try {
+      const blob = await playlistLinks.missingSongs(id, format);
+      const url = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `missing-songs.${format}`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } finally { URL.revokeObjectURL(url); }
+    } catch (cause) {
+      if (selectedId === id)
+        exportError = cause instanceof Error ? cause.message : "Missing songs could not be exported.";
+    } finally { action = ""; }
   }
 
   async function refreshSources(ids = refreshablePlaylists.map((playlist) => playlist.id)) {
@@ -615,6 +639,9 @@
                     </DropdownMenu.Item>
                   {/if}
                   <DropdownMenu.Separator />
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details.unresolvedCount} onSelect={() => void exportMissingSongs("csv")}>Export missing songs as CSV</DropdownMenu.Item>
+                  <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action) || !details.unresolvedCount} onSelect={() => void exportMissingSongs("json")}>Export missing songs as JSON</DropdownMenu.Item>
+                  <DropdownMenu.Separator />
                   <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => settingsOpen = true}>Edit settings</DropdownMenu.Item>
                   <DropdownMenu.Item class="bits-menu-item" disabled={Boolean(action)} onSelect={() => void run("toggle")}>{selected.enabled ? "Pause" : "Resume"}</DropdownMenu.Item>
                 </DropdownMenu.Content>
@@ -623,6 +650,8 @@
             <Dialog.Close class="icon-button playlist-dialog-close" aria-label="Close playlist details"><X size={18} aria-hidden="true" /></Dialog.Close>
           </div>
         </header>
+
+        {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
         <div class="playlist-view-switcher">
           <span><strong>Playlist view · Mapped for listeners</strong><small>Every source song stays in order and uses its native backend match when available.</small></span>

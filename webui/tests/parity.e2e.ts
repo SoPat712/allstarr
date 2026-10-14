@@ -5590,3 +5590,63 @@ test("Public Spotify profile edits invalidate stale discovery and selection", as
   await expect(dialog.getByRole("radio", { name: /Current public mix/ })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
 });
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`Missing-song export at ${width}px ${colorScheme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await mockApi(page);
+      const format = colorScheme === "light" ? "csv" : "json";
+      let requestedFormat = "";
+      await page.route("**/api/admin/playlist-links/playlist-link/missing-songs?*", (route) => {
+        requestedFormat = new URL(route.request().url()).searchParams.get("format") ?? "";
+        return route.fulfill({ contentType: format === "csv" ? "text/csv" : "application/json",
+          body: format === "csv" ? 'position,title\n2,"Missing song"\n' : JSON.stringify([{ position: 2, title: "Missing song" }]),
+        });
+      });
+      await page.goto("#/library/playlists");
+      await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+      const dialog = page.getByRole("dialog", { name: "Test playlist" });
+      await dialog.getByRole("button", { name: "Actions" }).click();
+      const item = page.getByRole("menuitem", { name: `Export missing songs as ${format.toUpperCase()}` });
+      await expect(item).toBeVisible();
+      await item.focus();
+      const downloaded = page.waitForEvent("download");
+      await item.press("Enter");
+      const file = await downloaded;
+      expect(file.suggestedFilename()).toBe(`missing-songs.${format}`);
+      expect(requestedFormat).toBe(format);
+      const stream = await file.createReadStream();
+      let text = "";
+      for await (const part of stream) text += part.toString();
+      expect(text).toContain("Missing song");
+      await expect(dialog).toBeVisible();
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    });
+  }
+}
+
+test("Missing-song export failures keep playlist details open for retry", async ({ page }) => {
+  await mockApi(page);
+  let requests = 0;
+  await page.route("**/api/admin/playlist-links/playlist-link/missing-songs?*", (route) => {
+    requests++;
+    return requests === 1
+      ? route.fulfill({ status: 403, contentType: "application/json", body: JSON.stringify({ error: "This playlist is outside the authenticated scope" }) })
+      : route.fulfill({ contentType: "text/csv", body: "position,title\n2,Missing song\n" });
+  });
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test playlist" });
+  await dialog.getByRole("button", { name: "Actions" }).click();
+  await page.getByRole("menuitem", { name: "Export missing songs as CSV" }).click();
+  await expect(dialog.getByRole("alert")).toHaveText("This playlist is outside the authenticated scope");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Actions" }).click();
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("menuitem", { name: "Export missing songs as CSV" }).click();
+  expect((await downloaded).suggestedFilename()).toBe("missing-songs.csv");
+  await expect(dialog.getByRole("alert")).toHaveCount(0);
+  expect(requests).toBe(2);
+});

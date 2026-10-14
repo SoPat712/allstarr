@@ -22,6 +22,124 @@ namespace allstarr.Tests;
 public sealed class PlaylistLinksControllerContractTests
 {
     [Theory]
+    [InlineData("csv")]
+    [InlineData("json")]
+    public async Task MissingSongExportUsesThePublishedOwnerSnapshotAndRejectsOtherListeners(string format)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var userId = Guid.CreateVersion7();
+        var linkId = Guid.CreateVersion7();
+        var snapshotId = Guid.CreateVersion7();
+        var externalId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(new UserRecord
+            {
+                Id = userId,
+                BackendType = "jellyfin",
+                BackendInstanceId = "main",
+                BackendPrincipalId = "owner",
+                DisplayName = "Owner",
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now,
+                LastSeenAt = now
+            });
+            db.PlaylistLinks.Add(new PlaylistLinkRecord
+            {
+                Id = linkId,
+                OwnerUserId = userId,
+                SourceProviderId = "spotify",
+                SourcePlaylistId = "public-source",
+                SourcePlaylistIdHash = new string('a', 64),
+                TargetProtocol = "jellyfin",
+                TargetBackendInstanceId = "main",
+                Mode = PlaylistLinkMode.Hybrid,
+                MaterializationMode = PlaylistMaterializationMode.Reconcile,
+                RuleVersion = "rules",
+                PolicyVersion = "policy",
+                Enabled = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.PlaylistSourceSnapshots.Add(new PlaylistSourceSnapshotRecord
+            {
+                Id = snapshotId,
+                OwnerUserId = userId,
+                PlaylistLinkId = linkId,
+                SnapshotVersion = 1,
+                ProviderRevision = "revision",
+                Name = "Published playlist",
+                PayloadSha256 = new string('b', 64),
+                CorrelationId = "export-fixture",
+                RetrievedAt = now,
+                PublishedAt = now
+            });
+            db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+            {
+                Id = externalId,
+                OwnerUserId = userId,
+                BackendInstanceId = "main",
+                BackendPrincipalId = "owner",
+                Protocol = "jellyfin",
+                ProviderId = "spotify",
+                ResourceKind = "Track",
+                ExternalIdHash = new string('c', 64),
+                SnapshotVersion = 1,
+                ProviderRevision = "revision",
+                PayloadSha256 = new string('d', 64),
+                CorrelationId = "export-fixture",
+                RetrievedAt = now,
+                PayloadJson = JsonSerializer.Serialize(new PlaylistSourceMetadata("Missing title", ["Artist"], "Album", 180_000))
+            });
+            db.PlaylistSourceEntries.Add(new PlaylistSourceEntryRecord
+            {
+                Id = Guid.CreateVersion7(),
+                PlaylistSourceSnapshotId = snapshotId,
+                ExternalMetadataSnapshotId = externalId,
+                SourcePosition = 0,
+                SourceEntryIdHash = new string('e', 64)
+            });
+            await db.SaveChangesAsync();
+        }
+        var controller = Controller(factory, projections: new(factory, new TestBackendLibraryAccess(factory, "music")));
+        Assert.IsType<UnauthorizedObjectResult>(await controller.ExportMissingSongs(linkId, format));
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            UserId = "backend-owner",
+            UserName = "Owner",
+            IsAdministrator = false,
+            JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = Guid.CreateVersion7(),
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+            LastSeenUtc = DateTime.UtcNow
+        };
+        var forbidden = Assert.IsType<ObjectResult>(await controller.ExportMissingSongs(linkId, format));
+        Assert.Equal(403, forbidden.StatusCode);
+        controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "session",
+            UserId = "backend-owner",
+            UserName = "Owner",
+            IsAdministrator = false,
+            JellyfinAccessToken = "fixture-token",
+            AllstarrUserId = userId,
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1),
+            LastSeenUtc = DateTime.UtcNow
+        };
+        var file = Assert.IsType<FileContentResult>(await controller.ExportMissingSongs(linkId, format));
+        Assert.Equal($"missing-songs.{format}", file.FileDownloadName);
+        Assert.Contains("Missing title", System.Text.Encoding.UTF8.GetString(file.FileContents), StringComparison.Ordinal);
+        Assert.DoesNotContain(new string('c', 64), System.Text.Encoding.UTF8.GetString(file.FileContents), StringComparison.Ordinal);
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl);
+        Assert.IsType<BadRequestObjectResult>(await controller.ExportMissingSongs(linkId, "xml"));
+        Assert.IsType<NotFoundResult>(await controller.ExportMissingSongs(Guid.CreateVersion7(), format));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task PublicUserDiscoveryRequiresALinkedSessionButNeverLoadsStoredAccounts(bool administrator)
@@ -110,6 +228,7 @@ public sealed class PlaylistLinksControllerContractTests
         {
             [nameof(PlaylistLinksController.List)] = null,
             [nameof(PlaylistLinksController.Details)] = "{id:guid}",
+            [nameof(PlaylistLinksController.ExportMissingSongs)] = "{id:guid}/missing-songs",
             [nameof(PlaylistLinksController.Create)] = null,
             [nameof(PlaylistLinksController.Update)] = "{id:guid}",
             [nameof(PlaylistLinksController.Refresh)] = "{id:guid}/refresh",
@@ -444,10 +563,11 @@ public sealed class PlaylistLinksControllerContractTests
         IPlaylistPersistenceService? playlists = null,
         IPlatformClock? clock = null,
         AdminProtocolExecutionContextFactory? protocolContexts = null,
-        IProviderRegistry? registry = null, IProviderRouter? router = null)
+        IProviderRegistry? registry = null, IProviderRouter? router = null,
+        DurablePlaylistProjectionReader? projections = null)
     {
         var controller = new PlaylistLinksController(
-            contextFactory!, playlists!, null!, null!, null!, null!, null!, registry!, router!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
+            contextFactory!, playlists!, projections!, null!, null!, null!, null!, registry!, router!, null!, null!, null!, clock!, null!, protocolContexts!, null!, null!, null!, null!, null!);
         controller.ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() };
         return controller;
     }
