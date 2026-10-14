@@ -1,35 +1,117 @@
 using System.Text;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using OtpNet;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Settings;
 
 namespace allstarr.Core.Providers.Spotify;
 
-internal sealed record SpotifyWebTokenResult(string? AccessToken, bool IsAnonymous, string? ReasonCode)
+internal sealed record SpotifyWebTokenResult(string? AccessToken, bool IsAnonymous, string? ReasonCode, long? ExpiresAtMilliseconds = null)
 {
     public bool Success => !string.IsNullOrWhiteSpace(AccessToken);
 }
 
-internal static class SpotifyWebTokenExchange
+internal sealed class SpotifyWebTokenExchange(
+    HttpClient http,
+    IProviderAccountSecretAccessor? secretsAccessor,
+    SpotifyApiSettings compatibility,
+    TimeProvider clock)
 {
-    private static readonly Uri SpotifyOrigin = new("https://open.spotify.com/");
+    private readonly SemaphoreSlim exchangeGate = new(1, 1);
+    private readonly Dictionary<TokenScope, SpotifyWebTokenResult> tokens = [];
+    private TotpSecret? cachedSecret;
+    private string? cachedSecretsFingerprint;
+    private DateTimeOffset secretsExpireAt;
 
-    public static async Task<SpotifyWebTokenResult> ExchangeAsync(HttpClient http, string? cookie, CancellationToken cancellationToken, SpotifyApiSettings? settings = null, bool allowAnonymous = false)
+    public async Task<SpotifyWebTokenResult> GetAsync(ProviderAccountContext? account, CancellationToken cancellationToken)
     {
-        settings ??= new();
-        if (!Uri.TryCreate(settings.TotpSecretsUrl, UriKind.Absolute, out var secretsUri) || secretsUri.Scheme != Uri.UriSchemeHttps ||
-            !string.IsNullOrEmpty(secretsUri.UserInfo) || settings.TokenEndpoint is not (SpotifyApiSettings.DefaultTokenEndpoint or "https://api-partner.spotify.com/api/token"))
-            return new(null, false, "invalid_compatibility_settings");
+        var settings = new SpotifyApiSettings
+        { TotpSecretsUrl = compatibility.TotpSecretsUrl, TokenEndpoint = compatibility.TokenEndpoint };
+        if (!ValidSettings(settings)) return new(null, false, "invalid_compatibility_settings");
+        var scope = Scope(account, settings);
+        await exchangeGate.WaitAsync(cancellationToken);
         try
         {
-            using var secretsRequest = new HttpRequestMessage(HttpMethod.Get, secretsUri);
-            SpotifyWebRequestProfile.Apply(secretsRequest);
-            using var secretsResponse = await http.SendAsync(secretsRequest, cancellationToken);
-            if (!secretsResponse.IsSuccessStatusCode) return new(null, false, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
-            var secrets = JsonSerializer.Deserialize<TotpSecret[]>(await secretsResponse.Content.ReadAsStringAsync(cancellationToken));
-            var secret = secrets?.OrderByDescending(item => item.Version).FirstOrDefault();
-            if (secret == null || secret.Secret.Count == 0) return new(null, false, "totp_secrets_invalid");
+            var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
+            foreach (var expired in tokens.Where(item => item.Value.ExpiresAtMilliseconds <= now + 30_000)
+                .Select(item => item.Key).ToArray()) tokens.Remove(expired);
+            if (tokens.TryGetValue(scope, out var cached)) return cached;
+            var result = account == null
+                ? await ExchangeAsync(null, cancellationToken, settings, allowAnonymous: true)
+                : await (secretsAccessor ?? throw new InvalidOperationException("Scoped token reads require a secret accessor."))
+                    .UseAsync(account, secret =>
+                {
+                    var cookie = SpotifySessionCookie.Normalize(Encoding.UTF8.GetString(secret.Span));
+                    return string.IsNullOrWhiteSpace(cookie)
+                        ? Task.FromResult(new SpotifyWebTokenResult(null, false, "account_needs_configuration"))
+                        : ExchangeAsync(cookie, cancellationToken, settings, allowAnonymous: false);
+                }, cancellationToken);
+            if (result.Success && result.ExpiresAtMilliseconds > now + 30_000) tokens[scope] = result;
+            return result;
+        }
+        finally { exchangeGate.Release(); }
+    }
+
+    public async Task InvalidateAsync(ProviderAccountContext? account, string accessToken, CancellationToken cancellationToken)
+    {
+        await exchangeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var scope = Scope(account, compatibility);
+            if (tokens.TryGetValue(scope, out var cached) && cached.AccessToken == accessToken) tokens.Remove(scope);
+        }
+        finally { exchangeGate.Release(); }
+    }
+
+    private static TokenScope Scope(ProviderAccountContext? account, SpotifyApiSettings settings) => new(
+        account?.AccountId, account?.Revision, account?.SecretReferenceId,
+        Fingerprint($"{settings.TotpSecretsUrl}\n{settings.TokenEndpoint}"));
+
+    private static string Fingerprint(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
+
+    private sealed record TokenScope(Guid? AccountId, long? Revision, Guid? SecretReferenceId, string CompatibilityFingerprint);
+
+    private static bool ValidSettings(SpotifyApiSettings settings) =>
+        Uri.TryCreate(settings.TotpSecretsUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
+        string.IsNullOrEmpty(uri.UserInfo) &&
+        settings.TokenEndpoint is SpotifyApiSettings.DefaultTokenEndpoint or "https://api-partner.spotify.com/api/token";
+
+    private static readonly Uri SpotifyOrigin = new("https://open.spotify.com/");
+
+    // Explicit credential probes verify the supplied cookie afresh instead of reusing an operational token.
+    public static Task<SpotifyWebTokenResult> ExchangeAsync(HttpClient http, string? cookie,
+        CancellationToken cancellationToken, SpotifyApiSettings? settings = null, bool allowAnonymous = false)
+    {
+        settings ??= new();
+        return ValidSettings(settings)
+            ? new SpotifyWebTokenExchange(http, null, settings, TimeProvider.System)
+                .ExchangeAsync(cookie, cancellationToken, settings, allowAnonymous)
+            : Task.FromResult(new SpotifyWebTokenResult(null, false, "invalid_compatibility_settings"));
+    }
+
+    private async Task<SpotifyWebTokenResult> ExchangeAsync(string? cookie, CancellationToken cancellationToken,
+        SpotifyApiSettings settings, bool allowAnonymous)
+    {
+        try
+        {
+            var secretsFingerprint = Fingerprint(settings.TotpSecretsUrl);
+            var secret = cachedSecretsFingerprint == secretsFingerprint && clock.GetUtcNow() < secretsExpireAt
+                ? cachedSecret : null;
+            if (secret == null)
+            {
+                using var secretsRequest = new HttpRequestMessage(HttpMethod.Get, settings.TotpSecretsUrl);
+                SpotifyWebRequestProfile.Apply(secretsRequest);
+                using var secretsResponse = await http.SendAsync(secretsRequest, cancellationToken);
+                if (!secretsResponse.IsSuccessStatusCode) return new(null, false, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
+                var secrets = JsonSerializer.Deserialize<TotpSecret[]>(await secretsResponse.Content.ReadAsStringAsync(cancellationToken));
+                secret = secrets?.OrderByDescending(item => item.Version).FirstOrDefault();
+                if (secret == null || secret.Secret.Count == 0) return new(null, false, "totp_secrets_invalid");
+                cachedSecret = secret;
+                cachedSecretsFingerprint = secretsFingerprint;
+                secretsExpireAt = clock.GetUtcNow().AddMinutes(5);
+            }
 
             using var timeRequest = new HttpRequestMessage(HttpMethod.Head, SpotifyOrigin);
             SpotifyWebRequestProfile.Apply(timeRequest);
@@ -40,7 +122,7 @@ internal static class SpotifyWebTokenExchange
             var transformed = secret.Secret.Select((value, index) => (byte)(value ^ ((index % 33) + 9))).ToArray();
             var key = Encoding.UTF8.GetBytes(string.Concat(transformed.Select(value => value.ToString())));
             var otp = new Totp(key, step: 30, totpSize: 6).ComputeTotp(DateTime.UnixEpoch.AddSeconds(serverTime.Value));
-            var clientTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var clientTime = clock.GetUtcNow().ToUnixTimeMilliseconds();
             var uri = new Uri($"{settings.TokenEndpoint}?reason=init&productType=web-player&totp={otp}&totpServer={otp}&totpVer={secret.Version}&sTime={serverTime}&cTime={clientTime}");
             using var request = new HttpRequestMessage(HttpMethod.Get, uri);
             if (!string.IsNullOrWhiteSpace(cookie))
@@ -64,9 +146,9 @@ internal static class SpotifyWebTokenExchange
                 if (allowAnonymous && string.IsNullOrWhiteSpace(cookie) && !token.IsAnonymous)
                     return new(null, false, "unexpected_authenticated_session");
                 if (token.AccessTokenExpirationTimestampMs is { } expiresAt &&
-                    expiresAt <= DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())
+                    expiresAt <= clock.GetUtcNow().ToUnixTimeMilliseconds())
                     return new(null, false, "expired_session");
-                return new(token.AccessToken, token.IsAnonymous, null);
+                return new(token.AccessToken, token.IsAnonymous, null, token.AccessTokenExpirationTimestampMs);
             }
             catch (JsonException) { return new(null, false, "invalid_response"); }
         }

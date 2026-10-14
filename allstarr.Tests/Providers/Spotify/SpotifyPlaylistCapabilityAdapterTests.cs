@@ -10,7 +10,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class SpotifyPlaylistCapabilityAdapterTests
+public sealed partial class SpotifyPlaylistCapabilityAdapterTests
 {
     [Fact]
     public async Task LargePublicProfilesHaveBoundedTransportAndAnHonestPartialResult()
@@ -590,6 +590,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
 
     private sealed class SpotifyFakeHandler : HttpMessageHandler
     {
+        public TaskCompletionSource? TokenRequested { get; set; }
+        public Task? TokenRelease { get; set; }
         public HttpStatusCode TokenStatus { get; set; } = HttpStatusCode.OK;
         public HttpStatusCode? ApiStatus { get; set; }
         public string? CookieHeader { get; private set; }
@@ -601,6 +603,7 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         public bool ReturnPersistedQueryError { get; set; }
         public bool ReturnAlternativeLibraryEnvelope { get; set; }
         public bool ReturnMalformedTrack { get; set; }
+        public string TokenValue { get; set; } = "account-access-token";
         public bool TokenIsAnonymous { get; set; }
         public long? TokenExpirationTimestampMs { get; set; }
         public int PlaylistTotalCount { get; set; } = 8;
@@ -641,12 +644,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                     return Task.FromResult(time);
                 }
                 CookieHeader = request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single() : null;
-                return Task.FromResult(Json(TokenStatus, new
-                {
-                    accessToken = "account-access-token",
-                    isAnonymous = TokenIsAnonymous,
-                    accessTokenExpirationTimestampMs = TokenExpirationTimestampMs
-                }));
+                TokenRequested?.TrySetResult();
+                return TokenResponseAsync(cancellationToken);
             }
 
             ApiAuthorizationHeaders.Add(request.Headers.Authorization!.ToString());
@@ -724,6 +723,17 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
                         ? AlternativeLibraryResponse()
                         : LibraryResponse()));
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+        }
+
+        private async Task<HttpResponseMessage> TokenResponseAsync(CancellationToken cancellationToken)
+        {
+            if (TokenRelease != null) await TokenRelease.WaitAsync(cancellationToken);
+            return Json(TokenStatus, new
+            {
+                accessToken = TokenValue,
+                isAnonymous = TokenIsAnonymous,
+                accessTokenExpirationTimestampMs = TokenExpirationTimestampMs
+            });
         }
 
         private static object PlaylistData() => new
