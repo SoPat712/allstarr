@@ -15,7 +15,8 @@ public static class SpotifyPlaylistCapabilityRegistration
             provider.GetRequiredService<IHttpClientFactory>(),
             provider.GetRequiredService<IProviderAccountSecretAccessor>(),
             provider.GetRequiredService<IApplicationCache>(),
-            provider.GetRequiredService<ILogger<SpotifyPathfinderPlaylistClient>>()));
+            provider.GetRequiredService<ILogger<SpotifyPathfinderPlaylistClient>>(),
+            provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.SpotifyApiSettings>>()));
         services.AddSingleton<ProviderRegistration>(provider =>
             SpotifyPlaylistCapabilityAdapter.CreateRegistration(
                 provider.GetRequiredService<SpotifyPlaylistCapabilityAdapter>(),

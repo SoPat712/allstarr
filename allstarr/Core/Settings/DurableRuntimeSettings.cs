@@ -161,6 +161,12 @@ public static class RuntimeSettingCatalog
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);
         items.Add(new("SpotifyApi:LyricsApiUrl", RuntimeSettingValueType.String,
             "SpotifyApi:LyricsApiUrl", AllowEmpty: true));
+        items.Add(new("SpotifyApi:PathfinderEndpoint", RuntimeSettingValueType.String, "SpotifyApi:PathfinderEndpoint", DefaultValue: SpotifyApiSettings.DefaultPathfinderEndpoint, Choices: new HashSet<string>([SpotifyApiSettings.DefaultPathfinderEndpoint, "https://api-partner.spotify.com/pathfinder/v2/query"], Comparer)));
+        items.Add(new("SpotifyApi:LibraryQueryHash", RuntimeSettingValueType.String, "SpotifyApi:LibraryQueryHash", DefaultValue: SpotifyApiSettings.DefaultLibraryQueryHash));
+        items.Add(new("SpotifyApi:PlaylistQueryHash", RuntimeSettingValueType.String, "SpotifyApi:PlaylistQueryHash", DefaultValue: SpotifyApiSettings.DefaultPlaylistQueryHash));
+        items.Add(new("SpotifyApi:LikedSongsQueryHash", RuntimeSettingValueType.String, "SpotifyApi:LikedSongsQueryHash", DefaultValue: SpotifyApiSettings.DefaultLikedSongsQueryHash));
+        items.Add(new("SpotifyApi:TotpSecretsUrl", RuntimeSettingValueType.String, "SpotifyApi:TotpSecretsUrl", DefaultValue: SpotifyApiSettings.DefaultTotpSecretsUrl));
+        items.Add(new("SpotifyApi:TokenEndpoint", RuntimeSettingValueType.String, "SpotifyApi:TokenEndpoint", DefaultValue: SpotifyApiSettings.DefaultTokenEndpoint, Choices: new HashSet<string>([SpotifyApiSettings.DefaultTokenEndpoint, "https://api-partner.spotify.com/api/token"], Comparer)));
         Bool("SpotifyApi:PreferIsrcMatching"); Bool("SpotifyImport:Enabled");
         Int("SpotifyImport:MatchingIntervalHours", 0, 8760);
         items.Add(new("SpotifyImport:Playlists", RuntimeSettingValueType.String,
@@ -564,6 +570,12 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (definition.Key == "Library:PlaylistsDirectory" &&
             (value is "." or ".." || value.Contains('/') || value.Contains('\\') || value.Contains('\0')))
             throw new ArgumentException("Library:PlaylistsDirectory must be a single safe directory name.");
+        if (definition.Key.StartsWith("SpotifyApi:", StringComparison.Ordinal) && definition.Key.EndsWith("QueryHash", StringComparison.Ordinal) &&
+            (value.Length != 64 || !value.All(Uri.IsHexDigit)))
+            throw new ArgumentException("Spotify query hashes must contain exactly 64 hexadecimal characters.");
+        if (definition.Key == "SpotifyApi:TotpSecretsUrl" &&
+            (!Uri.TryCreate(value, UriKind.Absolute, out var secretsUri) || secretsUri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(secretsUri.UserInfo)))
+            throw new ArgumentException("The public TOTP secrets URL must use HTTPS without credentials.");
         var canonical = definition.Choices?.FirstOrDefault(item => item.Equals(value, StringComparison.OrdinalIgnoreCase)) ?? value;
         return (canonical, canonical, JsonSerializer.Serialize(canonical, JsonOptions));
     }
@@ -712,6 +724,12 @@ public sealed class RuntimeSettingsLiveOptions
                 if (string.IsNullOrWhiteSpace(_bootstrapAppleBaseUrl)) _apple.BaseUrl = (string)value;
                 break;
             case "MusicBrainz:Enabled": _musicBrainz.Enabled = (bool)value; break;
+            case "SpotifyApi:PathfinderEndpoint": _spotifyApi.PathfinderEndpoint = (string)value; break;
+            case "SpotifyApi:LibraryQueryHash": _spotifyApi.LibraryQueryHash = (string)value; break;
+            case "SpotifyApi:PlaylistQueryHash": _spotifyApi.PlaylistQueryHash = (string)value; break;
+            case "SpotifyApi:LikedSongsQueryHash": _spotifyApi.LikedSongsQueryHash = (string)value; break;
+            case "SpotifyApi:TotpSecretsUrl": _spotifyApi.TotpSecretsUrl = (string)value; break;
+            case "SpotifyApi:TokenEndpoint": _spotifyApi.TokenEndpoint = (string)value; break;
             case "SpotifyApi:Enabled": _spotifyApi.Enabled = (bool)value; break;
             case "SpotifyApi:CacheDurationMinutes": _spotifyApi.CacheDurationMinutes = (int)value; break;
             case "SpotifyApi:RateLimitDelayMs": _spotifyApi.RateLimitDelayMs = (int)value; break;

@@ -8,6 +8,8 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Playlists.Sources;
 using allstarr.Core.Secrets;
 using allstarr.Services.Common;
+using allstarr.Models.Settings;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Providers.Spotify;
 
@@ -41,6 +43,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     public const string StableProviderId = "spotify";
     public const string HttpClientName = "SpotifyAccountBound";
     private static readonly Uri WebApiOrigin = new("https://api.spotify.com/");
+    private readonly SpotifyApiSettings _settings;
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly SpotifyPathfinderPlaylistClient _pathfinder;
@@ -51,19 +54,22 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
         IHttpClientFactory clients,
         IProviderAccountSecretAccessor secrets,
         IApplicationCache cache,
-        ILogger<SpotifyPathfinderPlaylistClient> logger)
-        : this(clients.CreateClient(HttpClientName), secrets, logger, cache) { }
+        ILogger<SpotifyPathfinderPlaylistClient> logger,
+        IOptions<SpotifyApiSettings>? settings = null)
+        : this(clients.CreateClient(HttpClientName), secrets, logger, cache, settings?.Value) { }
 
     public SpotifyPlaylistCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
         ILogger<SpotifyPathfinderPlaylistClient>? logger = null,
-        IApplicationCache? cache = null)
+        IApplicationCache? cache = null,
+        SpotifyApiSettings? settings = null)
     {
+        _settings = settings ?? new();
         _http = http;
         _secrets = secrets;
         _logger = logger;
-        _pathfinder = new SpotifyPathfinderPlaylistClient(http, cache, logger);
+        _pathfinder = new SpotifyPathfinderPlaylistClient(http, cache, logger, _settings);
     }
 
     public string ProviderId => StableProviderId;
@@ -381,7 +387,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
 
     private async Task<TokenResult> ExchangeCookieAsync(string cookie, CancellationToken cancellationToken)
     {
-        var result = await SpotifyWebTokenExchange.ExchangeAsync(_http, SpotifySessionCookie.Normalize(cookie)!, cancellationToken);
+        var result = await SpotifyWebTokenExchange.ExchangeAsync(_http, SpotifySessionCookie.Normalize(cookie)!, cancellationToken, _settings);
         if (result.Success) return new(ProviderOutcome<byte[]>.Success([]), result.AccessToken);
         var kind = result.ReasonCode switch
         {

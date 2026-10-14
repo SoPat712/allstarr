@@ -54,6 +54,30 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
         Assert.DoesNotContain("image-cdn", serialized, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task LikedSongsReadsOnlyTheSelectedEncryptedAccountAndRejectsAnonymousTokens()
+    {
+        var handler = new SpotifyFakeHandler();
+        var secrets = new FakeSecretAccessor("selected-cookie");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(handler), secrets);
+        var context = Context();
+        var request = new ProviderPlaylistTracksRequest(new("spotify", ProviderResourceKind.Playlist, "liked-songs"), new ProviderPageRequest(2));
+        var outcome = await adapter.GetPlaylistTracksAsync(context, request);
+        Assert.True(outcome.IsSuccess);
+        Assert.Equal("Liked Songs", outcome.RequireValue().Playlist.Name);
+        Assert.Equal(context.Account!.AccountId, Assert.Single(secrets.AccountIds));
+        Assert.Equal("sp_dc=selected-cookie", handler.CookieHeader);
+        Assert.Contains(handler.Paths, path => path.Contains("operationName=fetchLibraryTracks", StringComparison.Ordinal));
+        Assert.Empty(handler.MutationRequests);
+
+        var anonymous = new SpotifyFakeHandler { TokenIsAnonymous = true };
+        var denied = await new SpotifyPlaylistCapabilityAdapter(new HttpClient(anonymous), new FakeSecretAccessor("cookie"))
+            .GetPlaylistTracksAsync(Context(), request);
+        Assert.False(denied.IsSuccess);
+        Assert.Equal(ProviderErrorKind.Unauthorized, denied.Error!.Kind);
+        Assert.Empty(anonymous.ApiPaths);
+    }
+
     [Theory]
     [InlineData("sp_dc=account-cookie-secret")]
     [InlineData("other=value; sp_dc=account-cookie-secret; another=value")]
@@ -513,6 +537,8 @@ public sealed class SpotifyPlaylistCapabilityAdapterTests
 
             var decoded = Uri.UnescapeDataString(request.RequestUri.Query);
             Paths[^1] = $"{request.RequestUri.AbsolutePath}{decoded}";
+            if (decoded.Contains("operationName=fetchLibraryTracks", StringComparison.Ordinal))
+                return Task.FromResult(Json(HttpStatusCode.OK, new { data = new { me = new { library = new { tracks = new { totalCount = 0, items = System.Array.Empty<object>() } } } } }));
             if (decoded.Contains("operationName=fetchPlaylist", StringComparison.Ordinal))
                 return Task.FromResult(Json(HttpStatusCode.OK, PlaylistResponse()));
             if (decoded.Contains("operationName=libraryV3", StringComparison.Ordinal))

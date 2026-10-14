@@ -49,6 +49,14 @@ AudioMuse-AI is a built-in Intelligence integration rather than an extension. It
 
 Shared accounts are eligible for household use only while enabled and authorized for the requested capability. They do not grant access to any backend library or another user's private playlist management.
 
+## Spotify playlist compatibility
+
+Spotify playlist reads use the selected encrypted account. Import requests accept a playlist ID, `spotify:playlist:` URI, or an `https://open.spotify.com/playlist/…` link; tracking parameters and fragments are discarded before persistence. The logical source ID `liked-songs` reads that account's Liked Songs through the same paged playlist pipeline and preserves Spotify's returned order.
+
+Administrators can edit compatibility fields under **Integrations → Services → Spotify** without restarting: Pathfinder endpoint, library/playlist/Liked Songs query hashes, token endpoint, and the public TOTP secrets URL. The shipped v1 endpoint and existing hashes remain the defaults. Selecting Spotify's v2 endpoint sends the corresponding POST query envelope. Query hashes require 64 hexadecimal characters; token-bearing endpoints are restricted to the supported Spotify URLs, and the public secrets URL requires HTTPS without embedded credentials. Credentials remain in Accounts.
+
+A persisted-query failure reports a provider contract change. Check the compatibility fields against a trusted current source before changing them; token failures remain account errors, and an incompatible response does not publish a partial playlist snapshot.
+
 ## Backend setup
 
 `BACKEND_TYPE` selects Jellyfin or Subsonic/OpenSubsonic before startup. Backend URL, credentials, instance identity, library selection, and user mapping are completed through onboarding and durable configuration. An imported legacy file must not switch the active backend.
