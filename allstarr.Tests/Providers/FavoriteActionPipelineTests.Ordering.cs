@@ -1,5 +1,6 @@
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -182,7 +183,53 @@ public sealed partial class FavoriteActionPipelineTests
     {
         public string ActionType => "download";
         public Task<FavoriteActionExecutionResult> ExecuteAsync(FavoriteEventRecord favoriteEvent, FavoriteActionRecord action,
-            CancellationToken cancellationToken) => execute();
+            int executionAttempt, CancellationToken cancellationToken) => execute();
+    }
+
+    [Fact]
+    public async Task CanonicalFavoriteReusesOnlyAnAccessibleLocalRecording()
+    {
+        var recordingId = Guid.CreateVersion7();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.CanonicalRecordings.Add(new()
+            {
+                Id = recordingId,
+                CreatedByUserId = _userId,
+                Title = "Local recording",
+                PublicId = CanonicalRecordingRecord.DefaultPublicId(recordingId),
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            db.LibraryTracks.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = _userId,
+                CanonicalRecordingId = recordingId,
+                BackendLibraryId = "music",
+                Protocol = "jellyfin",
+                BackendInstanceId = "jellyfin-main",
+                BackendItemId = "local-canonical",
+                FilePath = "/source/never-written.flac",
+                Title = "Local recording",
+                Artist = "Artist",
+                IndexedAt = _clock.UtcNow,
+                SourceModifiedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var favorite = new FavoriteEventRecord
+        {
+            OwnerUserId = _userId,
+            Protocol = "jellyfin",
+            BackendInstanceId = "jellyfin-main",
+            ItemId = CanonicalRecordingRecord.DefaultPublicId(recordingId)
+        };
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        Assert.True(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, access, favorite, default));
+        access.Permissions[_userId] = BackendLibraryAccess.Unavailable;
+        Assert.False(await FavoriteDownloadActionExecutor.HasLocalMatchAsync(_factory, access, favorite, default));
     }
 
     [Theory]

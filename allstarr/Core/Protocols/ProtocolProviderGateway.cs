@@ -654,6 +654,13 @@ public sealed partial class ProtocolProviderGateway(
         string externalId)
     {
         var routedProviderId = NormalizeProvider(providerId);
+        if (keptFiles != null && protocol.Actor is { } actor)
+        {
+            var retained = await keptFiles.FindSongAsync(actor,
+                $"ext-{routedProviderId}-song-{externalId}", protocol.CancellationToken);
+            if (retained != null)
+                return (await ResolveEffectivePolicyAsync(protocol))?.Includes(retained) == false ? null : retained;
+        }
         if (routedProviderId == "allstarr") return await GetKnownSongAsync(protocol, routedProviderId, externalId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");

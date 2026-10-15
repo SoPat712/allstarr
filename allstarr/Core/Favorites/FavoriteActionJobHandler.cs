@@ -142,7 +142,7 @@ public sealed class FavoriteActionJobHandler(
                 {
                     try
                     {
-                        result = await executor.ExecuteAsync(favoriteEvent, action, cancellationToken);
+                        result = await executor.ExecuteAsync(favoriteEvent, action, context.Claim.AttemptNumber, cancellationToken);
                     }
                     catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                     {

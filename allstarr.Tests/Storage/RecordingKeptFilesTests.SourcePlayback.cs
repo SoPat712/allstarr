@@ -132,7 +132,7 @@ public sealed partial class RecordingKeptFilesTests
             sourceTrack: new("deezer", ProviderResourceKind.Track, "source-track"), sourceAccountRevision: 0);
         var secondRequest = new KeptRecordingPublication(
             secondRecording, other, secondJob, secondArtifact.Id, "deezer",
-            $"heart:{other:N}:{secondRecording:N}", new("Fixture other", "Artist", Extension: ".flac"))
+            $"keep:fixture:{other:N}:{secondRecording:N}", new("Fixture other", "Artist", Extension: ".flac"))
         { AttemptNumber = 1 };
         await Service().PublishAsync(secondRequest);
 

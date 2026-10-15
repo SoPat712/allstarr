@@ -18,6 +18,7 @@ public sealed record KeptRecordingPublication(
     ManagedTrackPathValues Track)
 {
     public int AttemptNumber { get; init; }
+    public KeptRecordingMetadata? Metadata { get; init; }
 }
 
 public sealed record KeptRecordingFile(Guid RecordingId, Guid ManagedFileId, long Length,
@@ -30,12 +31,13 @@ public sealed class RecordingKeptRouteEntity
     public Guid PublishedByUserId { get; set; }
     public Guid PublicationJobId { get; set; }
     public Guid SourceArtifactId { get; set; }
+    public string? DisplayMetadataJson { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long Revision { get; set; }
 }
 
-public sealed class RecordingKeptFiles(
+public sealed partial class RecordingKeptFiles(
     IDbContextFactory<AllstarrDbContext> factory,
     ProviderDownloadArtifactResolver artifacts,
     IServiceScopeFactory scopes,
@@ -53,6 +55,8 @@ public sealed class RecordingKeptFiles(
             string.IsNullOrWhiteSpace(publication.ReferenceKey) || publication.ReferenceKey.Length > 1000 ||
             publication.ReferenceKey.StartsWith("pending:kept:", StringComparison.Ordinal))
             throw Denied();
+        var metadata = SerializeMetadata(publication.Metadata ?? new(publication.Track.Title,
+            [publication.Track.Artist], publication.Track.Album));
         var proof = await AuthorizeAsync(publication, cancellationToken);
         var source = await artifacts.FindByJobAsync(publication.DurableJobId, publication.SourceProviderId, cancellationToken);
         if (source == null || source.Id != publication.SourceArtifactId || source.State != ProviderDownloadArtifactState.Verified ||
@@ -144,6 +148,7 @@ public sealed class RecordingKeptFiles(
                     route.PublishedByUserId = publication.InitiatingUserId;
                     route.PublicationJobId = publication.DurableJobId;
                     route.SourceArtifactId = publication.SourceArtifactId;
+                    route.DisplayMetadataJson = metadata;
                     route.UpdatedAt = clock.UtcNow;
                     route.Revision++;
                     db.AuditEvents.Add(new()
@@ -182,20 +187,9 @@ public sealed class RecordingKeptFiles(
         if (actor.EffectiveUserId == null) return null;
         try
         {
-            var known = await identities.ResolveRecordingAsync(actor,
+            var recordingId = await ResolveKeptRecordingIdAsync(actor,
                 $"ext-{source.ProviderId}-song-{source.Value}", cancellationToken);
-            if (known != null) return await FindAsync(actor, known.Id, cancellationToken);
-            // Publication explicitly shared these bytes and retained their exact source.
-            // This lookup does not reactivate or authorize the retired personal account.
-            await using var db = await factory.CreateDbContextAsync(cancellationToken);
-            var published = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
-                                   join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking()
-                                       on route.SourceArtifactId equals artifact.Id
-                                   join recording in db.CanonicalRecordings.AsNoTracking()
-                                       on route.CanonicalRecordingId equals recording.Id
-                                   where artifact.ProviderId == source.ProviderId && artifact.SourceExternalTrackId == source.Value
-                                   select recording.MergedIntoId ?? recording.Id).Distinct().Take(2).ToArrayAsync(cancellationToken);
-            return published.Length == 1 ? await FindAsync(actor, published[0], cancellationToken) : null;
+            return recordingId == null ? null : await FindAsync(actor, recordingId.Value, cancellationToken);
         }
         catch (UnauthorizedAccessException) { return null; }
     }
@@ -278,6 +272,7 @@ public sealed class RecordingKeptFiles(
             item.State == ProviderDownloadArtifactState.Verified && item.SourceExternalTrackId != null, cancellationToken);
         if (job == null || artifact == null || !await db.Users.AnyAsync(item =>
                 item.Id == request.InitiatingUserId && item.Enabled, cancellationToken)) throw Denied();
+        await AuthorizeFavoritePublicationAsync(db, job, request, cancellationToken);
         if (!await db.Set<ProviderDownloadWorkspaceEntity>().AsNoTracking().AnyAsync(workspace =>
                 workspace.Id == artifact.WorkspaceRecordId && workspace.WorkspaceId == artifact.WorkspaceId &&
                 workspace.OwnerUserId == artifact.OwnerUserId && workspace.DurableJobId == artifact.DurableJobId &&

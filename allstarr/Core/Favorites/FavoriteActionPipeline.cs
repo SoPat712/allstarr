@@ -289,5 +289,5 @@ public interface IFavoriteActionExecutor
 {
     string ActionType { get; }
     Task<FavoriteActionExecutionResult> ExecuteAsync(FavoriteEventRecord favoriteEvent,
-        FavoriteActionRecord action, CancellationToken cancellationToken);
+        FavoriteActionRecord action, int executionAttempt, CancellationToken cancellationToken);
 }
