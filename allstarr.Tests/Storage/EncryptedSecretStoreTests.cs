@@ -16,7 +16,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
 
-public sealed class EncryptedSecretStoreTests : IAsyncLifetime
+public sealed partial class EncryptedSecretStoreTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),

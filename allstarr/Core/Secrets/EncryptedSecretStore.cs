@@ -225,9 +225,21 @@ public sealed class EncryptedSecretStore
         if (!referenceAllowed)
             throw new UnauthorizedAccessException("The credential does not belong to the selected provider account.");
 
-        return await OpenAsync(current.SecretReferenceId.Value,
+        var lease = await OpenAsync(current.SecretReferenceId.Value,
             new SecretAccessContext(current.OwnerUserId, purpose, AllowShared: current.OwnerUserId == null),
             cancellationToken);
+        try
+        {
+            if (!await context.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Id == account.AccountId && item.Enabled &&
+                    item.ProviderId == account.ProviderId && item.Revision == account.Revision &&
+                    item.OwnerUserId == account.OwnerUserId && item.SecretReferenceId == account.SecretReferenceId &&
+                    context.SecretReferences.Any(reference => reference.Id == item.SecretReferenceId && reference.RevokedAt == null &&
+                        reference.UserId == item.OwnerUserId && reference.Purpose == purpose) &&
+                    (item.OwnerUserId == null || context.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)), cancellationToken))
+                throw new UnauthorizedAccessException("The provider account changed while its credentials were being opened.");
+            return lease;
+        }
+        catch { lease.Dispose(); throw; }
     }
 
     public async Task<BackendCredentialGrant?> GetSubsonicPlaylistGrantAsync(
