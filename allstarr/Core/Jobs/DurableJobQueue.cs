@@ -112,7 +112,7 @@ public sealed class DurableJobQueue
             request.ProviderAccountId,
             request.Capability,
             request.CorrelationId,
-            cancellationToken);
+            cancellationToken, request.Type.Trim().ToLowerInvariant());
         var scopeKey = CreateUserScopeKey(
             savedContext.OwnerUserId);
         var type = request.Type.Trim().ToLowerInvariant();
@@ -193,7 +193,7 @@ public sealed class DurableJobQueue
         var payloadJson = _payloadPolicy.SerializeAndValidate(request.Payload);
         var savedContext = await _contextAuthorizer.AuthorizeEnqueueAsync(
             request.OwnerUserId, request.ProviderAccountId,
-            request.Capability, request.CorrelationId, cancellationToken);
+            request.Capability, request.CorrelationId, cancellationToken, request.Type.Trim().ToLowerInvariant());
         var scopeKey = CreateUserScopeKey(savedContext.OwnerUserId);
         var type = request.Type.Trim().ToLowerInvariant();
         var idempotencyKey = request.IdempotencyKey.Trim();

@@ -4,6 +4,7 @@ using System.Text.Json;
 using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
+using allstarr.Core.ManagedFiles;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Jobs;
@@ -57,7 +58,8 @@ public sealed class DurableJobContextAuthorizer
         Guid? providerAccountId,
         string? capability,
         string? correlationId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? jobType = null)
     {
         if (!ownerUserId.HasValue || ownerUserId == Guid.Empty)
         {
@@ -65,11 +67,14 @@ public sealed class DurableJobContextAuthorizer
                 "Durable jobs require the initiating user.");
         }
 
+        var householdCleanup = jobType == RecordingKeptFiles.KeptCleanupJobType;
+        if (householdCleanup && (providerAccountId.HasValue || capability != null))
+            throw new ArgumentException("Household kept cleanup cannot carry provider authority.");
         var normalizedCapability = NormalizeCapability(capability, providerAccountId.HasValue);
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var userIsActive = await context.Users.AsNoTracking().AnyAsync(
             item => item.Id == ownerUserId.Value &&
-                    item.Enabled,
+                    (item.Enabled || householdCleanup),
             cancellationToken);
         if (!userIsActive)
         {
@@ -101,7 +106,7 @@ public sealed class DurableJobContextAuthorizer
             }
         }
 
-        var snapshot = BuildSnapshot(account, normalizedCapability);
+        var snapshot = householdCleanup ? CleanupSnapshot() : BuildSnapshot(account, normalizedCapability);
         return new DurableJobSavedContext(
             ownerUserId.Value,
             providerAccountId,
@@ -136,6 +141,21 @@ public sealed class DurableJobContextAuthorizer
             return DurableJobContextAuthorization.Deny(
                 "job_policy_snapshot_invalid",
                 "The durable job policy snapshot is missing or unsupported.");
+        }
+
+        if (claim.Type == RecordingKeptFiles.KeptCleanupJobType ||
+            savedSnapshot.AuthorizationRule == "household_kept_cleanup")
+        {
+            if (claim.Type != RecordingKeptFiles.KeptCleanupJobType || savedSnapshot != CleanupSnapshot() ||
+                claim.ProviderAccountId != null || claim.ProviderCapability != null)
+                return DurableJobContextAuthorization.Deny("job_policy_snapshot_mismatch",
+                    "The housekeeping policy does not match this exact cleanup job.");
+            await using var cleanupContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            return await cleanupContext.Users.AsNoTracking().AnyAsync(item => item.Id == claim.OwnerUserId,
+                cancellationToken)
+                ? DurableJobContextAuthorization.Allow()
+                : DurableJobContextAuthorization.Deny("job_initiator_unauthorized",
+                    "The cleanup job no longer has its recorded initiating user.");
         }
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
@@ -194,6 +214,9 @@ public sealed class DurableJobContextAuthorizer
                 "job_policy_snapshot_mismatch",
                 "The saved provider policy no longer authorizes this exact execution context.");
     }
+
+    private static DurableJobPolicySnapshot CleanupSnapshot() =>
+        new(SnapshotVersion, "household_kept_cleanup", null, null, null);
 
     private DurableJobPolicySnapshot BuildSnapshot(
         ProviderAccountRecord? account,

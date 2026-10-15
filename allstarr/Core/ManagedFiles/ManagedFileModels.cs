@@ -89,6 +89,8 @@ public sealed record ManagedFilePlacementResult(ManagedFileRecord File, bool Reu
 public interface IManagedFileOwnershipStore
 {
     Task<ManagedFileRecord?> FindByPathAsync(string canonicalPath, CancellationToken cancellationToken);
+    async Task<bool> IsPathReservedAsync(string canonicalPath, CancellationToken cancellationToken) =>
+        await FindByPathAsync(canonicalPath, cancellationToken) != null;
     Task<ManagedFileRecord?> FindCompatibleAsync(Guid rootId, string contentSha256, string scopeKey, CancellationToken cancellationToken);
     Task<ManagedFileRecord> AddAsync(ManagedFileRecord record, ManagedFileReference reference, CancellationToken cancellationToken);
     Task<ManagedFileRecord> AddReferenceAsync(Guid id, ManagedFileReference reference, CancellationToken cancellationToken);

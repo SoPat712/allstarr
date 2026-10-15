@@ -2,6 +2,7 @@ using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
+using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -44,7 +45,8 @@ public sealed partial class RecordingKeptFiles(
     ManagedTrackPlacementOptions placement,
     ITrackIdentityService identities,
     IPlatformClock clock,
-    ILogger<RecordingKeptFiles>? logger = null)
+    ILogger<RecordingKeptFiles>? logger = null,
+    DurableJobQueue? jobs = null)
 {
     public async Task<KeptRecordingFile> PublishAsync(KeptRecordingPublication publication,
         CancellationToken cancellationToken = default)

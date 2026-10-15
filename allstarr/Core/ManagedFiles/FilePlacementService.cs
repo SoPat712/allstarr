@@ -250,7 +250,8 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
 
     private async Task<string> ResolveCollisionAsync(string requested, string fingerprint, CancellationToken cancellationToken)
     {
-        if (!File.Exists(requested) && !Directory.Exists(requested)) return requested;
+        if (!File.Exists(requested) && !Directory.Exists(requested) &&
+            !await ownership.IsPathReservedAsync(requested, cancellationToken)) return requested;
         var directory = Path.GetDirectoryName(requested)!;
         var stem = Path.GetFileNameWithoutExtension(requested);
         var extension = Path.GetExtension(requested);
@@ -258,7 +259,8 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         {
             var suffix = attempt == 0 ? fingerprint[..12] : $"{fingerprint[..12]}-{attempt}";
             var candidate = Path.Combine(directory, $"{stem} [{suffix}]{extension}");
-            if (!File.Exists(candidate) && !Directory.Exists(candidate)) return candidate;
+            if (!File.Exists(candidate) && !Directory.Exists(candidate) &&
+                !await ownership.IsPathReservedAsync(candidate, cancellationToken)) return candidate;
         }
         throw new IOException("Unable to resolve a safe managed-file name collision.");
     }
