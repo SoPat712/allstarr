@@ -128,6 +128,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly IProviderRegistry? _registry;
+    private readonly allstarr.Core.ManagedFiles.RecordingKeptFiles? _kept;
     public PlaylistPersistenceService(
         IDbContextFactory<AllstarrDbContext> factory,
         ProviderAccountResolver accounts,
@@ -135,9 +136,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         ITrackMatchRepository trackMatches,
         IBackendLibraryAccessResolver libraryAccess,
         PlaylistMaterializationPlanner? planner = null,
-        IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null) =>
-        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway, _registry) =
-        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway, registry);
+        IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null,
+        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null) =>
+        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway, _registry, _kept) =
+        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway, registry, kept);
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -219,11 +221,17 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     public async Task<PlaylistLinkRecord> UpdateLinkAsync(ProtocolExecutionContext context, Guid linkId, PlaylistLinkUpdate update, CancellationToken cancellationToken = default)
     {
         var actor = context.RequireActor(); PersistenceGuard.Required(update.RuleVersion, nameof(update.RuleVersion)); PersistenceGuard.Required(update.PolicyVersion, nameof(update.PolicyVersion)); PersistenceGuard.ValidateStableReference(update.TargetPlaylistId, nameof(update.TargetPlaylistId));
-        await using var db = await _factory.CreateDbContextAsync(cancellationToken); var record = await db.PlaylistLinks.SingleOrDefaultAsync(item => item.Id == linkId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
+        var access = _kept != null && update.TrackRetention == PlaylistTrackRetention.KeepAll
+            ? await _libraryAccess.ResolveUserAsync(actor.EffectiveUserId!.Value, cancellationToken)
+            : BackendLibraryAccessContext.Unavailable;
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var record = await db.PlaylistLinks.SingleOrDefaultAsync(item => item.Id == linkId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, record.OwnerUserId); if (record.Revision != update.ExpectedRevision) throw new DbUpdateConcurrencyException("The playlist link changed before this update.");
         if (update.ImportMode.HasValue && update.ImportMode != record.ImportMode)
             throw new InvalidOperationException("Import behavior cannot be changed after playlist creation.");
         var trackRetention = update.TrackRetention ?? record.TrackRetention;
+        var retentionChanged = trackRetention != record.TrackRetention;
         ValidateImportPolicy(record.ImportMode, trackRetention, update.ScheduleId);
         if (!string.Equals(record.TargetPlaylistId, update.TargetPlaylistId, StringComparison.Ordinal))
         {
@@ -240,7 +248,14 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             }
         }
         record.Mode = update.Mode; record.ProjectionMode = update.ProjectionMode; record.MaterializationMode = update.MaterializationMode; record.TrackRetention = trackRetention; record.RuleVersion = update.RuleVersion.Trim(); record.PolicyVersion = update.PolicyVersion.Trim(); record.ScheduleId = update.ScheduleId; record.TargetPlaylistId = update.TargetPlaylistId; record.TargetCredentialReferenceId = update.TargetCredentialReferenceId; record.MirrorStaleEntries = update.MirrorStaleEntries; record.PreserveManualEntries = update.PreserveManualEntries; record.SyncName = update.SyncName; record.SyncDescription = update.SyncDescription; record.SyncArtwork = update.SyncArtwork; record.UpdatedAt = _clock.UtcNow; record.Revision++;
-        await db.SaveChangesAsync(cancellationToken); return record;
+        await db.SaveChangesAsync(cancellationToken);
+        if (retentionChanged && _kept != null)
+        {
+            await _kept.StagePlaylistInterestsAsync(db, record, access, context.CorrelationId, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+        return record;
     }
 
     private static void ValidateImportPolicy(
@@ -267,6 +282,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         PersistenceGuard.RequireOwner(actor, record.OwnerUserId);
         if (record.Revision != expectedRevision)
             throw new DbUpdateConcurrencyException("The playlist link changed before it could be removed.");
+
+        if (_kept != null)
+            await _kept.StagePlaylistInterestsAsync(db, record, BackendLibraryAccessContext.Unavailable,
+                context.CorrelationId, cancellationToken, deleting: true);
 
         var snapshotIds = await db.PlaylistSourceSnapshots
             .Where(item => item.PlaylistLinkId == linkId)

@@ -46,7 +46,8 @@ public sealed partial class RecordingKeptFiles(
     ITrackIdentityService identities,
     IPlatformClock clock,
     ILogger<RecordingKeptFiles>? logger = null,
-    DurableJobQueue? jobs = null)
+    DurableJobQueue? jobs = null,
+    allstarr.Core.Protocols.IBackendLibraryAccessResolver? libraryAccess = null)
 {
     public async Task<KeptRecordingFile> PublishAsync(KeptRecordingPublication publication,
         CancellationToken cancellationToken = default)
@@ -112,7 +113,7 @@ public sealed partial class RecordingKeptFiles(
             KeptRecordingFile result;
             await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
             {
-                var refreshed = await AuthorizeAsync(publication, cancellationToken);
+                var refreshed = await AuthorizeAsync(publication, cancellationToken, proof.PlaylistAccess);
                 if (!SameSource(proof.Artifact, refreshed.Artifact)) throw Denied();
                 var currentLink = await db.ProviderTrackIdentities.AsNoTracking()
                     .SingleOrDefaultAsync(item => item.Id == link.LinkId, cancellationToken);
@@ -260,8 +261,10 @@ public sealed partial class RecordingKeptFiles(
 
     private sealed record Candidate(ManagedFileRecord File, string? MimeType);
 
-    private async Task<(ProviderAccountContext? Account, string CorrelationId, ProviderDownloadArtifactEntity Artifact)> AuthorizeAsync(
-        KeptRecordingPublication request, CancellationToken cancellationToken)
+    private async Task<(ProviderAccountContext? Account, string CorrelationId, ProviderDownloadArtifactEntity Artifact,
+        allstarr.Core.Protocols.BackendLibraryAccessContext? PlaylistAccess)> AuthorizeAsync(
+        KeptRecordingPublication request, CancellationToken cancellationToken,
+        allstarr.Core.Protocols.BackendLibraryAccessContext? playlistAccess = null)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var job = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == request.DurableJobId &&
@@ -275,6 +278,7 @@ public sealed partial class RecordingKeptFiles(
         if (job == null || artifact == null || !await db.Users.AnyAsync(item =>
                 item.Id == request.InitiatingUserId && item.Enabled, cancellationToken)) throw Denied();
         await AuthorizeFavoritePublicationAsync(db, job, request, cancellationToken);
+        playlistAccess = await AuthorizePlaylistPublicationAsync(db, job, request, playlistAccess, cancellationToken);
         if (!await db.Set<ProviderDownloadWorkspaceEntity>().AsNoTracking().AnyAsync(workspace =>
                 workspace.Id == artifact.WorkspaceRecordId && workspace.WorkspaceId == artifact.WorkspaceId &&
                 workspace.OwnerUserId == artifact.OwnerUserId && workspace.DurableJobId == artifact.DurableJobId &&
@@ -291,7 +295,7 @@ public sealed partial class RecordingKeptFiles(
                 ownerUserId: saved.OwnerUserId, secretReferenceId: saved.SecretReferenceId);
         }
         else if (artifact.SourceAccountRevision != null) throw Denied();
-        return (account, job.CorrelationId, artifact);
+        return (account, job.CorrelationId, artifact, playlistAccess);
     }
 
     private static bool SameSource(ProviderDownloadArtifactEntity first, ProviderDownloadArtifactEntity second) =>

@@ -40,12 +40,18 @@ public sealed class PlaylistTrackRetentionQueue(
     DurablePlaylistProjectionReader projections,
     IDbContextFactory<AllstarrDbContext> factory) : IPlaylistTrackRetentionQueue
 {
-    public Task<int> EnqueueAsync(
+    public async Task<int> EnqueueAsync(
         PlaylistLinkRecord link,
         PlaylistMaterializationPlan plan,
         string correlationId,
-        CancellationToken cancellationToken) =>
-        EnqueueAsync(
+        CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var saved = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
+        if (saved != null)
+            return await EnqueuePublishedAsync(saved, correlationId, cancellationToken);
+        return await EnqueueAsync(
             link,
             plan.Entries.Select(entry => new RetentionCandidate(
                 plan.SourceSnapshotId,
@@ -61,17 +67,21 @@ public sealed class PlaylistTrackRetentionQueue(
                 entry.SourceMetadata?.Album)),
             correlationId,
             cancellationToken);
+    }
 
     public async Task<int> EnqueuePublishedAsync(
         PlaylistLinkRecord link,
         string correlationId,
         CancellationToken cancellationToken)
     {
-        if (link.TrackRetention != PlaylistTrackRetention.KeepAll) return 0;
-        var projection = await projections.ReadByLinkIdAsync(
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var saved = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
+        if (saved?.TrackRetention != PlaylistTrackRetention.KeepAll) return 0;
+        link = saved;
+        var projection = await projections.ReadForRetentionAsync(
             link.OwnerUserId, link.Id, cancellationToken);
         if (projection == null) return 0;
-        await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var sourceEntries = await db.PlaylistSourceEntries.AsNoTracking()
             .Where(item => item.PlaylistSourceSnapshotId == projection.SnapshotId)
             .ToDictionaryAsync(item => item.SourcePosition, item => item.Id, cancellationToken);
@@ -97,7 +107,8 @@ public sealed class PlaylistTrackRetentionQueue(
         PlaylistLinkRecord link,
         IEnumerable<RetentionCandidate> candidates,
         string correlationId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        AllstarrDbContext? transactionContext = null)
     {
         if (link.TrackRetention != PlaylistTrackRetention.KeepAll) return 0;
         var tracks = candidates
@@ -113,8 +124,8 @@ public sealed class PlaylistTrackRetentionQueue(
         {
             var providerId = entry.ProviderId!.Trim().ToLowerInvariant();
             var externalId = entry.ExternalId!;
-            var retentionKey = Hash($"{link.Id:N}\u001f{providerId}\u001f{externalId}");
-            var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistTrackRetentionJobPayload>(
+            var retentionKey = RetentionKey(link.Id, providerId, externalId);
+            var request = new DurableJobEnqueueRequest<PlaylistTrackRetentionJobPayload>(
                 PlaylistTrackRetentionJobHandler.JobTypeName,
                 $"playlist-retain:{retentionKey}:{entry.SourceSnapshotId:N}:{link.Revision}",
                 new(
@@ -130,11 +141,32 @@ public sealed class PlaylistTrackRetentionQueue(
                 link.OwnerUserId,
                 MaxAttempts: 12,
                 MaxDeferrals: 100,
-                CorrelationId: correlationId), cancellationToken);
+                CorrelationId: correlationId);
+            var result = transactionContext == null
+                ? await jobs.EnqueueAsync(request, cancellationToken)
+                : await jobs.EnqueueInExistingTransactionAsync(transactionContext, request, cancellationToken);
             if (result.Created) queued++;
         }
         return queued;
     }
+
+    internal async Task<int> EnqueueProjectionInTransactionAsync(AllstarrDbContext db, PlaylistLinkRecord link,
+        DurablePlaylistProjection projection, string correlationId, CancellationToken cancellationToken)
+    {
+        if (db.Database.CurrentTransaction == null)
+            throw new InvalidOperationException("Playlist retention requires the publication transaction.");
+        var entries = await db.PlaylistSourceEntries.AsNoTracking()
+            .Where(item => item.PlaylistSourceSnapshotId == projection.SnapshotId)
+            .ToDictionaryAsync(item => item.SourcePosition, item => item.Id, cancellationToken);
+        return await EnqueueAsync(link, projection.Entries.Select(item => new RetentionCandidate(
+            projection.SnapshotId, entries.GetValueOrDefault(item.Position),
+            item.RouteKind == "external" ? item.RouteProviderId : null,
+            item.RouteKind == "external" ? item.ExternalId : null,
+            item.Title, item.Artists.ToArray(), item.Album)), correlationId, cancellationToken, db);
+    }
+
+    internal static string RetentionKey(Guid linkId, string providerId, string externalId) =>
+        Hash($"{linkId:N}\u001f{providerId.Trim().ToLowerInvariant()}\u001f{externalId}");
 
     private static string Hash(string value) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
@@ -152,9 +184,7 @@ public sealed class PlaylistTrackRetentionQueue(
 public sealed class PlaylistTrackRetentionJobHandler(
     IDbContextFactory<AllstarrDbContext> factory,
     ManagedTrackDownloadService downloads,
-    ProviderDownloadArtifactResolver artifacts,
-    IServiceScopeFactory scopes,
-    ManagedTrackPlacementOptions placement) : IDurableJobHandler
+    RecordingKeptFiles kept) : IDurableJobHandler
 {
     public const string JobTypeName = "playlist.retain-track";
     public string JobType => JobTypeName;
@@ -201,6 +231,13 @@ public sealed class PlaylistTrackRetentionJobHandler(
             return DurableJobCompletion.Failure("playlist_retention_source_unavailable",
                 "The imported track is no longer available in this playlist snapshot.");
 
+        try
+        {
+            if (await kept.RetainPlaylistAsync(context.Claim, cancellationToken) != null)
+                return DurableJobCompletion.Success();
+        }
+        catch (UnauthorizedAccessException) { return DurableJobCompletion.Cancelled(); }
+
         await context.ReportProgressAsync(new(
             "playlist.retain.download",
             $"Downloading {request.Title} for permanent storage.",
@@ -214,7 +251,7 @@ public sealed class PlaylistTrackRetentionJobHandler(
             context.Claim.CorrelationId,
             request.RetentionKey,
             context.Claim.AttemptNumber,
-            "playlist-retention"), cancellationToken);
+            "recording-keep"), cancellationToken);
         if (!download.Succeeded)
         {
             var code = download.ErrorCode?.Replace(
@@ -228,16 +265,10 @@ public sealed class PlaylistTrackRetentionJobHandler(
         }
 
         var artifact = download.Artifact;
-        if (artifact is { State: ProviderDownloadArtifactState.Placed, ManagedFileId: not null })
-            return DurableJobCompletion.Success();
         if (artifact is not { State: ProviderDownloadArtifactState.Verified } ||
-            artifact.OwnerUserId != ownerUserId ||
-            artifact.DurableJobId != context.Claim.JobId)
+            artifact.OwnerUserId != ownerUserId || artifact.DurableJobId != context.Claim.JobId)
             return DurableJobCompletion.Failure("playlist_retention_artifact_invalid",
                 "The downloaded track is outside the playlist owner or job scope.");
-        if (placement.RootId == Guid.Empty || string.IsNullOrWhiteSpace(placement.RootPath))
-            return DurableJobCompletion.Failure("playlist_retention_placement_not_configured",
-                "The permanent music storage root is not configured.");
 
         await context.ReportProgressAsync(new(
             "playlist.retain.place",
@@ -246,32 +277,7 @@ public sealed class PlaylistTrackRetentionJobHandler(
             Track: request.Title), cancellationToken);
         try
         {
-            await using var scope = scopes.CreateAsyncScope();
-            var service = scope.ServiceProvider.GetRequiredService<FilePlacementService>();
-            var extension = Path.GetExtension(artifact.SourcePath);
-            var result = await service.PlaceAsync(new ManagedFilePlacementRequest(
-                new ManagedFileRoot(
-                    placement.RootId,
-                    Path.Combine(Path.GetFullPath(placement.RootPath), ownerUserId.ToString("N")),
-                    ownerUserId),
-                artifact.SourcePath,
-                placement.PathTemplate,
-                new ManagedTrackPathValues(
-                    request.Title,
-                    request.Artists.FirstOrDefault() ?? "Unknown artist",
-                    request.Album,
-                    Extension: string.IsNullOrWhiteSpace(extension) ? ".bin" : extension),
-                context.Claim.JobId,
-                ManagedFileScopeKey.Create(ownerUserId, placement.RootId),
-                SourceIsAllstarrManaged: true,
-                SourceIsImmutable: false,
-                ExpectedContentSha256: artifact.ContentSha256,
-                ExpectedLength: artifact.Length)
-            {
-                ReferenceKey = request.RetentionKey,
-                DestinationIsImmutable = false
-            }, cancellationToken);
-            await artifacts.MarkPlacedAsync(artifact.Id, result.File.Id, cancellationToken);
+            await kept.PublishPlaylistAsync(context.Claim, artifact, cancellationToken);
             await context.ReportProgressAsync(new(
                 "playlist.retain.complete",
                 $"Kept {request.Title} in permanent storage.",
@@ -286,14 +292,15 @@ public sealed class PlaylistTrackRetentionJobHandler(
             return DurableJobCompletion.Retry("playlist_retention_placement_io_failed",
                 "Permanent track placement temporarily failed.");
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException) { return DurableJobCompletion.Cancelled(); }
+        catch (ArgumentException)
         {
-            return DurableJobCompletion.Failure("playlist_retention_placement_denied",
-                "The permanent music storage path is not authorized.");
+            return DurableJobCompletion.Failure("playlist_retention_metadata_invalid",
+                "The song information could not be saved. Refresh the playlist and try again.");
         }
     }
 
-    private static bool Valid(PlaylistTrackRetentionJobPayload? payload) =>
+    internal static bool Valid(PlaylistTrackRetentionJobPayload? payload) =>
         payload != null &&
         payload.PlaylistLinkId != Guid.Empty &&
         payload.SourceSnapshotId != Guid.Empty &&

@@ -23,7 +23,10 @@ public sealed record DurablePlaylistEntryProjection(
     string? BackendItemId,
     string RouteKind,
     string? RouteProviderId,
-    IReadOnlyList<DurableProviderRoute> ProviderRoutes);
+    IReadOnlyList<DurableProviderRoute> ProviderRoutes)
+{
+    internal Guid? CanonicalRecordingId { get; init; }
+}
 
 public sealed record DurablePlaylistSourceEntryProjection(
     int Position,
@@ -193,11 +196,33 @@ public sealed class DurablePlaylistProjectionReader(
         return result;
     }
 
+    internal async Task<DurablePlaylistProjection?> ReadForRetentionAsync(Guid ownerUserId, Guid playlistLinkId,
+        CancellationToken cancellationToken)
+    {
+        var access = await libraryAccess.ResolveUserAsync(ownerUserId, cancellationToken);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        return await ReadForRetentionAsync(db, ownerUserId, playlistLinkId, access, cancellationToken);
+    }
+
+    internal async Task<DurablePlaylistProjection?> ReadForRetentionAsync(
+        AllstarrDbContext database, Guid ownerUserId, Guid playlistLinkId,
+        BackendLibraryAccessContext access, CancellationToken cancellationToken)
+    {
+        var snapshot = await database.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.PlaylistLinkId == playlistLinkId && item.OwnerUserId == ownerUserId &&
+                           item.PublishedAt != null)
+            .OrderByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.RetrievedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        return snapshot == null ? null : await new DurablePlaylistProjectionReader(factory, libraryAccess)
+            .ProjectAsync(database, snapshot, ownerUserId, cancellationToken, access);
+    }
+
     private async Task<DurablePlaylistProjection> ProjectAsync(
         AllstarrDbContext database,
         PlaylistSourceSnapshotRecord snapshot,
         Guid viewerUserId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        BackendLibraryAccessContext? retainedAccess = null)
     {
         var ownerUserId = snapshot.OwnerUserId;
         var link = await database.PlaylistLinks.AsNoTracking()
@@ -294,7 +319,7 @@ public sealed class DurablePlaylistProjectionReader(
         var overrideRecords = await ManualTrackOverrides.LoadAsync(
             database, viewerUserId, external.Values.ToArray(), cancellationToken);
         var overrides = ManualTrackOverrides.Index(external.Values, overrideRecords, viewerUserId);
-        var access = await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
+        var access = retainedAccess ?? await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
         IReadOnlyList<string> fallbackProviderOrder = new[] { link.SourceProviderId }
             .Concat(identities.Select(item => item.ProviderId))
             .Concat(overrides.Values.Select(item => item.Effective?.TargetProviderId)
@@ -623,7 +648,8 @@ public sealed class DurablePlaylistProjectionReader(
             backendItemId,
             routeKind,
             routeKind == "local" ? local!.Protocol : primaryRoute?.ProviderId,
-            classification.ProviderRoutes);
+            classification.ProviderRoutes)
+        { CanonicalRecordingId = route.CanonicalRecordingId };
     }
 
     private static EntryMetadata ReadMetadata(string payload)
