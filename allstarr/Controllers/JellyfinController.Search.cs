@@ -161,6 +161,9 @@ public partial class JellyfinController
             }
         }
 
+        if (favoritesOnlyRequest)
+            return await ReadFavoriteItemsAsync(searchTerm, includeItemTypes, startIndex, limit, userId);
+
         if (string.IsNullOrWhiteSpace(searchTerm) && !favoritesOnlyRequest)
         {
             var catalog = await TryReadNativeCatalogAsync(effectiveArtistIds, parentId, includeItemTypes, userId);
@@ -686,7 +689,9 @@ public partial class JellyfinController
 
     private bool IsFavoritesOnlyRequest()
     {
-        return string.Equals(Request.Query["IsFavorite"].ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        return string.Equals(Request.Query["IsFavorite"].ToString(), "true", StringComparison.OrdinalIgnoreCase) ||
+            Request.Query["Filters"].ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
+                .Contains("IsFavorite", StringComparer.OrdinalIgnoreCase);
     }
 
     internal static (int SongLimit, int AlbumLimit, int ArtistLimit) GetExternalSearchLimits(

@@ -55,6 +55,7 @@ public partial class SubsonicController : ControllerBase
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IIntelligencePolicyService? _intelligencePolicies;
     private readonly ILibraryIndexService? _libraryIndex;
+    private readonly FavoriteViewReader? _favoriteViews;
 
     public SubsonicController(
         IOptions<SubsonicSettings> subsonicSettings,
@@ -81,10 +82,12 @@ public partial class SubsonicController : ControllerBase
         IPlaybackSignalPipeline? playbackSignals = null,
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
-        ILibraryIndexService? libraryIndex = null)
+        ILibraryIndexService? libraryIndex = null,
+        FavoriteViewReader? favoriteViews = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _libraryIndex = libraryIndex;
+        _favoriteViews = favoriteViews;
         _localLibraryService = localLibraryService;
         _requestParser = requestParser;
         _responseBuilder = responseBuilder;

@@ -64,6 +64,7 @@ public partial class JellyfinController : ControllerBase
     private readonly IConfiguration _configuration;
     private readonly ILogger<JellyfinController> _logger;
     private readonly MusicFavorites _favorites;
+    private readonly FavoriteViewReader? _favoriteViews;
     private readonly MusicPlaybackObservations _playbackObservations;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
@@ -101,10 +102,12 @@ public partial class JellyfinController : ControllerBase
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         IBackendLibraryAccessResolver? libraryAccess = null,
-        ILibraryIndexService? libraryIndex = null)
+        ILibraryIndexService? libraryIndex = null,
+        FavoriteViewReader? favoriteViews = null)
     {
         _settings = settings.Value;
         _libraryIndex = libraryIndex;
+        _favoriteViews = favoriteViews;
         _libraryAccess = libraryAccess;
         _spotifySettings = spotifySettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;

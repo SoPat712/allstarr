@@ -9,6 +9,34 @@ namespace allstarr.Services.Subsonic;
 
 public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
 {
+    public Dictionary<string, object?> ConvertFavoriteToJson(allstarr.Core.Favorites.FavoriteViewItem favorite)
+    {
+        object converted = favorite.Resource.ResourceKind switch
+        {
+            allstarr.Core.Capabilities.ProviderResourceKind.Track => ConvertSongToJson(favorite.Song()),
+            allstarr.Core.Capabilities.ProviderResourceKind.Album => ConvertAlbumToJson(favorite.Album()),
+            allstarr.Core.Capabilities.ProviderResourceKind.Artist => ConvertArtistToJson(favorite.Artist()),
+            _ => throw new ArgumentException("The saved favorite resource kind is unsupported.", nameof(favorite))
+        };
+        var result = JsonSerializer.SerializeToElement(converted).EnumerateObject()
+            .ToDictionary(property => property.Name, property => (object?)property.Value.Clone(), StringComparer.Ordinal);
+        result["starred"] = favorite.FavoritedAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+        return result;
+    }
+
+    public XElement ConvertFavoriteToXml(allstarr.Core.Favorites.FavoriteViewItem favorite, XNamespace ns)
+    {
+        var item = favorite.Resource.ResourceKind switch
+        {
+            allstarr.Core.Capabilities.ProviderResourceKind.Track => ConvertSongToXml(favorite.Song(), ns),
+            allstarr.Core.Capabilities.ProviderResourceKind.Album => ConvertAlbumToXml(favorite.Album(), ns),
+            allstarr.Core.Capabilities.ProviderResourceKind.Artist => ConvertArtistToXml(favorite.Artist(), ns),
+            _ => throw new ArgumentException("The saved favorite resource kind is unsupported.", nameof(favorite))
+        };
+        item.SetAttributeValue("starred", favorite.FavoritedAt.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
+        return item;
+    }
+
     private const string SubsonicNamespace = "http://subsonic.org/restapi";
     private const string SubsonicVersion = "1.16.1";
 

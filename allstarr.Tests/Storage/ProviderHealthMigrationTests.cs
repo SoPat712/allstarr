@@ -161,6 +161,10 @@ public sealed class ProviderHealthMigrationTests
             CollapseSql(Assert.Single(after, row => row.Name == subjectIndex).Sql));
         Assert.DoesNotContain(before, row => row.Name is publicLinkIndex or publicSnapshotIndex);
 
+        Assert.Equal(["\"DisplayMetadataJson\" TEXT NULL"],
+            TableColumns(after, "favorite_states").Except(TableColumns(before, "favorite_states")).Order(StringComparer.Ordinal));
+        Assert.Empty(TableColumns(before, "favorite_states").Except(TableColumns(after, "favorite_states")));
+
         string[] keptObjects =
         [
             "recording_kept_routes", "IX_recording_kept_routes_ManagedFileId",
@@ -316,6 +320,7 @@ public sealed class ProviderHealthMigrationTests
         (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
             "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
         (table == "provider_download_artifacts" && component is "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL" or "\"SupersededAt\" INTEGER NULL") ||
+        (table == "favorite_states" && component == "\"DisplayMetadataJson\" TEXT NULL") ||
         (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
 
     private static string NormalizeNullability(string table, string component)

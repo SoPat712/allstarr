@@ -70,6 +70,7 @@ public static class FavoriteModelConfiguration
             entity.Property(item => item.Protocol).HasMaxLength(32).IsRequired();
             entity.Property(item => item.BackendInstanceId).HasMaxLength(200).IsRequired();
             entity.Property(item => item.ItemId).HasMaxLength(500).IsRequired();
+            entity.Property(item => item.DisplayMetadataJson).HasMaxLength(32768);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new
             {
