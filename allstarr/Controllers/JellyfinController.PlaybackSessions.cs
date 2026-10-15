@@ -3,6 +3,7 @@ using System.Globalization;
 using allstarr.Core.Identity;
 using allstarr.Core.Playback;
 using allstarr.Core.Protocols;
+using allstarr.Models.Domain;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Mvc;
@@ -192,10 +193,11 @@ public partial class JellyfinController
                     // Jellyfin needs a deterministic synthetic UUID to show external Now Playing state.
                     var ghostUuid = GenerateUuidFromString(itemId);
 
-                    // Omit Item so Jellyfin tracks the session without resolving external metadata.
+                    // Supply only the provider-scoped metadata Jellyfin needs for Now Playing.
                     var playbackStart = new
                     {
                         ItemId = ghostUuid,
+                        Item = BuildExternalPlaybackItem(ghostUuid, song),
                         PositionTicks = positionTicks ?? 0,
                         CanSeek = true,
                         IsPaused = false,
@@ -204,8 +206,6 @@ public partial class JellyfinController
                     };
 
                     var playbackJson = JsonSerializer.Serialize(playbackStart);
-                    _logger.LogDebug("📤 Sending ghost playback start for external track: {Json}", playbackJson);
-
                     var (ghostResult, ghostStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing", playbackJson, Request.Headers);
 
@@ -409,6 +409,9 @@ public partial class JellyfinController
 
                 if (isExternal)
                 {
+                    Song? currentSong = null;
+                    var currentSongLoaded = false;
+
                     if (!string.IsNullOrEmpty(deviceId))
                     {
                         var sessionReady = _sessionManager.HasSession(PlaybackSessionKey(deviceId));
@@ -454,8 +457,9 @@ public partial class JellyfinController
                         if (inferredStart &&
                             !await ShouldSuppressPlaybackSignalAsync("start", deviceId, itemId))
                         {
-                            var song = await GetProviderSongAsync(provider!, externalId!);
-                            var externalTrackName = song != null ? $"{song.Artist} - {song.Title}" : "Unknown";
+                            currentSong = await GetProviderSongAsync(provider!, externalId!);
+                            currentSongLoaded = true;
+                            var externalTrackName = currentSong != null ? $"{currentSong.Artist} - {currentSong.Title}" : "Unknown";
                             _logger.LogInformation(
                                 "▶️ External track playback started (inferred from progress): {TrackName} ({Provider}/{ExternalId})",
                                 externalTrackName,
@@ -466,6 +470,7 @@ public partial class JellyfinController
                             var inferredExternalStartPayload = JsonSerializer.Serialize(new
                             {
                                 ItemId = inferredStartGhostUuid,
+                                Item = BuildExternalPlaybackItem(inferredStartGhostUuid, currentSong),
                                 PositionTicks = positionTicks ?? 0,
                                 CanSeek = true,
                                 IsPaused = false,
@@ -502,12 +507,18 @@ public partial class JellyfinController
                         }
                     }
 
+                    if (!currentSongLoaded)
+                    {
+                        currentSong = await GetProviderSongAsync(provider!, externalId!);
+                    }
+
                     // Keep external progress tied to the synthetic Now Playing identity.
                     var ghostUuid = GenerateUuidFromString(itemId);
 
                     var progressReport = new
                     {
                         ItemId = ghostUuid,
+                        Item = BuildExternalPlaybackItem(ghostUuid, currentSong),
                         PositionTicks = positionTicks ?? 0,
                         IsPaused = false,
                         IsMuted = false,
@@ -722,6 +733,7 @@ public partial class JellyfinController
             var inferredExternalStopPayload = JsonSerializer.Serialize(new
             {
                 ItemId = ghostUuid,
+                Item = BuildExternalPlaybackItem(ghostUuid, song),
                 PositionTicks = previousPositionTicks ?? 0,
                 IsPaused = false
             });
@@ -1001,26 +1013,24 @@ public partial class JellyfinController
                         ? TimeSpan.FromTicks(positionTicks.Value).ToString(@"mm\:ss")
                         : "unknown";
 
-                    if (string.IsNullOrEmpty(itemName))
+                    Song? song = null;
+                    try
                     {
-                        try
+                        song = await GetProviderSongAsync(provider!, externalId!);
+                        if (song != null)
                         {
-                            var song = await GetProviderSongAsync(provider!, externalId!);
-                            if (song != null)
+                            itemName = $"{song.Artist} - {song.Title}";
+                            if (positionTicks.HasValue && song.Duration > 0)
                             {
-                                itemName = $"{song.Artist} - {song.Title}";
-                                if (positionTicks.HasValue && song.Duration > 0)
-                                {
-                                    var actualPosition = TimeSpan.FromTicks(positionTicks.Value);
-                                    var duration = TimeSpan.FromSeconds((double)song.Duration);
-                                    position = $"{actualPosition:mm\\:ss}/{duration:mm\\:ss}";
-                                }
+                                var actualPosition = TimeSpan.FromTicks(positionTicks.Value);
+                                var duration = TimeSpan.FromSeconds((double)song.Duration);
+                                position = $"{actualPosition:mm\\:ss}/{duration:mm\\:ss}";
                             }
                         }
-                        catch (Exception ex)
-                        {
-                            _logger.LogDebug(ex, "Could not fetch track name for external track on stop");
-                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogDebug(ex, "Could not fetch track metadata for external track on stop");
                     }
 
                     _logger.LogInformation(
@@ -1033,11 +1043,11 @@ public partial class JellyfinController
                     var externalStopInfo = new
                     {
                         ItemId = ghostUuid,
+                        Item = BuildExternalPlaybackItem(ghostUuid, song),
                         PositionTicks = positionTicks ?? 0
                     };
 
                     var stopJson = JsonSerializer.Serialize(externalStopInfo);
-                    _logger.LogDebug("📤 Sending ghost playback stop for external track: {Json}", stopJson);
 
                     var (stopResult, stopStatusCode) =
                         await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, Request.Headers);
@@ -1341,6 +1351,67 @@ public partial class JellyfinController
         if (itemId == null || !CanRunOptionalUserScopedWork()) return;
         await _playbackObservations.RecordAsync(new(HttpContext.RequireProtocolExecutionContext(), transition,
             itemId, deviceId, playSessionId, positionTicks, DateTimeOffset.UtcNow), HttpContext.RequestAborted);
+    }
+
+    private static ExternalPlaybackItem BuildExternalPlaybackItem(string ghostUuid, Song? song)
+    {
+        var artists = song?.Artists
+            ?.Where(artist => !string.IsNullOrWhiteSpace(artist))
+            .Select(artist => artist.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList() ?? [];
+        if (artists.Count == 0)
+        {
+            artists.Add(!string.IsNullOrWhiteSpace(song?.Artist)
+                ? song.Artist.Trim()
+                : "Unknown artist");
+        }
+
+        var artist = artists[0];
+        var albumArtist = !string.IsNullOrWhiteSpace(song?.AlbumArtist)
+            ? song.AlbumArtist.Trim()
+            : !string.IsNullOrWhiteSpace(song?.Artist)
+                ? song.Artist.Trim()
+                : artist;
+        var runTimeTicks = song?.PreciseDuration is { Ticks: > 0 } preciseDuration
+            ? preciseDuration.Ticks
+            : Math.Max(0L, (long)(song?.Duration ?? 0)) * TimeSpan.TicksPerSecond;
+
+        return new ExternalPlaybackItem
+        {
+            Id = ghostUuid,
+            Type = "Audio",
+            MediaType = "Audio",
+            Name = !string.IsNullOrWhiteSpace(song?.Title) ? song.Title.Trim() : "Unknown",
+            Artists = artists,
+            Album = !string.IsNullOrWhiteSpace(song?.Album) ? song.Album.Trim() : "Unknown album",
+            AlbumArtist = albumArtist,
+            RunTimeTicks = runTimeTicks,
+            IndexNumber = song?.Track
+        };
+    }
+
+    private sealed class ExternalPlaybackItem
+    {
+        public required string Id { get; init; }
+
+        public required string Type { get; init; }
+
+        public required string MediaType { get; init; }
+
+        public required string Name { get; init; }
+
+        public required IReadOnlyList<string> Artists { get; init; }
+
+        public required string Album { get; init; }
+
+        public required string AlbumArtist { get; init; }
+
+        public long RunTimeTicks { get; init; }
+
+        [System.Text.Json.Serialization.JsonIgnore(
+            Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        public int? IndexNumber { get; init; }
     }
 
 

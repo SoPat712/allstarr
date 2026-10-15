@@ -141,7 +141,10 @@ public sealed record ProtocolProviderStream(
     bool IsCached = false,
     ProviderAudioQuality EffectiveQuality = ProviderAudioQuality.Any,
     string SelectionReason = "provider-priority",
-    long? ServingAccountRevision = null);
+    long? ServingAccountRevision = null)
+{
+    internal object ObservationToken { get; } = new();
+}
 
 public sealed partial class ProtocolProviderGateway(
     IProviderRouter router,
@@ -1094,7 +1097,8 @@ public sealed partial class ProtocolProviderGateway(
             var candidate = plan.Candidates[candidateIndex];
             var servingTrack = candidate.TrackId ?? trackId;
             if (resuming && previous != null &&
-                (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId))
+                (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId ||
+                    candidate.Context.Account?.Revision != previous.AccountRevision))
                 throw new HttpRequestException("The previous playback source is no longer available. Restart playback.", null,
                     HttpStatusCode.Conflict);
             var routeReason = string.Join(':',

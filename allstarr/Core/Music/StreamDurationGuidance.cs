@@ -12,7 +12,7 @@ internal static class StreamDurationGuidance
 {
     private const int PrefixLimit = 1024 * 1024;
 
-    public static void Attach(ProtocolProviderStream routed, Func<Task<Song?>> metadata)
+    public static void Attach(ProtocolProviderStream routed, Func<Task<Song?>> metadata, Action<string>? selected = null)
     {
         if (routed.IsCached || routed.Lease.SupportsByteRanges || routed.Response.StatusCode != HttpStatusCode.OK)
             return;
@@ -20,7 +20,7 @@ internal static class StreamDurationGuidance
         if (container is not ("flac" or "mp3" or "mp4" or "m4a")) return;
         var original = routed.Response.Content;
         var replacement = new GuidedContent(new DeferredGuidanceStream(original, cancellationToken =>
-            PrepareAsync(original, routed, container, metadata, cancellationToken)));
+            PrepareAsync(original, routed, container, metadata, selected, cancellationToken)));
         foreach (var header in original.Headers)
             replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         // An optional FLAC ID3 prelude is removed lazily, so its final length is not known at header time.
@@ -29,7 +29,7 @@ internal static class StreamDurationGuidance
     }
 
     private static async Task<PreparedAudio> PrepareAsync(HttpContent original, ProtocolProviderStream routed, string container,
-        Func<Task<Song?>> metadata, CancellationToken cancellationToken)
+        Func<Task<Song?>> metadata, Action<string>? selected, CancellationToken cancellationToken)
     {
         var source = await original.ReadAsStreamAsync(cancellationToken);
         using var prefix = new MemoryStream();
@@ -98,7 +98,8 @@ internal static class StreamDurationGuidance
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception) { /* Metadata failure must not interrupt a valid audio response. */ }
             }
-            if (duration.HasValue) MediaDurationHeaders.TryPatch(prepared.AsSpan(skip), container, duration.Value);
+            if (duration.HasValue && MediaDurationHeaders.TryPatch(prepared.AsSpan(skip), container, duration.Value))
+                selected?.Invoke($"{(container == "m4a" ? "mp4" : container)}-duration");
         }
         return new(new PrefetchedStream(source, original, prepared.AsMemory(skip)), skip);
     }

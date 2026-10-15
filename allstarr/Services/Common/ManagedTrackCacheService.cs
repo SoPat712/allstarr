@@ -45,7 +45,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             {
                 var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(reader) };
                 response.Content.Headers.ContentType = new(transfer.Media.MimeType);
-                return new(response, CacheLease(transfer.Media, reader.CanSeek), track.ProviderId, track.Value,
+                return new(response, CacheLease(transfer.Media, reader.CanSeek, progressive: true), track.ProviderId, track.Value,
                     scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
                     SelectionReason: "progressive-cache", ServingAccountRevision: accountRevision);
             }
@@ -139,7 +139,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             transfer.Stop();
             throw new IOException("The progressive media cache could not open a reader.");
         }
-        var replacement = new StreamContent(reader);
+        var replacement = new ProgressiveContent(reader);
         foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         stream.Response.Content = replacement;
     }
@@ -165,7 +165,16 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     private static string Key(DownloadedSongMappingScope scope, long? revision, string provider, string track) =>
         $"{scope.Key}\n{revision}\n{provider}\n{track}";
 
-    private static ProviderStreamLease CacheLease(ProviderMediaFormat media, bool ranges) => new("managed-cache",
+    internal static string? SeekRung(HttpContent content) => content is ProgressiveContent progressive
+        ? progressive.Reader.CanSeek ? "progressive-cache" : "sequential-cache" : null;
+
+    private sealed class ProgressiveContent(Stream reader) : StreamContent(reader)
+    {
+        public Stream Reader { get; } = reader;
+    }
+
+    private static ProviderStreamLease CacheLease(ProviderMediaFormat media, bool ranges, bool progressive = false) => new(
+        progressive ? "managed-progressive-cache" : "managed-cache",
         new Uri("https://allstarr.invalid/managed-cache"), DateTimeOffset.UtcNow.AddHours(1), ranges, ranges, media,
         ProviderStreamRetryBehavior.DoNotRetry);
 

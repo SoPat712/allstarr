@@ -93,6 +93,7 @@ public class DownloadActivityController : ControllerBase
                 CatalogProviderId = ResolvePlaybackProvider(itemId),
                 SourceConfirmed = streamSource != null || externalIdentity == null,
                 Cached = streamSource?.Cached ?? false,
+                SeekRung = streamSource?.SeekRung,
                 RouteReason = streamSource?.SelectionReason ??
                     (externalIdentity == null ? "native-local-library" : null),
                 ProviderAccountName = streamSource?.AccountId == delivery?.Event.ProviderAccountId
@@ -322,6 +323,7 @@ public class DownloadActivityController : ControllerBase
         public required string CatalogProviderId { get; init; }
         public bool SourceConfirmed { get; init; }
         public bool Cached { get; init; }
+        public string? SeekRung { get; init; }
         public string? RouteReason { get; init; }
         public string? ProviderAccountName { get; init; }
         public string? ArtworkUrl { get; init; }

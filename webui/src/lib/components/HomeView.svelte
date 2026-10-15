@@ -9,7 +9,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import { Button } from "$lib/components/ui/button";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
+  import { playbackSeekLabel, playbackSourceIssues, summarizeHome, type HomeSnapshot } from "$lib/home";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { accountSubtitle, findProviderDefinition, providerDisplayName } from "$lib/sources";
 
@@ -248,6 +248,7 @@
                 <span>
                   <small title={item.routeReason ?? undefined}>{item.sourceConfirmed ? (item.cached ? "Cached from" : "Playing from") : "Catalog source · playback unconfirmed"}</small>
                   <strong>{providerName(item.providerId)}{item.sourceConfirmed && item.providerAccountName ? ` · ${item.providerAccountName}` : ""}</strong>
+                  <small>{playbackSeekLabel(item)}</small>
                 </span>
               </span>
               <span class="scrobble-state" class:complete={item.scrobbled}>

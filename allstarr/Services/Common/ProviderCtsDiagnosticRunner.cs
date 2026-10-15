@@ -304,6 +304,14 @@ public sealed class ProviderCtsDiagnosticRunner(
                     headersMilliseconds);
             }
 
+            if (!StreamByteRanges.Matches(response, sampleRequest.Headers.Range))
+            {
+                RecordFailure(execution, "range-response-mismatch", headersMilliseconds);
+                return ProviderCtsDiagnosticResult.Failure(
+                    StatusCodes.Status422UnprocessableEntity, providerId, providerAccountId,
+                    "response-range", "range-response-mismatch", resolveMilliseconds, headersMilliseconds);
+            }
+
             await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
             var buffer = new byte[32 * 1024];
             var bytesRead = 0;
@@ -356,15 +364,17 @@ public sealed class ProviderCtsDiagnosticRunner(
                 (int)response.StatusCode,
                 response.Content.Headers.ContentType?.MediaType,
                 response.Content.Headers.ContentLength,
-                response.Content.Headers.ContentRange?.ToString(),
-                response.Headers.AcceptRanges.Any(value => value.Equals("bytes", StringComparison.OrdinalIgnoreCase)),
+                response.StatusCode == HttpStatusCode.PartialContent ? response.Content.Headers.ContentRange?.ToString() : null,
+                response.StatusCode == HttpStatusCode.PartialContent &&
+                    response.Headers.AcceptRanges.Any(value => value.Equals("bytes", StringComparison.OrdinalIgnoreCase)),
                 CacheState(response),
                 Convert.ToHexString(sampleHash.GetHashAndReset()).ToLowerInvariant(),
                 lease.SupportsByteRanges,
                 lease.SupportsSeeking,
                 lease.Media,
                 lease.QualityDowngradeReason,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow,
+                sampleRequest.Headers.Range?.ToString());
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -496,6 +506,7 @@ public sealed class ProviderCtsDiagnosticResult
     public string? ContentType { get; init; }
     public long? ContentLength { get; init; }
     public string? ContentRange { get; init; }
+    public string? RequestedRange { get; init; }
     public bool AcceptsByteRanges { get; init; }
     public string? CacheState { get; init; }
     public string? SampleSha256 { get; init; }
@@ -504,8 +515,9 @@ public sealed class ProviderCtsDiagnosticResult
     public string SeekRung => !Succeeded ? "unavailable" :
         LeaseSupportsByteRanges && UpstreamStatusCode == 206 &&
         ContentRangeHeaderValue.TryParse(ContentRange, out var range) && range.HasLength &&
-        StreamByteRanges.HasValidContentRange(range, ContentLength)
-            ? "byte-range" : LeaseSupportsSeeking ? "provider-seek" : "sequential";
+        RangeHeaderValue.TryParse(RequestedRange, out var requested) &&
+        StreamByteRanges.MatchesContentRange(range, ContentLength, requested)
+            ? "byte-range" : RequestedRange == null && LeaseSupportsSeeking ? "provider-seek" : "sequential";
     public ProviderMediaFormat? Media { get; init; }
     public string? QualityDowngradeReason { get; init; }
     public string ProbeMode { get; init; } = "cold-connect";
@@ -562,7 +574,8 @@ public sealed class ProviderCtsDiagnosticResult
         bool leaseSupportsSeeking,
         ProviderMediaFormat media,
         string? qualityDowngradeReason,
-        DateTimeOffset measuredAt)
+        DateTimeOffset measuredAt,
+        string? requestedRange = null)
     {
         var bars = ConnectivityQuality.Bars(firstByteMilliseconds, true, ConnectivityMetric.ClickToStream);
         return new ProviderCtsDiagnosticResult
@@ -588,6 +601,7 @@ public sealed class ProviderCtsDiagnosticResult
             ContentType = contentType,
             ContentLength = contentLength,
             ContentRange = contentRange,
+            RequestedRange = requestedRange,
             AcceptsByteRanges = acceptsByteRanges,
             CacheState = cacheState,
             SampleSha256 = sampleSha256,

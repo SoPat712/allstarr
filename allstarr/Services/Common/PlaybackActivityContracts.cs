@@ -61,6 +61,10 @@ public sealed record PlaybackStreamSource(
     DateTimeOffset OpenedAt,
     string SelectionReason)
 {
+    public long? AccountRevision { get; init; }
+    public string SeekRung { get; init; } = "sequential";
+    internal object? ObservationToken { get; init; }
+
     public bool Matches(string protocol, string backendInstanceId) =>
         Protocol == protocol && BackendInstanceId == backendInstanceId;
 }
@@ -68,6 +72,7 @@ public sealed record PlaybackStreamSource(
 public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySource, IDisposable
 {
     private static readonly TimeSpan Retention = TimeSpan.FromHours(1);
+    private readonly object sourceGate = new();
     private readonly Microsoft.Extensions.Caching.Memory.MemoryCache _delivered = new(
         new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions
         {
@@ -102,10 +107,45 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         var source = new PlaybackStreamSource(stream.ServingProviderId, stream.ServingExternalId,
             stream.ServingAccountId, context.Protocol.ToString().ToLowerInvariant(),
             context.BackendInstanceId, stream.IsCached, DateTimeOffset.UtcNow,
-            stream.SelectionReason);
+            stream.SelectionReason)
+        {
+            AccountRevision = stream.ServingAccountRevision,
+            ObservationToken = stream.ObservationToken,
+            SeekRung = stream.IsCached
+                ? stream.Lease.LeaseId == "managed-progressive-cache"
+                    ? stream.Lease.SupportsByteRanges ? "progressive-cache" : "sequential-cache"
+                    : "byte-range"
+                : stream.Response.StatusCode == System.Net.HttpStatusCode.PartialContent &&
+                    stream.Response.Content.Headers.ContentRange is { HasLength: true } actual &&
+                    StreamByteRanges.HasValidContentRange(actual, stream.Response.Content.Headers.ContentLength)
+                        ? "byte-range" : "sequential"
+        };
         var key = (userId, context.Client.DeviceId, StreamItemKey(itemId));
-        Set(key, source);
-        Set((key, context.Protocol, context.BackendInstanceId, quality), source);
+        lock (sourceGate)
+        {
+            Set(key, source);
+            Set((key, context.Protocol, context.BackendInstanceId, quality), source);
+        }
+    }
+
+    public void SeekRungSelected(ProtocolExecutionContext context, string itemId,
+        ProviderAudioQuality quality, ProtocolProviderStream stream, string rung)
+    {
+        if (context.Actor?.EffectiveUserId is not { } userId || string.IsNullOrWhiteSpace(context.Client.DeviceId)) return;
+        var key = (userId, context.Client.DeviceId, StreamItemKey(itemId));
+        var exactKey = (key, context.Protocol, context.BackendInstanceId, quality);
+        lock (sourceGate)
+        {
+            var source = _delivered.Get<PlaybackStreamSource>(exactKey);
+            if (source == null || !ReferenceEquals(source.ObservationToken, stream.ObservationToken) ||
+                source.ProviderId != stream.ServingProviderId || source.ExternalId != stream.ServingExternalId ||
+                source.AccountId != stream.ServingAccountId || source.AccountRevision != stream.ServingAccountRevision) return;
+            // A duration hint must not replace proof of an available byte reader.
+            if (source.SeekRung is "byte-range" or "progressive-cache") return;
+            var updated = source with { SeekRung = rung };
+            Set(exactKey, updated);
+            if (_delivered.Get<PlaybackStreamSource>(key) == source) Set(key, updated);
+        }
     }
 
     public PlaybackStreamSource? StreamFor(ProtocolExecutionContext context, string itemId,

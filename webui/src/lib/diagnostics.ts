@@ -14,6 +14,7 @@ export function diagnosticFailureMessage(result: DiagnosticFailure) {
     "track-selection": "No song is available to test. Add a playlist from this source or choose a song, then try again.",
     resolve: "The playback connection could not be prepared. Check this source's setup and sign-in, then test again.",
     "lease-validation": "The playback link is not usable. Run a fresh test; if it still fails, check the source's setup.",
+    "response-range": "The source returned the wrong part of the audio. Run a fresh test; if it still fails, check the source. Full playback may still work.",
     "first-byte": "The source did not return usable audio. Check its connection and sign-in, then test again.",
   };
   return messages[result.stage ?? ""] ?? "Playback could not be tested. Check the source's connection and try again.";

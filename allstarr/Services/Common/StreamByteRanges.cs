@@ -37,8 +37,12 @@ internal static class StreamByteRanges
     public static bool Matches(HttpResponseMessage response, RangeHeaderValue? request)
     {
         if (response.StatusCode != HttpStatusCode.PartialContent) return true;
-        var actual = response.Content.Headers.ContentRange;
-        if (request == null || !HasValidContentRange(actual, response.Content.Headers.ContentLength)) return false;
+        return MatchesContentRange(response.Content.Headers.ContentRange, response.Content.Headers.ContentLength, request);
+    }
+
+    public static bool MatchesContentRange(ContentRangeHeaderValue? actual, long? contentLength, RangeHeaderValue? request)
+    {
+        if (request == null || !IsSingleByteRange(request) || !HasValidContentRange(actual, contentLength)) return false;
         if (actual!.Length is { } length)
             return TryResolve(request, length, out var start, out var end) && actual.From == start && actual.To == end;
         var requested = request.Ranges.Single();

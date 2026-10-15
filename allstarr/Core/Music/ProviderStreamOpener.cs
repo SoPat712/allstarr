@@ -13,7 +13,8 @@ namespace allstarr.Core.Music;
 public sealed class ProviderStreamOpener(
     IProtocolProviderGateway providers,
     ProtocolStreamingResponseAdapter responses,
-    ManagedTrackCacheService? cache = null)
+    ManagedTrackCacheService? cache = null,
+    PlaybackDeliveryActivityStore? activity = null)
 {
     public async Task<IActionResult> OpenAsync(
         HttpContext http,
@@ -51,9 +52,12 @@ public sealed class ProviderStreamOpener(
         Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(context, routed.ServingProviderId, servingId);
         try
         {
-            if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata);
+            var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
+            void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
+            if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
             if (cache != null)
                 await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
+            if (!headOnly && ManagedTrackCacheService.SeekRung(routed.Response.Content) is { } cacheRung) Selected(cacheRung);
             return await responses.CreateAsync(http, routed.Response, http.RequestAborted, enableRangeProcessing: routed.IsCached);
         }
         catch
