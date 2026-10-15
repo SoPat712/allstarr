@@ -102,6 +102,10 @@ Use the up and down buttons in **Lyrics source order** to choose which available
 
 **Kept LRC** uses existing lyrics beside an indexed kept download. It follows media-server lyrics by default and can be moved or disabled. Allstarr checks the listener's account and file ownership; missing or unreadable sidecars fall through to another source. Timed lyrics are preferred over plain words, and reading a sidecar never changes the audio or lyrics file.
 
+To fix a song's lyrics, open its match details and select **Wrong lyrics?**. Preview each available source, then select **Use this source for this recording**. This saves a source preference, including a plain-text source when you prefer it; it does not freeze the words. If that source becomes unavailable or disabled, Allstarr uses the normal source order until it returns.
+
+A personal choice overrides the household choice. **Use household default** removes your personal choice. Administrators can preview shared or public sources and save a household preference for listeners without a personal choice; **Use automatic selection** removes it. If the words or choice change while the picker is open, it reloads them for review before another save. Play or match a new song and reload its details if lyric choices are not available yet.
+
 ### Settings
 
 Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.

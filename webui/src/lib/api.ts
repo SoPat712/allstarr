@@ -1587,6 +1587,46 @@ export const settings = {
     }),
 };
 
+export type LyricsChoiceStamp = { id: string; revision: number };
+export type LyricsChoiceRevision = { personal: LyricsChoiceStamp | null; household: LyricsChoiceStamp | null };
+export type RecordingLyricsChoice = { id: string; sourceId: string; revision: number };
+export type RecordingLyricsChoiceLayers = {
+  personal: RecordingLyricsChoice | null;
+  household: RecordingLyricsChoice | null;
+  effective: RecordingLyricsChoice | null;
+  revision: LyricsChoiceRevision;
+};
+export type RecordingLyricsSource = {
+  sourceId: string;
+  format: "synced" | "plain" | null;
+  preview: string | null;
+  previewRevision: string | null;
+  available: boolean;
+  truncated: boolean;
+};
+export type RecordingLyricsReview = {
+  recordingId: string;
+  scope: MatchAuthorityScope;
+  song: { title: string; artist: string; album: string; durationSeconds: number | null };
+  choices: RecordingLyricsChoiceLayers;
+  sources: RecordingLyricsSource[];
+};
+const recordingLyricsPath = (id: string) => `/api/admin/recordings/${encodeURIComponent(id)}/lyrics`;
+export const recordingLyrics = {
+  get: (id: string, scope: MatchAuthorityScope, signal?: AbortSignal) =>
+    json<RecordingLyricsReview>(`${recordingLyricsPath(id)}?scope=${scope}`, { signal }),
+  choose: (id: string, sourceId: string, scope: MatchAuthorityScope, expectedRevision: LyricsChoiceRevision,
+    previewRevision: string, signal?: AbortSignal) => json<RecordingLyricsChoiceLayers>(recordingLyricsPath(id), {
+      method: "PUT", headers: { "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ sourceId, scope, expectedRevision, previewRevision }),
+    }),
+  clear: (id: string, scope: MatchAuthorityScope, expectedRevision: LyricsChoiceRevision, signal?: AbortSignal) =>
+    json<RecordingLyricsChoiceLayers>(recordingLyricsPath(id), {
+      method: "DELETE", headers: { "Content-Type": "application/json" }, signal,
+      body: JSON.stringify({ scope, expectedRevision }),
+    }),
+};
+
 export const listeningPreferences = {
   get: () => json<PersonalListeningPreferences>("/api/admin/preferences"),
   save: (values: {
