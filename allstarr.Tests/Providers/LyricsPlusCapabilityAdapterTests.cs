@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.Lyrics;
 using allstarr.Services.Common;
@@ -13,6 +14,37 @@ public sealed class LyricsPlusCapabilityAdapterTests
         {"type":"Word","metadata":{"title":"Fixture","artist":"Artist"},
          "lyrics":[{"time":1234,"text":"Synthetic first","syllabus":[{"time":1234,"text":"Synthetic"}]},
                    {"time":2500,"text":"Synthetic second"}]}
+        """;
+
+    private const string TimedWithSegments = """
+        {"type":"Word","metadata":{"title":"Fixture","artist":"Artist"},
+         "lyrics":[{"time":1234,"duration":1001,"text":"Synthetic first","syllabus":[
+             {"time":1234,"duration":321,"text":" Synthetic ","isBackground":true,"synthetic":false},
+             {"time":1555,"duration":680,"text":"first","isBackground":false,"synthetic":true}]},
+                   {"time":2500,"duration":900,"text":"Synthetic second"}]}
+        """;
+
+    private const string TimedWithMalformedSegments = """
+        {"type":"Word","metadata":{"title":"Fixture","artist":"Artist"},
+         "lyrics":[{"time":1234,"text":"Synthetic first","syllabus":[
+             {"time":"not-a-time","duration":321,"text":"first"}]},
+                   {"time":2500,"text":"Synthetic second"}]}
+        """;
+
+    private const string LineOnly = """
+        {"type":"Line","metadata":{"title":"Fixture","artist":"Artist"},
+         "lyrics":[{"time":1234,"text":"Synthetic first"},{"time":2500,"text":"Synthetic second"}]}
+        """;
+
+    private const string Plain = """
+        {"type":"None","metadata":{"title":"Fixture","artist":"Artist"},
+         "lyrics":[{"text":"Synthetic first"},{"text":"Synthetic second"}]}
+        """;
+
+    private const string LowercaseSyllableType = """
+        {"type":"syllable","metadata":{"title":"Fixture","artist":"Artist"},
+         "lyrics":[{"time":1234,"text":"Synthetic first","syllabus":[
+             {"time":1234,"duration":321,"text":"Synthetic"}]}]}
         """;
 
     [Fact]
@@ -82,6 +114,185 @@ public sealed class LyricsPlusCapabilityAdapterTests
         Assert.Equal(expected, result.RequireValue().Content);
         Assert.Equal(format, result.RequireValue().Format);
         Assert.StartsWith("sha256:", result.RequireValue().Revision);
+    }
+
+    [Fact]
+    public async Task WordTiming_PreservesLineAndSegmentPrecisionFlagsAndSpaces()
+    {
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, TimedWithSegments)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        var value = result.RequireValue();
+        Assert.Equal(ProviderLyricsFormat.LineTimed, value.Format);
+        Assert.Equal("[00:01.234]Synthetic first\n[00:02.500]Synthetic second", value.Content);
+        Assert.NotNull(value.TimedLines);
+        var lines = value.TimedLines!;
+        Assert.Collection(lines, _ => { }, _ => { });
+        var first = lines[0];
+        Assert.Equal("Synthetic first", first.Text);
+        Assert.Equal(TimeSpan.FromMilliseconds(1234), first.Start);
+        Assert.Equal(TimeSpan.FromMilliseconds(1001), first.Duration);
+        Assert.NotNull(first.Segments);
+        var segments = first.Segments!;
+        Assert.Collection(segments,
+            segment =>
+            {
+                Assert.Equal(" Synthetic ", segment.Text);
+                Assert.Equal(TimeSpan.FromMilliseconds(1234), segment.Start);
+                Assert.Equal(TimeSpan.FromMilliseconds(321), segment.Duration);
+                Assert.True(segment.IsBackground);
+                Assert.False(segment.Synthetic);
+            },
+            segment =>
+            {
+                Assert.Equal("first", segment.Text);
+                Assert.Equal(TimeSpan.FromMilliseconds(1555), segment.Start);
+                Assert.Equal(TimeSpan.FromMilliseconds(680), segment.Duration);
+                Assert.False(segment.IsBackground);
+                Assert.True(segment.Synthetic);
+            });
+        Assert.Null(lines[1].Segments);
+        Assert.Equal(TimeSpan.FromMilliseconds(2500), lines[1].Start);
+        Assert.Equal(TimeSpan.FromMilliseconds(900), lines[1].Duration);
+    }
+
+    [Fact]
+    public async Task WordTimedPreferenceStillProjectsLineLrcWithRetainedSegments()
+    {
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, TimedWithSegments)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request(format: ProviderLyricsFormat.WordTimed));
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.LineTimed, result.RequireValue().Format);
+        Assert.Equal("[00:01.234]Synthetic first\n[00:02.500]Synthetic second", result.RequireValue().Content);
+        Assert.NotNull(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task LowercaseSyllableTypeIsAdvertisedAsTimed()
+    {
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, LowercaseSyllableType)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.LineTimed, result.RequireValue().Format);
+        Assert.Equal("[00:01.234]Synthetic first", result.RequireValue().Content);
+        Assert.NotNull(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task WordTiming_AvailabilityProjectionOmitsTimingButCacheRetainsIt()
+    {
+        var cache = new TestMemoryApplicationCache();
+        var handler = new Handler((_, _) => Response(HttpStatusCode.OK, TimedWithSegments));
+        var adapter = Adapter(handler, cache, "http://lyrics:3000");
+
+        var availability = await adapter.FetchLyricsAsync(Context(), Request(availability: true));
+        var content = await adapter.FetchLyricsAsync(Context(), Request());
+
+        Assert.True(availability.IsSuccess, availability.Error?.SafeMessage);
+        Assert.Null(availability.RequireValue().Content);
+        Assert.Null(availability.RequireValue().TimedLines);
+        Assert.True(content.IsSuccess, content.Error?.SafeMessage);
+        Assert.NotNull(content.RequireValue().TimedLines);
+        Assert.Single(handler.Requests);
+        Assert.Single(cache.GetKeysByPattern("lyrics:v3:lyricsplus:*"));
+        Assert.Empty(cache.GetKeysByPattern("lyrics:v2:lyricsplus:*"));
+    }
+
+    [Fact]
+    public async Task WordTiming_PlainProjectionOmitsTiming()
+    {
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, TimedWithSegments)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request(format: ProviderLyricsFormat.PlainText));
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.PlainText, result.RequireValue().Format);
+        Assert.Equal("Synthetic first\nSynthetic second", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task WordTiming_InvalidOptionalSegmentsDiscardOnlyTimingVector()
+    {
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, TimedWithMalformedSegments)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.LineTimed, result.RequireValue().Format);
+        Assert.Equal("[00:01.234]Synthetic first\n[00:02.500]Synthetic second", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Theory]
+    [InlineData("-1")]
+    [InlineData("\"bad\"")]
+    [InlineData("86400000")]
+    public async Task InvalidOptionalLineDurationKeepsValidLineLyrics(string duration)
+    {
+        var body = TimedWithSegments.Replace("\"duration\":1001", "\"duration\":" + duration, StringComparison.Ordinal);
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, body)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]Synthetic first\n[00:02.500]Synthetic second", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OversizedOptionalTimingKeepsValidLineLyrics(bool characterBudget)
+    {
+        var text = characterBudget ? new string('x', 700_000) : "Words";
+        var segments = Enumerable.Repeat(new { time = 1234, text }, characterBudget ? 1 : 50_001).ToArray();
+        var body = JsonSerializer.Serialize(new { type = "Word", lyrics = new[] { new { time = 1234, text, syllabus = segments } } });
+        Assert.InRange(Encoding.UTF8.GetByteCount(body), 1, 1_999_999);
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, body)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]" + text, result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task LineOnlyLyricsDoNotInventTimingSegments()
+    {
+        var result = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, LineOnly)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.LineTimed, result.RequireValue().Format);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task TimingOnlyChangesChangeRevisionWhenRenderedLinesStayTheSame()
+    {
+        var withTiming = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, TimedWithSegments)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+        var withoutTiming = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, LineOnly)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(withTiming.RequireValue().Content, withoutTiming.RequireValue().Content);
+        Assert.NotEqual(withTiming.RequireValue().Revision, withoutTiming.RequireValue().Revision);
+        Assert.NotNull(withTiming.RequireValue().TimedLines);
+        Assert.Null(withoutTiming.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task PlainContentRevisionIgnoresMetadataWhenNoTimingExists()
+    {
+        var first = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK, Plain)), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+        var second = await Adapter(new Handler((_, _) => Response(HttpStatusCode.OK,
+                Plain.Replace("\"artist\":\"Artist\"", "\"artist\":\"Artist\",\"genre\":\"alt\"", StringComparison.Ordinal))), endpoint: "http://lyrics:3000")
+            .FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(first.RequireValue().Content, second.RequireValue().Content);
+        Assert.Equal(first.RequireValue().Revision, second.RequireValue().Revision);
+        Assert.Null(first.RequireValue().TimedLines);
+        Assert.Null(second.RequireValue().TimedLines);
     }
 
     [Theory]

@@ -1,3 +1,5 @@
+using allstarr.Core.Capabilities;
+
 namespace allstarr.Models.Lyrics;
 
 public class LyricsInfo
@@ -12,4 +14,5 @@ public class LyricsInfo
     public string? SyncedLyrics { get; set; }
     public string? Source { get; set; }
     public string? Revision { get; set; }
+    public IReadOnlyList<ProviderLyricsTimedLine>? TimedLines { get; set; }
 }

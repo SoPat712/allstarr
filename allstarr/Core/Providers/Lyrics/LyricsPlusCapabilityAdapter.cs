@@ -45,7 +45,7 @@ public sealed class LyricsPlusCapabilityAdapter(
                     return Failure(ProviderErrorKind.AccountNeedsConfiguration);
                 bases.Add(uri!);
             }
-            var key = "lyrics:v2:lyricsplus:" + Hash(JsonSerializer.Serialize(new
+            var key = "lyrics:v3:lyricsplus:" + Hash(JsonSerializer.Serialize(new
             {
                 Endpoints = bases.Select(uri => uri.AbsoluteUri),
                 request.TrackTitle,
@@ -58,7 +58,7 @@ public sealed class LyricsPlusCapabilityAdapter(
             {
                 var cached = cache == null ? null : await cache.GetAsync<ProviderLyricsResult>(key).WaitAsync(token);
                 token.ThrowIfCancellationRequested();
-                if (cached?.Content != null) return Project(cached, request.AvailabilityOnly);
+                if (cached?.Content != null) return Project(cached, request);
             }
             catch (Exception exception) when (exception is not OperationCanceledException) { }
 
@@ -78,7 +78,7 @@ public sealed class LyricsPlusCapabilityAdapter(
                 try { if (cache != null) await cache.SetAsync(key, result.RequireValue(), lyricsTtl?.Invoke() ?? TimeSpan.FromDays(7)).WaitAsync(token); }
                 catch (Exception exception) when (exception is not OperationCanceledException) { }
                 token.ThrowIfCancellationRequested();
-                return Project(result.RequireValue(), request.AvailabilityOnly);
+                return Project(result.RequireValue(), request);
             }
             return lastFailure ?? Unavailable();
         }
@@ -124,8 +124,9 @@ public sealed class LyricsPlusCapabilityAdapter(
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("type", out var type) ||
             type.ValueKind != JsonValueKind.String || !root.TryGetProperty("lyrics", out var lines) || lines.ValueKind != JsonValueKind.Array)
             return ContractFailure();
-        var timed = type.GetString() is "Word" or "Line";
-        if (!timed && type.GetString() != "None") return ContractFailure();
+        var typeName = type.GetString();
+        var timed = typeName is "Word" or "Line" or "syllable";
+        if (!timed && typeName != "None") return ContractFailure();
         if (root.TryGetProperty("metadata", out var metadata) && metadata.ValueKind == JsonValueKind.Object)
         {
             foreach (var (key, expected) in new[] { ("title", request.TrackTitle!), ("artist", string.Join(", ", request.ArtistNames)) })
@@ -136,6 +137,9 @@ public sealed class LyricsPlusCapabilityAdapter(
         var format = timed && request.PreferredFormat != ProviderLyricsFormat.PlainText
             ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText;
         var output = new List<string>();
+        var timedLines = timed ? new List<ProviderLyricsTimedLine>() : null;
+        var hasSegments = false;
+        var invalidSegments = false;
         var hasWords = false;
         foreach (var line in lines.EnumerateArray())
         {
@@ -147,19 +151,173 @@ public sealed class LyricsPlusCapabilityAdapter(
             var words = text.GetString()!;
             hasWords |= !string.IsNullOrWhiteSpace(words);
             if (words.Contains('\r') || words.Contains('\n')) return ContractFailure();
+            TimeSpan? duration = null;
+            if (timed && line.TryGetProperty("duration", out var durationValue))
+            {
+                if (!TryReadMilliseconds(durationValue, out var durationMs) ||
+                    durationMs < 0 || durationMs > 86_400_000 - ms)
+                    invalidSegments = true;
+                else duration = TimeSpan.FromMilliseconds(durationMs);
+            }
+
+            IReadOnlyList<ProviderLyricsTimedSegment>? segments = null;
+            if (timed && line.TryGetProperty("syllabus", out var syllabus))
+            {
+                if (syllabus.ValueKind != JsonValueKind.Array ||
+                    !TryReadSegments(syllabus, out var parsedSegments))
+                {
+                    invalidSegments = true;
+                }
+                else
+                {
+                    segments = parsedSegments;
+                    hasSegments |= parsedSegments.Count != 0;
+                }
+            }
+
+            if (timed)
+                timedLines!.Add(new(
+                    words,
+                    TimeSpan.FromMilliseconds(ms),
+                    duration,
+                    segments));
             output.Add(format == ProviderLyricsFormat.LineTimed
                 ? FormattableString.Invariant($"[{ms / 60_000:00}:{ms / 1000 % 60:00}.{ms % 1000:000}]{words}") : words);
         }
         if (!hasWords) return Unavailable();
         var content = string.Join('\n', output);
-        return ProviderOutcome<ProviderLyricsResult>.Success(new(ProviderLyricsAvailabilityState.Available,
-            "lyricsplus", format, content, "sha256:" + Hash(content)));
+        IReadOnlyList<ProviderLyricsTimedLine>? retainedTiming =
+            timed && hasSegments && !invalidSegments ? timedLines : null;
+        return Available(format, content, retainedTiming);
+    }
+
+    private static ProviderOutcome<ProviderLyricsResult> Available(
+        ProviderLyricsFormat format, string content, IReadOnlyList<ProviderLyricsTimedLine>? timedLines)
+    {
+        try
+        {
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                ProviderLyricsAvailabilityState.Available, "lyricsplus", format, content,
+                Revision(content, timedLines), timedLines));
+        }
+        catch (ArgumentException)
+        {
+            return timedLines == null ? ContractFailure() : Available(format, content, null);
+        }
+    }
+
+    private static bool TryReadSegments(
+        JsonElement syllabus,
+        out IReadOnlyList<ProviderLyricsTimedSegment> segments)
+    {
+        if (syllabus.GetArrayLength() > LyricsTimingLimits.MaximumElements)
+        {
+            segments = [];
+            return false;
+        }
+        var parsed = new List<ProviderLyricsTimedSegment>();
+        foreach (var segment in syllabus.EnumerateArray())
+        {
+            if (segment.ValueKind != JsonValueKind.Object ||
+                !segment.TryGetProperty("time", out var time) ||
+                !TryReadMilliseconds(time, out var milliseconds) ||
+                milliseconds < 0 || milliseconds > 86_400_000 ||
+                !segment.TryGetProperty("text", out var text) ||
+                text.ValueKind != JsonValueKind.String)
+            {
+                segments = [];
+                return false;
+            }
+
+            var value = text.GetString()!;
+            if (value.Contains('\r') || value.Contains('\n'))
+            {
+                segments = [];
+                return false;
+            }
+
+            TimeSpan? duration = null;
+            if (segment.TryGetProperty("duration", out var durationValue))
+            {
+                if (!TryReadMilliseconds(durationValue, out var durationMs) ||
+                    durationMs < 0 || durationMs > 86_400_000 - milliseconds)
+                {
+                    segments = [];
+                    return false;
+                }
+                duration = TimeSpan.FromMilliseconds(durationMs);
+            }
+
+            bool? isBackground = null;
+            if (segment.TryGetProperty("isBackground", out var background))
+            {
+                if (background.ValueKind != JsonValueKind.True && background.ValueKind != JsonValueKind.False)
+                {
+                    segments = [];
+                    return false;
+                }
+                isBackground = background.GetBoolean();
+            }
+
+            bool? synthetic = null;
+            if (segment.TryGetProperty("synthetic", out var interpolated))
+            {
+                if (interpolated.ValueKind != JsonValueKind.True && interpolated.ValueKind != JsonValueKind.False)
+                {
+                    segments = [];
+                    return false;
+                }
+                synthetic = interpolated.GetBoolean();
+            }
+
+            parsed.Add(new(
+                value,
+                TimeSpan.FromMilliseconds(milliseconds),
+                duration,
+                isBackground,
+                synthetic));
+        }
+
+        segments = parsed;
+        return true;
+    }
+
+    private static bool TryReadMilliseconds(JsonElement value, out long milliseconds)
+    {
+        milliseconds = 0;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out milliseconds);
+    }
+
+    private static string Revision(
+        string content,
+        IReadOnlyList<ProviderLyricsTimedLine>? timedLines)
+    {
+        var input = timedLines == null
+            ? content
+            : JsonSerializer.Serialize(new { Content = content, TimedLines = timedLines });
+        return "sha256:" + Hash(input);
     }
 
     private static string Hash(string value) => Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
-    private static ProviderOutcome<ProviderLyricsResult> Project(ProviderLyricsResult result, bool availability) =>
-        ProviderOutcome<ProviderLyricsResult>.Success(availability
-            ? new(result.Availability, result.Source, revision: result.Revision) : result);
+
+    private static ProviderOutcome<ProviderLyricsResult> Project(
+        ProviderLyricsResult result,
+        ProviderLyricsRequest request)
+    {
+        if (request.AvailabilityOnly && result.Availability == ProviderLyricsAvailabilityState.Available)
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                ProviderLyricsAvailabilityState.Available,
+                result.Source,
+                revision: result.Revision));
+        if (request.PreferredFormat == ProviderLyricsFormat.PlainText && result.TimedLines != null)
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                result.Availability,
+                result.Source,
+                result.Format,
+                result.Content,
+                result.Revision));
+        return ProviderOutcome<ProviderLyricsResult>.Success(result);
+    }
     private static ProviderOutcome<ProviderLyricsResult> Unavailable() =>
         ProviderOutcome<ProviderLyricsResult>.Success(new(ProviderLyricsAvailabilityState.Unavailable, "lyricsplus"));
     private static ProviderOutcome<ProviderLyricsResult> Failure(ProviderErrorKind kind) => ProviderOutcome<ProviderLyricsResult>.Failure(new(kind));

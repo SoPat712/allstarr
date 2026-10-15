@@ -27,6 +27,15 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly IApplicationCache _cache;
 
+    private readonly record struct RichsyncLyrics(
+        string Content,
+        IReadOnlyList<ProviderLyricsTimedLine>? TimedLines);
+
+    private readonly record struct SelectedLyrics(
+        ProviderLyricsFormat Format,
+        string Content,
+        IReadOnlyList<ProviderLyricsTimedLine>? TimedLines);
+
     public MusixmatchLyricsCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
@@ -41,16 +50,21 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 
-    internal static Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsFromTokenAsync(
+    internal static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsFromTokenAsync(
         HttpClient http,
         string userToken,
         ProviderLyricsRequest request,
-        CancellationToken cancellationToken) =>
-        ReadLyricsFromTokenCoreAsync(
+        CancellationToken cancellationToken)
+    {
+        var result = await ReadLyricsFromTokenCoreAsync(
             http ?? throw new ArgumentNullException(nameof(http)),
             userToken,
             request ?? throw new ArgumentNullException(nameof(request)),
             cancellationToken);
+        return result.IsSuccess
+            ? Project(result.RequireValue(), request)
+            : result;
+    }
 
     public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
         ProviderExecutionContext context,
@@ -91,7 +105,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             operation.Token.ThrowIfCancellationRequested();
             if (cached?.Availability == ProviderLyricsAvailabilityState.Available &&
                 cached.Content != null)
-                return Project(cached, request.AvailabilityOnly);
+                return Project(cached, request);
 
             var loaded = await _secrets.UseAsync(
                 context.Account,
@@ -124,7 +138,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 result.Content != null)
                 await WriteCacheAsync(cacheKey, result, operation.Token);
             operation.Token.ThrowIfCancellationRequested();
-            return Project(result, request.AvailabilityOnly);
+            return Project(result, request);
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
@@ -385,39 +399,39 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
         var selected = SelectContent(request.PreferredFormat, timed, subtitle, plain);
         return selected != null
-            ? Available(selected.Value.Format, selected.Value.Content)
+            ? Available(selected.Value.Format, selected.Value.Content, selected.Value.TimedLines)
             : deferredError == null
                 ? Unavailable()
                 : Failure<ProviderLyricsResult>(deferredError);
     }
 
-    private static (ProviderLyricsFormat Format, string Content)? SelectContent(
+    private static SelectedLyrics? SelectContent(
         ProviderLyricsFormat? preferred,
-        string? timed,
+        RichsyncLyrics? timed,
         string? subtitle,
         string? plain)
     {
-        var synced = timed ?? subtitle;
+        var synced = timed?.Content ?? subtitle;
         if (preferred == ProviderLyricsFormat.PlainText)
         {
             if (!string.IsNullOrWhiteSpace(plain))
-                return (ProviderLyricsFormat.PlainText, plain);
+                return new(ProviderLyricsFormat.PlainText, plain, timed?.TimedLines);
             if (!string.IsNullOrWhiteSpace(synced))
-                return (ProviderLyricsFormat.PlainText, StripTimestamps(synced));
+                return new(ProviderLyricsFormat.PlainText, StripTimestamps(synced), timed?.TimedLines);
             return null;
         }
 
         if (!string.IsNullOrWhiteSpace(synced))
-            return (ProviderLyricsFormat.LineTimed, synced);
+            return new(ProviderLyricsFormat.LineTimed, synced, timed?.TimedLines);
         return string.IsNullOrWhiteSpace(plain)
             ? null
-            : (ProviderLyricsFormat.PlainText, plain);
+            : new(ProviderLyricsFormat.PlainText, plain, null);
     }
 
     private static string StripTimestamps(string lyrics) =>
         string.Join('\n', MusicLyrics.ParseSyncedLines(lyrics).Select(line => line.Text));
 
-    private static string? ReadRichsync(
+    private static RichsyncLyrics? ReadRichsync(
         JsonElement calls,
         string name,
         out ProviderError? error)
@@ -441,51 +455,139 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             }
 
             var rendered = new StringBuilder();
+            var timedLines = new List<ProviderLyricsTimedLine>();
+            var hasSegments = false;
+            var invalidTiming = false;
             foreach (var line in linesDocument.RootElement.EnumerateArray())
             {
                 if (line.ValueKind != JsonValueKind.Object ||
                     !line.TryGetProperty("ts", out var timestampValue) ||
-                    timestampValue.ValueKind != JsonValueKind.Number ||
-                    !timestampValue.TryGetDouble(out var timestamp) ||
-                    !double.IsFinite(timestamp) ||
-                    timestamp < 0 ||
+                    !TryReadSeconds(timestampValue, out var timestamp) ||
                     !TryGetString(line, "x", out var text) ||
-                    string.IsNullOrEmpty(text))
+                    string.IsNullOrEmpty(text) ||
+                    text.Contains('\r') || text.Contains('\n'))
                 {
                     error = ProviderError.CompatibilityContractChanged();
                     return null;
                 }
 
-                var milliseconds = Math.Round(
-                    timestamp * 1000d,
-                    MidpointRounding.AwayFromZero);
-                if (!double.IsFinite(milliseconds) ||
-                    milliseconds < 0 ||
-                    milliseconds > MaximumTimestampMilliseconds)
+                TimeSpan? duration = null;
+                if (line.TryGetProperty("te", out var endValue))
                 {
-                    error = ProviderError.CompatibilityContractChanged();
-                    return null;
+                    if (!TryReadSeconds(endValue, out var end) || end < timestamp)
+                    {
+                        invalidTiming = true;
+                    }
+                    else
+                    {
+                        duration = ToSourceTime(end) - ToSourceTime(timestamp);
+                    }
                 }
 
-                var elapsed = TimeSpan.FromMilliseconds(milliseconds);
+                IReadOnlyList<ProviderLyricsTimedSegment>? segments = null;
+                if (line.TryGetProperty("l", out var nested))
+                {
+                    if (nested.ValueKind != JsonValueKind.Array ||
+                        !TryReadRichsyncSegments(nested, timestamp, out var parsedSegments))
+                    {
+                        invalidTiming = true;
+                    }
+                    else
+                    {
+                        segments = parsedSegments;
+                        hasSegments |= parsedSegments.Count != 0;
+                    }
+                }
+
+                timedLines.Add(new(
+                    text,
+                    ToSourceTime(timestamp),
+                    duration,
+                    segments));
                 if (rendered.Length != 0)
                     rendered.Append('\n');
-                rendered.AppendFormat(
-                    System.Globalization.CultureInfo.InvariantCulture,
-                    "[{0:00}:{1:00}.{2:000}]{3}",
-                    (long)elapsed.TotalMinutes,
-                    elapsed.Seconds,
-                    elapsed.Milliseconds,
-                    text);
+                rendered.Append(FormatTimestamp(timestamp, text));
             }
 
-            return rendered.Length == 0 ? null : rendered.ToString();
+            return rendered.Length == 0
+                ? null
+                : new(
+                    rendered.ToString(),
+                    hasSegments && !invalidTiming ? timedLines : null);
         }
         catch (JsonException)
         {
             error = ProviderError.CompatibilityContractChanged();
             return null;
         }
+        catch (ArgumentException)
+        {
+            error = ProviderError.CompatibilityContractChanged();
+            return null;
+        }
+    }
+
+    private static bool TryReadRichsyncSegments(
+        JsonElement nested,
+        decimal lineStart,
+        out IReadOnlyList<ProviderLyricsTimedSegment> segments)
+    {
+        if (nested.GetArrayLength() > LyricsTimingLimits.MaximumElements)
+        {
+            segments = [];
+            return false;
+        }
+        var parsed = new List<ProviderLyricsTimedSegment>();
+        foreach (var chunk in nested.EnumerateArray())
+        {
+            if (chunk.ValueKind != JsonValueKind.Object ||
+                !TryGetString(chunk, "c", out var text) ||
+                text == null ||
+                !chunk.TryGetProperty("o", out var offsetValue) ||
+                offsetValue.ValueKind != JsonValueKind.Number ||
+                !offsetValue.TryGetDecimal(out var offset) ||
+                offset < -86_400m || offset > 86_400m)
+            {
+                segments = [];
+                return false;
+            }
+
+            var absolute = lineStart + offset;
+            if (absolute < 0 ||
+                absolute > MaximumTimestampMilliseconds / 1000m ||
+                text.Contains('\r') || text.Contains('\n'))
+            {
+                segments = [];
+                return false;
+            }
+
+            parsed.Add(new(text, ToSourceTime(absolute)));
+        }
+
+        segments = parsed;
+        return true;
+    }
+
+    private static bool TryReadSeconds(JsonElement value, out decimal seconds)
+    {
+        seconds = 0;
+        return value.ValueKind == JsonValueKind.Number &&
+               value.TryGetDecimal(out seconds) &&
+               seconds >= 0 &&
+               seconds <= MaximumTimestampMilliseconds / 1000m;
+    }
+
+    private static TimeSpan ToSourceTime(decimal seconds) => TimeSpan.FromTicks(
+        decimal.ToInt64(decimal.Round(seconds * TimeSpan.TicksPerSecond, 0, MidpointRounding.AwayFromZero)));
+
+    private static string FormatTimestamp(decimal timestamp, string text)
+    {
+        var milliseconds = Math.Round(
+            timestamp * 1000m,
+            MidpointRounding.AwayFromZero);
+        var elapsed = TimeSpan.FromTicks((long)milliseconds * TimeSpan.TicksPerMillisecond);
+        return FormattableString.Invariant(
+            $"[{(long)elapsed.TotalMinutes:00}:{elapsed.Seconds:00}.{elapsed.Milliseconds:000}]{text}");
     }
 
     private static string? ReadSubtitle(
@@ -714,33 +816,54 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             ]);
         var fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(metadata))).ToLowerInvariant();
-        return $"lyrics:v2:{StableProviderId}:{account.AccountId:N}:{account.Revision}:" +
+        return $"lyrics:v3:{StableProviderId}:{account.AccountId:N}:{account.Revision}:" +
             $"{account.SecretReferenceId?.ToString("N") ?? "none"}:{fingerprint}:" +
             $"{format.ToLowerInvariant()}";
     }
 
     private static ProviderOutcome<ProviderLyricsResult> Project(
         ProviderLyricsResult result,
-        bool availabilityOnly) =>
-        availabilityOnly && result.Availability == ProviderLyricsAvailabilityState.Available
-            ? ProviderOutcome<ProviderLyricsResult>.Success(new(
+        ProviderLyricsRequest request)
+    {
+        if (request.AvailabilityOnly && result.Availability == ProviderLyricsAvailabilityState.Available)
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
                 ProviderLyricsAvailabilityState.Available,
                 result.Source,
-                revision: result.Revision))
-            : ProviderOutcome<ProviderLyricsResult>.Success(result);
+                revision: result.Revision));
+        if (request.PreferredFormat == ProviderLyricsFormat.PlainText && result.TimedLines != null)
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                result.Availability,
+                result.Source,
+                result.Format,
+                result.Content,
+                result.Revision));
+        return ProviderOutcome<ProviderLyricsResult>.Success(result);
+    }
 
     private static ProviderOutcome<ProviderLyricsResult> Available(
         ProviderLyricsFormat format,
-        string content)
+        string content,
+        IReadOnlyList<ProviderLyricsTimedLine>? timedLines)
     {
-        var revision = "sha256:" + Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
-        return ProviderOutcome<ProviderLyricsResult>.Success(new(
-            ProviderLyricsAvailabilityState.Available,
-            StableProviderId,
-            format,
-            content,
-            revision));
+        try
+        {
+            var revisionInput = timedLines == null
+                ? content
+                : JsonSerializer.Serialize(new { Content = content, TimedLines = timedLines });
+            var revision = "sha256:" + Convert.ToHexString(
+                SHA256.HashData(Encoding.UTF8.GetBytes(revisionInput))).ToLowerInvariant();
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                ProviderLyricsAvailabilityState.Available,
+                StableProviderId,
+                format,
+                content,
+                revision,
+                timedLines));
+        }
+        catch (ArgumentException)
+        {
+            return timedLines == null ? ContractFailure() : Available(format, content, null);
+        }
     }
 
     private static ProviderOutcome<ProviderLyricsResult> Unavailable() =>

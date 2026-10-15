@@ -1,4 +1,5 @@
 using allstarr.Core.Operations;
+using allstarr.Core.Capabilities;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 using System.Text.Json.Nodes;
@@ -36,6 +37,38 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
         Assert.Equal(2, files.Length);
         Assert.All(files, path => Assert.DoesNotContain("..", Path.GetFileName(path), StringComparison.Ordinal));
         Assert.All(files, path => Assert.DoesNotContain("release", path, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Theory]
+    [InlineData("lyrics:v3:lyricsplus:fixture")]
+    [InlineData("lyrics:v3:musixmatch:fixture")]
+    [InlineData("lrclib:automatic:v2:lyrics:v2:fixture")]
+    public void NewLyricsNamespacesKeepTheMediaTier(string key)
+    {
+        Assert.True(ApplicationCachePolicyRegistry.TryClassify(key, out var category));
+        Assert.Equal(ApplicationCacheCategory.Lyrics, category);
+        Assert.Equal(ApplicationCacheStorageTier.Media, ApplicationCachePolicyRegistry.Resolve(key).StorageTier);
+    }
+
+    [Fact]
+    public async Task CachedWordTimingSurvivesAFileCacheRestart()
+    {
+        var options = new FileMediaCacheOptions(Path.Combine(_root, "timing"), MaximumBytes: 16_384, MaximumEntryBytes: 8192);
+        var first = new FileMediaApplicationCache(options, _clock, NullLogger<FileMediaApplicationCache>.Instance);
+        var data = new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "fixture",
+            ProviderLyricsFormat.LineTimed, "[00:01.235]Words", timedLines:
+            [new("Words", TimeSpan.FromSeconds(1), segments: [new("Words", TimeSpan.FromTicks(12_345_678), null, true, false)])]);
+        const string key = "lyrics:v3:musixmatch:fixture";
+        Assert.True(await first.SetAsync(key, data, TimeSpan.FromHours(1)));
+        var restarted = new FileMediaApplicationCache(options, _clock, NullLogger<FileMediaApplicationCache>.Instance);
+        var retained = await restarted.GetAsync<ProviderLyricsResult>(key);
+        Assert.NotNull(retained);
+        var segment = Assert.Single(Assert.Single(retained.TimedLines!).Segments!);
+        Assert.Equal(TimeSpan.FromTicks(12_345_678), segment.Start);
+        Assert.True(segment.IsBackground);
+        Assert.False(segment.Synthetic);
+        Assert.Null(segment.Duration);
+        Assert.Equal(data.Content, retained.Content);
     }
 
     [Fact]

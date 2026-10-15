@@ -102,6 +102,24 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
     private const string MissingMacroPayload =
         """{"message":{"header":{"status_code":200},"body":{"macro_calls":{}}}}""";
 
+    private const string RichsyncWithSegmentsBody = """
+        [{"ts":1.234,"te":2.750,"x":"First","l":[
+          {"c":"Fir","o":0.0},
+          {"c":"st ","o":0.125},
+          {"c":"word","o":0.321}]},
+         {"ts":2.5,"x":"Second","l":[{"c":"Second","o":0.0}]}]
+        """;
+
+    private static string PayloadWithRichsync(string richsyncBody, bool compactEncoding = false)
+    {
+        var node = JsonNode.Parse(TimedMacroPayload)!;
+        var calls = node["message"]!["body"]!["macro_calls"]!.AsObject();
+        calls["track.richsync.get"]!["message"]!["body"]!["richsync"]!["richsync_body"] = richsyncBody;
+        return node.ToJsonString(compactEncoding
+            ? new JsonSerializerOptions { Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping }
+            : null);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -210,6 +228,225 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task RichsyncTiming_PreservesLineDurationAndAbsoluteSegmentOffsets()
+    {
+        var handler = new FixtureHttpHandler
+        {
+            Payload = PayloadWithRichsync(RichsyncWithSegmentsBody)
+        };
+        var outcome = await CreateAdapter(handler, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.SafeMessage);
+        var result = outcome.RequireValue();
+        Assert.Equal(ProviderLyricsFormat.LineTimed, result.Format);
+        Assert.Equal("[00:01.234]First\n[00:02.500]Second", result.Content);
+        Assert.NotNull(result.TimedLines);
+        var lines = result.TimedLines!;
+        Assert.Collection(lines, _ => { }, _ => { });
+        Assert.Equal(TimeSpan.FromMilliseconds(1234), lines[0].Start);
+        Assert.Equal(TimeSpan.FromMilliseconds(1516), lines[0].Duration);
+        Assert.NotNull(lines[0].Segments);
+        Assert.Collection(lines[0].Segments!,
+            segment =>
+            {
+                Assert.Equal("Fir", segment.Text);
+                Assert.Equal(TimeSpan.FromMilliseconds(1234), segment.Start);
+                Assert.Null(segment.Duration);
+            },
+            segment =>
+            {
+                Assert.Equal("st ", segment.Text);
+                Assert.Equal(TimeSpan.FromMilliseconds(1359), segment.Start);
+                Assert.Null(segment.Duration);
+            },
+            segment =>
+            {
+                Assert.Equal("word", segment.Text);
+                Assert.Equal(TimeSpan.FromMilliseconds(1555), segment.Start);
+                Assert.Null(segment.Duration);
+            });
+        Assert.Equal(TimeSpan.FromMilliseconds(2500), lines[1].Start);
+        Assert.Null(lines[1].Duration);
+        Assert.Single(lines[1].Segments!);
+    }
+
+    [Theory]
+    [InlineData("1.2345678", "0.0000001", 12345678L, 12345679L)]
+    [InlineData("1.2345678", "0.1250000", 12345678L, 13595678L)]
+    [InlineData("86399.9999998", "0.0000001", 863999999998L, 863999999999L)]
+    public async Task RichsyncTimingRetainsSubMillisecondSourcePrecision(string start, string offset, long lineTicks, long segmentTicks)
+    {
+        var raw = "[{\"ts\":" + start + ",\"x\":\"First\",\"l\":[{\"c\":\"First\",\"o\":" + offset + "}]}]";
+        var result = await CreateAdapter(new FixtureHttpHandler { Payload = PayloadWithRichsync(raw) }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        var line = Assert.Single(result.RequireValue().TimedLines!);
+        Assert.Equal(TimeSpan.FromTicks(lineTicks), line.Start);
+        Assert.Equal(TimeSpan.FromTicks(segmentTicks), Assert.Single(line.Segments!).Start);
+    }
+
+    [Fact]
+    public async Task RichsyncDurationRetainsTheDifferenceBetweenPreciseSourceEndpoints()
+    {
+        var raw = """[{"ts":1.2345678,"te":2.7500001,"x":"First","l":[{"c":"First","o":0}]}]""";
+        var result = await CreateAdapter(new FixtureHttpHandler { Payload = PayloadWithRichsync(raw) }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(TimeSpan.FromTicks(15154323), Assert.Single(result.RequireValue().TimedLines!).Duration);
+    }
+
+    [Fact]
+    public async Task RichsyncTiming_PlainProjectionOmitsSegments()
+    {
+        var handler = new FixtureHttpHandler
+        {
+            Payload = PayloadWithRichsync(RichsyncWithSegmentsBody)
+        };
+        var result = await CreateAdapter(handler, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest(preferredFormat: ProviderLyricsFormat.PlainText));
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.PlainText, result.RequireValue().Format);
+        Assert.Equal("First\nSecond", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task RichsyncTiming_WordTimedPreferenceStillProjectsLineLrcWithSegments()
+    {
+        var handler = new FixtureHttpHandler
+        {
+            Payload = PayloadWithRichsync(RichsyncWithSegmentsBody)
+        };
+        var result = await CreateAdapter(handler, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest(preferredFormat: ProviderLyricsFormat.WordTimed));
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(ProviderLyricsFormat.LineTimed, result.RequireValue().Format);
+        Assert.Equal("[00:01.234]First\n[00:02.500]Second", result.RequireValue().Content);
+        Assert.NotNull(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task RichsyncTiming_AvailabilityProjectionOmitsSegmentsButCacheRetainsThem()
+    {
+        EnsureCacheSettings();
+        var handler = new FixtureHttpHandler
+        {
+            Payload = PayloadWithRichsync(RichsyncWithSegmentsBody)
+        };
+        var cache = new TestMemoryApplicationCache();
+        var adapter = CreateAdapter(handler, new FixtureSecretAccessor(), cache);
+
+        var availability = await adapter.FetchLyricsAsync(
+            Context(AccountA), LyricsRequest(availabilityOnly: true));
+        var content = await adapter.FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.True(availability.IsSuccess, availability.Error?.SafeMessage);
+        Assert.Null(availability.RequireValue().Content);
+        Assert.Null(availability.RequireValue().TimedLines);
+        Assert.True(content.IsSuccess, content.Error?.SafeMessage);
+        Assert.NotNull(content.RequireValue().TimedLines);
+        Assert.Equal(1, handler.Requests);
+    }
+
+    [Fact]
+    public async Task RichsyncTiming_MissingNestedSegmentsDoesNotInventWordTiming()
+    {
+        var handler = new FixtureHttpHandler { Payload = TimedMacroPayload };
+        var result = await CreateAdapter(handler, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]First\n[00:02.500]Second", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Fact]
+    public async Task RichsyncTiming_InvalidOptionalSegmentsDiscardOnlyTimingVector()
+    {
+        var malformed = """
+            [{"ts":1.234,"te":2.750,"x":"First","l":[{"c":"First","o":"bad"}]},
+             {"ts":2.5,"x":"Second","l":[{"c":"Second","o":0.0}]}]
+            """;
+        var handler = new FixtureHttpHandler { Payload = PayloadWithRichsync(malformed) };
+        var result = await CreateAdapter(handler, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]First\n[00:02.500]Second", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Theory]
+    [InlineData("\"bad\"")]
+    [InlineData("0")]
+    [InlineData("86401")]
+    public async Task InvalidOptionalRichsyncEndKeepsValidLinesWithoutOtherFallbacks(string end)
+    {
+        var raw = "[{\"ts\":1.234,\"te\":" + end + ",\"x\":\"First\",\"l\":[{\"c\":\"First\",\"o\":0}]}]";
+        var payload = JsonNode.Parse(PayloadWithRichsync(raw))!;
+        var calls = payload["message"]!["body"]!["macro_calls"]!.AsObject();
+        calls.Remove("track.subtitles.get");
+        calls.Remove("track.lyrics.get");
+        var result = await CreateAdapter(new FixtureHttpHandler { Payload = payload.ToJsonString() }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]First", result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task OversizedOptionalRichsyncTimingKeepsValidLineLyrics(bool characterBudget)
+    {
+        var text = characterBudget ? new string('x', 700_000) : "Words";
+        var segments = Enumerable.Repeat(new { c = text, o = 0 }, characterBudget ? 1 : 50_001).ToArray();
+        var raw = JsonSerializer.Serialize(new[] { new { ts = 1.234, x = text, l = segments } });
+        var payload = PayloadWithRichsync(raw, compactEncoding: true);
+        Assert.InRange(Encoding.UTF8.GetByteCount(payload), 1, 1_999_999);
+        var result = await CreateAdapter(new FixtureHttpHandler { Payload = payload }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]" + text, result.RequireValue().Content);
+        Assert.Null(result.RequireValue().TimedLines);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitTokenProbeOmitsTimingForPlainAndAvailability(bool availability)
+    {
+        using var http = new HttpClient(new FixtureHttpHandler { Payload = PayloadWithRichsync(RichsyncWithSegmentsBody) });
+        var result = await MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(http, "fixture-token",
+            LyricsRequest(availabilityOnly: availability, preferredFormat: ProviderLyricsFormat.PlainText), default);
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Null(result.RequireValue().TimedLines);
+        if (availability) Assert.Null(result.RequireValue().Content);
+        else Assert.Equal("First\nSecond", result.RequireValue().Content);
+    }
+
+    [Fact]
+    public async Task RichsyncTiming_ChangesRevisionWithoutChangingRenderedLines()
+    {
+        var withTiming = await CreateAdapter(
+                new FixtureHttpHandler { Payload = PayloadWithRichsync(RichsyncWithSegmentsBody) },
+                new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+        var withoutTiming = await CreateAdapter(
+                new FixtureHttpHandler { Payload = TimedMacroPayload },
+                new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.Equal(withTiming.RequireValue().Content, withoutTiming.RequireValue().Content);
+        Assert.NotEqual(withTiming.RequireValue().Revision, withoutTiming.RequireValue().Revision);
+        Assert.NotNull(withTiming.RequireValue().TimedLines);
+        Assert.Null(withoutTiming.RequireValue().TimedLines);
+    }
+
+    [Fact]
     public async Task PlainPreference_ProjectsThePlainMacroWithoutInventingTiming()
     {
         var handler = new FixtureHttpHandler { Payload = TimedMacroPayload };
@@ -301,7 +538,7 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
             LyricsRequest(title: "Alternate track"));
 
         Assert.Equal(6, handler.Requests);
-        var keys = cache.GetKeysByPattern("lyrics:v2:*").ToArray();
+        var keys = cache.GetKeysByPattern("lyrics:v3:*").ToArray();
         Assert.Equal(6, keys.Length);
         Assert.Contains(keys, key => key.Contains(AccountA.ToString("N"), StringComparison.Ordinal));
         Assert.Contains(keys, key => key.Contains(AccountB.ToString("N"), StringComparison.Ordinal));
@@ -309,6 +546,44 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         Assert.Contains(keys, key => key.Contains(SecretB.ToString("N"), StringComparison.Ordinal));
         Assert.Contains(keys, key => key.Contains(":2:", StringComparison.Ordinal));
         Assert.DoesNotContain(keys, key => key.Contains("desktop-user-token", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Cache_DoesNotReuseStaleV2LineOnlyEntries()
+    {
+        EnsureCacheSettings();
+        var cache = new TestMemoryApplicationCache();
+        var metadata = string.Join(
+            "\n",
+            [
+                MusixmatchLyricsCapabilityAdapter.StableProviderId,
+                ProviderResourceKind.Track.ToString(),
+                "track-42",
+                "Fixture track",
+                "Fixture artist",
+                "Fixture album",
+                "180"
+            ]);
+        var fingerprint = Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(metadata))).ToLowerInvariant();
+        var staleKey = $"lyrics:v2:{MusixmatchLyricsCapabilityAdapter.StableProviderId}:" +
+            $"{AccountA:N}:1:{SecretA:N}:{fingerprint}:linetimed";
+        await cache.SetAsync(staleKey,
+            new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
+                MusixmatchLyricsCapabilityAdapter.StableProviderId,
+                ProviderLyricsFormat.LineTimed,
+                "[00:99.999]stale-v2"),
+            TimeSpan.FromMinutes(5));
+
+        var handler = new FixtureHttpHandler { Payload = TimedMacroPayload };
+        var result = await CreateAdapter(handler, new FixtureSecretAccessor(), cache)
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal("[00:01.234]First\n[00:02.500]Second", result.RequireValue().Content);
+        Assert.Equal(1, handler.Requests);
+        Assert.Single(cache.GetKeysByPattern("lyrics:v2:*"));
+        Assert.Single(cache.GetKeysByPattern("lyrics:v3:*"));
     }
 
     [Fact]
