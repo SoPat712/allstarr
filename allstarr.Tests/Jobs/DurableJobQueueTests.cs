@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Tests;
 
-public sealed class DurableJobQueueTests : IAsyncLifetime
+public sealed partial class DurableJobQueueTests : IAsyncLifetime
 {
     private readonly Guid _userId = Guid.CreateVersion7();
     private SqliteTestDatabase _database = null!;

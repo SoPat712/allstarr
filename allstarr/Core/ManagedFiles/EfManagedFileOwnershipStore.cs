@@ -3,13 +3,16 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ManagedFiles;
 
-public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : IManagedFileOwnershipStore, IManagedFileRemovalStore
+public sealed partial class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : IManagedFileOwnershipStore, IManagedFileRemovalStore
 {
     private DbSet<ManagedFileOwnershipEntity> Files => dbContext.Set<ManagedFileOwnershipEntity>();
     private DbSet<ManagedFileReferenceEntity> References => dbContext.Set<ManagedFileReferenceEntity>();
 
     public async Task<ManagedFileRecord?> FindByPathAsync(string canonicalPath, CancellationToken cancellationToken) =>
         Map(await Files.AsNoTracking().SingleOrDefaultAsync(item => item.CanonicalPath == canonicalPath && item.RemovedAt == null, cancellationToken));
+
+    public Task<bool> IsPathReservedAsync(string canonicalPath, CancellationToken cancellationToken) =>
+        Files.AsNoTracking().AnyAsync(item => item.CanonicalPath == canonicalPath, cancellationToken);
 
     public async Task<ManagedFileRecord?> FindCompatibleAsync(Guid rootId, string contentSha256, string scopeKey, CancellationToken cancellationToken) =>
         Map(await Files.AsNoTracking().OrderBy(item => item.CreatedAt).FirstOrDefaultAsync(item =>

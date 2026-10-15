@@ -19,6 +19,8 @@ public static class ProviderDownloadArtifactRegistration
         }
         services.AddSingleton(placement);
         services.AddSingleton<allstarr.Core.ManagedFiles.RecordingKeptFiles>();
+        services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler,
+            allstarr.Core.ManagedFiles.KeptRecordingCleanupJobHandler>();
         return services;
     }
 }

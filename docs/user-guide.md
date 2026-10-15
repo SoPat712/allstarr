@@ -189,7 +189,7 @@ If playback succeeded but Cached is empty, check the selected storage mode, prov
 
 Hearting an external song records your favorite immediately and queues a durable kept copy using an authorized provider account. An accessible recording in your backend library avoids a redundant download. An existing household kept copy is reused without contacting its original provider. Otherwise, verified audio is attached to the recording and becomes available to everyone in your household. Its title, artists, album and duration remain available when the original provider account is disconnected. Native songs, albums, artists, and playlists do not trigger favorite downloads.
 
-Favorite actions do not tag files, place music in the backend library, trigger library rescans, or send Last.fm love requests. Removing a favorite cancels its pending work and clears its favorite state; it does not delete an existing downloaded file.
+Favorite actions do not tag files, place music in the backend library, trigger library rescans, or send Last.fm love requests. Removing a favorite cancels its pending work, clears its favorite state and releases that heart’s reference to the household copy. Once its last managed reference is released, the household kept file has a twenty-four-hour grace period before removal. Another listener’s heart or another retained reference protects it. Hearting it again protects an existing copy immediately and cancels its cleanup.
 
 ## Listening and scrobbling
 

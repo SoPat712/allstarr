@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Jobs;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -48,7 +49,8 @@ public interface IFavoriteActionPipeline
 public sealed class FavoriteActionPipeline(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableJobQueue jobs,
-    IPlatformClock clock) : IFavoriteActionPipeline
+    IPlatformClock clock,
+    RecordingKeptFiles? keptFiles = null) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
@@ -170,6 +172,8 @@ public sealed class FavoriteActionPipeline(
         }
         try
         {
+            if (keptFiles != null)
+                await keptFiles.StageFavoriteInterestAsync(context, currentState, record, cancellationToken);
             await context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             return new FavoriteEventReceipt(eventId, job.JobId, true, FavoriteEventState.Pending);
