@@ -53,9 +53,13 @@ public sealed class ListeningHistoryRetentionSweeper(
                     (item.ListenedAt ?? item.StartedAt ?? item.UpdatedAt) < expiredBefore);
                 var occurrenceKeys = expired.Select(item => item.OccurrenceKey);
                 await db.PlaybackDeliveryCheckpoints.Where(item =>
-                        item.OwnerUserId == policy.OwnerUserId &&
+                        (item.State == allstarr.Core.Playback.ScopedPlaybackScrobbleOutcome.Delivered ||
+                        item.State == allstarr.Core.Playback.ScopedPlaybackScrobbleOutcome.Ignored) &&
+                    item.OwnerUserId == policy.OwnerUserId &&
                         item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
-                    .ExecuteDeleteAsync(cancellationToken);
+                    .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.SubmissionJson, (string?)null)
+                    .SetProperty(item => item.SignalPayloadJson, (string?)null), cancellationToken);
                 await expired.ExecuteDeleteAsync(cancellationToken);
             }
             await transaction.CommitAsync(cancellationToken);

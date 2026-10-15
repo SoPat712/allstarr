@@ -10,6 +10,7 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 - [Configuration](operations/configuration.md): deployment-owned values, durable settings, and secrets.
 - [Deployment profiles](operations/deployment-profiles.md): install, update, optional services, backup, and restore.
 - [Storage](operations/storage.md): SQLite ownership, data folders, backup, and recovery.
+- [Scrobble delivery and recovery](operations/scrobbling.md): saved destinations, retries and uncertain-send repair.
 - [Extension SDK v1](extensions/sdk-v1.md): package, capability, permission, and account contracts.
 
 ## Operator guides

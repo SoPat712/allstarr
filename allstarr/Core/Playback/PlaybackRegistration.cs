@@ -14,6 +14,8 @@ public static class PlaybackRegistration
         services.AddSingleton<PlaybackDeliveryActivityStore>();
         services.AddSingleton<IPlaybackDeliveryActivitySource>(provider =>
             provider.GetRequiredService<PlaybackDeliveryActivityStore>());
+        services.AddSingleton<PlaybackScrobbleAcceptance>();
+        services.AddSingleton<PlaybackScrobbleRepair>();
         services.AddSingleton<IPlaybackSignalPipeline, PlaybackSignalPipeline>();
         services.AddSingleton<IPlaybackTrackResolver, PlaybackTrackResolver>();
         services.AddSingleton<IPlaybackLyricsPrefetch, PlaybackLyricsPrefetch>();
@@ -29,8 +31,10 @@ public static class PlaybackRegistration
             services.AddSingleton<IRecommendationSignalWriter, DisabledRecommendationSignalWriter>();
         }
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, LastFmScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
+            .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, ListenBrainzScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
+            .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddSingleton<IDurableJobHandler, PlaybackSignalJobHandler>();
         return services;

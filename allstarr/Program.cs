@@ -435,7 +435,7 @@ builder.Services.AddHttpClient("LastFm", client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd(allstarr.AppIdentity.UserAgent);
     client.Timeout = TimeSpan.FromSeconds(30);
-}).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+}).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 builder.Services.AddSingleton<ScrobblingHelper>();
 

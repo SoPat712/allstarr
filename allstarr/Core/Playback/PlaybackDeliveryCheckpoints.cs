@@ -7,6 +7,15 @@ public sealed class PlaybackDeliveryCheckpointEntity
 {
     public Guid Id { get; set; }
     public Guid OwnerUserId { get; set; }
+    public Guid? DestinationAccountId { get; set; }
+    public long? DestinationAccountRevision { get; set; }
+    public string? DestinationJson { get; set; }
+    public string? SubmissionJson { get; set; }
+    public string? SignalPayloadJson { get; set; }
+    public DateTimeOffset? AttemptStartedAt { get; set; }
+    public int SendCount { get; set; }
+    public bool ReplaySafe { get; set; }
+    public long Revision { get; set; }
     public string? OccurrenceKey { get; set; }
     public string SignalKey { get; set; } = string.Empty;
     public string TargetId { get; set; } = string.Empty;
@@ -67,6 +76,8 @@ public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<Allstarr
                 checkpoint.RetryAfter = result.RetryAfter is { } delay ? now.Add(delay) : null;
                 checkpoint.RequiresReauthentication = result.RequiresReauthentication;
                 checkpoint.UpdatedAt = now;
+                checkpoint.AttemptStartedAt = null;
+                checkpoint.Revision++;
             }
             if (added) db.Add(checkpoint);
             try { await db.SaveChangesAsync(token); return; }
@@ -83,6 +94,7 @@ public static class PlaybackDeliveryCheckpointModelConfiguration
             entity.ToTable("playback_delivery_checkpoints", table => table.HasCheckConstraint(
                 "CK_playback_delivery_checkpoint_state",
                 "\"State\" IN ('Delivered', 'Ignored', 'Retrying', 'PermanentFailure')"));
+            entity.Property(x => x.Revision).IsConcurrencyToken();
             entity.HasKey(x => x.Id); entity.Property(x => x.Id).ValueGeneratedNever();
             entity.Property(x => x.OccurrenceKey).HasMaxLength(64);
             entity.Property(x => x.SignalKey).HasMaxLength(64).IsRequired();

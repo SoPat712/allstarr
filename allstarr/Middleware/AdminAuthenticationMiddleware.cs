@@ -141,6 +141,12 @@ public class AdminAuthenticationMiddleware
             path.TrimEnd('/').Equals("/api/admin/scrobbling/lastfm/authenticate", StringComparison.OrdinalIgnoreCase))
             return true;
 
+        var deliverySegments = path.TrimEnd('/').Split('/');
+        if (deliverySegments.Length >= 5 && deliverySegments[3] == "scrobbling" && deliverySegments[4] == "deliveries")
+            return deliverySegments.Length == 5 && HttpMethods.IsGet(method) ||
+                deliverySegments.Length == 7 && HttpMethods.IsPost(method) &&
+                Guid.TryParse(deliverySegments[5], out _) && deliverySegments[6] == "resolve";
+
         if (IsPlaylistSelfServiceRoute(path, method))
         {
             return true;
