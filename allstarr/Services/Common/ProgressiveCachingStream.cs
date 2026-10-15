@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace allstarr.Services.Common;
 
 internal readonly record struct ProgressiveCacheReadState(
@@ -21,6 +19,7 @@ public sealed class ProgressiveCachingStream : Stream
     private readonly Action? started;
     private readonly TimeSpan waitTimeout;
     private readonly TimeSpan initialWaitTimeout;
+    private readonly TimeProvider timeProvider;
     private long position;
     private int startedInvoked;
     private int disposed;
@@ -31,7 +30,8 @@ public sealed class ProgressiveCachingStream : Stream
         Action closed,
         TimeSpan waitTimeout,
         Action? started = null,
-        TimeSpan? initialWaitTimeout = null)
+        TimeSpan? initialWaitTimeout = null,
+        TimeProvider? timeProvider = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(state);
@@ -47,6 +47,7 @@ public sealed class ProgressiveCachingStream : Stream
         this.waitTimeout = waitTimeout;
         this.initialWaitTimeout = initialWaitTimeout ?? waitTimeout;
         this.started = started;
+        this.timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public override bool CanRead => Volatile.Read(ref disposed) == 0 && source.CanRead;
@@ -104,7 +105,7 @@ public sealed class ProgressiveCachingStream : Stream
         if (buffer.IsEmpty) return 0;
         cancellationToken.ThrowIfCancellationRequested();
         InvokeStarted();
-        var waitingSince = Stopwatch.GetTimestamp();
+        var waitingSince = timeProvider.GetTimestamp();
         long observedLength = 0;
         while (true)
         {
@@ -116,7 +117,7 @@ public sealed class ProgressiveCachingStream : Stream
             if (snapshot.AvailableLength > observedLength)
             {
                 observedLength = snapshot.AvailableLength;
-                waitingSince = Stopwatch.GetTimestamp();
+                waitingSince = timeProvider.GetTimestamp();
             }
             var available = snapshot.AvailableLength - position;
             if (available > 0)
@@ -139,7 +140,7 @@ public sealed class ProgressiveCachingStream : Stream
                 return 0;
             }
             var timeout = observedLength == 0 ? initialWaitTimeout : waitTimeout;
-            await WaitForChangeAsync(snapshot.Changed, timeout - Stopwatch.GetElapsedTime(waitingSince), cancellationToken);
+            await WaitForChangeAsync(snapshot.Changed, timeout - timeProvider.GetElapsedTime(waitingSince), cancellationToken);
         }
     }
 
@@ -160,10 +161,11 @@ public sealed class ProgressiveCachingStream : Stream
         TimeSpan remaining,
         CancellationToken cancellationToken)
     {
+        if (remaining <= TimeSpan.Zero)
+            throw new IOException("The progressive media cache did not advance before the read timeout.");
         try
         {
-            if (remaining <= TimeSpan.Zero) throw new TimeoutException();
-            await changed.WaitAsync(remaining, cancellationToken);
+            await changed.WaitAsync(remaining, timeProvider, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -171,7 +173,8 @@ public sealed class ProgressiveCachingStream : Stream
         }
         catch (TimeoutException)
         {
-            throw new IOException("The progressive media cache did not advance before the read timeout.");
+            // The producer may have advanced before this continuation was scheduled.
+            // Recheck published state before deciding whether the stall budget expired.
         }
         catch
         {
