@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -19,8 +20,9 @@ internal sealed class SpotifyWebTokenExchange(
     SpotifyApiSettings compatibility,
     TimeProvider clock)
 {
-    private readonly SemaphoreSlim exchangeGate = new(1, 1);
-    private readonly Dictionary<TokenScope, SpotifyWebTokenResult> tokens = [];
+    // Keep scope gates stable while requests may be waiting; expired token values are cleared independently.
+    private readonly ConcurrentDictionary<TokenScope, TokenScopeState> scopes = [];
+    private readonly SemaphoreSlim totpSecretsGate = new(1, 1);
     private TotpSecret? cachedSecret;
     private string? cachedSecretsFingerprint;
     private DateTimeOffset secretsExpireAt;
@@ -31,13 +33,15 @@ internal sealed class SpotifyWebTokenExchange(
         { TotpSecretsUrl = compatibility.TotpSecretsUrl, TokenEndpoint = compatibility.TokenEndpoint };
         if (!ValidSettings(settings)) return new(null, false, "invalid_compatibility_settings");
         var scope = Scope(account, settings);
-        await exchangeGate.WaitAsync(cancellationToken);
+        PruneExpiredTokens();
+        var state = scopes.GetOrAdd(scope, static _ => new TokenScopeState());
+        await state.Gate.WaitAsync(cancellationToken);
         try
         {
             var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
-            foreach (var expired in tokens.Where(item => item.Value.ExpiresAtMilliseconds <= now + 30_000)
-                .Select(item => item.Key).ToArray()) tokens.Remove(expired);
-            if (tokens.TryGetValue(scope, out var cached)) return cached;
+            if (state.Token is { } cached && cached.ExpiresAtMilliseconds > now + 30_000)
+                return cached;
+            state.Token = null;
             var result = account == null
                 ? await ExchangeAsync(null, cancellationToken, settings, allowAnonymous: true)
                 : await (secretsAccessor ?? throw new InvalidOperationException("Scoped token reads require a secret accessor."))
@@ -48,21 +52,39 @@ internal sealed class SpotifyWebTokenExchange(
                         ? Task.FromResult(new SpotifyWebTokenResult(null, false, "account_needs_configuration"))
                         : ExchangeAsync(cookie, cancellationToken, settings, allowAnonymous: false);
                 }, cancellationToken);
-            if (result.Success && result.ExpiresAtMilliseconds > now + 30_000) tokens[scope] = result;
+            if (result.Success && result.ExpiresAtMilliseconds > now + 30_000)
+                state.Token = result;
             return result;
         }
-        finally { exchangeGate.Release(); }
+        finally { state.Gate.Release(); }
     }
 
     public async Task InvalidateAsync(ProviderAccountContext? account, string accessToken, CancellationToken cancellationToken)
     {
-        await exchangeGate.WaitAsync(cancellationToken);
+        var settings = new SpotifyApiSettings
+        { TotpSecretsUrl = compatibility.TotpSecretsUrl, TokenEndpoint = compatibility.TokenEndpoint };
+        var scope = Scope(account, settings);
+        if (!scopes.TryGetValue(scope, out var state)) return;
+        await state.Gate.WaitAsync(cancellationToken);
         try
         {
-            var scope = Scope(account, compatibility);
-            if (tokens.TryGetValue(scope, out var cached) && cached.AccessToken == accessToken) tokens.Remove(scope);
+            if (state.Token?.AccessToken == accessToken) state.Token = null;
         }
-        finally { exchangeGate.Release(); }
+        finally { state.Gate.Release(); }
+    }
+
+    private void PruneExpiredTokens()
+    {
+        var now = clock.GetUtcNow().ToUnixTimeMilliseconds();
+        foreach (var state in scopes.Values)
+        {
+            if (!state.Gate.Wait(0)) continue;
+            try
+            {
+                if (state.Token?.ExpiresAtMilliseconds <= now + 30_000) state.Token = null;
+            }
+            finally { state.Gate.Release(); }
+        }
     }
 
     private static TokenScope Scope(ProviderAccountContext? account, SpotifyApiSettings settings) => new(
@@ -72,6 +94,12 @@ internal sealed class SpotifyWebTokenExchange(
     private static string Fingerprint(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value)));
 
     private sealed record TokenScope(Guid? AccountId, long? Revision, Guid? SecretReferenceId, string CompatibilityFingerprint);
+
+    private sealed class TokenScopeState
+    {
+        public SemaphoreSlim Gate { get; } = new(1, 1);
+        public SpotifyWebTokenResult? Token { get; set; }
+    }
 
     private static bool ValidSettings(SpotifyApiSettings settings) =>
         Uri.TryCreate(settings.TotpSecretsUrl, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
@@ -96,22 +124,10 @@ internal sealed class SpotifyWebTokenExchange(
     {
         try
         {
-            var secretsFingerprint = Fingerprint(settings.TotpSecretsUrl);
-            var secret = cachedSecretsFingerprint == secretsFingerprint && clock.GetUtcNow() < secretsExpireAt
-                ? cachedSecret : null;
-            if (secret == null)
-            {
-                using var secretsRequest = new HttpRequestMessage(HttpMethod.Get, settings.TotpSecretsUrl);
-                SpotifyWebRequestProfile.Apply(secretsRequest);
-                using var secretsResponse = await http.SendAsync(secretsRequest, cancellationToken);
-                if (!secretsResponse.IsSuccessStatusCode) return new(null, false, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
-                var secrets = JsonSerializer.Deserialize<TotpSecret[]>(await secretsResponse.Content.ReadAsStringAsync(cancellationToken));
-                secret = secrets?.OrderByDescending(item => item.Version).FirstOrDefault();
-                if (secret == null || secret.Secret.Count == 0) return new(null, false, "totp_secrets_invalid");
-                cachedSecret = secret;
-                cachedSecretsFingerprint = secretsFingerprint;
-                secretsExpireAt = clock.GetUtcNow().AddMinutes(5);
-            }
+            var secretResult = await GetTotpSecretAsync(settings, cancellationToken);
+            if (secretResult.Secret == null)
+                return new(null, false, secretResult.ReasonCode ?? "totp_secrets_invalid");
+            var secret = secretResult.Secret;
 
             using var timeRequest = new HttpRequestMessage(HttpMethod.Head, SpotifyOrigin);
             SpotifyWebRequestProfile.Apply(timeRequest);
@@ -154,6 +170,48 @@ internal sealed class SpotifyWebTokenExchange(
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { return new(null, false, $"exchange_exception_{ex.GetType().Name.ToLowerInvariant()}"); }
+    }
+
+    private async Task<(TotpSecret? Secret, string? ReasonCode)> GetTotpSecretAsync(
+        SpotifyApiSettings settings, CancellationToken cancellationToken)
+    {
+        var secretsFingerprint = Fingerprint(settings.TotpSecretsUrl);
+        await totpSecretsGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (cachedSecret != null && cachedSecretsFingerprint == secretsFingerprint &&
+                clock.GetUtcNow() < secretsExpireAt)
+                return (cachedSecret, null);
+
+            using var secretsRequest = new HttpRequestMessage(HttpMethod.Get, settings.TotpSecretsUrl);
+            SpotifyWebRequestProfile.Apply(secretsRequest);
+            using var secretsResponse = await http.SendAsync(secretsRequest, cancellationToken);
+            if (!secretsResponse.IsSuccessStatusCode)
+                return (null, $"totp_secrets_http_{(int)secretsResponse.StatusCode}");
+
+            TotpSecret[]? secrets;
+            try
+            {
+                secrets = JsonSerializer.Deserialize<TotpSecret[]>(
+                    await secretsResponse.Content.ReadAsStringAsync(cancellationToken));
+            }
+            catch (JsonException)
+            {
+                return (null, "totp_secrets_invalid");
+            }
+
+            var secret = secrets?.OrderByDescending(item => item.Version).FirstOrDefault();
+            if (secret == null || secret.Secret.Count == 0)
+                return (null, "totp_secrets_invalid");
+            cachedSecret = secret;
+            cachedSecretsFingerprint = secretsFingerprint;
+            secretsExpireAt = clock.GetUtcNow().AddMinutes(5);
+            return (secret, null);
+        }
+        finally
+        {
+            totpSecretsGate.Release();
+        }
     }
 
     private sealed class TotpSecret

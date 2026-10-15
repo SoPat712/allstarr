@@ -38,9 +38,10 @@ The media-only sidecar API is version `2.0.0`. Catalog metadata is owned by Alls
 - `POST /api/login`
 - `POST /api/login/2fa`
 - `GET /api/download/{songId}?quality=...` — complete managed FLAC artifact
-- `GET /api/stream/{songId}?quality=...` — progressive FLAC after account-scoped source preparation;
-  `X-Allstarr-Duration-Seconds` supplies the finite positive probed duration when available.
-  The gateway relays the encoded bytes unchanged. Allstarr owns duration-header guidance.
+- `GET /api/stream/{songId}?quality=...` — immediate headers and an empty ID3 prelude,
+  followed by FLAC after account-scoped source preparation. Allstarr strips the prelude
+  and applies duration guidance lazily from catalog metadata. Preparation failures after
+  headers stop the stream; `/api/download` can return a structured preparation error.
 - `GET /api/lyrics/{songId}?quality=...` — synced lyrics artifact
 - `HEAD /api/stream/{songId}?quality=...` and `HEAD /api/download/{songId}?quality=...` — FLAC type/disposition only
 - `HEAD /api/lyrics/{songId}?quality=...` — JSON type only; no media preparation

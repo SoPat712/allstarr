@@ -1373,7 +1373,24 @@ for (const viewport of viewports) {
       const connect = page.getByRole("dialog", { name: "Connect a Source" });
       await expect(connect).toBeVisible();
       await connect.getByRole("button", { name: "Source", exact: true }).click();
-      await page.getByRole("option", { name: "ListenBrainz" }).click();
+      const options = page.getByRole("listbox");
+      await expect(options).toBeVisible();
+      await expect(options.getByRole("option").last()).toBeVisible();
+      let previousOptions = "";
+      await expect.poll(async () => {
+        const current = await options.getByRole("option").evaluateAll((items) => JSON.stringify(items.map((item) => {
+          const box = item.getBoundingClientRect();
+          return [item.textContent, box.x, box.y, box.width, box.height];
+        })));
+        const settled = current === previousOptions && current.includes("ListenBrainz");
+        previousOptions = current;
+        return settled;
+      }, { message: "Source options finish loading and positioning before selection" }).toBe(true);
+      const listenBrainz = options.getByRole("option", { name: "ListenBrainz", exact: true });
+      await expect(listenBrainz).toBeVisible();
+      await expect(listenBrainz).toHaveAttribute("data-value", "listenbrainz");
+      await listenBrainz.click({ trial: true });
+      await listenBrainz.click();
       await expect(connect.getByLabel("ListenBrainz or Koito token")).toBeVisible();
       await expect(connect.getByLabel("Where to send listens (optional)")).toBeVisible();
       await expect(connect.getByText("Leave blank to send listens to ListenBrainz. To use Koito, paste its HTTPS listening address.")).toBeVisible();
