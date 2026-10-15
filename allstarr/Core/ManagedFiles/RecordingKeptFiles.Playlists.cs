@@ -31,36 +31,60 @@ public sealed partial class RecordingKeptFiles
                 .ReadForRetentionAsync(db, link.OwnerUserId, link.Id, access, cancellationToken);
             var actor = new ProviderActorContext(ProviderActorKind.User, user.Id,
                 new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
-            foreach (var entry in projection?.Entries ?? [])
+            var entries = (projection?.Entries ?? []).Where(item =>
+                item.RouteKind == "external" && item.RouteProviderId != null).ToArray();
+            var recordings = await ResolvePlaylistRecordingsAsync(db, actor, entries, cancellationToken);
+            var targets = recordings.Values.OfType<Guid>().Distinct().ToArray();
+            var routes = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                                join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
+                                join file in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals file.Id
+                                where file.RemovedAt == null && (EF.Parameter(targets).Contains(recording.Id) ||
+                                    recording.MergedIntoId.HasValue && EF.Parameter(targets).Contains(recording.MergedIntoId.Value))
+                                orderby route.CreatedAt, route.ManagedFileId
+                                select new { RecordingId = recording.Id, recording.MergedIntoId, FileId = file.Id })
+                .ToArrayAsync(cancellationToken);
+            var files = routes.SelectMany(item => item.MergedIntoId is { } merged
+                    ? new[] { (Target: item.RecordingId, Direct: true, item.FileId), (Target: merged, Direct: false, item.FileId) }
+                    : new[] { (Target: item.RecordingId, Direct: true, item.FileId) })
+                .GroupBy(item => item.Target).ToDictionary(group => group.Key,
+                    group => group.OrderByDescending(item => item.Direct).First().FileId);
+            foreach (var entry in entries)
             {
-                if (entry.RouteKind != "external" || entry.RouteProviderId == null) continue;
-                var key = prefix + PlaylistTrackRetentionQueue.RetentionKey(link.Id, entry.RouteProviderId, entry.ExternalId);
-                var recordingId = await ResolvePlaylistRecordingAsync(actor, entry, cancellationToken);
-                var fileId = recordingId == null ? Guid.Empty : await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
-                                                                       join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
-                                                                       join file in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals file.Id
-                                                                       where (recording.Id == recordingId || recording.MergedIntoId == recordingId) && file.RemovedAt == null
-                                                                       orderby route.CanonicalRecordingId == recordingId descending, route.CreatedAt, route.ManagedFileId
-                                                                       select file.Id).FirstOrDefaultAsync(cancellationToken);
-                desired[key] = fileId;
+                var key = prefix + PlaylistTrackRetentionQueue.RetentionKey(link.Id, entry.RouteProviderId!, entry.ExternalId);
+                desired[key] = recordings[entry.Position] is { } recordingId ? files.GetValueOrDefault(recordingId) : Guid.Empty;
             }
         }
 
         var now = clock.UtcNow;
-        foreach (var (key, fileId) in desired)
-        {
-            if (fileId == Guid.Empty) continue;
-            await store.StageReferenceAsync(fileId, key, now, cancellationToken);
-            await CancelCleanupAsync(db, fileId, now, cancellationToken);
-        }
+        var references = desired.Where(item => item.Value != Guid.Empty)
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
+        await store.StageReferencesAsync(references, now, cancellationToken);
+        await CancelCleanupsAsync(db, references.Values.Distinct().ToArray(), now, cancellationToken);
         var existing = await db.ManagedFileReferences.AsNoTracking()
             .Where(item => item.ReleasedAt == null && item.ReferenceKey.StartsWith(prefix)).ToArrayAsync(cancellationToken);
-        var operationId = Guid.CreateVersion7();
-        foreach (var reference in existing)
+        var obsolete = existing.Where(item => desired.GetValueOrDefault(item.ReferenceKey) != item.ManagedFileId)
+            .Select(item => item.Id).ToArray();
+        var released = await store.StageReleaseReferencesAsync(obsolete, now, cancellationToken);
+        if (released.Length > 0)
         {
-            if (desired.GetValueOrDefault(reference.ReferenceKey) == reference.ManagedFileId) continue;
-            await StageReleaseInterestAsync(db, reference.ReferenceKey, link.OwnerUserId, operationId, now,
-                correlationId, cancellationToken, reference.ManagedFileId);
+            var saved = await db.ManagedFileReferences.Where(item => EF.Parameter(released).Contains(item.ManagedFileId) && item.ReleasedAt == null)
+                .ToArrayAsync(cancellationToken);
+            var active = saved.Concat(db.ManagedFileReferences.Local).Where(item => item.ReleasedAt == null)
+                .Select(item => item.ManagedFileId).ToHashSet();
+            var unreferenced = released.Where(item => !active.Contains(item)).ToArray();
+            var abandoned = await db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                .Where(item => EF.Parameter(unreferenced).Contains(item.ManagedFileId)).OrderBy(item => item.CanonicalRecordingId)
+                .Select(item => new { item.ManagedFileId, item.CanonicalRecordingId }).ToArrayAsync(cancellationToken);
+            if (abandoned.Length > 0)
+            {
+                if (jobs == null) throw new InvalidOperationException("The kept cleanup queue is unavailable.");
+                var operationId = Guid.CreateVersion7();
+                var requests = abandoned.GroupBy(item => item.ManagedFileId).Select(group => group.First())
+                    .Select(item => new DurableJobEnqueueRequest<KeptRecordingCleanupPayload>(KeptCleanupJobType,
+                        $"kept:{item.ManagedFileId:N}:{operationId:N}:{now.UtcTicks}", new(item.CanonicalRecordingId, item.ManagedFileId),
+                        link.OwnerUserId, AvailableAt: now.AddHours(24), CorrelationId: correlationId)).ToArray();
+                await jobs.EnqueueManyInExistingTransactionAsync(db, requests, cancellationToken);
+            }
         }
         var running = await db.Jobs.Where(item => item.Type == PlaylistTrackRetentionJobHandler.JobTypeName &&
             item.OwnerUserId == link.OwnerUserId && (item.State == DurableJobState.Pending ||
@@ -189,6 +213,46 @@ public sealed partial class RecordingKeptFiles
             new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
         var recordingId = await ResolvePlaylistRecordingAsync(actor, current, cancellationToken);
         return recordingId == null ? null : new(request, current, recordingId.Value, actor);
+    }
+
+    private async Task<IReadOnlyDictionary<int, Guid?>> ResolvePlaylistRecordingsAsync(AllstarrDbContext db,
+        ProviderActorContext actor, IReadOnlyList<DurablePlaylistEntryProjection> entries, CancellationToken cancellationToken)
+    {
+        static string PublicId(DurablePlaylistEntryProjection entry) => $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}";
+        var publicIds = entries.Select(PublicId).Concat(entries.Where(item =>
+                item.ProviderRoutes.FirstOrDefault()?.IsManual != true && item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value.ToString("D"))).Distinct(StringComparer.Ordinal).ToArray();
+        var known = await identities.ResolveRecordingsAsync(actor, publicIds, cancellationToken);
+        var manual = entries.Where(item => item.ProviderRoutes.FirstOrDefault()?.IsManual == true &&
+                known.GetValueOrDefault(PublicId(item)) == null)
+            .Select(item => allstarr.Services.Local.LocalLibraryService.ParseExternalResource(PublicId(item)))
+            .Where(item => item.isExternal && item.type == "song").ToArray();
+        var providers = manual.Select(item => item.provider).Distinct().ToArray();
+        var externalIds = manual.Select(item => item.externalId).Distinct().ToArray();
+        var published = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                               join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking() on route.SourceArtifactId equals artifact.Id
+                               join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
+                               where EF.Parameter(providers).Contains(artifact.ProviderId) && EF.Parameter(externalIds).Contains(artifact.SourceExternalTrackId)
+                               select new { artifact.ProviderId, artifact.SourceExternalTrackId, RecordingId = recording.MergedIntoId ?? recording.Id })
+            .Distinct().ToArrayAsync(cancellationToken);
+        var historical = published.GroupBy(item => (item.ProviderId, item.SourceExternalTrackId))
+            .ToDictionary(group => group.Key, group => group.Select(item => item.RecordingId).Distinct().ToArray());
+        var result = new Dictionary<int, Guid?>();
+        foreach (var entry in entries)
+        {
+            Guid? recordingId = known.GetValueOrDefault(PublicId(entry))?.Id;
+            if (recordingId == null && entry.ProviderRoutes.FirstOrDefault()?.IsManual == true)
+            {
+                var parsed = allstarr.Services.Local.LocalLibraryService.ParseExternalResource(PublicId(entry));
+                if (parsed.provider != null && parsed.externalId != null &&
+                    historical.TryGetValue((parsed.provider, parsed.externalId), out var matches) && matches.Length == 1)
+                    recordingId = matches[0];
+            }
+            else if (recordingId == null && entry.CanonicalRecordingId is { } canonical)
+                recordingId = known.GetValueOrDefault(canonical.ToString("D"))?.Id;
+            result[entry.Position] = recordingId;
+        }
+        return result;
     }
 
     private async Task<Guid?> ResolvePlaylistRecordingAsync(ProviderActorContext actor,

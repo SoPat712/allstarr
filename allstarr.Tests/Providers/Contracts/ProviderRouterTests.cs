@@ -749,6 +749,11 @@ public sealed class ProviderRouterTests
             ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default) =>
             Task.FromResult<CanonicalRecordingIdentity?>(null);
 
+        public Task<IReadOnlyDictionary<string, CanonicalRecordingIdentity?>> ResolveRecordingsAsync(
+            ProviderActorContext actor, IReadOnlyCollection<string> publicIds, CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyDictionary<string, CanonicalRecordingIdentity?>>(publicIds
+                .Distinct(StringComparer.Ordinal).ToDictionary(item => item, _ => (CanonicalRecordingIdentity?)null));
+
         public Task<TrackIdentityResolution?> ResolveTargetAsync(
             ProviderExecutionContext executionContext, Guid recordingId, ProviderTrackIdentityTarget target,
             CancellationToken cancellationToken = default) => Task.FromResult<TrackIdentityResolution?>(null);
