@@ -16,11 +16,17 @@ public sealed partial class RecordingKeptFilesTests
         var playlist = await SeedLargeRetentionPlaylistAsync(100);
         var initial = PlaylistInterestServices();
         await initial.Persistence.UpdateLinkAsync(PlaylistContext(), playlist.PlaylistLinkId, RetentionUpdate(0, false));
-        var barrier = new RetentionPreparationBarrier();
+        var barrier = new RetentionPreparationBarrier(armed: false);
         factory = new Factory(new DbContextOptionsBuilder<AllstarrDbContext>().UseSqlite(database.ConnectionString)
             .AddInterceptors(new SqlitePragmaInterceptor(), barrier).Options);
         var (_, _, _, persistence) = PlaylistInterestServices();
         var (_, _, _, favorites) = CreateInterestPipeline();
+        // Compile and initialize the same favorite path before measuring writer contention.
+        await favorites.RecordAsync(Mutation(owner, CanonicalItemId(), FavoriteOperation.Favorite, "preparation-warmup-heart"));
+        await favorites.RecordAsync(Mutation(owner, CanonicalItemId(), FavoriteOperation.Unfavorite, "preparation-warmup-unheart"));
+        await using (var baseline = new AllstarrDbContext(database.Options))
+            Assert.False((await baseline.Set<FavoriteStateRecord>().SingleAsync()).IsFavorite);
+        barrier.Arm();
         using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         Task acceptance = Task.CompletedTask;
         Task favorite = Task.CompletedTask;
@@ -91,16 +97,18 @@ public sealed partial class RecordingKeptFilesTests
         }
     }
 
-    private sealed class RetentionPreparationBarrier : DbCommandInterceptor
+    private sealed class RetentionPreparationBarrier(bool armed = true) : DbCommandInterceptor
     {
         private int entered;
+        private int isArmed = armed ? 1 : 0;
+        public void Arm() => Volatile.Write(ref isArmed, 1);
         public TaskCompletionSource Opened { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
             CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
         {
-            if (command.CommandText.Contains("playlist_source_entries", StringComparison.Ordinal) &&
+            if (Volatile.Read(ref isArmed) == 1 && command.CommandText.Contains("playlist_source_entries", StringComparison.Ordinal) &&
                 Interlocked.Exchange(ref entered, 1) == 0)
             {
                 Opened.TrySetResult();
