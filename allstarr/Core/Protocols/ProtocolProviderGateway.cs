@@ -118,6 +118,12 @@ public interface IProtocolProviderGateway
         string? rangeHeader,
         bool headOnly = false);
 
+    Task<ProviderLyricsResult?> GetRecordingLyricsAsync(
+        ProtocolExecutionContext protocol, string providerId, Guid recordingId,
+        ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null,
+        bool householdOnly = false);
+
     Task<ProviderLyricsResult?> GetHouseholdLyricsAsync(
         ProtocolExecutionContext protocol, string providerId, string externalId,
         ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
@@ -1285,6 +1291,19 @@ public sealed partial class ProtocolProviderGateway(
          lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease &&
          statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
 
+    public Task<ProviderLyricsResult?> GetRecordingLyricsAsync(
+        ProtocolExecutionContext protocol, string providerId, Guid recordingId,
+        ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null,
+        bool householdOnly = false)
+    {
+        ArgumentNullException.ThrowIfNull(protocol);
+        if (recordingId == Guid.Empty) throw new ArgumentException("A recording ID is required.", nameof(recordingId));
+        protocol.CancellationToken.ThrowIfCancellationRequested();
+        return GetLyricsCoreAsync(protocol, providerId, recordingId.ToString("D"), preferredFormat, trackTitle,
+            artistNames, albumTitle, durationSeconds, householdOnly ? [ProviderAccountScope.Shared] : null, recordingId);
+    }
+
     public Task<ProviderLyricsResult?> GetHouseholdLyricsAsync(
         ProtocolExecutionContext protocol, string providerId, string externalId,
         ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
@@ -1307,19 +1326,21 @@ public sealed partial class ProtocolProviderGateway(
     private async Task<ProviderLyricsResult?> GetLyricsCoreAsync(
         ProtocolExecutionContext protocol, string providerId, string externalId, ProviderLyricsFormat? preferredFormat,
         string? trackTitle, IReadOnlyList<string>? artistNames, string? albumTitle, int? durationSeconds,
-        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes)
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes, Guid? recordingId = null)
     {
         providerId = NormalizeProvider(providerId);
         var trackId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
+        var sourceTrackId = recordingId.HasValue
+            ? new ProviderExternalResourceId("allstarr", ProviderResourceKind.Track, recordingId.Value.ToString("D")) : trackId;
         var routed = await PlanExactAsync<IProviderLyricsCapability>(
             protocol,
             providerId,
             ProviderCapabilityKind.Lyrics,
             "protocol-lyrics-get",
-            trackId, allowedAccountScopes: allowedAccountScopes);
-        if (routed.Candidate == null) return null;
+            sourceTrackId, allowedAccountScopes: allowedAccountScopes);
+        if (routed.Candidate == null || recordingId.HasValue && routed.Candidate.TrackId == null) return null;
         var canonicalBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{providerId}\n{externalId}"));
-        var canonicalId = new Guid(canonicalBytes.AsSpan(0, 16));
+        var canonicalId = recordingId ?? new Guid(canonicalBytes.AsSpan(0, 16));
         var outcome = await routed.Candidate.Implementation.FetchLyricsAsync(
             routed.Candidate.Context,
             new ProviderLyricsRequest(
