@@ -196,10 +196,13 @@ public sealed class DurablePlaylistProjectionReader(
         return result;
     }
 
+    internal Task<BackendLibraryAccessContext> ResolveRetentionAccessAsync(Guid ownerUserId,
+        CancellationToken cancellationToken) => libraryAccess.ResolveUserAsync(ownerUserId, cancellationToken);
+
     internal async Task<DurablePlaylistProjection?> ReadForRetentionAsync(Guid ownerUserId, Guid playlistLinkId,
         CancellationToken cancellationToken)
     {
-        var access = await libraryAccess.ResolveUserAsync(ownerUserId, cancellationToken);
+        var access = await ResolveRetentionAccessAsync(ownerUserId, cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         return await ReadForRetentionAsync(db, ownerUserId, playlistLinkId, access, cancellationToken);
     }

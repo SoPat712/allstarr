@@ -636,6 +636,6 @@ public sealed partial class DurableJobQueue
         return Convert.ToHexString(SHA256.HashData(stream.ToArray())).ToLowerInvariant();
     }
 
-    private static string CreateUserScopeKey(Guid ownerUserId) =>
+    internal static string CreateUserScopeKey(Guid ownerUserId) =>
         $"user:{ownerUserId:N}";
 }

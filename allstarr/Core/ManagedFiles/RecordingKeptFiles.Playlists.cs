@@ -21,6 +21,7 @@ public sealed partial class RecordingKeptFiles
         var store = new EfManagedFileOwnershipStore(db);
         var desired = new Dictionary<string, Guid>(StringComparer.Ordinal);
         DurablePlaylistProjection? projection = null;
+        IReadOnlyDictionary<int, Guid?> recordings = new Dictionary<int, Guid?>();
         var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == link.OwnerUserId, cancellationToken);
         if (user is not { Enabled: true } || user.BackendType != link.TargetProtocol ||
             user.BackendInstanceId != link.TargetBackendInstanceId) throw Denied();
@@ -31,10 +32,11 @@ public sealed partial class RecordingKeptFiles
                 preparation.DataVersion == await ReadPlaylistDataVersionAsync(db, cancellationToken))
             {
                 projection = preparation.Projection;
+                recordings = preparation.Recordings;
                 desired = preparation.Desired.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
             }
             else
-                (projection, desired) = await ReadPlaylistInterestsAsync(db, link, user, access, cancellationToken);
+                (projection, desired, recordings) = await ReadPlaylistInterestsAsync(db, link, user, access, cancellationToken);
         }
 
         var now = clock.UtcNow;
@@ -68,16 +70,21 @@ public sealed partial class RecordingKeptFiles
                 await jobs.EnqueueManyInExistingTransactionAsync(db, requests, cancellationToken);
             }
         }
+        var linkText = link.Id.ToString("D");
         var running = await db.Jobs.Where(item => item.Type == PlaylistTrackRetentionJobHandler.JobTypeName &&
-            item.OwnerUserId == link.OwnerUserId && (item.State == DurableJobState.Pending ||
-                item.State == DurableJobState.RetryScheduled || item.State == DurableJobState.Running)).ToArrayAsync(cancellationToken);
-        foreach (var job in running)
+            item.OwnerUserId == link.OwnerUserId && item.PayloadJson.Contains(linkText) &&
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled || item.State == DurableJobState.Running))
+            .ToArrayAsync(cancellationToken);
+        var compatible = await PlaylistRetentionContinuity.CompatibleAsync(db, identities, link, user,
+            projection, recordings, running, cancellationToken);
+        var retained = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var job in running.OrderByDescending(item => item.State == DurableJobState.Running)
+                     .ThenBy(item => item.CreatedAt).ThenBy(item => item.Id))
         {
-            PlaylistTrackRetentionJobPayload? payload;
-            try { payload = JsonSerializer.Deserialize<PlaylistTrackRetentionJobPayload>(job.PayloadJson); }
-            catch (JsonException) { continue; }
-            if (payload?.PlaylistLinkId != link.Id || projection?.SnapshotId == payload.SourceSnapshotId &&
-                desired.ContainsKey(PlaylistKey(payload))) continue;
+            var payload = PlaylistRetentionContinuity.ReadPayload(job);
+            if (payload?.PlaylistLinkId != link.Id) continue;
+            if (compatible.TryGetValue(job.Id, out var key) && retained.Add(key)) continue;
+            if (job.CancellationRequestedAt != null) continue;
             job.CancellationRequestedAt = now;
             if (job.State != DurableJobState.Running)
             {
@@ -90,12 +97,12 @@ public sealed partial class RecordingKeptFiles
         if (projection != null)
         {
             if (jobs == null) throw new InvalidOperationException("The playlist retention queue is unavailable.");
-            await new PlaylistTrackRetentionQueue(jobs, new(factory, libraryAccess!), factory)
-                .EnqueueProjectionInTransactionAsync(db, link, projection, correlationId, cancellationToken);
+            await new PlaylistTrackRetentionQueue(jobs, new(factory, libraryAccess!), factory, identities)
+                .EnqueueProjectionInTransactionAsync(db, link, projection, correlationId, cancellationToken, recordings, retained);
         }
     }
 
-    private async Task<(DurablePlaylistProjection? Projection, Dictionary<string, Guid> Desired)> ReadPlaylistInterestsAsync(
+    private async Task<(DurablePlaylistProjection? Projection, Dictionary<string, Guid> Desired, IReadOnlyDictionary<int, Guid?> Recordings)> ReadPlaylistInterestsAsync(
         AllstarrDbContext db, PlaylistLinkRecord link, UserRecord user, BackendLibraryAccessContext access,
         CancellationToken cancellationToken)
     {
@@ -108,7 +115,7 @@ public sealed partial class RecordingKeptFiles
             new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
         var entries = (projection?.Entries ?? []).Where(item =>
             item.RouteKind == "external" && item.RouteProviderId != null).ToArray();
-        var recordings = await ResolvePlaylistRecordingsAsync(db, actor, entries, cancellationToken);
+        var recordings = await PlaylistRetentionTargets.ResolveAsync(db, identities, actor, entries, cancellationToken);
         var targets = recordings.Values.OfType<Guid>().Distinct().ToArray();
         var routes = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
                             join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
@@ -128,7 +135,7 @@ public sealed partial class RecordingKeptFiles
             var key = prefix + PlaylistTrackRetentionQueue.RetentionKey(link.Id, entry.RouteProviderId!, entry.ExternalId);
             desired[key] = recordings[entry.Position] is { } recordingId ? files.GetValueOrDefault(recordingId) : Guid.Empty;
         }
-        return (projection, desired);
+        return (projection, desired, recordings);
     }
 
     public async Task<KeptRecordingFile?> RetainPlaylistAsync(DurableJobClaim claim,
@@ -219,73 +226,44 @@ public sealed partial class RecordingKeptFiles
                                   metadata.OwnerUserId == ownerId && metadata.ProviderAccountId == link.ProviderAccountId &&
                                   metadata.Protocol == link.TargetProtocol && metadata.BackendInstanceId == link.TargetBackendInstanceId &&
                                   metadata.BackendPrincipalId == user.BackendPrincipalId
-                            select entry).SingleOrDefaultAsync(cancellationToken);
+                            select new { Entry = entry, metadata.ProviderId, metadata.ExternalIdHash })
+            .SingleOrDefaultAsync(cancellationToken);
         if (source == null) return null;
+        var snapshotId = await db.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
+                item.PlaylistLinkId == link.Id && item.OwnerUserId == ownerId && item.PublishedAt != null)
+            .OrderByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.RetrievedAt)
+            .Select(item => (Guid?)item.Id).FirstOrDefaultAsync(cancellationToken);
+        if (snapshotId == null) return null;
+        var currentEntryId = source.Entry.Id;
+        var currentMetadataId = source.Entry.ExternalMetadataSnapshotId;
+        if (snapshotId != request.SourceSnapshotId)
+        {
+            if (request.TargetCanonicalRecordingId == null) return null;
+            var input = await (from entry in db.PlaylistSourceEntries.AsNoTracking()
+                               join metadata in db.ExternalMetadataSnapshots.AsNoTracking() on entry.ExternalMetadataSnapshotId equals metadata.Id
+                               where entry.PlaylistSourceSnapshotId == snapshotId && metadata.OwnerUserId == ownerId &&
+                                     metadata.ProviderAccountId == link.ProviderAccountId && metadata.Protocol == link.TargetProtocol &&
+                                     metadata.BackendInstanceId == link.TargetBackendInstanceId && metadata.BackendPrincipalId == user.BackendPrincipalId &&
+                                     metadata.ProviderId == source.ProviderId && metadata.ExternalIdHash == source.ExternalIdHash && metadata.ResourceKind == "track"
+                               orderby entry.SourcePosition
+                               select new { entry.Id, entry.ExternalMetadataSnapshotId }).FirstOrDefaultAsync(cancellationToken);
+            if (input == null) return null;
+            currentEntryId = input.Id;
+            currentMetadataId = input.ExternalMetadataSnapshotId;
+        }
         var current = await new DurablePlaylistProjectionReader(factory, libraryAccess)
-            .ReadRetentionEntryAsync(db, ownerId, link.Id, request.SourceSnapshotId, source.Id, access,
-                cancellationToken);
-        if (current?.ExternalSnapshotId != source.ExternalMetadataSnapshotId) return null;
+            .ReadRetentionEntryAsync(db, ownerId, link.Id, snapshotId.Value, currentEntryId, access, cancellationToken);
+        if (current?.ExternalSnapshotId != currentMetadataId) return null;
         if (current == null || current.RouteKind != "external" || current.RouteProviderId != request.ProviderId ||
             current.ExternalId != request.ExternalId) return null;
         var actor = new ProviderActorContext(ProviderActorKind.User, ownerId,
             new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
-        var recordingId = await ResolvePlaylistRecordingAsync(actor, current, cancellationToken);
-        return recordingId == null ? null : new(request, current, recordingId.Value, actor);
-    }
-
-    private async Task<IReadOnlyDictionary<int, Guid?>> ResolvePlaylistRecordingsAsync(AllstarrDbContext db,
-        ProviderActorContext actor, IReadOnlyList<DurablePlaylistEntryProjection> entries, CancellationToken cancellationToken)
-    {
-        static string PublicId(DurablePlaylistEntryProjection entry) => $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}";
-        var publicIds = entries.Select(PublicId).Concat(entries.Where(item =>
-                item.ProviderRoutes.FirstOrDefault()?.IsManual != true && item.CanonicalRecordingId.HasValue)
-            .Select(item => item.CanonicalRecordingId!.Value.ToString("D"))).Distinct(StringComparer.Ordinal).ToArray();
-        var known = await identities.ResolveRecordingsAsync(actor, publicIds, cancellationToken);
-        var manual = entries.Where(item => item.ProviderRoutes.FirstOrDefault()?.IsManual == true &&
-                known.GetValueOrDefault(PublicId(item)) == null)
-            .Select(item => allstarr.Services.Local.LocalLibraryService.ParseExternalResource(PublicId(item)))
-            .Where(item => item.isExternal && item.type == "song").ToArray();
-        var providers = manual.Select(item => item.provider).Distinct().ToArray();
-        var externalIds = manual.Select(item => item.externalId).Distinct().ToArray();
-        var published = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
-                               join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking() on route.SourceArtifactId equals artifact.Id
-                               join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
-                               where EF.Parameter(providers).Contains(artifact.ProviderId) && EF.Parameter(externalIds).Contains(artifact.SourceExternalTrackId)
-                               select new { artifact.ProviderId, artifact.SourceExternalTrackId, RecordingId = recording.MergedIntoId ?? recording.Id })
-            .Distinct().ToArrayAsync(cancellationToken);
-        var historical = published.GroupBy(item => (item.ProviderId, item.SourceExternalTrackId))
-            .ToDictionary(group => group.Key, group => group.Select(item => item.RecordingId).Distinct().ToArray());
-        var result = new Dictionary<int, Guid?>();
-        foreach (var entry in entries)
-        {
-            Guid? recordingId = known.GetValueOrDefault(PublicId(entry))?.Id;
-            if (recordingId == null && entry.ProviderRoutes.FirstOrDefault()?.IsManual == true)
-            {
-                var parsed = allstarr.Services.Local.LocalLibraryService.ParseExternalResource(PublicId(entry));
-                if (parsed.provider != null && parsed.externalId != null &&
-                    historical.TryGetValue((parsed.provider, parsed.externalId), out var matches) && matches.Length == 1)
-                    recordingId = matches[0];
-            }
-            else if (recordingId == null && entry.CanonicalRecordingId is { } canonical)
-                recordingId = known.GetValueOrDefault(canonical.ToString("D"))?.Id;
-            result[entry.Position] = recordingId;
-        }
-        return result;
-    }
-
-    private async Task<Guid?> ResolvePlaylistRecordingAsync(ProviderActorContext actor,
-        DurablePlaylistEntryProjection entry, CancellationToken cancellationToken)
-    {
-        var current = await identities.ResolveRecordingAsync(actor,
-            $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}", cancellationToken);
-        if (current != null) return current.Id;
-        if (entry.ProviderRoutes.FirstOrDefault()?.IsManual == true)
-            return await ResolveKeptRecordingIdAsync(actor,
-                $"ext-{entry.RouteProviderId}-song-{entry.ExternalId}", cancellationToken);
-        if (entry.CanonicalRecordingId is not { } known) return null;
-        // Imported, owned decisions remain usable after their source account is retired.
-        // New downloads still require the actual selected account and revision.
-        return (await identities.ResolveRecordingAsync(actor, known.ToString("D"), cancellationToken))?.Id;
+        var recordingId = (await PlaylistRetentionTargets.ResolveAsync(db, identities, actor, [current], cancellationToken))[current.Position];
+        if (recordingId == null) return null;
+        if (request.TargetCanonicalRecordingId is { } frozen && frozen != recordingId &&
+            (await identities.ResolveRecordingAsync(actor, frozen.ToString("D"), cancellationToken))?.Id != recordingId)
+            return null;
+        return new(request, current, recordingId.Value, actor);
     }
 
     private static string PlaylistKey(PlaylistTrackRetentionJobPayload payload) =>

@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore.Storage;
 namespace allstarr.Core.ManagedFiles;
 
 internal sealed record PlaylistInterestPreparation(AllstarrDbContext Database, Guid LinkId, long LinkRevision,
-    long DataVersion, DurablePlaylistProjection? Projection, IReadOnlyDictionary<string, Guid> Desired);
+    long DataVersion, DurablePlaylistProjection? Projection, IReadOnlyDictionary<string, Guid> Desired, IReadOnlyDictionary<int, Guid?> Recordings);
 
 public sealed partial class RecordingKeptFiles
 {
@@ -32,7 +32,7 @@ public sealed partial class RecordingKeptFiles
             throw Denied();
         var result = await ReadPlaylistInterestsAsync(db, link, user, access, cancellationToken);
         if (version != await ReadPlaylistDataVersionAsync(db, cancellationToken)) return null;
-        return new(db, link.Id, link.Revision, version, result.Projection, result.Desired);
+        return new(db, link.Id, link.Revision, version, result.Projection, result.Desired, result.Recordings);
     }
 
     private static async Task<long> ReadPlaylistDataVersionAsync(AllstarrDbContext db, CancellationToken cancellationToken)

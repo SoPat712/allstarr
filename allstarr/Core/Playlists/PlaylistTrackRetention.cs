@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Downloads;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Matching;
@@ -19,7 +20,10 @@ public sealed record PlaylistTrackRetentionJobPayload(
     string RetentionKey,
     string Title,
     string[] Artists,
-    string? Album);
+    string? Album)
+{
+    public Guid? TargetCanonicalRecordingId { get; init; }
+}
 
 public interface IPlaylistTrackRetentionQueue
 {
@@ -35,10 +39,11 @@ public interface IPlaylistTrackRetentionQueue
         CancellationToken cancellationToken);
 }
 
-public sealed class PlaylistTrackRetentionQueue(
+public sealed partial class PlaylistTrackRetentionQueue(
     DurableJobQueue jobs,
     DurablePlaylistProjectionReader projections,
-    IDbContextFactory<AllstarrDbContext> factory) : IPlaylistTrackRetentionQueue
+    IDbContextFactory<AllstarrDbContext> factory,
+    ITrackIdentityService identities) : IPlaylistTrackRetentionQueue
 {
     public async Task<int> EnqueueAsync(
         PlaylistLinkRecord link,
@@ -78,29 +83,34 @@ public sealed class PlaylistTrackRetentionQueue(
         var saved = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
         if (saved?.TrackRetention != PlaylistTrackRetention.KeepAll) return 0;
+        var access = await projections.ResolveRetentionAccessAsync(saved.OwnerUserId, cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        saved = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == link.Id && item.OwnerUserId == link.OwnerUserId, cancellationToken);
+        if (saved?.TrackRetention != PlaylistTrackRetention.KeepAll) return 0;
         link = saved;
-        var projection = await projections.ReadForRetentionAsync(
-            link.OwnerUserId, link.Id, cancellationToken);
+        var projection = await projections.ReadForRetentionAsync(db, link.OwnerUserId, link.Id, access, cancellationToken);
         if (projection == null) return 0;
-        var sourceEntries = await db.PlaylistSourceEntries.AsNoTracking()
-            .Where(item => item.PlaylistSourceSnapshotId == projection.SnapshotId)
-            .ToDictionaryAsync(item => item.SourcePosition, item => item.Id, cancellationToken);
-        return await EnqueueAsync(
-            link,
-            projection.Entries.Select(entry => new RetentionCandidate(
-                projection.SnapshotId,
-                sourceEntries.GetValueOrDefault(entry.Position),
-                entry.RouteKind.Equals("external", StringComparison.OrdinalIgnoreCase)
-                    ? entry.RouteProviderId
-                    : null,
-                entry.RouteKind.Equals("external", StringComparison.OrdinalIgnoreCase)
-                    ? entry.ExternalId
-                    : null,
-                entry.Title,
-                entry.Artists.ToArray(),
-                entry.Album)),
-            correlationId,
+        var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == link.OwnerUserId && item.Enabled,
             cancellationToken);
+        if (user == null || user.BackendType != link.TargetProtocol || user.BackendInstanceId != link.TargetBackendInstanceId)
+            throw new UnauthorizedAccessException("The playlist owner is no longer available.");
+        var actor = new ProviderActorContext(ProviderActorKind.User, user.Id,
+            new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
+        var entries = projection.Entries.Where(item => item.RouteKind == "external" && item.RouteProviderId != null).ToArray();
+        var targets = await PlaylistRetentionTargets.ResolveAsync(db, identities, actor, entries, cancellationToken);
+        var linkText = link.Id.ToString("D");
+        var active = await db.Jobs.AsNoTracking().Where(item => item.Type == PlaylistTrackRetentionJobHandler.JobTypeName &&
+            item.OwnerUserId == user.Id && item.PayloadJson.Contains(linkText) &&
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled || item.State == DurableJobState.Running))
+            .ToArrayAsync(cancellationToken);
+        var compatible = await PlaylistRetentionContinuity.CompatibleAsync(db, identities, link, user, projection,
+            targets, active, cancellationToken);
+        var queued = await EnqueueProjectionInTransactionAsync(db, link, projection, correlationId, cancellationToken,
+            targets, compatible.Values.ToHashSet(StringComparer.Ordinal));
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return queued;
     }
 
     private async Task<int> EnqueueAsync(
@@ -127,7 +137,7 @@ public sealed class PlaylistTrackRetentionQueue(
             var retentionKey = RetentionKey(link.Id, providerId, externalId);
             var request = new DurableJobEnqueueRequest<PlaylistTrackRetentionJobPayload>(
                 PlaylistTrackRetentionJobHandler.JobTypeName,
-                $"playlist-retain:{retentionKey}:{entry.SourceSnapshotId:N}:{link.Revision}",
+                $"playlist-retain:{retentionKey}:{entry.TargetCanonicalRecordingId?.ToString("N") ?? "unbound"}:{entry.SourceEntryId:N}:{entry.SourceSnapshotId:N}:{link.Revision}",
                 new(
                     link.Id,
                     entry.SourceSnapshotId,
@@ -137,7 +147,8 @@ public sealed class PlaylistTrackRetentionQueue(
                     retentionKey,
                     string.IsNullOrWhiteSpace(entry.Title) ? "Unknown track" : entry.Title,
                     entry.Artists ?? [],
-                    entry.Album),
+                    entry.Album)
+                { TargetCanonicalRecordingId = entry.TargetCanonicalRecordingId },
                 link.OwnerUserId,
                 MaxAttempts: 12,
                 MaxDeferrals: 100,
@@ -146,13 +157,15 @@ public sealed class PlaylistTrackRetentionQueue(
         }
         if (transactionContext != null)
         {
-            var staged = await jobs.EnqueueManyInExistingTransactionAsync(transactionContext, requests, cancellationToken);
+            var current = await ResolveCancelledLifecyclesAsync(transactionContext, requests, cancellationToken);
+            var staged = await jobs.EnqueueManyInExistingTransactionAsync(transactionContext, current, cancellationToken);
             await jobs.PersistEnqueuedJobsAsync(transactionContext, staged, cancellationToken);
             return staged.Count(item => item.Created);
         }
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        var results = await jobs.EnqueueManyInExistingTransactionAsync(db, requests, cancellationToken);
+        var currentRequests = await ResolveCancelledLifecyclesAsync(db, requests, cancellationToken);
+        var results = await jobs.EnqueueManyInExistingTransactionAsync(db, currentRequests, cancellationToken);
         await jobs.PersistEnqueuedJobsAsync(db, results, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
@@ -160,18 +173,22 @@ public sealed class PlaylistTrackRetentionQueue(
     }
 
     internal async Task<int> EnqueueProjectionInTransactionAsync(AllstarrDbContext db, PlaylistLinkRecord link,
-        DurablePlaylistProjection projection, string correlationId, CancellationToken cancellationToken)
+        DurablePlaylistProjection projection, string correlationId, CancellationToken cancellationToken,
+        IReadOnlyDictionary<int, Guid?>? targets = null, IReadOnlySet<string>? retained = null)
     {
         if (db.Database.CurrentTransaction == null)
             throw new InvalidOperationException("Playlist retention requires the publication transaction.");
         var entries = await db.PlaylistSourceEntries.AsNoTracking()
             .Where(item => item.PlaylistSourceSnapshotId == projection.SnapshotId)
             .ToDictionaryAsync(item => item.SourcePosition, item => item.Id, cancellationToken);
-        return await EnqueueAsync(link, projection.Entries.Select(item => new RetentionCandidate(
+        return await EnqueueAsync(link, projection.Entries.Where(item => item.RouteProviderId == null ||
+                retained?.Contains(RetentionKey(link.Id, item.RouteProviderId, item.ExternalId)) != true)
+            .Select(item => new RetentionCandidate(
             projection.SnapshotId, entries.GetValueOrDefault(item.Position),
             item.RouteKind == "external" ? item.RouteProviderId : null,
             item.RouteKind == "external" ? item.ExternalId : null,
-            item.Title, item.Artists.ToArray(), item.Album)), correlationId, cancellationToken, db);
+            item.Title, item.Artists.ToArray(), item.Album, targets?.GetValueOrDefault(item.Position))),
+            correlationId, cancellationToken, db);
     }
 
     internal static string RetentionKey(Guid linkId, string providerId, string externalId) =>
@@ -187,7 +204,8 @@ public sealed class PlaylistTrackRetentionQueue(
         string? ExternalId,
         string? Title,
         string[]? Artists,
-        string? Album);
+        string? Album,
+        Guid? TargetCanonicalRecordingId = null);
 }
 
 public sealed class PlaylistTrackRetentionJobHandler(
@@ -314,6 +332,7 @@ public sealed class PlaylistTrackRetentionJobHandler(
         payload.PlaylistLinkId != Guid.Empty &&
         payload.SourceSnapshotId != Guid.Empty &&
         payload.SourceEntryId != Guid.Empty &&
+        payload.TargetCanonicalRecordingId != Guid.Empty &&
         payload.ProviderId is { Length: > 0 and <= 100 } &&
         payload.ExternalId is { Length: > 0 and <= 500 } &&
         payload.RetentionKey is { Length: 64 } &&
