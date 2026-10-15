@@ -156,4 +156,6 @@ public sealed class KeptRecordingCleanupJobHandler(RecordingKeptFiles kept) : ID
         CancellationToken cancellationToken) => kept.CleanupAsync(context.Claim, cancellationToken);
     public async Task RecoverAsync(CancellationToken cancellationToken) =>
         await kept.RecoverReservationsAsync(cancellationToken);
+    public async Task RecoverCompletedAsync(DurableJobClaim claim, CancellationToken cancellationToken) =>
+        await kept.RecoverCompletedReservationsAsync(claim, cancellationToken);
 }
