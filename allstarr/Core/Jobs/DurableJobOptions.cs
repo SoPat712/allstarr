@@ -7,6 +7,7 @@ public sealed class DurableJobOptions
     public int DefaultMaxAttempts { get; set; } = 5;
     public int DefaultMaxDeferrals { get; set; } = 96;
     public int MaximumConcurrentJobs { get; set; } = 4;
+    public int MaxConsecutiveInterruptions { get; set; } = 5;
     public Dictionary<string, int> TypeConcurrencyLimits { get; set; } =
         new(StringComparer.OrdinalIgnoreCase);
     public int PollIntervalMilliseconds { get; set; } = 1000;
@@ -27,6 +28,11 @@ public sealed class DurableJobOptions
         if (MaximumConcurrentJobs is < 1 or > 32)
         {
             throw new InvalidOperationException("Jobs:MaximumConcurrentJobs must be between 1 and 32.");
+        }
+
+        if (MaxConsecutiveInterruptions is < 1 or > 100)
+        {
+            throw new InvalidOperationException("Jobs:MaxConsecutiveInterruptions must be between 1 and 100.");
         }
 
         ValidateTypeConcurrencyLimits();

@@ -346,6 +346,51 @@ public sealed partial class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RepeatedInterruptionsWithoutAFinishedAttemptStopTheJob()
+    {
+        _options.MaxConsecutiveInterruptions = 3;
+        var queued = await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
+            "placement", "crash-loop", new { itemId = "fixture" }, _userId, MaxAttempts: 10));
+        for (var restart = 1; restart <= 3; restart++)
+        {
+            Assert.NotNull(await _queue.ClaimNextAsync($"process-{restart}"));
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            Assert.Equal(1, await _queue.RecoverInterruptedAsync());
+        }
+
+        Assert.Null(await _queue.ClaimNextAsync("process-4"));
+        await using var db = await _factory.CreateDbContextAsync();
+        var job = await db.Jobs.SingleAsync(item => item.Id == queued.JobId);
+        Assert.Equal(DurableJobState.Failed, job.State);
+        Assert.Equal("worker_interrupted_repeatedly", job.LastErrorCode);
+        Assert.Equal(0, job.FailureCount);
+        Assert.NotNull(job.CompletedAt);
+    }
+
+    [Fact]
+    public async Task AFinishedAttemptResetsTheInterruptionStreak()
+    {
+        _options.MaxConsecutiveInterruptions = 3;
+        var queued = await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
+            "placement", "interrupt-then-retry", new { itemId = "fixture" }, _userId, MaxAttempts: 10));
+        for (var round = 0; round < 2; round++)
+        {
+            Assert.NotNull(await _queue.ClaimNextAsync("process"));
+            _clock.Advance(TimeSpan.FromMinutes(1));
+            Assert.Equal(1, await _queue.RecoverInterruptedAsync());
+        }
+        var claim = (await _queue.ClaimNextAsync("process"))!;
+        await _queue.CompleteAsync(claim, DurableJobCompletion.Retry("source_busy", "Try later.", TimeSpan.Zero));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.NotNull(await _queue.ClaimNextAsync("process"));
+        _clock.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(1, await _queue.RecoverInterruptedAsync());
+
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(DurableJobState.Pending, (await db.Jobs.SingleAsync(item => item.Id == queued.JobId)).State);
+    }
+
+    [Fact]
     public async Task ConcurrentStartupRecoveryRecordsOneInterruption()
     {
         await Enqueue("placement", "concurrent-recovery");
