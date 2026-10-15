@@ -73,6 +73,7 @@ public sealed class FavoriteStateRecord
     public string Protocol { get; set; } = string.Empty;
     public string BackendInstanceId { get; set; } = string.Empty;
     public string ItemId { get; set; } = string.Empty;
+    public string? DisplayMetadataJson { get; set; }
     public bool IsFavorite { get; set; }
     public Guid LastEventId { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }

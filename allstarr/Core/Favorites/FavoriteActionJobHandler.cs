@@ -446,6 +446,7 @@ public static class FavoriteActionRegistration
 {
     public static IServiceCollection AddFavoriteActions(this IServiceCollection services)
     {
+        services.AddSingleton<FavoriteViewReader>();
         services.AddSingleton<FavoriteActionPipeline>();
         services.AddSingleton<IFavoriteActionPipeline>(provider => provider.GetRequiredService<FavoriteActionPipeline>());
         services.AddSingleton<FavoriteDownloadActionExecutor>();

@@ -437,6 +437,10 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("DisplayMetadataJson")
+                        .HasMaxLength(32768)
+                        .HasColumnType("TEXT");
+
                     b.Property<bool>("IsFavorite")
                         .HasColumnType("INTEGER");
 

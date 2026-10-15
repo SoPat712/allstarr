@@ -16,7 +16,6 @@ public sealed partial class FavoriteActionPipelineTests
         const string before = "20261015072034_HouseholdKeptRecordingRoutes";
         await using var db = await _factory.CreateDbContextAsync();
         var migrator = db.GetService<IMigrator>();
-        await migrator.MigrateAsync(before);
         var first = await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "upgrade-first"));
         var claim = (await _jobs.ClaimNextAsync("upgrade-first"))!;
         var handler = new FavoriteActionJobHandler(_factory, [], _clock);
@@ -43,6 +42,7 @@ public sealed partial class FavoriteActionPipelineTests
         var eventsBefore = await db.Set<FavoriteEventRecord>().AsNoTracking().OrderBy(item => item.Id)
             .Select(item => new { item.Id, item.State, item.ItemId, item.EventKey, item.PolicySnapshotJson, item.Revision }).ToArrayAsync();
 
+        await migrator.MigrateAsync(before);
         await db.Database.MigrateAsync();
         db.ChangeTracker.Clear();
         var updated = await db.Set<FavoriteStateRecord>().AsNoTracking().SingleAsync(item => item.Id == oldStateId);

@@ -46,11 +46,12 @@ public interface IFavoriteActionPipeline
     Task<FavoriteEventStatus?> GetStatusAsync(Guid userId, Guid eventId, CancellationToken cancellationToken = default);
 }
 
-public sealed class FavoriteActionPipeline(
+public sealed partial class FavoriteActionPipeline(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     DurableJobQueue jobs,
     IPlatformClock clock,
-    RecordingKeptFiles? keptFiles = null) : IFavoriteActionPipeline
+    RecordingKeptFiles? keptFiles = null,
+    IProtocolProviderGateway? metadata = null) : IFavoriteActionPipeline
 {
     public const string JobType = "favorite.process";
     public const string VirtualLikedAction = "virtual-liked";
@@ -67,6 +68,7 @@ public sealed class FavoriteActionPipeline(
         var protocol = execution.Protocol.ToString().ToLowerInvariant();
         var backend = execution.BackendInstanceId;
         var eventKey = HashKey(userId, protocol, backend, itemId, request.Operation, sourceRevision);
+        var display = await CaptureDisplayAsync(request, itemId, userId, cancellationToken);
         var now = clock.UtcNow;
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
@@ -152,6 +154,7 @@ public sealed class FavoriteActionPipeline(
             context.Add(currentState);
         }
         currentState.IsFavorite = request.Operation == FavoriteOperation.Favorite;
+        if (display != null) currentState.DisplayMetadataJson = display;
         currentState.LastEventId = eventId;
         currentState.UpdatedAt = now;
         currentState.Revision++;

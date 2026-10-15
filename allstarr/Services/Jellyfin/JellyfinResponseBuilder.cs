@@ -11,6 +11,21 @@ namespace allstarr.Services.Jellyfin;
 
 public class JellyfinResponseBuilder
 {
+    public Dictionary<string, object?> ConvertFavoriteToJellyfinItem(allstarr.Core.Favorites.FavoriteViewItem favorite)
+    {
+        var item = favorite.Resource.ResourceKind switch
+        {
+            allstarr.Core.Capabilities.ProviderResourceKind.Track => ConvertSongToJellyfinItem(favorite.Song()),
+            allstarr.Core.Capabilities.ProviderResourceKind.Album => ConvertAlbumToJellyfinItem(favorite.Album()),
+            allstarr.Core.Capabilities.ProviderResourceKind.Artist => ConvertArtistToJellyfinItem(favorite.Artist()),
+            allstarr.Core.Capabilities.ProviderResourceKind.Playlist => ConvertPlaylistToJellyfinItem(favorite.Playlist()),
+            _ => throw new ArgumentException("The saved favorite resource kind is unsupported.", nameof(favorite))
+        };
+        if (item.GetValueOrDefault("UserData") is IDictionary<string, object?> userData)
+            userData["IsFavorite"] = true;
+        return item;
+    }
+
     private readonly string _serverId;
     private readonly IHttpContextAccessor? _httpContexts;
 
