@@ -10,16 +10,26 @@ namespace allstarr.Core.ManagedFiles;
 
 public sealed partial class RecordingKeptFiles
 {
-    public async Task<int> RecoverReservationsAsync(CancellationToken cancellationToken = default)
+    public Task<int> RecoverReservationsAsync(CancellationToken cancellationToken = default) =>
+        RecoverReservationsAsync(null, cancellationToken);
+
+    public Task<int> RecoverCompletedReservationsAsync(DurableJobClaim claim,
+        CancellationToken cancellationToken = default) =>
+        claim.JobId == Guid.Empty || !KnownReservationJobType(claim.Type)
+            ? Task.FromResult(0) : RecoverReservationsAsync(claim, cancellationToken);
+
+    private async Task<int> RecoverReservationsAsync(DurableJobClaim? completed,
+        CancellationToken cancellationToken)
     {
         if (jobs == null) return 0;
         var released = 0;
+        var prefix = completed == null ? "pending:kept:" : $"pending:kept:{completed.JobId:N}:";
         Guid? after = null;
         while (true)
         {
             await using var page = await factory.CreateDbContextAsync(cancellationToken);
             var query = page.ManagedFileReferences.AsNoTracking().Where(item =>
-                item.ReleasedAt == null && item.ReferenceKey.StartsWith("pending:kept:"));
+                item.ReleasedAt == null && item.ReferenceKey.StartsWith(prefix));
             if (after != null) query = query.Where(item => item.Id.CompareTo(after.Value) > 0);
             var candidates = await query.OrderBy(item => item.Id).Take(200).ToArrayAsync(cancellationToken);
             if (candidates.Length == 0) return released;
@@ -35,6 +45,8 @@ public sealed partial class RecordingKeptFiles
                 if (reference == null || reference.ReferenceKey != candidate.ReferenceKey) continue;
                 var sourceJob = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == marker.JobId,
                     cancellationToken);
+                if (completed != null && (sourceJob == null || sourceJob.AttemptCount != completed.AttemptNumber ||
+                    sourceJob.Type != completed.Type || sourceJob.OwnerUserId != completed.OwnerUserId)) continue;
                 var file = await db.ManagedFiles.AsNoTracking().SingleOrDefaultAsync(item =>
                     item.Id == reference.ManagedFileId && item.RemovedAt == null, cancellationToken);
                 if (sourceJob == null || marker.Attempt > sourceJob.AttemptCount || file == null ||
@@ -82,7 +94,10 @@ public sealed partial class RecordingKeptFiles
 
     private static bool TerminalReservationJob(DurableJobRecord job) =>
         job.State is DurableJobState.Succeeded or DurableJobState.Failed or DurableJobState.Cancelled &&
-        job.Type is FavoriteActionPipeline.JobType or PlaylistTrackRetentionJobHandler.JobTypeName or "recording.keep";
+        KnownReservationJobType(job.Type);
+
+    private static bool KnownReservationJobType(string type) =>
+        type is FavoriteActionPipeline.JobType or PlaylistTrackRetentionJobHandler.JobTypeName or "recording.keep";
 
     private static ReservationMarker? ParseReservation(string key)
     {

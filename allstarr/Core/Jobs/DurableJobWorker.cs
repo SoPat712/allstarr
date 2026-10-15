@@ -23,6 +23,7 @@ public interface IDurableJobHandler
 public interface IDurableJobRecoveryHandler
 {
     Task RecoverAsync(CancellationToken cancellationToken);
+    Task RecoverCompletedAsync(DurableJobClaim claim, CancellationToken cancellationToken) => Task.CompletedTask;
 }
 
 public sealed class DurableJobWorker : BackgroundService
@@ -252,18 +253,27 @@ public sealed class DurableJobWorker : BackgroundService
         CancellationToken stoppingToken)
     {
         var retryDelayMilliseconds = Math.Max(50, _options.PollIntervalMilliseconds);
+        var completionSaved = false;
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await _queue.CompleteAsync(claim, completion, stoppingToken);
-                return;
-            }
-            catch (DurableJobExecutionChangedException)
-            {
-                _logger.LogDebug(
-                    "Durable job {JobId} completion was ignored after ownership changed",
-                    claim.JobId);
+                if (!completionSaved)
+                {
+                    try
+                    {
+                        await _queue.CompleteAsync(claim, completion, stoppingToken);
+                    }
+                    catch (DurableJobExecutionChangedException)
+                    {
+                        _logger.LogDebug(
+                            "Durable job {JobId} completion was ignored after ownership changed",
+                            claim.JobId);
+                    }
+                    completionSaved = true;
+                }
+                foreach (var recovery in _handlers.Values.OfType<IDurableJobRecoveryHandler>())
+                    await recovery.RecoverCompletedAsync(claim, stoppingToken);
                 return;
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -273,8 +283,9 @@ public sealed class DurableJobWorker : BackgroundService
             catch (Exception exception)
             {
                 _logger.LogWarning(
-                    "Durable job {JobId} completion persistence failed ({ExceptionType}); retrying",
+                    "Durable job {JobId} {Stage} failed ({ExceptionType}); retrying",
                     claim.JobId,
+                    completionSaved ? "resource recovery" : "completion persistence",
                     exception.GetType().Name);
                 try
                 {
