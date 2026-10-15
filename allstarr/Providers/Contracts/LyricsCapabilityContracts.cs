@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace allstarr.Core.Capabilities;
 
 public enum ProviderLyricsFormat
@@ -71,6 +73,46 @@ public sealed record ProviderLyricsRequest
     public int? DurationSeconds { get; }
 }
 
+public sealed record ProviderLyricsTimedSegment
+{
+    public ProviderLyricsTimedSegment(string text, TimeSpan start, TimeSpan? duration = null,
+        bool? isBackground = null, bool? synthetic = null)
+    {
+        LyricsTimingLimits.ValidateText(text);
+        LyricsTimingLimits.ValidateTime(start, duration);
+        Text = text;
+        Start = start;
+        Duration = duration;
+        IsBackground = isBackground;
+        Synthetic = synthetic;
+    }
+    public string Text { get; }
+    public TimeSpan Start { get; }
+    public TimeSpan? Duration { get; }
+    public bool? IsBackground { get; }
+    public bool? Synthetic { get; }
+}
+
+public sealed record ProviderLyricsTimedLine
+{
+    public ProviderLyricsTimedLine(string text, TimeSpan start, TimeSpan? duration = null,
+        IReadOnlyList<ProviderLyricsTimedSegment>? segments = null)
+    {
+        LyricsTimingLimits.ValidateText(text);
+        LyricsTimingLimits.ValidateTime(start, duration);
+        Text = text;
+        Start = start;
+        Duration = duration;
+        if (segments is { Count: > LyricsTimingLimits.MaximumElements } || segments?.Any(item => item == null) == true)
+            throw new ArgumentException("Lyric segments exceed the supported bounds.", nameof(segments));
+        Segments = segments is { Count: > 0 } ? Array.AsReadOnly(segments.ToArray()) : null;
+    }
+    public string Text { get; }
+    public TimeSpan Start { get; }
+    public TimeSpan? Duration { get; }
+    public IReadOnlyList<ProviderLyricsTimedSegment>? Segments { get; }
+}
+
 public sealed record ProviderLyricsResult
 {
     public ProviderLyricsResult(
@@ -78,7 +120,8 @@ public sealed record ProviderLyricsResult
         string source,
         ProviderLyricsFormat? format = null,
         string? content = null,
-        string? revision = null)
+        string? revision = null,
+        IReadOnlyList<ProviderLyricsTimedLine>? timedLines = null)
     {
         if (!Enum.IsDefined(availability))
         {
@@ -106,6 +149,28 @@ public sealed record ProviderLyricsResult
         Format = format;
         Content = ProviderContractValidation.OptionalContent(content, nameof(content), 2_000_000);
         Revision = ProviderContractValidation.OptionalText(revision, nameof(revision), 300);
+        if (timedLines is { Count: > 0 })
+        {
+            if (availability != ProviderLyricsAvailabilityState.Available || string.IsNullOrWhiteSpace(Content))
+                throw new ArgumentException("Timing content requires available lyrics text.", nameof(timedLines));
+            if (timedLines.Count > LyricsTimingLimits.MaximumElements || timedLines.Any(line => line == null))
+                throw new ArgumentException("Lyric lines exceed the supported bounds.", nameof(timedLines));
+            var characters = Content.Length;
+            var segments = 0;
+            foreach (var line in timedLines)
+            {
+                characters = checked(characters + line.Text.Length);
+                if (characters > LyricsTimingLimits.MaximumCharacters)
+                    throw new ArgumentException("Lyric timing content is too large.", nameof(timedLines));
+                foreach (var segment in line.Segments ?? [])
+                {
+                    characters = checked(characters + segment.Text.Length);
+                    if (++segments > LyricsTimingLimits.MaximumElements || characters > LyricsTimingLimits.MaximumCharacters)
+                        throw new ArgumentException("Lyric timing content is too large.", nameof(timedLines));
+                }
+            }
+            TimedLines = Array.AsReadOnly(timedLines.ToArray());
+        }
     }
 
     public ProviderLyricsAvailabilityState Availability { get; }
@@ -117,6 +182,31 @@ public sealed record ProviderLyricsResult
     public string? Content { get; }
 
     public string? Revision { get; }
+
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<ProviderLyricsTimedLine>? TimedLines { get; }
+}
+
+internal static class LyricsTimingLimits
+{
+    public const int MaximumElements = 50_000;
+    public const int MaximumCharacters = 2_000_000;
+    private static readonly TimeSpan MaximumTime = TimeSpan.FromHours(24);
+
+    public static void ValidateText(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        if (text.Length > MaximumCharacters || text.Contains('\r') || text.Contains('\n'))
+            throw new ArgumentException("A lyric timing entry must contain one bounded line of text.", nameof(text));
+    }
+
+    public static void ValidateTime(TimeSpan start, TimeSpan? duration)
+    {
+        if (start < TimeSpan.Zero || start > MaximumTime)
+            throw new ArgumentOutOfRangeException(nameof(start));
+        if (duration is { } value && (value < TimeSpan.Zero || value > MaximumTime || start > MaximumTime - value))
+            throw new ArgumentOutOfRangeException(nameof(duration));
+    }
 }
 
 public interface IProviderLyricsCapability : IProviderCapability

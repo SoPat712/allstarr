@@ -281,7 +281,8 @@ public sealed class ProtocolLyricsResolver(
                         PlainLyrics = result.Format == ProviderLyricsFormat.PlainText ? result.Content : null,
                         SyncedLyrics = result.Format == ProviderLyricsFormat.PlainText ? null : result.Content,
                         Source = providerId,
-                        Revision = result.Revision
+                        Revision = result.Revision,
+                        TimedLines = result.TimedLines
                     };
                 }
                 protocol.CancellationToken.ThrowIfCancellationRequested();
