@@ -239,6 +239,24 @@ public sealed partial class RecordingKeptFiles(
         catch (UnauthorizedAccessException) { return null; }
     }
 
+    internal async Task<KeptRecordingFile?> FindForLyricsAsync(ProviderActorContext actor, string itemId,
+        CancellationToken cancellationToken)
+    {
+        if (actor.EffectiveUserId == null) return null;
+        try
+        {
+            var recordingId = await ResolveKeptRecordingIdAsync(actor, itemId, cancellationToken);
+            if (recordingId == null) return null;
+            await using var scope = scopes.CreateAsyncScope();
+            var candidate = await FindCandidateAsync(scope.ServiceProvider.GetRequiredService<AllstarrDbContext>(),
+                scope.ServiceProvider.GetRequiredService<FilePlacementService>(),
+                scope.ServiceProvider.GetRequiredService<IManagedFileRemovalStore>(), recordingId.Value, true,
+                cancellationToken, verifyContent: false);
+            return candidate == null ? null : ToResult(recordingId.Value, candidate.File, candidate.MimeType);
+        }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     public async Task<KeptRecordingRead?> OpenForPlaybackAsync(ProviderActorContext actor,
         ProviderExternalResourceId source, bool headOnly, CancellationToken cancellationToken = default)
     {

@@ -11,6 +11,33 @@ namespace allstarr.Tests;
 
 public sealed partial class RecordingKeptFilesTests
 {
+    [Theory]
+    [Trait("Lane", "ReleaseCritical")]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task KeptLyricsLookupReadsZeroAudioBytes(bool canonical)
+    {
+        UsePhysicalKeptLyricsRoot();
+        var published = await Service().PublishAsync(Request());
+        await File.WriteAllTextAsync(Path.ChangeExtension(published.Path, ".lrc"), "[00:01.250]Retained words");
+        await RetireSourceAccountAsync();
+        var reads = await CountKeptReadsAsync();
+        var song = new Song
+        {
+            Id = canonical ? CanonicalItemId() : "ext-deezer-song-source-track",
+            CanonicalRecordingId = canonical ? recordingId : null,
+            Title = "Retained song",
+            Artist = "Retained artist"
+        };
+
+        var result = await CreateKeptLyricsReader(Path.Combine(root, "unused-download-root"))
+            .ReadHouseholdAsync(LyricsContext(other), song, [new KeptLyricsIdentity("deezer", "source-track")]);
+
+        Assert.Equal("[00:01.250]Retained words", result?.SyncedLyrics);
+        Assert.Equal(0, reads.Bytes);
+        Assert.Equal(0, reads.FullFileReads);
+    }
+
     [Fact]
     [Trait("Lane", "ReleaseCritical")]
     public async Task CanonicalKeptLyricsSurviveSourceAccountRetirementAndIgnoreSongLocalPath()

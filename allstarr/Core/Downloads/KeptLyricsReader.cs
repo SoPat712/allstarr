@@ -73,7 +73,7 @@ public sealed class KeptLyricsReader(
         if (keptFiles != null && actor != null &&
             song.CanonicalRecordingId is { } canonical && canonical != Guid.Empty)
         {
-            var kept = await keptFiles.FindAsync(actor, canonical, cancellationToken);
+            var kept = await keptFiles.FindForLyricsAsync(actor, canonical.ToString("D"), cancellationToken);
             if (kept != null)
             {
                 var text = await ReadKeptSidecarAsync(kept, cancellationToken);
@@ -99,8 +99,9 @@ public sealed class KeptLyricsReader(
                 KeptRecordingFile? kept;
                 try
                 {
-                    kept = await keptFiles.FindBySourceAsync(actor,
-                        new(identity.ProviderId, ProviderResourceKind.Track, identity.ExternalId),
+                    var source = new ProviderExternalResourceId(identity.ProviderId, ProviderResourceKind.Track, identity.ExternalId);
+                    kept = await keptFiles.FindForLyricsAsync(actor,
+                        $"ext-{source.ProviderId}-song-{source.Value}",
                         cancellationToken);
                 }
                 catch (ArgumentException)
