@@ -5,7 +5,6 @@ using Moq.Protected;
 using Microsoft.Extensions.Logging;
 using allstarr.Services.Lyrics;
 using allstarr.Services.Common;
-using allstarr.Core.Storage;
 using allstarr.Models.Settings;
 using Microsoft.Extensions.Options;
 
@@ -16,7 +15,6 @@ public class LrclibServiceTests
     private readonly Mock<ILogger<LrclibService>> _mockLogger;
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;
     private readonly Mock<IApplicationCache> _mockCache;
-    private readonly Mock<IManualLyricsMappingStore> _mockMappingStore;
     private readonly Mock<HttpMessageHandler> _handler;
 
     public LrclibServiceTests()
@@ -25,7 +23,6 @@ public class LrclibServiceTests
         _mockHttpClientFactory = new Mock<IHttpClientFactory>();
 
         _mockCache = new Mock<IApplicationCache>();
-        _mockMappingStore = new Mock<IManualLyricsMappingStore>();
 
         _handler = new Mock<HttpMessageHandler>();
         var httpClient = new HttpClient(_handler.Object)
@@ -121,15 +118,9 @@ public class LrclibServiceTests
     }
 
     [Fact]
-    public async Task ManualMapping_CachesTheCompleteLyricsDocument()
+    public async Task LegacyGlobalLyricsCacheCannotOverrideAutomaticLookup()
     {
         var requestedUris = new List<Uri>();
-        (string Artist, string Track)? mappingLookup = null;
-        _mockMappingStore
-            .Setup(store => store.FindLyricsIdAsync(
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
-            .Callback<string, string, CancellationToken>((artist, track, _) => mappingLookup = (artist, track))
-            .ReturnsAsync((int?)42);
         _mockCache.Setup(cache => cache.SetStringAsync(
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>())).ReturnsAsync(true);
         _handler.Protected()
@@ -138,21 +129,23 @@ public class LrclibServiceTests
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
             .Callback<HttpRequestMessage, CancellationToken>((request, _) => requestedUris.Add(request.RequestUri!))
-            .ReturnsAsync(() => new HttpResponseMessage(HttpStatusCode.OK)
+            .ReturnsAsync((HttpRequestMessage request, CancellationToken _) => new HttpResponseMessage(HttpStatusCode.OK)
             {
-                Content = new StringContent(
+                Content = new StringContent(request.RequestUri!.AbsolutePath == "/api/search" ? "[]" :
                     """{"id":42,"trackName":"Mapped","artistName":"Artist","plainLyrics":"complete lyrics"}""")
             });
         var service = CreateService();
         var cacheKey = CacheKeyBuilder.BuildLyricsKey("Artist", "Mapped", "Album", 180);
+        _mockCache.Setup(cache => cache.GetStringAsync(cacheKey))
+            .ReturnsAsync("""{"id":999,"plainLyrics":"Legacy global words"}""");
 
         var result = await service.GetLyricsAsync("Mapped", "Artist", "Album", 180);
 
-        Assert.Equal(("Artist", "Mapped"), mappingLookup);
-        Assert.Equal(["https://lrclib.net/api/get/42"], requestedUris.Select(uri => uri.AbsoluteUri));
+        Assert.Equal(new[] { "/api/search", "/api/get" }, requestedUris.Select(uri => uri.AbsolutePath));
+        Assert.All(requestedUris, uri => Assert.Contains("track_name=Mapped", uri.Query, StringComparison.Ordinal));
         Assert.Equal("complete lyrics", result?.PlainLyrics);
         _mockCache.Verify(cache => cache.SetStringAsync(
-            cacheKey,
+            "lrclib:automatic:v2:" + cacheKey,
             It.Is<string>(value => IsCompleteLyricsJson(value)),
             new CacheSettings().LyricsTTL), Times.Once());
     }
@@ -168,7 +161,6 @@ public class LrclibServiceTests
         new(
             _mockHttpClientFactory.Object,
             _mockCache.Object,
-            _mockMappingStore.Object,
             Options.Create(new CacheSettings()),
             _mockLogger.Object);
 }

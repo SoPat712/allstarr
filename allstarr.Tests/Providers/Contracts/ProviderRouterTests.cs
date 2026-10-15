@@ -10,6 +10,59 @@ namespace allstarr.Tests;
 public sealed class ProviderRouterTests
 {
     [Theory]
+    [InlineData(ProviderAccountScope.Personal, false)]
+    [InlineData(ProviderAccountScope.Shared, true)]
+    public async Task PerOperationAccountScopeNarrowsTheDescriptorAndRechecksResolvedAccounts(
+        ProviderAccountScope returnedScope, bool allowed)
+    {
+        var actor = Actor(Guid.CreateVersion7());
+        var account = new ProviderAccountContext(Guid.CreateVersion7(), "scoped", returnedScope, 1,
+            ownerUserId: returnedScope == ProviderAccountScope.Personal ? actor.EffectiveUserId : null);
+        ProviderRouteAccountRequest? captured = null;
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<ProviderRouteAccountRequest, CancellationToken>((request, _) => captured = request)
+            .ReturnsAsync(new ProviderRouteAccountResolution(account, 1));
+        var router = Router([Metadata("scoped", ProviderAccountRequirement.Required,
+            [ProviderAccountScope.Personal, ProviderAccountScope.Shared])], accounts.Object);
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata,
+            ["scoped"], actor: actor, states: [new ProviderRouteProviderState("scoped", allowedAccountScopes: [ProviderAccountScope.Shared])]));
+        Assert.NotNull(captured);
+        Assert.Equal([ProviderAccountScope.Shared], captured.AllowedScopes);
+        Assert.Equal(allowed ? 1 : 0, plan.Candidates.Count);
+        if (!allowed) Assert.Equal("account-scope-denied", Assert.Single(plan.Decision.Candidates).ReasonCode);
+    }
+
+    [Fact]
+    public async Task PerOperationScopeCannotExpandAProvidersDeclaredScopes()
+    {
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountRequest request, CancellationToken _) =>
+            {
+                Assert.Empty(request.AllowedScopes!);
+                return null;
+            });
+        var plan = await Router([Metadata("scoped", ProviderAccountRequirement.Required, [ProviderAccountScope.Personal])], accounts.Object)
+            .PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata, ["scoped"],
+                states: [new ProviderRouteProviderState("scoped", allowedAccountScopes: [ProviderAccountScope.Shared])]));
+        Assert.Empty(plan.Candidates);
+    }
+
+    [Fact]
+    public void PerOperationScopesAreValidatedAndImmutable()
+    {
+        var scopes = new[] { ProviderAccountScope.Shared };
+        var state = new ProviderRouteProviderState("scoped", allowedAccountScopes: scopes);
+        scopes[0] = ProviderAccountScope.Personal;
+        Assert.Equal([ProviderAccountScope.Shared], state.AllowedAccountScopes);
+        Assert.Throws<ArgumentException>(() => new ProviderRouteProviderState("scoped", allowedAccountScopes:
+            [ProviderAccountScope.Shared, ProviderAccountScope.Shared]));
+        Assert.Throws<ArgumentException>(() => new ProviderRouteProviderState("scoped", allowedAccountScopes:
+            [(ProviderAccountScope)999]));
+    }
+
+    [Theory]
     [InlineData(ProviderIdentityVerification.Verified, "exact", true)]
     [InlineData(ProviderIdentityVerification.Unknown, "exact", false)]
     [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion", false)]

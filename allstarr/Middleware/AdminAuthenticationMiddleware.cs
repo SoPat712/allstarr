@@ -92,6 +92,14 @@ public class AdminAuthenticationMiddleware
                     matchSegments.Length == 7 && matchSegments[6].Equals("rematch", StringComparison.OrdinalIgnoreCase) && HttpMethods.IsPost(method));
         }
 
+        if (path.StartsWith("/api/admin/recordings", StringComparison.OrdinalIgnoreCase))
+        {
+            var segments = path.TrimEnd('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+            return segments.Length == 5 && segments[2].Equals("recordings", StringComparison.OrdinalIgnoreCase) &&
+                Guid.TryParse(segments[3], out _) && segments[4].Equals("lyrics", StringComparison.OrdinalIgnoreCase) &&
+                (HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method));
+        }
+
         if (path.TrimEnd('/').Equals("/api/admin/preferences", StringComparison.OrdinalIgnoreCase))
             return HttpMethods.IsGet(method) || HttpMethods.IsPut(method) || HttpMethods.IsDelete(method);
 

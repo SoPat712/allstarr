@@ -13,6 +13,9 @@ public sealed record KeptLyricsIdentity(string ProviderId, string ExternalId);
 
 public interface IKeptLyricsReader
 {
+    Task<LyricsInfo?> ReadHouseholdAsync(ProtocolExecutionContext context, Song song,
+        IReadOnlyList<KeptLyricsIdentity> identities);
+
     Task<LyricsInfo?> ReadAsync(
         ProtocolExecutionContext context,
         Song song,
@@ -25,10 +28,16 @@ public sealed class KeptLyricsReader(
 {
     private const int MaximumLyricsBytes = 2 * 1024 * 1024;
 
-    public async Task<LyricsInfo?> ReadAsync(
+    public Task<LyricsInfo?> ReadHouseholdAsync(ProtocolExecutionContext context, Song song,
+        IReadOnlyList<KeptLyricsIdentity> identities) => ReadCoreAsync(context, song, identities, householdOnly: true);
+
+    public Task<LyricsInfo?> ReadAsync(
         ProtocolExecutionContext context,
         Song song,
-        IReadOnlyList<KeptLyricsIdentity> identities)
+        IReadOnlyList<KeptLyricsIdentity> identities) => ReadCoreAsync(context, song, identities, householdOnly: false);
+
+    private async Task<LyricsInfo?> ReadCoreAsync(ProtocolExecutionContext context, Song song,
+        IReadOnlyList<KeptLyricsIdentity> identities, bool householdOnly)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(song);
@@ -73,7 +82,7 @@ public sealed class KeptLyricsReader(
             foreach (var mapping in mappings)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!await IsMappingAllowedAsync(db, mapping, identity.ProviderId, listenerId, cancellationToken) ||
+                if (!await IsMappingAllowedAsync(db, mapping, identity.ProviderId, listenerId, householdOnly, cancellationToken) ||
                     !TryGetSafePath(mapping.LocalPath, roots, out var audioPath))
                     continue;
 
@@ -90,7 +99,7 @@ public sealed class KeptLyricsReader(
                 if (managedFiles.Any(item =>
                         item.RemovedAt != null ||
                         !item.IsManaged ||
-                        item.OwnerUserId != null && item.OwnerUserId != listenerId))
+                        item.OwnerUserId != null && (householdOnly || item.OwnerUserId != listenerId)))
                     continue;
 
                 var text = await ReadSidecarAsync(sidecarPath, cancellationToken);
@@ -127,6 +136,7 @@ public sealed class KeptLyricsReader(
         DownloadedSongMappingEntity mapping,
         string providerId,
         Guid listenerId,
+        bool householdOnly,
         CancellationToken cancellationToken)
     {
         if (mapping.ProviderAccountId is not { } accountId)
@@ -139,7 +149,7 @@ public sealed class KeptLyricsReader(
             item.Id == accountId && item.ProviderId == providerId,
             cancellationToken);
         return account is { Enabled: true } &&
-               (account.OwnerUserId == null || account.OwnerUserId == listenerId);
+               (account.OwnerUserId == null || !householdOnly && account.OwnerUserId == listenerId);
     }
 
     private static bool TryGetSafePath(

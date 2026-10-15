@@ -94,6 +94,10 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
             { Policy = protocol.Policy, RequestedItemId = protocol.RequestedItemId };
             var lookup = MusicLyrics.ForLookup(new Song
             {
+                Id = song?.Id ?? string.Empty,
+                CanonicalRecordingId = song?.CanonicalRecordingId,
+                ExternalProvider = externalProvider,
+                ExternalId = externalId,
                 Title = title,
                 Artist = artistNames[0],
                 Artists = artistNames,
@@ -103,8 +107,7 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
             });
             var resourceKey = externalProvider != null && externalId != null ? $"{externalProvider}:{externalId}" :
                 Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(audioFilePath)));
-            var lyrics = await _lyrics.FindAsync(context, lookup, resourceKey,
-                externalProvider, externalId, lookup.SpotifyId);
+            var lyrics = await _lyrics.FindAsync(context, lookup, resourceKey, new ProtocolLyricsSources(HouseholdOnly: true));
 
             if (lyrics == null)
             {

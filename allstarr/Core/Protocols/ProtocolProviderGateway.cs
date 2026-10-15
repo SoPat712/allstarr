@@ -118,6 +118,11 @@ public interface IProtocolProviderGateway
         string? rangeHeader,
         bool headOnly = false);
 
+    Task<ProviderLyricsResult?> GetHouseholdLyricsAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId,
+        ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null);
+
     Task<ProviderLyricsResult?> GetLyricsAsync(
         ProtocolExecutionContext protocol,
         string providerId,
@@ -1280,7 +1285,14 @@ public sealed partial class ProtocolProviderGateway(
          lease.RetryBehavior == ProviderStreamRetryBehavior.RefreshLease &&
          statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden);
 
-    public async Task<ProviderLyricsResult?> GetLyricsAsync(
+    public Task<ProviderLyricsResult?> GetHouseholdLyricsAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId,
+        ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
+        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null) =>
+        GetLyricsCoreAsync(protocol, providerId, externalId, preferredFormat, trackTitle, artistNames, albumTitle,
+            durationSeconds, [ProviderAccountScope.Shared]);
+
+    public Task<ProviderLyricsResult?> GetLyricsAsync(
         ProtocolExecutionContext protocol,
         string providerId,
         string externalId,
@@ -1288,7 +1300,14 @@ public sealed partial class ProtocolProviderGateway(
         string? trackTitle = null,
         IReadOnlyList<string>? artistNames = null,
         string? albumTitle = null,
-        int? durationSeconds = null)
+        int? durationSeconds = null) =>
+        GetLyricsCoreAsync(protocol, providerId, externalId, preferredFormat, trackTitle, artistNames, albumTitle,
+            durationSeconds, null);
+
+    private async Task<ProviderLyricsResult?> GetLyricsCoreAsync(
+        ProtocolExecutionContext protocol, string providerId, string externalId, ProviderLyricsFormat? preferredFormat,
+        string? trackTitle, IReadOnlyList<string>? artistNames, string? albumTitle, int? durationSeconds,
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes)
     {
         providerId = NormalizeProvider(providerId);
         var trackId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
@@ -1297,7 +1316,7 @@ public sealed partial class ProtocolProviderGateway(
             providerId,
             ProviderCapabilityKind.Lyrics,
             "protocol-lyrics-get",
-            trackId);
+            trackId, allowedAccountScopes: allowedAccountScopes);
         if (routed.Candidate == null) return null;
         var canonicalBytes = SHA256.HashData(Encoding.UTF8.GetBytes($"{providerId}\n{externalId}"));
         var canonicalId = new Guid(canonicalBytes.AsSpan(0, 16));
@@ -1329,7 +1348,8 @@ public sealed partial class ProtocolProviderGateway(
             ProviderCapabilityKind capability,
             string operationId,
             ProviderExternalResourceId? sourceTrackId = null,
-            ProviderAudioQuality quality = ProviderAudioQuality.Any)
+            ProviderAudioQuality quality = ProviderAudioQuality.Any,
+            IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null)
         where TCapability : class, IProviderCapability
     {
         ArgumentNullException.ThrowIfNull(protocol);
@@ -1343,7 +1363,7 @@ public sealed partial class ProtocolProviderGateway(
             operationId,
             [providerId],
             sourceTrackId,
-            quality));
+            quality, allowedAccountScopes: allowedAccountScopes));
         var candidate = plan.Candidates.SingleOrDefault();
         if (candidate == null && plan.Decision.Candidates.Any(item =>
                 item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
@@ -1419,7 +1439,8 @@ public sealed partial class ProtocolProviderGateway(
         ProviderAudioQuality quality = ProviderAudioQuality.Any,
         bool allowFallback = false,
         bool allowManagedDownloads = false,
-        string? idempotencyKey = null) => Request(
+        string? idempotencyKey = null,
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null) => Request(
         actor,
         capability,
         operationId,
@@ -1431,7 +1452,8 @@ public sealed partial class ProtocolProviderGateway(
         idempotencyKey,
         protocol.CorrelationId,
         protocol.Deadline,
-        protocol.CancellationToken);
+        protocol.CancellationToken,
+        allowedAccountScopes);
 
     private static ProviderRouteRequest Request(
         ProviderActorContext actor,
@@ -1445,7 +1467,8 @@ public sealed partial class ProtocolProviderGateway(
         string? idempotencyKey = null,
         string correlationId = "provider-route",
         DateTimeOffset deadline = default,
-        CancellationToken cancellationToken = default) => new(
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null) => new(
         capability,
         actor,
         new ProviderExecutionPolicy(
@@ -1470,7 +1493,7 @@ public sealed partial class ProtocolProviderGateway(
                 ProviderAudioQuality.Lossy,
                 ProviderAudioQuality.Lossless,
                 ProviderAudioQuality.HighResolution
-            ])),
+            ], allowedAccountScopes: allowedAccountScopes)),
         sourceTrackId: sourceTrackId,
         idempotencyKey: idempotencyKey,
         cancellationToken: cancellationToken);

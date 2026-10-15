@@ -3430,6 +3430,57 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("recording_identifiers", (string)null);
                 });
 
+            modelBuilder.Entity("allstarr.Core.Storage.RecordingLyricsChoiceRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("RevokedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CanonicalRecordingId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_recording_lyrics_choices_household_active")
+                        .HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NULL");
+
+                    b.HasIndex("OwnerUserId");
+
+                    b.HasIndex("CanonicalRecordingId", "OwnerUserId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_recording_lyrics_choices_personal_active")
+                        .HasFilter("\"RevokedAt\" IS NULL AND \"OwnerUserId\" IS NOT NULL");
+
+                    b.HasIndex("CanonicalRecordingId", "RevokedAt");
+
+                    b.ToTable("recording_lyrics_choices", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_recording_lyrics_choices_revision", "\"Revision\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.SecretReferenceRecord", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4410,6 +4461,22 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("RecordingId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.RecordingLyricsChoiceRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalRecordingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired()
+                        .HasConstraintName("FK_recording_lyrics_choices_recording");
+
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .HasConstraintName("FK_recording_lyrics_choices_owner");
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.SecretReferenceRecord", b =>

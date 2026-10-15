@@ -144,7 +144,8 @@ public sealed class ProviderRouter(
                             provider.Id,
                             request.Capability,
                             state.RequestedAccountId,
-                            descriptor.AllowedAccountScopes,
+                            state.AllowedAccountScopes == null ? descriptor.AllowedAccountScopes :
+                                descriptor.AllowedAccountScopes.Intersect(state.AllowedAccountScopes).ToArray(),
                             request.Policy.AllowSharedAccount),
                         request.CancellationToken);
             }
@@ -171,7 +172,8 @@ public sealed class ProviderRouter(
                 continue;
             }
 
-            if (account != null && !descriptor.AllowedAccountScopes.Contains(account.Scope))
+            if (account != null && (!descriptor.AllowedAccountScopes.Contains(account.Scope) ||
+                    state.AllowedAccountScopes != null && !state.AllowedAccountScopes.Contains(account.Scope)))
             {
                 Reject("account-scope-denied");
                 continue;
@@ -390,7 +392,8 @@ public sealed class ProviderRouter(
             request.ProviderPriority.Select(Resolve).Distinct(StringComparer.Ordinal),
             request.ProviderStates.Values.Select(state => new ProviderRouteProviderState(Resolve(state.ProviderId),
                 state.CapabilityEnabled, state.RequestedAccountId, state.ExpectedAccountRevision, state.AvailableQualities,
-                state.TrackCatalog, state.IsExplicit, state.RateLimitBudgetAvailable, state.StorageCapacityAvailable, state.ProviderTermsAllowed)),
+                state.TrackCatalog, state.IsExplicit, state.RateLimitBudgetAvailable, state.StorageCapacityAvailable,
+                state.ProviderTermsAllowed, state.AllowedAccountScopes)),
             request.SourceTrackId is { } source ? new(Resolve(source.ProviderId), source.ResourceKind, source.Value) : null,
             request.IdempotencyKey, request.CancellationToken);
     }
@@ -409,6 +412,7 @@ public sealed class ProviderRouter(
                     source.ProviderId,
                     request.Capability,
                     state.RequestedAccountId,
+                    AllowedScopes: state.AllowedAccountScopes,
                     AllowSharedAccount: request.Policy.AllowSharedAccount),
                 request.CancellationToken);
         }
@@ -421,7 +425,8 @@ public sealed class ProviderRouter(
             (!resolution.Account.Enabled ||
              resolution.Account.Revision != resolution.CurrentRevision ||
              state.ExpectedAccountRevision.HasValue &&
-             state.ExpectedAccountRevision != resolution.CurrentRevision))
+             state.ExpectedAccountRevision != resolution.CurrentRevision ||
+             state.AllowedAccountScopes != null && !state.AllowedAccountScopes.Contains(resolution.Account.Scope)))
         {
             return null;
         }
