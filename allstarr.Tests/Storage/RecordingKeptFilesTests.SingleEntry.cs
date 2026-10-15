@@ -248,7 +248,7 @@ public sealed partial class RecordingKeptFilesTests
         Assert.Equal("matched-external", result.ExternalId);
     }
 
-    private async Task<PlaylistTrackRetentionJobPayload> SeedLargeRetentionPlaylistAsync(int count = 10_000, bool sharedMetadata = false)
+    private async Task<PlaylistTrackRetentionJobPayload> SeedLargeRetentionPlaylistAsync(int count = 10_000, bool sharedMetadata = false, int snapshotVersion = 1)
     {
         if (count < 1) throw new ArgumentOutOfRangeException(nameof(count));
         var now = DateTimeOffset.UtcNow;
@@ -275,7 +275,7 @@ public sealed partial class RecordingKeptFilesTests
             OwnerUserId = owner,
             PlaylistLinkId = link.Id,
             ProviderAccountId = account,
-            SnapshotVersion = 1,
+            SnapshotVersion = snapshotVersion,
             ProviderRevision = "large-v1",
             Name = "Large playlist",
             PayloadSha256 = PlaylistHash("large-snapshot"),
