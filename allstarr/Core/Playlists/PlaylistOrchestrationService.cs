@@ -215,6 +215,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly IProviderRegistry? _registry;
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
+    private readonly allstarr.Core.ManagedFiles.RecordingKeptFiles? _kept;
 
     public PlaylistOrchestrationService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -228,7 +229,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         IBackendLibraryAccessResolver libraryAccess,
         ILogger<PlaylistOrchestrationService>? logger = null,
         IEffectiveProviderPolicyResolver? effectivePolicies = null,
-        IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null)
+        IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null,
+        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
@@ -237,6 +239,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         _libraryAccess = libraryAccess;
         _providerGateway = providerGateway;
         _registry = registry;
+        _kept = kept;
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -456,6 +459,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         CancellationToken cancellationToken = default)
     {
         var actor = execution.RequireActor();
+        var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
+            await _libraryAccess.ResolveUserAsync(actor.EffectiveUserId!.Value, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var link = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
@@ -501,6 +506,11 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         foreach (var entry in entries)
             entry.PublishedTrackMatchId = latest[entry.ExternalMetadataSnapshotId].Id;
         await db.SaveChangesAsync(cancellationToken);
+        if (_kept != null)
+        {
+            await _kept.StagePlaylistInterestsAsync(db, link, access, execution.CorrelationId, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -585,6 +595,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         IReadOnlyDictionary<Guid, Guid?> decisionIds,
         CancellationToken cancellationToken)
     {
+        var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
+            await _libraryAccess.ResolveUserAsync(link.OwnerUserId, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var published = await db.PlaylistSourceSnapshots.SingleAsync(item =>
@@ -612,6 +624,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             entry.PublishedTrackMatchId = decisionIds[entry.Id];
         published.PublishedAt = _clock.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
+        if (_kept != null)
+        {
+            var currentLink = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == link.Id, cancellationToken);
+            await _kept.StagePlaylistInterestsAsync(db, currentLink, access, published.CorrelationId, cancellationToken);
+            await db.SaveChangesAsync(cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
     }
 

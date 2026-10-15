@@ -298,7 +298,7 @@ public sealed partial class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             JsonSerializer.SerializeToElement(new { }),
             "retention-scope");
         var handler = new PlaylistTrackRetentionJobHandler(
-            _factory, null!, null!, null!, null!);
+            _factory, null!, null!);
 
         var completion = await handler.ExecuteAsync(
             new DurableJobExecutionContext(claim, NullServices.Instance),

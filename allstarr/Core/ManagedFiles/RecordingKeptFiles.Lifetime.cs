@@ -107,7 +107,16 @@ public sealed partial class RecordingKeptFiles
             return;
         }
 
-        var released = await store.StageReleaseAsync(key, favoriteEvent.UpdatedAt, cancellationToken);
+        await StageReleaseInterestAsync(db, key, state.OwnerUserId, favoriteEvent.Id, favoriteEvent.UpdatedAt,
+            favoriteEvent.CorrelationId, cancellationToken);
+    }
+
+    private async Task StageReleaseInterestAsync(AllstarrDbContext db, string key, Guid ownerUserId,
+        Guid operationId, DateTimeOffset releasedAt, string correlationId, CancellationToken cancellationToken,
+        Guid? onlyFileId = null)
+    {
+        var store = new EfManagedFileOwnershipStore(db);
+        var released = await store.StageReleaseAsync(key, releasedAt, cancellationToken, onlyFileId);
         foreach (var fileId in released)
         {
             if (await store.HasStagedActiveReferencesAsync(fileId, cancellationToken)) continue;
@@ -116,12 +125,11 @@ public sealed partial class RecordingKeptFiles
                 .FirstOrDefaultAsync(cancellationToken);
             if (route == null) continue;
             if (jobs == null) throw new InvalidOperationException("The kept cleanup queue is unavailable.");
-            var releasedAt = favoriteEvent.UpdatedAt;
             await jobs.EnqueueInExistingTransactionAsync(db,
                 new DurableJobEnqueueRequest<KeptRecordingCleanupPayload>(KeptCleanupJobType,
-                    $"kept:{fileId:N}:{favoriteEvent.Id:N}:{releasedAt.UtcTicks}", new(route.CanonicalRecordingId, fileId),
-                    state.OwnerUserId, AvailableAt: releasedAt.AddHours(24),
-                    CorrelationId: favoriteEvent.CorrelationId), cancellationToken);
+                    $"kept:{fileId:N}:{operationId:N}:{releasedAt.UtcTicks}", new(route.CanonicalRecordingId, fileId),
+                    ownerUserId, AvailableAt: releasedAt.AddHours(24),
+                    CorrelationId: correlationId), cancellationToken);
         }
     }
 

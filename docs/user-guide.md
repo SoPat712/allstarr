@@ -185,6 +185,8 @@ Playlist synchronization retains ownership of songs whose removal has not been c
 
 If playback succeeded but Cached is empty, check the selected storage mode, provider route, durable job, and Activity outcome. A remote stream may not create a complete cache file until the provider download finishes and publishes atomically.
 
+A playlist with **Keep downloaded copies** retains its current external songs as household kept recordings. Existing copies are shared with hearts and other retained playlists. Turning the option off, deleting the link, or publishing a source update that removes a song releases only that playlist's interest. The final release starts the same twenty-four-hour grace period used by favorites. Re-enabling the option protects existing copies immediately and queues fresh work for missing ones.
+
 ## Favorites
 
 Hearting an external song records your favorite immediately and queues a durable kept copy using an authorized provider account. An accessible recording in your backend library avoids a redundant download. An existing household kept copy is reused without contacting its original provider. Otherwise, verified audio is attached to the recording and becomes available to everyone in your household. Its title, artists, album and duration remain available when the original provider account is disconnected. Native songs, albums, artists, and playlists do not trigger favorite downloads.
