@@ -318,7 +318,7 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
         public Task<bool> SupersedeAsync(VerifiedProviderDownloadArtifact expected, long revision, int attempt,
             DateTimeOffset now, CancellationToken token) => Task.FromResult(false);
         public Task<IReadOnlyList<ProviderDownloadWorkspaceEntity>> FindDiscardableWorkspacesAsync(Guid owner,
-            Guid job, string? provider, CancellationToken token) =>
+            Guid job, string? provider, CancellationToken token, ProviderDownloadWorkspaceRequest? legacyWorkspace = null) =>
             Task.FromResult<IReadOnlyList<ProviderDownloadWorkspaceEntity>>([]);
         public Task MarkPlacedAsync(Guid id, Guid managedId, CancellationToken token) => Task.CompletedTask;
     }

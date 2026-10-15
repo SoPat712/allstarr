@@ -41,7 +41,8 @@ public sealed partial class EfProviderDownloadArtifactStore
     }
 
     public async Task<IReadOnlyList<ProviderDownloadWorkspaceEntity>> FindDiscardableWorkspacesAsync(
-        Guid ownerUserId, Guid durableJobId, string? providerId, CancellationToken cancellationToken)
+        Guid ownerUserId, Guid durableJobId, string? providerId, CancellationToken cancellationToken,
+        ProviderDownloadWorkspaceRequest? legacyWorkspace = null)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var pendingPrefix = $"pending:kept:{durableJobId:N}:";
@@ -50,13 +51,18 @@ public sealed partial class EfProviderDownloadArtifactStore
                    join file in db.ManagedFiles on reference.ManagedFileId equals file.Id
                    where reference.ReferenceKey.StartsWith(pendingPrefix) && file.RemovedAt == null
                    select reference.Id).AnyAsync(cancellationToken)) return [];
+        var legacyKey = legacyWorkspace?.IdempotencyKey;
+        var legacyAccount = legacyWorkspace?.ProviderAccountId;
         return await db.ProviderDownloadWorkspaces.AsNoTracking().Where(workspace =>
             workspace.OwnerUserId == ownerUserId && workspace.DurableJobId == durableJobId &&
             (providerId == null || workspace.ProviderId == providerId) &&
-            db.ProviderDownloadArtifacts.Any(artifact => artifact.WorkspaceRecordId == workspace.Id &&
+            ((legacyKey != null && workspace.IdempotencyKey == legacyKey &&
+              workspace.ProviderAccountId == legacyAccount &&
+              !db.ProviderDownloadArtifacts.Any(artifact => artifact.WorkspaceRecordId == workspace.Id)) ||
+             db.ProviderDownloadArtifacts.Any(artifact => artifact.WorkspaceRecordId == workspace.Id &&
                 artifact.WorkspaceId == workspace.WorkspaceId && artifact.OwnerUserId == ownerUserId &&
                 artifact.DurableJobId == durableJobId && artifact.ProviderId == workspace.ProviderId &&
-                artifact.ProviderAccountId == workspace.ProviderAccountId && artifact.SupersededAt != null) &&
+                artifact.ProviderAccountId == workspace.ProviderAccountId && artifact.SupersededAt != null)) &&
             !db.ProviderDownloadArtifacts.Any(artifact => artifact.WorkspaceRecordId == workspace.Id &&
                 (artifact.SupersededAt == null ||
                  db.ManagedFiles.Any(file => file.Id == artifact.ManagedFileId && file.RemovedAt == null) ||

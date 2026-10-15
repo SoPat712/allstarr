@@ -159,7 +159,8 @@ public sealed class ManagedTrackDownloadService(
             var candidateAccountId = candidate.Context.Account?.AccountId;
             var candidateAccountRevision = candidate.Context.Account?.Revision;
             await artifacts.DiscardSupersededWorkspacesAsync(command.OwnerUserId, command.DurableJobId,
-                candidate.Provider.Id, cancellationToken);
+                candidate.Provider.Id, cancellationToken,
+                new(command.OwnerUserId, command.DurableJobId, candidate.Provider.Id, candidateAccountId, command.IdempotencyKey));
             var prior = await artifacts.ReadBindingAsync(
                 command.DurableJobId,
                 candidate.Provider.Id,

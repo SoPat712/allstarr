@@ -124,6 +124,7 @@ public interface IProviderDownloadArtifactStore
     Task<bool> SupersedeAsync(VerifiedProviderDownloadArtifact expected, long accountRevision, int attempt,
         DateTimeOffset now, CancellationToken cancellationToken);
     Task<IReadOnlyList<ProviderDownloadWorkspaceEntity>> FindDiscardableWorkspacesAsync(Guid ownerUserId,
-        Guid durableJobId, string? providerId, CancellationToken cancellationToken);
+        Guid durableJobId, string? providerId, CancellationToken cancellationToken,
+        ProviderDownloadWorkspaceRequest? legacyWorkspace = null);
     Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken cancellationToken);
 }

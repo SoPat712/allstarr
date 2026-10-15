@@ -254,9 +254,12 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         store.SupersedeAsync(expected, accountRevision, attempt, now, cancellationToken);
 
     internal async Task DiscardSupersededWorkspacesAsync(Guid ownerUserId, Guid jobId, string? providerId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ProviderDownloadWorkspaceRequest? legacyWorkspace = null)
     {
-        foreach (var workspace in await store.FindDiscardableWorkspacesAsync(ownerUserId, jobId, providerId, cancellationToken))
+        if (legacyWorkspace != null && (legacyWorkspace.OwnerUserId != ownerUserId ||
+            legacyWorkspace.DurableJobId != jobId || legacyWorkspace.ProviderId != providerId))
+            throw new ArgumentException("The legacy workspace binding is invalid.", nameof(legacyWorkspace));
+        foreach (var workspace in await store.FindDiscardableWorkspacesAsync(ownerUserId, jobId, providerId, cancellationToken, legacyWorkspace))
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (workspace.OwnerUserId != ownerUserId || workspace.DurableJobId != jobId ||
