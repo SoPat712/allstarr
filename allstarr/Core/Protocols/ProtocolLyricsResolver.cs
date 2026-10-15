@@ -36,26 +36,26 @@ public sealed class ProtocolLyricsResolver(
         ArgumentNullException.ThrowIfNull(protocol);
         ArgumentNullException.ThrowIfNull(song);
         ArgumentException.ThrowIfNullOrWhiteSpace(resourceKey);
+        protocol.CancellationToken.ThrowIfCancellationRequested();
         var artists = song.Artists.Count > 0 ? song.Artists : [song.Artist];
 
         var order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics);
-        if (effectivePolicies != null && protocol.Actor is { } actor)
+        if (effectivePolicies != null && protocol.Actor?.EffectiveUserId is { } userId)
         {
-            var effectivePolicy = await effectivePolicies.ResolveAsync(
-                protocol.CancellationToken);
+            var effectivePolicy = await effectivePolicies.ResolveForUserAsync(
+                userId, protocol.CancellationToken);
             order = effectivePolicy.ApplyProviderAvailability(
                 ProviderCapabilityKind.Lyrics,
                 order);
         }
-        if (!string.IsNullOrWhiteSpace(sourceProvider) &&
-            order.Contains(sourceProvider, StringComparer.OrdinalIgnoreCase))
-            order = [sourceProvider, .. order];
         var sourceUrl = !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId)
             ? OdesliService.BuildTrackUrl(sourceProvider, sourceExternalId)
             : null;
 
+        LyricsInfo? plainFallback = null;
         foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
         {
+            protocol.CancellationToken.ThrowIfCancellationRequested();
             try
             {
                 var externalId = ResolveExternalId(
@@ -73,8 +73,9 @@ public sealed class ProtocolLyricsResolver(
                     artists,
                     song.Album,
                     song.Duration);
+                protocol.CancellationToken.ThrowIfCancellationRequested();
                 if (string.IsNullOrWhiteSpace(result?.Content)) continue;
-                return new LyricsInfo
+                var lyrics = new LyricsInfo
                 {
                     TrackName = song.Title,
                     ArtistName = string.Join(", ", artists),
@@ -85,14 +86,16 @@ public sealed class ProtocolLyricsResolver(
                     Source = result.Source,
                     Revision = result.Revision
                 };
+                if (result.Format != ProviderLyricsFormat.PlainText) return lyrics;
+                plainFallback ??= lyrics;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                logger.LogWarning(exception, "Lyrics source {Provider} failed; trying the next configured source", providerId);
+                logger.LogWarning("Lyrics source {Provider} failed; trying the next configured source", providerId);
             }
         }
 
-        return null;
+        return plainFallback;
     }
 
     private static string? ResolveExternalId(
@@ -103,6 +106,8 @@ public sealed class ProtocolLyricsResolver(
         string? spotifyTrackId)
     {
         providerId = providerId.Trim().ToLowerInvariant();
+        if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
+            return sourceExternalId;
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
         if (providerId == "lrclib")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();

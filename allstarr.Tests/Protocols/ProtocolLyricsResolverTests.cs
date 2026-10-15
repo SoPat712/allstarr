@@ -1,3 +1,6 @@
+using System.Collections.Immutable;
+using allstarr.Core.Identity;
+using allstarr.Core.Settings;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
@@ -67,7 +70,7 @@ public sealed class ProtocolLyricsResolverTests
     }
 
     [Fact]
-    public async Task Resolver_TriesExactSourceProviderBeforeConfiguredFallbacks()
+    public async Task Resolver_HonorsConfiguredOrderBeforeCatalogSource()
     {
         var protocol = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin, "backend", "api-key", null, "lyrics-source-first",
@@ -76,11 +79,11 @@ public sealed class ProtocolLyricsResolverTests
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics))
             .Returns(["lrclib", "spotiflac-apple-music"]);
         providers.Setup(item => item.GetLyricsAsync(
-                protocol, "spotiflac-apple-music", "apple-track", ProviderLyricsFormat.LineTimed,
+                protocol, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 "Fixture song", It.IsAny<IReadOnlyList<string>>(), "Fixture album", 240))
             .ReturnsAsync(new ProviderLyricsResult(
-                ProviderLyricsAvailabilityState.Available, "apple-music",
-                ProviderLyricsFormat.LineTimed, "[00:01.00]Apple line\n"));
+                ProviderLyricsAvailabilityState.Available, "lrclib",
+                ProviderLyricsFormat.LineTimed, "[00:01.00]Fixture line\n"));
         var resolver = new ProtocolLyricsResolver(
             providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
 
@@ -91,9 +94,9 @@ public sealed class ProtocolLyricsResolverTests
             "spotiflac-apple-music",
             "apple-track");
 
-        Assert.Equal("apple-music", result?.Source);
+        Assert.Equal("lrclib", result?.Source);
         providers.Verify(item => item.GetLyricsAsync(
-            It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
+            It.IsAny<ProtocolExecutionContext>(), "spotiflac-apple-music", It.IsAny<string>(),
             It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
             It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
     }
@@ -172,6 +175,106 @@ public sealed class ProtocolLyricsResolverTests
             It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
             It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
             It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+    }
+
+
+    [Theory]
+    [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed, "lrclib")]
+    [InlineData(ProviderLyricsFormat.PlainText, ProviderLyricsFormat.PlainText, "spotify")]
+    [InlineData(ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed, "spotify")]
+    public async Task Resolver_PrefersTimedContentThenConfiguredOrder(
+        ProviderLyricsFormat first, ProviderLyricsFormat second, string expected)
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, first, second);
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
+        Assert.Equal(expected, result?.Source);
+        Assert.Equal(first == ProviderLyricsFormat.PlainText && second == ProviderLyricsFormat.PlainText,
+            result?.SyncedLyrics == null);
+        providers.Verify(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
+            ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120), Times.Once);
+        providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
+            ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120),
+            first == ProviderLyricsFormat.LineTimed ? Times.Never() : Times.Once());
+    }
+
+    [Fact]
+    public async Task Resolver_UsesTheExactListenersOrderAndDisabledSources()
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(context.Actor!.EffectiveUserId!.Value, context.CancellationToken))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
+                { [ProviderCapabilityKind.Lyrics] = ["lrclib", "spotify"] }.ToImmutableDictionary(),
+                ImmutableHashSet.Create("spotify"), "lossless", 0.07));
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+            effectivePolicies: policies.Object);
+        var result = await resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track");
+        Assert.Equal("lrclib", result?.Source);
+        providers.Verify(item => item.GetLyricsAsync(context, "spotify", It.IsAny<string>(),
+            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+        policies.VerifyAll();
+    }
+
+    [Fact]
+    public async Task Resolver_FailureFallsBackButCancellationStops()
+    {
+        using var canceled = new CancellationTokenSource();
+        var context = LyricsContext(canceled.Token);
+        var providers = LyricsProviders(context, ProviderLyricsFormat.PlainText, ProviderLyricsFormat.LineTimed);
+        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120))
+            .ThrowsAsync(new HttpRequestException("Private upstream detail"));
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        Assert.Equal("lrclib", (await resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track"))?.Source);
+        providers.Invocations.Clear();
+        canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track"));
+        providers.Verify(item => item.GetLyricsAsync(context, It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Resolver_CancellationDuringProviderReplyCannotReturnLyrics()
+    {
+        using var canceled = new CancellationTokenSource();
+        var context = LyricsContext(canceled.Token);
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "fixture-track",
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120))
+            .Callback(canceled.Cancel)
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spotify",
+                ProviderLyricsFormat.LineTimed, "[00:01.00]Synthetic words"));
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            resolver.FindAsync(context, LyricsSong(), "recording", "spotify", "fixture-track"));
+        providers.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(),
+            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+            It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+    }
+
+    private static ProtocolExecutionContext LyricsContext(CancellationToken cancellationToken = default) => new(
+        ProtocolKind.Jellyfin, "backend", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend",
+            "listener", "Listener", false), "lyrics-order", DateTimeOffset.UtcNow.AddMinutes(1), cancellationToken);
+    private static Song LyricsSong() => new()
+    { Title = "Fixture", Artist = "Artist", Artists = ["Artist"], Album = "Album", Duration = 120 };
+    private static Mock<IProtocolProviderGateway> LyricsProviders(ProtocolExecutionContext context,
+        ProviderLyricsFormat first, ProviderLyricsFormat second)
+    {
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spotify", "lrclib"]);
+        foreach (var (id, format) in new[] { ("spotify", first), ("lrclib", second) })
+            providers.Setup(item => item.GetLyricsAsync(context, id, It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                    "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120))
+                .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, id, format,
+                    format == ProviderLyricsFormat.PlainText ? "Synthetic words" : "[00:01.00]Synthetic words"));
+        return providers;
     }
 
     private sealed class HttpFactory(HttpMessageHandler handler) : IHttpClientFactory
