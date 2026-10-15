@@ -11,6 +11,7 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Secrets;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
+using allstarr.Core.ManagedFiles;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
@@ -61,6 +62,7 @@ public sealed record LegacyEnvMigrationPreview(
     public int BackendIdentityCount { get; init; }
     public int PlaylistLinkCount { get; init; }
     public int ScheduleCount { get; init; }
+    public LegacyMediaPreview? Media { get; init; }
 }
 
 public sealed record LegacyEnvMigrationApplyResult(
@@ -80,6 +82,8 @@ public sealed record LegacyEnvMigrationApplyResult(
     public int PlaylistLinksCreated { get; init; }
     public int SchedulesCreated { get; init; }
     public IReadOnlyList<LegacyAccountCheck> AccountChecks { get; init; } = [];
+    public Guid? MediaJobId { get; init; }
+    public int MediaFilesQueued { get; init; }
 }
 
 public sealed record LegacyEnvMigrationStatus(
@@ -109,6 +113,8 @@ public sealed partial class LegacyEnvMigrationService
     private readonly IProviderRegistry? _registry;
     private readonly ILegacyAccountVerifier? _accountVerifier;
     private readonly IConfiguration? _configuration;
+    private readonly LegacyMediaInventory? _mediaInventory;
+    private readonly LegacyMediaImport? _mediaImport;
     private readonly ConcurrentDictionary<string, PreviewState> _previews = new(StringComparer.Ordinal);
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
 
@@ -120,8 +126,10 @@ public sealed partial class LegacyEnvMigrationService
         BackendSelectionAuthority? backendSelection = null,
         IProviderRegistry? registry = null,
         ILegacyAccountVerifier? accountVerifier = null,
-        IConfiguration? configuration = null) =>
-        (_factory, _settings, _secrets, _clock, _backendSelection, _registry, _accountVerifier, _configuration) = (
+        IConfiguration? configuration = null,
+        LegacyMediaInventory? mediaInventory = null,
+        LegacyMediaImport? mediaImport = null) =>
+        (_factory, _settings, _secrets, _clock, _backendSelection, _registry, _accountVerifier, _configuration, _mediaInventory, _mediaImport) = (
             factory,
             settings,
             secrets,
@@ -132,7 +140,7 @@ public sealed partial class LegacyEnvMigrationService
                 "test-default",
                 false,
                 false,
-                null), registry, accountVerifier, configuration);
+                null), registry, accountVerifier, configuration, mediaInventory, mediaImport);
 
     public async Task<LegacyEnvMigrationStatus> GetStatusAsync(
         CancellationToken cancellationToken = default)
@@ -158,6 +166,13 @@ public sealed partial class LegacyEnvMigrationService
         ValidateActor(actor);
         PurgeExpired();
         var document = LegacyEnvParser.Parse(source);
+        var media = _mediaInventory?.Preview(document, cancellationToken) ?? LegacyMediaPlan.Empty;
+        if (media.Files.Count > 0)
+            document = document with
+            {
+                SourceSha256 = Convert.ToHexStringLower(SHA256.HashData(
+                Encoding.UTF8.GetBytes(document.SourceSha256 + JsonSerializer.Serialize(media.Files, JsonOptions))))
+            };
         var durableEntries = document.Entries
             .Where(item => item.Disposition == LegacyEnvDisposition.DurableSetting && item.Value.Length > 0)
             .ToArray();
@@ -357,7 +372,8 @@ public sealed partial class LegacyEnvMigrationService
             expiresAt,
             canApply,
             previewItems,
-            accountPreviews);
+            accountPreviews,
+            media);
         StorePreview(tokenHash, state);
 
         return new(
@@ -380,6 +396,8 @@ public sealed partial class LegacyEnvMigrationService
             conflicts,
             DuplicateAssignmentWarnings(document))
         {
+            Media = new(media.Files.Count, media.Files.Count(item => item.ProviderId != null),
+                media.Files.Count(item => item.ProviderId == null), media.Notices),
             BackendIdentityCount = 0,
             PlaylistLinkCount = document.Playlists.Count(item => item.Action == "import_playlist_link"),
             ScheduleCount = document.Playlists.Count(item =>
@@ -786,6 +804,13 @@ public sealed partial class LegacyEnvMigrationService
                     }, JsonOptions),
                     CreatedAt = appliedAt
                 };
+                var importId = Guid.CreateVersion7();
+                Guid? mediaJobId = null;
+                if (state.Media.Files.Count > 0)
+                {
+                    if (_mediaImport == null) throw new LegacyEnvMigrationException("media_import_unavailable", "The file import worker is unavailable.");
+                    mediaJobId = (await _mediaImport.StageAsync(db, importId, state.ActorUserId!.Value, state.CorrelationId, cancellationToken)).JobId;
+                }
                 var appliedResult = new LegacyEnvMigrationApplyResult(
                     true,
                     false,
@@ -803,12 +828,14 @@ public sealed partial class LegacyEnvMigrationService
                     BackendIdentitiesCreated = 0,
                     PlaylistLinksCreated = createdPlaylistLinks.Count,
                     SchedulesCreated = createdSchedules.Count,
-                    AccountChecks = checkedAccounts.Values.Select(item => item.Check).ToArray()
+                    AccountChecks = checkedAccounts.Values.Select(item => item.Check).ToArray(),
+                    MediaJobId = mediaJobId,
+                    MediaFilesQueued = state.Media.Files.Count
                 };
                 db.AuditEvents.Add(audit);
                 db.LegacyEnvImports.Add(new LegacyEnvImportRecord
                 {
-                    Id = Guid.CreateVersion7(),
+                    Id = importId,
 
                     SourceSha256 = state.Document.SourceSha256,
                     SchemaVersion = MigrationSchemaVersion,
@@ -817,6 +844,7 @@ public sealed partial class LegacyEnvMigrationService
                     ResultJson = JsonSerializer.Serialize(appliedResult, JsonOptions),
                     ProvenanceJson = JsonSerializer.Serialize(new
                     {
+                        media = state.Media,
                         settings = stagedSettings.Select(item => new
                         {
                             recordId = item.Record.Id,
@@ -1388,9 +1416,11 @@ public sealed partial class LegacyEnvMigrationService
         DateTimeOffset expiresAt,
         bool canApply,
         IReadOnlyList<LegacyEnvPreviewItem> items,
-        IReadOnlyList<LegacyProviderAccountPreview> providerAccounts)
+        IReadOnlyList<LegacyProviderAccountPreview> providerAccounts,
+        LegacyMediaPlan media)
     {
         public LegacyEnvDocument Document { get; private set; } = document;
+        public LegacyMediaPlan Media { get; } = media;
         public string SessionId { get; } = sessionId;
         public Guid? ActorUserId { get; } = actorUserId;
         public string CorrelationId { get; } = correlationId;

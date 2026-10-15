@@ -56,3 +56,13 @@ Legacy Redis/Valkey, SQLite, mapping-file, cache-file, AIO, and Compose-overlay 
 - It does not preserve a rollback database inside the new runtime. Keep the stopped version 2 deployment separately until verification is complete.
 
 SquidWTF is retired. No replacement source or account is selected automatically; choose a source in Integrations. The old Apple AIO URL is left behind and links to optional Apple setup. Retired Spotify cache settings, obsolete concurrency flags, and Valkey configuration are reported rather than copied into active settings. Credential verification runs before opening the import writer transaction, and the administrator and current account/settings state are rechecked before persistence.
+
+## Original media
+
+The preview inventories audio under the approved legacy mounts, including nested kept folders. It reports identified files, files that need identification, missing mounts and skipped links or temporary cache folders. A preview changes neither the database nor the originals. One preview accepts at most 10,000 audio files; select smaller mounted subfolders if the inventory exceeds that limit.
+
+Apply saves the reviewed inventory with the import receipt and queues **Import legacy files** in Activity. The worker verifies each original file and records ownership in place. It does not copy, move, retag or delete audio, create missing lyrics sidecars, or import pending deletions. Interrupted work resumes and skips files already adopted. A changed file is left untouched and reported for review; create another preview after checking the mounts. Repeating an unchanged preview does not duplicate files, accounts, schedules or settings.
+
+Known provider IDs in version 2 filenames retain their external IDs and can serve household playback without the former provider account. Unidentified audio remains protected in the file inventory without an invented song association. Kept lists imported originals with a read-only status and download action. Existing sibling lyrics remain readable. Original ownership and its permanent reference cannot be released through removal or cleanup actions.
+
+Database backups preserve the import receipts and ownership proof, while original audio stays in its existing mounts. Include those folders in an offline copy and keep their container paths stable. See [storage operations](storage.md) before moving or rolling back an upgraded installation.

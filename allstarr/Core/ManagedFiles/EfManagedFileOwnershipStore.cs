@@ -252,7 +252,7 @@ public sealed partial class EfManagedFileOwnershipStore(AllstarrDbContext dbCont
         Revision = 1
     };
 
-    private static ManagedFileRecord? Map(ManagedFileOwnershipEntity? item) => item is null ? null : new(
+    internal static ManagedFileRecord? Map(ManagedFileOwnershipEntity? item) => item is null ? null : new(
         item.Id, item.RootId, item.CanonicalPath, item.ContentSha256, item.Length, item.PlacementMethod,
         item.OwnerUserId, item.SourceJobId, item.ScopeKey,
         item.ReferenceCount, item.IsManaged, item.CreatedAt)

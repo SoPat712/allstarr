@@ -1299,6 +1299,51 @@ namespace allstarr.Core.Storage.Migrations
                         });
                 });
 
+            modelBuilder.Entity("allstarr.Core.ManagedFiles.LegacyMediaAdoptionRecord", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ExternalId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ImportId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Kept")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("ManagedFileId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MetadataJson")
+                        .IsRequired()
+                        .HasMaxLength(16000)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProviderId")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CanonicalRecordingId");
+
+                    b.HasIndex("ImportId");
+
+                    b.HasIndex("ManagedFileId")
+                        .IsUnique();
+
+                    b.ToTable("legacy_media_adoptions", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -4022,6 +4067,26 @@ namespace allstarr.Core.Storage.Migrations
                         .WithMany()
                         .HasForeignKey("ScheduleId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("allstarr.Core.ManagedFiles.LegacyMediaAdoptionRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalRecordingId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("allstarr.Core.Storage.LegacyEnvImportRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ImportId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ManagedFileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", b =>

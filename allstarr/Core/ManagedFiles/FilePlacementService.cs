@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace allstarr.Core.ManagedFiles;
 
-public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, IManagedFileOperations files)
+public sealed partial class FilePlacementService(IManagedFileOwnershipStore ownership, IManagedFileOperations files)
 {
     public Task<ManagedFilePlacementResult> PlaceAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken = default) =>
         PlaceAsync(request, reuseExisting: true, cancellationToken);
@@ -409,6 +409,14 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
 
     private string ValidateExistingIdentity(string root, ManagedFileRecord record, bool requireRecordedIdentity = false)
     {
+        if (record.PlacementMethod == ManagedFilePlacementMethod.Adopted)
+        {
+            for (var ancestor = new DirectoryInfo(root); ancestor is not null; ancestor = ancestor.Parent)
+            {
+                if (ancestor.LinkTarget is not null)
+                    throw new UnauthorizedAccessException("The imported file root contains a symbolic link.");
+            }
+        }
         var path = Path.GetFullPath(record.CanonicalPath);
         if (!path.StartsWith(root + Path.DirectorySeparatorChar,
                 OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))

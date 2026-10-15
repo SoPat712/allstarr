@@ -162,6 +162,8 @@ public sealed partial class RecordingKeptFilesTests
         Assert.True((await RevisionDownloadService(new(artifacts), 8).ExecuteAsync(RevisionCommand())).Succeeded);
         var rejected = await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() => migrator.MigrateAsync(before));
         Assert.Contains("CK_download_history_requires_backup_restore", rejected.Message, StringComparison.Ordinal);
+        await db.Database.MigrateAsync();
+        Assert.False(db.Database.HasPendingModelChanges());
         Assert.Equal(2, await db.ProviderDownloadArtifacts.CountAsync());
         Assert.Single(await db.ProviderDownloadArtifacts.Where(item => item.SupersededAt != null).ToArrayAsync());
         Assert.Equal(triggers, await db.Database.SqlQueryRaw<string>(

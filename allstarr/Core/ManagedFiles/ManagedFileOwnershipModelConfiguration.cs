@@ -40,6 +40,21 @@ public static class ManagedFileOwnershipModelConfiguration
                 .HasConstraintName("FK_managed_file_job").OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<LegacyMediaAdoptionRecord>(entity =>
+        {
+            entity.ToTable("legacy_media_adoptions");
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.ProviderId).HasMaxLength(128);
+            entity.Property(item => item.ExternalId).HasMaxLength(500);
+            entity.Property(item => item.MetadataJson).HasMaxLength(16000).IsRequired();
+            entity.HasIndex(item => item.ManagedFileId).IsUnique();
+            entity.HasIndex(item => item.CanonicalRecordingId);
+            entity.HasOne<LegacyEnvImportRecord>().WithMany().HasForeignKey(item => item.ImportId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ManagedFileOwnershipEntity>().WithMany().HasForeignKey(item => item.ManagedFileId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<CanonicalRecordingRecord>().WithMany().HasForeignKey(item => item.CanonicalRecordingId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<RecordingKeptRouteEntity>(entity =>
         {
             entity.ToTable("recording_kept_routes");

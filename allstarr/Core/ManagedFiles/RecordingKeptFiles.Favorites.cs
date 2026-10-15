@@ -63,6 +63,11 @@ public sealed partial class RecordingKeptFiles
                                         route.DisplayMetadataJson != null
                                   orderby route.CanonicalRecordingId == recordingId descending, route.CreatedAt, route.ManagedFileId
                                   select route.DisplayMetadataJson).FirstOrDefaultAsync(cancellationToken);
+            snapshot ??= await (from adoption in db.Set<LegacyMediaAdoptionRecord>().AsNoTracking()
+                                join canonical in db.CanonicalRecordings.AsNoTracking() on adoption.CanonicalRecordingId equals (Guid?)canonical.Id
+                                where canonical.Id == recordingId || canonical.MergedIntoId == recordingId
+                                orderby adoption.Kept descending, adoption.CreatedAt, adoption.ManagedFileId
+                                select adoption.MetadataJson).FirstOrDefaultAsync(cancellationToken);
             if (snapshot == null) return null;
             KeptRecordingMetadata? metadata;
             try { metadata = JsonSerializer.Deserialize<KeptRecordingMetadata>(snapshot); }
@@ -102,7 +107,12 @@ public sealed partial class RecordingKeptFiles
                                    on route.CanonicalRecordingId equals recording.Id
                                where artifact.ProviderId == parsed.provider && artifact.SourceExternalTrackId == parsed.externalId
                                select recording.MergedIntoId ?? recording.Id).Distinct().Take(2).ToArrayAsync(cancellationToken);
-        return published.Length == 1 ? published[0] : null;
+        var adopted = await (from adoption in db.Set<LegacyMediaAdoptionRecord>().AsNoTracking()
+                             join recording in db.CanonicalRecordings.AsNoTracking() on adoption.CanonicalRecordingId equals (Guid?)recording.Id
+                             where adoption.ProviderId == parsed.provider && adoption.ExternalId == parsed.externalId
+                             select recording.MergedIntoId ?? recording.Id).Distinct().Take(2).ToArrayAsync(cancellationToken);
+        var candidates = published.Concat(adopted).Distinct().Take(2).ToArray();
+        return candidates.Length == 1 ? candidates[0] : null;
     }
 
     private async Task AuthorizeFavoritePublicationAsync(AllstarrDbContext db, DurableJobRecord job,

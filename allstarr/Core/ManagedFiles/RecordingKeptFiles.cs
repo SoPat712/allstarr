@@ -138,8 +138,10 @@ public sealed partial class RecordingKeptFiles(
                 var serving = winner?.File ?? prepared;
                 var mime = winner?.MimeType ?? source.MimeType;
                 await files.VerifyOwnedFileAsync(serving, cancellationToken);
-                var replacement = await ReplaceUnavailableKeptFilesAsync(db, ownership, unavailable,
-                    serving, recording.Id, winner?.Route, publication, proof.CorrelationId, cancellationToken);
+                var replacement = winner is { Route: null }
+                    ? (CanonicalReplaced: false, RetiredFiles: (IReadOnlyList<Guid>)[])
+                    : await ReplaceUnavailableKeptFilesAsync(db, ownership, unavailable,
+                        serving, recording.Id, winner?.Route, publication, proof.CorrelationId, cancellationToken);
                 await ownership.AddReferenceAsync(serving.Id, new(Guid.CreateVersion7(), serving.Id, null,
                     serving.ScopeKey, publication.ReferenceKey, clock.UtcNow), cancellationToken);
                 foreach (var fileId in new[] { prepared.Id, serving.Id }.Distinct())
@@ -160,9 +162,9 @@ public sealed partial class RecordingKeptFiles(
                         db.Add(route);
                     }
                     route.ManagedFileId = serving.Id;
-                    route.PublishedByUserId = winner?.Route.PublishedByUserId ?? publication.InitiatingUserId;
-                    route.PublicationJobId = winner?.Route.PublicationJobId ?? publication.DurableJobId;
-                    route.SourceArtifactId = winner?.Route.SourceArtifactId ?? publication.SourceArtifactId;
+                    route.PublishedByUserId = winner?.Route?.PublishedByUserId ?? publication.InitiatingUserId;
+                    route.PublicationJobId = winner?.Route?.PublicationJobId ?? publication.DurableJobId;
+                    route.SourceArtifactId = winner?.Route?.SourceArtifactId ?? publication.SourceArtifactId;
                     route.DisplayMetadataJson = metadata;
                     route.UpdatedAt = clock.UtcNow;
                     route.Revision++;
@@ -308,7 +310,7 @@ public sealed partial class RecordingKeptFiles(
                 unavailable?.Add(file);
             }
         }
-        return null;
+        return await FindLegacyCandidateAsync(db, files, records, recordingId, skipUnavailable, verifyContent, cancellationToken);
     }
 
     private async Task CleanupPendingAsync(ManagedFileRecord file, string pendingKey)
@@ -330,7 +332,7 @@ public sealed partial class RecordingKeptFiles(
         }
     }
 
-    private sealed record Candidate(ManagedFileRecord File, string? MimeType, RecordingKeptRouteEntity Route);
+    private sealed record Candidate(ManagedFileRecord File, string? MimeType, RecordingKeptRouteEntity? Route);
 
     private async Task<(ProviderAccountContext? Account, string CorrelationId, ProviderDownloadArtifactEntity Artifact,
         allstarr.Core.Protocols.BackendLibraryAccessContext? PlaylistAccess)> AuthorizeAsync(
