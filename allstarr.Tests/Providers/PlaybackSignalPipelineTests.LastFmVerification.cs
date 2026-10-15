@@ -26,6 +26,38 @@ public sealed partial class PlaybackSignalPipelineTests
         Assert.Contains("to=", http.Queries[0]);
     }
 
+    [Theory]
+    [InlineData("Artist", "Track (2011 Remaster)", 0, false)]
+    [InlineData("Artist feat. Guest", "Corrected name", -1, false)]
+    [InlineData("Corrected artist", "Corrected title", 1, false)]
+    [InlineData("Artist", "Corrected title", 0, true)]
+    [InlineData("Corrected artist", "Track - Remastered", 0, true)]
+    public async Task LastFmUncertain_AutocorrectedHistoryConfirmsWithoutResending(
+        string artist, string title, int offset, bool multiple)
+    {
+        await AddScrobbleAccountAsync();
+        var http = new VerificationHttp { Found = true, Artist = artist, Title = title, Offset = offset, Multiple = multiple };
+        await VerificationDelivery(http).DeliverAsync(AcceptedScrobblePayload(), default);
+        await AgeUncertainAttemptAsync();
+        await VerificationDelivery(http).DeliverAsync(AcceptedScrobblePayload(), default);
+        Assert.Equal(1, http.Sends);
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, (await db.PlaybackDeliveryCheckpoints.SingleAsync()).State);
+    }
+
+    [Fact]
+    public async Task LastFmUncertain_MultipleUnrelatedEntriesNeverProveAbsence()
+    {
+        await AddScrobbleAccountAsync();
+        var http = new VerificationHttp { Found = true, Artist = "Unrelated", Title = "Different", Multiple = true };
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => VerificationDelivery(http).DeliverAsync(AcceptedScrobblePayload(), default));
+        await AgeUncertainAttemptAsync();
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => VerificationDelivery(http).DeliverAsync(AcceptedScrobblePayload(), default));
+        Assert.Equal(1, http.Sends);
+        await using var db = await factory.CreateDbContextAsync();
+        Assert.Equal("ambiguous", (await db.PlaybackDeliveryCheckpoints.SingleAsync()).ProviderCode);
+    }
+
     [Fact]
     public async Task LastFmUncertain_AbsentSettlesThenResendsOnlyOnceAcrossRestart()
     {
@@ -49,7 +81,6 @@ public sealed partial class PlaybackSignalPipelineTests
     [InlineData("incomplete")]
     [InlineData("nowplaying")]
     [InlineData("wrong-time")]
-    [InlineData("wrong-artist")]
     public async Task LastFmUncertain_UnprovenHistoryNeverConfirmsOrBlindlyResends(string mode)
     {
         await AddScrobbleAccountAsync();
@@ -117,7 +148,9 @@ public sealed partial class PlaybackSignalPipelineTests
 
     private sealed class VerificationHttp : HttpMessageHandler
     {
-        public bool Found;
+        public bool Found, Multiple;
+        public string Artist = "Artist", Title = "Track";
+        public int Offset;
         public string Mode = "";
         public int Sends, Lookups;
         public long Timestamp;
@@ -139,11 +172,16 @@ public sealed partial class PlaybackSignalPipelineTests
                 ? [new Dictionary<string, object>
                 {
                     ["artist"] = new Dictionary<string, string> { ["#text"] = "Artist" },
-                    ["name"] = "Track",
-                    ["date"] = new { uts = (Mode == "wrong-time" ? Timestamp + 600 : Timestamp).ToString() },
+                    ["name"] = Title,
+                    ["date"] = new { uts = (Mode == "wrong-time" ? Timestamp + 600 : Timestamp + Offset).ToString() },
                     ["@attr"] = new { nowplaying = Mode == "nowplaying" ? "true" : "false" }
                 }] : [];
-            if (tracks.Length > 0) ((Dictionary<string, object>)tracks[0])["artist"] = new Dictionary<string, string> { ["#text"] = Mode == "wrong-artist" ? "Other artist" : "Artist" };
+            if (tracks.Length > 0) ((Dictionary<string, object>)tracks[0])["artist"] = new Dictionary<string, string> { ["#text"] = Artist };
+            if (Multiple) tracks = [.. tracks, new Dictionary<string, object>
+            {
+                ["artist"] = new { name = "Someone else" }, ["name"] = "Another song",
+                ["date"] = new { uts = Timestamp.ToString() }
+            }];
             var json = JsonSerializer.Serialize(new
             {
                 recenttracks = new Dictionary<string, object>
