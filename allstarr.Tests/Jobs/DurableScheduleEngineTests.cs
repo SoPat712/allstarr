@@ -218,10 +218,10 @@ public sealed class DurableScheduleEngineTests : IAsyncLifetime
         var payload = JsonDocument.Parse(job.PayloadJson).RootElement.Clone();
         var orchestration = new CapturingOrchestration();
         var handler = new PlaylistMaterializationJobHandler(_factory, orchestration, _clock);
-        var claim = new DurableJobClaim(job.Id, Guid.CreateVersion7(), 1, job.Type, payload,
+        var claim = new DurableJobClaim(job.Id, 1, job.Type, payload,
             job.OwnerUserId, job.ProviderAccountId, job.ProviderCapability,
             JsonDocument.Parse(job.PolicySnapshotJson).RootElement.Clone(),
-            job.CorrelationId, "test-worker", _clock.UtcNow.AddMinutes(1));
+            job.CorrelationId);
         var progress = new List<DurableJobProgressUpdate>();
 
         var result = await handler.ExecuteAsync(new DurableJobExecutionContext(claim,

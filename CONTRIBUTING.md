@@ -40,7 +40,7 @@ Read [README.md](README.md) for supported behavior, the [documentation map](docs
 | `allstarr/Core/Playlists/` | Playlist ingestion, projection, and synchronization |
 | `allstarr/Core/Playback/` | Playback observations and client sessions |
 | `allstarr/Shelved/Intelligence/` | Listening history, recommendations, and AudioMuse integration |
-| `allstarr/Core/Jobs/` | Durable jobs, schedules, leases, and retries |
+| `allstarr/Core/Jobs/` | Durable jobs, schedules, restart recovery, and retries |
 | `allstarr/Core/Storage/` | SQLite model, migrations, and backups |
 | `allstarr/Providers/Extensions/` | Extension package lifecycle and permissions |
 | `allstarr/Services/` | Shared services, backend adapters, and external gateways |

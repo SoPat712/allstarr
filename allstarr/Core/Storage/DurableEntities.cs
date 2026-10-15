@@ -131,8 +131,9 @@ public sealed class DurableJobRecord
     public int MaxAttempts { get; set; }
     public int MaxDeferrals { get; set; }
     public DateTimeOffset AvailableAt { get; set; }
-    public string? LeaseOwner { get; set; }
-    public DateTimeOffset? LeaseExpiresAt { get; set; }
+    public DateTimeOffset? LastAttemptStartedAt { get; set; }
+    public DateTimeOffset? LastAttemptCompletedAt { get; set; }
+    public string? LastAttemptOutcome { get; set; }
     public DateTimeOffset? CancellationRequestedAt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
@@ -141,19 +142,6 @@ public sealed class DurableJobRecord
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long Revision { get; set; }
-}
-
-public sealed class JobAttemptRecord
-{
-    public Guid Id { get; set; }
-    public Guid JobId { get; set; }
-    public int AttemptNumber { get; set; }
-    public string WorkerId { get; set; } = string.Empty;
-    public DateTimeOffset StartedAt { get; set; }
-    public DateTimeOffset? CompletedAt { get; set; }
-    public string? Outcome { get; set; }
-    public string? ErrorCode { get; set; }
-    public string? ErrorMessage { get; set; }
 }
 
 public sealed class CanonicalRecordingRecord
@@ -220,6 +208,8 @@ public sealed class AuditEventRecord
     public string Action { get; set; } = string.Empty;
     public string Outcome { get; set; } = string.Empty;
     public string CorrelationId { get; set; } = string.Empty;
+    public string? SubjectType { get; set; }
+    public string? SubjectId { get; set; }
     public string DetailsJson { get; set; } = "{}";
     public DateTimeOffset CreatedAt { get; set; }
 }

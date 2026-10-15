@@ -99,9 +99,9 @@ public sealed class LibraryIndexMaintenanceServiceTests : IAsyncLifetime
         using var payload = JsonDocument.Parse(JsonSerializer.Serialize(new LibraryIndexJobPayload(
             "music", requestedIdentity.BackendInstanceId, requestedIdentity.BackendPrincipalId, credential.Id)));
         using var policy = JsonDocument.Parse("{}");
-        var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "library.index",
+        var claim = new DurableJobClaim(Guid.CreateVersion7(), 1, "library.index",
             payload.RootElement.Clone(), userId, null, null, policy.RootElement.Clone(),
-            "credential-scope-test", "worker", _now.AddMinutes(5));
+            "credential-scope-test");
         var handler = new LibraryIndexJobHandler(_factory,
             new BackendLibraryCatalogScannerResolver([]), _clock);
         await using var services = new ServiceCollection().BuildServiceProvider();

@@ -29,7 +29,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         db.LibraryTracks.AddRange(Track(Guid.Parse("11111111-1111-1111-1111-111111111111"), "track-secret"),
             Track(Guid.Parse("22222222-2222-2222-2222-222222222222"), "track-two"));
         await db.SaveChangesAsync(); _policies = new(_factory, _clock);
-        var options = new DurableJobOptions { LeaseSeconds = 30, PollIntervalMilliseconds = 10 };
+        var options = new DurableJobOptions { PollIntervalMilliseconds = 10 };
         _jobs = new(_factory, options, new JobPayloadPolicy(options), _clock);
     }
 

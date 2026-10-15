@@ -215,7 +215,6 @@ public sealed class TrackRematchAllIntegrationTests
         Assert.Equal(preview.SnapshotFingerprint, payload.SnapshotFingerprint);
         var claim = new DurableJobClaim(
             receipt.JobId,
-            Guid.CreateVersion7(),
             1,
             TrackRematchJobHandler.Type,
             JsonSerializer.SerializeToElement(payload),
@@ -223,9 +222,7 @@ public sealed class TrackRematchAllIntegrationTests
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
-            TrackRematchAllService.OperationCorrelation(payload.OperationId),
-            "worker",
-            now.AddMinutes(1));
+            TrackRematchAllService.OperationCorrelation(payload.OperationId));
         var commands = new TrackMatchCommandService(
             factory,
             new TrackMatchDecisionEngine(),

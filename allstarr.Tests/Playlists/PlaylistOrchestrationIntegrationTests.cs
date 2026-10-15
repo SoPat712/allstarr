@@ -790,7 +790,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
 
         var claim = new DurableJobClaim(
             Guid.CreateVersion7(),
-            Guid.CreateVersion7(),
             1,
             TrackRematchJobHandler.Type,
             JsonSerializer.SerializeToElement(new PlaylistRematchJobPayload(
@@ -801,9 +800,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
-            "controlled-rematch",
-            "worker",
-            _now.AddMinutes(1));
+            "controlled-rematch");
         var handler = new PlaylistRematchJobHandler(
             _factory, rematches, _trackMatches, _service, new Clock(_now));
         var completion = await handler.ExecuteAsync(
@@ -929,7 +926,6 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             new DurableJobExecutionContext(
                 new DurableJobClaim(
                     Guid.CreateVersion7(),
-                    Guid.CreateVersion7(),
                     1,
                     TrackRematchJobHandler.Type,
                     JsonSerializer.SerializeToElement(new PlaylistRematchJobPayload(
@@ -941,9 +937,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
                     null,
                     null,
                     JsonSerializer.SerializeToElement(new { }),
-                    "scoped-playlist-rematch",
-                    "worker",
-                    _now.AddMinutes(1)),
+                    "scoped-playlist-rematch"),
                 EmptyServices.Instance),
             default);
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);

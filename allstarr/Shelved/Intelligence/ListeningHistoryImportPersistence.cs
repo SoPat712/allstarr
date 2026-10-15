@@ -75,21 +75,10 @@ internal static class ListeningHistoryImportStateTransfer
             job.State = DurableJobState.Cancelled;
             job.CancellationRequestedAt ??= now;
             job.CompletedAt = now;
-            job.LeaseOwner = null;
-            job.LeaseExpiresAt = null;
+            job.LastAttemptCompletedAt = now;
+            job.LastAttemptOutcome = "cancelled";
             job.UpdatedAt = now;
             job.Revision++;
-        }
-    }
-
-    public static void CancelAttempts(IEnumerable<JobAttemptRecord> attempts, IReadOnlySet<Guid> jobIds, DateTimeOffset now)
-    {
-        foreach (var attempt in attempts.Where(item => jobIds.Contains(item.JobId) && item.CompletedAt == null))
-        {
-            attempt.CompletedAt = now;
-            attempt.Outcome = "cancelled";
-            attempt.ErrorCode = "history_import_artifact_not_transferred";
-            attempt.ErrorMessage = "The private upload artifact is not included in state transfer.";
         }
     }
 }

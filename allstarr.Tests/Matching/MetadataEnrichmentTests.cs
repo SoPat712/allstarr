@@ -407,8 +407,8 @@ public sealed class MetadataEnrichmentTests
             var fake = new FakeRefresher();
             var handler = new BackendLibraryRefreshJobHandler(factory, new([fake]), new Clock(), new TestBackendLibraryAccess(factory, "music"));
             var payload = JsonSerializer.SerializeToElement(new BackendLibraryRefreshJobPayload("music", "backend", "principal"));
-            var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "library.refresh", payload,
-                user, null, null, JsonSerializer.SerializeToElement(new { }), "correlation", "worker", DateTimeOffset.UtcNow.AddMinutes(1));
+            var claim = new DurableJobClaim(Guid.CreateVersion7(), 1, "library.refresh", payload,
+                user, null, null, JsonSerializer.SerializeToElement(new { }), "correlation");
 
             var result = await handler.ExecuteAsync(new(claim,
                 Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(

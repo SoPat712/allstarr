@@ -87,15 +87,17 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
                 Job("playback.signal.process", DurableJobState.Failed, now.AddDays(-31), "failed"),
                 Job("playback.signal.process", DurableJobState.Pending, now.AddDays(-31), "pending"),
                 Job("playlist.sync", DurableJobState.Succeeded, now.AddDays(-31), "other-type"));
-            database.JobAttempts.Add(new JobAttemptRecord
+            database.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.NewGuid(),
-                JobId = expired.Id,
-                AttemptNumber = 1,
-                WorkerId = "worker",
-                StartedAt = now.AddDays(-31),
-                CompletedAt = now.AddDays(-31),
-                Outcome = "succeeded"
+                Category = "job-attempt",
+                Action = "attempt-completed",
+                SubjectType = "job",
+                SubjectId = expired.Id.ToString("D"),
+                Outcome = "succeeded",
+                DetailsJson = "{}",
+                CorrelationId = "retention-fixture",
+                CreatedAt = now.AddDays(-31)
             });
             await database.SaveChangesAsync();
         }
@@ -107,7 +109,7 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         var remaining = await context.Jobs.AsNoTracking()
             .OrderBy(item => item.IdempotencyKey).Select(item => item.IdempotencyKey).ToListAsync();
         Assert.Equal(["failed", "other-type", "pending", "recent"], remaining);
-        Assert.Empty(await context.JobAttempts.AsNoTracking().ToListAsync());
+        Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
     private AuditEventRetentionService Worker(int retentionDays, int maximumRows)

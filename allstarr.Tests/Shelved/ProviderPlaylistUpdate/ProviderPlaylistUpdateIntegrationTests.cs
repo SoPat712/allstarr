@@ -356,7 +356,6 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
 
     private DurableJobClaim Claim(ProviderPlaylistUpdateJobPayload payload) => new(
         Guid.CreateVersion7(),
-        Guid.CreateVersion7(),
         1,
         "playlist.provider-source-update",
         JsonSerializer.SerializeToElement(payload),
@@ -364,9 +363,7 @@ public sealed class ProviderPlaylistUpdateIntegrationTests : IAsyncLifetime
         _account,
         "playlist",
         JsonSerializer.SerializeToElement(new { }),
-        "provider-playlist-update",
-        "test-worker",
-        _now.AddMinutes(5));
+        "provider-playlist-update");
 
     private ProviderActorContext Actor(Guid user) => new(
         ProviderActorKind.User,

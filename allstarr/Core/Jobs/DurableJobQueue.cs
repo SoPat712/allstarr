@@ -24,9 +24,10 @@ public sealed record DurableJobEnqueueRequest<T>(
 
 public sealed record DurableJobEnqueueResult(Guid JobId, bool Created);
 
+public sealed class DurableJobExecutionChangedException() : InvalidOperationException("The execution is no longer current for this job.");
+
 public sealed record DurableJobClaim(
     Guid JobId,
-    Guid AttemptId,
     int AttemptNumber,
     string Type,
     JsonElement Payload,
@@ -34,9 +35,7 @@ public sealed record DurableJobClaim(
     Guid? ProviderAccountId,
     string? ProviderCapability,
     JsonElement PolicySnapshot,
-    string CorrelationId,
-    string WorkerId,
-    DateTimeOffset LeaseExpiresAt);
+    string CorrelationId);
 
 public enum DurableJobCompletionKind
 {
@@ -237,6 +236,41 @@ public sealed class DurableJobQueue
         return new DurableJobEnqueueResult(job.Id, true);
     }
 
+    public async Task<int> RecoverInterruptedAsync(CancellationToken cancellationToken = default)
+    {
+        var now = _clock.UtcNow;
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        var interrupted = await context.Jobs.Where(item => item.State == DurableJobState.Running)
+            .OrderBy(item => item.Id).ToArrayAsync(cancellationToken);
+        foreach (var job in interrupted)
+        {
+            var cancelled = job.CancellationRequestedAt.HasValue;
+            job.LastAttemptStartedAt ??= job.StartedAt ?? job.UpdatedAt;
+            job.LastAttemptCompletedAt = now;
+            job.LastAttemptOutcome = cancelled ? "cancelled" : "interrupted";
+            job.LastErrorCode = cancelled ? null : "worker_interrupted";
+            job.LastErrorMessage = cancelled ? null : "Work was interrupted by a restart and is ready to resume.";
+            DurableJobHistory.Append(context, job, now);
+            job.State = cancelled ? DurableJobState.Cancelled : DurableJobState.Pending;
+            job.CompletedAt = cancelled ? now : null;
+            if (!cancelled) job.AvailableAt = now;
+            job.UpdatedAt = now;
+            job.Revision++;
+        }
+        await context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return interrupted.Length;
+    }
+
+    public async Task<bool> IsExecutionCurrentAsync(DurableJobClaim claim, CancellationToken cancellationToken = default)
+    {
+        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        return await context.Jobs.AsNoTracking().AnyAsync(item => item.Id == claim.JobId &&
+            item.State == DurableJobState.Running && item.AttemptCount == claim.AttemptNumber &&
+            item.CancellationRequestedAt == null, cancellationToken);
+    }
+
     public async Task<DurableJobClaim?> ClaimNextAsync(
         string workerId,
         IReadOnlyCollection<string>? supportedTypes = null,
@@ -254,7 +288,7 @@ public sealed class DurableJobQueue
         {
             try
             {
-                return await ClaimOnceAsync(workerId.Trim(), normalizedTypes, cancellationToken);
+                return await ClaimOnceAsync(normalizedTypes, cancellationToken);
             }
             catch (Exception exception) when (retry < 2 && DbErrors.IsTransientConflict(exception))
             {
@@ -265,7 +299,6 @@ public sealed class DurableJobQueue
     }
 
     private async Task<DurableJobClaim?> ClaimOnceAsync(
-        string workerId,
         string[]? supportedTypes,
         CancellationToken cancellationToken)
     {
@@ -275,9 +308,8 @@ public sealed class DurableJobQueue
             IsolationLevel.Serializable,
             cancellationToken);
         var query = context.Jobs.Where(item =>
-            ((item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled) &&
-             item.AvailableAt <= now) ||
-            (item.State == DurableJobState.Running && item.LeaseExpiresAt <= now));
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled) &&
+            item.AvailableAt <= now);
         if (supportedTypes is { Length: > 0 })
         {
             query = query.Where(item => supportedTypes.Contains(item.Type));
@@ -287,6 +319,7 @@ public sealed class DurableJobQueue
             .OrderByDescending(item => item.Priority)
             .ThenBy(item => item.AvailableAt)
             .ThenBy(item => item.CreatedAt)
+            .ThenBy(item => item.Id)
             .FirstOrDefaultAsync(cancellationToken);
         if (job == null)
         {
@@ -305,97 +338,28 @@ public sealed class DurableJobQueue
             return null;
         }
 
-        if (job.State == DurableJobState.Running)
-        {
-            var abandoned = await context.JobAttempts.SingleOrDefaultAsync(
-                item => item.JobId == job.Id && item.CompletedAt == null,
-                cancellationToken);
-            if (abandoned != null)
-            {
-                abandoned.CompletedAt = now;
-                abandoned.Outcome = "lease_expired";
-                abandoned.ErrorCode = "worker_lease_expired";
-                abandoned.ErrorMessage = "The prior worker lease expired before completion.";
-            }
-
-            job.FailureCount++;
-            if (job.FailureCount >= job.MaxAttempts)
-            {
-                job.State = DurableJobState.Failed;
-                job.CompletedAt = now;
-                job.LeaseOwner = null;
-                job.LeaseExpiresAt = null;
-                job.LastErrorCode = "worker_lease_expired";
-                job.LastErrorMessage = "The job exhausted its recovery budget after worker lease loss.";
-                job.UpdatedAt = now;
-                job.Revision++;
-                await context.SaveChangesAsync(cancellationToken);
-                await transaction.CommitAsync(cancellationToken);
-                return null;
-            }
-        }
-
         job.AttemptCount++;
         job.State = DurableJobState.Running;
-        job.LeaseOwner = workerId;
-        job.LeaseExpiresAt = now.AddSeconds(_options.LeaseSeconds);
         job.StartedAt ??= now;
+        job.LastAttemptStartedAt = now;
+        job.LastAttemptCompletedAt = null;
+        job.LastAttemptOutcome = "running";
         job.UpdatedAt = now;
         job.Revision++;
-        var attempt = new JobAttemptRecord
-        {
-            Id = Guid.CreateVersion7(),
-            JobId = job.Id,
-            AttemptNumber = job.AttemptCount,
-            WorkerId = workerId,
-            StartedAt = now
-        };
-        context.JobAttempts.Add(attempt);
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         using var payload = JsonDocument.Parse(job.PayloadJson);
         using var policySnapshot = JsonDocument.Parse(job.PolicySnapshotJson);
         return new DurableJobClaim(
             job.Id,
-            attempt.Id,
-            attempt.AttemptNumber,
+            job.AttemptCount,
             job.Type,
             payload.RootElement.Clone(),
             job.OwnerUserId,
             job.ProviderAccountId,
             job.ProviderCapability,
             policySnapshot.RootElement.Clone(),
-            job.CorrelationId,
-            workerId,
-            job.LeaseExpiresAt.Value);
-    }
-
-    public async Task<bool> RenewLeaseAsync(
-        DurableJobClaim claim,
-        CancellationToken cancellationToken = default)
-    {
-        var now = _clock.UtcNow;
-        await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
-        var job = await context.Jobs.SingleOrDefaultAsync(item => item.Id == claim.JobId, cancellationToken);
-        if (job == null ||
-            job.State != DurableJobState.Running ||
-            job.LeaseOwner != claim.WorkerId ||
-            job.AttemptCount != claim.AttemptNumber ||
-            job.LeaseExpiresAt <= now)
-        {
-            return false;
-        }
-
-        if (job.CancellationRequestedAt.HasValue)
-        {
-            return false;
-        }
-
-        job.LeaseExpiresAt = now.AddSeconds(_options.LeaseSeconds);
-        job.UpdatedAt = now;
-        job.Revision++;
-        await context.SaveChangesAsync(cancellationToken);
-        return true;
+            job.CorrelationId);
     }
 
     public Task<DurableJobContextAuthorization> ReauthorizeAsync(
@@ -429,8 +393,8 @@ public sealed class DurableJobQueue
         var job = await context.Jobs.SingleOrDefaultAsync(
             item => item.Id == claim.JobId &&
                     item.State == DurableJobState.Running &&
-                    item.LeaseOwner == claim.WorkerId &&
-                    item.AttemptCount == claim.AttemptNumber,
+                    item.AttemptCount == claim.AttemptNumber &&
+                    item.CancellationRequestedAt == null,
             cancellationToken);
         if (job == null)
         {
@@ -445,6 +409,8 @@ public sealed class DurableJobQueue
             Action = stage,
             Outcome = "running",
             CorrelationId = job.CorrelationId,
+            SubjectType = "job",
+            SubjectId = job.Id.ToString("D"),
             DetailsJson = JsonSerializer.Serialize(new
             {
                 jobId = job.Id,
@@ -475,15 +441,11 @@ public sealed class DurableJobQueue
         await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
         var job = await context.Jobs.SingleAsync(item => item.Id == claim.JobId, cancellationToken);
         if (job.State != DurableJobState.Running ||
-            job.LeaseOwner != claim.WorkerId ||
             job.AttemptCount != claim.AttemptNumber)
         {
-            throw new InvalidOperationException("The worker no longer owns this job lease.");
+            throw new DurableJobExecutionChangedException();
         }
 
-        var attempt = await context.JobAttempts.SingleAsync(
-            item => item.Id == claim.AttemptId,
-            cancellationToken);
         var effectiveKind = job.CancellationRequestedAt.HasValue
             ? DurableJobCompletionKind.Cancelled
             : completion.Kind;
@@ -494,12 +456,12 @@ public sealed class DurableJobQueue
             case DurableJobCompletionKind.Succeeded:
                 job.State = DurableJobState.Succeeded;
                 job.CompletedAt = now;
-                attempt.Outcome = "succeeded";
+                job.LastAttemptOutcome = "succeeded";
                 break;
             case DurableJobCompletionKind.Cancelled:
                 job.State = DurableJobState.Cancelled;
                 job.CompletedAt = now;
-                attempt.Outcome = "cancelled";
+                job.LastAttemptOutcome = "cancelled";
                 break;
             case DurableJobCompletionKind.Retry:
                 job.FailureCount++;
@@ -507,13 +469,13 @@ public sealed class DurableJobQueue
                 {
                     job.State = DurableJobState.RetryScheduled;
                     job.AvailableAt = now.Add(completion.RetryDelay ?? RetryDelay(job.FailureCount));
-                    attempt.Outcome = "retry_scheduled";
+                    job.LastAttemptOutcome = "retry_scheduled";
                 }
                 else
                 {
                     job.State = DurableJobState.Failed;
                     job.CompletedAt = now;
-                    attempt.Outcome = "failed";
+                    job.LastAttemptOutcome = "failed";
                 }
                 break;
             case DurableJobCompletionKind.Deferred:
@@ -522,13 +484,13 @@ public sealed class DurableJobQueue
                 {
                     job.State = DurableJobState.RetryScheduled;
                     job.AvailableAt = now.Add(completion.RetryDelay ?? TimeSpan.FromMinutes(5));
-                    attempt.Outcome = "deferred";
+                    job.LastAttemptOutcome = "deferred";
                 }
                 else
                 {
                     job.State = DurableJobState.Failed;
                     job.CompletedAt = now;
-                    attempt.Outcome = "failed";
+                    job.LastAttemptOutcome = "failed";
                     errorCode = "deferral_limit_exceeded";
                     safeMessage = "The job remained blocked beyond its configured deferral budget.";
                 }
@@ -540,19 +502,16 @@ public sealed class DurableJobQueue
                 }
                 job.State = DurableJobState.Failed;
                 job.CompletedAt = now;
-                attempt.Outcome = "failed";
+                job.LastAttemptOutcome = "failed";
                 break;
         }
 
-        attempt.CompletedAt = now;
-        attempt.ErrorCode = errorCode;
-        attempt.ErrorMessage = safeMessage;
+        job.LastAttemptCompletedAt = now;
         job.LastErrorCode = errorCode;
         job.LastErrorMessage = safeMessage;
-        job.LeaseOwner = null;
-        job.LeaseExpiresAt = null;
         job.UpdatedAt = now;
         job.Revision++;
+        DurableJobHistory.Append(context, job, now);
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }

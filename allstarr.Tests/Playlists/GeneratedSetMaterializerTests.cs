@@ -427,9 +427,9 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     {
         await AddEntries("one"); var target = new SequenceMaterializer();
         var handler = new GeneratedSetMaterializationJobHandler(_factory, [target], new HandlerClock());
-        var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "smart-playlist.materialize",
+        var claim = new DurableJobClaim(Guid.CreateVersion7(), 1, "smart-playlist.materialize",
             JsonSerializer.SerializeToElement(new GeneratedSetMaterializationPayload(_set)), _user, null,
-            null, JsonSerializer.SerializeToElement(new { }), "generated-test", "worker", DateTimeOffset.UtcNow.AddMinutes(1));
+            null, JsonSerializer.SerializeToElement(new { }), "generated-test");
         var services = new ServiceCollection().BuildServiceProvider();
 
         var retry = await handler.ExecuteAsync(new(claim, services), default);
@@ -451,9 +451,9 @@ public sealed class GeneratedSetMaterializerTests : IAsyncLifetime
     {
         await AddEntries("one"); using var cancellation = new CancellationTokenSource();
         var handler = new GeneratedSetMaterializationJobHandler(_factory, [new CancellingMaterializer(cancellation)], new HandlerClock());
-        var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "smart-playlist.materialize",
+        var claim = new DurableJobClaim(Guid.CreateVersion7(), 1, "smart-playlist.materialize",
             JsonSerializer.SerializeToElement(new GeneratedSetMaterializationPayload(_set)), _user, null,
-            null, JsonSerializer.SerializeToElement(new { }), "generated-test", "worker", DateTimeOffset.UtcNow.AddMinutes(1));
+            null, JsonSerializer.SerializeToElement(new { }), "generated-test");
 
         var completion = await handler.ExecuteAsync(new(claim, new ServiceCollection().BuildServiceProvider()), cancellation.Token);
 

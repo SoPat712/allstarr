@@ -138,9 +138,26 @@ public sealed class ProviderHealthMigrationTests
     {
         const string publicLinkIndex = "IX_playlist_link_public_source_target";
         const string publicSnapshotIndex = "IX_external_snapshot_public_version";
+        const string subjectIndex = "IX_audit_subject_history";
+        Assert.Contains(before, row => row.Name == "job_attempts");
+        Assert.Contains(before, row => row.Name == "IX_job_attempts_JobId_AttemptNumber");
+        Assert.DoesNotContain(after, row => row.Name is "job_attempts" or "IX_job_attempts_JobId_AttemptNumber");
+        Assert.Equal(
+            ["\"LeaseExpiresAt\" INTEGER NULL", "\"LeaseOwner\" TEXT NULL"],
+            TableColumns(before, "durable_jobs").Except(TableColumns(after, "durable_jobs")).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["\"LastAttemptCompletedAt\" INTEGER NULL", "\"LastAttemptOutcome\" TEXT NULL", "\"LastAttemptStartedAt\" INTEGER NULL"],
+            TableColumns(after, "durable_jobs").Except(TableColumns(before, "durable_jobs")).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["\"SubjectId\" TEXT NULL", "\"SubjectType\" TEXT NULL"],
+            TableColumns(after, "audit_events").Except(TableColumns(before, "audit_events")).Order(StringComparer.Ordinal));
+        Assert.Empty(TableColumns(before, "audit_events").Except(TableColumns(after, "audit_events")));
+        Assert.Equal("CREATE INDEX \"IX_audit_subject_history\" ON \"audit_events\" (\"SubjectType\", \"SubjectId\", \"CreatedAt\")",
+            CollapseSql(Assert.Single(after, row => row.Name == subjectIndex).Sql));
         Assert.DoesNotContain(before, row => row.Name is publicLinkIndex or publicSnapshotIndex);
 
         var oldSchema = before
+            .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
             {
                 Sql = row.Sql.Replace("'Playback:ShowExplicitLabel')", "'Playback:ShowExplicitLabel', 'Providers:LyricsOrder')", StringComparison.Ordinal)
@@ -149,7 +166,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -262,10 +279,19 @@ public sealed class ProviderHealthMigrationTests
         return $"{row.Type}|{row.Name}|{normalizedSql}";
     }
 
+    private static IEnumerable<string> TableColumns(SchemaObject[] schema, string table)
+    {
+        var sql = Assert.Single(schema, row => row.Type == "table" && row.Name == table).Sql;
+        return SplitTopLevel(sql[(sql.IndexOf('(') + 1)..sql.LastIndexOf(')')]).Select(CollapseSql);
+    }
+
     private static bool IsDeliberateNewColumn(string table, string component) =>
         (table == "provider_accounts" && component == "\"SettingsJson\" TEXT NOT NULL DEFAULT '{}'") ||
         (table == "playlist_links" && component is "\"DestinationMode\" TEXT NOT NULL DEFAULT 'Existing'" or "\"DestinationMode\" TEXT NOT NULL") ||
-        (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL");
+        (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||
+        (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
+            "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
+        (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
 
     private static string NormalizeNullability(string table, string component)
     {
