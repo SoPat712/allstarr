@@ -9,9 +9,15 @@ PROJECT="v2-qualification-${GITHUB_RUN_ID:-$$}"
 MOCK_PID=""
 [[ -z "$(docker ps -aq --filter name='^allstarr$')" ]] || { echo 'An allstarr container already exists; refusing.' >&2; exit 2; }
 cleanup() {
+  local result=$?
+  trap - EXIT
+  if [[ "$result" != 0 ]] && declare -F compose >/dev/null; then
+    compose logs --no-color --tail=120 allstarr || true
+  fi
   docker compose --project-name "$PROJECT" --project-directory "$WORK" -f "$FIXTURE/docker-compose.yml" down --remove-orphans >/dev/null 2>&1 || true
   [[ -z "$MOCK_PID" ]] || kill "$MOCK_PID" 2>/dev/null || true
-  rm -rf -- "$WORK"
+  rm -rf -- "$WORK" 2>/dev/null || true
+  exit "$result"
 }
 trap cleanup EXIT
 sha256sum "$FIXTURE/docker-compose.yml" "$FIXTURE/example.env" > "$WORK/fixture-sha256"
@@ -72,14 +78,14 @@ curl --fail --silent http://127.0.0.1:5275/ > "$WORK/admin.html"
 test -s "$WORK/admin.html"
 test -s "$WORK/cache/allstarr-v3/allstarr.db"
 test -s "$WORK/cache/allstarr-v3/keyring.json"
-python3 - "$WORK" <<'PY'
+sudo python3 - "$WORK" <<'PY'
 import pathlib, sqlite3, sys
 root = pathlib.Path(sys.argv[1])
 db = sqlite3.connect(root / 'cache/allstarr-v3/allstarr.db')
 assert db.execute('select count(*) from onboarding_states').fetchone()[0] == 0
 assert db.execute('select count(*) from legacy_env_imports').fetchone()[0] == 0
 PY
-cp "$WORK/cache/allstarr-v3/keyring.json" "$WORK/previous-keyring.json"
+compose exec -T allstarr sha256sum /app/cache/allstarr-v3/keyring.json > "$WORK/previous-keyring.sha256"
 compose restart allstarr
 for attempt in $(seq 1 90); do
   if curl --fail --silent http://127.0.0.1:5274/health >/dev/null; then break; fi
@@ -87,7 +93,8 @@ for attempt in $(seq 1 90); do
 done
 curl --fail --silent http://127.0.0.1:5274/System/Info/Public | python3 -c 'import json,sys; assert json.load(sys.stdin)["ServerName"] == "native-fixture"'
 cmp "$WORK/.env" "$WORK/input.env"
-cmp "$WORK/cache/allstarr-v3/keyring.json" "$WORK/previous-keyring.json"
+compose exec -T allstarr sha256sum /app/cache/allstarr-v3/keyring.json > "$WORK/current-keyring.sha256"
+cmp "$WORK/current-keyring.sha256" "$WORK/previous-keyring.sha256"
 test "$(cat "$WORK/kept/unidentified.flac")" = 'legacy kept bytes'
 test "$(cat "$WORK/downloads/unidentified.flac")" = 'legacy download bytes'
 test "$(cat "$WORK/cache/legacy-entry")" = 'legacy cache bytes'
