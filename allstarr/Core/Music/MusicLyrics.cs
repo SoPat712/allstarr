@@ -54,11 +54,18 @@ public static partial class MusicLyrics
 
         return new Song
         {
+            Id = song.Id,
+            CanonicalRecordingId = song.CanonicalRecordingId,
+            IsLocal = song.IsLocal,
+            ExternalProvider = song.ExternalProvider,
+            ExternalId = song.ExternalId,
+            Isrc = song.Isrc,
             Title = StripPresentationLabels(song.Title),
             Artist = artist,
             Artists = artists,
             Album = StripPresentationLabels(song.Album),
             Duration = song.Duration,
+            PreciseDuration = song.PreciseDuration,
             SpotifyId = song.SpotifyId
         };
     }
@@ -74,12 +81,22 @@ public static partial class MusicLyrics
     /// <summary>
     /// Reads LRC lines in time order. A line may carry several timestamps, and fractions are
     /// read as written: ".1" is 100 ms, ".12" 120 ms and ".125" 125 ms. Tag lines such as
-    /// "[ar:Artist]" and lines without a timestamp are skipped.
+    /// "[ar:Artist]" and lines without a timestamp are skipped. A global offset advances
+    /// positive values and delays negative values; projected timestamps are never negative.
     /// </summary>
     public static IReadOnlyList<TimedLyricLine> ParseSyncedLines(string? value)
     {
         var lines = new List<TimedLyricLine>();
-        foreach (var rawLine in (value ?? "").Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n'))
+        var rawLines = (value ?? "").Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
+        long offset = 0;
+        foreach (var rawLine in rawLines)
+        {
+            var match = OffsetRegex().Match(rawLine.Trim().TrimStart('\uFEFF'));
+            if (match.Success && long.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed) && Math.Abs(parsed) <= 86_400_000)
+                offset = parsed;
+        }
+        foreach (var rawLine in rawLines)
         {
             var matches = TimestampRegex().Matches(rawLine);
             if (matches.Count == 0) continue;
@@ -91,12 +108,17 @@ public static partial class MusicLyrics
                 var milliseconds = match.Groups[3].Success
                     ? int.Parse(match.Groups[3].Value.PadRight(3, '0')[..3], System.Globalization.CultureInfo.InvariantCulture)
                     : 0;
-                lines.Add(new TimedLyricLine((((long)minutes * 60) + seconds) * 1000 + milliseconds, text));
+                var timestamp = (((long)minutes * 60) + seconds) * 1000 + milliseconds;
+                if (timestamp <= 86_400_000)
+                    lines.Add(new TimedLyricLine(Math.Max(0, timestamp - offset), text));
             }
         }
         return lines.OrderBy(line => line.StartMilliseconds).ToList();
     }
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\[(\d{1,3}):([0-5]?\d)(?:[.:](\d{1,3}))?\]")]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\[(\d{1,4}):([0-5]?\d)(?:[.:](\d{1,3}))?\]")]
     private static partial System.Text.RegularExpressions.Regex TimestampRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\[offset:([+-]?\d{1,9})\]$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex OffsetRegex();
 }

@@ -194,18 +194,18 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("/#/preferences");
     const region = page.getByRole("region", { name: "Lyrics source order" });
     await expect(region).toBeVisible();
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics"]);
+    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics", "Kept LRC"]);
     await expect(region.getByRole("button", { name: "Move Spotify up", exact: true })).toBeDisabled();
-    await expect(region.getByRole("button", { name: "Move Media server lyrics down", exact: true })).toBeDisabled();
-    await region.getByRole("button", { name: "Move Media server lyrics up", exact: true }).focus();
+    await expect(region.getByRole("button", { name: "Move Kept LRC down", exact: true })).toBeDisabled();
+    await region.getByRole("button", { name: "Move Kept LRC up", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "Media server lyrics", "LyricsPlus"]);
+    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Kept LRC", "Media server lyrics"]);
     await page.getByRole("button", { name: "Save preferences", exact: true }).click();
     await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
-      lyricsOrder: "spotify,lrclib,backend,lyricsplus", expectedRevision: "initial" });
+      lyricsOrder: "spotify,lrclib,lyricsplus,kept,backend", expectedRevision: "initial" });
     await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
-    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics"]);
+    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus", "Media server lyrics", "Kept LRC"]);
     await expect(page.getByText("Using household defaults", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     for (const button of await region.getByRole("button").all()) {

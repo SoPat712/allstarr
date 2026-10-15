@@ -49,6 +49,9 @@ public sealed record IndexedLibraryTrack(
 
 public interface ILibraryIndexService
 {
+    Task<IndexedLibraryTrack?> FindByBackendItemAsync(ProtocolExecutionContext context, string backendItemId,
+        CancellationToken cancellationToken = default);
+
     Task<IndexedLibraryTrack> UpsertAsync(
         ProtocolExecutionContext executionContext,
         LibraryTrackIndexInput input,
@@ -74,6 +77,31 @@ public interface ILibraryIndexService
 
 public sealed partial class LibraryIndexService : ILibraryIndexService
 {
+    public async Task<IndexedLibraryTrack?> FindByBackendItemAsync(ProtocolExecutionContext context, string backendItemId,
+        CancellationToken cancellationToken = default)
+    {
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, cancellationToken);
+        var token = cancellation.Token;
+        token.ThrowIfCancellationRequested();
+        if (context.Principal == null || string.IsNullOrWhiteSpace(backendItemId)) return null;
+        EnsureStorageReady();
+        await using var db = await _contextFactory.CreateDbContextAsync(token);
+        await RequireUserAsync(db, context.Principal, token);
+        var access = await _libraryAccess.ResolveAsync(context, token);
+        var tracks = await LibraryTrackAccess.Query(db, context, access)
+            .Where(track => track.BackendItemId == backendItemId)
+            .OrderByDescending(track => track.OwnerUserId == context.Principal.UserId)
+            .ThenBy(track => track.BackendLibraryId).ThenBy(track => track.Id).ToArrayAsync(token);
+        if (tracks.Length == 0) return null;
+        var candidates = tracks.Select(Map).ToArray();
+        var first = candidates[0];
+        if (candidates.Any(track => track.CanonicalRecordingId != first.CanonicalRecordingId ||
+                track.ProviderTrackIds.Count != first.ProviderTrackIds.Count ||
+                track.ProviderTrackIds.Any(pair => first.ProviderTrackIds.GetValueOrDefault(pair.Key) != pair.Value)))
+            return null;
+        return first;
+    }
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase

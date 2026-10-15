@@ -1414,7 +1414,11 @@ for (const viewport of viewports) {
       await expect(access).toBeVisible();
       await access.getByRole("radio", { name: "Personal" }).check();
       await access.getByRole("button", { name: "Allstarr user" }).click();
-      await page.getByRole("option", { name: "Listener" }).click();
+      const ownerOptions = page.getByRole("listbox");
+      await waitForSettledOptions(ownerOptions, "Listener");
+      await ownerOptions.getByRole("option", { name: "Listener", exact: true }).click();
+      await expect(ownerOptions).toBeHidden();
+      await expect(access.getByRole("button", { name: "Allstarr user" })).toContainText("Listener");
       await access.getByRole("button", { name: "Save access" }).click();
       await expect(access).toBeHidden();
 

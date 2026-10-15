@@ -47,7 +47,7 @@
   ));
 
   function completeLyricsOrder(value?: string | null) {
-    const candidates = [...(value ?? "").split(","), "backend", ...providerDefinitions
+    const candidates = [...(value ?? "").split(","), "backend", "kept", ...providerDefinitions
       .filter(provider => provider.categories?.includes("lyrics")).map(provider => provider.id).sort()];
     const included = new Set<string>();
     return candidates.map(id => id.trim()).filter(id => {

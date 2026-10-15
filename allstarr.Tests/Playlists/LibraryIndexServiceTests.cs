@@ -55,6 +55,67 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExactNativeReadUsesTheCurrentLibraryAndUserBoundaryWithoutWriting()
+    {
+        var viewer = Context(_userA, "principal-a");
+        var indexed = await _service.UpsertAsync(viewer, Input() with
+        { ProviderTrackIds = new Dictionary<string, string> { ["spotify"] = "exact-source" } });
+        await using var db = await _factory.CreateDbContextAsync();
+        var before = await db.AuditEvents.CountAsync();
+        var found = await _service.FindByBackendItemAsync(viewer, "local-item");
+        Assert.Equal(indexed.Id, found?.Id);
+        Assert.Equal("exact-source", found?.ProviderTrackIds["spotify"]);
+        Assert.Null(await _service.FindByBackendItemAsync(viewer, "other-item"));
+        Assert.Null(await _service.FindByBackendItemAsync(Context(_userB, "principal-b"), "local-item"));
+        Assert.Null(await _service.FindByBackendItemAsync(UnlinkedContext(), "local-item"));
+        _libraryAccess.Setup(item => item.ResolveAsync(viewer, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new BackendLibraryAccess(true, []));
+        Assert.Null(await _service.FindByBackendItemAsync(viewer, "local-item"));
+        Assert.Equal(before, await db.AuditEvents.CountAsync());
+    }
+
+    [Fact]
+    public async Task ExactNativeReadRejectsDisabledUsersAndConflictingIndexedIdentities()
+    {
+        var viewer = Context(_userA, "principal-a");
+        await _service.UpsertAsync(viewer, Input() with
+        { ProviderTrackIds = new Dictionary<string, string> { ["spotify"] = "first-source" } });
+        await using var db = await _factory.CreateDbContextAsync();
+        var original = await db.LibraryTracks.SingleAsync();
+        db.LibraryTracks.Add(new LibraryTrackRecord
+        {
+            Id = Guid.CreateVersion7(),
+            OwnerUserId = _userB,
+            BackendLibraryId = original.BackendLibraryId,
+            BackendInstanceId = original.BackendInstanceId,
+            BackendItemId = original.BackendItemId,
+            Protocol = original.Protocol,
+            FilePath = original.FilePath,
+            Title = original.Title,
+            Artist = original.Artist,
+            ProviderIdsJson = "{\"spotify\":\"conflicting-source\"}",
+            SourceModifiedAt = original.SourceModifiedAt,
+            IndexedAt = original.IndexedAt,
+            UpdatedAt = original.UpdatedAt
+        });
+        await db.SaveChangesAsync();
+        Assert.Null(await _service.FindByBackendItemAsync(viewer, "local-item"));
+        db.LibraryTracks.Remove(await db.LibraryTracks.SingleAsync(item => item.OwnerUserId == _userB));
+        (await db.Users.SingleAsync(item => item.Id == _userA)).Enabled = false;
+        await db.SaveChangesAsync();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => _service.FindByBackendItemAsync(viewer, "local-item"));
+    }
+
+    [Fact]
+    public async Task ExactNativeReadObservesCallerCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            _service.FindByBackendItemAsync(Context(_userA, "principal-a"), "local-item", cancellation.Token));
+    }
+
+    [Fact]
     public async Task KnownNativeLookupFailureLeavesExternalPlaybackAvailable()
     {
         var viewer = Context(_userA, "principal-a");

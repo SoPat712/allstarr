@@ -282,6 +282,9 @@ public sealed class BackendLibraryIndexingTests
 
     private sealed class RecordingIndex : ILibraryIndexService
     {
+        public Task<IndexedLibraryTrack?> FindByBackendItemAsync(ProtocolExecutionContext context, string backendItemId,
+            CancellationToken cancellationToken = default) => Task.FromResult<IndexedLibraryTrack?>(null);
+
         public List<LibraryTrackIndexInput> Inputs { get; } = [];
         public List<Guid> ContextOwners { get; } = [];
 

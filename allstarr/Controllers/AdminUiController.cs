@@ -1400,8 +1400,9 @@ public class AdminUiController : ControllerBase
                 .Where(providerId => !providers.Contains(providerId, StringComparer.OrdinalIgnoreCase))
                 .OrderBy(providerId => providerId, StringComparer.Ordinal));
         }
-        if (capability == ProviderCapabilityKind.Lyrics && !providers.Contains("backend", StringComparer.Ordinal))
-            providers.Add("backend");
+        if (capability == ProviderCapabilityKind.Lyrics)
+            foreach (var source in new[] { "backend", "kept" })
+                if (!providers.Contains(source, StringComparer.Ordinal)) providers.Add(source);
         return new AdminUiPriorityGroup
         {
             Id = id,
