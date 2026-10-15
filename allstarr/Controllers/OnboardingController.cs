@@ -26,6 +26,24 @@ public sealed class OnboardingController(
             cancellationToken));
     }
 
+    public sealed record SetupStepRequest(string StepId, string Action, long ExpectedRevision);
+
+    [HttpPost("step")]
+    public async Task<IActionResult> SetStep([FromBody] SetupStepRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!TryGetAdminScope(out var session, out var userId, out var error)) return error!;
+        try
+        {
+            var state = await onboarding.SetStepAsync(userId, request.StepId, request.Action,
+                request.ExpectedRevision, $"onboarding:{session.SessionId}", cancellationToken);
+            return Ok(await CreateResponseAsync(state, false, cancellationToken));
+        }
+        catch (OnboardingStateException exception)
+        {
+            return Conflict(new { error = exception.Message, code = exception.Code });
+        }
+    }
+
     [HttpPost("complete")]
     public async Task<IActionResult> Complete(CancellationToken cancellationToken = default)
     {
@@ -60,14 +78,15 @@ public sealed class OnboardingController(
             return error!;
         }
 
-        var state = await onboarding.ReopenAsync(
-            userId,
-            $"onboarding:{session.SessionId}",
-            cancellationToken);
-        return Ok(await CreateResponseAsync(
-            state,
-            alreadyCompleted: false,
-            cancellationToken));
+        try
+        {
+            var state = await onboarding.ReopenAsync(userId, $"onboarding:{session.SessionId}", cancellationToken);
+            return Ok(await CreateResponseAsync(state, false, cancellationToken));
+        }
+        catch (OnboardingStateException exception)
+        {
+            return Conflict(new { error = exception.Message, code = exception.Code });
+        }
     }
 
     private async Task<object> CreateResponseAsync(
@@ -83,6 +102,8 @@ public sealed class OnboardingController(
             shouldRedirectToSetup = state.ShouldRedirectToSetup,
             schemaVersion = state.SchemaVersion,
             completedSteps = state.CompletedSteps,
+            skippedSteps = state.SkippedSteps,
+            steps = state.Steps,
             completionSource = state.CompletionSource,
             completedAt = state.CompletedAt,
             reopenedAt = state.ReopenedAt,

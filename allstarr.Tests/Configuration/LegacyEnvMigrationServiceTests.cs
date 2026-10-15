@@ -197,7 +197,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
             provenance.RootElement.GetProperty("onboardingState")
                 .GetProperty("recordId").GetGuid());
         var onboarding = await db.OnboardingStates.SingleAsync();
-        Assert.NotNull(onboarding.CompletedAt);
+        Assert.Null(onboarding.CompletedAt);
         Assert.Contains(OnboardingStateService.BackendIdentityStep, onboarding.CompletedStepsJson);
         Assert.Contains(OnboardingStateService.LegacyEnvironmentStep, onboarding.CompletedStepsJson);
 

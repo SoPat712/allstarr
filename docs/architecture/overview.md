@@ -216,6 +216,8 @@ Shared lyrics resolution follows the saved lyrics order and the exact listener's
 
 Provider lyric results may retain immutable timed lines and source segments alongside rendered LRC. Times use .NET tick precision; optional source durations, background flags and synthetic-alignment flags stay distinct from unknown values. Segments may represent syllables or chunks, so the host does not infer whole-word boundaries or missing durations. Timing is bounded and stored with the full response in the existing file cache. Availability-only projections omit both text and timing. Jellyfin and Subsonic continue to receive their normal line lyric responses; auxiliary timing does not change those wire contracts.
 
+Setup and upgrade share `OnboardingStateService` and the server-owned `SetupGuide` checklist. Per-user reviewed/skipped steps, completion and optimistic revisions use the existing onboarding row. `LegacyConfigurationController` owns bounded uploaded/mounted previews and explicit import application; import receipts complete only their guide step. Product settings remain with their existing owners rather than being copied into wizard-specific configuration.
+
 ## Durable work
 
 State-changing background work uses the durable job queue, schedules, restart recovery, retries, cancellation, and owner authorization under `Core/Jobs`. A process-local task is not an acceptable owner for matching, downloads, playlist synchronization, scrobbling, or extension lifecycle work.

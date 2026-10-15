@@ -64,6 +64,7 @@ builder.Services.AddEncryptedSecretStore(builder.Configuration);
 builder.Services.AddSingleton<ILegacyAccountVerifier, LegacyAccountVerifier>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.OnboardingStateService>();
+builder.Services.AddSingleton<MountedLegacyEnvironment>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);

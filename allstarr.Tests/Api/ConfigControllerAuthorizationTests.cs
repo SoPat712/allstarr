@@ -194,19 +194,20 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     [Fact]
     public async Task MigrationEndpoints_RequireAdministratorSession()
     {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
+        var controller = CreateMigrationController(CreateHttpContextWithSession(isAdmin: false));
         AssertForbidden(await controller.GetEnvMigrationStatus());
+        AssertForbidden(await controller.PreviewMountedEnvironment());
         var bytes = Encoding.UTF8.GetBytes("CACHE_LYRICS_DAYS=30");
         AssertForbidden(await controller.PreviewEnvMigration(
             new FormFile(new MemoryStream(bytes), 0, bytes.Length, "file", "legacy.env")));
-        AssertForbidden(await controller.ApplyEnvMigration(new ConfigController.ApplyLegacyEnvMigrationRequest
+        AssertForbidden(await controller.ApplyEnvMigration(new LegacyConfigurationController.ApplyLegacyEnvMigrationRequest
         {
             PreviewToken = "token",
             Revision = "revision",
             Confirmed = true
         }));
         AssertForbidden(await controller.ResetEnvMigration(
-            new ConfigController.ResetLegacyEnvMigrationRequest
+            new LegacyConfigurationController.ResetLegacyEnvMigrationRequest
             {
                 PreviewToken = "token"
             }));
@@ -215,7 +216,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     [Fact]
     public async Task MigrationController_ReturnsNonCachedAdminPreviewAndRequiresExplicitConfirmation()
     {
-        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
+        var controller = CreateMigrationController(CreateHttpContextWithSession(isAdmin: true));
         const string source = "CACHE_LYRICS_DAYS=33\nSPOTIFY_API_SESSION_COOKIE=controller-secret";
         var bytes = Encoding.UTF8.GetBytes(source);
         var previewResult = Assert.IsType<OkObjectResult>(await controller.PreviewEnvMigration(
@@ -231,7 +232,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var revision = previewDocument.RootElement.GetProperty("revision").GetString();
 
         var unconfirmed = Assert.IsType<BadRequestObjectResult>(await controller.ApplyEnvMigration(
-            new ConfigController.ApplyLegacyEnvMigrationRequest
+            new LegacyConfigurationController.ApplyLegacyEnvMigrationRequest
             {
                 PreviewToken = token,
                 Revision = revision,
@@ -240,7 +241,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Equal(StatusCodes.Status400BadRequest, unconfirmed.StatusCode);
 
         var applied = Assert.IsType<OkObjectResult>(await controller.ApplyEnvMigration(
-            new ConfigController.ApplyLegacyEnvMigrationRequest
+            new LegacyConfigurationController.ApplyLegacyEnvMigrationRequest
             {
                 PreviewToken = token,
                 Revision = revision,
@@ -260,6 +261,35 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.True(statusDocument.RootElement.GetProperty("completed").GetBoolean());
         Assert.False(statusDocument.RootElement.GetProperty("firstRun").GetBoolean());
         Assert.False(statusDocument.RootElement.GetProperty("sourcePresent").GetBoolean());
+    }
+
+    [Fact]
+    public async Task MountedMigration_UsesTheSameReadOnlyPreviewAndExplicitApplyBoundary()
+    {
+        var path = Path.Combine(_root, ".env");
+        const string source = "CACHE_LYRICS_DAYS=35\nDEEZER_ARL=mounted-private-fixture";
+        await File.WriteAllTextAsync(path, source);
+        var modified = File.GetLastWriteTimeUtc(path);
+        var environment = Mock.Of<Microsoft.Extensions.Hosting.IHostEnvironment>(item =>
+            item.EnvironmentName == "Development" && item.ContentRootPath == Path.Combine(_root, "app"));
+        var controller = CreateMigrationController(CreateHttpContextWithSession(true), new MountedLegacyEnvironment(environment));
+        var status = Assert.IsType<LegacyEnvMigrationStatus>(Assert.IsType<OkObjectResult>(await controller.GetEnvMigrationStatus()).Value);
+        Assert.True(status.SourcePresent);
+        var preview = Assert.IsType<LegacyEnvMigrationPreview>(Assert.IsType<OkObjectResult>(await controller.PreviewMountedEnvironment()).Value);
+        Assert.DoesNotContain("mounted-private-fixture", JsonSerializer.Serialize(preview), StringComparison.Ordinal);
+        Assert.Equal("no-store", controller.Response.Headers.CacheControl);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
+        Assert.Empty(await db.LegacyEnvImports.ToListAsync());
+        Assert.Equal(source, await File.ReadAllTextAsync(path));
+        Assert.Equal(modified, File.GetLastWriteTimeUtc(path));
+        Assert.IsType<BadRequestObjectResult>(await controller.ApplyEnvMigration(new()
+        { PreviewToken = preview.PreviewToken, Revision = preview.Revision, Confirmed = false }));
+        Assert.Empty(await db.LegacyEnvImports.ToListAsync());
+        Assert.IsType<OkObjectResult>(await controller.ApplyEnvMigration(new()
+        { PreviewToken = preview.PreviewToken, Revision = preview.Revision, Confirmed = true }));
+        Assert.Single(await db.LegacyEnvImports.ToListAsync());
+        Assert.Equal(source, await File.ReadAllTextAsync(path));
     }
 
     [Fact]
@@ -500,6 +530,12 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         return context;
     }
 
+    private LegacyConfigurationController CreateMigrationController(HttpContext context, MountedLegacyEnvironment? mounted = null)
+    {
+        _ = CreateController(context, mounted: mounted);
+        return new() { ControllerContext = new ControllerContext { HttpContext = context } };
+    }
+
     private ConfigController CreateController(
         HttpContext httpContext,
         Dictionary<string, string?>? configValues = null,
@@ -507,7 +543,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         ProviderRuntimeHealth? healthStore = null,
         EncryptedSecretStore? secretStore = null,
         IApplicationCache? applicationCache = null,
-        ProviderCtsDiagnosticRunner? diagnosticRunner = null)
+        ProviderCtsDiagnosticRunner? diagnosticRunner = null,
+        MountedLegacyEnvironment? mounted = null)
     {
         var logger = new Mock<ILogger<ConfigController>>();
         configValues ??= new Dictionary<string, string?>();
@@ -543,6 +580,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             .AddSingleton<IEffectiveProviderPolicyResolver>(effectiveProviderPolicies)
             .AddSingleton(migration)
             .AddSingleton(effectiveSecretStore);
+        if (mounted != null) services.AddSingleton(mounted);
         services.AddSingleton(healthStore ?? new ProviderRuntimeHealth());
         if (diagnosticRunner != null) services.AddSingleton(diagnosticRunner);
         httpContext.RequestServices = services.BuildServiceProvider();

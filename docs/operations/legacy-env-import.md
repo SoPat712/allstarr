@@ -66,3 +66,11 @@ Apply saves the reviewed inventory with the import receipt and queues **Import l
 Known provider IDs in version 2 filenames retain their external IDs and can serve household playback without the former provider account. Unidentified audio remains protected in the file inventory without an invented song association. Kept lists imported originals with a read-only status and download action. Existing sibling lyrics remain readable. Original ownership and its permanent reference cannot be released through removal or cleanup actions.
 
 Database backups preserve the import receipts and ownership proof, while original audio stays in its existing mounts. Include those folders in an offline copy and keep their container paths stable. See [storage operations](storage.md) before moving or rolling back an upgraded installation.
+
+## Setup progress and mounted previews
+
+Importing settings records the import step; it does not finish the entire setup guide. The shared setup engine keeps reviewed and skipped steps separately for each administrator. Finishing explicitly records remaining optional steps as skipped. Reopening preserves that progress. Updates compare the saved revision, so a stale browser tab must reload before changing another step. Disabled or demoted administrators cannot save or reopen setup.
+
+The administration API exposes the shared checklist at `GET /api/admin/onboarding/status` and accepts `stepId`, `action` (`review`, `skip`, or `reset`) and `expectedRevision` at `POST /api/admin/onboarding/step`. The verified media-server identity is required and cannot be skipped.
+
+When the old environment is still mounted, migration status reports its availability without returning its contents. `POST /api/admin/config/migration/preview-mounted` reads that file with the same 1 MiB limit and creates the same session-bound preview as an upload. Symbolic links, missing files and oversized inputs are rejected. Reading or previewing never edits the file or applies its values. Confirmation through the existing apply endpoint is still required.
