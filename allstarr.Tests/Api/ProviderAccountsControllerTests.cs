@@ -22,7 +22,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ProviderAccountsControllerTests : IAsyncLifetime
+public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),

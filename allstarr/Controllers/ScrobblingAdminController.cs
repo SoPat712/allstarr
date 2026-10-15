@@ -152,14 +152,13 @@ public sealed class ScrobblingAdminController : ControllerBase
             {
                 var errorElement = root.Element("error");
                 var errorCode = errorElement?.Attribute("code")?.Value;
-                var errorMessage = errorElement?.Value ?? "Unknown error";
 
                 if (errorCode == "4")
                 {
                     return BadRequest(new { error = "Invalid username or password" });
                 }
 
-                return BadRequest(new { error = $"Last.fm error: {errorMessage}" });
+                return BadRequest(new { error = "Last.fm rejected this sign-in. Check the account credentials and try again." });
             }
 
             var sessionElement = root?.Element("session");
@@ -171,7 +170,7 @@ public sealed class ScrobblingAdminController : ControllerBase
                 return BadRequest(new { error = "Failed to get session key from Last.fm response" });
             }
 
-            _logger.LogInformation("Successfully authenticated Last.fm user: {Username}", authenticatedUsername);
+            _logger.LogInformation("Successfully authenticated the selected Last.fm account");
 
             try
             {
@@ -182,7 +181,11 @@ public sealed class ScrobblingAdminController : ControllerBase
                     authenticatedUsername ?? username,
                     sessionKey,
                     cancellationToken);
-                _logger.LogInformation("Last.fm session saved to encrypted provider account {AccountId}", managed!.Account.Id);
+                _logger.LogInformation("Last.fm session saved to encrypted account storage");
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Conflict(new { error = "The account changed during sign-in. Refresh and retry." });
             }
             catch (Exception saveEx)
             {
@@ -263,14 +266,13 @@ public sealed class ScrobblingAdminController : ControllerBase
             {
                 var errorElement = root.Element("error");
                 var errorCode = errorElement?.Attribute("code")?.Value;
-                var errorMessage = errorElement?.Value ?? "Unknown error";
 
                 if (errorCode == "9")
                 {
                     return BadRequest(new { error = "Session key is invalid. Please re-authenticate." });
                 }
 
-                return BadRequest(new { error = $"Last.fm error: {errorMessage}" });
+                return BadRequest(new { error = "Last.fm rejected this sign-in. Check the account credentials and try again." });
             }
 
             var userElement = root?.Element("user");
@@ -547,23 +549,33 @@ public sealed class ScrobblingAdminController : ControllerBase
         });
         try
         {
-            await _secretStore.StoreAsync(
-                managed.Account.OwnerUserId,
-                $"provider-account:lastfm:{managed.Account.Id:N}",
-                payload,
-                managed.Account.SecretReferenceId,
-                cancellationToken);
+            await using var db = await _contextFactory!.CreateDbContextAsync(cancellationToken);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            var account = await db.ProviderAccounts.SingleOrDefaultAsync(item => item.Id == managed.Account.Id, cancellationToken);
+            if (account == null || account.Revision != managed.Account.Revision || !account.Enabled ||
+                account.ProviderId != "lastfm" || account.OwnerUserId != managed.Account.OwnerUserId ||
+                account.SecretReferenceId != managed.Account.SecretReferenceId)
+                throw new DbUpdateConcurrencyException("The account changed during sign-in.");
+            var secret = await _secretStore.StoreWithinTransactionAsync(db, account.OwnerUserId,
+                $"provider-account:lastfm:{account.Id:N}", payload, account.SecretReferenceId, cancellationToken);
+            account.SecretReferenceId = secret.Id;
+            account.UpdatedAt = DateTimeOffset.UtcNow;
+            account.Revision++;
+            var actor = HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession;
+            db.AuditEvents.Add(new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = actor?.AllstarrUserId,
+                Category = "provider-account",
+                Action = "provider-account.session-replaced",
+                Outcome = "succeeded",
+                CreatedAt = account.UpdatedAt,
+                DetailsJson = JsonSerializer.Serialize(new { accountId = account.Id, account.Revision })
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
         }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(payload);
-        }
-
-        await using var db = await _contextFactory!.CreateDbContextAsync(cancellationToken);
-        var account = await db.ProviderAccounts.SingleAsync(item => item.Id == managed.Account.Id, cancellationToken);
-        account.UpdatedAt = DateTimeOffset.UtcNow;
-        account.Revision++;
-        await db.SaveChangesAsync(cancellationToken);
+        finally { CryptographicOperations.ZeroMemory(payload); }
     }
 
     private static string? Secret(IReadOnlyDictionary<string, string>? values, params string[] names)

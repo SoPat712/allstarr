@@ -286,12 +286,19 @@ public sealed partial class ProviderAccountsController : ControllerBase
         using var merged = JsonDocument.Parse(bytes);
         if (ValidateScrobbleAddress(account.ProviderId, merged.RootElement) is { } addressError)
             return BadRequest(new { error = addressError });
-        var secret = await _secretStore.StoreAsync(
-            account.OwnerUserId,
+        var expectedRevision = account.Revision;
+        var expectedOwner = account.OwnerUserId;
+        var expectedProvider = account.ProviderId;
+        var expectedReference = account.SecretReferenceId;
+        await using var transaction = await context.Database.BeginTransactionAsync(cancellationToken);
+        await context.Entry(account).ReloadAsync(cancellationToken);
+        if (context.Entry(account).State == EntityState.Detached || account.Revision != expectedRevision ||
+            account.OwnerUserId != expectedOwner || account.ProviderId != expectedProvider || account.SecretReferenceId != expectedReference)
+            return Conflict(new { error = "The account changed. Refresh before replacing its credentials." });
+        var secret = await _secretStore.StoreWithinTransactionAsync(
+            context, account.OwnerUserId,
             $"provider-account:{account.ProviderId}:{account.Id:N}",
-            bytes,
-            account.SecretReferenceId,
-            cancellationToken);
+            bytes, account.SecretReferenceId, cancellationToken);
         account.SecretReferenceId = secret.Id;
         account.SettingsJson = PublicSettingsJson(account.ProviderId, bytes);
         account.UpdatedAt = DateTimeOffset.UtcNow;
@@ -303,6 +310,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "succeeded",
             new { accountId = account.Id, account.ProviderId, secretVersion = secret.ActiveVersion });
         await context.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
         return Ok(new
         {
