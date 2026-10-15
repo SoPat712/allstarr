@@ -1,6 +1,6 @@
 # Legacy `.env` import
 
-Version 3 uses an explicit administrator import to carry safe configuration from a 2.x deployment into a fresh SQLite installation. Startup never scans or applies a legacy file automatically.
+Version 3 uses an explicit administrator import to carry safe configuration from a 2.x deployment into a fresh SQLite installation. Startup does not apply a legacy file automatically. In an unchanged version 2 container layout, the database and encryption key ring are created under the persistent `/app/cache/allstarr-v3` mount. The old client and administration ports, administration bind/trust environment names, and `/health` remain supported. Native backend requests continue while setup is pending. A container with neither a persistent data mount nor the compatible cache mount refuses to start.
 
 ## Supported workflow
 

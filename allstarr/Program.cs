@@ -50,6 +50,10 @@ using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment);
+ContainerStorageLayout.Configure(builder.Configuration,
+    Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true",
+    OperatingSystem.IsLinux() && File.Exists("/proc/self/mountinfo")
+        ? ContainerStorageLayout.PersistentMounts(File.ReadAllText("/proc/self/mountinfo")) : []);
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new RedactingConsoleLoggerProvider(builder.Configuration));
 builder.Services.AddDurableStorage(
@@ -282,9 +286,7 @@ builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddHttpContextAccessor();
-var dataProtectionKeysPath = builder.Environment.IsEnvironment("Testing")
-    ? Path.Combine(Path.GetTempPath(), "allstarr-tests", "data-protection")
-    : Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
+var dataProtectionKeysPath = Path.Combine(builder.Configuration["Storage:DataDirectory"] ?? "/app/data", "data-protection");
 var dataProtectionKeysDirectory = new DirectoryInfo(dataProtectionKeysPath);
 dataProtectionKeysDirectory.Create();
 builder.Services.AddDataProtection()
