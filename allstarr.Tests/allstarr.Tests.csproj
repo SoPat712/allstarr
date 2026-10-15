@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\allstarr\allstarr.csproj" />
+    <ProjectReference Include="../tools/tests/ScrobbleCrashProbe/ScrobbleCrashProbe.csproj" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

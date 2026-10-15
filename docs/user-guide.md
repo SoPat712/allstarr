@@ -203,7 +203,7 @@ Automatic history is opt-in in the development-only Intelligence workspace. Enab
 
 Recommendation learning stays within your user and backend account. Local recommendations include only music libraries you can access. Plays, skips, favorites, playlist membership, and direct Discover feedback can influence later runs only when their signal types are enabled. A favorite raises the track's preference signal; removing the favorite cancels that contribution. Generated sets remain ephemeral in Intelligence until **Create in Jellyfin** or **Create in Subsonic** is used, while Automation can refresh and publish rotating personal sets on a schedule.
 
-Scrobbling is checkpointed so a provider is not sent the same completed listen twice. Home and History show what Allstarr observed; Activity shows delivery failures and retries.
+Scrobbling saves the destination account and revision with accepted playback, then keeps one delivery receipt per completed listen and target. Retries preserve the original metadata and time. A changed or revoked account needs explicit repair; queued listens never move to a replacement account automatically. If a send may have been accepted but its result was lost, Allstarr holds it for review unless the destination safely deduplicates retries. See [scrobble delivery and recovery](operations/scrobbling.md) for status and repair.
 
 ## Safety and recovery
 

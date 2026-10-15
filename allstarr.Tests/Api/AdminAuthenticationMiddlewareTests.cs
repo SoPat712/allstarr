@@ -101,6 +101,8 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/audience", "PUT")]
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40", "PATCH")]
     [InlineData("/api/admin/scrobbling/lastfm/authenticate", "POST")]
+    [InlineData("/api/admin/scrobbling/deliveries", "GET")]
+    [InlineData("/api/admin/scrobbling/deliveries/11111111-1111-1111-1111-111111111111/resolve", "POST")]
     public async Task InvokeAsync_NonAdminUser_ProviderSelfServiceRoutesPassToScopedControllers(
         string path,
         string method)
@@ -213,6 +215,9 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/provider-accounts/not-a-guid/audience", "PUT")]
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/audience", "GET")]
     [InlineData("/api/admin/scrobbling/status", "GET")]
+    [InlineData("/api/admin/scrobbling/deliveries", "POST")]
+    [InlineData("/api/admin/scrobbling/deliveries/invalid/resolve", "POST")]
+    [InlineData("/api/admin/scrobbling/deliveries/11111111-1111-1111-1111-111111111111/resolve/extra", "POST")]
     [InlineData("/api/admin/scrobbling/lastfm/authenticate", "GET")]
     [InlineData("/api/admin/scrobbling/lastfm/authenticate-extra", "POST")]
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/secret", "GET")]

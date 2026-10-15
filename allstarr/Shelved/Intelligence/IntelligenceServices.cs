@@ -102,9 +102,13 @@ public sealed class IntelligencePolicyService(IDbContextFactory<AllstarrDbContex
             item.BackendInstanceId == scope.BackendInstanceId);
         var occurrenceKeys = history.Select(item => item.OccurrenceKey);
         await db.PlaybackDeliveryCheckpoints.Where(item =>
-                item.OwnerUserId == scope.OwnerUserId &&
+                (item.State == allstarr.Core.Playback.ScopedPlaybackScrobbleOutcome.Delivered ||
+                        item.State == allstarr.Core.Playback.ScopedPlaybackScrobbleOutcome.Ignored) &&
+                    item.OwnerUserId == scope.OwnerUserId &&
                 item.OccurrenceKey != null && occurrenceKeys.Contains(item.OccurrenceKey))
-            .ExecuteDeleteAsync(cancellationToken);
+            .ExecuteUpdateAsync(setters => setters
+                    .SetProperty(item => item.SubmissionJson, (string?)null)
+                    .SetProperty(item => item.SignalPayloadJson, (string?)null), cancellationToken);
         await history.ExecuteDeleteAsync(cancellationToken);
         await db.ListeningHistoryImports.Where(item =>
                 item.OwnerUserId == scope.OwnerUserId && item.Protocol == scope.Protocol &&

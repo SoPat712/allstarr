@@ -7,6 +7,7 @@ using System.Net;
 using System.Xml;
 using System.Xml.Linq;
 using allstarr.Core.Intelligence;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Services.Common;
@@ -14,39 +15,49 @@ using allstarr.Services.Common;
 namespace allstarr.Services.Scrobbling;
 
 public sealed class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
-    : IExactScopePlaybackScrobbleTarget
+    : IBoundPlaybackScrobbleTarget
 {
     public string ProviderId => "lastfm";
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);
+    public Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) =>
+        accounts.UseExactAsync(scope, account, (_, _) => Task.FromResult(false), token);
+    public Task<ProviderAccountContext?> FindDestinationAsync(IntelligenceScope scope, CancellationToken token) =>
+        accounts.FindAccountAsync(scope, ProviderId, token);
+    public Task<ScopedPlaybackScrobbleResult> DeliverBoundAsync(IntelligenceScope scope, ProviderAccountContext account,
+        PlaybackTransition transition, ScopedPlaybackTrack track, long? positionTicks, DateTimeOffset observedAt,
+        string signalKey, CancellationToken token) =>
+        accounts.UseExactAsync(scope, account, (secret, ct) => SendAsync(secret, transition, track, observedAt, ct), token);
     public Task<ScopedPlaybackScrobbleResult> DeliverAsync(IntelligenceScope scope, PlaybackTransition transition, ScopedPlaybackTrack track,
         long? positionTicks, DateTimeOffset observedAt, string signalKey, CancellationToken token) =>
-        accounts.UseAsync(scope, ProviderId, async (secret, ct) =>
+        accounts.UseAsync(scope, ProviderId, (secret, ct) => SendAsync(secret, transition, track, observedAt, ct), token);
+    private async Task<ScopedPlaybackScrobbleResult> SendAsync(JsonElement secret, PlaybackTransition transition,
+        ScopedPlaybackTrack track, DateTimeOffset observedAt, CancellationToken ct)
+    {
+        var method = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart ? "track.updateNowPlaying" : "track.scrobble";
+        var values = new SortedDictionary<string, string>(StringComparer.Ordinal)
         {
-            var method = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart ? "track.updateNowPlaying" : "track.scrobble";
-            var values = new SortedDictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["api_key"] = Required(secret, "apiKey"),
-                ["artist"] = track.Artist,
-                ["method"] = method,
-                ["sk"] = Required(secret, "sessionKey"),
-                ["track"] = track.Title
-            };
-            Add(values, "album", track.Album);
-            if (!string.Equals(track.AlbumArtist, track.Artist, StringComparison.Ordinal)) Add(values, "albumArtist", track.AlbumArtist);
-            if (track.DurationMilliseconds is > 0) values["duration"] = (track.DurationMilliseconds.Value / 1000).ToString(CultureInfo.InvariantCulture);
-            if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty) values["mbid"] = mbid.ToString("D");
-            if (track.TrackNumber is > 0) values["trackNumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
-            if (method == "track.scrobble")
-            {
-                values["chosenByUser"] = track.ChosenByUser ? "1" : "0";
-                values["timestamp"] = observedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
-            }
-            values["api_sig"] = Sign(values, Required(secret, "sharedSecret")); values["format"] = "json";
-            using var response = await http.PostAsync("https://ws.audioscrobbler.com/2.0/", new FormUrlEncodedContent(values), ct);
-            await response.Content.LoadIntoBufferAsync(64 * 1024, ct);
-            var body = await response.Content.ReadAsStringAsync(ct);
-            return Classify(response, body, method == "track.scrobble");
-        }, token);
+            ["api_key"] = Required(secret, "apiKey"),
+            ["artist"] = track.Artist,
+            ["method"] = method,
+            ["sk"] = Required(secret, "sessionKey"),
+            ["track"] = track.Title
+        };
+        Add(values, "album", track.Album);
+        if (!string.Equals(track.AlbumArtist, track.Artist, StringComparison.Ordinal)) Add(values, "albumArtist", track.AlbumArtist);
+        if (track.DurationMilliseconds is > 0) values["duration"] = (track.DurationMilliseconds.Value / 1000).ToString(CultureInfo.InvariantCulture);
+        if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty) values["mbid"] = mbid.ToString("D");
+        if (track.TrackNumber is > 0) values["trackNumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
+        if (method == "track.scrobble")
+        {
+            values["chosenByUser"] = track.ChosenByUser ? "1" : "0";
+            values["timestamp"] = observedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
+        }
+        values["api_sig"] = Sign(values, Required(secret, "sharedSecret")); values["format"] = "json";
+        using var response = await http.PostAsync("https://ws.audioscrobbler.com/2.0/", new FormUrlEncodedContent(values), ct);
+        await response.Content.LoadIntoBufferAsync(64 * 1024, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return Classify(response, body, method == "track.scrobble");
+    }
     private static ScopedPlaybackScrobbleResult Classify(HttpResponseMessage response, string body, bool scrobble)
     {
         var retryAfter = RetryAfter(response);
@@ -228,63 +239,74 @@ public sealed class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedR
 }
 
 public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
-    : IExactScopePlaybackScrobbleTarget
+    : IBoundPlaybackScrobbleTarget
 {
     public string ProviderId => "listenbrainz";
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);
+    public Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) =>
+        accounts.UseExactAsync(scope, account, (secret, _) => Task.FromResult(
+            ListenBrainzServiceEndpoint.FromSecret(secret).AbsoluteUri == "https://api.listenbrainz.org/1/"), token);
+    public Task<ProviderAccountContext?> FindDestinationAsync(IntelligenceScope scope, CancellationToken token) =>
+        accounts.FindAccountAsync(scope, ProviderId, token);
+    public Task<ScopedPlaybackScrobbleResult> DeliverBoundAsync(IntelligenceScope scope, ProviderAccountContext account,
+        PlaybackTransition transition, ScopedPlaybackTrack track, long? positionTicks, DateTimeOffset observedAt,
+        string signalKey, CancellationToken token) =>
+        accounts.UseExactAsync(scope, account, (secret, ct) => SendAsync(secret, transition, track, observedAt, ct), token);
     public Task<ScopedPlaybackScrobbleResult> DeliverAsync(IntelligenceScope scope, PlaybackTransition transition, ScopedPlaybackTrack track,
         long? positionTicks, DateTimeOffset observedAt, string signalKey, CancellationToken token) =>
-        accounts.UseAsync(scope, ProviderId, async (secret, ct) =>
+        accounts.UseAsync(scope, ProviderId, (secret, ct) => SendAsync(secret, transition, track, observedAt, ct), token);
+    private async Task<ScopedPlaybackScrobbleResult> SendAsync(JsonElement secret, PlaybackTransition transition,
+        ScopedPlaybackTrack track, DateTimeOffset observedAt, CancellationToken ct)
+    {
+        var playing = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart;
+        var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret);
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            ListenBrainzServiceEndpoint.Route(baseUri, "submit-listens"));
+        request.Headers.Authorization = new("Token", Required(secret, "token"));
+        var additionalInfo = new Dictionary<string, object>
         {
-            var playing = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart;
-            var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret);
-            using var request = new HttpRequestMessage(HttpMethod.Post,
-                ListenBrainzServiceEndpoint.Route(baseUri, "submit-listens"));
-            request.Headers.Authorization = new("Token", Required(secret, "token"));
-            var additionalInfo = new Dictionary<string, object>
-            {
-                ["submission_client"] = "Allstarr",
-                ["submission_client_version"] = AppVersion.Version
-            };
-            if (track.DurationMilliseconds is > 0) additionalInfo["duration_ms"] = track.DurationMilliseconds.Value;
-            if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty)
-                additionalInfo["recording_mbid"] = mbid.ToString("D");
-            if (track.TrackNumber is > 0) additionalInfo["tracknumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
-            if (!string.IsNullOrWhiteSpace(track.ClientClass)) additionalInfo["media_player"] = track.ClientClass;
-            var metadata = new Dictionary<string, object>
-            {
-                ["artist_name"] = track.Artist,
-                ["track_name"] = track.Title,
-                ["additional_info"] = additionalInfo
-            };
-            if (!string.IsNullOrWhiteSpace(track.Album)) metadata["release_name"] = track.Album;
-            var listen = new Dictionary<string, object> { ["track_metadata"] = metadata };
-            if (!playing) listen["listened_at"] = observedAt.ToUnixTimeSeconds();
-            request.Content = JsonContent.Create(new Dictionary<string, object>
-            {
-                ["listen_type"] = playing ? "playing_now" : "single",
-                ["payload"] = new[] { listen }
-            });
-            using var response = await http.SendAsync(request, ct);
-            return response.StatusCode switch
-            {
-                >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices =>
-                    ScopedPlaybackScrobbleResult.Delivered(JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
-                HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => ScopedPlaybackScrobbleResult.Permanent(
+            ["submission_client"] = "Allstarr",
+            ["submission_client_version"] = AppVersion.Version
+        };
+        if (track.DurationMilliseconds is > 0) additionalInfo["duration_ms"] = track.DurationMilliseconds.Value;
+        if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty)
+            additionalInfo["recording_mbid"] = mbid.ToString("D");
+        if (track.TrackNumber is > 0) additionalInfo["tracknumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
+        if (!string.IsNullOrWhiteSpace(track.ClientClass)) additionalInfo["media_player"] = track.ClientClass;
+        var metadata = new Dictionary<string, object>
+        {
+            ["artist_name"] = track.Artist,
+            ["track_name"] = track.Title,
+            ["additional_info"] = additionalInfo
+        };
+        if (!string.IsNullOrWhiteSpace(track.Album)) metadata["release_name"] = track.Album;
+        var listen = new Dictionary<string, object> { ["track_metadata"] = metadata };
+        if (!playing) listen["listened_at"] = observedAt.ToUnixTimeSeconds();
+        request.Content = JsonContent.Create(new Dictionary<string, object>
+        {
+            ["listen_type"] = playing ? "playing_now" : "single",
+            ["payload"] = new[] { listen }
+        });
+        using var response = await http.SendAsync(request, ct);
+        return response.StatusCode switch
+        {
+            >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices =>
+                ScopedPlaybackScrobbleResult.Delivered(JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
+            HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => ScopedPlaybackScrobbleResult.Permanent(
+                ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
+                "Reconnect the selected ListenBrainz account and replace its expired or revoked credentials.", true,
+                JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
+            HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError =>
+                ScopedPlaybackScrobbleResult.Retrying(
                     ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                    "Reconnect the selected ListenBrainz account and replace its expired or revoked credentials.", true,
+                    "ListenBrainz could not accept the listen yet.", RetryAfter(response),
                     JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
-                HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError =>
-                    ScopedPlaybackScrobbleResult.Retrying(
-                        ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                        "ListenBrainz could not accept the listen yet.", RetryAfter(response),
-                        JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
-                _ => ScopedPlaybackScrobbleResult.Permanent(
-                    ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                    "ListenBrainz rejected the listen.",
-                    detailsJson: JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode }))
-            };
-        }, token);
+            _ => ScopedPlaybackScrobbleResult.Permanent(
+                ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
+                "ListenBrainz rejected the listen.",
+                detailsJson: JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode }))
+        };
+    }
     private static string Required(JsonElement value, string property) => value.TryGetProperty(property, out var node) && !string.IsNullOrWhiteSpace(node.GetString()) ? node.GetString()! : throw new InvalidOperationException("Scoped scrobble account is incomplete.");
     private static TimeSpan? RetryAfter(HttpResponseMessage response)
     {

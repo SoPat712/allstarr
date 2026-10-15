@@ -12,6 +12,9 @@ public interface IScopedRecommendationAccountAccessor
     Task<ProviderAccountContext?> FindAccountAsync(
         IntelligenceScope scope, string providerId, CancellationToken cancellationToken) =>
         Task.FromResult<ProviderAccountContext?>(null);
+    Task<T> UseExactAsync<T>(IntelligenceScope scope, ProviderAccountContext account,
+        Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("Exact account access is required.");
     Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,
         Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken cancellationToken);
 }
@@ -36,6 +39,23 @@ public sealed class ScopedRecommendationAccountAccessor(IDbContextFactory<Allsta
         return account == null ? null : new ProviderAccountContext(account.Id, account.ProviderId, account.Scope,
             account.Revision, account.Enabled, account.OwnerUserId,
             "recommendation-account", account.SecretReferenceId);
+    }
+    public async Task<T> UseExactAsync<T>(IntelligenceScope scope, ProviderAccountContext account,
+        Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
+    {
+        IntelligencePolicyService.ValidateScope(scope);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (!await IntelligencePolicyService.OwnsBackendAsync(db, scope, cancellationToken) ||
+            !await db.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Id == account.AccountId &&
+                item.ProviderId == account.ProviderId && item.Enabled && item.Revision == account.Revision &&
+                item.OwnerUserId == account.OwnerUserId && item.SecretReferenceId == account.SecretReferenceId &&
+                (item.OwnerUserId == scope.OwnerUserId || item.OwnerUserId == null), cancellationToken))
+            throw new UnauthorizedAccessException("The saved scrobble destination needs attention.");
+        return await secrets.UseAsync(account, async bytes =>
+        {
+            using var document = JsonDocument.Parse(bytes);
+            return await operation(document.RootElement, cancellationToken);
+        }, cancellationToken);
     }
     public async Task<T> UseAsync<T>(IntelligenceScope scope, string providerId,
         Func<JsonElement, CancellationToken, Task<T>> operation, CancellationToken cancellationToken)

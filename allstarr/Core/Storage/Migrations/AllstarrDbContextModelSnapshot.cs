@@ -1489,6 +1489,18 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("AttemptStartedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("DestinationAccountId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("DestinationAccountRevision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("DestinationJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("DetailsJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -1509,24 +1521,40 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("ReplaySafe")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("RequiresReauthentication")
                         .HasColumnType("INTEGER");
 
                     b.Property<long?>("RetryAfter")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("SafeMessage")
                         .HasMaxLength(500)
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("SendCount")
+                        .HasColumnType("INTEGER");
 
                     b.Property<string>("SignalKey")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SignalPayloadJson")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubmissionJson")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("TargetId")

@@ -16,7 +16,7 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Tests;
 
-public sealed class PlaybackSignalPipelineTests : IAsyncLifetime
+public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
     private readonly Guid user = Guid.CreateVersion7();

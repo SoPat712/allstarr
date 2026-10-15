@@ -19,7 +19,7 @@ public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTran
     string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt, string SignalKey,
     string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null,
     PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol",
-    PlaybackStreamSource? StreamSource = null);
+    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null);
 public interface IPlaybackSignalPipeline { Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default); }
 public interface IScopedPlaybackScrobbleDelivery
 {
@@ -32,7 +32,8 @@ public interface IPlaybackLyricsPrefetch
 
 public sealed class PlaybackSignalPipeline(
     DurableJobQueue jobs,
-    IPlaybackDeliveryActivitySource? playbackActivity = null) : IPlaybackSignalPipeline
+    IPlaybackDeliveryActivitySource? playbackActivity = null,
+    PlaybackScrobbleAcceptance? scrobbleAcceptance = null) : IPlaybackSignalPipeline
 {
     public const string JobType = "playback.signal.process";
     public async Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default)
@@ -62,10 +63,11 @@ public sealed class PlaybackSignalPipeline(
         // A paused or repeated position can still be a new observation. Only identical
         // observations share a job; listening effects deduplicate by occurrence separately.
         var key = Hash(JsonSerializer.Serialize(payload));
-        var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaybackSignalPayload>(JobType, key,
-            payload with { SignalKey = key },
-            scope.OwnerUserId,
-            CorrelationId: execution.CorrelationId), cancellationToken);
+        var enqueue = new DurableJobEnqueueRequest<PlaybackSignalPayload>(JobType, key,
+            payload with { SignalKey = key }, scope.OwnerUserId, CorrelationId: execution.CorrelationId);
+        var result = scrobbleAcceptance == null
+            ? await jobs.EnqueueAsync(enqueue, cancellationToken)
+            : await scrobbleAcceptance.EnqueueAsync(enqueue, cancellationToken);
         return result.Created;
     }
 
@@ -91,9 +93,20 @@ public sealed class PlaybackSignalPipeline(
 public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals,
     IScopedPlaybackScrobbleDelivery scrobbles, IPlaybackLyricsPrefetch lyrics,
     IDbContextFactory<AllstarrDbContext> factory, IPlaybackTrackResolver? tracks = null,
-    MusicBrainzListeningEnrichmentQueue? musicBrainz = null) : IDurableJobHandler
+    MusicBrainzListeningEnrichmentQueue? musicBrainz = null) : IDurableJobHandler, IDurableJobRecoveryHandler
 {
     public string JobType => PlaybackSignalPipeline.JobType;
+    public async Task RecoverAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await db.PlaybackDeliveryCheckpoints.Where(x => x.AttemptStartedAt != null && !x.ReplaySafe &&
+                x.State == ScopedPlaybackScrobbleOutcome.Retrying)
+            .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
+                .SetProperty(x => x.ProviderCode, "ambiguous")
+                .SetProperty(x => x.SafeMessage, "Delivery was interrupted after its send attempt began. Check the destination history before resolving it.")
+                .SetProperty(x => x.UpdatedAt, DateTimeOffset.UtcNow)
+                .SetProperty(x => x.Revision, x => x.Revision + 1), cancellationToken);
+    }
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
         var payload = execution.Claim.Payload.Deserialize<PlaybackSignalPayload>();
@@ -130,7 +143,20 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return DurableJobCompletion.Cancelled(); }
         catch (ScopedPlaybackScrobbleDeliveryException ex) when (ex.Retryable)
-        { return DurableJobCompletion.Retry(ex.Code, ex.Message, ex.RetryAfter); }
+        {
+            var job = await ownerDb.Jobs.AsNoTracking().SingleAsync(x => x.Id == execution.Claim.JobId, cancellationToken);
+            if (job.FailureCount + 1 >= job.MaxAttempts)
+            {
+                var key = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
+                await ownerDb.PlaybackDeliveryCheckpoints.Where(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
+                        x.SignalKey == key && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null)
+                    .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
+                        .SetProperty(x => x.ProviderCode, "retry-exhausted")
+                        .SetProperty(x => x.SafeMessage, "Automatic retries are exhausted. Check the destination and explicitly retry this saved listen.")
+                        .SetProperty(x => x.Revision, x => x.Revision + 1), cancellationToken);
+            }
+            return DurableJobCompletion.Retry(ex.Code, ex.Message, ex.RetryAfter);
+        }
         catch (ScopedPlaybackScrobbleDeliveryException ex)
         { return DurableJobCompletion.Failure(ex.Code, ex.Message); }
         catch (UnauthorizedAccessException) { return DurableJobCompletion.Failure("playback_scrobble_unauthorized", "The scoped scrobble account is unauthorized."); }

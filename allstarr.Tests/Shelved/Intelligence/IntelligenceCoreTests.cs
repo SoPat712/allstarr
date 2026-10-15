@@ -189,7 +189,7 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Equal(ListeningEventState.Playing, events[activeKey].State);
         Assert.Equal(otherUser, events[otherKey].OwnerUserId);
         Assert.Equal("other", events[otherKey].BackendInstanceId);
-        Assert.Equal([recentKey, otherKey], await db.PlaybackDeliveryCheckpoints.AsNoTracking()
+        Assert.Equal([expiredKey, recentKey, otherKey], await db.PlaybackDeliveryCheckpoints.AsNoTracking()
             .OrderBy(item => item.OccurrenceKey).Select(item => item.OccurrenceKey!).ToArrayAsync());
         var signals = await db.ListeningSignals.AsNoTracking().ToListAsync();
         Assert.DoesNotContain(signals, item => item.ExpiresAt <= _clock.UtcNow);
@@ -489,7 +489,8 @@ public sealed class IntelligenceCoreTests : IAsyncLifetime
         Assert.Empty(await db.GeneratedSetEntries.ToListAsync());
         Assert.Equal("other", Assert.Single(await db.ListeningEvents.ToListAsync()).BackendInstanceId);
         Assert.Equal("other", Assert.Single(await db.ListeningHistoryImports.ToListAsync()).BackendInstanceId);
-        Assert.Equal(new string('b', 64), Assert.Single(await db.PlaybackDeliveryCheckpoints.ToListAsync()).OccurrenceKey);
+        Assert.Equal([new string('a', 64), new string('b', 64)], await db.PlaybackDeliveryCheckpoints
+            .OrderBy(item => item.OccurrenceKey).Select(item => item.OccurrenceKey!).ToArrayAsync());
         Assert.Equal(DurableJobState.Cancelled, (await db.Jobs.SingleAsync(item => item.Id == exactEnrichment.Id)).State);
         Assert.Equal(DurableJobState.Pending, (await db.Jobs.SingleAsync(item => item.Id == otherEnrichment.Id)).State);
         Assert.False((await db.JobSchedules.SingleAsync()).Enabled);

@@ -320,6 +320,11 @@ public sealed class ProviderHealthMigrationTests
         (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
             "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
         (table == "provider_download_artifacts" && component is "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL" or "\"SupersededAt\" INTEGER NULL") ||
+        (table == "playback_delivery_checkpoints" && component is "\"AttemptStartedAt\" INTEGER NULL" or
+            "\"DestinationAccountId\" TEXT NULL" or "\"DestinationAccountRevision\" INTEGER NULL" or
+            "\"DestinationJson\" TEXT NULL" or "\"ReplaySafe\" INTEGER NOT NULL DEFAULT 0" or
+            "\"Revision\" INTEGER NOT NULL DEFAULT 0" or "\"SendCount\" INTEGER NOT NULL DEFAULT 0" or
+            "\"SignalPayloadJson\" TEXT NULL" or "\"SubmissionJson\" TEXT NULL") ||
         (table == "favorite_states" && component == "\"DisplayMetadataJson\" TEXT NULL") ||
         (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
 
