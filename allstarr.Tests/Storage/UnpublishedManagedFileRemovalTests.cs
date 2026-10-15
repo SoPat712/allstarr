@@ -7,7 +7,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class UnpublishedManagedFileRemovalTests : IAsyncLifetime
+public sealed partial class UnpublishedManagedFileRemovalTests : IAsyncLifetime
 {
     private readonly string managedRoot = Path.Combine(Path.GetTempPath(), "allstarr-unpublished-managed", Guid.NewGuid().ToString("N"));
     private readonly string sourceRoot = Path.Combine(Path.GetTempPath(), "allstarr-unpublished-source", Guid.NewGuid().ToString("N"));

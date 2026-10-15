@@ -12,6 +12,12 @@ public interface IManagedFileRemovalStore
     Task<bool> TryMarkUnpublishedRemovedAsync(
         ManagedFileRecord expected,
         CancellationToken cancellationToken) => Task.FromResult(false);
+
+    // Implementations can opt into crash recovery by returning a durably revoked
+    // household record. Until then, a resume request must remain a no-op.
+    Task<ManagedFileRecord?> GetRevokedUnpublishedAsync(
+        Guid id,
+        CancellationToken cancellationToken) => Task.FromResult<ManagedFileRecord?>(null);
 }
 
 public sealed class ManagedFileRemovalService(
@@ -40,6 +46,31 @@ public sealed class ManagedFileRemovalService(
         if (!await IsSafeCurrentFileAsync(record, true, cancellationToken)) return true;
         // Durable revocation precedes this delete. If deletion fails, the record
         // remains revoked and an operator can repair the orphan safely.
+        File.Delete(record.CanonicalPath);
+        return true;
+    }
+
+    public async Task<bool> ResumeUnpublishedRemovalAsync(
+        Guid id,
+        string requestingScopeKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (id == Guid.Empty || string.IsNullOrWhiteSpace(requestingScopeKey)) return false;
+        var record = await store.GetRevokedUnpublishedAsync(id, cancellationToken);
+        if (record is null || !record.IsManaged || record.OwnerUserId is not null ||
+            record.SourceJobId is not null || record.ReferenceCount != 0 ||
+            !StringComparer.Ordinal.Equals(record.ScopeKey, requestingScopeKey)) return false;
+
+        var exists = File.Exists(record.CanonicalPath);
+        if (!exists)
+            return await IsSafeCurrentFileAsync(record, false, cancellationToken);
+
+        // Existing bytes require the identity captured at placement time. Without
+        // it, a resumed cleanup cannot distinguish the owned file from a replacement.
+        if (string.IsNullOrWhiteSpace(record.FileSystemDeviceId) ||
+            string.IsNullOrWhiteSpace(record.FileSystemFileId) ||
+            !await IsSafeCurrentFileAsync(record, true, cancellationToken)) return false;
+
         File.Delete(record.CanonicalPath);
         return true;
     }

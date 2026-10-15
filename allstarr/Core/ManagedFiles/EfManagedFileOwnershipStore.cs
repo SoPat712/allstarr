@@ -124,6 +124,31 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
     public async Task<ManagedFileRecord?> GetAsync(Guid id, CancellationToken cancellationToken) =>
         Map(await Files.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.RemovedAt == null, cancellationToken));
 
+    public async Task<ManagedFileRecord?> GetRevokedUnpublishedAsync(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        if (id == Guid.Empty || dbContext.Database.CurrentTransaction is not null)
+            return null;
+
+        var entity = await Files.AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == id && item.RemovedAt != null && item.IsManaged &&
+            item.OwnerUserId == null && item.SourceJobId == null && item.ReferenceCount == 0,
+            cancellationToken);
+        if (entity is null || entity.RootId == Guid.Empty ||
+            !StringComparer.Ordinal.Equals(entity.ScopeKey,
+                ManagedFileScopeKey.Create(null, entity.RootId)))
+            return null;
+        if (await References.AsNoTracking().AnyAsync(item =>
+                item.ManagedFileId == entity.Id && item.ReleasedAt == null,
+                cancellationToken))
+            return null;
+        if (await dbContext.Set<RecordingKeptRouteEntity>().AsNoTracking().AnyAsync(
+                item => item.ManagedFileId == entity.Id, cancellationToken))
+            return null;
+        return Map(entity);
+    }
+
     public async Task<bool> TryMarkUnpublishedRemovedAsync(
         ManagedFileRecord expected,
         CancellationToken cancellationToken)
