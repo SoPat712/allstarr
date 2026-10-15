@@ -1458,8 +1458,7 @@ public sealed partial class ProtocolProviderGateway(
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(NormalizeProvider)
             .ToImmutableHashSet(StringComparer.Ordinal);
-        var ordered = configured
-            .Select(NormalizeProvider)
+        var ordered = ProviderOrderPolicyCatalog.NormalizeOrder(capability, configured)
             .Where(providerId => !disabled.Contains(providerId))
             .Where(providerId => availableProviders.Contains(providerId, StringComparer.Ordinal))
             .Distinct(StringComparer.Ordinal)

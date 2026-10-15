@@ -26,6 +26,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Theory]
+    [InlineData("Providers:LyricsOrder")]
+    [InlineData("MULTI_PROVIDER_LYRICS_ORDER")]
+    public void LegacyLyricsOrderAddsMissingBackendBeforeAnExplicitKeptPosition(string key)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { [key] = "lrclib,kept" }).Build();
+        var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
+            new ProviderRegistry([]), new HttpClientFactory(), configuration);
+
+        Assert.Equal(new[] { "backend", "kept" }, gateway.GetProviderOrder(ProviderCapabilityKind.Lyrics));
+    }
+
+    [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
     public async Task MetadataCollectionsFilterPerViewerWithoutChangingSharedProviderData(ProtocolKind protocol)
