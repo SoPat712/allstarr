@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Mvc;
 using allstarr.Core.Music;
@@ -96,17 +97,20 @@ public sealed class SubsonicLyricsProtocolAdapter
     private readonly ISubsonicLyricsLookup _lyricsLookup;
     private readonly SubsonicProxyService _proxyService;
     private readonly SubsonicResponseBuilder _responseBuilder;
+    private readonly IProtocolLyricsResolver _lyrics;
 
     public SubsonicLyricsProtocolAdapter(
         ILocalLibraryService localLibraryService,
         ISubsonicLyricsLookup lyricsLookup,
         SubsonicProxyService proxyService,
-        SubsonicResponseBuilder responseBuilder)
+        SubsonicResponseBuilder responseBuilder,
+        IProtocolLyricsResolver lyrics)
     {
         _localLibraryService = localLibraryService;
         _lyricsLookup = lyricsLookup;
         _proxyService = proxyService;
         _responseBuilder = responseBuilder;
+        _lyrics = lyrics;
     }
 
     public async Task<IActionResult> GetLyricsBySongIdAsync(
@@ -124,18 +128,61 @@ public sealed class SubsonicLyricsProtocolAdapter
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(id);
         if (!isExternal)
         {
-            var result = await _proxyService.RelayRawAsync(
-                "rest/getLyricsBySongId",
-                parameters,
-                cancellationToken);
-            return new SubsonicRelayResult(
-                result.Body,
-                result.ContentType ?? $"application/{format}",
-                (int)result.StatusCode);
+            var metadata = await _proxyService.RelayRawAsync("rest/getSong",
+                parameters.SetValue("f", "json"), cancellationToken);
+            if ((int)metadata.StatusCode is < 200 or >= 300)
+                return new SubsonicRelayResult(metadata.Body, metadata.ContentType ?? $"application/{format}", (int)metadata.StatusCode);
+            var song = ParseNativeSong(metadata.Body, id);
+            if (song == null) return _responseBuilder.CreateError(format, 70, "Song not found");
+            SubsonicProxyResponse? backendLyrics = null;
+            var selected = await _lyrics.FindAsync(protocol, MusicLyrics.ForLookup(song), id,
+                new ProtocolLyricsSources(Backend: async token =>
+                {
+                    var response = await _proxyService.RelayRawAsync("rest/getLyricsBySongId", parameters, token);
+                    backendLyrics = response;
+                    if ((int)response.StatusCode is < 200 or >= 300) return null;
+                    return BackendLyrics.ParseSubsonic(response.Body,
+                        response.ContentType?.Contains("json", StringComparison.OrdinalIgnoreCase) ?? format == "json");
+                }));
+            if ((selected == null || selected.Source == "backend") && backendLyrics != null)
+                return new SubsonicRelayResult(backendLyrics.Body,
+                    backendLyrics.ContentType ?? $"application/{format}", (int)backendLyrics.StatusCode);
+            return _responseBuilder.CreateLyricsBySongIdResponse(format, SubsonicStructuredLyricsMapper.Map(song, selected));
         }
 
         var lyrics = await _lyricsLookup.FindAsync(protocol, provider!, externalId!, cancellationToken);
         return _responseBuilder.CreateLyricsBySongIdResponse(format, lyrics);
+    }
+
+    private static Song? ParseNativeSong(byte[] body, string expectedId)
+    {
+        if (body.Length > 2 * 1024 * 1024) return null;
+        try
+        {
+            using var document = JsonDocument.Parse(body, new JsonDocumentOptions { MaxDepth = 16 });
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("subsonic-response", out var response) ||
+                response.ValueKind != JsonValueKind.Object || Text(response, "status") != "ok" ||
+                !response.TryGetProperty("song", out var song) || song.ValueKind != JsonValueKind.Object ||
+                Text(song, "id") != expectedId || song.TryGetProperty("isVideo", out var video) && video.ValueKind == JsonValueKind.True ||
+                song.TryGetProperty("type", out var type) && type.ValueKind == JsonValueKind.String && type.GetString() != "music")
+                return null;
+            int? duration = song.TryGetProperty("duration", out var length) && length.TryGetInt32(out var seconds) && seconds >= 0
+                ? seconds : null;
+            return new Song
+            {
+                Id = expectedId,
+                IsLocal = true,
+                Title = Text(song, "title"),
+                Artist = Text(song, "artist"),
+                Album = Text(song, "album"),
+                Duration = duration
+            };
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException) { return null; }
+
+        static string Text(JsonElement item, string property) => item.TryGetProperty(property, out var value) &&
+            value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : "";
     }
 
     private sealed class SubsonicRelayResult(

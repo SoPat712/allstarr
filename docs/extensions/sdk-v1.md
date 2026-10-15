@@ -144,6 +144,8 @@ Allstarr ships the SDK and control plane, not a bundled registry or third-party 
 
 Reserved built-in provider IDs cannot be replaced by a registry package. Package icons and descriptions come from reviewed registry/package metadata and are cached through the shared media/cache layer.
 
+The IDs `backend` and `kept` belong to host-owned lyrics sources. They cannot be registered as providers or compatibility aliases.
+
 ## Lifecycle
 
 1. Add or refresh a registry.

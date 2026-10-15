@@ -6,6 +6,19 @@ namespace allstarr.Tests;
 
 public sealed class ProviderRegistryTests
 {
+    [Theory]
+    [InlineData("backend")]
+    [InlineData("kept")]
+    public void LocalLyricsSourcesCannotBeReplacedByAProviderOrAlias(string id)
+    {
+        Assert.Throws<InvalidOperationException>(() => new ProviderRegistry([Registration(id)]));
+        var registry = new ProviderRegistry([]);
+        Assert.Throws<InvalidOperationException>(() => registry.RegisterOrReplaceExtension(new ProviderRegistration(
+            BaseDescriptor(id, origin: ProviderOrigin.Extension, entryPoint: "index.js"), [new FakeMetadataCapability(id)])));
+        Assert.Throws<InvalidOperationException>(() => new ProviderRegistry([new ProviderRegistration(
+            BaseDescriptor("fixture-provider"), [new FakeMetadataCapability("fixture-provider")], [id])]));
+    }
+
     [Fact]
     public void Registry_ValidatesThenOrdersProvidersAndCapabilityQueriesDeterministically()
     {

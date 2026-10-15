@@ -10,7 +10,7 @@
   import AudioQualityField from "$lib/components/AudioQualityField.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
-  import { humanize } from "$lib/sources";
+  import { humanize, lyricsSourceDisplayName } from "$lib/sources";
   import { fieldValue, mergeRoutingOrders, move } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
 
@@ -192,6 +192,7 @@
             {/if}
             {#each orders[group.id] ?? group.providers as providerId, index}
               {@const definition = provider(providerId)}
+              {@const label = group.id === "lyrics" ? lyricsSourceDisplayName(schema?.providers ?? [], providerId) : definition?.name ?? providerId}
               <li
                 draggable="true"
                 class:dragging={dragging?.groupId === group.id && dragging.index === index}
@@ -201,11 +202,11 @@
                 ondragend={() => { dragging = null; }}
               >
                 <span class="routing-index" aria-hidden="true"><GripVertical size={16} />{index + 1}</span>
-                <ProviderArtwork id={providerId} definition={definition} />
-                <span class="routing-copy"><strong>{definition?.name ?? humanize(providerId)}</strong><small>{definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
+                <ProviderArtwork id={providerId} definition={definition} label={label} />
+                <span class="routing-copy"><strong>{group.id === "lyrics" ? label : definition?.name ?? humanize(providerId)}</strong><small>{providerId === "backend" ? "Lyrics supplied by your media server" : definition?.categories?.map(humanize).join(" · ") || "Provider service"}</small></span>
                 <span class="routing-actions">
-                  <Button variant="ghost" size="icon" aria-label={`Move ${definition?.name ?? providerId} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
-                  <Button variant="ghost" size="icon" aria-label={`Move ${definition?.name ?? providerId} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={index === 0} onclick={() => moveProvider(group, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={index === (orders[group.id] ?? group.providers).length - 1} onclick={() => moveProvider(group, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
                 </span>
               </li>
             {/each}

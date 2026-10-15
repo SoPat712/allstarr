@@ -1380,6 +1380,7 @@ public sealed partial class ProtocolProviderGateway(
         if (definition == null) return [];
         var availableProviders = registry.FindByCapability(capability, includeNonOperational: true)
             .Select(provider => NormalizeProvider(provider.Id))
+            .Concat(capability == ProviderCapabilityKind.Lyrics ? ["backend", "kept"] : Array.Empty<string>())
             .ToArray();
         if (effectivePolicy != null)
         {
@@ -1398,8 +1399,7 @@ public sealed partial class ProtocolProviderGateway(
         var ordered = configured
             .Select(NormalizeProvider)
             .Where(providerId => !disabled.Contains(providerId))
-            .Where(providerId => registry.FindByCapability(capability, includeNonOperational: true)
-                .Any(provider => provider.Id.Equals(providerId, StringComparison.Ordinal)))
+            .Where(providerId => availableProviders.Contains(providerId, StringComparer.Ordinal))
             .Distinct(StringComparer.Ordinal)
             .ToList();
         ordered.AddRange(availableProviders

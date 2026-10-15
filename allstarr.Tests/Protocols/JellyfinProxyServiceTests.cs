@@ -17,6 +17,28 @@ namespace allstarr.Tests;
 
 public class JellyfinProxyServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task NativeLyricsJsonAndMetadataReadsHonorCallerCancellation(bool metadata)
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _mockHandler.Protected().Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(),
+                ItExpr.IsAny<CancellationToken>())
+            .Returns(async (HttpRequestMessage _, CancellationToken token) =>
+            {
+                started.TrySetResult();
+                await Task.Delay(Timeout.InfiniteTimeSpan, token);
+                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+            });
+        using var cancellation = new CancellationTokenSource();
+        var pending = metadata ? _service.GetItemAsync("native-song", cancellationToken: cancellation.Token)
+            : _service.GetJsonAsync("Audio/native-song/Lyrics", cancellationToken: cancellation.Token);
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(1)));
+    }
+
     private readonly JellyfinProxyService _service;
     private readonly Mock<HttpMessageHandler> _mockHandler;
     private readonly Mock<IHttpClientFactory> _mockHttpClientFactory;

@@ -5,12 +5,26 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
 using allstarr.Services;
+using Microsoft.Extensions.Configuration;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData("", "kept,backend")]
+    [InlineData("backend", "kept")]
+    public void LyricsOrderIncludesLocalSourcesWithoutRegisteringFakeProviderServices(string disabled, string expected)
+    {
+        var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Providers:LyricsOrder"] = "kept,backend", ["Providers:Disabled"] = disabled }).Build();
+        var gateway = new ProtocolProviderGateway(Mock.Of<IProviderRouter>(MockBehavior.Strict),
+            new ProviderRegistry([]), new HttpClientFactory(), configuration);
+        Assert.Equal(expected.Split(','), gateway.GetProviderOrder(ProviderCapabilityKind.Lyrics));
+        Assert.Empty(gateway.GetProviderOrder(ProviderCapabilityKind.Metadata));
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]

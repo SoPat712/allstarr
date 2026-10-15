@@ -11,7 +11,7 @@ public partial class JellyfinController
 {
     #region Lyrics
 
-    // Prefer Jellyfin's embedded lyrics for local tracks before provider fallbacks.
+    // Native and provider lyrics use the same configured source selection.
     [HttpGet("Audio/{itemId}/Lyrics")]
     [HttpGet("Items/{itemId}/Lyrics")]
     public async Task<IActionResult> GetLyrics(string itemId)
@@ -29,26 +29,6 @@ public partial class JellyfinController
             "🎵 Lyrics request: itemId={ItemId}, isExternal={IsExternal}, provider={Provider}, externalId={ExternalId}",
             itemId, isExternal, provider, externalId);
 
-        if (!isExternal)
-        {
-            _logger.LogDebug("Checking Jellyfin for embedded lyrics for local track: {ItemId}", itemId);
-
-            var (jellyfinLyrics, statusCode) =
-                await _proxyService.GetJsonAsync($"Audio/{itemId}/Lyrics", null, Request.Headers);
-
-            _logger.LogDebug("Jellyfin lyrics check result: statusCode={StatusCode}, hasLyrics={HasLyrics}",
-                statusCode, jellyfinLyrics != null);
-
-            if (jellyfinLyrics != null && statusCode == 200)
-            {
-                _logger.LogInformation("Found embedded lyrics in Jellyfin for track {ItemId}", itemId);
-                return new JsonResult(JsonSerializer.Deserialize<object>(jellyfinLyrics.RootElement.GetRawText()));
-            }
-
-            _logger.LogWarning("No embedded lyrics found in Jellyfin (status: {StatusCode}), trying configured sources",
-                statusCode);
-        }
-
         var protocol = HttpContext.RequireProtocolExecutionContext();
         LyricsInfo? lyrics;
         if (isExternal)
@@ -64,8 +44,11 @@ public partial class JellyfinController
         }
         else
         {
-            var (item, _) = await _proxyService.GetItemAsync(itemId, Request.Headers);
-            if (item == null || !item.RootElement.TryGetProperty("Type", out var typeEl) ||
+            var (item, _) = await _proxyService.GetItemAsync(itemId, Request.Headers, protocol.CancellationToken);
+            using var nativeItem = item;
+            if (item == null || item.RootElement.ValueKind != JsonValueKind.Object ||
+                !item.RootElement.TryGetProperty("Id", out var nativeId) || nativeId.ValueKind != JsonValueKind.String ||
+                !SameNativeItem(nativeId.GetString(), itemId) || !item.RootElement.TryGetProperty("Type", out var typeEl) ||
                 typeEl.GetString() != "Audio")
             {
                 return NotFound(new { error = "Song not found" });
@@ -73,6 +56,8 @@ public partial class JellyfinController
 
             var song = new Song
             {
+                Id = itemId,
+                IsLocal = true,
                 Title = item.RootElement.TryGetProperty("Name", out var name) ? name.GetString() ?? "" : "",
                 Artist = item.RootElement.TryGetProperty("AlbumArtist", out var artist)
                     ? artist.GetString() ?? ""
@@ -89,8 +74,27 @@ public partial class JellyfinController
                 spotifyTrackId = spotifyId.GetString();
             }
 
-            lyrics = await MusicLyrics.FindForLibrarySongAsync(
-                _protocolLyricsResolver, protocol, song, itemId, spotifyTrackId);
+            song.SpotifyId = spotifyTrackId;
+            JsonDocument? backendLyrics = null;
+            try
+            {
+                lyrics = await _protocolLyricsResolver.FindAsync(protocol, MusicLyrics.ForLookup(song), itemId,
+                    new ProtocolLyricsSources(Backend: async token =>
+                    {
+                        var (body, status) = await _proxyService.GetJsonAsync(
+                            $"Audio/{Uri.EscapeDataString(itemId)}/Lyrics", null, Request.Headers, token);
+                        if (status != StatusCodes.Status200OK || body == null)
+                        {
+                            body?.Dispose();
+                            return null;
+                        }
+                        backendLyrics = body;
+                        return BackendLyrics.ParseJellyfin(body.RootElement);
+                    }));
+                if (lyrics?.Source == "backend" && backendLyrics != null)
+                    return Content(backendLyrics.RootElement.GetRawText(), "application/json", System.Text.Encoding.UTF8);
+            }
+            finally { backendLyrics?.Dispose(); }
         }
 
         if (lyrics == null)
@@ -110,4 +114,8 @@ public partial class JellyfinController
     }
 
     #endregion
+
+    private static bool SameNativeItem(string? actual, string expected) =>
+        string.Equals(actual, expected, StringComparison.Ordinal) ||
+        Guid.TryParse(actual, out var actualGuid) && Guid.TryParse(expected, out var expectedGuid) && actualGuid == expectedGuid;
 }

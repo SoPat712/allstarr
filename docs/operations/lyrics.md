@@ -4,6 +4,10 @@ Set the household source order in **Integrations → Routing → Lyrics**. Allst
 
 Listeners can save their own source order in **Listening preferences → Lyrics source order**. This takes precedence over the household order in both protocols. Saving display preferences alone preserves the existing order; **Reset to household defaults** removes personal choices and follows the current household settings again. Concurrent edits require reloading the latest preferences before saving.
 
+**Media server lyrics** participates in the same movable order. It is first in the default order; an existing saved order is retained. Native Jellyfin and Subsonic song requests verify the requested song before querying other sources. When backend lyrics win, their original response is preserved, including language, offsets, enhanced cues and additional metadata. Plain backend lyrics remain a fallback while later sources are checked for timing. A failed Subsonic backend lookup keeps its original response if no other source succeeds.
+
+Native parsing follows the [Jellyfin 10.11 lyrics DTOs](https://github.com/jellyfin/jellyfin/tree/v10.11.0/MediaBrowser.Model/Lyrics) and [OpenSubsonic structured lyrics](https://opensubsonic.netlify.app/docs/responses/structuredlyrics/). Verified times retain millisecond precision, and plain text is not assigned invented timestamps.
+
 ## LyricsPlus
 
 LyricsPlus requires no account. It looks up a song using its title, artists, album and duration. With no server URL configured, Allstarr tries `lyricsplus.binimum.org` and then `lyricsplus.prjktla.workers.dev`. Public service availability can change; a configured source is not a promise that either instance is online or has a particular song.

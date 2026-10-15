@@ -1557,6 +1557,82 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal("\"art-v1\"", observed[^1].IfRange);
     }
 
+    [Theory]
+    [InlineData("backend,lrclib", true, true, true)]
+    [InlineData("lrclib,backend", true, true, false)]
+    [InlineData("backend,lrclib", false, true, false)]
+    [InlineData("backend,lrclib", false, false, true)]
+    public async Task JellyfinNativeLyricsFollowSavedOrderAndPreserveTheSelectedBackendBody(
+        string order, bool backendTimed, bool providerTimed, bool expectBackend)
+    {
+        var calls = new List<string>();
+        var native = """{"Metadata":{"Title":"Native fixture","IsSynced":BACKEND_TIMED,"Offset":-1250000,"Custom":"preserve"},"Lyrics":[{"Text":"Native line","Start":12340000,"Cues":[{"Text":"Native","Start":12340000}]}]}""".Replace("BACKEND_TIMED", backendTimed.ToString().ToLowerInvariant(), StringComparison.Ordinal);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(order.Split(','));
+        gateway.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
+                ProviderLyricsFormat.LineTimed, "Fixture Song", It.IsAny<IReadOnlyList<string>>(), "Fixture Album", 123))
+            .Callback(() => calls.Add("lrclib"))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
+                providerTimed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
+                providerTimed ? "[00:01.234]Provider line" : "Provider line"));
+        using var factory = new ProtocolFactory("Jellyfin", request =>
+        {
+            if (request.RequestUri!.AbsolutePath == "/Users/Me")
+                return Json(200, """{"Id":"user-1","Name":"Fixture User"}""");
+            if (request.RequestUri.AbsolutePath == "/Items")
+                return ItemLookup("""{"Id":"native-song","Type":"Audio","Name":"Fixture Song","AlbumArtist":"Fixture Artist","Album":"Fixture Album","RunTimeTicks":1230000000}""");
+            if (request.RequestUri.AbsolutePath == "/Audio/native-song/Lyrics")
+            {
+                calls.Add("backend");
+                return Json(200, native);
+            }
+            throw new InvalidOperationException("Unexpected fixture backend request");
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        }, new Dictionary<string, string?> { ["MULTI_PROVIDER_LYRICS_ORDER"] = order });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Audio/native-song/Lyrics?api_key=fixture-key");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        if (expectBackend)
+            Assert.Equal(CanonicalJson(JsonDocument.Parse(native).RootElement), CanonicalJson(JsonDocument.Parse(body).RootElement));
+        else Assert.Contains("Provider line", body, StringComparison.Ordinal);
+        Assert.Equal(order.Split(',').Take(calls.Count), calls);
+        Assert.Equal(expectBackend && backendTimed ? 1 : order.StartsWith("lrclib", StringComparison.Ordinal) ? 1 : 2, calls.Count);
+    }
+
+    [Theory]
+    [InlineData("different-song")]
+    [InlineData(null)]
+    public async Task NativeLyricsNeverUseMetadataForADifferentOrUnidentifiedItem(string? returnedId)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib"]);
+        gateway.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
+                It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
+                ProviderLyricsFormat.LineTimed, "[00:01.000]Unverified metadata was used"));
+        using var factory = new ProtocolFactory("Jellyfin", request => request.RequestUri!.AbsolutePath switch
+        {
+            "/Users/Me" => Json(200, """{"Id":"user-1","Name":"Fixture User"}"""),
+            "/Items" => ItemLookup(JsonSerializer.Serialize(new { Id = returnedId, Type = "Audio", Name = "Unverified fixture", AlbumArtist = "Artist" })),
+            "/Audio/requested-song/Lyrics" => Json(404, "{}"),
+            _ => throw new InvalidOperationException("Unexpected fixture request")
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/Audio/requested-song/Lyrics?api_key=fixture-key");
+        Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
+        Assert.DoesNotContain("Unverified", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
+        gateway.Verify(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+    }
+
     [Fact]
     public async Task JellyfinLyrics_PreservesLocalFirstFallbackAndNotFoundFixtures()
     {
@@ -1574,8 +1650,8 @@ public sealed partial class ProtocolRouteFixtureTests
                     .ReturnsAsync((Song?)null);
             }
 
-            if (fixture.TryGetProperty("itemBody", out var item) &&
-                item.GetProperty("Type").GetString() == "Audio")
+            if (!(fixture.TryGetProperty("external", out var externalItem) && externalItem.GetBoolean()) &&
+                (!fixture.TryGetProperty("itemBody", out var item) || item.GetProperty("Type").GetString() == "Audio"))
             {
                 gateway.Setup(service => service.GetProviderOrder(ProviderCapabilityKind.Lyrics))
                     .Returns(Array.Empty<string>());
@@ -1631,7 +1707,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     CanonicalJson(fixture.GetProperty("upstreamLyricsBody")),
                     CanonicalJson(JsonDocument.Parse(body).RootElement));
                 Assert.Equal(
-                    ["/Items", "/Users/Me", "/Audio/local-song/Lyrics"],
+                    ["/Items", "/Users/Me", "/Items", "/Audio/local-song/Lyrics"],
                     observedPaths);
             }
             else
@@ -3819,6 +3895,94 @@ public sealed partial class ProtocolRouteFixtureTests
         virtualization.VerifyAll();
     }
 
+    [Theory]
+    [InlineData("default", "backend,lrclib", true, true, true)]
+    [InlineData("json", "backend,lrclib", true, true, true)]
+    [InlineData("xml", "backend,lrclib", true, true, true)]
+    [InlineData("json", "lrclib,backend", true, true, false)]
+    [InlineData("xml", "lrclib,backend", true, true, false)]
+    [InlineData("json", "backend,lrclib", false, true, false)]
+    [InlineData("xml", "backend,lrclib", false, true, false)]
+    [InlineData("json", "backend,lrclib", false, false, true)]
+    [InlineData("xml", "backend,lrclib", false, false, true)]
+    public async Task SubsonicNativeLyricsFollowSavedOrderAndPreserveTheSelectedBackendBody(
+        string format, string order, bool backendTimed, bool providerTimed, bool expectBackend)
+    {
+        var calls = new List<string>();
+        var native = format == "json"
+            ? """{"subsonic-response":{"status":"ok","version":"1.16.1","lyricsList":{"structuredLyrics":[{"lang":"en","synced":BACKEND_TIMED,"offset":-125,"line":[{"start":1234,"value":"Native line"}]}]}}}""".Replace("BACKEND_TIMED", backendTimed.ToString().ToLowerInvariant(), StringComparison.Ordinal)
+            : """<subsonic-response xmlns="http://subsonic.org/restapi" status="ok" version="1.16.1"><lyricsList><structuredLyrics lang="en" synced="BACKEND_TIMED" offset="-125"><line start="1234">Native line</line></structuredLyrics></lyricsList></subsonic-response>""".Replace("BACKEND_TIMED", backendTimed.ToString().ToLowerInvariant(), StringComparison.Ordinal);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(order.Split(','));
+        gateway.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
+                ProviderLyricsFormat.LineTimed, "Fixture Song", It.IsAny<IReadOnlyList<string>>(), "Fixture Album", 123))
+            .Callback(() => calls.Add("lrclib"))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
+                providerTimed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
+                providerTimed ? "[00:01.234]Provider line" : "Provider line"));
+        using var factory = new ProtocolFactory("Subsonic", request =>
+        {
+            var path = request.RequestUri!.AbsolutePath;
+            if (path.Contains("ping", StringComparison.Ordinal)) return Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+            if (path.Contains("getSong", StringComparison.Ordinal))
+            {
+                Assert.Equal("json", QueryHelpers.ParseQuery(request.RequestUri.Query)["f"]);
+                return Json(200, """{"subsonic-response":{"status":"ok","song":{"id":"native-song","title":"Fixture Song","artist":"Fixture Artist","album":"Fixture Album","duration":123}}}""");
+            }
+            if (path.Contains("getLyricsBySongId", StringComparison.Ordinal))
+            {
+                calls.Add("backend");
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(native, Encoding.UTF8,
+                    format == "json" ? "application/json" : "application/xml")
+                };
+            }
+            throw new InvalidOperationException("Unexpected fixture backend request");
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        }, new Dictionary<string, string?> { ["MULTI_PROVIDER_LYRICS_ORDER"] = order });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync($"/rest/getLyricsBySongId.view?id=native-song&u=listener&p=fixture&v=1.16.1&c=fixture{(format == "default" ? "" : "&f=" + format)}");
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var body = await response.Content.ReadAsStringAsync();
+        if (expectBackend) Assert.Equal(native, body);
+        else Assert.Contains("Provider line", body, StringComparison.Ordinal);
+        Assert.Equal(order.Split(',').Take(calls.Count), calls);
+        Assert.Equal(expectBackend && backendTimed ? 1 : order.StartsWith("lrclib", StringComparison.Ordinal) ? 1 : 2, calls.Count);
+    }
+
+    [Theory]
+    [InlineData(200, "wrong-song", false)]
+    [InlineData(200, "native-song", true)]
+    [InlineData(401, "native-song", false)]
+    public async Task SubsonicNativeLyricsDoNotQuerySourcesForDeniedOrUnverifiedSongs(int status, string returnedId, bool video)
+    {
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        using var factory = new ProtocolFactory("Subsonic", request =>
+        {
+            if (request.RequestUri!.AbsolutePath.Contains("ping", StringComparison.Ordinal))
+                return Json(200, """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
+            if (!request.RequestUri.AbsolutePath.Contains("getSong", StringComparison.Ordinal))
+                throw new InvalidOperationException("Denied metadata must not reach a lyrics source");
+            return status == 401 ? Json(401, """{"subsonic-response":{"status":"failed","error":{"code":40,"message":"Denied"}}}""")
+                : Json(200, """{"subsonic-response":{"status":"ok","song":SONG}}""".Replace("SONG",
+                    JsonSerializer.Serialize(new { id = returnedId, title = "Fixture", artist = "Artist", isVideo = video }), StringComparison.Ordinal));
+        }, services =>
+        {
+            services.RemoveAll<IProtocolProviderGateway>();
+            services.AddSingleton(gateway.Object);
+        });
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/rest/getLyricsBySongId.view?id=native-song&u=listener&p=fixture&v=1.16.1&c=fixture&f=json");
+        Assert.Equal(status == 401 ? HttpStatusCode.Unauthorized : HttpStatusCode.OK, response.StatusCode);
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("failed", document.RootElement.GetProperty("subsonic-response").GetProperty("status").GetString());
+        gateway.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task SubsonicStructuredLyrics_CoversExternalAndRelayGetPostXmlJsonFixtures()
     {
@@ -3860,6 +4024,8 @@ public sealed partial class ProtocolRouteFixtureTests
                             """{"subsonic-response":{"status":"ok","version":"1.16.1"}}""");
                     }
 
+                    if (request.RequestUri!.AbsolutePath.Contains("getSong", StringComparison.Ordinal))
+                        return Json(200, """{"subsonic-response":{"status":"ok","song":{"id":"local-song","title":"Fixture Song","artist":"Fixture Artist","album":"Fixture Album","duration":123}}}""");
                     var relay = fixture.GetProperty("relay");
                     return new HttpResponseMessage((HttpStatusCode)relay.GetProperty("status").GetInt32())
                     {
@@ -3873,6 +4039,13 @@ public sealed partial class ProtocolRouteFixtureTests
                 {
                     services.RemoveAll<ISubsonicLyricsLookup>();
                     services.AddSingleton(lookup.Object);
+                    if (!external)
+                    {
+                        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+                        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["backend"]);
+                        services.RemoveAll<IProtocolProviderGateway>();
+                        services.AddSingleton(gateway.Object);
+                    }
                 });
             using var client = factory.CreateClient();
             using var request = CreateFixtureRequest(fixture.GetProperty("request"));
@@ -3893,8 +4066,10 @@ public sealed partial class ProtocolRouteFixtureTests
                 var relay = fixture.GetProperty("relay");
                 Assert.Equal(relay.GetProperty("status").GetInt32(), (int)response.StatusCode);
                 Assert.Equal(relay.GetProperty("responseBody").GetString(), body);
-                Assert.Equal(2, observedRequests.Count);
-                AssertObservedRequest(relay, observedRequests[1]);
+                Assert.Equal(3, observedRequests.Count);
+                Assert.Equal(relay.GetProperty("method").GetString(), observedRequests[1].Method);
+                Assert.Contains("getSong", observedRequests[1].PathAndQuery, StringComparison.Ordinal);
+                AssertObservedRequest(relay, observedRequests[2]);
                 lookup.VerifyNoOtherCalls();
             }
         }

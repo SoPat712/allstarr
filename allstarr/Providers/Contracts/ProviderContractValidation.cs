@@ -6,6 +6,8 @@ internal static partial class ProviderContractValidation
 {
     private const int MaximumIdentifierLength = 100;
 
+    internal static bool IsLocalLyricsSource(string id) => id is "backend" or "kept";
+
     public static string ProviderId(string value, string parameterName)
     {
         var candidate = RequiredText(value, parameterName, MaximumIdentifierLength);
