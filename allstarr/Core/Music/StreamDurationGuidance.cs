@@ -12,14 +12,28 @@ internal static class StreamDurationGuidance
 {
     private const int PrefixLimit = 1024 * 1024;
 
-    public static async Task PrepareAsync(ProtocolProviderStream routed, Func<Task<Song?>> metadata,
-        CancellationToken cancellationToken)
+    public static void Attach(ProtocolProviderStream routed, Func<Task<Song?>> metadata, HttpResponse response)
     {
         if (routed.IsCached || routed.Lease.SupportsByteRanges || routed.Response.StatusCode != HttpStatusCode.OK)
             return;
         var container = routed.Lease.Media.Container.ToLowerInvariant();
         if (container is not ("flac" or "mp3" or "mp4" or "m4a")) return;
         var original = routed.Response.Content;
+        var replacement = new StreamContent(new DeferredGuidanceStream(original, async cancellationToken =>
+        {
+            await response.StartAsync(cancellationToken);
+            return await PrepareAsync(original, routed, container, metadata, cancellationToken);
+        }));
+        foreach (var header in original.Headers)
+            replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        // An optional FLAC ID3 prelude is removed lazily, so its final length is not known at header time.
+        if (container == "flac") replacement.Headers.ContentLength = null;
+        routed.Response.Content = replacement;
+    }
+
+    private static async Task<Stream> PrepareAsync(HttpContent original, ProtocolProviderStream routed, string container,
+        Func<Task<Song?>> metadata, CancellationToken cancellationToken)
+    {
         var source = await original.ReadAsStreamAsync(cancellationToken);
         using var prefix = new MemoryStream();
         var skip = 0;
@@ -89,12 +103,7 @@ internal static class StreamDurationGuidance
             }
             if (duration.HasValue) MediaDurationHeaders.TryPatch(prepared.AsSpan(skip), container, duration.Value);
         }
-        var replacement = new StreamContent(new PrefetchedStream(source, original, prepared.AsMemory(skip)));
-        foreach (var header in original.Headers)
-            replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
-        if (skip > 0 && original.Headers.ContentLength is { } length)
-            replacement.Headers.ContentLength = length >= skip ? length - skip : null;
-        routed.Response.Content = replacement;
+        return new PrefetchedStream(source, original, prepared.AsMemory(skip));
     }
 
     private static async Task ReadUntilAsync(Stream source, MemoryStream prefix, int length, CancellationToken cancellationToken)
@@ -107,4 +116,41 @@ internal static class StreamDurationGuidance
             prefix.Write(buffer, 0, read);
         }
     }
+
+    private sealed class DeferredGuidanceStream(HttpContent owner, Func<CancellationToken, Task<Stream>> prepare) : Stream
+    {
+        private Task<Stream>? prepared;
+        private bool disposed;
+        public override bool CanRead => !disposed;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) =>
+            ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (buffer.IsEmpty) return 0;
+            var stream = await (prepared ??= prepare(cancellationToken));
+            return await stream.ReadAsync(buffer, cancellationToken);
+        }
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && !disposed)
+            {
+                disposed = true;
+                owner.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
 }
