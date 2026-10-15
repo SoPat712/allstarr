@@ -10,7 +10,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class FavoriteActionPipelineTests : IAsyncLifetime
+public sealed partial class FavoriteActionPipelineTests : IAsyncLifetime
 {
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();
