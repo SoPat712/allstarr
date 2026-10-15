@@ -63,7 +63,8 @@ public sealed record ProviderRouteProviderState
         bool? isExplicit = null,
         bool rateLimitBudgetAvailable = true,
         bool storageCapacityAvailable = true,
-        bool providerTermsAllowed = true)
+        bool providerTermsAllowed = true,
+        IEnumerable<ProviderAccountScope>? allowedAccountScopes = null)
     {
         ProviderId = ProviderContractValidation.ProviderId(providerId, nameof(providerId));
         if (requestedAccountId == Guid.Empty)
@@ -95,6 +96,10 @@ public sealed record ProviderRouteProviderState
         RateLimitBudgetAvailable = rateLimitBudgetAvailable;
         StorageCapacityAvailable = storageCapacityAvailable;
         ProviderTermsAllowed = providerTermsAllowed;
+        var scopes = allowedAccountScopes?.ToArray();
+        if (scopes != null && (scopes.Any(scope => !Enum.IsDefined(scope)) || scopes.Distinct().Count() != scopes.Length))
+            throw new ArgumentException("Allowed account scopes must be valid and unique.", nameof(allowedAccountScopes));
+        AllowedAccountScopes = scopes == null ? null : Array.AsReadOnly(scopes);
     }
 
     public string ProviderId { get; }
@@ -116,6 +121,8 @@ public sealed record ProviderRouteProviderState
     public bool StorageCapacityAvailable { get; }
 
     public bool ProviderTermsAllowed { get; }
+
+    public IReadOnlyList<ProviderAccountScope>? AllowedAccountScopes { get; }
 }
 
 public sealed record ProviderRouteRequest

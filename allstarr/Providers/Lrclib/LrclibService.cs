@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using allstarr.Core.Storage;
 using allstarr.Models.Lyrics;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -12,7 +11,6 @@ public class LrclibService
 {
     private readonly HttpClient _httpClient;
     private readonly IApplicationCache _cache;
-    private readonly IManualLyricsMappingStore _mappingStore;
     private readonly ILogger<LrclibService> _logger;
     private readonly TimeSpan _lyricsTtl;
     private const string BaseUrl = "https://lrclib.net/api";
@@ -20,14 +18,12 @@ public class LrclibService
     public LrclibService(
         IHttpClientFactory httpClientFactory,
         IApplicationCache cache,
-        IManualLyricsMappingStore mappingStore,
         IOptions<CacheSettings> cacheSettings,
         ILogger<LrclibService> logger)
     {
         _httpClient = httpClientFactory.CreateClient("Lrclib");
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(AppIdentity.UserAgent);
         _cache = cache;
-        _mappingStore = mappingStore;
         _lyricsTtl = cacheSettings.Value.LyricsTTL;
         _logger = logger;
     }
@@ -45,24 +41,7 @@ public class LrclibService
         }
 
         var artistName = string.Join(", ", artistNames);
-        var cacheKey = CacheKeyBuilder.BuildLyricsKey(artistName, trackName, albumName, durationSeconds);
-
-        var manualLyricsId = await _mappingStore.FindLyricsIdAsync(artistName, trackName);
-        if (manualLyricsId is > 0)
-        {
-            _logger.LogInformation("Manual lyrics mapping found for {Artist} - {Track}: Lyrics ID {Id}",
-                artistName, trackName, manualLyricsId);
-
-            var manualLyrics = await GetLyricsByIdAsync(manualLyricsId.Value);
-            if (manualLyrics != null && !string.IsNullOrEmpty(manualLyrics.PlainLyrics))
-            {
-                await CacheLyricsAsync(cacheKey, manualLyrics);
-                return manualLyrics;
-            }
-
-            _logger.LogWarning("Manual lyrics mapping points to invalid ID {Id} for {Artist} - {Track}",
-                manualLyricsId, artistName, trackName);
-        }
+        var cacheKey = "lrclib:automatic:v2:" + CacheKeyBuilder.BuildLyricsKey(artistName, trackName, albumName, durationSeconds);
 
         var cached = await _cache.GetStringAsync(cacheKey);
         if (!string.IsNullOrEmpty(cached))

@@ -87,6 +87,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         ConfigureOperations(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
         modelBuilder.ConfigureManualLyricsMappings();
+        ConfigureLyricsChoices(modelBuilder);
         ConfigurePortableDateTimeOffsets(modelBuilder);
         // Durable identifiers are assigned explicitly; omit provider-specific identifier limits.
         modelBuilder.Model.RemoveAnnotation("Relational:MaxIdentifierLength");

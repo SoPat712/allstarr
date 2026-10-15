@@ -153,6 +153,8 @@ public sealed partial class TrackIdentityService
         if (musicBrainzIds.Length > 1)
             throw new RecordingMergeConflictException("Recordings with conflicting MusicBrainz identities cannot be merged.");
 
+        await MergeLyricsChoicesAsync(context, winner.Id, loser.Id, now, cancellationToken);
+
         foreach (var identifier in loser.Identifiers.ToArray())
         {
             identifier.RecordingId = winner.Id;
@@ -208,6 +210,28 @@ public sealed partial class TrackIdentityService
         AddAudit(context, actor, correlationId, "canonical-recording.merge", "merged",
             new { recordingId = winner.Id, mergedRecordingId = loser.Id });
         return winner;
+    }
+
+    private static async Task MergeLyricsChoicesAsync(AllstarrDbContext context, Guid winnerId, Guid loserId,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var choices = await context.RecordingLyricsChoices.Where(item => item.RevokedAt == null &&
+            (item.CanonicalRecordingId == winnerId || item.CanonicalRecordingId == loserId)).ToArrayAsync(cancellationToken);
+        var losing = choices.Where(item => item.CanonicalRecordingId == loserId).ToArray();
+        foreach (var choice in losing)
+        {
+            var existing = choices.FirstOrDefault(item => item.CanonicalRecordingId == winnerId && item.OwnerUserId == choice.OwnerUserId);
+            if (existing != null && existing.SourceId != choice.SourceId)
+                throw new RecordingMergeConflictException("Recordings with conflicting lyrics choices cannot be merged. Clear a choice before merging.");
+        }
+        foreach (var choice in losing)
+        {
+            if (choices.Any(item => item.CanonicalRecordingId == winnerId && item.OwnerUserId == choice.OwnerUserId))
+                choice.RevokedAt = now;
+            else choice.CanonicalRecordingId = winnerId;
+            choice.UpdatedAt = now;
+            choice.Revision++;
+        }
     }
 
     internal static CanonicalRecordingRecord CreateProvisionalRecording(

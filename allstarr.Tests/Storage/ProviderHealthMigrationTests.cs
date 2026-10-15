@@ -94,6 +94,7 @@ public sealed class ProviderHealthMigrationTests
         var oldArchive = await CreateBaselineBackup(db, keys, database.StorageOptions.DataDirectory);
 
         await db.Database.MigrateAsync();
+        Assert.Empty(await db.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.Equal(beforeRows, await Rows(db));
         Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -117,6 +118,7 @@ public sealed class ProviderHealthMigrationTests
             NullLogger<DurableStorageInitializer>.Instance, backups).StartAsync(default);
         Assert.Equal(DurableStorageReadiness.Ready, state.GetSnapshot().Readiness);
         await using var restored = await factory.CreateDbContextAsync();
+        Assert.Empty(await restored.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -174,7 +176,7 @@ public sealed class ProviderHealthMigrationTests
               AND tbl_name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples',
                 'canonical_artists','canonical_catalog_aliases','canonical_recording_artists',
                 'canonical_release_group_artists','canonical_release_groups','canonical_releases',
-                'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings')
+                'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings','recording_lyrics_choices')
             ORDER BY type,name
             """;
         var connection = db.Database.GetDbConnection();
@@ -206,7 +208,7 @@ public sealed class ProviderHealthMigrationTests
               AND name NOT LIKE '__EFMigrations%' AND name NOT IN ('provider_circuits','provider_health_rollups','provider_health_samples',
                 'canonical_artists','canonical_catalog_aliases','canonical_recording_artists',
                 'canonical_release_group_artists','canonical_release_groups','canonical_releases',
-                'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings')
+                'canonical_release_tracks','catalog_facts','recording_identifiers','canonical_recordings','recording_lyrics_choices')
             ORDER BY name
             """).ToArrayAsync();
         var connection = db.Database.GetDbConnection();

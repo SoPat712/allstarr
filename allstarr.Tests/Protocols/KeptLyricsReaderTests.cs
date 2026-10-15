@@ -11,6 +11,27 @@ namespace allstarr.Tests;
 
 public sealed class KeptLyricsReaderTests
 {
+    [Theory]
+    [InlineData("anonymous", false, true)]
+    [InlineData("shared", false, true)]
+    [InlineData("personal", false, false)]
+    [InlineData("shared", true, false)]
+    public async Task HouseholdPublicationNeverReadsPersonalAccountsOrOwnedFiles(string accountScope, bool personalFile, bool expected)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var user = Guid.CreateVersion7();
+        await fixture.AddUserAsync(user);
+        Guid? account = accountScope == "anonymous" ? null : Guid.CreateVersion7();
+        if (account.HasValue) await fixture.AddAccountAsync(account.Value, "fixture", accountScope == "personal" ? user : null);
+        var path = await fixture.WriteAudioAsync("kept/track.mp3", "[00:01.234]Shared words");
+        await fixture.AddMappingAsync("fixture", "track", path, account);
+        if (personalFile) await fixture.AddManagedFileAsync(path, user);
+        var result = await fixture.Reader.ReadHouseholdAsync(fixture.Context(user, admin: true),
+            new Song { Title = "Fixture", Artist = "Artist" }, [new("fixture", "track")]);
+        Assert.Equal(expected, result != null);
+        if (expected) Assert.Equal("[00:01.234]Shared words", result!.SyncedLyrics);
+    }
+
     [Fact]
     public async Task TimedCandidateWinsOverEarlierPlainSidecarWithoutWritingEither()
     {
