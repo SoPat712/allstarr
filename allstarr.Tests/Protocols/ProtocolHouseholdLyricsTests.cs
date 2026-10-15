@@ -34,6 +34,39 @@ public sealed class ProtocolHouseholdLyricsTests
         Assert.Equal(new Guid?[] { personal.AccountId, shared.AccountId }, served);
     }
 
+    [Theory]
+    [InlineData(ProviderAccountRequirement.Required)]
+    [InlineData(ProviderAccountRequirement.Optional)]
+    public async Task CanonicalHouseholdAliasesUseOnlyTheSharedAccount(ProviderAccountRequirement requirement)
+    {
+        var context = Context();
+        var recording = Guid.CreateVersion7();
+        var personal = new ProviderAccountContext(Guid.CreateVersion7(), "fixture", ProviderAccountScope.Personal, 2,
+            ownerUserId: context.Principal!.UserId);
+        var shared = new ProviderAccountContext(Guid.CreateVersion7(), "fixture", ProviderAccountScope.Shared, 3);
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), context.CancellationToken))
+            .ReturnsAsync((ProviderRouteAccountRequest request, CancellationToken _) =>
+            {
+                var selected = request.AllowedScopes!.Contains(ProviderAccountScope.Personal) ? personal : shared;
+                return new ProviderRouteAccountResolution(selected, selected.Revision);
+            });
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        identities.Setup(item => item.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), recording,
+                It.IsAny<ProviderTrackIdentityTarget>(), context.CancellationToken))
+            .ReturnsAsync((ProviderExecutionContext execution, Guid _, ProviderTrackIdentityTarget _, CancellationToken _) =>
+                new TrackIdentityResolution(recording, Guid.CreateVersion7(), new("fixture", ProviderResourceKind.Track,
+                    execution.Account!.Scope == ProviderAccountScope.Shared ? "shared-alias" : "personal-alias"),
+                    ProviderIdentityScope.Account, execution.Account.AccountId, ProviderIdentityVerification.Verified, "fixture", 1));
+        var served = new List<Guid?>();
+        var capability = Capability(served);
+        var gateway = Gateway(requirement, capability.Object, accounts.Object, identities.Object);
+        Assert.NotNull(await gateway.GetRecordingLyricsAsync(context, "fixture", recording));
+        Assert.NotNull(await gateway.GetRecordingLyricsAsync(context, "fixture", recording, householdOnly: true));
+        Assert.Equal(new Guid?[] { personal.AccountId, shared.AccountId }, served);
+        identities.VerifyAll();
+    }
+
     [Fact]
     public async Task AccountFreeHouseholdSourceNeverResolvesAnAccount()
     {
@@ -60,7 +93,7 @@ public sealed class ProtocolHouseholdLyricsTests
     }
 
     private static ProtocolProviderGateway Gateway(ProviderAccountRequirement requirement,
-        IProviderLyricsCapability capability, IProviderRouteAccountResolver accounts)
+        IProviderLyricsCapability capability, IProviderRouteAccountResolver accounts, ITrackIdentityService? identities = null)
     {
         var descriptor = new ProviderCapabilityDescriptor(ProviderCapabilityKind.Lyrics,
             ProviderCapabilitySupportState.Supported, requirement, "1.0", ["fetchLyrics"],
@@ -70,7 +103,7 @@ public sealed class ProtocolHouseholdLyricsTests
         var health = new Mock<IProviderRouteHealthSource>();
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unknown, false));
-        var router = new ProviderRouter(registry, accounts, health.Object, Mock.Of<IProviderRouteSidecarSource>(), Mock.Of<ITrackIdentityService>());
+        var router = new ProviderRouter(registry, accounts, health.Object, Mock.Of<IProviderRouteSidecarSource>(), identities ?? Mock.Of<ITrackIdentityService>());
         return new ProtocolProviderGateway(router, registry, Mock.Of<IHttpClientFactory>());
     }
 
