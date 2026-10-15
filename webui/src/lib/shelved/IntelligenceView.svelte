@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { FileUp, Heart, History, LayoutDashboard, ListMusic, SlidersHorizontal, Sparkles, X } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
@@ -218,7 +219,8 @@
       const counts = await playlistLinks.libraryIndexCounts();
       if (ready && counts.trackCount > 0) {
         indexingTargetId = "";
-        librarySetupFeedback = "Your Subsonic library is indexed and ready for Intelligence.";
+        librarySetupFeedback = "";
+        toast.success("Your Subsonic library is indexed and ready for Intelligence.");
         await openTarget(ready.id);
         return;
       }
@@ -243,7 +245,8 @@
   }
 
   async function libraryAccessConnected(message: string, targetId: string) {
-    librarySetupFeedback = message;
+    librarySetupFeedback = "";
+    toast.success(message);
     indexingTargetId = targetId;
     indexPollCount = 0;
     await refreshIndexedTarget();
@@ -391,7 +394,7 @@
     </div>
   </header>
 
-  {#if librarySetupFeedback}<p class="action-feedback library-setup-feedback" role="status">{librarySetupFeedback}</p>{/if}
+  {#if librarySetupFeedback}<p class="degraded-banner library-setup-feedback" role="status">{librarySetupFeedback}</p>{/if}
 
   <SegmentedNav items={[
     { id: "overview", label: "Overview", href: "#/intelligence?section=overview", icon: LayoutDashboard },

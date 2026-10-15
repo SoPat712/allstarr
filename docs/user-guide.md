@@ -60,7 +60,13 @@ A Service is an implementation. An Account is a credential and access policy for
 
 Listeners connect **Personal** accounts, which only they may use and manage. Administrators can assign Personal accounts to a user or create **Shared** accounts for the household. A listener’s eligible Personal account is preferred over Shared accounts. Administrators manage Shared accounts; listeners can see their availability without viewing credentials or changing them.
 
-Provider cards and account titles use the provider's display name. The subtitle shows **Personal** or **Shared with everyone**, followed by an optional custom connection name. Leave the connection name blank to use the provider name. Older automatically generated account labels are renamed on startup; custom labels and credentials are preserved. A provider without a health sample shows **Not checked yet**.
+Provider cards and account titles use the provider's display name. The subtitle shows the Personal account owner or **Shared with everyone**, followed by an optional custom connection name. When someone else created a Personal account, the card distinguishes its owner from its creator. New Personal connections default to the signed-in administrator; changing the owner changes whose listening may use the account. Leave the connection name blank to use the provider name. Older automatically generated account labels are renamed on startup; custom labels and credentials are preserved. A provider without a health sample shows **Not checked yet**.
+
+Apple Music has a three-step setup checklist: connect the Media User Token and storefront, sign the playback gateway into the same Apple account, then test playback. Package installation and gateway details are under Advanced setup. See [Apple setup](operations/apple-download-provider.md#connect-allstarr).
+
+Administrators may test playback on accounts they manage, including another user’s Personal account. These diagnostics are audited to the administrator. Ordinary listener playback still uses only the listener’s eligible Personal or Shared accounts.
+
+Action results appear in a shared notification area at the bottom right on desktop or above mobile navigation. Success and information messages close after five seconds, pausing while hovered or focused. Errors remain until dismissed. Form errors and warnings about stale page data remain beside the affected controls.
 
 Administrators can change an account’s audience in **Access → Edit access**. Sharing makes the account available for supported capabilities, including playlists or scrobbling when supported, and may consume the provider’s limits. Making it Personal stops new shared selections; it cannot retract audio already delivered.
 

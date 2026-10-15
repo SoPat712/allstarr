@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -40,10 +41,17 @@
   let registries = $state<ExtensionRegistry[]>([]);
   let store = $state<ExtensionStoreItem[]>([]);
   let storeErrors = $state<Array<{ repository: string; message: string }>>([]);
+  let dataUnavailable = $state(false);
   let loading = $state(true);
   let action = $state("");
-  let feedback = $state("");
   let dialogError = $state("");
+  let catalogError = $state("");
+  let reviewError = $state("");
+  function reportActionError(message: string) {
+    if (reviewOpen) reviewError = message;
+    else if (view === "catalog" && open) catalogError = message;
+    else toast.error(message);
+  }
   let search = $state("");
   let installOpen = $state(false);
   let reviewOpen = $state(false);
@@ -112,7 +120,7 @@
       storeErrors = results[2].value.errors;
     }
     const failed = results.find((result) => result.status === "rejected");
-    if (failed?.status === "rejected") feedback = extensionDataUnavailable;
+    dataUnavailable = failed?.status === "rejected";
     loading = false;
   }
 
@@ -124,13 +132,14 @@
   async function run(key: string, operation: () => Promise<unknown>, message: string) {
     if (action) return false;
     action = key;
+    catalogError = ""; reviewError = "";
     try {
       await operation();
-      feedback = message;
+      toast.success(message);
       await changed();
       return true;
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : `${message} failed.`;
+      reportActionError(cause instanceof Error ? cause.message : `${message} failed.`);
       return false;
     } finally {
       action = "";
@@ -146,10 +155,10 @@
       open = false;
       await changed();
       const staged = packages.find((entry) => entry.id === result.packageId);
-      feedback = result.message;
+      toast.success(result.message);
       if (staged?.permissionReviewRequired) await openReview(staged);
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Extension could not be staged.";
+      reportActionError(cause instanceof Error ? cause.message : "Extension could not be staged.");
     } finally {
       action = "";
     }
@@ -171,15 +180,14 @@
   async function retryPackage(item: ExtensionPackage) {
     if (action || item.state.toLowerCase() !== "failed") return;
     action = `retry:${item.id}`;
-    feedback = "";
     try {
       const retried = await extensions.retry(item);
-      feedback = retried.permissionReviewRequired || retried.state.toLowerCase() === "reviewrequired"
+      toast.success(retried.permissionReviewRequired || retried.state.toLowerCase() === "reviewrequired"
         ? "Package staged. Review permissions before enabling."
-        : "Package staged. Enable it when ready.";
+        : "Package staged. Enable it when ready.");
       void changed();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The extension package could not be retried.";
+      reportActionError(cause instanceof Error ? cause.message : "The extension package could not be retried.");
     } finally {
       action = "";
     }
@@ -197,9 +205,10 @@
       reviewPackage = item;
       decisions = {};
       permissionConfirmed = false;
+      reviewError = "";
       reviewOpen = true;
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Permissions could not be loaded.";
+      reportActionError(cause instanceof Error ? cause.message : "Permissions could not be loaded.");
     } finally {
       action = "";
     }
@@ -244,15 +253,14 @@
       reviewOpen = false;
       if (reviewed.state.toLowerCase() === "staged") {
         activatePackage = reviewed;
-        feedback = "";
         dialogError = "";
         confirmOpen = true;
       } else {
-        feedback = "Extension permissions saved.";
+        toast.success("Extension permissions saved.");
         await changed();
       }
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Permission review failed.";
+      reportActionError(cause instanceof Error ? cause.message : "Permission review failed.");
     } finally {
       action = "";
     }
@@ -264,7 +272,6 @@
   }
 
   function confirmRemoval(item: ExtensionPackage | ExtensionRegistry) {
-    feedback = "";
     dialogError = "";
     activatePackage = null;
     reviewAccessPackage = null;
@@ -279,7 +286,6 @@
   }
 
   function confirmActivation(item: ExtensionPackage) {
-    feedback = "";
     dialogError = "";
     activatePackage = item;
     removePackage = null;
@@ -289,7 +295,6 @@
   }
 
   function confirmPermissionReview(item: ExtensionPackage) {
-    feedback = "";
     dialogError = "";
     activatePackage = null;
     removePackage = null;
@@ -337,7 +342,7 @@
       activatePackage = null;
       removePackage = null;
       removeRegistry = null;
-      feedback = successMessage;
+      toast.success(successMessage);
       void changed();
       succeeded = true;
     } catch (cause) {
@@ -408,7 +413,9 @@
       <header class="dialog-heading"><div><Dialog.Title>Add a source</Dialog.Title><Dialog.Description>Install an extension from one of your catalogs, or from a package address. Nothing runs until you approve its access.</Dialog.Description></div><Dialog.Close class="icon-button" aria-label="Close add a source"><X size={18} aria-hidden="true" /></Dialog.Close></header>
       <SegmentedNav items={catalogTabs} active={catalogTab} label="Ways to add a source" class="route-tabs extension-tabs" onchange={(id) => { catalogTab = id as typeof catalogTab; }} />
       <div class="extension-catalog-body">
-        {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+        {#if catalogError}<p class="notice-error" role="alert">{catalogError}</p>{/if}
+
+        {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
         {#if loading}
           <p class="service-empty">Loading catalogs…</p>
         {:else if catalogTab === "catalog"}
@@ -473,10 +480,11 @@
 {:else if loading}
   {#if view === "package"}<Skeleton class="panel skeleton-panel extension-skeleton" aria-label="Loading extension" aria-busy="true" />{/if}
 {:else if view === "attention"}
-  {#if attention.length || feedback}
+  {#if attention.length || dataUnavailable}
     <section class="extension-attention" aria-labelledby="extension-attention-title">
       <h3 id="extension-attention-title">Extensions that need you</h3>
-      {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+      {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
+
       {#if attention.length}
         <ul class="source-list extension-list" aria-label="Extensions that need you">
           {#each attention as item (item.id)}{@render packageRow(item, true)}{/each}
@@ -486,8 +494,9 @@
   {/if}
 {:else if focused}
   <section class="settings-card service-extension" aria-labelledby="service-extension-title">
+    {#if dataUnavailable}<p class="degraded-banner" role="status">{extensionDataUnavailable}</p>{/if}
     <header><div><h3 id="service-extension-title">Extension</h3><small>This source comes from an extension. Updates, permissions and sign-in live here.</small></div></header>
-    {#if feedback}<p class="action-feedback service-extension-feedback" role="status">{feedback}</p>{/if}
+
     <ul class="source-list extension-list extension-package" aria-label={`${focused.displayName} extension`}>
       {@render packageRow(focused, false)}
     </ul>
@@ -543,6 +552,7 @@
           {/each}
         </ul>
       </div>
+      {#if reviewError}<p class="notice-error" role="alert">{reviewError}</p>{/if}
       <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand what this extension can access.</span></label>
         <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</Button></footer>

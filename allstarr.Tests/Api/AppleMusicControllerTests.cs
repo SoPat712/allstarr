@@ -78,6 +78,8 @@ public sealed class AppleMusicControllerTests
         using var document = JsonDocument.Parse(content.Content!);
         Assert.Equal("awaiting_2fa", document.RootElement.GetProperty("state").GetString());
         Assert.Equal("awaiting_2fa", document.RootElement.GetProperty("login_state").GetString());
+        Assert.Equal("l***@example.test", document.RootElement.GetProperty("account").GetProperty("maskedIdentifier").GetString());
+        Assert.DoesNotContain("listener@example.test", content.Content, StringComparison.Ordinal);
         Assert.False(document.RootElement.GetProperty("logged_in").GetBoolean());
     }
 

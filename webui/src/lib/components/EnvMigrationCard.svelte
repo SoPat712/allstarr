@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { settings, type EnvMigrationPreview } from "$lib/api";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -46,7 +47,7 @@
     failed = false;
     try {
       const result = await settings.applyMigration(preview);
-      feedback = result.alreadyApplied ? "This migration was already applied." : "Legacy settings imported.";
+      toast.success(result.alreadyApplied ? "This migration was already applied." : "Legacy settings imported.");
       preview = null;
       file = null;
       await loadStatus();
@@ -67,7 +68,7 @@
       preview = null;
       file = null;
       confirmed = false;
-      feedback = "Preview discarded. Choose the corrected file to retry.";
+      toast.info("Preview discarded. Choose the corrected file to retry.");
     } catch (cause) {
       failed = true;
       feedback = cause instanceof Error ? cause.message : "The preview could not be reset.";
@@ -124,5 +125,5 @@
       <footer><Button variant="secondary" type="submit" disabled={!file || Boolean(action)}>{action === "preview" ? "Inspecting…" : status?.completed ? "Preview revision" : "Preview import"}</Button></footer>
     </form>
   {/if}
-  {#if feedback}<p class={failed ? "notice-error migration-feedback" : "action-feedback migration-feedback"} role={failed ? "alert" : "status"}>{feedback}</p>{/if}
+  {#if feedback && failed}<p class="notice-error migration-feedback" role="alert">{feedback}</p>{/if}
 </article>

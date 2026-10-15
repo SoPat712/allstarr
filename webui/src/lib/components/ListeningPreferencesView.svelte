@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import {
     ApiError,
@@ -24,7 +25,6 @@
   let loading = $state(true);
   let busy = $state(false);
   let error = $state("");
-  let feedback = $state("");
   let conflict = $state(false);
 
   const selectedFilter = $derived(
@@ -61,7 +61,6 @@
     loading = !snapshot;
     busy = Boolean(snapshot);
     error = "";
-    feedback = "";
     conflict = false;
     try {
       apply(await listeningPreferences.get());
@@ -77,7 +76,6 @@
     if (!snapshot || !selectedFilter || busy) return;
     busy = true;
     error = "";
-    feedback = "";
     conflict = false;
     try {
       apply(await listeningPreferences.save({
@@ -86,7 +84,7 @@
         showExplicitLabel,
         expectedRevision: snapshot.revision,
       }));
-      feedback = "Listening preferences saved.";
+      toast.success("Listening preferences saved.");
     } catch (cause) {
       error = messageFor(cause, "Listening preferences could not be saved.");
     } finally {
@@ -98,11 +96,10 @@
     if (!snapshot || busy) return;
     busy = true;
     error = "";
-    feedback = "";
     conflict = false;
     try {
       apply(await listeningPreferences.reset(snapshot.revision));
-      feedback = "Household defaults restored.";
+      toast.success("Household defaults restored.");
     } catch (cause) {
       error = messageFor(cause, "Household defaults could not be restored.");
     } finally {
@@ -125,7 +122,7 @@
 {:else}
   <section class="preferences-view" aria-busy={busy}>
     <header class="preferences-intro">
-      
+
       <h2>Choose what your music clients show</h2>
       <p>
         These choices affect only your listener account. Native library titles remain untouched.
@@ -141,12 +138,12 @@
         {/if}
       </div>
     {/if}
-    {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
 
     <form class="panel preferences-panel" onsubmit={(event) => { event.preventDefault(); void save(); }}>
       <header class="panel-heading preferences-heading">
         <div>
-          
+
           <h3>Explicit releases</h3>
           <p>Control which release versions appear in your Allstarr results. Tracks with unknown explicit status always remain visible.</p>
         </div>

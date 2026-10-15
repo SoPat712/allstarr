@@ -3,6 +3,7 @@ import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api"
 import {
   accountSettings,
   accountSubtitle,
+  accountOwnershipLabel,
   providerDisplayName,
   audienceLabel,
   ctsMeasurementLabel,
@@ -212,4 +213,12 @@ it("labels unchecked capabilities plainly and merges checks that share a cause",
   ]);
   expect(groups.map((group) => group.label)).toEqual(["Metadata", "Playlists", "Streaming, downloads and lyrics"]);
   expect(checkStatusLabel(groups[2].checks[0])).toBe("Apple download gateway needs an update");
+});
+
+it("account cards distinguish the owner from the creator", () => {
+  expect(accountOwnershipLabel({ ...account(), ownerUserId: "owner", ownerDisplayName: "Listener", createdByUserId: "admin", creatorDisplayName: "Admin" }))
+    .toBe("Personal · belongs to Listener (added by Admin)");
+  expect(accountOwnershipLabel({ ...account(), ownerUserId: "owner", ownerDisplayName: "Listener", createdByUserId: "owner", creatorDisplayName: "Listener" }))
+    .toBe("Personal · Listener");
+  expect(accountOwnershipLabel(account())).toBe("Personal · Unknown user");
 });

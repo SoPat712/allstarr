@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { KeyRound } from "@lucide/svelte";
   import { auth, type PlaylistConsentStatus } from "$lib/api";
@@ -10,7 +11,6 @@
   let loadFailed = $state(false);
   let pending = $state(false);
   let error = $state("");
-  let feedback = $state("");
 
   function dateLabel(value: string | null) {
     if (!value) return "";
@@ -36,11 +36,10 @@
     if (!password || pending) return;
     pending = true;
     error = "";
-    feedback = "";
     try {
       status = await auth.grantPlaylistConsent(password);
       password = "";
-      feedback = "Playlist management allowed for your listener account.";
+      toast.success("Playlist management allowed for your listener account.");
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist access could not be allowed.";
     } finally {
@@ -53,10 +52,9 @@
     if (pending) return;
     pending = true;
     error = "";
-    feedback = "";
     try {
       status = await auth.revokePlaylistConsent();
-      feedback = "Playlist management revoked.";
+      toast.success("Playlist management revoked.");
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Playlist access could not be revoked.";
     } finally {
@@ -99,7 +97,7 @@
     {/if}
 
     {#if error}<p class="notice-error" role="alert">{error} <button class="text-button" type="button" onclick={() => void load()}>Retry</button></p>{/if}
-    {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
   </section>
 {:else if loadFailed}
   <section class="panel consent-panel consent-error" aria-labelledby="playlist-consent-error-title">

@@ -38,7 +38,8 @@ public sealed class DurableProviderRouteAccountResolver(
                 CapabilityName(request.Capability),
                 request.RequestedAccountId,
                 request.AllowedScopes,
-                request.AllowSharedAccount),
+                request.AllowSharedAccount,
+                request.AllowManagedDiagnosticAccount),
             cancellationToken);
         var resolved = request.RequestedAccountId.HasValue
             ? candidates.FirstOrDefault()

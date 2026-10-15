@@ -679,3 +679,15 @@ async def test_runner_cancellation_reaps_subprocess(settings, tmp_path):
         await task
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_stream_reports_account_mismatch_as_a_safe_diagnostic_code(settings):
+    class MismatchedRunner(FakeRunner):
+        async def download(self, *args, **kwargs):
+            raise ProcessFailure("account_mismatch")
+
+    with TestClient(create_app(settings, FakeWrapper(), MismatchedRunner()), headers=ACCOUNT_HEADERS) as client:
+        response = client.get("/api/stream/101")
+    assert response.status_code == 403
+    assert response.headers["x-allstarr-failure-code"] == "account_mismatch"
+    assert response.json() == {"detail": "account_mismatch"}

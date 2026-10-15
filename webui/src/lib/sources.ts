@@ -101,6 +101,15 @@ export function audienceLabel(account: ProviderAccount) {
   return account.ownerDisplayName ? `Personal · ${account.ownerDisplayName}` : "Personal · you";
 }
 
+export function accountOwnershipLabel(account: ProviderAccount) {
+  const owner = account.ownerDisplayName || "Unknown user";
+  const differentCreator = account.scope === "Personal" && account.creatorDisplayName &&
+    (account.createdByUserId && account.ownerUserId ? account.createdByUserId !== account.ownerUserId : account.creatorDisplayName !== owner);
+  const label = account.scope === "Shared" ? "Shared with everyone" : differentCreator
+    ? `Personal · belongs to ${owner} (added by ${account.creatorDisplayName})` : `Personal · ${owner}`;
+  return account.customLabel ? `${label} · ${account.customLabel}` : label;
+}
+
 export function sourceStatus(
   provider: ProviderDefinition,
   accounts: ProviderAccount[],

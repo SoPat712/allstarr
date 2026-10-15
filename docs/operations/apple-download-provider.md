@@ -11,8 +11,7 @@ GAMDL search and download HTTP gateway by itself.
 ## Prepare wrapper-v2
 
 Obtain Apple Music for Android legally from a source you are permitted to use. Allstarr does not download or
-redistribute that package. Open **Integrations > Services > Apple Music > Manage optional downloads** in the dashboard, manage the
-Apple download setup, upload the APK/APKM, and run:
+redistribute that package. Open **Integrations > Services > Apple Music**, choose **Sign in to Apple Music** in step 2, then open **Advanced setup** if the package or gateway is missing. Upload the APK/APKM and run:
 
 ```bash
 ./allstarr.sh install-apple x86_64
@@ -90,8 +89,9 @@ an unexpected host.
 
 ## Connect Allstarr
 
-Open the dashboard and find the Apple download provider. The Compose profile configures its private gateway URL.
-Finish Apple login or 2FA there; credentials are forwarded only to wrapper-v2 and are not stored in the database.
+Open **Integrations > Services > Apple Music**. Step 1 connects the Personal account using its Media User Token and storefront. Step 2 signs the gateway into the same Apple account, including 2FA when requested. Step 3 tests the saved account and playback. The sign-in dialog checks setup before showing a form; existing installations go straight to sign-in, and missing package or gateway steps appear under Advanced setup. Successful sign-in closes the dialog and displays a notification. When reported by the gateway, the signed-in identifier is masked. The gateway verifies account identity during media preparation; the dashboard cannot infer a token’s account from its masked identifier.
+
+The Compose profile configures its private gateway URL. This URL is read-only under Advanced server settings when deployment manages it; otherwise it is optional, with blank selecting the bundled gateway. Sign-in credentials are forwarded only to wrapper-v2 and are not stored in the database.
 
 The legacy `APPLE_MUSIC_AIO_URL` name is recognized only by the migration review so an operator can identify the
 old endpoint. New deployments use `APPLE_DOWNLOAD_URL`.

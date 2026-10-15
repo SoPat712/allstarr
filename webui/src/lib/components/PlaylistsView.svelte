@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -68,7 +69,6 @@
   let passiveRefreshing = $state(false);
   let error = $state("");
   let degraded = $state("");
-  let feedback = $state("");
   let action = $state("");
   let refreshQueued = false;
   let detailRequest = 0;
@@ -231,7 +231,7 @@
           });
       details = { ...details, schedule: next };
       scheduleEditorOpen = false;
-      feedback = "Automatic update schedule saved.";
+      toast.success("Automatic update schedule saved.");
       await refresh();
     } catch (cause) {
       scheduleError = cause instanceof Error ? cause.message : "The schedule could not be saved.";
@@ -318,20 +318,19 @@
   async function run(name: "sync" | "toggle") {
     if (!selected || action) return;
     action = name;
-    feedback = "";
     try {
       if (name === "sync") {
         if (!details) return;
         const result = await playlistLinks.run(selected.id, details.snapshotId);
         operationJobId = result.jobId;
-        feedback = result.created ? "Playlist update queued." : "A playlist update is already queued.";
+        toast.success(result.created ? "Playlist update queued." : "A playlist update is already queued.");
       } else {
         await playlistLinks.setEnabled(selected.id, selected.revision, !selected.enabled);
-        feedback = selected.enabled ? "Playlist paused." : "Playlist resumed.";
+        toast.success(selected.enabled ? "Playlist paused." : "Playlist resumed.");
       }
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The action failed.";
+      toast.error(cause instanceof Error ? cause.message : "The action failed.");
     } finally {
       action = "";
     }
@@ -362,7 +361,6 @@
   async function refreshSources(ids = refreshablePlaylists.map((playlist) => playlist.id)) {
     if (action || refreshing || !ids.length) return;
     action = "refresh-sources";
-    feedback = "";
     const started = performance.now();
     const results = await runBounded(
       ids,
@@ -372,22 +370,22 @@
     );
     const failed = results.filter((result) => result.status === "rejected").length;
     const elapsed = ((performance.now() - started) / 1_000).toFixed(1);
-    feedback = failed
+    toast.show(failed
       ? `${ids.length - failed} playlists refreshed; ${failed} failed in ${elapsed}s.`
-      : `${ids.length} playlists refreshed in ${elapsed}s.`;
+      : `${ids.length} playlists refreshed in ${elapsed}s.`, failed ? "error" : "success");
     bulkProgress = "";
     action = "";
     await refresh();
   }
 
   async function playlistAdded(message: string) {
-    feedback = message;
+    toast.success(message);
     await refresh();
   }
 
   async function sourceUpdateQueued(jobId: string, message: string) {
     operationJobId = jobId;
-    feedback = message;
+    toast.success(message);
     await refresh();
   }
 
@@ -405,14 +403,14 @@
       LoadedMatchDialog = dialog;
       matchOpen = true;
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Track details are unavailable.";
+      toast.error(cause instanceof Error ? cause.message : "Track details are unavailable.");
     } finally {
       matchLoading = "";
     }
   }
 
   async function matchSaved(message: string) {
-    feedback = message;
+    toast.success(message);
     await refresh();
   }
 
@@ -502,7 +500,7 @@
           </Button>
         </div>
       </header>
-      {#if feedback}<p class="playlist-feedback" role="status">{feedback}</p>{/if}
+
 
       <div class="playlist-filters">
         <SearchField bind:value={query} label="Filter playlists" placeholder="Filter playlists" hiddenLabel />
@@ -673,7 +671,7 @@
           details.reconciliation.duplicatedPositions.length ||
           details.reconciliation.changedPositions.length
         )}
-          <p class="action-feedback">
+          <p class="inline-status">
             Changes since the previous source refresh:
             {details.reconciliation.addedPositions.length} added,
             {details.reconciliation.removedPositions.length} removed,
@@ -749,7 +747,7 @@
           />
         </div>
 
-        {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
 
         {#if detailError}
           <div class="compact-empty playlist-projection-empty" role="alert">

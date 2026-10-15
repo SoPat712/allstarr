@@ -121,7 +121,9 @@ public sealed class ProviderCtsDiagnosticRunner(
                     providerId,
                     ProviderCapabilityKind.Streaming,
                     providerAccountId,
-                    null), cancellationToken);
+                    null,
+                    AllowManagedDiagnosticAccount: actor.Kind == ProviderActorKind.Administrator &&
+                        providerAccountId.HasValue), cancellationToken);
             }
         }
         catch (UnauthorizedAccessException)
@@ -147,6 +149,21 @@ public sealed class ProviderCtsDiagnosticRunner(
         providerAccountId = resolved?.Account.AccountId;
         var routeMilliseconds = total.Elapsed.TotalMilliseconds;
 
+        var executionActor = actor;
+        if (actor.Kind == ProviderActorKind.Administrator &&
+            resolved != null &&
+            resolved.Account.Scope == ProviderAccountScope.Personal &&
+            resolved.Account.OwnerUserId.HasValue &&
+            resolved.Account.OwnerUserId.Value != actor.EffectiveUserId)
+        {
+            executionActor = new ProviderActorContext(
+                actor.Kind,
+                actor.UserId,
+                actor.BackendPrincipal,
+                actor.DurableJobId,
+                resolved.Account.OwnerUserId.Value);
+        }
+
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var timeout = streaming is ExtensionDownloadStreamingCapabilityAdapter
             ? TimeSpan.FromMinutes(5)
@@ -160,7 +177,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             allowManagedDownloads: true,
             [providerId]);
         var execution = new ProviderExecutionContext(
-            actor,
+            executionActor,
             providerId,
             resolved?.Account,
             policy,
@@ -273,6 +290,9 @@ public sealed class ProviderCtsDiagnosticRunner(
                 var error = IsRedirect(response.StatusCode)
                     ? "redirect-rejected"
                     : $"http-{(int)response.StatusCode}";
+                if (!IsRedirect(response.StatusCode) && response.Headers.TryGetValues("X-Allstarr-Failure-Code", out var codes) &&
+                    codes.SequenceEqual(["account_mismatch"], StringComparer.Ordinal))
+                    error = "account_mismatch";
                 RecordFailure(execution, error, headersMilliseconds);
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity,

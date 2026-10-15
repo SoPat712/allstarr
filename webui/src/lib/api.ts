@@ -8,6 +8,7 @@ export type Session = {
   };
   user?: {
     id: string;
+    allstarrUserId?: string | null;
     name: string;
     isAdministrator: boolean;
     avatarUrl?: string | null;
@@ -275,7 +276,7 @@ export type AppleDownloadStatus = {
   logged_in?: boolean;
   login_state?: string;
   api_version?: string | null;
-  account?: { state?: string; logged_in?: boolean };
+  account?: { state?: string; logged_in?: boolean; maskedIdentifier?: string };
 };
 
 export type UiSchema = {
@@ -477,6 +478,10 @@ export type ProviderHealth = {
 };
 
 export type ConnectivityResult = {
+  succeeded?: boolean;
+  stage?: string;
+  failureCode?: string | null;
+  error?: string | null;
   success?: boolean;
   healthy?: boolean;
   health?: string;

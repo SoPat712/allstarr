@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { ChevronDown } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
@@ -41,7 +42,6 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state("");
-  let feedback = $state("");
   let action = $state("");
   let removal = $state<Removal | null>(null);
   let confirmOpen = $state(false);
@@ -109,10 +109,10 @@
     action = file.path;
     try {
       await downloads.keep(file.path);
-      feedback = `${file.title || file.fileName} moved to Kept.`;
+      toast.success(`${file.title || file.fileName} moved to Kept.`);
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The track could not be kept.";
+      toast.error(cause instanceof Error ? cause.message : "The track could not be kept.");
     } finally {
       action = "";
     }
@@ -129,10 +129,10 @@
         CACHE_TRANSCODE_MINUTES: String(transcodeCacheMinutes),
       });
       cacheControlsDirty = false;
-      feedback = "Track cache settings saved.";
+      toast.success("Track cache settings saved.");
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Track cache settings could not be saved.";
+      toast.error(cause instanceof Error ? cause.message : "Track cache settings could not be saved.");
     } finally {
       action = "";
     }
@@ -149,15 +149,15 @@
     try {
       if (removal.kind === "all") {
         const result = await downloads.removeAll(storage);
-        feedback = `${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`;
+        toast.success(`${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`);
       } else {
         await downloads.remove(removal.file.path, storage);
-        feedback = `${removal.file.title || removal.file.fileName} removed.`;
+        toast.success(`${removal.file.title || removal.file.fileName} removed.`);
       }
       confirmOpen = false;
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Removal failed.";
+      toast.error(cause instanceof Error ? cause.message : "Removal failed.");
     } finally {
       action = "";
     }
@@ -227,7 +227,7 @@
       ]} />
     </div>
 
-    {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
 
     {#if data.files.length}
       <div class="download-table" role="table" aria-label={`${label} tracks`}>
@@ -327,7 +327,7 @@
             <footer><Button type="submit" disabled={Boolean(action) || !cacheControlsDirty}>{action === "cache-settings" ? "Saving…" : "Save track cache"}</Button></footer>
           </form>
         {:else}
-          <p class="action-feedback" role="status">{controlsError || "Loading track cache settings…"}</p>
+          <p class="inline-status" role="status">{controlsError || "Loading track cache settings…"}</p>
         {/if}
       </details>
     {/if}

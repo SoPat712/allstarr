@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { diagnosticFailureMessage, type DiagnosticFailure } from "$lib/diagnostics";
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -9,6 +11,10 @@
   import { Button } from "$lib/components/ui/button";
   import {
     home,
+    appleDownload,
+    ApiError,
+    normalizeResponse,
+    type AppleDownloadStatus,
     settings,
     sources,
     type ConnectivityResult,
@@ -34,6 +40,7 @@
   import {
     accountSettings,
     accountSubtitle,
+    accountOwnershipLabel,
     providerDisplayName,
     audienceLabel,
     ctsMeasurementLabel,
@@ -57,6 +64,7 @@
   let {
     mode = "services",
     administrator,
+    currentUserId = "",
     initialSource = "",
     initialSection = "data",
     initialConnect = false,
@@ -66,6 +74,7 @@
   }: {
     mode?: "services" | "accounts";
     administrator: boolean;
+    currentUserId?: string;
     initialSource?: string;
     initialSection?: string;
     initialConnect?: boolean;
@@ -85,11 +94,38 @@
   let loading = $state(true);
   let refreshing = $state(false);
   let error = $state("");
-  let feedback = $state("");
   let action = $state("");
   let connectOpen = $state(false);
   let connectProviderId = $state("");
   let appleDownloadOpen = $state(false);
+  let appleStatus = $state<AppleDownloadStatus | null>(null);
+  let appleStatusError = $state("");
+  let applePlaybackResult = $state("");
+  let appleRequest = 0;
+  const appleAccount = $derived(accounts.find(account => account.providerId === "apple-musickit" && account.enabled && account.ownerUserId === currentUserId)
+    ?? accounts.find(account => account.providerId === "apple-musickit" && account.enabled));
+  const appleLoginState = $derived(String(appleStatus?.login_state || appleStatus?.account?.state || "").toLowerCase().replaceAll("-", "_"));
+  const appleSessionLabel = $derived(!administrator ? "An administrator manages sign-in" : !appleStatus ? appleStatusError ? "Needs attention" : "Checking setup…"
+    : !appleStatus.staged || !appleStatus.daemon_running || !appleStatus.wrapper_healthy ? "Not set up"
+    : appleLoginState.includes("mismatch") ? "Use the same Apple account"
+    : ["awaiting_2fa", "awaiting2fa", "needs_2fa", "2fa_required", "two_factor_required"].includes(appleLoginState) ? "Waiting for 2FA code"
+    : appleStatus.logged_in ? "Signed in" : "Signed out");
+
+  async function loadAppleStatus() {
+    const current = ++appleRequest;
+    try { const result = await appleDownload.status(); if (current === appleRequest) { appleStatus = result; appleStatusError = ""; } }
+    catch { if (current === appleRequest) appleStatusError = "Apple Music setup could not be checked. Open step 2 and refresh status."; }
+  }
+  $effect(() => { if (administrator && pageId === "apple-musickit") void loadAppleStatus(); });
+  function diagnosticError(cause: unknown) {
+    return diagnosticFailureMessage(cause instanceof ApiError ? normalizeResponse(cause.details) as DiagnosticFailure : {});
+  }
+  async function testApplePlayback() {
+    if (!appleAccount?.canManage || action) return;
+    const result = await test(appleAccount);
+    if (result?.metric === "cts") applePlaybackResult = result.healthy ?? result.success ? "Playback test passed." : diagnosticFailureMessage(result);
+    else await measure(appleAccount);
+  }
   let configureOpen = $state(false);
   let accessOpen = $state(false);
   let selectedAccount = $state<ProviderAccount | null>(null);
@@ -201,7 +237,8 @@
   const scheduleRefresh = refreshScheduler.schedule;
 
   async function completed(message: string) {
-    feedback = message;
+    connectOpen = false; configureOpen = false; accessOpen = false;
+    toast.success(message);
     await refresh();
   }
 
@@ -227,7 +264,7 @@
 
   function sourcePurpose(item: ProviderDefinition) {
     if (item.id === "apple-musickit")
-      return "Browse the public catalog and connect your personal library with a Media User Token and storefront. Optional downloads use the same account.";
+      return "Browse the public catalog and connect your personal library with a Media User Token and storefront. Playback, downloads and synced lyrics use the same account after step 2.";
     if (item.id === "spotiflac-apple-music")
       return "Apple Music extension metadata and Media User Token lyrics, including configured translation or pronunciation.";
     if (item.description) return item.description;
@@ -275,10 +312,10 @@
       ]));
     try {
       await settings.save(updates);
-      feedback = `${selectedSource.name} configuration saved.`;
+      toast.success(`${selectedSource.name} configuration saved.`);
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Source configuration could not be saved.";
+      toast.error(cause instanceof Error ? cause.message : "Source configuration could not be saved.");
     } finally {
       action = "";
     }
@@ -296,7 +333,7 @@
       await sources.setEnabled(account, !account.enabled);
       await completed(`${account.sourceDisplayName || account.displayName} ${account.enabled ? "disabled" : "enabled"}.`);
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The connection could not be updated.";
+      toast.error(cause instanceof Error ? cause.message : "The connection could not be updated.");
     } finally {
       action = "";
     }
@@ -309,12 +346,14 @@
     try {
       const result = await sources.test(account, capability);
       testResults = { ...testResults, [key]: result };
-      feedback = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
-      if (result.seekRung) feedback += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
-      if (result.reasonCode) feedback += ` ${humanize(result.reasonCode)}.`;
+      let message = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
+      if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
+      if (result.reasonCode) message += ` ${diagnosticFailureMessage(result)}`;
+      toast.show(message, result.healthy ?? result.success ? "success" : "error");
       await refresh();
+      return result;
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The connection test failed.";
+      toast.error(diagnosticError(cause));
     } finally {
       action = "";
     }
@@ -330,10 +369,15 @@
         ...result,
         latencyMs: result.clickToStreamMilliseconds ?? result.latencyMs,
       } };
-      feedback = `${provider(account.providerId)?.name ?? account.providerId} click-to-stream measured${result.seekRung ? `: ${humanize(result.seekRung)}` : ""}.`;
+      const passed = result.succeeded ?? result.healthy ?? result.success ?? false;
+      const message = passed ? `${provider(account.providerId)?.name ?? account.providerId} click-to-stream measured${result.seekRung ? `: ${humanize(result.seekRung)}` : ""}.` : diagnosticFailureMessage(result);
+      toast.show(message, passed ? "success" : "error");
+      if (account.providerId === "apple-musickit") applePlaybackResult = passed ? "Playback test passed." : message;
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The click-to-stream test failed.";
+      const message = diagnosticError(cause);
+      toast.error(message);
+      if (account.providerId === "apple-musickit") applePlaybackResult = message;
     } finally {
       action = "";
     }
@@ -344,11 +388,12 @@
     if (action) return;
     action = key;
     try {
-      await sources.deepStream(item.id);
-      feedback = `${item.name} click-to-stream measured.`;
+      const result = await sources.deepStream(item.id);
+      const passed = result.succeeded ?? result.healthy ?? result.success ?? false;
+      toast.show(passed ? `${item.name} click-to-stream measured.` : diagnosticFailureMessage(result), passed ? "success" : "error");
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The click-to-stream test failed.";
+      toast.error(diagnosticError(cause));
     } finally {
       action = "";
     }
@@ -362,7 +407,7 @@
       removeOpen = false;
       await completed(`${removal.sourceDisplayName || removal.displayName} removed.`);
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The saved connection could not be removed.";
+      toast.error(cause instanceof Error ? cause.message : "The saved connection could not be removed.");
     } finally {
       action = "";
     }
@@ -390,7 +435,7 @@
               <ProviderArtwork id={account.providerId} definition={definition} />
               <span class="source-row-copy">
                 <strong>{providerDisplayName(providers, account.providerId)}</strong>
-                <small>{accountSubtitle(account)}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
+                <small>{accountOwnershipLabel(account)}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
               </span>
               <span class="source-row-owner">
                 <small>Added by</small>
@@ -433,10 +478,36 @@
 {#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false)}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
-    <Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>
+    <span><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/integrations/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
     {#if canTest && onTest}<Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={onTest}>Test</Button>{/if}
   </li>
+{/snippet}
+
+{#snippet serverFields(source: ProviderDefinition)}
+            {#each source.configSchema ?? [] as field}
+              <label class="settings-row setting-field" class:read-only={field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}>
+                <div><strong>{source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label}</strong>{#if source.id === "apple-musickit"}<small>{(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment ? "Configured by deployment." : "Leave blank to use the bundled gateway."}</small>{:else if field.helpText}<small>{field.helpText}</small>{/if}{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</div>
+                {#if field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}
+                  <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
+                {:else if field.type === "select"}
+                  <SelectField name={field.key} label={source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
+                {:else if field.type === "toggle"}
+                  <span class="settings-toggle"><Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} /></span>
+                {:else}
+                  <input
+                    name={field.key}
+                    type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
+                    value={field.sensitive ? "" : String(fieldValue(config, field))}
+                    min={field.min ?? undefined}
+                    max={field.max ?? undefined}
+                    required={field.required}
+                    autocomplete="off"
+                  />
+                {/if}
+              </label>
+            {/each}
+            {#if source.id !== "apple-musickit" || !(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}<footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${source.id}` ? "Saving…" : "Save configuration"}</Button></footer>{/if}
 {/snippet}
 
 {#snippet servicePage(source: ProviderDefinition)}
@@ -500,7 +571,7 @@
               <header>
                 <span class="service-account-title">
                   <strong>{providerDisplayName(providers, account.providerId)}</strong>
-                  <small>{accountSubtitle(account)} · added by {account.creatorDisplayName || account.ownerDisplayName || "Unknown"}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
+                  <small>{accountOwnershipLabel(account)}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
                 </span>
                 <Badge state={!account.enabled ? "disabled" : readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>
                   {!account.enabled ? "Turned off" : capabilities.length && ready === capabilities.length ? "Working" : `${ready} of ${capabilities.length} ready`}
@@ -564,10 +635,19 @@
       {/if}
 
       {#if source.id === "apple-musickit"}
-        <section class="settings-card" aria-labelledby="apple-downloads-title">
-          <header><div><h3 id="apple-downloads-title">Optional downloads</h3><small>GAMDL downloads need a gateway whose wrapper is signed in to the same Apple account. Catalog and playlists work without it.</small></div>
-            {#if administrator}<Button variant="secondary" onclick={() => { appleDownloadOpen = true; }}>Manage optional downloads</Button>{/if}
-          </header>
+        <section class="settings-card apple-checklist" aria-label="Apple Music setup">
+          <header><div><h3>Apple Music setup</h3><small>Use the same Apple account for steps 1 and 2.</small></div></header>
+          <ol>
+            <li><div><strong>1. Apple Music account</strong><p>Media User Token and storefront enable catalog, search and playlists.</p><Badge state={!appleAccount ? "suggested" : !appleAccount.secret.configured || appleAccount.secret.revoked ? "degraded" : "healthy"}>{!appleAccount ? "Not connected" : !appleAccount.secret.configured || appleAccount.secret.revoked ? "Needs attention" : `Connected (${String(appleAccount.configuration?.storefront || "us")})`}</Badge></div></li>
+            <li id="apple-playback-sign-in"><div><strong>2. Apple Music sign-in for playback</strong><p>The Apple ID session enables streaming, downloads and synced lyrics.</p><Badge state={appleStatus?.logged_in ? "healthy" : "suggested"}>{appleSessionLabel}</Badge>
+              {#if appleStatus?.account?.maskedIdentifier}<p>Signed-in account: {appleStatus.account.maskedIdentifier}</p>{/if}
+              {#if appleLoginState.includes("mismatch")}<p class="notice-error">Use the same Apple account for steps 1 and 2, then test again.</p>{/if}
+              {#if appleStatusError}<p class="service-note">{appleStatusError}</p>{/if}
+            </div>{#if administrator}<Button variant="secondary" onclick={() => appleDownloadOpen = true}>{appleStatus?.logged_in ? "Manage Apple Music sign-in" : "Sign in to Apple Music"}</Button>{/if}</li>
+            <li><div><strong>3. Test playback</strong><p>Check the saved account and measure how quickly its audio starts.</p>{#if applePlaybackResult}<p role="status">{applePlaybackResult}</p>{/if}</div>
+              {#if administrator}<Button disabled={!appleAccount?.canManage || Boolean(action)} onclick={() => void testApplePlayback()}>Test playback</Button>{/if}
+            </li>
+          </ol>
         </section>
       {/if}
 
@@ -575,29 +655,7 @@
         {#if administrator}
           <form class="settings-card source-configuration-form" aria-label={`${source.name} settings`} onsubmit={(event) => void saveSourceConfiguration(event)}>
             <header><div><h3>Server settings</h3><small>Shared by everyone using this service.</small></div></header>
-            {#each source.configSchema as field}
-              <label class="settings-row setting-field" class:read-only={field.readOnly || field.ownership === "deployment"}>
-                <div><strong>{field.label}</strong>{#if field.helpText}<small>{field.helpText}</small>{/if}{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</div>
-                {#if field.readOnly || field.ownership === "deployment"}
-                  <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
-                {:else if field.type === "select"}
-                  <SelectField name={field.key} label={field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
-                {:else if field.type === "toggle"}
-                  <span class="settings-toggle"><Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} /></span>
-                {:else}
-                  <input
-                    name={field.key}
-                    type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
-                    value={field.sensitive ? "" : String(fieldValue(config, field))}
-                    min={field.min ?? undefined}
-                    max={field.max ?? undefined}
-                    required={field.required}
-                    autocomplete="off"
-                  />
-                {/if}
-              </label>
-            {/each}
-            <footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${source.id}` ? "Saving…" : "Save configuration"}</Button></footer>
+            {#if source.id === "apple-musickit"}<details class="source-advanced-settings"><summary>Advanced server settings</summary>{@render serverFields(source)}</details>{:else}{@render serverFields(source)}{/if}
           </form>
         {:else}
           <p class="service-empty">Only an administrator can change this service's server settings.</p>
@@ -626,7 +684,7 @@
     </div>
   {/if}
 
-  {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
   <div class="sources-layout" aria-busy={refreshing}>
     {#if pageId}
       {#if pageSource}
@@ -705,9 +763,9 @@
 
   </div>
 
-  <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
-  <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} testConnection={administrator} account={selectedAccount} onSaved={completed} />
-  <AppleDownloadDialog bind:open={appleDownloadOpen} />
+  <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
+  <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />
+  <AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />
   {#if administrator}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/if}
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
 

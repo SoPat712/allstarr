@@ -1,84 +1,57 @@
 <script lang="ts">
   import { Dialog } from "$lib/components/ui/dialog";
-  import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
-  import { Check, X } from "@lucide/svelte";
-  import { appleDownload, type AppleDownloadStatus } from "$lib/api";
-  import { humanize } from "$lib/sources";
+  import { X } from "@lucide/svelte";
+  import { appleDownload, ApiError, normalizeResponse, type AppleDownloadStatus } from "$lib/api";
+  import { toast } from "$lib/toasts";
+  import { diagnosticFailureMessage } from "$lib/diagnostics";
 
-  let { open = $bindable(false) }: { open: boolean } = $props();
-
+  let { open = $bindable(false), onStatus }: { open: boolean; onStatus?: (status: AppleDownloadStatus) => void } = $props();
   let status = $state<AppleDownloadStatus | null>(null);
+  let checked = $state(false);
   let packageFile = $state<File | null>(null);
   let upload = $state<{ message?: string; fileName?: string; sizeBytes?: number } | null>(null);
-  let username = $state("");
-  let password = $state("");
-  let code = $state("");
-  let action = $state("");
-  let feedback = $state("");
-  let error = $state("");
-
-  const loginState = $derived(
-    String(status?.login_state || status?.account?.state || status?.state || "unknown")
-      .trim().toLowerCase().replaceAll("-", "_").replaceAll(" ", "_"),
-  );
-  const awaiting2fa = $derived(
-    ["awaiting_2fa", "awaiting2fa", "needs_2fa", "2fa_required", "two_factor_required"]
-      .includes(loginState),
-  );
-  const gatewayReady = $derived(Boolean(
-    status?.staged && status?.daemon_running && status?.wrapper_healthy,
-  ));
+  let username = $state(""); let password = $state(""); let code = $state("");
+  let action = $state(""); let error = $state(""); let advanced = $state(false);
+  let request = 0;
+  const loginState = $derived(String(status?.login_state || status?.account?.state || "").toLowerCase().replaceAll("-", "_"));
+  const awaiting2fa = $derived(["awaiting_2fa", "awaiting2fa", "needs_2fa", "2fa_required", "two_factor_required"].includes(loginState));
+  const gatewayReady = $derived(Boolean(status?.staged && status?.daemon_running && status?.wrapper_healthy));
   const packageReady = $derived(Boolean(status?.staged || upload));
 
   async function load() {
-    action = "status";
-    error = "";
+    const current = ++request;
     try {
-      status = await appleDownload.status();
-    } catch (cause) {
-      error = cause instanceof Error ? cause.message : "Apple download status is unavailable.";
-    } finally {
-      action = "";
+      const result = await appleDownload.status();
+      if (current !== request) return;
+      status = result; checked = true; advanced = !result.staged || !result.daemon_running || !result.wrapper_healthy;
+      onStatus?.(result);
+    } catch {
+      if (current !== request) return;
+      checked = true; error = "Apple Music setup could not be checked. Refresh status and try again.";
     }
   }
-
   async function run(name: string, operation: () => Promise<unknown>, message: string) {
     if (action) return;
-    action = name;
-    error = "";
-    feedback = "";
+    action = name; error = "";
     try {
-      await operation();
-      feedback = message;
-      await load();
+      await operation(); await load();
+      if ((name === "login" || name === "2fa") && status?.logged_in) {
+        open = false; toast.success("Signed in to Apple Music");
+      } else toast.info(message);
     } catch (cause) {
-      error = cause instanceof Error ? cause.message : `${message} failed.`;
-    } finally {
-      action = "";
-    }
+      const details = cause instanceof ApiError ? normalizeResponse(cause.details) as { error?: string } : {};
+      error = details.error?.includes("account_mismatch") ? diagnosticFailureMessage({ failureCode: details.error })
+        : "Apple Music could not complete this step. Check the details you entered and try again.";
+    } finally { action = ""; password = ""; code = ""; }
   }
-
   async function uploadPackage() {
     if (!packageFile) return;
-    await run("upload", async () => {
-      upload = await appleDownload.setup(packageFile!);
-      packageFile = null;
-    }, "Package staged. Run the host install command next.");
+    await run("upload", async () => { upload = await appleDownload.setup(packageFile!); packageFile = null; }, "Package staged. Run the host install command next.");
   }
-
-  async function login() {
-    await run("login", () => appleDownload.login(username, password), "Login submitted.");
-    password = "";
-  }
-
-  async function submit2fa() {
-    await run("2fa", () => appleDownload.submit2fa(code), "2FA submitted.");
-    code = "";
-  }
-
   $effect(() => {
-    if (open) void load();
+    if (open) { checked = false; status = null; error = ""; void load(); }
+    else { request++; password = ""; code = ""; }
   });
 </script>
 
@@ -88,67 +61,46 @@
     <Dialog.Content class="source-dialog apple-download-dialog">
       <header>
         <div>
-          <p class="eyebrow">Operator-managed Source</p>
-          <Dialog.Title>Apple Music – GAMDL</Dialog.Title>
-          <Dialog.Description>Install the gateway package, then authenticate its Apple Music session.</Dialog.Description>
+          <Dialog.Title>Sign in to Apple Music</Dialog.Title>
+          <Dialog.Description>Use the same Apple account as your Media User Token. This sign-in enables playback, downloads and synced lyrics.</Dialog.Description>
         </div>
-        <Dialog.Close class="icon-button" aria-label="Close Apple Music – GAMDL manager"><X size={18} aria-hidden="true" /></Dialog.Close>
+        <Dialog.Close class="icon-button" aria-label="Close Apple Music sign-in"><X size={18} aria-hidden="true" /></Dialog.Close>
       </header>
-
       <div class="apple-manager-body">
-        <dl class="source-metrics">
-          <div><dt>Gateway</dt><dd><Badge state={gatewayReady ? "healthy" : "suggested"}>{gatewayReady ? "Ready" : humanize(status?.state ?? "unknown")}</Badge></dd></div>
-          <div><dt>Session</dt><dd><Badge state={status?.logged_in ? "healthy" : "suggested"}>{status?.logged_in ? "Authenticated" : humanize(loginState)}</Badge></dd></div>
-          <div><dt>API contract</dt><dd>{status?.api_version || "Not discovered"}</dd></div>
-          <div><dt>Provider</dt><dd><Badge state={status?.ready ? "healthy" : "needs_config"}>{status?.ready ? "Playable" : "Needs setup"}</Badge></dd></div>
-        </dl>
-
-        <ol class="apple-setup-progress" aria-label="Apple download setup progress">
-          <li class:complete={packageReady} class:active={!packageReady}>
-            <span>{#if packageReady}<Check size={16} aria-hidden="true" />{:else}1{/if}</span><span><strong>Package</strong><small>{upload?.fileName || (packageReady ? "Installed" : "APK or APKM required")}</small></span>
-          </li>
-          <li class:complete={gatewayReady} class:active={packageReady && !gatewayReady}>
-            <span>{#if gatewayReady}<Check size={16} aria-hidden="true" />{:else}2{/if}</span><span><strong>Gateway</strong><small>{gatewayReady ? "Running" : packageReady ? "Run host installer" : "Waiting for package"}</small></span>
-          </li>
-          <li class:complete={Boolean(status?.logged_in)} class:active={gatewayReady && !status?.logged_in}>
-            <span>{#if status?.logged_in}<Check size={16} aria-hidden="true" />{:else}3{/if}</span><span><strong>Session</strong><small>{status?.logged_in ? "Authenticated" : gatewayReady ? "Login required" : "Waiting for gateway"}</small></span>
-          </li>
-        </ol>
-
-        {#if !packageReady}
-          <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void uploadPackage(); }}>
-            <label class="field">
-              <span>Apple Music package</span>
-              <input type="file" accept=".apk,.apkm,application/vnd.android.package-archive" required onchange={(event) => packageFile = event.currentTarget.files?.[0] ?? null} />
-              <small>Choose a legally obtained APK or APKM, up to 512 MB.</small>
-            </label>
-            <Button type="submit" disabled={!packageFile || Boolean(action)}>{action === "upload" ? "Uploading…" : "Upload package"}</Button>
-          </form>
-        {:else if !gatewayReady}
-          <section class="apple-host-action">
-            <strong>{upload?.fileName || "Apple Music package"} is staged</strong>
-            <p>Run this on the Docker host to verify the package, build the gateway, and start it.</p>
-            <code>./allstarr.sh install-apple</code>
-          </section>
-        {:else if awaiting2fa}
-          <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void submit2fa(); }}>
-            <label class="field"><span>2FA code</span><input bind:value={code} inputmode="numeric" autocomplete="one-time-code" required /></label>
-            <Button type="submit" disabled={Boolean(action)}>{action === "2fa" ? "Submitting…" : "Submit 2FA"}</Button>
-          </form>
-        {:else if !status?.logged_in}
-          <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void login(); }}>
-            <label class="field"><span>Apple ID</span><input bind:value={username} autocomplete="username" required /></label>
-            <label class="field"><span>Password</span><input bind:value={password} type="password" autocomplete="current-password" required /></label>
-            <Button type="submit" disabled={Boolean(action)}>{action === "login" ? "Signing in…" : "Start login"}</Button>
-          </form>
+        {#if !checked}
+          <p class="inline-status" role="status">Checking setup…</p>
         {:else}
-          <div class="compact-empty"><strong>Apple Music – GAMDL is ready</strong><p>The gateway and saved Apple Music session are authenticated.</p></div>
+          {#if gatewayReady}
+            {#if awaiting2fa}
+              <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void run("2fa", () => appleDownload.submit2fa(code), "2FA code submitted. Refresh status if sign-in is still pending."); }}>
+                <label class="field"><span>2FA code</span><input bind:value={code} inputmode="numeric" autocomplete="one-time-code" required /></label>
+                <Button type="submit" disabled={Boolean(action)}>Submit 2FA</Button>
+              </form>
+            {:else if !status?.logged_in}
+              <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void run("login", () => appleDownload.login(username, password), "Sign-in submitted. Enter your 2FA code if requested."); }}>
+                <label class="field"><span>Apple ID</span><input bind:value={username} autocomplete="username" required /></label>
+                <label class="field"><span>Password</span><input bind:value={password} type="password" autocomplete="current-password" required /></label>
+                <Button type="submit" disabled={Boolean(action)}>{action === "login" ? "Signing in…" : "Sign in"}</Button>
+              </form>
+            {:else}
+              <div class="compact-empty"><strong>Signed in to Apple Music</strong><p>{status.account?.maskedIdentifier || "The playback session is ready."}</p></div>
+            {/if}
+          {/if}
+          <details bind:open={advanced} class="apple-advanced">
+            <summary>Advanced setup</summary>
+            <p>Gateway: {gatewayReady ? "Running" : "Not set up"}. Package: {packageReady ? "Installed" : "Missing"}.</p>
+            {#if !packageReady}
+              <form class="apple-manager-form" onsubmit={(event) => { event.preventDefault(); void uploadPackage(); }}>
+                <label class="field"><span>Apple Music package</span><input type="file" accept=".apk,.apkm,application/vnd.android.package-archive" required onchange={(event) => packageFile = event.currentTarget.files?.[0] ?? null} /><small>Choose a legally obtained APK or APKM, up to 512 MB.</small></label>
+                <Button type="submit" disabled={!packageFile || Boolean(action)}>Upload package</Button>
+              </form>
+            {:else if !gatewayReady}
+              <section class="apple-host-action"><strong>{upload?.fileName || "Apple Music package"} is staged</strong><p>Run this on the Docker host to verify the package, build the gateway, and start it.</p><code>./allstarr.sh install-apple</code></section>
+            {:else}<p>The gateway is already installed. API contract: {status?.api_version || "Not discovered"}.</p>{/if}
+          </details>
         {/if}
-
-        {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
       </div>
-
       <footer class="dialog-actions">
         <Button variant="secondary" href="#/integrations/services/apple-musickit" onclick={() => open = false}>Provider settings</Button>
         <Button variant="secondary" disabled={Boolean(action)} onclick={() => void load()}>Refresh status</Button>
