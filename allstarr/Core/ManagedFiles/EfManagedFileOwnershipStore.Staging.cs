@@ -24,10 +24,11 @@ public sealed partial class EfManagedFileOwnershipStore
     }
 
     internal async Task<Guid[]> StageReleaseAsync(string key, DateTimeOffset now,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, Guid? fileId = null)
     {
         RequireReferenceTransaction();
-        var references = await References.Where(item => item.ReferenceKey == key && item.ReleasedAt == null)
+        var references = await References.Where(item => item.ReferenceKey == key && item.ReleasedAt == null &&
+                (fileId == null || item.ManagedFileId == fileId))
             .ToArrayAsync(cancellationToken);
         foreach (var reference in references)
         {
@@ -52,7 +53,7 @@ public sealed partial class EfManagedFileOwnershipStore
     }
 
     internal async Task<bool> StageKeptRemovalAsync(Guid fileId, Guid recordingId,
-        DateTimeOffset now, CancellationToken cancellationToken)
+        DateTimeOffset now, CancellationToken cancellationToken, bool allowUnpublished = false)
     {
         RequireReferenceTransaction();
         var file = await Files.AsNoTracking().SingleOrDefaultAsync(item => item.Id == fileId &&
@@ -63,7 +64,9 @@ public sealed partial class EfManagedFileOwnershipStore
                 item.ManagedFileId == fileId && item.ReleasedAt == null, cancellationToken)) return false;
         var routes = dbContext.Set<RecordingKeptRouteEntity>();
         if (!await routes.AnyAsync(item => item.ManagedFileId == fileId &&
-                item.CanonicalRecordingId == recordingId, cancellationToken)) return false;
+                item.CanonicalRecordingId == recordingId, cancellationToken) &&
+            (!allowUnpublished || await routes.AnyAsync(item => item.ManagedFileId == fileId, cancellationToken)))
+            return false;
 
         // A content-deduplicated file can serve several recordings. Actual file
         // references protect all of them; remove their zero-interest routes together.

@@ -7,7 +7,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.ManagedFiles;
 
-public sealed record KeptRecordingCleanupPayload(Guid RecordingId, Guid ManagedFileId);
+public sealed record KeptRecordingCleanupPayload(Guid RecordingId, Guid ManagedFileId,
+    Guid? ReservationJobId = null);
 
 public sealed partial class RecordingKeptFiles
 {
@@ -51,8 +52,21 @@ public sealed partial class RecordingKeptFiles
                 var due = lastRelease.Value.AddHours(24);
                 if (clock.UtcNow < due)
                     return DurableJobCompletion.Defer("kept_cleanup_grace", "The kept file is still in its grace period.", due - clock.UtcNow);
+                var unpublished = false;
+                if (payload.ReservationJobId is { } sourceJobId)
+                {
+                    var sourceJob = await db.Jobs.AsNoTracking().SingleOrDefaultAsync(item => item.Id == sourceJobId,
+                        cancellationToken);
+                    if (sourceJob != null && !TerminalReservationJob(sourceJob))
+                        return DurableJobCompletion.Defer("kept_reservation_active", "The original work is active again.", TimeSpan.FromHours(1));
+                    unpublished = sourceJob != null && await HasReservationProofAsync(db, file, sourceJob,
+                        payload.RecordingId, cancellationToken);
+                    if (!unpublished)
+                        return DurableJobCompletion.Failure("kept_reservation_proof_missing",
+                            "The abandoned placement no longer has its original verification record.");
+                }
                 if (!await new EfManagedFileOwnershipStore(db).StageKeptRemovalAsync(file.Id,
-                        payload.RecordingId, clock.UtcNow, cancellationToken))
+                        payload.RecordingId, clock.UtcNow, cancellationToken, unpublished))
                     return DurableJobCompletion.Success();
             }
             db.Entry(job).Property(item => item.Revision).IsModified = true;
@@ -135,9 +149,11 @@ public sealed partial class RecordingKeptFiles
     }
 }
 
-public sealed class KeptRecordingCleanupJobHandler(RecordingKeptFiles kept) : IDurableJobHandler
+public sealed class KeptRecordingCleanupJobHandler(RecordingKeptFiles kept) : IDurableJobHandler, IDurableJobRecoveryHandler
 {
     public string JobType => RecordingKeptFiles.KeptCleanupJobType;
     public Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext context,
         CancellationToken cancellationToken) => kept.CleanupAsync(context.Claim, cancellationToken);
+    public async Task RecoverAsync(CancellationToken cancellationToken) =>
+        await kept.RecoverReservationsAsync(cancellationToken);
 }
