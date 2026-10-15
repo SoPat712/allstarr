@@ -13,7 +13,6 @@ profiles() {
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r value; do
       case "$value" in
-        spotify|spotify-lyrics) values+=(spotify-lyrics) ;;
         apple) values+=("$value") ;;
       esac
     done < "$PROFILE_FILE"
@@ -37,7 +36,6 @@ compose_args() {
   COMPOSE=(-f "$ROOT/docker-compose.yml")
   while IFS= read -r profile; do
     case "$profile" in
-      spotify-lyrics) COMPOSE+=(--profile spotify-lyrics) ;;
       apple) COMPOSE+=(--profile apple) ;;
     esac
   done < <(profiles)
@@ -49,10 +47,9 @@ start_stack() {
 
 remember_profile() {
   local wanted="$1" temporary
-  [[ "$wanted" == spotify ]] && wanted=spotify-lyrics
   touch "$PROFILE_FILE"
   temporary="$(mktemp)"
-  awk '{ if ($0 == "spotify") $0 = "spotify-lyrics"; if (!seen[$0]++) print }' "$PROFILE_FILE" > "$temporary"
+  awk '$0 != "spotify" && $0 != "spotify-lyrics" && !seen[$0]++' "$PROFILE_FILE" > "$temporary"
   mv "$temporary" "$PROFILE_FILE"
   grep -qxF "$wanted" "$PROFILE_FILE" 2>/dev/null || printf '%s\n' "$wanted" >> "$PROFILE_FILE"
 }
@@ -156,8 +153,9 @@ validate_deployment_files() {
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r profile; do
       case "$profile" in
-        ""|apple|spotify|spotify-lyrics) ;;
-        *) die "unsupported saved profile '$profile'; use apple or spotify-lyrics" ;;
+        ""|apple) ;;
+        spotify|spotify-lyrics) echo "Spotify lyrics runs inside Allstarr. Configure its account in Integrations > Accounts." >&2 ;;
+        *) die "unsupported saved profile '$profile'; use apple" ;;
       esac
     done < "$PROFILE_FILE"
   fi
@@ -183,9 +181,6 @@ update() {
   docker compose "${COMPOSE[@]}" config --quiet
   if [[ "$(deployment_mode)" == release ]]; then
     docker compose "${COMPOSE[@]}" pull allstarr
-    if profiles | grep -qx spotify-lyrics; then
-      docker compose "${COMPOSE[@]}" pull spotify-lyrics
-    fi
   fi
   if [[ "$(deployment_mode)" == source ]]; then
     need git
@@ -217,8 +212,7 @@ Usage: ./allstarr.sh COMMAND
   update                            Pull the saved release/source and safely recreate
   status                            Show containers and the saved profile
   logs [service]                    Follow redacted container logs
-  enable spotify-lyrics             Add an optional saved profile
-  disable spotify-lyrics|apple      Remove an optional profile on next up
+  disable apple                     Remove Apple on next up
   prepare-apple [INPUT] [ARCH]      Verify an APK/APKM or staged libs; enable Apple
   install-apple [ARCH]              Build and start Apple from the WebUI-staged package
   down                              Stop containers without deleting data
@@ -251,9 +245,9 @@ case "$command" in
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
     case "${1:-}" in
-      spotify|spotify-lyrics) remember_profile "$1" ;;
+      spotify|spotify-lyrics) die "Spotify lyrics runs inside Allstarr. Configure its account in Integrations > Accounts." ;;
       apple) die "use prepare-apple for Apple so its libraries are verified first" ;;
-      *) die "choose spotify-lyrics" ;;
+      *) die "use prepare-apple for the optional Apple profile" ;;
     esac
     echo "Profile enabled. Run: ./allstarr.sh up"
     ;;

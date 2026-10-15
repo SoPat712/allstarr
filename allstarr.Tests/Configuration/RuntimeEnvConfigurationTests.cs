@@ -12,6 +12,12 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
         Path.GetTempPath(),
         $"allstarr-runtime-{Guid.NewGuid():N}.env");
 
+    [Theory]
+    [InlineData("SPOTIFY_LYRICS_API_URL")]
+    [InlineData("SpotifyApi__LyricsApiUrl")]
+    public void MapEnvVarToConfiguration_IgnoresRetiredSpotifySidecar(string key) =>
+        Assert.Empty(RuntimeEnvConfiguration.MapEnvVarToConfiguration(key, "http://obsolete.example.test"));
+
     [Fact]
     public void MapEnvVarToConfiguration_MapsFlatKeyToNestedConfigKey()
     {

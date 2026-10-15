@@ -68,7 +68,6 @@ public static class RuntimeEnvConfiguration
             ["SPOTIFY_API_CACHE_DURATION_MINUTES"] = ["SpotifyApi:CacheDurationMinutes"],
             ["SPOTIFY_API_RATE_LIMIT_DELAY_MS"] = ["SpotifyApi:RateLimitDelayMs"],
             ["SPOTIFY_API_PREFER_ISRC_MATCHING"] = ["SpotifyApi:PreferIsrcMatching"],
-            ["SPOTIFY_LYRICS_API_URL"] = ["SpotifyApi:LyricsApiUrl"],
 
             ["SCROBBLING_ENABLED"] = ["Scrobbling:Enabled"],
             ["SCROBBLING_LOCAL_TRACKS_ENABLED"] = ["Scrobbling:LocalTracksEnabled"],
@@ -149,6 +148,7 @@ public static class RuntimeEnvConfiguration
 
     private static readonly HashSet<string> IgnoredComposeOnlyKeys = new(StringComparer.OrdinalIgnoreCase)
     {
+        "SPOTIFY_LYRICS_API_URL", "SpotifyApi__LyricsApiUrl",
         "DOWNLOAD_PATH",
         "KEPT_PATH",
         "CACHE_PATH"

@@ -231,7 +231,7 @@ of API, authentication, and authorization behavior.
 
 ## Optional upstream services
 
-- Spotify lyrics uses the pinned upstream `akashrchandran/spotify-lyrics-api` image through the native `spotify-lyrics` Compose profile.
+- Spotify lyrics use the native account-bound capability and the existing Spotify token exchange. Its bounded transport and parser are shared with explicit account probes; no lyrics container is required. Playback prefetch and kept-sidecar generation use the same listener-scoped lyrics resolver as protocol requests.
 - Apple download uses a legally obtained Apple package, the upstream provider/wrapper, and Allstarr's thin compatibility layer through the native `apple` profile.
 
 Allstarr distributes only its own integration layer. Optional upstream code and artifacts remain owned and distributed by their original projects.

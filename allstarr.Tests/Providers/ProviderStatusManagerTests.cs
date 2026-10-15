@@ -59,24 +59,18 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public void SpotifyLyricsSidecar_DoesNotRequireDirectSpotifyApiMode()
+    public void SpotifyLyricsRequiresAnExactManagedAccount()
     {
-        var manager = CreateManager(
-            new Dictionary<string, string?>
-            {
-                ["MULTI_PROVIDER_LYRICS_ORDER"] = "spotify,lrclib"
-            },
-            spotifySettings: new SpotifyApiSettings
-            {
-                Enabled = false,
-                SessionCookie = string.Empty,
-                LyricsApiUrl = "http://lyrics-sidecar:8080"
-            });
-
-        var status = manager.GetAccountFreeStatus("spotify", ProviderCapabilities.Lyrics);
-
-        Assert.Equal(ProviderConfigurationState.Configured, status.Configuration);
-        Assert.Contains("spotify", manager.GetEnabledLyricsProviders());
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            spotifySettings: new SpotifyApiSettings { Enabled = false, SessionCookie = "deployment-cookie" });
+        Assert.Throws<InvalidOperationException>(() => manager.GetAccountFreeStatus("spotify", ProviderCapabilities.Lyrics));
+        Assert.DoesNotContain("spotify", manager.GetEnabledLyricsProviders());
+        var id = Guid.NewGuid();
+        Assert.Equal(ProviderConfigurationState.NeedsConfiguration,
+            manager.GetManagedStatus("spotify", ProviderCapabilities.Lyrics, id, new Dictionary<string, string>()).Configuration);
+        Assert.Equal(ProviderConfigurationState.Configured,
+            manager.GetManagedStatus("spotify", ProviderCapabilities.Lyrics, id,
+                new Dictionary<string, string> { ["sessioncookie"] = "account-cookie" }).Configuration);
     }
 
     [Fact]
@@ -388,33 +382,25 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public async Task SpotifyAccount_ProbesPlaylistAndLyricsSidecar()
+    public async Task SpotifyAccount_ProbesPlaylistAndNativeLyrics()
     {
-        var manager = CreateManager(
-            new Dictionary<string, string?>(),
-            httpClientFactory: new HandlerHttpClientFactory(
-                new QueuedResponseHandler(
-                    SpotifyTotpSecrets(),
-                    SpotifyTime(),
-                    Json(HttpStatusCode.OK, "{\"accessToken\":\"access-token\"}"),
-                    Json(HttpStatusCode.OK, "{\"error\":false,\"syncType\":\"LINE_SYNCED\",\"lines\":[]}"))),
-            spotifySettings: new SpotifyApiSettings
-            {
-                Enabled = true,
-                SessionCookie = "deployment-cookie",
-                LyricsApiUrl = "http://lyrics-sidecar:8080"
-            });
+        var handler = new QueuedResponseHandler(
+            SpotifyTotpSecrets(), SpotifyTime(), Json(HttpStatusCode.OK, "{\"accessToken\":\"access-token\"}"),
+            SpotifyTotpSecrets(), SpotifyTime(), Json(HttpStatusCode.OK, "{\"accessToken\":\"access-token\"}"),
+            Json(HttpStatusCode.OK, "{\"lyrics\":{\"syncType\":\"UNSYNCED\",\"lines\":[{\"words\":\"Synthetic words\"}]}}"));
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(handler),
+            spotifySettings: new SpotifyApiSettings { Enabled = true, SessionCookie = "deployment-cookie" });
         var accountId = Guid.CreateVersion7();
         var secrets = new Dictionary<string, string> { ["sessioncookie"] = "account-cookie" };
-
         Assert.True(manager.CanTestCapability("spotify", ProviderCapabilities.Lyrics));
         Assert.True(await manager.TestManagedProviderConnectionAsync("spotify", accountId, secrets));
-        Assert.Equal(
-            ProviderHealthState.Healthy,
+        Assert.Equal(ProviderHealthState.Healthy,
             manager.GetManagedStatus("spotify", ProviderCapabilities.Playlist, accountId, secrets).Health);
-        Assert.Equal(
-            ProviderHealthState.Healthy,
+        Assert.Equal(ProviderHealthState.Healthy,
             manager.GetManagedStatus("spotify", ProviderCapabilities.Lyrics, accountId, secrets).Health);
+        Assert.Equal("spclient.wg.spotify.com", handler.Requests.Last().Host);
+        Assert.Contains("/color-lyrics/v2/track/", handler.Requests.Last().AbsolutePath, StringComparison.Ordinal);
     }
 
     [Fact]

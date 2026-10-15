@@ -22,11 +22,11 @@ public sealed class ComposeContractTests
         Assert.Contains("${ALLSTARR_DATA_PATH:-allstarr-data}:/app/data", compose, StringComparison.Ordinal);
         Assert.Contains("./.env:/app/.env:ro", compose, StringComparison.Ordinal);
         Assert.Contains("ghcr.io/sopat712/allstarr:3.1.0-beta.1", compose, StringComparison.Ordinal);
-        Assert.Matches("(?s)spotify-lyrics:.*?profiles:\\s*- spotify-lyrics", compose);
+        Assert.DoesNotContain("spotify-lyrics:", compose, StringComparison.Ordinal);
         Assert.Matches("(?s)apple-gateway:.*?profiles:\\s*- apple", compose);
         Assert.Matches("(?s)apple-wrapper:.*?profiles:\\s*- apple", compose);
-        Assert.Contains("akashrchandran/spotify-lyrics-api@sha256:", compose, StringComparison.Ordinal);
-        Assert.Contains("SPOTIFY_API_SESSION_COOKIE", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("spotify-lyrics-api", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("SpotifyApi__LyricsApiUrl", compose, StringComparison.Ordinal);
         Assert.Contains("APPLE_GATEWAY_WRAPPER_DECRYPT_PORT", compose, StringComparison.Ordinal);
         Assert.Contains("./.apple-provider/wrapper-v2", compose, StringComparison.Ordinal);
         Assert.DoesNotContain("valkey", compose, StringComparison.OrdinalIgnoreCase);
@@ -124,6 +124,8 @@ public sealed class ComposeContractTests
         startInfo.ArgumentList.Add("compose");
         startInfo.ArgumentList.Add("-f");
         startInfo.ArgumentList.Add("docker-compose.yml");
+        startInfo.ArgumentList.Add("--env-file");
+        startInfo.ArgumentList.Add(Path.Combine(_repositoryRoot, ".env.example"));
         foreach (var profile in profiles)
         {
             startInfo.ArgumentList.Add("--profile");
@@ -139,7 +141,6 @@ public sealed class ComposeContractTests
             .Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.Ordinal);
         var expected = new HashSet<string>(["allstarr"], StringComparer.Ordinal);
-        if (profiles.Contains("spotify-lyrics")) expected.Add("spotify-lyrics");
         if (profiles.Contains("apple")) expected.UnionWith(["apple-gateway", "apple-wrapper"]);
 
         Assert.True(process.ExitCode == 0, error);
@@ -148,12 +149,14 @@ public sealed class ComposeContractTests
     }
 
     [Theory]
-    [InlineData("release", false, false)]
-    [InlineData("source", false, false)]
-    [InlineData("release", true, false)]
-    [InlineData("source", true, false)]
-    [InlineData("release", true, true)]
-    public async Task Up_BuildsEnabledGatewayBeforeStarting(string mode, bool apple, bool failBuild)
+    [InlineData("release", false, false, false)]
+    [InlineData("source", false, false, false)]
+    [InlineData("release", true, false, false)]
+    [InlineData("source", true, false, false)]
+    [InlineData("release", true, true, false)]
+    [InlineData("release", false, false, true)]
+    [InlineData("source", true, false, true)]
+    public async Task Up_BuildsEnabledGatewayBeforeStarting(string mode, bool apple, bool failBuild, bool retiredSpotify)
     {
         var root = Path.Combine(Path.GetTempPath(), $"allstarr-compose-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
@@ -162,7 +165,8 @@ public sealed class ComposeContractTests
             File.Copy(Path.Combine(_repositoryRoot, "allstarr.sh"), Path.Combine(root, "allstarr.sh"));
             await File.WriteAllTextAsync(Path.Combine(root, ".env"), "FIXTURE=true\n");
             await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-mode"), mode + "\n");
-            await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-profiles"), apple ? "apple\n" : "");
+            await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-profiles"),
+                (apple ? "apple\n" : "") + (retiredSpotify ? "spotify\nspotify-lyrics\n" : ""));
             var docker = Path.Combine(root, "docker");
             await File.WriteAllTextAsync(docker, "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_COMMANDS\"\n" +
                 (failBuild ? "[[ \"$*\" != *'build apple-gateway'* ]]\n" : "exit 0\n"));
@@ -183,6 +187,7 @@ public sealed class ComposeContractTests
             await process.WaitForExitAsync();
             var commands = await File.ReadAllLinesAsync(Path.Combine(root, "commands"));
             Assert.Equal(!failBuild, process.ExitCode == 0);
+            Assert.DoesNotContain(commands, command => command.Contains("spotify", StringComparison.Ordinal));
             Assert.Equal(mode == "source", commands.Any(command => command.EndsWith("build allstarr", StringComparison.Ordinal)));
             Assert.Equal(apple, commands.Any(command => command.EndsWith("build apple-gateway", StringComparison.Ordinal)));
             var startIndex = Array.FindIndex(commands, command => command.Contains("up -d", StringComparison.Ordinal));
@@ -204,7 +209,7 @@ public sealed class ComposeContractTests
         Assert.Contains("validate_deployment_files", controller, StringComparison.Ordinal);
         Assert.Contains("Invalid .env line", controller, StringComparison.Ordinal);
         Assert.Contains("Duplicate .env key", controller, StringComparison.Ordinal);
-        Assert.Contains("--profile spotify-lyrics", controller, StringComparison.Ordinal);
+        Assert.DoesNotContain("--profile spotify-lyrics", controller, StringComparison.Ordinal);
         Assert.Contains("--profile apple", controller, StringComparison.Ordinal);
         Assert.Contains("git -c \"safe.directory=$ROOT\" diff --quiet", controller, StringComparison.Ordinal);
         Assert.Contains("git -c \"safe.directory=$ROOT\" diff --cached --quiet", controller, StringComparison.Ordinal);
@@ -264,7 +269,7 @@ public sealed class ComposeContractTests
         Assert.Contains("dotnet format allstarr.sln --no-restore --verify-no-changes --verbosity minimal", workflow, StringComparison.Ordinal);
         Assert.Contains("dotnet test --configuration Release --no-build", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml config --quiet", workflow, StringComparison.Ordinal);
-        Assert.Contains("docker compose -f docker-compose.yml --profile spotify-lyrics config --quiet", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("docker compose -f docker-compose.yml --profile spotify-lyrics config --quiet", workflow, StringComparison.Ordinal);
         Assert.Contains("docker compose -f docker-compose.yml --profile apple config --quiet", workflow, StringComparison.Ordinal);
         Assert.DoesNotContain("continue-on-error: true", workflow, StringComparison.Ordinal);
     }

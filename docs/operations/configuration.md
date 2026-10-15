@@ -112,12 +112,11 @@ This is the MusicBrainz-compatible front door used by DroppedNeedle. Do not appe
 Use `allstarr.sh` rather than editing Compose fragments:
 
 ```bash
-./allstarr.sh enable spotify-lyrics
 ./allstarr.sh install-apple x86_64
 ./allstarr.sh up
 ```
 
-See [deployment profiles](deployment-profiles.md), [Spotify lyrics](spotify-lyrics-sidecar.md), and [Apple download](apple-download-provider.md).
+See [deployment profiles](deployment-profiles.md), [Spotify lyrics](spotify-lyrics.md), and [Apple download](apple-download-provider.md).
 
 ## Legacy import
 

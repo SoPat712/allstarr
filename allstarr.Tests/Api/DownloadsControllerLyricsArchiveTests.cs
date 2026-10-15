@@ -204,7 +204,8 @@ public class DownloadsControllerLyricsArchiveTests
             Song? song = null,
             string? externalProvider = null,
             string? externalId = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            allstarr.Core.Protocols.ProtocolExecutionContext? protocol = null)
         {
             var sidecarPath = GetSidecarPath(audioFilePath);
             if (_createSidecar)

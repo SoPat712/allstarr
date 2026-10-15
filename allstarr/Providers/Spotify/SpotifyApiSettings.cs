@@ -21,5 +21,4 @@ public sealed class SpotifyApiSettings
     public int RateLimitDelayMs { get; set; } = 100;
     public bool PreferIsrcMatching { get; set; } = true;
     public string? SessionCookieSetDate { get; set; }
-    public string LyricsApiUrl { get; set; } = string.Empty;
 }

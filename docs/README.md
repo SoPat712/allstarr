@@ -18,7 +18,7 @@ User and operator guides describe shipped behavior. Contributor assessments expl
 - [WebUI proxy and SSO setup](operations/webui-access.md)
 - [Legacy `.env` import](operations/legacy-env-import.md)
 - [Apple download provider](operations/apple-download-provider.md)
-- [Spotify lyrics service](operations/spotify-lyrics-sidecar.md)
+- [Spotify lyrics service](operations/spotify-lyrics.md)
 - [Client compatibility](operations/client-compatibility.md)
 - [Jellyfin v12 music surface](operations/jellyfin-music-surface-v12.md)
 

@@ -159,8 +159,6 @@ public static class RuntimeSettingCatalog
             "ProviderAccounts:ListenersCanConnectOwnAccounts", DefaultValue: "true"));
         Bool("MusicBrainz:Enabled"); Bool("SpotifyApi:Enabled");
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);
-        items.Add(new("SpotifyApi:LyricsApiUrl", RuntimeSettingValueType.String,
-            "SpotifyApi:LyricsApiUrl", AllowEmpty: true));
         items.Add(new("SpotifyApi:PathfinderEndpoint", RuntimeSettingValueType.String, "SpotifyApi:PathfinderEndpoint", DefaultValue: SpotifyApiSettings.DefaultPathfinderEndpoint, Choices: new HashSet<string>([SpotifyApiSettings.DefaultPathfinderEndpoint, "https://api-partner.spotify.com/pathfinder/v2/query"], Comparer)));
         items.Add(new("SpotifyApi:LibraryQueryHash", RuntimeSettingValueType.String, "SpotifyApi:LibraryQueryHash", DefaultValue: SpotifyApiSettings.DefaultLibraryQueryHash));
         items.Add(new("SpotifyApi:PlaylistQueryHash", RuntimeSettingValueType.String, "SpotifyApi:PlaylistQueryHash", DefaultValue: SpotifyApiSettings.DefaultPlaylistQueryHash));
@@ -733,7 +731,6 @@ public sealed class RuntimeSettingsLiveOptions
             case "SpotifyApi:Enabled": _spotifyApi.Enabled = (bool)value; break;
             case "SpotifyApi:CacheDurationMinutes": _spotifyApi.CacheDurationMinutes = (int)value; break;
             case "SpotifyApi:RateLimitDelayMs": _spotifyApi.RateLimitDelayMs = (int)value; break;
-            case "SpotifyApi:LyricsApiUrl": _spotifyApi.LyricsApiUrl = (string)value; break;
             case "SpotifyApi:PreferIsrcMatching": _spotifyApi.PreferIsrcMatching = (bool)value; break;
             case "SpotifyImport:Enabled": _spotifyImport.Enabled = (bool)value; break;
             case "SpotifyImport:MatchingIntervalHours": _spotifyImport.MatchingIntervalHours = (int)value; break;

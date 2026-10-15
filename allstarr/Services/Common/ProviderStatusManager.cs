@@ -31,7 +31,7 @@ public class ProviderStatusManager
     private static readonly (string Provider, string Capability, ProviderAccountRequirement AccountRequirement)[] KnownCapabilities =
     [
         ("spotify", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
-        ("spotify", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("spotify", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
         ("apple-musickit", ProviderCapabilities.Metadata, ProviderAccountRequirement.Optional),
         ("apple-musickit", ProviderCapabilities.Playlist, ProviderAccountRequirement.Optional),
         ("apple-musickit", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
@@ -370,10 +370,9 @@ public class ProviderStatusManager
         var probeObservation = _health.BeginProbe(key, accountRevision);
 
         _logger.LogDebug(
-            "Testing provider capability {Provider}/{Capability} for provider account {ProviderAccountId}",
+            "Testing provider capability {Provider}/{Capability}",
             key.Provider,
-            key.Capability,
-            key.ProviderAccountId?.ToString("N") ?? "account-free");
+            key.Capability);
 
         var startedAt = _clock.UtcNow;
         try
@@ -549,14 +548,10 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_qobuz_account"),
 
-            ("spotify", ProviderCapabilities.Playlist) =>
+            ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
                 _spotifySettings.Enabled && IsConfiguredValue(_spotifySettings.SessionCookie)
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
-            ("spotify", ProviderCapabilities.Lyrics) =>
-                IsConfiguredValue(_spotifySettings.LyricsApiUrl)
-                    ? (ProviderConfigurationState.Configured, null)
-                    : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_lyrics_configuration"),
 
             ("lrclib", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
@@ -609,10 +604,8 @@ public class ProviderStatusManager
         {
             ("apple-musickit", _) => IsConfiguredValue(SecretValue(secrets, "musicusertoken", "mediausertoken")) &&
                 (baseline.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist || IsConfiguredValue(_appleMusicSettings.BaseUrl)),
-            ("spotify", ProviderCapabilities.Playlist) =>
+            ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
                 IsConfiguredValue(SecretValue(secrets, "sessioncookie", "spdc", "cookie")),
-            ("spotify", ProviderCapabilities.Lyrics) =>
-                IsConfiguredValue(_spotifySettings.LyricsApiUrl),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "arl")),
             ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
@@ -700,7 +693,8 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist) => await TestSpotifyPlaylistAsync(
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie,
                 cancellationToken),
-            ("spotify", ProviderCapabilities.Lyrics) => await AsOutcome(TestSpotifyLyricsAsync(cancellationToken)),
+            ("spotify", ProviderCapabilities.Lyrics) => await TestSpotifyLyricsAsync(
+                SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestAppleMusicAsync(capability, accountSecrets, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestDeezerMetadataAsync(cancellationToken)),
@@ -869,32 +863,20 @@ public class ProviderStatusManager
         return new ProbeOutcome(result.Success, result.ReasonCode);
     }
 
-    private async Task<bool> TestSpotifyLyricsAsync(CancellationToken cancellationToken)
+    private async Task<ProbeOutcome> TestSpotifyLyricsAsync(string? cookie, CancellationToken cancellationToken)
     {
-        if (!IsConfiguredValue(_spotifySettings.LyricsApiUrl))
-        {
-            return false;
-        }
-
-        try
-        {
-            var url = $"{_spotifySettings.LyricsApiUrl!.TrimEnd('/')}/?trackid={SpotifyLyricsTestTrackId}&format=id3";
-            using var client = _httpClientFactory.CreateClient();
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-            if (!response.IsSuccessStatusCode)
-            {
-                return false;
-            }
-
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-            return !(document.RootElement.TryGetProperty("error", out var error) &&
-                     error.ValueKind == JsonValueKind.True);
-        }
-        catch (Exception)
-        {
-            return false;
-        }
+        cookie = allstarr.Core.Providers.Spotify.SpotifySessionCookie.Normalize(cookie);
+        if (cookie == null) return new(false, "account_needs_configuration");
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(ProbeTimeout);
+        using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Spotify.SpotifyPlaylistCapabilityAdapter.HttpClientName);
+        var token = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(
+            client, cookie, timeout.Token, _spotifySettings);
+        if (!token.Success) return new(false, token.ReasonCode);
+        var result = await allstarr.Core.Providers.Spotify.SpotifyLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
+            client, token.AccessToken!, new ProviderLyricsRequest(Guid.NewGuid(),
+                new("spotify", ProviderResourceKind.Track, SpotifyLyricsTestTrackId), availabilityOnly: true), timeout.Token);
+        return new(result.IsSuccess, result.Error?.Code);
     }
 
     private async Task<ProbeOutcome> TestAppleMusicAsync(string capability,
