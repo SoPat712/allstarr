@@ -207,6 +207,81 @@ public sealed class OnboardingControllerTests : IAsyncLifetime
         };
     }
 
+    [Fact]
+    public async Task Steps_ReviewSkipResetAndResumeAcrossRestartsAndUsers()
+    {
+        await EnableIdentity(_firstUserId);
+        var first = await _onboarding.SetStepAsync(_firstUserId, "sources", "review", 0, "review-sources");
+        var skipped = await _onboarding.SetStepAsync(_firstUserId, "apple", "skip", first.Revision, "skip-apple");
+        Assert.Contains("apple", skipped.SkippedSteps);
+        Assert.Equal("reviewed", skipped.Steps.Single(item => item.Id == "sources").State);
+        Assert.False(skipped.Completed);
+        var restarted = new OnboardingStateService(_factory, new FixedClock(DateTimeOffset.UtcNow));
+        var resumed = await restarted.GetAsync(_firstUserId);
+        Assert.Equal(skipped.Revision, resumed.Revision);
+        Assert.Equal("skipped", resumed.Steps.Single(item => item.Id == "apple").State);
+        Assert.All((await restarted.GetAsync(_secondUserId)).Steps, step => Assert.Equal("pending", step.State));
+        var reset = await restarted.SetStepAsync(_firstUserId, "apple", "reset", resumed.Revision, "reset-apple");
+        Assert.Empty(reset.SkippedSteps);
+        Assert.Equal("pending", reset.Steps.Single(item => item.Id == "apple").State);
+        var completed = await restarted.CompleteAsync(_firstUserId, "finish");
+        Assert.True(completed.Completed);
+        Assert.Contains("apple", completed.SkippedSteps);
+        Assert.DoesNotContain("sources", completed.SkippedSteps);
+    }
+
+    [Fact]
+    [Trait("Lane", "ReleaseCritical")]
+    public async Task Steps_RejectStaleTabsAndRevokedAdministratorsWithoutChangingProgress()
+    {
+        await EnableIdentity(_firstUserId);
+        var saved = await _onboarding.SetStepAsync(_firstUserId, "sources", "review", 0, "first-tab");
+        var stale = await Assert.ThrowsAsync<OnboardingStateException>(() =>
+            _onboarding.SetStepAsync(_firstUserId, "apple", "skip", 0, "stale-tab"));
+        Assert.Equal("setup_changed", stale.Code);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var user = await db.Users.SingleAsync(item => item.Id == _firstUserId);
+            user.IsAdmin = false;
+            await db.SaveChangesAsync();
+        }
+        var denied = await Assert.ThrowsAsync<OnboardingStateException>(() =>
+            _onboarding.SetStepAsync(_firstUserId, "apple", "skip", saved.Revision, "revoked-tab"));
+        Assert.Equal("backend_identity_required", denied.Code);
+        Assert.Equal(saved.Revision, (await _onboarding.GetAsync(_firstUserId)).Revision);
+        Assert.IsType<ConflictObjectResult>(await Controller(Session(_firstUserId)).Complete());
+        Assert.IsType<ConflictObjectResult>(await Controller(Session(_firstUserId)).Reopen());
+    }
+
+    [Theory]
+    [InlineData("backend-identity", "skip", "required_step")]
+    [InlineData("backend-identity", "reset", "required_step")]
+    [InlineData("unknown", "review", "unknown_step")]
+    [InlineData("sources", "execute", "invalid_step_action")]
+    public async Task Steps_RejectUnsupportedOrRequiredChanges(string step, string action, string code)
+    {
+        await EnableIdentity(_firstUserId);
+        var error = await Assert.ThrowsAsync<OnboardingStateException>(() =>
+            _onboarding.SetStepAsync(_firstUserId, step, action, 0, "invalid-step"));
+        Assert.Equal(code, error.Code);
+        Assert.Equal(0, (await _onboarding.GetAsync(_firstUserId)).Revision);
+    }
+
+    [Fact]
+    public async Task StepEndpoint_ReturnsSharedGuideAndRequiresTheAdministratorScope()
+    {
+        var request = new OnboardingController.SetupStepRequest("apple", "skip", 0);
+        Assert.IsType<UnauthorizedObjectResult>(await Controller(null).SetStep(request));
+        Assert.Equal(403, Assert.IsType<ObjectResult>(await Controller(Session(_firstUserId, false)).SetStep(request)).StatusCode);
+        await EnableIdentity(_firstUserId);
+        var result = Assert.IsType<OkObjectResult>(await Controller(Session(_firstUserId)).SetStep(request));
+        var state = Payload(result.Value);
+        Assert.Contains(state.GetProperty("skippedSteps").EnumerateArray(), item => item.GetString() == "apple");
+        Assert.Equal(SetupGuide.Steps.Count, state.GetProperty("steps").GetArrayLength());
+        var stale = Assert.IsType<ConflictObjectResult>(await Controller(Session(_firstUserId)).SetStep(request));
+        Assert.Equal("setup_changed", Payload(stale.Value).GetProperty("code").GetString());
+    }
+
     private AdminAuthSession Session(
         Guid? userId,
         bool administrator = true) => new()

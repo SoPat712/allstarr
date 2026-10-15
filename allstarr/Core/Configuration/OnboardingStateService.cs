@@ -16,18 +16,22 @@ public sealed record OnboardingStateSnapshot(
     DateTimeOffset? CompletedAt,
     DateTimeOffset? ReopenedAt,
     long Revision,
-    IReadOnlyList<string> RecoveryNotices);
+    IReadOnlyList<string> RecoveryNotices)
+{
+    public IReadOnlyList<SetupGuideStep> Steps { get; init; } = [];
+    public IReadOnlyList<string> SkippedSteps { get; init; } = [];
+}
 
 public sealed class OnboardingStateException(string code, string message) : Exception(message)
 {
     public string Code { get; } = code;
 }
 
-public sealed class OnboardingStateService(
+public sealed partial class OnboardingStateService(
     IDbContextFactory<AllstarrDbContext> factory,
     IPlatformClock clock)
 {
-    public const string SchemaVersion = "onboarding-v1";
+    public const string SchemaVersion = "onboarding-v2";
     public const string BackendIdentityStep = "backend-identity";
     public const string LegacyEnvironmentStep = "legacy-environment";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -50,6 +54,9 @@ public sealed class OnboardingStateService(
         CancellationToken cancellationToken = default)
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.ReadCommitted,
+            cancellationToken);
         if (!await HasIdentityAsync(db, userId, cancellationToken))
         {
             throw new OnboardingStateException(
@@ -57,23 +64,26 @@ public sealed class OnboardingStateService(
                 "Connect and verify a Jellyfin or Subsonic identity before completing setup.");
         }
 
-        await using var transaction = await db.Database.BeginTransactionAsync(
-            IsolationLevel.ReadCommitted,
-            cancellationToken);
         var state = await GetOrCreateAsync(
             db, userId, "setup-guide", clock.UtcNow, cancellationToken);
-        var alreadyCompleted = state.CompletedAt.HasValue && !state.ReopenedAt.HasValue;
-        SetSteps(state, ReadSteps(state).Append(BackendIdentityStep));
+        if (state.CompletedAt.HasValue && !state.ReopenedAt.HasValue)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return Snapshot(state, identityPresent: true);
+        }
+        var reviewed = ReadSteps(state).ToHashSet(StringComparer.Ordinal);
+        reviewed.Add(BackendIdentityStep);
+        foreach (var step in SetupGuide.Steps.Where(item => !item.Required))
+            if (!reviewed.Contains(step.Id)) reviewed.Add("skip:" + step.Id);
+        SetSteps(state, reviewed);
+        state.SchemaVersion = SchemaVersion;
         state.CompletionSource = "setup-guide";
         state.CompletedAt ??= clock.UtcNow;
         state.ReopenedAt = null;
         state.UpdatedAt = clock.UtcNow;
-        if (!alreadyCompleted)
-        {
-            state.Revision++;
-            AddAudit(db, state, userId, correlationId, "onboarding.complete");
-            await db.SaveChangesAsync(cancellationToken);
-        }
+        state.Revision++;
+        AddAudit(db, state, userId, correlationId, "onboarding.complete");
+        await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         return Snapshot(state, identityPresent: true);
@@ -88,6 +98,8 @@ public sealed class OnboardingStateService(
         await using var transaction = await db.Database.BeginTransactionAsync(
             IsolationLevel.ReadCommitted,
             cancellationToken);
+        if (!await HasIdentityAsync(db, userId, cancellationToken))
+            throw new OnboardingStateException("backend_identity_required", "Sign in with an active media-server administrator before reopening setup.");
         var state = await GetOrCreateAsync(
             db, userId, "administrator", clock.UtcNow, cancellationToken);
         if (!state.ReopenedAt.HasValue)
@@ -121,11 +133,11 @@ public sealed class OnboardingStateService(
             db.OnboardingStates.Add(state);
         }
 
-        var steps = ReadSteps(state).Append(LegacyEnvironmentStep);
+        var steps = ReadSteps(state).Where(step => step != "skip:" + LegacyEnvironmentStep &&
+            (!backendIdentityReady || step != "skip:" + BackendIdentityStep)).Append(LegacyEnvironmentStep);
         if (backendIdentityReady)
         {
             steps = steps.Append(BackendIdentityStep);
-            state.CompletedAt ??= now;
         }
         SetSteps(state, steps);
         state.CompletionSource = "legacy-env-import";
@@ -212,7 +224,7 @@ public sealed class OnboardingStateService(
         Guid userId,
         CancellationToken cancellationToken) =>
         db.Users.AnyAsync(
-            item => item.Id == userId && item.Enabled,
+            item => item.Id == userId && item.Enabled && item.IsAdmin,
             cancellationToken);
 
     private static OnboardingStateSnapshot Snapshot(
@@ -232,7 +244,16 @@ public sealed class OnboardingStateService(
             state?.CompletedAt,
             state?.ReopenedAt,
             state?.Revision ?? 0,
-            identityCompleted && !identityPresent ? ["backend_identity_missing"] : []);
+            identityCompleted && !identityPresent ? ["backend_identity_missing"] : [])
+        {
+            Steps = SetupGuide.Steps.Select(step => step with
+            {
+                State = steps.Contains(step.Id, StringComparer.Ordinal) ? "reviewed" :
+                    steps.Contains("skip:" + step.Id, StringComparer.Ordinal) ? "skipped" : "pending"
+            }).ToArray(),
+            SkippedSteps = steps.Where(item => item.StartsWith("skip:", StringComparison.Ordinal))
+                .Select(item => item[5..]).ToArray()
+        };
     }
 
     private static void AddAudit(
