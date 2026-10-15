@@ -9,17 +9,20 @@ namespace allstarr.Services.Common;
 /// </summary>
 public class CacheCleanupService : BackgroundService
 {
+    private readonly allstarr.Core.Operations.BackgroundTaskActivity? _taskActivity;
     private readonly IConfiguration _configuration;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly ILogger<CacheCleanupService> _logger;
+    private bool _cleanupFailed;
     private readonly TimeSpan _cleanupInterval = TimeSpan.FromHours(1);
 
     public CacheCleanupService(
         IConfiguration configuration,
         IOptions<SubsonicSettings> subsonicSettings,
-        ILogger<CacheCleanupService> logger)
+        ILogger<CacheCleanupService> logger, allstarr.Core.Operations.BackgroundTaskActivity? taskActivity = null)
     {
         _configuration = configuration;
+        _taskActivity = taskActivity;
         _subsonicSettings = subsonicSettings.Value;
         _logger = logger;
     }
@@ -30,15 +33,19 @@ public class CacheCleanupService : BackgroundService
             "CacheCleanupService started with cleanup interval of {Interval}",
             _cleanupInterval);
 
+        _taskActivity?.Register("audio-cache-cleanup", "Temporary audio cleanup", _cleanupInterval);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
+                _cleanupFailed = false;
+                _taskActivity?.Started("audio-cache-cleanup");
                 if (_subsonicSettings.StorageMode == StorageMode.Cache)
                 {
                     await CleanupOldCachedFilesAsync(stoppingToken);
                 }
                 await CleanupTranscodedCacheAsync(stoppingToken);
+                if (_taskActivity != null) await _taskActivity.CompletedAsync("audio-cache-cleanup", !_cleanupFailed, stoppingToken);
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }
             catch (OperationCanceledException)
@@ -49,6 +56,7 @@ public class CacheCleanupService : BackgroundService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error during cache cleanup");
+                if (_taskActivity != null) await _taskActivity.CompletedAsync("audio-cache-cleanup", false, stoppingToken);
                 // Continue running even if cleanup fails
                 await Task.Delay(_cleanupInterval, stoppingToken);
             }
@@ -103,6 +111,7 @@ public class CacheCleanupService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    _cleanupFailed = true;
                     _logger.LogError(ex, "Failed to delete cached file: {Path}", filePath);
                 }
             }
@@ -123,6 +132,7 @@ public class CacheCleanupService : BackgroundService
         }
         catch (Exception ex)
         {
+            _cleanupFailed = true;
             _logger.LogError(ex, "Error during cache cleanup");
         }
     }
@@ -172,6 +182,7 @@ public class CacheCleanupService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    _cleanupFailed = true;
                     _logger.LogError(ex, "Failed to delete transcoded cache file: {Path}", filePath);
                 }
             }
@@ -188,6 +199,7 @@ public class CacheCleanupService : BackgroundService
         }
         catch (Exception ex)
         {
+            _cleanupFailed = true;
             _logger.LogError(ex, "Error during transcoded cache cleanup");
         }
     }
@@ -214,12 +226,14 @@ public class CacheCleanupService : BackgroundService
                 }
                 catch (Exception ex)
                 {
+                    _cleanupFailed = true;
                     _logger.LogError(ex, "Failed to delete empty directory: {Path}", directory);
                 }
             }
         }
         catch (Exception ex)
         {
+            _cleanupFailed = true;
             _logger.LogError(ex, "Error cleaning up empty directories");
         }
 

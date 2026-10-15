@@ -80,3 +80,26 @@ describe("acceptUpdate", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 });
+
+it("refreshes subscribers after reconnect and ignores malformed stream messages", () => {
+  const handlers = new Map<string, (event: { data: string }) => void>();
+  let fail: (() => void) | undefined;
+  class Stream {
+    set onerror(value: () => void) { fail = value; }
+    addEventListener(name: string, listener: (event: { data: string }) => void) { handlers.set(name, listener); }
+    close() {}
+  }
+  vi.stubGlobal("EventSource", Stream);
+  const listener = vi.fn();
+  const unsubscribe = liveUpdates.subscribe(listener);
+  liveUpdates.connect();
+  handlers.get("stream-status")?.({ data: "{}" });
+  expect(listener).not.toHaveBeenCalled();
+  fail?.();
+  handlers.get("stream-status")?.({ data: "{}" });
+  expect(listener).toHaveBeenCalledOnce();
+  expect(() => handlers.get("update")?.({ data: "invalid-json" })).not.toThrow();
+  unsubscribe();
+  liveUpdates.close();
+  vi.unstubAllGlobals();
+});

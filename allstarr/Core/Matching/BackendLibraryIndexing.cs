@@ -314,18 +314,23 @@ public sealed class LibraryIndexMaintenanceService(
     DurableJobQueue jobs,
     DurableStorageState storageState,
     IPlatformClock clock,
-    ILogger<LibraryIndexMaintenanceService> logger) : BackgroundService
+    ILogger<LibraryIndexMaintenanceService> logger, BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        taskActivity?.Register("library-index", "Library index refresh", RefreshInterval);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
                 if (storageState.GetSnapshot().Readiness == DurableStorageReadiness.Ready)
+                {
+                    taskActivity?.Started("library-index");
                     await EnqueueStaleIndexesAsync(stoppingToken);
+                    if (taskActivity != null) await taskActivity.CompletedAsync("library-index", true, stoppingToken);
+                }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -334,6 +339,7 @@ public sealed class LibraryIndexMaintenanceService(
             catch (Exception exception)
             {
                 logger.LogWarning(exception, "Durable backend audio index maintenance failed; it will retry");
+                if (taskActivity != null) await taskActivity.CompletedAsync("library-index", false, stoppingToken);
             }
 
             await Task.Delay(RefreshInterval, stoppingToken);

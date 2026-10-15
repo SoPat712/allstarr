@@ -111,3 +111,17 @@ describe("event log presentation", () => {
       .toBe("Scrobbling Check");
   });
 });
+
+describe("background work presentation", () => {
+  it("uses ordinary job names and distinguishes deferred work", async () => {
+    const { jobName, jobState, progressPercent } = await import("./activity");
+    expect(jobName("playlist.materialize")).toBe("Update playlist");
+    expect(jobState("RetryScheduled")).toBe("Retrying");
+    expect(jobState("Deferred")).toBe("Deferred");
+    expect(progressPercent(5, 10)).toBe(50);
+    expect(progressPercent(20, 10)).toBe(100);
+    expect(progressPercent(-1, 10)).toBe(0);
+    expect(progressPercent(5, 0)).toBeNull();
+    expect(progressPercent(NaN, 10)).toBeNull();
+  });
+});

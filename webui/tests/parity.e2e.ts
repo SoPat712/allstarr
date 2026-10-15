@@ -539,6 +539,13 @@ async function mockApi(page: Page, options: {
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
+    if (url.pathname === "/api/admin/jobs" && body === undefined) {
+      const fixture = structuredClone(responses["/api/admin/jobs?limit=100"]) as { jobs: Array<{ state: string }>; progress: unknown[] };
+      const history = url.searchParams.get("view") === "history";
+      fixture.jobs = fixture.jobs.filter(job => history === ["Succeeded", "Failed", "Cancelled"].includes(job.state));
+      body = { ...fixture, hasMore: false };
+    }
+    if (url.pathname === "/api/admin/activity/tasks" && body === undefined) body = { items: [] };
     if (url.pathname === "/api/admin/auth/me" && options.intelligenceEnabled === false) {
       body = {
         ...(structuredClone(body) as Record<string, unknown>),
@@ -1020,8 +1027,11 @@ for (const viewport of viewports) {
         const errorPage = await context.newPage();
         await mockApi(errorPage, { fail: [...failures] });
         await errorPage.goto(route);
-        await expect(errorPage.getByRole("alert")).toBeVisible();
-        await expect(errorPage.getByRole("button", { name: "Try again" })).toBeInViewport();
+        const errorSurface = route === "#/activity" ? errorPage.getByRole("alert", { name: "Event log unavailable" }) : errorPage.getByRole("alert");
+        await expect(errorSurface).toBeVisible();
+        const retry = errorSurface.getByRole("button", { name: "Try again" });
+        if (route === "#/activity") await retry.scrollIntoViewIfNeeded();
+        await expect(retry).toBeInViewport();
       });
     }
 
@@ -3323,7 +3333,7 @@ test("Event log groups matching work and preserves actionable history", async ({
   await technical.click();
   await expect(page.getByText("Media server item ID").first()).toBeVisible();
   await expect(page.getByText("Title Similarity").first()).toBeVisible();
-  await page.getByRole("button", { name: "Refresh" }).click();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
   await expect(page.locator(".event-log-group.streaming")).toHaveCount(1);
   const streamedGroup = page.locator(".event-log-group").filter({ hasText: "New live event" });
   await expect(streamedGroup.locator(":scope > summary").getByText("New live event", { exact: true })).toBeVisible();
@@ -5299,7 +5309,7 @@ test("retry and refresh controls expose pending work", async ({ page }) => {
   failures.length = 0;
   const retry = routeRelease();
   delayedRequest = retry.promise;
-  await page.getByRole("button", { name: "Try again" }).click();
+  await page.getByRole("alert", { name: "Event log unavailable" }).getByRole("button", { name: "Try again" }).click();
   await expect(page.getByRole("button", { name: "Refreshing…" })).toBeDisabled();
   retry.release();
   delayedRequest = null;
@@ -6252,3 +6262,149 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expectContainedMobileGeometry(page);
   });
 }
+
+for (const width of [390, 1280]) {
+  for (const theme of ["light", "dark"] as const) {
+    for (const view of ["Queue", "History", "Tasks"] as const) {
+      test(`Activity views: ${view} at ${width}px in ${theme}`, async ({ page }) => {
+        await page.setViewportSize({ width, height: 844 });
+        await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+        await mockApi(page);
+        let cancelled = false;
+        let taskRuns = 0;
+        const jobs = ["Pending", "Running", "RetryScheduled", "Deferred"].map((state, index) => ({
+          id: `activity-job-${index}`, type: ["favorite.process", "playlist.materialize", "playback.signal", "recording.kept-cleanup"][index],
+          state, ownerName: "Listener", attemptCount: 1, canCancel: true,
+          availableAt: "2026-10-16T00:00:00Z", updatedAt: "2026-10-15T00:00:00Z", createdAt: "2026-10-15T00:00:00Z",
+        }));
+        await page.route("**/api/admin/jobs?*", (route) => {
+          const query = new URL(route.request().url()).searchParams;
+          const history = query.get("view") === "history";
+          const older = query.has("before");
+          return route.fulfill({ json: {
+            jobs: history ? [{ ...jobs[0], id: older ? "older-finished" : "finished-job", state: "Failed", canCancel: false,
+              type: "playlist.materialize", completedAt: "2026-10-15T00:00:00Z", lastErrorMessage: "The source is temporarily unavailable." }]
+              : cancelled ? jobs.slice(1) : jobs,
+            progress: history ? [] : [{ id: "progress", jobId: "activity-job-1", action: "copy", outcome: "running",
+              createdAt: "2026-10-15T00:00:00Z", detailsJson: '{"completed":5,"total":10,"message":"Writing playlist"}' }],
+            hasMore: history && !older, nextCursor: "2026-10-15T00:00:00Z", nextCursorId: "finished-job",
+          }});
+        });
+        await page.route("**/api/admin/jobs/finished-job?*", (route) => route.fulfill({ json: {
+          job: { ...jobs[0], id: "finished-job", state: "Failed" },
+          attempts: [{ attemptNumber: 1, startedAt: "2026-10-15T00:00:00Z", completedAt: "2026-10-15T00:00:01Z",
+            outcome: "failed", errorMessage: "The source is temporarily unavailable." }], hasMore: false,
+        }}));
+        await page.route("**/api/admin/jobs/activity-job-0/cancel", (route) => {
+          cancelled = true;
+          return route.fulfill({ status: 202, json: { state: "cancellation_requested" } });
+        });
+        await page.route("**/api/admin/activity/tasks", (route) => route.fulfill({ json: { items: [
+          { id: "schedule-1", name: "Sync Evening playlist", kind: "playlist", ownerName: "Listener", enabled: true,
+            lastRunAt: "2026-10-14T00:00:00Z", nextRunAt: "2026-10-16T00:00:00Z", state: "Scheduled",
+            cadence: "Daily · UTC", runPlaylistLinkId: "playlist-1" },
+          { id: "event-retention", name: "Activity retention", kind: "maintenance", enabled: true,
+            lastRunAt: null, nextRunAt: null, state: "Waiting", cadence: "Every 6 hours", detail: "Runs automatically after startup." },
+        ]}}));
+        await page.route("**/api/admin/playlist-links/playlist-1/run", (route) => {
+          taskRuns++;
+          return route.fulfill({ status: 202, json: { jobId: "new-sync" } });
+        });
+        await page.goto("#/activity");
+        await page.getByRole("tab", { name: view, exact: true }).click();
+        await expect(page.getByRole("tab", { name: view, exact: true })).toHaveAttribute("aria-selected", "true");
+        if (view === "Queue") {
+          await expect(page.getByText("Writing playlist", { exact: true })).toBeVisible();
+          await expect(page.getByRole("progressbar", { name: /50%/ })).toBeVisible();
+          for (const state of ["Waiting", "Running", "Retrying", "Deferred"])
+            await expect(page.getByText(state, { exact: true }).first()).toBeVisible();
+          await page.getByRole("button", { name: "Cancel job" }).first().click();
+          await page.getByRole("alertdialog", { name: "Cancel this job?" }).getByRole("button", { name: "Cancel job", exact: true }).click();
+          await expect.poll(() => cancelled).toBe(true);
+          await expect(page.getByRole("button", { name: "Cancel job" })).toHaveCount(3);
+        } else if (view === "History") {
+          await expect(page.getByText("The source is temporarily unavailable.", { exact: true }).first()).toBeVisible();
+          await page.getByRole("button", { name: "Show attempts" }).click();
+          await expect(page.getByRole("region", { name: "Attempt history" })).toContainText("Attempt 1");
+          await page.getByRole("button", { name: "Load earlier jobs" }).click();
+          await expect(page.locator('[data-job-id="older-finished"]')).toBeVisible();
+        } else {
+          await expect(page.getByText("Sync Evening playlist", { exact: true })).toBeVisible();
+          await expect(page.getByText("Activity retention", { exact: true })).toBeVisible();
+          await page.getByRole("button", { name: "Run now" }).click();
+          await expect.poll(() => taskRuns).toBe(1);
+          await expect(page.getByRole("status").filter({ hasText: "Task queued" })).toBeVisible();
+        }
+        await expectContainedMobileGeometry(page);
+        if (process.env.ALLSTARR_SCREENSHOT_DIR)
+          await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-${view.toLowerCase()}-${width}-${theme}.png`, fullPage: true });
+        await page.getByRole("tab", { name: view, exact: true }).focus();
+        await page.keyboard.press("Home");
+        await expect(page.getByRole("tab", { name: "Queue", exact: true })).toBeFocused();
+        await expect(page.getByRole("tab", { name: "Queue", exact: true })).toHaveAttribute("aria-selected", "true");
+      });
+    }
+  }
+}
+
+for (const view of ["Queue", "History", "Tasks"] as const) {
+  test(`Activity ${view} recovers from errors into an accessible empty state`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockApi(page);
+    let fail = true;
+    await page.route(view === "Tasks" ? "**/api/admin/activity/tasks" : "**/api/admin/jobs?*", route =>
+      route.fulfill(fail ? { status: 503, json: { error: "fixture-private-response" } } :
+        { json: view === "Tasks" ? { items: [] } : { jobs: [], progress: [], hasMore: false } }));
+    await page.goto("#/activity");
+    await page.getByRole("tab", { name: view, exact: true }).click();
+    const alert = page.getByRole("alert", { name: view === "Tasks" ? "Tasks unavailable" : "Jobs unavailable" });
+    await expect(alert).toBeVisible();
+    await expect(page.getByText("fixture-private-response")).toHaveCount(0);
+    fail = false;
+    await alert.getByRole("button", { name: "Try again" }).click();
+    await expect(page.getByText(view === "Queue" ? "Nothing queued" : view === "History" ? "No finished jobs yet" : "No scheduled tasks", { exact: true })).toBeVisible();
+    await expectContainedMobileGeometry(page);
+  });
+}
+
+test("Activity queue refreshes after reconnect and sends server-side filters", async ({ page }) => {
+  await mockApi(page);
+  await page.addInitScript(() => {
+    let source: FixtureStream;
+    class FixtureStream {
+      listeners = new Map<string, Array<(event: MessageEvent<string>) => void>>();
+      onerror?: () => void;
+      constructor() { source = this; }
+      addEventListener(name: string, listener: (event: MessageEvent<string>) => void) {
+        this.listeners.set(name, [...this.listeners.get(name) ?? [], listener]);
+        if (name === "stream-status") setTimeout(() => listener(new MessageEvent("stream-status", { data: "{}" })), 0);
+      }
+      close() {}
+    }
+    Object.defineProperty(window, "EventSource", { value: FixtureStream });
+    window.__emitAllstarrUpdate = () => {
+      source.onerror?.();
+      for (const listener of source.listeners.get("stream-status") ?? []) listener(new MessageEvent("stream-status", { data: "{}" }));
+    };
+  });
+  let completed = false;
+  let selectedState = "";
+  await page.route("**/api/admin/jobs?*", route => {
+    const params = new URL(route.request().url()).searchParams;
+    if (params.get("view") === "queue") selectedState = params.get("state") ?? "";
+    return route.fulfill({ json: {
+      jobs: params.get("view") !== "queue" || completed ? [] : [{ id: "live-work", type: "playlist.materialize", state: "Running", updatedAt: "2026-10-15T00:00:00Z", canCancel: true }],
+      progress: [], hasMore: false,
+    }});
+  });
+  await page.goto("#/activity");
+  await page.getByRole("tab", { name: "Queue", exact: true }).click();
+  await expect(page.getByText("Update playlist", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Job state", exact: true }).click();
+  await page.getByRole("option", { name: "Running", exact: true }).click();
+  await expect.poll(() => selectedState).toBe("Running");
+  completed = true;
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+  await expect(page.getByText("No jobs match these filters", { exact: true })).toBeVisible();
+  await expect(page.getByText("Live updates connected", { exact: true })).toBeVisible();
+});

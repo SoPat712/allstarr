@@ -85,13 +85,20 @@ export const liveUpdates = {
     state.status = "connecting";
     source = new EventSource(adminUrl("/api/admin/updates/stream"));
     source.addEventListener("stream-status", () => {
+      const reconnecting = state.status === "reconnecting" || state.status === "stale";
       if (staleTimer) clearTimeout(staleTimer);
       state.status = "live";
       state.lastEventAt = new Date();
+      if (reconnecting) for (const listener of listeners) listener({});
     });
     source.addEventListener("update", (message) => {
       const event = message as MessageEvent<string>;
-      const update = JSON.parse(event.data) as UpdateEvent;
+      let update: UpdateEvent;
+      try {
+        const parsed = JSON.parse(event.data);
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return;
+        update = parsed as UpdateEvent;
+      } catch { return; }
       const eventId = event.lastEventId || update.eventId || "";
       if (!acceptUpdate(update, eventId, revisions, seenEventIds)) return;
       state.revision += 1;
