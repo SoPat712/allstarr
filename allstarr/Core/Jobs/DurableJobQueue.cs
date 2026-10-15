@@ -246,21 +246,41 @@ public sealed class DurableJobQueue
         foreach (var job in interrupted)
         {
             var cancelled = job.CancellationRequestedAt.HasValue;
+            // A restart does not spend the failure budget, but work that keeps being
+            // interrupted without ever finishing an attempt (for example because it
+            // takes the process down) must stop instead of looping on every restart.
+            var exhausted = !cancelled && await ConsecutiveInterruptionsAsync(context, job.Id, cancellationToken) + 1 >=
+                _options.MaxConsecutiveInterruptions;
             job.LastAttemptStartedAt ??= job.StartedAt ?? job.UpdatedAt;
             job.LastAttemptCompletedAt = now;
             job.LastAttemptOutcome = cancelled ? "cancelled" : "interrupted";
-            job.LastErrorCode = cancelled ? null : "worker_interrupted";
-            job.LastErrorMessage = cancelled ? null : "Work was interrupted by a restart and is ready to resume.";
+            job.LastErrorCode = cancelled ? null : exhausted ? "worker_interrupted_repeatedly" : "worker_interrupted";
+            job.LastErrorMessage = cancelled ? null : exhausted
+                ? "Work was interrupted by restarts too many times in a row and was stopped."
+                : "Work was interrupted by a restart and is ready to resume.";
             DurableJobHistory.Append(context, job, now);
-            job.State = cancelled ? DurableJobState.Cancelled : DurableJobState.Pending;
-            job.CompletedAt = cancelled ? now : null;
-            if (!cancelled) job.AvailableAt = now;
+            job.State = cancelled ? DurableJobState.Cancelled : exhausted ? DurableJobState.Failed : DurableJobState.Pending;
+            job.CompletedAt = cancelled || exhausted ? now : null;
+            if (!cancelled && !exhausted) job.AvailableAt = now;
             job.UpdatedAt = now;
             job.Revision++;
         }
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return interrupted.Length;
+    }
+
+    private async Task<int> ConsecutiveInterruptionsAsync(AllstarrDbContext context, Guid jobId,
+        CancellationToken cancellationToken)
+    {
+        var subject = jobId.ToString("D");
+        var outcomes = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "job-attempt" && item.SubjectType == "job" && item.SubjectId == subject)
+            .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+            .Take(_options.MaxConsecutiveInterruptions)
+            .Select(item => item.Outcome)
+            .ToListAsync(cancellationToken);
+        return outcomes.TakeWhile(outcome => outcome == "interrupted").Count();
     }
 
     public async Task<bool> IsExecutionCurrentAsync(DurableJobClaim claim, CancellationToken cancellationToken = default)
