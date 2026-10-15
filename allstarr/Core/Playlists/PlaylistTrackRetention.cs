@@ -116,7 +116,7 @@ public sealed class PlaylistTrackRetentionQueue(
             var retentionKey = Hash($"{link.Id:N}\u001f{providerId}\u001f{externalId}");
             var result = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistTrackRetentionJobPayload>(
                 PlaylistTrackRetentionJobHandler.JobTypeName,
-                $"playlist-retain:{retentionKey}",
+                $"playlist-retain:{retentionKey}:{entry.SourceSnapshotId:N}:{link.Revision}",
                 new(
                     link.Id,
                     entry.SourceSnapshotId,
