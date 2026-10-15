@@ -189,15 +189,47 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         var http = new DefaultHttpContext();
         http.Response.Body = new MemoryStream();
         http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
-        var controller = new AdminUpdatesController(Feed(), sessions)
+        var clock = new PollingClock();
+        var controller = new AdminUpdatesController(Feed(), sessions, clock)
         {
             ControllerContext = new ControllerContext { HttpContext = http }
         };
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var stream = controller.Stream(timeout.Token);
+        using var poll = await clock.PollScheduled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Equal(TimeSpan.FromSeconds(1), poll.DueTime);
+        Assert.False(stream.IsCompleted);
         await sessions.RemoveSessionAsync(session.SessionId);
+        poll.Fire();
         await stream.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.False(timeout.IsCancellationRequested);
+        Assert.Equal(1, clock.ScheduledCount);
+    }
+
+    private sealed class PollingClock : TimeProvider
+    {
+        public TaskCompletionSource<PollTimer> PollScheduled { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public int ScheduledCount { get; private set; }
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state,
+            TimeSpan dueTime, TimeSpan period)
+        {
+            Assert.Equal(Timeout.InfiniteTimeSpan, period);
+            ScheduledCount++;
+            var timer = new PollTimer(callback, state, dueTime);
+            PollScheduled.TrySetResult(timer);
+            return timer;
+        }
+    }
+
+    private sealed class PollTimer(TimerCallback callback, object? state, TimeSpan dueTime) : ITimer
+    {
+        public TimeSpan DueTime { get; } = dueTime;
+        public void Fire() => callback(state);
+        public bool Change(TimeSpan dueTime, TimeSpan period) => throw new NotSupportedException();
+        public void Dispose() { }
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     [Theory]
