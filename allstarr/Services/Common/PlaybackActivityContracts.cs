@@ -62,6 +62,7 @@ public sealed record PlaybackStreamSource(
     string SelectionReason)
 {
     public long? AccountRevision { get; init; }
+    public Guid? ManagedFileId { get; init; }
     public string SeekRung { get; init; } = "sequential";
     internal object? ObservationToken { get; init; }
 
@@ -110,6 +111,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             stream.SelectionReason)
         {
             AccountRevision = stream.ServingAccountRevision,
+            ManagedFileId = stream.ServingManagedFileId,
             ObservationToken = stream.ObservationToken,
             SeekRung = stream.IsCached
                 ? stream.Lease.LeaseId == "managed-progressive-cache"
@@ -139,7 +141,8 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
             var source = _delivered.Get<PlaybackStreamSource>(exactKey);
             if (source == null || !ReferenceEquals(source.ObservationToken, stream.ObservationToken) ||
                 source.ProviderId != stream.ServingProviderId || source.ExternalId != stream.ServingExternalId ||
-                source.AccountId != stream.ServingAccountId || source.AccountRevision != stream.ServingAccountRevision) return;
+                source.AccountId != stream.ServingAccountId || source.AccountRevision != stream.ServingAccountRevision ||
+                source.ManagedFileId != stream.ServingManagedFileId) return;
             // A duration hint must not replace proof of an available byte reader.
             if (source.SeekRung is "byte-range" or "progressive-cache") return;
             var updated = source with { SeekRung = rung };

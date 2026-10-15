@@ -174,6 +174,32 @@ public sealed class RecordingKeptFiles(
         }
     }
 
+    public async Task<KeptRecordingFile?> FindBySourceAsync(ProviderActorContext actor,
+        ProviderExternalResourceId source, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        source.RequireOwner(source.ProviderId, ProviderResourceKind.Track);
+        if (actor.EffectiveUserId == null) return null;
+        try
+        {
+            var known = await identities.ResolveRecordingAsync(actor,
+                $"ext-{source.ProviderId}-song-{source.Value}", cancellationToken);
+            if (known != null) return await FindAsync(actor, known.Id, cancellationToken);
+            // Publication explicitly shared these bytes and retained their exact source.
+            // This lookup does not reactivate or authorize the retired personal account.
+            await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            var published = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                                   join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking()
+                                       on route.SourceArtifactId equals artifact.Id
+                                   join recording in db.CanonicalRecordings.AsNoTracking()
+                                       on route.CanonicalRecordingId equals recording.Id
+                                   where artifact.ProviderId == source.ProviderId && artifact.SourceExternalTrackId == source.Value
+                                   select recording.MergedIntoId ?? recording.Id).Distinct().Take(2).ToArrayAsync(cancellationToken);
+            return published.Length == 1 ? await FindAsync(actor, published[0], cancellationToken) : null;
+        }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
     public async Task<KeptRecordingFile?> FindAsync(ProviderActorContext actor, Guid recordingId,
         CancellationToken cancellationToken = default)
     {
