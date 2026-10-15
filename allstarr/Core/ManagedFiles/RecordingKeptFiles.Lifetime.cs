@@ -76,6 +76,8 @@ public sealed partial class RecordingKeptFiles
         var removed = await scope.ServiceProvider.GetRequiredService<ManagedFileRemovalService>()
             .ResumeUnpublishedRemovalAsync(payload.ManagedFileId,
                 ManagedFileScopeKey.Create(null, placement.RootId), cancellationToken);
+        if (removed && payload.ReservationJobId is { } reservationJobId && claim.OwnerUserId is { } owner)
+            await artifacts.DiscardSupersededWorkspacesAsync(owner, reservationJobId, null, cancellationToken);
         return removed ? DurableJobCompletion.Success() : DurableJobCompletion.Failure(
             "kept_cleanup_file_changed", "The kept file changed. Check storage before removing it.");
     }

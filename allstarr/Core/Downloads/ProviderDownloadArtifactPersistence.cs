@@ -47,7 +47,8 @@ public static class ProviderDownloadArtifactModelConfiguration
             entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasIndex(item => new { item.WorkspaceRecordId, item.ProviderArtifactId }).IsUnique().HasDatabaseName("IX_download_artifact_identity");
-            entity.HasIndex(item => new { item.DurableJobId, item.ProviderId }).IsUnique().HasDatabaseName("IX_download_artifact_job_provider");
+            entity.HasIndex(item => new { item.DurableJobId, item.ProviderId }).IsUnique()
+                .HasFilter("\"SupersededAt\" IS NULL").HasDatabaseName("IX_download_artifact_job_provider");
             entity.HasOne<ProviderDownloadWorkspaceEntity>().WithMany().HasForeignKey(item => item.WorkspaceRecordId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.OwnerUserId)
                 .HasConstraintName("FK_download_artifact_user").OnDelete(DeleteBehavior.Restrict);
@@ -56,7 +57,7 @@ public static class ProviderDownloadArtifactModelConfiguration
     }
 }
 
-public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDbContext> factory) : IProviderDownloadArtifactStore
+public sealed partial class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDbContext> factory) : IProviderDownloadArtifactStore
 {
     public async Task<ProviderDownloadWorkspaceEntity> CreateWorkspaceAsync(ProviderDownloadWorkspaceEntity workspace, CancellationToken cancellationToken)
     {
@@ -101,7 +102,8 @@ public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDb
         ProviderDownloadArtifactEntity existing,
         ProviderDownloadArtifactEntity candidate)
     {
-        if (!string.Equals(existing.SourceExternalTrackId, candidate.SourceExternalTrackId, StringComparison.Ordinal) ||
+        if (existing.SupersededAt != null ||
+            !string.Equals(existing.SourceExternalTrackId, candidate.SourceExternalTrackId, StringComparison.Ordinal) ||
             existing.SourceAccountRevision != candidate.SourceAccountRevision)
         {
             throw new InvalidOperationException(
@@ -110,7 +112,7 @@ public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDb
     }
 
     public async Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid durableJobId, string providerId, CancellationToken cancellationToken)
-    { await using var db = await factory.CreateDbContextAsync(cancellationToken); return await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleOrDefaultAsync(item => item.DurableJobId == durableJobId && item.ProviderId == providerId, cancellationToken); }
+    { await using var db = await factory.CreateDbContextAsync(cancellationToken); return await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleOrDefaultAsync(item => item.DurableJobId == durableJobId && item.ProviderId == providerId && item.SupersededAt == null, cancellationToken); }
 
     public async Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken cancellationToken)
     {
@@ -118,7 +120,7 @@ public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDb
         var item = await db.Set<ProviderDownloadArtifactEntity>().SingleAsync(value => value.Id == artifactId, cancellationToken);
         if (item.State == ProviderDownloadArtifactState.Placed)
         { if (item.ManagedFileId != managedFileId) throw new InvalidOperationException("The artifact is already linked to another managed file."); return; }
-        if (item.State != ProviderDownloadArtifactState.Verified) throw new InvalidOperationException("Only a verified download artifact can be placed.");
+        if (item.State != ProviderDownloadArtifactState.Verified || item.SupersededAt != null) throw new InvalidOperationException("Only a current verified download artifact can be placed.");
         var exactManagedScope = await db.Set<ManagedFileOwnershipEntity>().AsNoTracking().AnyAsync(file =>
             file.Id == managedFileId &&
             file.OwnerUserId == item.OwnerUserId &&

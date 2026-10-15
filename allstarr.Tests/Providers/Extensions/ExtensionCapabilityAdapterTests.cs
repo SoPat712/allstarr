@@ -1812,6 +1812,11 @@ public sealed class ExtensionCapabilityAdapterTests
         }
         public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid jobId, string providerId, CancellationToken token) =>
             Task.FromResult(Artifacts.SingleOrDefault(item => item.DurableJobId == jobId && item.ProviderId == providerId));
+        public Task<bool> SupersedeAsync(VerifiedProviderDownloadArtifact expected, long revision, int attempt,
+            DateTimeOffset now, CancellationToken token) => Task.FromResult(false);
+        public Task<IReadOnlyList<ProviderDownloadWorkspaceEntity>> FindDiscardableWorkspacesAsync(Guid owner,
+            Guid job, string? provider, CancellationToken token) =>
+            Task.FromResult<IReadOnlyList<ProviderDownloadWorkspaceEntity>>([]);
         public Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken token) => Task.CompletedTask;
     }
 }

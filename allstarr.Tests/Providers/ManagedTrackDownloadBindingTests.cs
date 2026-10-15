@@ -69,7 +69,8 @@ public sealed class ManagedTrackDownloadBindingTests
         var result = await service.ExecuteAsync(Command(fixture, "recording-keep", originalTrack.Value));
 
         Assert.False(result.Succeeded);
-        Assert.Equal("managed_download_artifact_invalid", result.ErrorCode);
+        Assert.Equal(mismatch == "revision" ? "managed_download_account_changed" : "managed_download_artifact_invalid", result.ErrorCode);
+        Assert.Equal(mismatch == "revision", result.Retryable);
         Assert.Equal(0, capability.CheckAvailabilityCalls);
         Assert.Equal(0, capability.DownloadCalls);
         var persisted = await fixture.FreshResolver().FindByJobAsync(fixture.JobId, fixture.ProviderId);

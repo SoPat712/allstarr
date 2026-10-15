@@ -326,7 +326,8 @@ public sealed partial class RecordingKeptFiles(
         var artifact = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleOrDefaultAsync(item =>
             item.Id == request.SourceArtifactId && item.DurableJobId == request.DurableJobId &&
             item.OwnerUserId == request.InitiatingUserId && item.ProviderId == request.SourceProviderId &&
-            item.State == ProviderDownloadArtifactState.Verified && item.SourceExternalTrackId != null, cancellationToken);
+            item.State == ProviderDownloadArtifactState.Verified && item.SupersededAt == null &&
+            item.SourceExternalTrackId != null, cancellationToken);
         if (job == null || artifact == null || !await db.Users.AnyAsync(item =>
                 item.Id == request.InitiatingUserId && item.Enabled, cancellationToken)) throw Denied();
         await AuthorizeFavoritePublicationAsync(db, job, request, cancellationToken);

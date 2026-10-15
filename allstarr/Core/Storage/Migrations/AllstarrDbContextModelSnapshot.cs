@@ -165,6 +165,9 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(32)
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("SupersededAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<long>("VerifiedAt")
                         .HasColumnType("INTEGER");
 
@@ -184,7 +187,8 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("DurableJobId", "ProviderId")
                         .IsUnique()
-                        .HasDatabaseName("IX_download_artifact_job_provider");
+                        .HasDatabaseName("IX_download_artifact_job_provider")
+                        .HasFilter("\"SupersededAt\" IS NULL");
 
                     b.HasIndex("WorkspaceRecordId", "ProviderArtifactId")
                         .IsUnique()

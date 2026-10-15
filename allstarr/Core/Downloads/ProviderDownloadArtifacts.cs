@@ -46,6 +46,7 @@ public sealed class ProviderDownloadArtifactEntity
     public DateTimeOffset CreatedAt { get; set; }
     public DateTimeOffset VerifiedAt { get; set; }
     public DateTimeOffset? PlacedAt { get; set; }
+    public DateTimeOffset? SupersededAt { get; set; }
     public long Revision { get; set; }
 }
 
@@ -120,5 +121,9 @@ public interface IProviderDownloadArtifactStore
     Task<ProviderDownloadWorkspaceEntity?> GetWorkspaceAsync(string workspaceId, CancellationToken cancellationToken);
     Task<ProviderDownloadArtifactEntity> AddVerifiedAsync(ProviderDownloadArtifactEntity artifact, CancellationToken cancellationToken);
     Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid durableJobId, string providerId, CancellationToken cancellationToken);
+    Task<bool> SupersedeAsync(VerifiedProviderDownloadArtifact expected, long accountRevision, int attempt,
+        DateTimeOffset now, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ProviderDownloadWorkspaceEntity>> FindDiscardableWorkspacesAsync(Guid ownerUserId,
+        Guid durableJobId, string? providerId, CancellationToken cancellationToken);
     Task MarkPlacedAsync(Guid artifactId, Guid managedFileId, CancellationToken cancellationToken);
 }
