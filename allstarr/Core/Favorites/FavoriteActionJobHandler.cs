@@ -447,6 +447,10 @@ public static class FavoriteActionRegistration
     public static IServiceCollection AddFavoriteActions(this IServiceCollection services)
     {
         services.AddSingleton<FavoriteViewReader>();
+        services.AddSingleton<FavoriteDisplayBackfillQueue>();
+        services.AddSingleton<FavoriteDisplayBackfillJobHandler>();
+        services.AddSingleton<IDurableJobHandler>(provider => provider.GetRequiredService<FavoriteDisplayBackfillJobHandler>());
+        services.AddHostedService<FavoriteDisplayBackfillService>();
         services.AddSingleton<FavoriteActionPipeline>();
         services.AddSingleton<IFavoriteActionPipeline>(provider => provider.GetRequiredService<FavoriteActionPipeline>());
         services.AddSingleton<FavoriteDownloadActionExecutor>();
