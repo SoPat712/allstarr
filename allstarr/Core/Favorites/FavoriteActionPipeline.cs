@@ -68,10 +68,18 @@ public sealed class FavoriteActionPipeline(
         var now = clock.UtcNow;
 
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var latest = await context.Set<FavoriteEventRecord>().AsNoTracking()
-            .Where(item => item.OwnerUserId == userId &&
-                           item.Protocol == protocol && item.BackendInstanceId == backend && item.ItemId == itemId)
-            .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
+        await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
+        if (!await context.Users.AsNoTracking().AnyAsync(item => item.Id == userId && item.Enabled &&
+                item.BackendType == protocol && item.BackendInstanceId == backend &&
+                item.BackendPrincipalId == execution.VerifiedBackendPrincipalId, cancellationToken))
+            throw new UnauthorizedAccessException("The favorite principal is no longer authorized.");
+        var currentState = await context.Set<FavoriteStateRecord>().SingleOrDefaultAsync(item =>
+            item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend &&
+            item.ItemId == itemId, cancellationToken);
+        var acceptedEvents = context.Set<FavoriteEventRecord>().AsNoTracking().Where(item =>
+            item.OwnerUserId == userId && item.Protocol == protocol && item.BackendInstanceId == backend && item.ItemId == itemId);
+        if (currentState != null) acceptedEvents = acceptedEvents.Where(item => item.Id == currentState.LastEventId);
+        var latest = await acceptedEvents.OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Select(item => new { item.Id, item.JobId, item.Operation, item.SourceRevision, item.State })
             .FirstOrDefaultAsync(cancellationToken);
         if (latest != null && latest.Operation == request.Operation &&
@@ -93,20 +101,8 @@ public sealed class FavoriteActionPipeline(
             return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
         }
 
-        await using var transaction = await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        existing = await context.Set<FavoriteEventRecord>()
-            .SingleOrDefaultAsync(item => item.EventKey == eventKey, cancellationToken);
-        if (existing != null)
-        {
-            await transaction.CommitAsync(cancellationToken);
-            return new FavoriteEventReceipt(existing.Id, existing.JobId, false, existing.State);
-        }
-
         var eventId = Guid.CreateVersion7();
-        if (request.Operation == FavoriteOperation.Unfavorite)
-        {
-            await CancelPendingFavoriteWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken);
-        }
+        await CancelSupersededWorkAsync(context, userId, protocol, backend, itemId, now, cancellationToken);
 
         var actionTypes = BuildActions(request.Operation, itemId);
         var job = await jobs.EnqueueInExistingTransactionAsync(
@@ -141,6 +137,22 @@ public sealed class FavoriteActionPipeline(
             UpdatedAt = now
         };
         context.Set<FavoriteEventRecord>().Add(record);
+        if (currentState == null)
+        {
+            currentState = new FavoriteStateRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = userId,
+                Protocol = protocol,
+                BackendInstanceId = backend,
+                ItemId = itemId
+            };
+            context.Add(currentState);
+        }
+        currentState.IsFavorite = request.Operation == FavoriteOperation.Favorite;
+        currentState.LastEventId = eventId;
+        currentState.UpdatedAt = now;
+        currentState.Revision++;
         foreach (var actionType in actionTypes)
         {
             context.Set<FavoriteActionRecord>().Add(new FavoriteActionRecord
@@ -199,24 +211,29 @@ public sealed class FavoriteActionPipeline(
             ? [VirtualLikedAction, "download"]
             : [VirtualLikedAction];
 
-    private async Task CancelPendingFavoriteWorkAsync(AllstarrDbContext context, Guid userId,
+    private async Task CancelSupersededWorkAsync(AllstarrDbContext context, Guid userId,
         string protocol, string backend, string itemId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         var priorEvents = await context.Set<FavoriteEventRecord>()
             .Where(item => item.OwnerUserId == userId && item.Protocol == protocol &&
                            item.BackendInstanceId == backend && item.ItemId == itemId &&
-                           item.Operation == FavoriteOperation.Favorite && item.State == FavoriteEventState.Pending)
+                           (item.State == FavoriteEventState.Pending || item.State == FavoriteEventState.Running ||
+                            item.State == FavoriteEventState.Failed))
             .ToListAsync(cancellationToken);
         if (priorEvents.Count == 0) return;
         var eventIds = priorEvents.Select(item => item.Id).ToArray();
         var jobIds = priorEvents.Select(item => item.JobId).ToArray();
         var pendingJobs = await context.Jobs.Where(item => jobIds.Contains(item.Id) &&
-            (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled)).ToListAsync(cancellationToken);
+            (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled ||
+             item.State == DurableJobState.Running)).ToListAsync(cancellationToken);
         foreach (var job in pendingJobs)
         {
-            job.State = DurableJobState.Cancelled;
-            job.CancellationRequestedAt = now;
-            job.CompletedAt = now;
+            job.CancellationRequestedAt ??= now;
+            if (job.State != DurableJobState.Running)
+            {
+                job.State = DurableJobState.Cancelled;
+                job.CompletedAt = now;
+            }
             job.UpdatedAt = now;
             job.Revision++;
         }
@@ -229,7 +246,8 @@ public sealed class FavoriteActionPipeline(
             prior.Revision++;
         }
         var actions = await context.Set<FavoriteActionRecord>()
-            .Where(item => eventIds.Contains(item.EventId) && item.State == FavoriteActionState.Pending).ToListAsync(cancellationToken);
+            .Where(item => eventIds.Contains(item.EventId) && item.State != FavoriteActionState.Succeeded &&
+                           item.State != FavoriteActionState.Cancelled).ToListAsync(cancellationToken);
         foreach (var action in actions.Where(item => priorEvents.Any(e => e.Id == item.EventId && cancelledJobIds.Contains(e.JobId))))
         {
             action.State = FavoriteActionState.Cancelled;
