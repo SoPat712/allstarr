@@ -28,6 +28,8 @@ public sealed class ProviderDownloadArtifactEntity
     public Guid DurableJobId { get; set; }
     public string ProviderId { get; set; } = string.Empty;
     public Guid? ProviderAccountId { get; set; }
+    public string? SourceExternalTrackId { get; set; }
+    public long? SourceAccountRevision { get; set; }
     public string ProviderArtifactId { get; set; } = string.Empty;
     public string RelativePath { get; set; } = string.Empty;
     public string ContentSha256 { get; set; } = string.Empty;
@@ -94,6 +96,8 @@ public sealed record VerifiedProviderDownloadArtifact(Guid Id, Guid WorkspaceRec
     string ContentSha256, long Length, Guid? OwnerUserId, Guid DurableJobId,
     string ProviderId, Guid? ProviderAccountId, ProviderDownloadArtifactState State, Guid? ManagedFileId)
 {
+    public string? SourceExternalTrackId { get; init; }
+    public long? SourceAccountRevision { get; init; }
     public string? MimeType { get; init; }
     public string? Container { get; init; }
     public string? Codec { get; init; }

@@ -8,7 +8,7 @@ public static partial class ManagedPathTemplate
 {
     private static readonly HashSet<string> Supported = new(StringComparer.OrdinalIgnoreCase)
     {
-        "title", "artist", "album", "albumArtist", "genre", "year", "track"
+        "title", "artist", "album", "albumArtist", "genre", "year", "track", "extension"
     };
 
     public static string Render(string template, ManagedTrackPathValues values)
@@ -46,6 +46,7 @@ public static partial class ManagedPathTemplate
             "genre" => values.Genre,
             "year" => values.Year,
             "track" => values.Track,
+            "extension" => NormalizeExtension(values.Extension),
             _ => null
         };
 

@@ -152,17 +152,43 @@ public sealed class ManagedTrackDownloadService(
         for (var index = 0; index < plan.Candidates.Count; index++)
         {
             var candidate = plan.Candidates[index];
+            var candidateTrack = candidate.TrackId ?? new ProviderExternalResourceId(
+                candidate.Provider.Id,
+                ProviderResourceKind.Track,
+                command.ExternalTrackId);
+            var candidateAccountId = candidate.Context.Account?.AccountId;
+            var candidateAccountRevision = candidate.Context.Account?.Revision;
             var prior = await artifacts.FindByJobAsync(
                 command.DurableJobId,
                 candidate.Provider.Id,
                 cancellationToken);
             if (prior != null)
             {
+                if (!CanReusePriorArtifact(
+                        prior,
+                        candidateAccountId,
+                        candidateTrack,
+                        candidateAccountRevision,
+                        command.RoutePurpose))
+                {
+                    LogOutcome(
+                        index,
+                        "existing-artifact",
+                        candidate.Provider.Id,
+                        candidateAccountId,
+                        ProviderRouteOutcomeStatus.Stopped,
+                        "artifact-binding-mismatch",
+                        nextProviderId: null);
+                    return ManagedTrackDownloadResult.Failure(
+                        "managed_download_artifact_invalid",
+                        "The existing managed artifact belongs to a different provider source.");
+                }
+
                 LogOutcome(
                     index,
                     "existing-artifact",
                     candidate.Provider.Id,
-                    candidate.Context.Account?.AccountId,
+                    candidateAccountId,
                     ProviderRouteOutcomeStatus.Succeeded,
                     "verified-artifact-reused",
                     nextProviderId: null);
@@ -173,12 +199,8 @@ public sealed class ManagedTrackDownloadService(
                 command.OwnerUserId,
                 command.DurableJobId,
                 candidate.Provider.Id,
-                candidate.Context.Account?.AccountId,
+                candidateAccountId,
                 command.IdempotencyKey), cancellationToken);
-            var candidateTrack = candidate.TrackId ?? new ProviderExternalResourceId(
-                candidate.Provider.Id,
-                ProviderResourceKind.Track,
-                command.ExternalTrackId);
             ProviderOutcome<ProviderDownloadedArtifact> outcome;
             try
             {
@@ -236,12 +258,14 @@ public sealed class ManagedTrackDownloadService(
                 var artifact = await artifacts.ResolveAsync(
                     workspace.Reference,
                     outcome.RequireValue(),
-                    cancellationToken);
+                    cancellationToken,
+                    candidateTrack,
+                    candidateAccountRevision);
                 LogOutcome(
                     index,
                     "artifact-verification",
                     candidate.Provider.Id,
-                    candidate.Context.Account?.AccountId,
+                    candidateAccountId,
                     ProviderRouteOutcomeStatus.Succeeded,
                     "download-verified",
                     nextProviderId: null);
@@ -253,7 +277,7 @@ public sealed class ManagedTrackDownloadService(
                     index,
                     "artifact-verification",
                     candidate.Provider.Id,
-                    candidate.Context.Account?.AccountId,
+                    candidateAccountId,
                     ProviderRouteOutcomeStatus.Stopped,
                     "artifact-io-failed",
                     nextProviderId: null);
@@ -267,7 +291,7 @@ public sealed class ManagedTrackDownloadService(
                     index,
                     "artifact-verification",
                     candidate.Provider.Id,
-                    candidate.Context.Account?.AccountId,
+                    candidateAccountId,
                     ProviderRouteOutcomeStatus.Stopped,
                     "artifact-invalid",
                     nextProviderId: null);
@@ -280,6 +304,26 @@ public sealed class ManagedTrackDownloadService(
         return ManagedTrackDownloadResult.Failure(
             "managed_download_route_exhausted",
             "Authorized download providers were exhausted.");
+    }
+
+    private static bool CanReusePriorArtifact(
+        VerifiedProviderDownloadArtifact prior,
+        Guid? candidateAccountId,
+        ProviderExternalResourceId candidateTrack,
+        long? candidateAccountRevision,
+        string routePurpose)
+    {
+        if (prior.ProviderAccountId != candidateAccountId)
+            return false;
+
+        if (prior.SourceExternalTrackId is null)
+        {
+            return prior.SourceAccountRevision is null &&
+                   !routePurpose.Equals("recording-keep", StringComparison.Ordinal);
+        }
+
+        return string.Equals(prior.SourceExternalTrackId, candidateTrack.Value, StringComparison.Ordinal) &&
+               prior.SourceAccountRevision == candidateAccountRevision;
     }
 
     private static void ValidateScope(ManagedTrackDownloadCommand command)

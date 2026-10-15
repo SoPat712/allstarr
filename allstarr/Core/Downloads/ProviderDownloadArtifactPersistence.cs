@@ -39,6 +39,7 @@ public static class ProviderDownloadArtifactModelConfiguration
             entity.Property(item => item.ProviderId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.ProviderArtifactId).HasMaxLength(500).IsRequired();
             entity.Property(item => item.RelativePath).HasMaxLength(1000).IsRequired();
+            entity.Property(item => item.SourceExternalTrackId).HasMaxLength(500);
             entity.Property(item => item.ContentSha256).HasMaxLength(64).IsRequired();
             entity.Property(item => item.MimeType).HasMaxLength(100);
             entity.Property(item => item.Container).HasMaxLength(100);
@@ -81,6 +82,7 @@ public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDb
         if (existing is not null)
         {
             if (existing.ContentSha256 != artifact.ContentSha256 || existing.Length != artifact.Length) throw new InvalidOperationException("A provider artifact identity was reused for different content.");
+            EnsureSourceBindingMatches(existing, artifact);
             return existing;
         }
         db.Add(artifact);
@@ -90,7 +92,20 @@ public sealed class EfProviderDownloadArtifactStore(IDbContextFactory<AllstarrDb
             db.Entry(artifact).State = EntityState.Detached;
             var winner = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleAsync(item => item.WorkspaceRecordId == artifact.WorkspaceRecordId && item.ProviderArtifactId == artifact.ProviderArtifactId, cancellationToken);
             if (winner.ContentSha256 != artifact.ContentSha256 || winner.Length != artifact.Length) throw new InvalidOperationException("A provider artifact identity was reused for different content.");
+            EnsureSourceBindingMatches(winner, artifact);
             return winner;
+        }
+    }
+
+    private static void EnsureSourceBindingMatches(
+        ProviderDownloadArtifactEntity existing,
+        ProviderDownloadArtifactEntity candidate)
+    {
+        if (!string.Equals(existing.SourceExternalTrackId, candidate.SourceExternalTrackId, StringComparison.Ordinal) ||
+            existing.SourceAccountRevision != candidate.SourceAccountRevision)
+        {
+            throw new InvalidOperationException(
+                "A provider artifact identity was reused with a different source binding.");
         }
     }
 

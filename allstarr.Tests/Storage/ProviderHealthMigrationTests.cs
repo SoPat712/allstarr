@@ -156,6 +156,24 @@ public sealed class ProviderHealthMigrationTests
             CollapseSql(Assert.Single(after, row => row.Name == subjectIndex).Sql));
         Assert.DoesNotContain(before, row => row.Name is publicLinkIndex or publicSnapshotIndex);
 
+        string[] keptObjects =
+        [
+            "recording_kept_routes", "IX_recording_kept_routes_ManagedFileId",
+            "IX_recording_kept_routes_PublicationJobId", "IX_recording_kept_routes_PublishedByUserId",
+            "IX_recording_kept_routes_SourceArtifactId", "TR_kept_publication_insert", "TR_kept_publication_update",
+            "TR_kept_source_immutable", "TR_kept_file_immutable", "TR_kept_job_owner", "TR_kept_workspace_immutable"
+        ];
+        Assert.DoesNotContain(before, row => keptObjects.Contains(row.Name));
+        Assert.Equal(keptObjects.Order(StringComparer.Ordinal),
+            after.Where(row => keptObjects.Contains(row.Name)).Select(row => row.Name).Order(StringComparer.Ordinal));
+        Assert.Equal(
+            ["\"SourceAccountRevision\" INTEGER NULL", "\"SourceExternalTrackId\" TEXT NULL"],
+            TableColumns(after, "provider_download_artifacts").Except(TableColumns(before, "provider_download_artifacts")).Order(StringComparer.Ordinal));
+        Assert.Empty(TableColumns(before, "provider_download_artifacts").Except(TableColumns(after, "provider_download_artifacts")));
+        foreach (var column in new[] { "ManagedFileId", "PublicationJobId", "PublishedByUserId", "SourceArtifactId" })
+            Assert.Equal($"CREATE INDEX \"IX_recording_kept_routes_{column}\" ON \"recording_kept_routes\" (\"{column}\")",
+                CollapseSql(Assert.Single(after, row => row.Name == $"IX_recording_kept_routes_{column}").Sql));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -166,7 +184,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -291,6 +309,7 @@ public sealed class ProviderHealthMigrationTests
         (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||
         (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
             "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
+        (table == "provider_download_artifacts" && component is "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL") ||
         (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
 
     private static string NormalizeNullability(string table, string component)

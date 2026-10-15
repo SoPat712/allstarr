@@ -153,6 +153,13 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<int?>("SampleRate")
                         .HasColumnType("INTEGER");
 
+                    b.Property<long?>("SourceAccountRevision")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SourceExternalTrackId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("State")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -1423,6 +1430,46 @@ namespace allstarr.Core.Storage.Migrations
                         .HasDatabaseName("IX_managed_file_reference_owner");
 
                     b.ToTable("managed_file_references", (string)null);
+                });
+
+            modelBuilder.Entity("allstarr.Core.ManagedFiles.RecordingKeptRouteEntity", b =>
+                {
+                    b.Property<Guid>("CanonicalRecordingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("CreatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("ManagedFileId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PublicationJobId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("PublishedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("SourceArtifactId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("UpdatedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("CanonicalRecordingId");
+
+                    b.HasIndex("ManagedFileId");
+
+                    b.HasIndex("PublicationJobId");
+
+                    b.HasIndex("PublishedByUserId");
+
+                    b.HasIndex("SourceArtifactId");
+
+                    b.ToTable("recording_kept_routes", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity", b =>
@@ -3963,6 +4010,39 @@ namespace allstarr.Core.Storage.Migrations
                         .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_managed_file_reference_user");
+                });
+
+            modelBuilder.Entity("allstarr.Core.ManagedFiles.RecordingKeptRouteEntity", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.CanonicalRecordingRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CanonicalRecordingId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", null)
+                        .WithMany()
+                        .HasForeignKey("ManagedFileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PublicationJobId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("PublishedByUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("allstarr.Core.Downloads.ProviderDownloadArtifactEntity", null)
+                        .WithMany()
+                        .HasForeignKey("SourceArtifactId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity", b =>

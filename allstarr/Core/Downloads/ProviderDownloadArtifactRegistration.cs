@@ -18,6 +18,7 @@ public static class ProviderDownloadArtifactRegistration
             placement.RootPath = configuration["Library:KeptPath"] ?? Path.Combine(downloadRoot, "kept");
         }
         services.AddSingleton(placement);
+        services.AddSingleton<allstarr.Core.ManagedFiles.RecordingKeptFiles>();
         return services;
     }
 }

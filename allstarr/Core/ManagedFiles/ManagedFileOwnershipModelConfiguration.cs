@@ -40,6 +40,25 @@ public static class ManagedFileOwnershipModelConfiguration
                 .HasConstraintName("FK_managed_file_job").OnDelete(DeleteBehavior.Restrict);
         });
 
+        modelBuilder.Entity<RecordingKeptRouteEntity>(entity =>
+        {
+            entity.ToTable("recording_kept_routes");
+            entity.HasKey(item => item.CanonicalRecordingId);
+            entity.Property(item => item.CanonicalRecordingId).ValueGeneratedNever();
+            entity.Property(item => item.Revision).IsConcurrencyToken();
+            entity.HasOne<CanonicalRecordingRecord>().WithMany().HasForeignKey(item => item.CanonicalRecordingId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<ManagedFileOwnershipEntity>().WithMany().HasForeignKey(item => item.ManagedFileId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<UserRecord>().WithMany().HasForeignKey(item => item.PublishedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<DurableJobRecord>().WithMany()
+                .HasForeignKey(item => item.PublicationJobId)
+                .OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne<allstarr.Core.Downloads.ProviderDownloadArtifactEntity>().WithMany()
+                .HasForeignKey(item => item.SourceArtifactId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         modelBuilder.Entity<ManagedFileReferenceEntity>(entity =>
         {
             entity.ToTable("managed_file_references");

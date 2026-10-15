@@ -81,6 +81,8 @@ Each protocol dialect keeps what is specific to it: authentication, request pars
 
 ## Sources, accounts, and capabilities
 
+Household kept publication belongs to `RecordingKeptFiles` and the existing managed-file owner. A canonical recording route retains its initiating user, source job and verified artifact. The personal source artifact keeps its ownership; the published immutable file has a household scope and no personal source-job link. Publication checks the current job execution, user, exact provider track, source account revision and verified canonical identity before placement and again before acquiring its lasting reference. Temporary placement references permit restart recovery and safe cleanup on rejection. SQLite guards preserve the publication lineage. Household reads verify file ownership and bytes independently of the original provider account; public and unknown principals cannot read them. Legacy artifacts without a recorded track binding remain personal and cannot establish a household route.
+
 The product term **Source** covers anything that can supply music data or an action. A source can expose one or more typed capabilities: metadata, playlist discovery, streaming, download, lyrics, health, or scrobbling.
 
 A **provider account** is an encrypted credential, any non-secret source settings, and an access policy for a source. It can be Personal or Shared. A source can exist without an account when its capability is public. Routing considers the initiating user, capability, account ownership, permission, readiness, and configured priority. Backend library permissions govern local copies separately.
