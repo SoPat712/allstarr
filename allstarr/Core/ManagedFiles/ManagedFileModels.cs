@@ -99,9 +99,14 @@ public interface IManagedFileOwnershipStore
 
 public interface IManagedFileOperations
 {
+    Stream OpenRead(string path, bool sequential = false) => new FileStream(path, FileMode.Open, FileAccess.Read,
+        FileShare.Read, sequential ? 128 * 1024 : 1,
+        FileOptions.Asynchronous | (sequential ? FileOptions.SequentialScan : FileOptions.RandomAccess));
     bool TryCreateHardLink(string linkPath, string existingPath);
     bool TryCreateReflink(string destinationPath, string sourcePath);
     bool TryGetFileIdentity(string path, out ManagedFileSystemIdentity identity);
+    bool TryGetFileIdentity(Stream stream, out ManagedFileSystemIdentity identity) =>
+        new PhysicalManagedFileOperations().TryGetFileIdentity(stream, out identity);
     Task CopyAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken);
     void MoveNoReplace(string sourcePath, string destinationPath);
 }

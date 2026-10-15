@@ -312,9 +312,9 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         }
     }
 
-    private static async Task<string> FingerprintAsync(string path, CancellationToken cancellationToken)
+    private async Task<string> FingerprintAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+        await using var stream = files.OpenRead(path, sequential: true);
         return Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
     }
 
@@ -347,6 +347,34 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             record.ContentSha256, record.Length, cancellationToken);
     }
 
+    internal void VerifyOwnedFileIdentity(ManagedFileRecord record, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!record.IsManaged || record.ScopeKey != ManagedFileScopeKey.Create(record.OwnerUserId, record.RootId))
+            throw new UnauthorizedAccessException("The managed file ownership scope is invalid.");
+        ValidateExistingIdentity(ValidateRoot(record.TargetRootPath), record, requireRecordedIdentity: true);
+    }
+
+    internal Stream OpenOwnedPlaybackRead(ManagedFileRecord record, CancellationToken cancellationToken)
+    {
+        VerifyOwnedFileIdentity(record, cancellationToken);
+        var stream = files.OpenRead(record.CanonicalPath);
+        try
+        {
+            VerifyOwnedFileIdentity(record, cancellationToken);
+            if (stream.Length != record.Length || !files.TryGetFileIdentity(stream, out var identity) ||
+                !StringComparer.Ordinal.Equals(record.FileSystemDeviceId, identity.DeviceId) ||
+                !StringComparer.Ordinal.Equals(record.FileSystemFileId, identity.FileId))
+                throw new IOException("The opened managed file no longer matches its ownership record.");
+            return stream;
+        }
+        catch
+        {
+            stream.Dispose();
+            throw;
+        }
+    }
+
     private async Task ValidateExistingManagedFileAsync(
         string root,
         ManagedFileRecord record,
@@ -354,26 +382,37 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         long expectedLength,
         CancellationToken cancellationToken)
     {
-        var path = Path.GetFullPath(record.CanonicalPath);
-        if (!path.StartsWith(root + Path.DirectorySeparatorChar,
-                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
-            throw new UnauthorizedAccessException("The existing managed file is outside its recorded root.");
-        RejectSymlinksUnder(root, path);
-        var info = new FileInfo(path);
-        if (info.Length != record.Length || info.Length != expectedLength)
+        var path = ValidateExistingIdentity(root, record);
+        if (record.Length != expectedLength)
             throw new IOException("The existing managed file length no longer matches its ownership record.");
-        if (!string.IsNullOrWhiteSpace(record.FileSystemDeviceId) &&
-            !string.IsNullOrWhiteSpace(record.FileSystemFileId) &&
-            (!files.TryGetFileIdentity(path, out var identity) ||
-             !StringComparer.Ordinal.Equals(record.FileSystemDeviceId, identity.DeviceId) ||
-             !StringComparer.Ordinal.Equals(record.FileSystemFileId, identity.FileId)))
-            throw new IOException("The existing managed file identity no longer matches its ownership record.");
         var actual = await FingerprintAsync(path, cancellationToken);
         if (!CryptographicOperations.FixedTimeEquals(
                 Convert.FromHexString(expectedFingerprint), Convert.FromHexString(actual)) ||
             !CryptographicOperations.FixedTimeEquals(
                 Convert.FromHexString(record.ContentSha256), Convert.FromHexString(actual)))
             throw new IOException("The existing managed file content no longer matches its ownership record.");
+    }
+
+    private string ValidateExistingIdentity(string root, ManagedFileRecord record, bool requireRecordedIdentity = false)
+    {
+        var path = Path.GetFullPath(record.CanonicalPath);
+        if (!path.StartsWith(root + Path.DirectorySeparatorChar,
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new UnauthorizedAccessException("The existing managed file is outside its recorded root.");
+        RejectSymlinksUnder(root, path);
+        var info = new FileInfo(path);
+        if (info.Length != record.Length)
+            throw new IOException("The existing managed file length no longer matches its ownership record.");
+        if (requireRecordedIdentity && (string.IsNullOrWhiteSpace(record.FileSystemDeviceId) ||
+            string.IsNullOrWhiteSpace(record.FileSystemFileId)))
+            throw new IOException("The managed file has no recorded filesystem identity.");
+        if (!string.IsNullOrWhiteSpace(record.FileSystemDeviceId) &&
+            !string.IsNullOrWhiteSpace(record.FileSystemFileId) &&
+            (!files.TryGetFileIdentity(path, out var identity) ||
+             !StringComparer.Ordinal.Equals(record.FileSystemDeviceId, identity.DeviceId) ||
+             !StringComparer.Ordinal.Equals(record.FileSystemFileId, identity.FileId)))
+            throw new IOException("The existing managed file identity no longer matches its ownership record.");
+        return path;
     }
 
     private static string ResolveReferenceKey(ManagedFilePlacementRequest request)
