@@ -25,6 +25,8 @@ public sealed record KeptRecordingPublication(
 public sealed record KeptRecordingFile(Guid RecordingId, Guid ManagedFileId, long Length,
     string ContentSha256, string MimeType, [property: JsonIgnore] string Path);
 
+public sealed record KeptRecordingRead(KeptRecordingFile File, [property: JsonIgnore] Stream? Content);
+
 public sealed class RecordingKeptRouteEntity
 {
     public Guid CanonicalRecordingId { get; set; }
@@ -214,8 +216,32 @@ public sealed partial class RecordingKeptFiles(
         catch (UnauthorizedAccessException) { return null; }
     }
 
+    public async Task<KeptRecordingRead?> OpenForPlaybackAsync(ProviderActorContext actor,
+        ProviderExternalResourceId source, bool headOnly, CancellationToken cancellationToken = default)
+    {
+        source.RequireOwner(source.ProviderId, ProviderResourceKind.Track);
+        if (actor.EffectiveUserId == null) return null;
+        try
+        {
+            var recordingId = await ResolveKeptRecordingIdAsync(actor,
+                $"ext-{source.ProviderId}-song-{source.Value}", cancellationToken);
+            if (recordingId == null) return null;
+            await using var scope = scopes.CreateAsyncScope();
+            var files = scope.ServiceProvider.GetRequiredService<FilePlacementService>();
+            var candidate = await FindCandidateAsync(scope.ServiceProvider.GetRequiredService<AllstarrDbContext>(), files,
+                scope.ServiceProvider.GetRequiredService<IManagedFileRemovalStore>(), recordingId.Value, true, cancellationToken,
+                verifyContent: false);
+            if (candidate == null) return null;
+            var stream = files.OpenOwnedPlaybackRead(candidate.File, cancellationToken);
+            if (headOnly) { await stream.DisposeAsync(); stream = null; }
+            return new(ToResult(recordingId.Value, candidate.File, candidate.MimeType), stream);
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     private async Task<Candidate?> FindCandidateAsync(AllstarrDbContext db, FilePlacementService files,
-        IManagedFileRemovalStore records, Guid recordingId, bool skipUnavailable, CancellationToken cancellationToken)
+        IManagedFileRemovalStore records, Guid recordingId, bool skipUnavailable, CancellationToken cancellationToken,
+        bool verifyContent = true)
     {
         // Recording merges flatten all earlier aliases onto the surviving recording.
         var routes = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
@@ -230,7 +256,8 @@ public sealed partial class RecordingKeptFiles(
             try
             {
                 ValidateHousehold(file);
-                await files.VerifyOwnedFileAsync(file, cancellationToken);
+                if (verifyContent) await files.VerifyOwnedFileAsync(file, cancellationToken);
+                else files.VerifyOwnedFileIdentity(file, cancellationToken);
                 var mime = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking()
                     .Where(item => item.Id == route.SourceArtifactId).Select(item => item.MimeType).SingleAsync(cancellationToken);
                 return new(file, mime);

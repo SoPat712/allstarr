@@ -10,8 +10,14 @@ public sealed partial class ProtocolProviderGateway
     {
         if (keptFiles == null) return null;
         var actor = protocol.RequireActor();
-        var kept = await keptFiles.FindBySourceAsync(actor, track, protocol.CancellationToken);
-        if (kept == null || resuming && kept.ManagedFileId != previousFileId) return null;
+        var opened = await keptFiles.OpenForPlaybackAsync(actor, track, headOnly, protocol.CancellationToken);
+        if (opened == null) return null;
+        var kept = opened.File;
+        if (resuming && kept.ManagedFileId != previousFileId)
+        {
+            if (opened.Content != null) await opened.Content.DisposeAsync();
+            return null;
+        }
         HttpResponseMessage? response = null;
         try
         {
@@ -19,14 +25,7 @@ public sealed partial class ProtocolProviderGateway
             if (headOnly) response.Content = new ByteArrayContent([]);
             else
             {
-                var file = new FileStream(kept.Path, FileMode.Open, FileAccess.Read, FileShare.Read,
-                    128 * 1024, FileOptions.Asynchronous | FileOptions.RandomAccess);
-                response.Content = new StreamContent(file);
-                if (file.Length != kept.Length)
-                {
-                    response.Dispose();
-                    return null;
-                }
+                response.Content = new StreamContent(opened.Content!);
             }
             response.Content.Headers.ContentLength = kept.Length;
             response.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(kept.MimeType);
@@ -42,11 +41,13 @@ public sealed partial class ProtocolProviderGateway
         catch (Exception error) when (error is IOException or UnauthorizedAccessException)
         {
             response?.Dispose();
+            if (response == null && opened.Content != null) await opened.Content.DisposeAsync();
             return null;
         }
         catch
         {
             response?.Dispose();
+            if (response == null && opened.Content != null) await opened.Content.DisposeAsync();
             throw;
         }
     }

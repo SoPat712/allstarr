@@ -62,14 +62,34 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
         identity = null!;
         try
         {
-            if (OperatingSystem.IsWindows()) return TryGetWindowsIdentity(path, out identity);
+            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return TryGetFileIdentity(handle, out identity);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    public bool TryGetFileIdentity(Stream stream, out ManagedFileSystemIdentity identity)
+    {
+        identity = null!;
+        return stream is FileStream file && TryGetFileIdentity(file.SafeFileHandle, out identity);
+    }
+
+    private static bool TryGetFileIdentity(SafeFileHandle handle, out ManagedFileSystemIdentity identity)
+    {
+        identity = null!;
+        try
+        {
+            if (OperatingSystem.IsWindows()) return TryGetWindowsIdentity(handle, out identity);
             if (!OperatingSystem.IsLinux() && !OperatingSystem.IsMacOS()) return false;
 
             var buffer = Marshal.AllocHGlobal(512);
             try
             {
                 for (var index = 0; index < 512; index++) Marshal.WriteByte(buffer, index, 0);
-                if (StatUnix(path, buffer) != 0) return false;
+                if (FStatUnix(handle.DangerousGetHandle().ToInt32(), buffer) != 0) return false;
                 var device = OperatingSystem.IsMacOS()
                     ? unchecked((uint)Marshal.ReadInt32(buffer, 0)).ToString("x")
                     : unchecked((ulong)Marshal.ReadInt64(buffer, 0)).ToString("x");
@@ -126,14 +146,12 @@ public sealed class PhysicalManagedFileOperations : IManagedFileOperations
     [DllImport("libc", EntryPoint = "clonefile", SetLastError = true)]
     private static extern int CloneFileMac(string source, string destination, int flags);
 
-    [DllImport("libc", EntryPoint = "stat", SetLastError = true)]
-    private static extern int StatUnix(string path, IntPtr buffer);
+    [DllImport("libc", EntryPoint = "fstat", SetLastError = true)]
+    private static extern int FStatUnix(int descriptor, IntPtr buffer);
 
-    private static bool TryGetWindowsIdentity(string path, out ManagedFileSystemIdentity identity)
+    private static bool TryGetWindowsIdentity(SafeFileHandle handle, out ManagedFileSystemIdentity identity)
     {
         identity = null!;
-        using SafeFileHandle handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read,
-            FileShare.ReadWrite | FileShare.Delete);
         if (!GetFileInformationByHandle(handle, out var info)) return false;
         identity = new ManagedFileSystemIdentity(
             info.VolumeSerialNumber.ToString("x"),
