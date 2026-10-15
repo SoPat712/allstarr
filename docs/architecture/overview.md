@@ -192,6 +192,8 @@ Remote opening honors the protocol deadline and the lease's single-retry policy.
 
 The bounded `PlaybackDeliveryActivityStore` retains disposable, one-hour stream-open observations, keyed by actor, device and requested item, with exact backend/quality keys for byte-range continuation. These are not durable sessions or match decisions. Durable playback signals capture the observation at ingestion; listening events can replace provisional catalog attribution with confirmed source attribution. The observation retains the serving account revision and selected seek behavior. Lazy duration evidence is bound to the originating stream object and cannot replace a newer request or stronger byte-access evidence. Range continuation rejects an account revision change before looking up cached media. No credential or media URL is stored in the observation. See [client compatibility](../operations/client-compatibility.md#external-song-labels-and-playback-sources) for presentation and device/seek limitations.
 
+Shared provider lyrics resolution follows the saved lyrics order and the exact listener's effective availability policy. The catalog provider does not jump ahead of that order. The first timed result wins; otherwise the first plain-text result is retained while later sources are tried for timing. A source failure permits fallback, while cancellation stops the lookup. Foreground cross-provider identifiers come only from existing cached translations.
+
 ## Durable work
 
 State-changing background work uses the durable job queue, schedules, leases, retries, cancellation, and owner authorization under `Core/Jobs`. A process-local task is not an acceptable owner for matching, downloads, playlist synchronization, scrobbling, or extension lifecycle work.
