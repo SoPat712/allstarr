@@ -86,7 +86,7 @@ public sealed partial class RecordingKeptFiles
         catch (UnauthorizedAccessException) { return null; }
     }
 
-    private async Task<Guid?> ResolveKeptRecordingIdAsync(ProviderActorContext actor, string itemId,
+    internal async Task<Guid?> ResolveKeptRecordingIdAsync(ProviderActorContext actor, string itemId,
         CancellationToken cancellationToken)
     {
         if (actor.EffectiveUserId == null) return null;
