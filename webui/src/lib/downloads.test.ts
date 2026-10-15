@@ -21,6 +21,7 @@ const file = (title: string, provider: string, size: number): ManagedDownload =>
   provider,
   lastAccessedAt: "2026-07-27T00:00:00Z",
   publicationState: "Indexed",
+  explicitlyKept: false,
   removable: true,
 });
 
