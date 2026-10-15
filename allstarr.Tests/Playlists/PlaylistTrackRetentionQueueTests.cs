@@ -8,7 +8,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
+public sealed partial class PlaylistTrackRetentionQueueTests : IAsyncLifetime
 {
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _providerAccountId = Guid.CreateVersion7();
@@ -192,7 +192,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
         Assert.Equal("Stable song", payload.Title);
         Assert.Equal(["First artist", "Second artist"], payload.Artists);
         Assert.Equal("Stable album", payload.Album);
-        Assert.Equal(job.IdempotencyKey["playlist-retain:".Length..], payload.RetentionKey);
+        Assert.Equal($"playlist-retain:{payload.RetentionKey}:{plan.SourceSnapshotId:N}:{link.Revision}", job.IdempotencyKey);
         Assert.Null(db.Model.FindEntityType("allstarr.Core.Storage.OutboxMessageRecord"));
     }
 
