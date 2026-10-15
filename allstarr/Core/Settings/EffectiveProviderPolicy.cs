@@ -103,6 +103,11 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
             item => item.Capability,
             item => ((string[])values[item.SettingKey].Value).Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).Distinct(StringComparer.Ordinal).ToImmutableArray());
+        if (preferences.Values.LyricsOrder is { } lyricsOrder)
+            orders = orders.SetItem(ProviderCapabilityKind.Lyrics, lyricsOrder
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
+                .Distinct(StringComparer.Ordinal).ToImmutableArray());
         var disabled = ((string[])values["Providers:Disabled"].Value)
             .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
             .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);

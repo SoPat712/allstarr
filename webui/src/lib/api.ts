@@ -58,6 +58,7 @@ export type ListeningPreferences = {
   explicitFilter: string;
   showExternalLabel: boolean;
   showExplicitLabel: boolean;
+  lyricsOrder?: string | null;
 };
 
 export type PersonalListeningPreferences = {
@@ -1592,6 +1593,7 @@ export const listeningPreferences = {
     explicitFilter: ExplicitFilter;
     showExternalLabel: boolean;
     showExplicitLabel: boolean;
+    lyricsOrder?: string;
     expectedRevision: string;
   }) => json<PersonalListeningPreferences>("/api/admin/preferences", {
     method: "PUT",

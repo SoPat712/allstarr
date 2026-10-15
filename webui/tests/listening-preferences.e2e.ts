@@ -4,6 +4,7 @@ type PreferenceState = {
   explicitFilter: string;
   showExternalLabel: boolean;
   showExplicitLabel: boolean;
+  lyricsOrder?: string;
   revision: string;
   usesHouseholdDefaults: boolean;
 };
@@ -11,11 +12,13 @@ type PreferenceState = {
 function response(state: PreferenceState) {
   return {
     Values: {
+      LyricsOrder: state.lyricsOrder ?? "spotify,lrclib,lyricsplus",
       ExplicitFilter: state.explicitFilter,
       ShowExternalLabel: state.showExternalLabel,
       ShowExplicitLabel: state.showExplicitLabel,
     },
     HouseholdDefaults: {
+      LyricsOrder: "spotify,lrclib,lyricsplus",
       ExplicitFilter: "All",
       ShowExternalLabel: true,
       ShowExplicitLabel: true,
@@ -163,3 +166,52 @@ test("administrator reloads a 409 conflict before saving against the refreshed r
   expect(putBodies[0].expectedRevision).toBe("revision-1");
   expect(putBodies[1].expectedRevision).toBe("revision-server");
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`personal lyrics order saves and resets at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    let state: PreferenceState = { explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
+      lyricsOrder: "spotify,lrclib,lyricsplus", revision: "initial", usesHouseholdDefaults: true };
+    const writes: Record<string, unknown>[] = [];
+    await mockShell(page, false, async route => {
+      if (route.request().method() === "GET") return fulfillJson(route, response(state));
+      const body = route.request().postDataJSON() as Record<string, unknown>;
+      writes.push(body);
+      if (route.request().method() === "PUT") {
+        state = { ...state, lyricsOrder: String(body.lyricsOrder), revision: "saved", usesHouseholdDefaults: false };
+      } else {
+        expect(body).toEqual({ expectedRevision: "saved" });
+        state = { ...state, lyricsOrder: "spotify,lrclib,lyricsplus", revision: "reset", usesHouseholdDefaults: true };
+      }
+      return fulfillJson(route, response(state));
+    });
+    await page.route("**/api/admin/ui/schema", route => fulfillJson(route, { providers: [
+      { id: "spotify", name: "Spotify", categories: ["lyrics"] },
+      { id: "lrclib", name: "LRCLIB", categories: ["lyrics"] },
+      { id: "lyricsplus", name: "LyricsPlus", categories: ["lyrics"] },
+    ] }));
+    await page.goto("/#/preferences");
+    const region = page.getByRole("region", { name: "Lyrics source order" });
+    await expect(region).toBeVisible();
+    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus"]);
+    await expect(region.getByRole("button", { name: "Move Spotify up", exact: true })).toBeDisabled();
+    await region.getByRole("button", { name: "Move LRCLIB up", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(region.getByRole("listitem")).toHaveText(["LRCLIB", "Spotify", "LyricsPlus"]);
+    await page.getByRole("button", { name: "Save preferences", exact: true }).click();
+    await expect.poll(() => writes[0]).toEqual({ explicitFilter: "All", showExternalLabel: true, showExplicitLabel: true,
+      lyricsOrder: "lrclib,spotify,lyricsplus", expectedRevision: "initial" });
+    await expect(page.getByText("Personal choices", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Reset to household defaults", exact: true }).click();
+    await expect(region.getByRole("listitem")).toHaveText(["Spotify", "LRCLIB", "LyricsPlus"]);
+    await expect(page.getByText("Using household defaults", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const button of await region.getByRole("button").all()) {
+      const box = await button.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.width).toBeGreaterThanOrEqual(43);
+      expect(box!.height).toBeGreaterThanOrEqual(43);
+    }
+  });
+}

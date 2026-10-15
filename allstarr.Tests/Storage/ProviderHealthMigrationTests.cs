@@ -139,6 +139,10 @@ public sealed class ProviderHealthMigrationTests
         Assert.DoesNotContain(before, row => row.Name is publicLinkIndex or publicSnapshotIndex);
 
         var oldSchema = before
+            .Select(row => row.Name == "runtime_settings" ? row with
+            {
+                Sql = row.Sql.Replace("'Playback:ShowExplicitLabel')", "'Playback:ShowExplicitLabel', 'Providers:LyricsOrder')", StringComparison.Ordinal)
+            } : row)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();

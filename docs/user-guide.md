@@ -96,6 +96,8 @@ Open your name in the desktop sidebar, or **More → Listening preferences** on 
 
 The **[A]** external and **[E]** explicit title markers can be toggled independently; both default to on. Personal choices override household defaults. **Reset to household defaults** removes your choices and follows the latest defaults again. Reload client search results, playlists or queues to see updated presentation.
 
+Use the up and down buttons in **Lyrics source order** to choose which available sources your music apps try first. Allstarr prefers synced lyrics and retains plain text when no source provides timing. Your order applies only to your listener account and still requires enabled sources and authorized accounts. Resetting preferences restores the latest household order as well as your display defaults.
+
 ### Settings
 
 Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.
