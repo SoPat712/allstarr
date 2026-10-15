@@ -10,7 +10,9 @@ A send attempt is committed before any request goes to the destination. Known te
 
 ListenBrainz's public service deduplicates submissions by user, timestamp and track name. Retries preserve the original timestamp and metadata. Custom compatible servers do not inherit that guarantee. See the [ListenBrainz service description](https://listenbrainz.readthedocs.io/_/downloads/en/stable/pdf/).
 
-Last.fm does not document an idempotency key for [track.scrobble](https://www.last.fm/api/show/track.scrobble). If the process stops after a request may have reached Last.fm, Allstarr cannot know whether that request was accepted. It keeps the receipt as needing review and does not resend automatically. Check the destination's history, then confirm delivery or explicitly retry. The same conservative handling applies to an uncertain custom-service send. A network timeout or an invalid response can also require review.
+Last.fm does not document an idempotency key for [track.scrobble](https://www.last.fm/api/show/track.scrobble). After an uncertain send, Allstarr checks [user.getRecentTracks](https://www.last.fm/api/show/user.getRecentTracks) for the saved account, original artist, title and timestamp. A matching completed listen confirms delivery without another submission. A complete empty result waits until two minutes after the send attempt, then allows one automatic resend. This resend allowance survives restart. If the lookup fails, is incomplete, or cannot establish the outcome after that resend, the receipt needs review. Previously uncertain Last.fm receipts are also checked when their worker runs again; startup queues a bounded verification pass for up to 100 older review items.
+
+This is recovery through destination history, not a remote exactly-once transaction. History visibility delays, corrections or another source submitting the same song at the same time can still require manual review. Custom compatible services retain the conservative manual path because they have no documented history lookup contract.
 
 ## Inspect and repair
 

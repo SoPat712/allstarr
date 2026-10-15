@@ -14,8 +14,8 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Scrobbling;
 
-public sealed class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
-    : IBoundPlaybackScrobbleTarget
+public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
+    : IVerifiablePlaybackScrobbleTarget
 {
     public string ProviderId => "lastfm";
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);

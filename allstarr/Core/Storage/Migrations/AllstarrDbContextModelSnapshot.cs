@@ -1492,6 +1492,9 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long?>("AttemptStartedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("AutomaticResendCount")
+                        .HasColumnType("INTEGER");
+
                     b.Property<Guid?>("DestinationAccountId")
                         .HasColumnType("TEXT");
 

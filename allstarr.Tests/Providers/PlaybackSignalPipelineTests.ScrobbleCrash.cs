@@ -14,7 +14,7 @@ public sealed partial class PlaybackSignalPipelineTests
     [Theory]
     [Trait("Lane", "ReleaseCritical")]
     [InlineData("lastfm", "before-send", 1, false)]
-    [InlineData("lastfm", "after-send", 1, true)]
+    [InlineData("lastfm", "after-send", 1, false)]
     [InlineData("lastfm", "after-save", 1, false)]
     [InlineData("listenbrainz", "before-send", 1, false)]
     [InlineData("listenbrainz", "after-send", 2, false)]
@@ -54,6 +54,17 @@ public sealed partial class PlaybackSignalPipelineTests
                 var request = await listener.GetContextAsync().WaitAsync(cancellation.Token);
                 using var reader = new StreamReader(request.Request.InputStream);
                 var body = await reader.ReadToEndAsync(cancellation.Token);
+                if (request.Request.HttpMethod == "GET")
+                {
+                    string saved;
+                    lock (requests) saved = requests.Single();
+                    var timestamp = saved.Split('&').Single(x => x.StartsWith("timestamp=", StringComparison.Ordinal)).Split('=')[1];
+                    var history = Encoding.UTF8.GetBytes("{\"recenttracks\":{\"@attr\":{\"user\":\"fixture-user\",\"page\":\"1\",\"totalPages\":\"1\"},\"track\":[{\"name\":\"Track\",\"artist\":{\"#text\":\"Artist\"},\"date\":{\"uts\":\"" + timestamp + "\"}}]}}");
+                    request.Response.ContentLength64 = history.Length;
+                    await request.Response.OutputStream.WriteAsync(history, cancellation.Token);
+                    request.Response.Close();
+                    continue;
+                }
                 lock (requests) { requests.Add(body); uniqueListens.Add(body); }
                 var response = Encoding.UTF8.GetBytes(provider == "lastfm"
                     ? "{\"scrobbles\":{\"scrobble\":{\"ignoredMessage\":{\"code\":\"0\"}},\"@attr\":{\"accepted\":\"1\",\"ignored\":\"0\"}}}"
