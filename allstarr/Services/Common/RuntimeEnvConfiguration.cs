@@ -294,12 +294,18 @@ public static class RuntimeEnvConfiguration
 
         if (envKey.Contains("__", StringComparison.Ordinal))
         {
-            yield return new KeyValuePair<string, string?>(envKey.Replace("__", ":"), envValue);
+            var key = envKey.Replace("__", ":");
+            var value = (key.Equals("Jellyfin:MusicService", StringComparison.OrdinalIgnoreCase) ||
+                         key.Equals("Subsonic:MusicService", StringComparison.OrdinalIgnoreCase)) &&
+                        string.Equals(envValue, "SquidWTF", StringComparison.OrdinalIgnoreCase) ? "None" : envValue;
+            yield return new KeyValuePair<string, string?>(key, value);
             yield break;
         }
 
         if (SharedBackendKeyMappings.TryGetValue(envKey, out var sharedKeys))
         {
+            if (envKey.Equals("MUSIC_SERVICE", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(envValue, "SquidWTF", StringComparison.OrdinalIgnoreCase)) envValue = "None";
             foreach (var sharedKey in sharedKeys)
             {
                 yield return new KeyValuePair<string, string?>(sharedKey, envValue);

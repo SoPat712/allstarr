@@ -84,6 +84,20 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
         Assert.Equal("value", mapping.Value);
     }
 
+    [Theory]
+    [InlineData("MUSIC_SERVICE")]
+    [InlineData("Jellyfin__MusicService")]
+    [InlineData("Subsonic__MusicService")]
+    public void RetiredSource_BindsWithoutSelectingAReplacement(string key)
+    {
+        var mapped = RuntimeEnvConfiguration.MapEnvVarToConfiguration(key, "SquidWTF");
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(mapped).Build();
+        var jellyfin = configuration.GetSection("Jellyfin").Get<allstarr.Models.Settings.JellyfinSettings>();
+        var subsonic = configuration.GetSection("Subsonic").Get<allstarr.Models.Settings.SubsonicSettings>();
+        if (jellyfin != null) Assert.Equal(allstarr.Models.Settings.MusicService.None, jellyfin.MusicService);
+        if (subsonic != null) Assert.Equal(allstarr.Models.Settings.MusicService.None, subsonic.MusicService);
+    }
+
     [Fact]
     public void MapEnvVarToConfiguration_MapsSharedBackendKeysToBothSections()
     {
