@@ -11,6 +11,7 @@ using allstarr.Core.Routing;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Core.Downloads;
+using allstarr.Core.ManagedFiles;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Subsonic;
@@ -155,6 +156,7 @@ public sealed record ProtocolProviderStream(
     long? ServingAccountRevision = null)
 {
     internal object ObservationToken { get; } = new();
+    public Guid? ServingManagedFileId { get; init; }
 }
 
 public sealed partial class ProtocolProviderGateway(
@@ -168,7 +170,8 @@ public sealed partial class ProtocolProviderGateway(
     PlaybackDeliveryActivityStore? playbackActivity = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
     ITrackIdentityService? identities = null,
-    IProviderOutcomeObserver? outcomes = null) : IProtocolProviderGateway
+    IProviderOutcomeObserver? outcomes = null,
+    RecordingKeptFiles? keptFiles = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -1023,6 +1026,27 @@ public sealed partial class ProtocolProviderGateway(
         {
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
         }
+        var parsedRange = headOnly ? null : StreamByteRanges.Parse(rangeHeader);
+        var rangeStart = parsedRange?.Ranges.Single().From;
+        var trackId = new ProviderExternalResourceId(
+            providerId, ProviderResourceKind.Track, externalId);
+        var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
+        var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
+        var resuming = parsedRange != null && rangeStart != 0;
+        var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
+        if (resuming && hasPlaybackIdentity && playbackActivity != null && previous == null)
+            throw new HttpRequestException("Restart playback before seeking this external track.", null,
+                HttpStatusCode.Conflict);
+        // Legacy provider requests without a device retain their direct provider route across ranges.
+        if ((hasPlaybackIdentity || providerId == "allstarr") && (!resuming || previous?.ManagedFileId != null))
+        {
+            var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, previous?.ManagedFileId,
+                resuming, headOnly);
+            if (kept != null) return await OpenedAsync(kept, null, null);
+            if (resuming && previous?.ManagedFileId != null)
+                throw new HttpRequestException("The previous kept playback source is no longer available. Restart playback.",
+                    null, HttpStatusCode.Conflict);
+        }
         var exactRouteMissKey = CacheKeyBuilder.BuildPlaybackRouteNegativeKey(
             actor.EffectiveUserId,
             providerId,
@@ -1037,19 +1061,11 @@ public sealed partial class ProtocolProviderGateway(
             return null;
         }
 
-        var parsedRange = headOnly ? null : StreamByteRanges.Parse(rangeHeader);
-        var rangeStart = parsedRange?.Ranges.Single().From;
-        var trackId = new ProviderExternalResourceId(
-            providerId, ProviderResourceKind.Track, externalId);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy);
         if (effectivePolicy?.DisabledProviders.Contains(providerId) != true)
         {
             providerOrder = providerOrder.Append(providerId).Distinct(StringComparer.Ordinal).ToArray();
         }
-        var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
-        var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
-        var resuming = parsedRange != null && rangeStart != 0;
-        var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
         if (!hasPlaybackIdentity && providerId != "allstarr")
         {
             if (!providerOrder.Contains(providerId, StringComparer.Ordinal)) return null;
@@ -1061,9 +1077,6 @@ public sealed partial class ProtocolProviderGateway(
                 throw new HttpRequestException("Restart playback before seeking this recording.", null,
                     HttpStatusCode.Conflict);
             // Byte offsets cannot be transferred between two encodings of the same recording.
-            if (hasPlaybackIdentity && playbackActivity != null && previous == null)
-                throw new HttpRequestException("Restart playback before seeking this external track.", null,
-                    HttpStatusCode.Conflict);
             var resumeProvider = previous?.ProviderId ?? providerId;
             if (!providerOrder.Contains(resumeProvider, StringComparer.Ordinal)) return null;
             providerOrder = [resumeProvider];
@@ -1185,9 +1198,10 @@ public sealed partial class ProtocolProviderGateway(
         return null;
 
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
-            ProviderExecutionContext execution, ProviderExternalResourceId servingTrack)
+            ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
-            if (!headOnly) await RememberPlayedTrackAsync(execution, servingTrack, itemId);
+            if (!headOnly && execution != null && servingTrack != null)
+                await RememberPlayedTrackAsync(execution, servingTrack, itemId);
             stream.Response.Headers.Remove("X-Allstarr-Provider");
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
             stream.Response.Headers.Remove("X-Allstarr-Route-Reason");

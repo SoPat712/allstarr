@@ -14,7 +14,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace allstarr.Tests;
 
-public sealed class RecordingKeptFilesTests : IAsyncLifetime
+public sealed partial class RecordingKeptFilesTests : IAsyncLifetime
 {
     private readonly Guid owner = Guid.CreateVersion7();
     private readonly Guid other = Guid.CreateVersion7();
