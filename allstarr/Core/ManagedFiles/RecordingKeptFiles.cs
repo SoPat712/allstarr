@@ -279,6 +279,7 @@ public sealed partial class RecordingKeptFiles(
                 item.Id == request.InitiatingUserId && item.Enabled, cancellationToken)) throw Denied();
         await AuthorizeFavoritePublicationAsync(db, job, request, cancellationToken);
         playlistAccess = await AuthorizePlaylistPublicationAsync(db, job, request, playlistAccess, cancellationToken);
+        await AuthorizeExplicitKeepPublicationAsync(db, job, request, cancellationToken);
         if (!await db.Set<ProviderDownloadWorkspaceEntity>().AsNoTracking().AnyAsync(workspace =>
                 workspace.Id == artifact.WorkspaceRecordId && workspace.WorkspaceId == artifact.WorkspaceId &&
                 workspace.OwnerUserId == artifact.OwnerUserId && workspace.DurableJobId == artifact.DurableJobId &&

@@ -914,6 +914,7 @@ export type ManagedDownload = {
   expiresAt?: string | null;
   publicationState: string;
   referenceCount?: number | null;
+  explicitlyKept: boolean;
   removable: boolean;
 };
 
@@ -1807,17 +1808,24 @@ export const downloads = {
   list: (storage: "cache" | "kept") =>
     json<DownloadsResponse>(`/api/admin/downloads?storage=${storage}`),
   keep: (path: string) =>
-    json<{ success: boolean }>(
+    json<{ success: boolean; queued: boolean; jobId: string; message: string }>(
       `/api/admin/downloads/promote?path=${encodeURIComponent(path)}`,
-      { method: "POST" },
+      { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } },
     ),
   remove: (path: string, storage: "cache" | "kept") =>
-    json<{ success: boolean }>(
+    json<{ success: boolean; released?: boolean; message?: string }>(
       `/api/admin/downloads?path=${encodeURIComponent(path)}&storage=${storage}`,
       { method: "DELETE" },
     ),
   removeAll: (storage: "cache" | "kept") =>
-    json<{ success: boolean; deletedCount: number; skippedUnknown: number; skippedReferenced: number }>(
+    json<{
+      success: boolean;
+      deletedCount: number;
+      releasedCount?: number;
+      skippedUnknown: number;
+      skippedReferenced: number;
+      message?: string;
+    }>(
       `/api/admin/downloads/all?storage=${storage}`,
       { method: "DELETE" },
     ),

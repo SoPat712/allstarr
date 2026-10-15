@@ -27,6 +27,8 @@ public class DownloadsController : ControllerBase
     private readonly IProviderRegistry? _providerRegistry;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
     private readonly AdminProtocolExecutionContextFactory? _protocolContexts;
+    private readonly Core.ManagedFiles.RecordingKeptFiles? _kept;
+    private readonly Core.Downloads.ManagedTrackPlacementOptions? _placement;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
@@ -34,7 +36,9 @@ public class DownloadsController : ControllerBase
         IKeptLyricsSidecarService? keptLyricsSidecarService = null,
         IProviderRegistry? providerRegistry = null,
         IDbContextFactory<AllstarrDbContext>? contextFactory = null,
-        AdminProtocolExecutionContextFactory? protocolContexts = null)
+        AdminProtocolExecutionContextFactory? protocolContexts = null,
+        Core.ManagedFiles.RecordingKeptFiles? kept = null,
+        Core.Downloads.ManagedTrackPlacementOptions? placement = null)
     {
         _logger = logger;
         _configuration = configuration;
@@ -42,6 +46,8 @@ public class DownloadsController : ControllerBase
         _providerRegistry = providerRegistry;
         _contextFactory = contextFactory;
         _protocolContexts = protocolContexts;
+        _kept = kept;
+        _placement = placement;
     }
 
     [HttpGet("downloads")]
@@ -100,6 +106,17 @@ public class DownloadsController : ControllerBase
             if (!TryResolveExistingFile(storage, path, out var root, out var fullPath))
                 return NotFound(new { error = "File not found" });
             var ownership = await FindOwnershipAsync(fullPath, cancellationToken);
+            if (ownership is { ExplicitlyKept: true, ManagedFileId: { } fileId })
+            {
+                var execution = await RequireKeepContextAsync(cancellationToken);
+                var released = await _kept!.ReleaseKeepForFileAsync(execution, fileId, cancellationToken);
+                return Accepted(new
+                {
+                    success = true,
+                    released = released > 0,
+                    message = "Your Keep was released. The file stays while hearts or playlists need it; otherwise it is removed after 24 hours."
+                });
+            }
             if (ownership?.Mapping == null)
                 return Conflict(new { error = "Only indexed Allstarr files can be removed here" });
             if (ownership.ReferenceCount.GetValueOrDefault() > 0)
@@ -121,6 +138,10 @@ public class DownloadsController : ControllerBase
         {
             return BadRequest(new { error = exception.Message });
         }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized(new { error = "Your media-server administrator access changed. Sign in again and retry." });
+        }
         catch (Exception exception)
         {
             _logger.LogError(exception, "Failed to delete {Storage} file: {Path}", storage, path);
@@ -139,14 +160,22 @@ public class DownloadsController : ControllerBase
             var paths = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
             var ownership = await LoadOwnershipAsync(paths.Select(item => item.path), cancellationToken);
             var deleted = 0;
+            var released = 0;
             var skipped = 0;
             var skippedReferenced = 0;
             var removedMappings = new List<(Guid Id, long Revision)>();
             foreach (var (root, file) in paths)
             {
                 var owned = ownership.GetValueOrDefault(Path.GetFullPath(file));
+                if (owned is { ExplicitlyKept: true, ManagedFileId: { } fileId })
+                {
+                    var execution = await RequireKeepContextAsync(cancellationToken);
+                    released += await _kept!.ReleaseKeepForFileAsync(execution, fileId, cancellationToken) > 0 ? 1 : 0;
+                    continue;
+                }
                 if (owned?.Mapping == null)
                 {
+                    if (owned?.ReferenceCount > 0) { skippedReferenced++; continue; }
                     skipped++;
                     continue;
                 }
@@ -173,14 +202,19 @@ public class DownloadsController : ControllerBase
             {
                 success = true,
                 deletedCount = deleted,
+                releasedCount = released,
                 skippedUnknown = skipped,
                 skippedReferenced,
-                message = $"Deleted {deleted} indexed download(s); skipped {skipped} diagnostic and {skippedReferenced} referenced file(s)"
+                message = $"Deleted {deleted} indexed download(s) and released {released} Keep(s); skipped {skipped} diagnostic and {skippedReferenced} referenced file(s)"
             });
         }
         catch (ArgumentException exception)
         {
             return BadRequest(new { error = exception.Message });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return Unauthorized(new { error = "Your media-server administrator access changed. Sign in again and retry." });
         }
         catch (Exception exception)
         {
@@ -198,54 +232,60 @@ public class DownloadsController : ControllerBase
         {
             if (string.IsNullOrWhiteSpace(path) || !IsSafeRequestedPath("cache", path))
                 return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
-            if (!TryResolveExistingFile("cache", path, out var cacheRoot, out var sourcePath))
+            if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession { IsAdministrator: true } session)
+                return Unauthorized(new { error = "Sign in with a linked media-server administrator to keep a track." });
+            if (_protocolContexts == null || _contextFactory == null || _kept == null)
+                return StatusCode(503, new { error = "Keeping tracks is unavailable right now. Try again." });
+            var context = await _protocolContexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken);
+            var requestId = Guid.CreateVersion7();
+            if (Request.Headers.TryGetValue("Idempotency-Key", out var savedId) &&
+                (!Guid.TryParse(savedId.ToString(), out requestId) || requestId == Guid.Empty))
+                return BadRequest(new { error = "The keep request ID is invalid. Refresh the list and try again." });
+            if (!TryResolveExistingFile("cache", path, out _, out var sourcePath))
                 return NotFound(new { error = "Cached file not found" });
             var ownership = await FindOwnershipAsync(sourcePath, cancellationToken);
-            if (ownership?.Mapping == null)
+            if (ownership?.Mapping is not { } mapping)
                 return Conflict(new { error = "Only indexed Allstarr cache files can be kept" });
-            if (ownership.ReferenceCount.GetValueOrDefault() > 0)
-                return Conflict(new { error = "This cache file is still referenced and cannot be moved" });
-
-            var permanentRoot = Root("permanent");
-            var targetPath = Path.GetFullPath(Path.Combine(permanentRoot.Path, Path.GetRelativePath(cacheRoot.Path, sourcePath)));
-            if (!IsPathUnderRoot(targetPath, permanentRoot.Path))
-                return BadRequest(new { error = "Invalid path" });
-            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
-            targetPath = ResolveUniquePath(targetPath);
-            System.IO.File.Move(sourcePath, targetPath);
-
-            var sourceSidecar = Path.ChangeExtension(sourcePath, ".lrc");
-            if (System.IO.File.Exists(sourceSidecar))
+            await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            if (mapping.ProviderAccountId is { } accountId)
             {
-                var targetSidecar = Path.ChangeExtension(targetPath, ".lrc");
-                System.IO.File.Move(sourceSidecar, targetSidecar, overwrite: false);
+                var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == accountId &&
+                    item.ProviderId == mapping.ProviderId, cancellationToken);
+                if (account == null || account.OwnerUserId != null && account.OwnerUserId != context.Principal!.UserId ||
+                    mapping.ScopeKey != new Core.Downloads.DownloadedSongMappingScope(accountId, mapping.AudioQuality).Key)
+                    return StatusCode(403, new { error = "This cached track belongs to another account. Choose a track available to your account." });
             }
-            CleanEmptyDirectories(Path.GetDirectoryName(sourcePath), cacheRoot.Path);
-            if (_contextFactory != null)
-            {
-                await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
-                var record = await db.DownloadedSongMappings.SingleAsync(item =>
-                    item.Id == ownership.Mapping.Id && item.Revision == ownership.Mapping.Revision, cancellationToken);
-                record.LocalPath = targetPath;
-                record.Revision++;
-                await db.SaveChangesAsync(cancellationToken);
-            }
-            return Ok(new
+            else if (mapping.ScopeKey != Core.Downloads.DownloadedSongMappingScope.LegacyKey)
+                return StatusCode(403, new { error = "The cached track's account scope changed. Refresh the list and try again." });
+            var result = await _kept.RequestKeepAsync(context, new(mapping.ProviderId, ProviderResourceKind.Track, mapping.ExternalId),
+                new(string.IsNullOrWhiteSpace(mapping.Title) ? "Unknown track" : mapping.Title,
+                    [string.IsNullOrWhiteSpace(mapping.Artist) ? "Unknown artist" : mapping.Artist], mapping.Album),
+                requestId, cancellationToken, new(mapping.Id, mapping.Revision));
+            return Accepted(new
             {
                 success = true,
-                storage = "permanent",
-                path = Path.GetRelativePath(permanentRoot.Path, targetPath),
-                message = "Cached track moved to Kept"
+                queued = result.Created,
+                jobId = result.JobId,
+                message = "Track queued for Kept. Its cached copy stays available."
             });
         }
-        catch (ArgumentException exception)
+        catch (UnauthorizedAccessException)
         {
-            return BadRequest(new { error = exception.Message });
+            return Unauthorized(new { error = "Your media-server administrator access changed. Sign in again and retry." });
         }
-        catch (Exception exception)
+        catch (ArgumentException)
         {
-            _logger.LogError(exception, "Failed to keep cached file: {Path}", path);
-            return StatusCode(500, new { error = "Failed to keep cached file" });
+            return BadRequest(new { error = "The track information is invalid. Refresh the list and try again." });
+        }
+        catch (InvalidOperationException)
+        {
+            return Conflict(new { error = "The track changed or its recording identity is not ready. Refresh the list and try again." });
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception)
+        {
+            _logger.LogWarning("Failed to queue a kept track");
+            return StatusCode(503, new { error = "Keeping tracks is unavailable right now. Try again." });
         }
     }
 
@@ -341,7 +381,9 @@ public class DownloadsController : ControllerBase
             "legacy" => "kept",
             _ => throw new ArgumentException("Unsupported storage root")
         };
-        return new(key, Path.GetFullPath(Path.Combine(basePath, directory)));
+        return new(key, Path.GetFullPath(key == "legacy"
+            ? _placement?.RootPath ?? _configuration["Library:KeptPath"] ?? Path.Combine(basePath, directory)
+            : Path.Combine(basePath, directory)));
     }
 
     private static string NormalizeStorage(string? storage) =>
@@ -436,9 +478,10 @@ public class DownloadsController : ControllerBase
                     $"ext-{identity.Provider}-song-{identity.ExternalId}")}",
             info.LastAccessTimeUtc,
             Expiry(root.Key, info.LastWriteTimeUtc),
-            ownership?.ReferenceCount > 0 ? "Referenced" : ownership?.Mapping != null ? "Indexed" : "Diagnostic",
+            ownership?.ReferenceCount > 0 ? "Referenced" : ownership?.Mapping != null || ownership?.ManagedFileId != null ? "Indexed" : "Diagnostic",
             ownership?.ReferenceCount,
-            ownership?.Mapping != null && ownership.ReferenceCount.GetValueOrDefault() == 0);
+            ownership?.ExplicitlyKept == true || ownership?.Mapping != null && ownership.ReferenceCount.GetValueOrDefault() == 0,
+            ownership?.ExplicitlyKept == true);
     }
 
     private DateTime? Expiry(string root, DateTime lastModified) => root switch
@@ -461,12 +504,18 @@ public class DownloadsController : ControllerBase
         var managed = await db.ManagedFiles.AsNoTracking()
             .Where(item => item.RemovedAt == null && paths.Contains(item.CanonicalPath))
             .ToListAsync(cancellationToken);
-        return paths.ToDictionary(
-            path => path,
-            path => new DownloadOwnership(
+        var owner = (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession)?.AllstarrUserId;
+        var prefix = $"keep:user:{owner:N}:";
+        var keptFiles = owner == null ? [] : await db.ManagedFileReferences.AsNoTracking()
+            .Where(item => item.ReleasedAt == null && item.ReferenceKey.StartsWith(prefix))
+            .Select(item => item.ManagedFileId).ToArrayAsync(cancellationToken);
+        return paths.ToDictionary(path => path, path =>
+        {
+            var file = managed.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.CanonicalPath), path));
+            return new DownloadOwnership(
                 mappings.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.LocalPath), path)),
-                managed.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.CanonicalPath), path))?.ReferenceCount),
-            PathComparer);
+                file?.ReferenceCount, file?.Id, file != null && keptFiles.Contains(file.Id));
+        }, PathComparer);
     }
 
     private async Task<DownloadOwnership?> FindOwnershipAsync(
@@ -570,18 +619,12 @@ public class DownloadsController : ControllerBase
         return Path.GetFullPath(candidatePath).StartsWith(normalizedRootWithSeparator, GetPathComparison());
     }
 
-    private static string ResolveUniquePath(string path)
+    private async Task<ProtocolExecutionContext> RequireKeepContextAsync(CancellationToken cancellationToken)
     {
-        if (!System.IO.File.Exists(path)) return path;
-        var directory = Path.GetDirectoryName(path)!;
-        var stem = Path.GetFileNameWithoutExtension(path);
-        var extension = Path.GetExtension(path);
-        for (var index = 2; index < 10_000; index++)
-        {
-            var candidate = Path.Combine(directory, $"{stem} ({index}){extension}");
-            if (!System.IO.File.Exists(candidate)) return candidate;
-        }
-        throw new IOException("Unable to create a unique kept file name");
+        if (_kept == null || _protocolContexts == null ||
+            HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession { IsAdministrator: true } session)
+            throw new UnauthorizedAccessException();
+        return await _protocolContexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken);
     }
 
     private void DeleteSidecar(string audioPath)
@@ -657,7 +700,9 @@ public class DownloadsController : ControllerBase
 
     private sealed record DownloadOwnership(
         Core.Downloads.DownloadedSongMappingEntity? Mapping,
-        int? ReferenceCount);
+        int? ReferenceCount,
+        Guid? ManagedFileId,
+        bool ExplicitlyKept);
 
     private sealed record ManagedDownloadFile(
         string Path,
@@ -683,5 +728,6 @@ public class DownloadsController : ControllerBase
         DateTime? ExpiresAt,
         string PublicationState,
         int? ReferenceCount,
-        bool Removable);
+        bool Removable,
+        bool ExplicitlyKept);
 }

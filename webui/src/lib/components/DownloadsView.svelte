@@ -32,7 +32,7 @@
 
   let { storage }: { storage: "cache" | "kept" } = $props();
 
-  type Removal = { kind: "one"; file: ManagedDownload } | { kind: "all" };
+  type Removal = { kind: "one"; file: ManagedDownload } | { kind: "release"; file: ManagedDownload } | { kind: "all" };
 
   let data = $state<DownloadsResponse | null>(null);
   let providers = $state<ProviderDefinition[]>([]);
@@ -55,8 +55,17 @@
   const cached = $derived(storage === "cache");
   const label = $derived(cached ? "Cached" : "Kept");
   const visible = $derived(filterDownloads(data?.files ?? [], query, providerFilter, sort));
-  const removableCount = $derived((data?.files ?? []).filter((file) => file.removable).length);
-  const referencedCount = $derived((data?.files ?? []).filter((file) => file.publicationState === "Referenced").length);
+  const explicitKeepCount = $derived((data?.files ?? []).filter((file) => file.removable && file.explicitlyKept).length);
+  const legacyRemovalCount = $derived((data?.files ?? []).filter((file) => file.removable && !file.explicitlyKept).length);
+  const bulkActionCount = $derived(explicitKeepCount + legacyRemovalCount);
+  const bulkDescription = $derived.by(() => {
+    const actions: string[] = [];
+    if (explicitKeepCount) actions.push(`release ${explicitKeepCount} explicit Keep${explicitKeepCount === 1 ? "" : "s"}`);
+    if (legacyRemovalCount) actions.push(`delete ${legacyRemovalCount} unreferenced ${label.toLowerCase()} track${legacyRemovalCount === 1 ? "" : "s"}`);
+    if (!actions.length) actions.push("make no changes");
+    const diagnosticCount = data?.diagnosticCount ?? 0;
+    return `This ${actions.join(" and ")}. Other household interests remain protected. If none remain, the file enters a 24-hour grace period before cleanup. ${diagnosticCount} diagnostic file${diagnosticCount === 1 ? "" : "s"} remain${diagnosticCount === 1 ? "s" : ""} untouched.`;
+  });
   const availableProviders = $derived(
     [...new Set((data?.files ?? [])
       .map((file) => file.provider)
@@ -108,8 +117,8 @@
     if (action) return;
     action = file.path;
     try {
-      await downloads.keep(file.path);
-      toast.success(`${file.title || file.fileName} moved to Kept.`);
+      const result = await downloads.keep(file.path);
+      toast.success(result.message || `${file.title || file.fileName} queued for Kept.`);
       await refresh();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The track could not be kept.");
@@ -149,10 +158,12 @@
     try {
       if (removal.kind === "all") {
         const result = await downloads.removeAll(storage);
-        toast.success(`${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`);
+        toast.success(result.message || `${result.deletedCount} indexed ${label.toLowerCase()} track${result.deletedCount === 1 ? "" : "s"} removed${result.skippedUnknown ? `; ${result.skippedUnknown} diagnostic file${result.skippedUnknown === 1 ? "" : "s"} skipped` : ""}${result.skippedReferenced ? `; ${result.skippedReferenced} referenced file${result.skippedReferenced === 1 ? "" : "s"} protected` : ""}.`);
       } else {
-        await downloads.remove(removal.file.path, storage);
-        toast.success(`${removal.file.title || removal.file.fileName} removed.`);
+        const result = await downloads.remove(removal.file.path, storage);
+        toast.success(result.message || (removal.kind === "release"
+          ? "Keep released. Other interests remain protected."
+          : `${removal.file.title || removal.file.fileName} removed.`));
       }
       confirmOpen = false;
       await refresh();
@@ -208,7 +219,7 @@
       </div>
       <div class="panel-heading-actions downloads-heading-actions">
         <Button variant="secondary" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Refreshing…" : "Refresh"}</Button>
-        {#if removableCount}
+        {#if bulkActionCount}
           <Button variant="destructive" onclick={() => confirm({ kind: "all" })}>Remove all</Button>
         {/if}
       </div>
@@ -276,8 +287,12 @@
               <span class="download-actions" role="cell">
                 <Button variant="secondary" href={downloads.fileUrl(file.path, storage)}>Download</Button>
                 {#if file.removable}
-                  {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
-                  <Button variant="destructive" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</Button>
+                  {#if file.explicitlyKept}
+                    <Button disabled={Boolean(action)} onclick={() => confirm({ kind: "release", file })}>Release Keep</Button>
+                  {:else}
+                    {#if cached}<Button disabled={Boolean(action)} onclick={() => void keep(file)}>Keep</Button>{/if}
+                    <Button variant="destructive" disabled={Boolean(action)} onclick={() => confirm({ kind: "one", file })}>Remove</Button>
+                  {/if}
                 {/if}
               </span>
             </div>
@@ -335,11 +350,15 @@
 
   <ConfirmDialog
     bind:open={confirmOpen}
-    title={removal?.kind === "all" ? `Remove all ${label.toLowerCase()} tracks?` : "Remove this track?"}
+    title={removal?.kind === "all"
+      ? `Remove all ${label.toLowerCase()} tracks?`
+      : removal?.kind === "release" ? "Release this Keep?" : "Remove this track?"}
     description={removal?.kind === "all"
-      ? `This deletes ${removableCount} unreferenced ${label.toLowerCase()} track${removableCount === 1 ? "" : "s"} and their lyrics sidecars. ${data.diagnosticCount} diagnostic and ${referencedCount} referenced file${data.diagnosticCount + referencedCount === 1 ? " is" : "s are"} left untouched.`
-      : "This deletes the indexed audio file and its lyrics sidecar. This cannot be undone."}
-    confirmLabel={removal?.kind === "all" ? "Remove all" : "Remove track"}
+      ? bulkDescription
+      : removal?.kind === "release"
+        ? "This releases your Keep. Other household interests stay protected. If none remain, the file enters a 24-hour grace period before cleanup."
+        : "This deletes the indexed audio file and its lyrics sidecar. This cannot be undone."}
+    confirmLabel={removal?.kind === "all" ? "Remove all" : removal?.kind === "release" ? "Release Keep" : "Remove track"}
     onConfirm={remove}
   />
 {/if}
