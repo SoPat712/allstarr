@@ -51,7 +51,7 @@ Audio, artwork, extension packages, and the encryption key ring remain files. Or
 
 ## Event log and job retention
 
-A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempts are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under `Operations:EventLog` (for example `Operations__EventLog__RetentionDays` in the container environment):
+A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempt events are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under `Operations:EventLog` (for example `Operations__EventLog__RetentionDays` in the container environment):
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
@@ -59,3 +59,9 @@ A background cleanup keeps the event log and finished playback jobs from growing
 | `Operations__EventLog__MaximumRows` | `250000` | Oldest unreferenced events beyond this count are removed (1000–5000000) |
 | `Operations__EventLog__CleanupIntervalMinutes` | `360` | Time between cleanup passes; one also runs at startup (5–10080) |
 | `Operations__EventLog__CleanupBatchSize` | `1000` | Rows deleted per batch (100–10000) |
+
+## Background job recovery and concurrency
+
+Run one Allstarr process per database. After storage becomes ready, the worker immediately requeues jobs interrupted by the previous process. A cancellation saved before shutdown becomes terminal on recovery. Restart recovery preserves the job identity, account binding and retry budget; no lease expiration or heartbeat is required. A job's detail includes its latest attempt and retained completion history from the event ledger.
+
+`Jobs__MaximumConcurrentJobs` defaults to `4` and accepts values from `1` to `32`. Each registered job type runs one execution at a time by default. Set `Jobs__TypeConcurrencyLimits__<job.type>` to an integer between one and the global maximum to allow more executions of that type. Keys use the normalized lower-case job type. The global limit still applies across types. Shutdown cancels and awaits every active handler; a temporary database failure retries persistence of a finished handler's result without invoking that handler again.

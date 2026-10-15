@@ -71,7 +71,6 @@ public sealed class TrackRematchJobHandlerTests
     private static DurableJobExecutionContext Context(object payload, Guid owner) => new(
         new DurableJobClaim(
             Guid.CreateVersion7(),
-            Guid.CreateVersion7(),
             1,
             TrackRematchJobHandler.Type,
             JsonSerializer.SerializeToElement(payload),
@@ -79,8 +78,6 @@ public sealed class TrackRematchJobHandlerTests
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
-            "correlation",
-            "worker",
-            DateTimeOffset.UtcNow.AddMinutes(1)),
+            "correlation"),
         new ServiceCollection().BuildServiceProvider());
 }

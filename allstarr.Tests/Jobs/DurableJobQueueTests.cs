@@ -40,7 +40,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         _options = new DurableJobOptions
         {
             DefaultMaxAttempts = 3,
-            LeaseSeconds = 10,
+
             PollIntervalMilliseconds = 100,
             MaxPayloadBytes = 64 * 1024
         };
@@ -320,31 +320,137 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ExpiredLease_IsRecoveredAndStaleWorkerCannotComplete()
+    public async Task StartupRecoveryImmediatelyRequeuesInterruptedWorkWithoutSpendingFailureBudget()
+    {
+        var queued = await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
+            "placement", "immediate-recovery", new { itemId = "fixture" }, _userId, MaxAttempts: 1));
+        var interrupted = (await _queue.ClaimNextAsync("first-process"))!;
+        Assert.Equal(1, await _queue.RecoverInterruptedAsync());
+        Assert.Equal(0, await _queue.RecoverInterruptedAsync());
+        var recovered = (await _queue.ClaimNextAsync("second-process"))!;
+        Assert.Equal(queued.JobId, recovered.JobId);
+        Assert.Equal(2, recovered.AttemptNumber);
+        await Assert.ThrowsAsync<DurableJobExecutionChangedException>(() =>
+            _queue.CompleteAsync(interrupted, DurableJobCompletion.Success()));
+        await _queue.CompleteAsync(recovered, DurableJobCompletion.Success());
+        await using var db = await _factory.CreateDbContextAsync();
+        var job = await db.Jobs.SingleAsync();
+        Assert.Equal(DurableJobState.Succeeded, job.State);
+        Assert.Equal(0, job.FailureCount);
+        var history = await db.AuditEvents.Where(item => item.Category == "job-attempt")
+            .OrderBy(item => item.CreatedAt).ToListAsync();
+        Assert.Equal(2, history.Count);
+        Assert.Single(history, item => item.Outcome == "interrupted");
+        Assert.Single(history, item => item.Outcome == "succeeded");
+        Assert.All(history, item => Assert.Equal(_userId, item.ActorUserId));
+    }
+
+    [Fact]
+    public async Task ConcurrentStartupRecoveryRecordsOneInterruption()
+    {
+        await Enqueue("placement", "concurrent-recovery");
+        Assert.NotNull(await _queue.ClaimNextAsync("interrupted-process"));
+        var results = await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => _queue.RecoverInterruptedAsync()));
+        Assert.Equal(1, results.Sum());
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(DurableJobState.Pending, (await db.Jobs.SingleAsync()).State);
+        Assert.Equal("interrupted", Assert.Single(await db.AuditEvents
+            .Where(item => item.Category == "job-attempt").ToListAsync()).Outcome);
+    }
+
+    [Fact]
+    public async Task StartupRecoveryLeavesCompletedAndFutureScheduledJobsUnchanged()
+    {
+        await Enqueue("completed", "recovery-completed-baseline");
+        await _queue.CompleteAsync((await _queue.ClaimNextAsync("process", ["completed"]))!, DurableJobCompletion.Success());
+        await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>("future", "recovery-future-baseline",
+            new { item = "fixture" }, _userId, AvailableAt: _clock.UtcNow.AddDays(1)));
+        await Enqueue("retrying", "recovery-retry-baseline");
+        await _queue.CompleteAsync((await _queue.ClaimNextAsync("process", ["retrying"]))!,
+            DurableJobCompletion.Retry("source_busy", "Try later.", TimeSpan.FromDays(1)));
+        await using var db = await _factory.CreateDbContextAsync();
+        var before = JsonSerializer.Serialize(await db.Jobs.AsNoTracking().OrderBy(item => item.Id).ToArrayAsync());
+        var historyCount = await db.AuditEvents.CountAsync();
+        Assert.Equal(0, await _queue.RecoverInterruptedAsync());
+        Assert.Equal(before, JsonSerializer.Serialize(await db.Jobs.AsNoTracking().OrderBy(item => item.Id).ToArrayAsync()));
+        Assert.Equal(historyCount, await db.AuditEvents.CountAsync());
+    }
+
+    [Fact]
+    public async Task PassingTimeNeverReclaimsRunningWork()
+    {
+        await Enqueue("placement", "no-wall-clock-reclaim");
+        var claim = (await _queue.ClaimNextAsync("first-process"))!;
+        _clock.Advance(TimeSpan.FromDays(1));
+        Assert.Null(await _queue.ClaimNextAsync("another-worker"));
+        Assert.True(await _queue.IsExecutionCurrentAsync(claim));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(DurableJobState.Running, (await db.Jobs.SingleAsync()).State);
+    }
+
+    [Fact]
+    public async Task StartupRecoveryHonorsPersistedCancellationExactlyOnce()
+    {
+        var queued = await Enqueue("placement", "cancel-before-restart");
+        var claim = (await _queue.ClaimNextAsync("first-process"))!;
+        Assert.True(await _queue.RequestCancellationAsync(queued.JobId, _userId));
+        Assert.Equal(1, await _queue.RecoverInterruptedAsync());
+        Assert.Equal(0, await _queue.RecoverInterruptedAsync());
+        Assert.Null(await _queue.ClaimNextAsync("second-process"));
+        Assert.False(await _queue.IsExecutionCurrentAsync(claim));
+        await using var db = await _factory.CreateDbContextAsync();
+        var job = await db.Jobs.SingleAsync();
+        Assert.Equal(DurableJobState.Cancelled, job.State);
+        Assert.NotNull(job.CompletedAt);
+        Assert.Equal(0, job.FailureCount);
+        Assert.Equal("cancelled", Assert.Single(await db.AuditEvents
+            .Where(item => item.Category == "job-attempt").ToListAsync()).Outcome);
+    }
+
+    [Fact]
+    public async Task ExecutionChecksRejectStaleAndCancelledClaimsWithoutHeartbeatWrites()
+    {
+        var queued = await Enqueue("placement", "read-only-execution-check");
+        var claim = (await _queue.ClaimNextAsync("first-process"))!;
+        await using var db = await _factory.CreateDbContextAsync();
+        var before = await db.Jobs.AsNoTracking().SingleAsync();
+        _clock.Advance(TimeSpan.FromDays(1));
+        Assert.True(await _queue.IsExecutionCurrentAsync(claim));
+        Assert.False(await _queue.IsExecutionCurrentAsync(claim with { AttemptNumber = claim.AttemptNumber + 1 }));
+        var after = await db.Jobs.AsNoTracking().SingleAsync();
+        Assert.Equal(before.Revision, after.Revision);
+        Assert.Equal(before.UpdatedAt, after.UpdatedAt);
+        Assert.True(await _queue.RequestCancellationAsync(queued.JobId, _userId));
+        Assert.False(await _queue.IsExecutionCurrentAsync(claim));
+    }
+
+    [Fact]
+    public async Task StartupRecovery_RejectsStaleWorkerCompletion()
     {
         var queued = await Enqueue("placement", "placement-1");
         var first = await _queue.ClaimNextAsync("worker-a");
         Assert.NotNull(first);
-        _clock.Advance(TimeSpan.FromSeconds(11));
+        Assert.Equal(1, await _queue.RecoverInterruptedAsync());
 
         var recovered = await _queue.ClaimNextAsync("worker-b");
 
         Assert.NotNull(recovered);
         Assert.Equal(queued.JobId, recovered.JobId);
         Assert.Equal(2, recovered.AttemptNumber);
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        await Assert.ThrowsAsync<DurableJobExecutionChangedException>(() =>
             _queue.CompleteAsync(first, DurableJobCompletion.Success()));
         await _queue.CompleteAsync(recovered, DurableJobCompletion.Success());
         await using var context = await _factory.CreateDbContextAsync();
         var job = await context.Jobs.SingleAsync();
         Assert.Equal(DurableJobState.Succeeded, job.State);
-        var attempts = await context.JobAttempts.OrderBy(item => item.AttemptNumber).ToListAsync();
-        Assert.Equal("lease_expired", attempts[0].Outcome);
+        var attempts = (await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync())
+            .OrderBy(item => JsonDocument.Parse(item.DetailsJson).RootElement.GetProperty("attemptNumber").GetInt32()).ToArray();
+        Assert.Equal("interrupted", attempts[0].Outcome);
         Assert.Equal("succeeded", attempts[1].Outcome);
     }
 
     [Fact]
-    public async Task ConcurrentClaims_LeaseAJobToOnlyOneWorker()
+    public async Task ConcurrentClaims_RunAJobOnOnlyOneWorker()
     {
         var queued = await Enqueue("placement", "placement-concurrent-claim");
 
@@ -357,12 +463,13 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         await using var context = await _factory.CreateDbContextAsync();
         var job = await context.Jobs.SingleAsync();
         Assert.Equal(DurableJobState.Running, job.State);
-        Assert.Equal(claim.WorkerId, job.LeaseOwner);
-        Assert.Single(await context.JobAttempts.ToListAsync());
+        Assert.Equal(claim.AttemptNumber, job.AttemptCount);
+        Assert.Equal("running", job.LastAttemptOutcome);
+        Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
     [Fact]
-    public async Task Progress_IsPersistedForTheActiveLeaseAndRedactsUnsafeDetails()
+    public async Task Progress_IsPersistedForTheCurrentExecutionAndRedactsUnsafeDetails()
     {
         await Enqueue("playlist.materialize", "playlist-progress");
         var claim = (await _queue.ClaimNextAsync("worker-progress"))!;
@@ -397,7 +504,8 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
             claim,
             new DurableJobProgressUpdate("late", "This must not be persisted.")));
         await using var finalContext = await _factory.CreateDbContextAsync();
-        Assert.Single(await finalContext.AuditEvents.ToListAsync());
+        Assert.Single(await finalContext.AuditEvents.Where(item => item.Category == "job-progress").ToListAsync());
+        Assert.Single(await finalContext.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
     [Fact]
@@ -450,7 +558,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Null(claim);
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Equal(DurableJobState.Cancelled, (await context.Jobs.SingleAsync()).State);
-        Assert.Empty(await context.JobAttempts.ToListAsync());
+        Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
     [Fact]
@@ -485,37 +593,39 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         Assert.Equal(0, job.FailureCount);
         Assert.Equal(2, job.DeferralCount);
         Assert.Equal("deferral_limit_exceeded", job.LastErrorCode);
-        var attempts = await context.JobAttempts.OrderBy(item => item.AttemptNumber).ToListAsync();
+        var attempts = (await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync())
+            .OrderBy(item => JsonDocument.Parse(item.DetailsJson).RootElement.GetProperty("attemptNumber").GetInt32()).ToArray();
         Assert.Equal("deferred", attempts[0].Outcome);
         Assert.Equal("failed", attempts[1].Outcome);
     }
 
     [Fact]
-    public async Task RepeatedWorkerLeaseLoss_StopsAtTheFailureBudget()
+    public async Task RepeatedRestarts_PreserveTheProviderFailureBudget()
     {
         var enqueued = await _queue.EnqueueAsync(new DurableJobEnqueueRequest<object>(
-            "placement",
-            "lease-loss-budget",
-            new { itemId = "fixture" },
-            _userId,
-            MaxAttempts: 1));
-        Assert.NotNull(await _queue.ClaimNextAsync("worker-a"));
-        _clock.Advance(TimeSpan.FromSeconds(11));
-
-        var recovered = await _queue.ClaimNextAsync("worker-b");
-
-        Assert.Null(recovered);
+            "placement", "restart-budget", new { itemId = "fixture" }, _userId, MaxAttempts: 1));
+        var claim = (await _queue.ClaimNextAsync("process-0"))!;
+        for (var index = 1; index <= 3; index++)
+        {
+            Assert.Equal(1, await _queue.RecoverInterruptedAsync());
+            claim = (await _queue.ClaimNextAsync($"process-{index}"))!;
+            Assert.Equal(index + 1, claim.AttemptNumber);
+            await using var before = await _factory.CreateDbContextAsync();
+            Assert.Equal(0, (await before.Jobs.SingleAsync()).FailureCount);
+        }
+        await _queue.CompleteAsync(claim, DurableJobCompletion.Retry("source_unavailable", "Try later."));
         await using var context = await _factory.CreateDbContextAsync();
         var job = await context.Jobs.SingleAsync(item => item.Id == enqueued.JobId);
         Assert.Equal(DurableJobState.Failed, job.State);
         Assert.Equal(1, job.FailureCount);
-        Assert.Equal("worker_lease_expired", job.LastErrorCode);
+        Assert.Equal(4, job.AttemptCount);
+        Assert.Equal("source_unavailable", job.LastErrorCode);
     }
 
     [Fact]
-    public async Task WorkerRestart_RecoversExpiredLeaseAndCompletesTheOriginalJob()
+    public async Task WorkerRestart_ImmediatelyRecoversAndCompletesTheOriginalJob()
     {
-        _options.LeaseSeconds = 5;
+
         _options.PollIntervalMilliseconds = 25;
         var queued = await Enqueue("restartable", "restart-1");
         var storageOptions = StorageOptions();
@@ -534,7 +644,6 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         await firstWorker.StartAsync(CancellationToken.None);
         await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await firstWorker.StopAsync(CancellationToken.None);
-        _clock.Advance(TimeSpan.FromSeconds(6));
 
         var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var secondWorker = new DurableJobWorker(
@@ -554,15 +663,16 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var job = Assert.Single(jobs);
         Assert.Equal(queued.JobId, job.Id);
         Assert.Equal(2, job.AttemptCount);
-        var attempts = await context.JobAttempts.OrderBy(item => item.AttemptNumber).ToListAsync();
-        Assert.Equal("lease_expired", attempts[0].Outcome);
+        var attempts = (await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync())
+            .OrderBy(item => JsonDocument.Parse(item.DetailsJson).RootElement.GetProperty("attemptNumber").GetInt32()).ToArray();
+        Assert.Equal("interrupted", attempts[0].Outcome);
         Assert.Equal("succeeded", attempts[1].Outcome);
     }
 
     [Fact]
-    public async Task RunningCooperativeHandler_IsCancelledWhenLeaseRenewalSeesCancellationRequest()
+    public async Task RunningCooperativeHandler_IsCancelledWhenExecutionCheckSeesCancellationRequest()
     {
-        _options.LeaseSeconds = 3;
+
         _options.PollIntervalMilliseconds = 20;
         var queued = await Enqueue("cooperative", "cooperative-cancellation");
         var storageOptions = StorageOptions();
@@ -590,7 +700,7 @@ public sealed class DurableJobQueueTests : IAsyncLifetime
         var job = await context.Jobs.SingleAsync(item => item.Id == queued.JobId);
         Assert.NotNull(job.CancellationRequestedAt);
         Assert.Equal(DurableJobState.Cancelled, job.State);
-        var attempt = await context.JobAttempts.SingleAsync(item => item.JobId == queued.JobId);
+        var attempt = await context.AuditEvents.SingleAsync(item => item.Category == "job-attempt" && item.SubjectId == queued.JobId.ToString("D"));
         Assert.Equal("cancelled", attempt.Outcome);
     }
 

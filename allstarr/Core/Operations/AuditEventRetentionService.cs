@@ -142,7 +142,6 @@ public sealed class AuditEventRetentionService(
                 .ToListAsync(cancellationToken);
             if (ids.Count == 0) break;
 
-            await database.JobAttempts.Where(item => ids.Contains(item.JobId)).ExecuteDeleteAsync(cancellationToken);
             deleted += await database.Jobs.Where(item => ids.Contains(item.Id)).ExecuteDeleteAsync(cancellationToken);
             if (ids.Count < batchSize) break;
         }

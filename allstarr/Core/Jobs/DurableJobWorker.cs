@@ -28,7 +28,8 @@ public sealed class DurableJobWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly IReadOnlyDictionary<string, IDurableJobHandler> _handlers;
     private readonly ILogger<DurableJobWorker> _logger;
-    private readonly string _workerId = $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
+    private readonly string _workerId =
+        $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
 
     public DurableJobWorker(
         DurableJobQueue queue,
@@ -50,156 +51,320 @@ public sealed class DurableJobWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        var active = new List<RunningExecution>();
+        var recoveryAttempted = false;
+        var faultBackoffMilliseconds = Math.Max(50, _options.PollIntervalMilliseconds);
         while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                if (_handlers.Count == 0 ||
-                    _storageState.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
+                await ObserveCompletedAsync(active);
+                if (_storageState.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
                 {
                     await Delay(stoppingToken);
+                    continue;
+                }
+
+                if (!recoveryAttempted)
+                {
+                    await _queue.RecoverInterruptedAsync(stoppingToken);
+                    recoveryAttempted = true;
+                }
+
+                await MonitorCurrentExecutionsAsync(active, stoppingToken);
+                var eligibleTypes = GetEligibleTypes(active);
+                if (eligibleTypes.Length == 0)
+                {
+                    await WaitForProgressAsync(active, stoppingToken);
                     continue;
                 }
 
                 var claim = await _queue.ClaimNextAsync(
                     _workerId,
-                    _handlers.Keys.ToArray(),
+                    eligibleTypes,
                     stoppingToken);
                 if (claim == null)
                 {
-                    await Delay(stoppingToken);
+                    await WaitForProgressAsync(active, stoppingToken);
                     continue;
                 }
 
-                await ExecuteClaimAsync(claim, stoppingToken);
+                var cancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+                var execution = new RunningExecution(
+                    claim,
+                    cancellation,
+                    ExecuteClaimAsync(claim, cancellation, stoppingToken));
+                active.Add(execution);
+                faultBackoffMilliseconds = Math.Max(50, _options.PollIntervalMilliseconds);
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogError(
+                    "Durable job worker loop failed ({ExceptionType})",
+                    exception.GetType().Name);
+                try
+                {
+                    await Task.Delay(faultBackoffMilliseconds, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                faultBackoffMilliseconds = Math.Min(
+                    faultBackoffMilliseconds * 2,
+                    2000);
+            }
+        }
+
+        foreach (var execution in active)
+            execution.Cancellation.Cancel();
+        await ObserveAllAsync(active);
+    }
+
+    private string[] GetEligibleTypes(IReadOnlyCollection<RunningExecution> active)
+    {
+        if (_handlers.Count == 0 || active.Count >= _options.MaximumConcurrentJobs)
+        {
+            return [];
+        }
+
+        var activeByType = active
+            .GroupBy(item => item.Claim.Type, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.Count(), StringComparer.OrdinalIgnoreCase);
+        return _handlers.Keys
+            .Where(type =>
+            {
+                activeByType.TryGetValue(type, out var count);
+                return count < TypeLimit(type);
+            })
+            .ToArray();
+    }
+
+    private int TypeLimit(string type) =>
+        _options.TypeConcurrencyLimits.TryGetValue(type, out var configured)
+            ? configured
+            : 1;
+
+    private async Task MonitorCurrentExecutionsAsync(
+        IReadOnlyCollection<RunningExecution> active,
+        CancellationToken stoppingToken)
+    {
+        foreach (var execution in active)
+        {
+            if (execution.Task.IsCompleted)
+                continue;
+
+            try
+            {
+                if (!await _queue.IsExecutionCurrentAsync(execution.Claim, stoppingToken))
+                    execution.Cancellation.Cancel();
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(
-                    "Durable job worker loop failed ({ExceptionType})",
-                    ex.GetType().Name);
-                await Delay(stoppingToken);
-            }
         }
     }
 
-    private async Task ExecuteClaimAsync(DurableJobClaim claim, CancellationToken stoppingToken)
+    private async Task ExecuteClaimAsync(
+        DurableJobClaim claim,
+        CancellationTokenSource executionCancellation,
+        CancellationToken stoppingToken)
     {
-        using var logScope = _logger.BeginScope(new Dictionary<string, object>
-        {
-            ["CorrelationId"] = claim.CorrelationId,
-            ["JobId"] = claim.JobId,
-            ["JobType"] = claim.Type
-        });
-        if (!_handlers.TryGetValue(claim.Type, out var handler))
-        {
-            await _queue.CompleteAsync(
-                claim,
-                DurableJobCompletion.Failure("handler_missing", "No handler is registered for this job type."),
-                stoppingToken);
-            return;
-        }
-
-        using var leaseCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
-        var renewal = RenewLeaseUntilCancelled(claim, leaseCancellation, stoppingToken);
-        DurableJobCompletion completion;
+        DurableJobCompletion? completion = null;
         try
         {
-            var authorization = await _queue.ReauthorizeAsync(claim, leaseCancellation.Token);
-            if (!authorization.Authorized)
+            if (!_handlers.TryGetValue(claim.Type, out var handler))
             {
                 completion = DurableJobCompletion.Failure(
-                    authorization.ErrorCode ?? "job_context_unauthorized",
-                    authorization.SafeMessage ?? "The saved durable job context is no longer authorized.");
+                    "handler_missing",
+                    "No handler is registered for this job type.");
             }
             else
             {
-                completion = await handler.ExecuteAsync(
-                    new DurableJobExecutionContext(claim, _services)
-                    {
-                        ReportProgressAsync = (update, cancellationToken) =>
-                            _queue.ReportProgressAsync(claim, update, cancellationToken)
-                    },
-                    leaseCancellation.Token);
+                var authorization = await _queue.ReauthorizeAsync(
+                    claim,
+                    executionCancellation.Token);
+                if (!authorization.Authorized)
+                {
+                    completion = DurableJobCompletion.Failure(
+                        authorization.ErrorCode ?? "job_context_unauthorized",
+                        authorization.SafeMessage ??
+                        "The saved durable job context is no longer authorized.");
+                }
+                else
+                {
+                    completion = await handler.ExecuteAsync(
+                        new DurableJobExecutionContext(claim, _services)
+                        {
+                            ReportProgressAsync = (update, cancellationToken) =>
+                                _queue.ReportProgressAsync(claim, update, cancellationToken)
+                        },
+                        executionCancellation.Token);
+                }
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
-            leaseCancellation.Cancel();
-            await IgnoreCancellation(renewal);
             return;
         }
         catch (OperationCanceledException)
         {
             completion = DurableJobCompletion.Cancelled();
         }
-        catch (Exception ex)
+        catch (Exception exception)
         {
-            var failureDetail = SafeOperationalText.Sanitize(ex.Message, 300) ?? "No failure detail was provided.";
+            var failureDetail = SafeOperationalText.Sanitize(exception.Message, 300) ??
+                "No failure detail was provided.";
             _logger.LogWarning(
                 "Durable job {JobId} handler failed ({FailureKind}): {FailureDetail}",
                 claim.JobId,
-                ex.GetType().Name,
+                exception.GetType().Name,
                 failureDetail);
-            completion = DurableJobCompletion.Retry(
-                "handler_exception",
-                failureDetail);
+            completion = DurableJobCompletion.Retry("handler_exception", failureDetail);
         }
         finally
         {
-            leaseCancellation.Cancel();
+            executionCancellation.Cancel();
         }
 
-        await IgnoreCancellation(renewal);
-        try
+        if (completion == null || stoppingToken.IsCancellationRequested)
+            return;
+
+        await CompleteWithRetryAsync(claim, completion, stoppingToken);
+    }
+
+    private async Task CompleteWithRetryAsync(
+        DurableJobClaim claim,
+        DurableJobCompletion completion,
+        CancellationToken stoppingToken)
+    {
+        var retryDelayMilliseconds = Math.Max(50, _options.PollIntervalMilliseconds);
+        while (!stoppingToken.IsCancellationRequested)
         {
-            await _queue.CompleteAsync(claim, completion, stoppingToken);
-        }
-        catch (InvalidOperationException)
-        {
-            _logger.LogWarning("Durable job {JobId} completion was ignored after lease loss", claim.JobId);
+            try
+            {
+                await _queue.CompleteAsync(claim, completion, stoppingToken);
+                return;
+            }
+            catch (DurableJobExecutionChangedException)
+            {
+                _logger.LogDebug(
+                    "Durable job {JobId} completion was ignored after ownership changed",
+                    claim.JobId);
+                return;
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                _logger.LogWarning(
+                    "Durable job {JobId} completion persistence failed ({ExceptionType}); retrying",
+                    claim.JobId,
+                    exception.GetType().Name);
+                try
+                {
+                    await Task.Delay(retryDelayMilliseconds, stoppingToken);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                retryDelayMilliseconds = Math.Min(retryDelayMilliseconds * 2, 2000);
+            }
         }
     }
 
-    private async Task RenewLeaseUntilCancelled(
-        DurableJobClaim claim,
-        CancellationTokenSource executionCancellation,
+    private async Task WaitForProgressAsync(
+        IReadOnlyCollection<RunningExecution> active,
         CancellationToken stoppingToken)
     {
-        var interval = TimeSpan.FromSeconds(Math.Max(1, _options.LeaseSeconds / 3));
+        if (active.Count == 0)
+        {
+            await Delay(stoppingToken);
+            return;
+        }
+
+        var completion = Task.WhenAny(active.Select(item => item.Task));
+        using var wakeCancellation = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        var delay = Task.Delay(_options.PollIntervalMilliseconds, wakeCancellation.Token);
+        await Task.WhenAny(completion, delay);
+        wakeCancellation.Cancel();
         try
         {
-            using var timer = new PeriodicTimer(interval);
-            while (await timer.WaitForNextTickAsync(executionCancellation.Token))
-            {
-                var renewed = await _queue.RenewLeaseAsync(claim, stoppingToken);
-                if (!renewed)
-                {
-                    executionCancellation.Cancel();
-                    return;
-                }
-            }
+            await delay;
         }
-        catch (OperationCanceledException) when (executionCancellation.IsCancellationRequested)
+        catch (OperationCanceledException)
         {
+        }
+
+        if (!stoppingToken.IsCancellationRequested && !completion.IsCompleted)
+            await MonitorCurrentExecutionsAsync(active, stoppingToken);
+    }
+
+    private async Task ObserveCompletedAsync(List<RunningExecution> active)
+    {
+        for (var index = active.Count - 1; index >= 0; index--)
+        {
+            var execution = active[index];
+            if (!execution.Task.IsCompleted)
+                continue;
+
+            await ObserveExecutionAsync(execution);
+            active.RemoveAt(index);
+        }
+    }
+
+    private async Task ObserveAllAsync(List<RunningExecution> active)
+    {
+        while (active.Count > 0)
+            await ObserveCompletedOrWaitAsync(active);
+    }
+
+    private async Task ObserveCompletedOrWaitAsync(List<RunningExecution> active)
+    {
+        await ObserveCompletedAsync(active);
+        if (active.Count == 0)
+            return;
+
+        await Task.WhenAny(active.Select(item => item.Task));
+    }
+
+    private async Task ObserveExecutionAsync(RunningExecution execution)
+    {
+        try
+        {
+            await execution.Task;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception)
+        {
+            _logger.LogError(
+                "Durable job {JobId} execution failed ({ExceptionType})",
+                execution.Claim.JobId,
+                exception.GetType().Name);
+        }
+        finally
+        {
+            execution.Cancellation.Dispose();
         }
     }
 
     private Task Delay(CancellationToken cancellationToken) =>
         Task.Delay(_options.PollIntervalMilliseconds, cancellationToken);
 
-    private static async Task IgnoreCancellation(Task task)
-    {
-        try
-        {
-            await task;
-        }
-        catch (OperationCanceledException)
-        {
-        }
-    }
+    private sealed record RunningExecution(
+        DurableJobClaim Claim,
+        CancellationTokenSource Cancellation,
+        Task Task);
 }

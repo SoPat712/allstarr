@@ -289,7 +289,6 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             "Scoped album");
         var claim = new DurableJobClaim(
             Guid.CreateVersion7(),
-            Guid.CreateVersion7(),
             1,
             PlaylistTrackRetentionJobHandler.JobTypeName,
             JsonSerializer.SerializeToElement(payload),
@@ -297,9 +296,7 @@ public sealed class PlaylistTrackRetentionQueueTests : IAsyncLifetime
             null,
             null,
             JsonSerializer.SerializeToElement(new { }),
-            "retention-scope",
-            "worker",
-            _now.AddMinutes(1));
+            "retention-scope");
         var handler = new PlaylistTrackRetentionJobHandler(
             _factory, null!, null!, null!, null!);
 

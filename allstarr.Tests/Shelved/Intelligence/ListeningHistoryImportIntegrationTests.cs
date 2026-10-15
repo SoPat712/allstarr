@@ -49,7 +49,7 @@ public sealed class ListeningHistoryImportIntegrationTests : IAsyncLifetime
         var jobOptions = new DurableJobOptions
         {
             DefaultMaxAttempts = 3,
-            LeaseSeconds = 30,
+
             PollIntervalMilliseconds = 100,
             MaxPayloadBytes = 64 * 1024
         };

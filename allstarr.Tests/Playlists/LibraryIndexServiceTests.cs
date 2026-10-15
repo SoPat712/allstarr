@@ -150,9 +150,9 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         using var policy = JsonDocument.Parse("{}");
         async Task Scan()
         {
-            var claim = new DurableJobClaim(Guid.CreateVersion7(), Guid.CreateVersion7(), 1, "library.index",
+            var claim = new DurableJobClaim(Guid.CreateVersion7(), 1, "library.index",
                 payload.RootElement.Clone(), _userA, null, null, policy.RootElement.Clone(),
-                "unchanged-scan", "worker", _clock.UtcNow.AddMinutes(5));
+                "unchanged-scan");
             Assert.Equal(DurableJobCompletionKind.Succeeded,
                 (await handler.ExecuteAsync(new DurableJobExecutionContext(claim, services), default)).Kind);
         }

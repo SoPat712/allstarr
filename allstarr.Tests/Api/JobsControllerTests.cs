@@ -115,6 +115,68 @@ public sealed class JobsControllerTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task CompletedHistoryUsesExactSubjectAndOwnerAndLatestStateSurvivesRetention()
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var own = await db.Jobs.SingleAsync(item => item.Id == _ownJobId);
+            var other = await db.Jobs.SingleAsync(item => item.Id == _otherJobId);
+            other.CorrelationId = own.CorrelationId;
+            await db.SaveChangesAsync();
+        }
+        for (var index = 0; index < 2; index++)
+            await _queue.CompleteAsync((await _queue.ClaimNextAsync("fixture"))!, DurableJobCompletion.Success());
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var own = await db.AuditEvents.SingleAsync(item => item.SubjectId == _ownJobId.ToString("D"));
+            db.AuditEvents.AddRange(
+                new AuditEventRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    ActorUserId = _otherUserId,
+                    Category = own.Category,
+                    Action = own.Action,
+                    Outcome = "wrong-owner",
+                    CorrelationId = own.CorrelationId,
+                    SubjectType = own.SubjectType,
+                    SubjectId = own.SubjectId,
+                    DetailsJson = own.DetailsJson,
+                    CreatedAt = own.CreatedAt
+                },
+                new AuditEventRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    ActorUserId = _userId,
+                    Category = own.Category,
+                    Action = own.Action,
+                    Outcome = "malformed",
+                    CorrelationId = own.CorrelationId,
+                    SubjectType = own.SubjectType,
+                    SubjectId = own.SubjectId,
+                    DetailsJson = "invalid-json",
+                    CreatedAt = own.CreatedAt
+                });
+            await db.SaveChangesAsync();
+        }
+        foreach (var admin in new[] { false, true })
+        {
+            var result = Assert.IsType<OkObjectResult>(await Controller(Session(_userId, admin)).Get(_ownJobId));
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+            var attempt = Assert.Single(json.RootElement.GetProperty("attempts").EnumerateArray());
+            Assert.Equal(1, attempt.GetProperty("AttemptNumber").GetInt32());
+            Assert.Equal("succeeded", attempt.GetProperty("Outcome").GetString());
+            Assert.Equal("succeeded", json.RootElement.GetProperty("job").GetProperty("LastAttemptOutcome").GetString());
+        }
+        await using (var db = await _factory.CreateDbContextAsync())
+            await db.AuditEvents.ExecuteDeleteAsync();
+        var retained = Assert.IsType<OkObjectResult>(await Controller(Session(_userId)).Get(_ownJobId));
+        using var latest = JsonDocument.Parse(JsonSerializer.Serialize(retained.Value));
+        Assert.Empty(latest.RootElement.GetProperty("attempts").EnumerateArray());
+        Assert.Equal("succeeded", latest.RootElement.GetProperty("job").GetProperty("LastAttemptOutcome").GetString());
+        Assert.Equal(JsonValueKind.String, latest.RootElement.GetProperty("job").GetProperty("LastAttemptCompletedAt").ValueKind);
+    }
+
     private JobsController Controller(AdminAuthSession session)
     {
         var httpContext = new DefaultHttpContext();

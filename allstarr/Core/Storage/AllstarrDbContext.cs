@@ -17,7 +17,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
     public DbSet<SecretReferenceRecord> SecretReferences => Set<SecretReferenceRecord>();
     public DbSet<SecretVersionRecord> SecretVersions => Set<SecretVersionRecord>();
     public DbSet<DurableJobRecord> Jobs => Set<DurableJobRecord>();
-    public DbSet<JobAttemptRecord> JobAttempts => Set<JobAttemptRecord>();
     public DbSet<CanonicalRecordingRecord> CanonicalRecordings => Set<CanonicalRecordingRecord>();
     public DbSet<RecordingIdentifierRecord> RecordingIdentifiers => Set<RecordingIdentifierRecord>();
     public DbSet<ProviderTrackIdentityRecord> ProviderTrackIdentities => Set<ProviderTrackIdentityRecord>();
@@ -217,7 +216,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.CorrelationId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.IdempotencyKey).HasMaxLength(300).IsRequired();
             entity.Property(item => item.State).HasConversion<string>().HasMaxLength(32);
-            entity.Property(item => item.LeaseOwner).HasMaxLength(200);
+            entity.Property(item => item.LastAttemptOutcome).HasMaxLength(50);
             entity.Property(item => item.LastErrorCode).HasMaxLength(100);
             entity.Property(item => item.LastErrorMessage).HasMaxLength(1000);
             entity.Property(item => item.Revision).IsConcurrencyToken();
@@ -235,20 +234,6 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
                 .OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ProviderAccountRecord>().WithMany().HasForeignKey(item => item.ProviderAccountId)
                 .OnDelete(DeleteBehavior.Restrict);
-        });
-
-        modelBuilder.Entity<JobAttemptRecord>(entity =>
-        {
-            entity.ToTable("job_attempts");
-            entity.HasKey(item => item.Id);
-            entity.Property(item => item.Id).ValueGeneratedNever();
-            entity.Property(item => item.WorkerId).HasMaxLength(200).IsRequired();
-            entity.Property(item => item.Outcome).HasMaxLength(50);
-            entity.Property(item => item.ErrorCode).HasMaxLength(100);
-            entity.Property(item => item.ErrorMessage).HasMaxLength(1000);
-            entity.HasIndex(item => new { item.JobId, item.AttemptNumber }).IsUnique();
-            entity.HasOne<DurableJobRecord>().WithMany().HasForeignKey(item => item.JobId)
-                .OnDelete(DeleteBehavior.Cascade);
         });
     }
 
@@ -375,6 +360,10 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
             entity.Property(item => item.Outcome).HasMaxLength(100).IsRequired();
             entity.Property(item => item.CorrelationId).HasMaxLength(100).IsRequired();
             entity.Property(item => item.DetailsJson).IsRequired();
+            entity.Property(item => item.SubjectType).HasMaxLength(100);
+            entity.Property(item => item.SubjectId).HasMaxLength(300);
+            entity.HasIndex(item => new { item.SubjectType, item.SubjectId, item.CreatedAt })
+                .HasDatabaseName("IX_audit_subject_history");
             entity.HasIndex(item => new { item.CreatedAt, item.Id })
                 .HasDatabaseName("IX_audit_event_updates");
             entity.HasIndex(item => item.CorrelationId);

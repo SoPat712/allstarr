@@ -1637,6 +1637,14 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SubjectId")
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("SubjectType")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ActorUserId");
@@ -1645,6 +1653,9 @@ namespace allstarr.Core.Storage.Migrations
 
                     b.HasIndex("CreatedAt", "Id")
                         .HasDatabaseName("IX_audit_event_updates");
+
+                    b.HasIndex("SubjectType", "SubjectId", "CreatedAt")
+                        .HasDatabaseName("IX_audit_subject_history");
 
                     b.ToTable("audit_events", (string)null);
                 });
@@ -1743,19 +1754,22 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(300)
                         .HasColumnType("TEXT");
 
+                    b.Property<long?>("LastAttemptCompletedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("LastAttemptOutcome")
+                        .HasMaxLength(50)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("LastAttemptStartedAt")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("LastErrorCode")
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LastErrorMessage")
                         .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long?>("LeaseExpiresAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("LeaseOwner")
-                        .HasMaxLength(200)
                         .HasColumnType("TEXT");
 
                     b.Property<int>("MaxAttempts")
@@ -2157,48 +2171,6 @@ namespace allstarr.Core.Storage.Migrations
 
                             t.HasCheckConstraint("CK_external_snapshots_version", "\"SnapshotVersion\" > 0");
                         });
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.JobAttemptRecord", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("TEXT");
-
-                    b.Property<int>("AttemptNumber")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<long?>("CompletedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ErrorCode")
-                        .HasMaxLength(100)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("ErrorMessage")
-                        .HasMaxLength(1000)
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid>("JobId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Outcome")
-                        .HasMaxLength(50)
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("StartedAt")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("WorkerId")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("JobId", "AttemptNumber")
-                        .IsUnique();
-
-                    b.ToTable("job_attempts", (string)null);
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.JobScheduleRecord", b =>
@@ -4129,15 +4101,6 @@ namespace allstarr.Core.Storage.Migrations
                         .HasPrincipalKey("Id", "ProviderId")
                         .OnDelete(DeleteBehavior.Restrict)
                         .HasConstraintName("FK_external_snapshot_provider_account");
-                });
-
-            modelBuilder.Entity("allstarr.Core.Storage.JobAttemptRecord", b =>
-                {
-                    b.HasOne("allstarr.Core.Storage.DurableJobRecord", null)
-                        .WithMany()
-                        .HasForeignKey("JobId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("allstarr.Core.Storage.JobScheduleRecord", b =>

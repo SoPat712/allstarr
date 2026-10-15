@@ -86,6 +86,9 @@ public sealed class JobsController : ControllerBase
                 item.AvailableAt,
                 item.CancellationRequestedAt,
                 item.StartedAt,
+                item.LastAttemptStartedAt,
+                item.LastAttemptCompletedAt,
+                item.LastAttemptOutcome,
                 item.CompletedAt,
                 item.LastErrorCode,
                 item.LastErrorMessage,
@@ -151,20 +154,14 @@ public sealed class JobsController : ControllerBase
             return NotFound();
         }
 
-        var attempts = await context.JobAttempts.AsNoTracking()
-            .Where(item => item.JobId == jobId)
-            .OrderBy(item => item.AttemptNumber)
-            .Select(item => new
-            {
-                item.AttemptNumber,
-                item.WorkerId,
-                item.StartedAt,
-                item.CompletedAt,
-                item.Outcome,
-                item.ErrorCode,
-                item.ErrorMessage
-            })
-            .ToListAsync(cancellationToken);
+        var subjectId = job.Id.ToString("D");
+        var history = await context.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "job-attempt" && item.SubjectType == "job" &&
+                           item.SubjectId == subjectId && item.ActorUserId == job.OwnerUserId)
+            .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id)
+            .ToArrayAsync(cancellationToken);
+        var attempts = history.Select(item => DurableJobHistory.Read(item, jobId))
+            .OfType<DurableJobAttemptHistory>().OrderBy(item => item.AttemptNumber).ToArray();
         var progress = await context.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "job-progress" &&
                            item.ActorUserId == job.OwnerUserId &&
@@ -196,6 +193,9 @@ public sealed class JobsController : ControllerBase
                 job.AvailableAt,
                 job.CancellationRequestedAt,
                 job.StartedAt,
+                job.LastAttemptStartedAt,
+                job.LastAttemptCompletedAt,
+                job.LastAttemptOutcome,
                 job.CompletedAt,
                 job.LastErrorCode,
                 job.LastErrorMessage,

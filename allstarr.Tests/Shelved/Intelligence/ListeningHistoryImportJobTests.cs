@@ -119,19 +119,19 @@ public sealed class ListeningHistoryImportJobTests
         {
             Id = jobId,
             State = DurableJobState.Running,
+            AttemptCount = 1,
             Revision = 2
         };
-        var attempt = new JobAttemptRecord { JobId = jobId };
         var now = new DateTimeOffset(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
 
         var jobIds = ListeningHistoryImportStateTransfer.ExpireActiveImports([import]);
         ListeningHistoryImportStateTransfer.CancelJobs([job], jobIds, now);
-        ListeningHistoryImportStateTransfer.CancelAttempts([attempt], jobIds, now);
 
         Assert.Equal(ListeningHistoryImportState.Expired, import.State);
         Assert.Equal(jobId, import.JobId);
         Assert.Equal(DurableJobState.Cancelled, job.State);
         Assert.Equal(now, job.CompletedAt);
-        Assert.Equal("cancelled", attempt.Outcome);
+        Assert.Equal("cancelled", job.LastAttemptOutcome);
+        Assert.Equal(now, job.LastAttemptCompletedAt);
     }
 }

@@ -439,7 +439,7 @@ public sealed class FavoriteActionPipelineTests : IAsyncLifetime
         var options = new DurableJobOptions
         {
             DefaultMaxAttempts = 3,
-            LeaseSeconds = 30,
+
             PollIntervalMilliseconds = 10,
             MaxPayloadBytes = 64 * 1024
         };
