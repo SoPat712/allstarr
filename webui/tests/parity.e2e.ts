@@ -5916,3 +5916,168 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(dialog).toHaveCount(0);
   });
 }
+
+async function expectRecordingLyricsGeometry(page: Page, picker: Locator, width: number) {
+  if (width === 390) await expectContainedMobileGeometry(page);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
+  const audit = await picker.evaluate(element => {
+    const failures: string[] = [];
+    for (const child of element.querySelectorAll<HTMLElement>("*")) {
+      const rect = child.getBoundingClientRect();
+      if (!rect.width || !rect.height) continue;
+      if (rect.left < -1 || rect.right > innerWidth + 1) failures.push(`overflow: ${child.tagName}`);
+      if (child.matches("button, textarea, label") && (rect.width < 43 || rect.height < 43))
+        failures.push(`target: ${child.tagName} ${rect.width}×${rect.height}`);
+    }
+    return failures;
+  });
+  expect(audit, "lyrics controls stay contained and provide 44px targets in both layouts").toEqual([]);
+}
+
+const lyricsRecordingId = "11111111-1111-4111-8111-111111111111";
+
+async function mockRecordingLyrics(page: Page, options: { administrator?: boolean; conflict?: boolean; failFirst?: boolean } = {}) {
+  await mockApi(page);
+  const administrator = options.administrator ?? true;
+  if (!administrator) await page.route("**/api/admin/auth/me", route => route.fulfill({ json: {
+    ...(responses["/api/admin/auth/me"] as object),
+    user: { id: "listener", name: "Listener", isAdministrator: false },
+  } }));
+  await page.route("**/api/admin/track-matches?*", route => route.fulfill({ json: {
+    matches: [{
+      externalSnapshotId: "snapshot", canonicalRecordingId: lyricsRecordingId, providerId: "lumen-audio",
+      title: "Fixture song", artist: "Artist", album: "Album", state: "suggested", confidence: 0.8, threshold: 0.9,
+      candidates: [], providerIdentities: [], reasons: [], warnings: [],
+      allowedAuthorityScopes: administrator ? ["personal", "household"] : ["personal"],
+    }],
+    stats: { total: 1, matched: 0, accepted: 0, unresolved: 0, suggested: 1, review: 1, rejected: 0, attention: 1 },
+    pagination: { page: 1, pageSize: 50, total: 1, totalPages: 1 },
+  } }));
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+    ...schema, providers: [...schema.providers, { id: "lrclib", name: "LRCLIB", categories: ["lyrics"] },
+      { id: "lyricsplus", name: "LyricsPlus", categories: ["lyrics"] }],
+  } }));
+  let personal: { id: string; sourceId: string; revision: number } | null = { id: "personal-choice", sourceId: "spotify", revision: 1 };
+  let household: { id: string; sourceId: string; revision: number } | null = { id: "household-choice", sourceId: "lrclib", revision: 2 };
+  let reads = 0;
+  const writes: { method: string; body: Record<string, unknown> }[] = [];
+  const layers = () => ({ personal, household, effective: personal ?? household,
+    revision: { personal: personal && { id: personal.id, revision: personal.revision },
+      household: household && { id: household.id, revision: household.revision } } });
+  await page.route(`**/api/admin/recordings/${lyricsRecordingId}/lyrics*`, route => {
+    const method = route.request().method();
+    if (method === "GET") {
+      reads++;
+      if (options.failFirst && reads === 1) return route.fulfill({ status: 503, json: { error: "Lyrics sources are temporarily unavailable. Try again shortly." } });
+      const scope = new URL(route.request().url()).searchParams.get("scope") ?? "personal";
+      return route.fulfill({ json: {
+        recordingId: lyricsRecordingId, scope, song: { title: "Fixture song", artist: "Artist", album: "Album", durationSeconds: 180 },
+        choices: layers(), sources: [
+          { sourceId: "spotify", available: false, preview: null, previewRevision: null, format: null, truncated: false },
+          { sourceId: "lrclib", available: true, preview: scope === "household" ? "Shared plain words" : "Personal plain words <script>inert</script>",
+            previewRevision: `sha256:${scope}-plain-${reads}`, format: "plain", truncated: false },
+          { sourceId: "lyricsplus", available: true, preview: "[00:01.234]Timed words", previewRevision: `sha256:${scope}-timed-${reads}`, format: "synced", truncated: true },
+        ],
+      } });
+    }
+    const body = route.request().postDataJSON();
+    writes.push({ method, body });
+    if (options.conflict && writes.length === 1) {
+      personal = { id: "personal-choice", sourceId: "lyricsplus", revision: 8 };
+      return route.fulfill({ status: 409, json: { error: "The lyrics or saved choice changed. Reload the sources and try again." } });
+    }
+    if (body.scope === "household") household = method === "DELETE" ? null : { id: "household-choice", sourceId: body.sourceId, revision: (household?.revision ?? 0) + 1 };
+    else personal = method === "DELETE" ? null : { id: "personal-choice", sourceId: body.sourceId, revision: (personal?.revision ?? 0) + 1 };
+    return route.fulfill({ json: layers() });
+  });
+  return { writes, reads: () => reads };
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Recording lyrics sources stay scoped and usable at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.emulateMedia({ colorScheme: theme as "light" | "dark", reducedMotion: "reduce" });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    const fixture = await mockRecordingLyrics(page);
+    await page.goto("#/library/mappings?review=snapshot");
+    const dialog = page.getByRole("dialog", { name: "Fixture song" });
+    const open = dialog.getByRole("button", { name: "Wrong lyrics?" });
+    await open.focus();
+    await page.keyboard.press("Enter");
+    const picker = dialog.getByRole("region", { name: "Lyrics sources" });
+    await expect(picker).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Reject candidate", exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Back to match", exact: true })).toBeVisible();
+    await expect(picker.getByRole("button", { name: /Spotify.*Unavailable/ })).toBeDisabled();
+    await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
+    await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal plain words <script>inert</script>");
+    await expect(picker.locator("script")).toHaveCount(0);
+    await expectRecordingLyricsGeometry(page, picker, width);
+    await page.screenshot({ path: `/tmp/allstarr-lyrics-picker-${width}-${theme}.png` });
+    const save = picker.getByRole("button", { name: "Use this source for this recording", exact: true });
+    await save.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => fixture.writes.length).toBe(1);
+    expect(fixture.writes[0]).toMatchObject({ method: "PUT", body: { sourceId: "lrclib", scope: "personal",
+      expectedRevision: { personal: { id: "personal-choice", revision: 1 }, household: { id: "household-choice", revision: 2 } },
+      previewRevision: "sha256:personal-plain-1" } });
+    await expect(page.getByRole("status").filter({ hasText: "Lyrics source saved for you." })).toBeVisible();
+    await picker.getByRole("button", { name: "Use household default", exact: true }).click();
+    await expect.poll(() => fixture.writes.length).toBe(2);
+    expect(fixture.writes[1]).toMatchObject({ method: "DELETE", body: { scope: "personal",
+      expectedRevision: { personal: { id: "personal-choice", revision: 2 }, household: { id: "household-choice", revision: 2 } } } });
+    await picker.getByRole("radio", { name: "Household", exact: true }).check();
+    await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Shared plain words");
+    await expect(picker).not.toContainText("Personal plain words");
+    await picker.getByRole("button", { name: /LyricsPlus.*Synced/ }).click();
+    await expect(picker).toContainText("Preview shortened");
+    await save.click();
+    await expect.poll(() => fixture.writes.length).toBe(3);
+    expect(fixture.writes[2]).toMatchObject({ method: "PUT", body: { scope: "household", sourceId: "lyricsplus",
+      expectedRevision: { personal: null, household: { id: "household-choice", revision: 2 } } } });
+    await expectRecordingLyricsGeometry(page, picker, width);
+    await dialog.getByRole("button", { name: "Back to match", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(picker).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Reject candidate", exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Wrong lyrics?" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeHidden();
+  });
+}
+
+test("Recording lyrics conflict reloads the preview without repeating a write", async ({ page }) => {
+  const fixture = await mockRecordingLyrics(page, { administrator: false, conflict: true });
+  await page.goto("#/library/mappings?review=snapshot");
+  await page.getByRole("button", { name: "Wrong lyrics?" }).click();
+  const picker = page.getByRole("region", { name: "Lyrics sources" });
+  await expect(picker.getByRole("radio", { name: "Household", exact: true })).toHaveCount(0);
+  await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
+  await picker.getByRole("button", { name: "Use this source for this recording", exact: true }).click();
+  await expect.poll(fixture.reads).toBe(2);
+  expect(fixture.writes).toHaveLength(1);
+  await expect(picker).toContainText("The lyrics or saved choice changed.");
+  await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("[00:01.234]Timed words");
+  await picker.getByRole("button", { name: /LRCLIB.*Plain/ }).click();
+  await picker.getByRole("button", { name: "Use this source for this recording", exact: true }).click();
+  await expect.poll(() => fixture.writes.length).toBe(2);
+  expect(fixture.writes[1].body).toMatchObject({ expectedRevision: { personal: { id: "personal-choice", revision: 8 } }, previewRevision: "sha256:personal-plain-2" });
+});
+
+test("Recording lyrics unavailable sources can be reloaded", async ({ page }) => {
+  const fixture = await mockRecordingLyrics(page, { failFirst: true });
+  await page.goto("#/library/mappings?review=snapshot");
+  await page.getByRole("button", { name: "Wrong lyrics?" }).click();
+  const picker = page.getByRole("region", { name: "Lyrics sources" });
+  await expect(picker).toContainText("Lyrics sources are temporarily unavailable.");
+  await picker.getByRole("button", { name: "Reload sources", exact: true }).click();
+  await expect(picker.getByRole("textbox", { name: "Lyrics preview" })).toHaveValue("Personal plain words <script>inert</script>");
+  expect(fixture.reads()).toBe(2);
+  expect(fixture.writes).toHaveLength(0);
+});
+
+test("Recording lyrics review has an accessible song name", async ({ page }) => {
+  await mockRecordingLyrics(page);
+  await page.goto("#/library/mappings?review=snapshot");
+  await expect(page.getByRole("dialog")).toHaveAccessibleName("Fixture song");
+});

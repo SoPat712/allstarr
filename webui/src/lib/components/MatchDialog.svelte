@@ -10,6 +10,7 @@
     type MatchTarget,
     type ProviderDefinition,
   } from "$lib/api";
+  import RecordingLyricsPicker from "$lib/components/RecordingLyricsPicker.svelte";
   import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
@@ -58,6 +59,7 @@
   let loading = $state(false);
   let saving = $state(false);
   let error = $state("");
+  let showLyrics = $state(false);
   let authorityScope = $state<MatchAuthorityScope>("personal");
 
   const playbackProviders = $derived(playableProviderIds(providers));
@@ -85,6 +87,7 @@
     }
     if (!match || preparedId === match.externalSnapshotId) return;
     preparedId = match.externalSnapshotId;
+    showLyrics = false;
     targetQuery = match.searchQuery || match.title || "";
     providerFilter = "";
     results = [];
@@ -238,6 +241,7 @@
           <Dialog.Close class="icon-button" aria-label="Close match dialog"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
 
+        {#if !showLyrics}
         <section class="mapping-source">
           <span class="media-art mapping-art">
             {#if match.sourceArtworkUrl}<img src={adminUrl(match.sourceArtworkUrl)} alt="" />{:else}<ProviderMark id={match.providerId} definition={provider(match.providerId)} />{/if}
@@ -249,7 +253,18 @@
             <span>{formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ISRC ${match.isrc}` : ""}</span>
           </div>
         </section>
+        {/if}
 
+        <div class="lyrics-review">
+          <Button variant="outline" disabled={!match.canonicalRecordingId} aria-expanded={showLyrics}
+            onclick={() => showLyrics = !showLyrics}>{showLyrics ? "Back to match" : "Wrong lyrics?"}</Button>
+          {#if !match.canonicalRecordingId}<p class="field-help">Play or match this song, then reload its details to choose lyrics.</p>{/if}
+        {#if showLyrics && match.canonicalRecordingId}
+          <RecordingLyricsPicker recordingId={match.canonicalRecordingId} {providers} allowHousehold={allowedAuthorityScopes(match).includes("household")} />
+        {/if}
+        </div>
+
+        {#if !showLyrics}
         {#if allowedAuthorityScopes(match).includes("household")}
           <fieldset class="authority-scope-picker" disabled={saving}>
             <legend>Save decision for</legend>
@@ -459,11 +474,17 @@
           {/each}
         </div>
 
+        {/if}
+
         <footer class="dialog-actions">
+          {#if showLyrics}
+            <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close>
+          {:else}
           {#if showReject}
             <Button variant="destructive" disabled={!selectedScopeEditable} onclick={() => onReject?.(match!, authorityScope)}>Reject candidate</Button>
           {/if}
           <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+          {/if}
         </footer>
       {/if}
     </Dialog.Content>
@@ -471,6 +492,8 @@
 </Dialog.Root>
 
 <style>
+  .lyrics-review { padding: var(--surface-gutter); display: grid; gap: var(--space-3); min-width: 0; }
+  .lyrics-review > :global(button) { justify-self: start; }
   .authority-scope-picker {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
