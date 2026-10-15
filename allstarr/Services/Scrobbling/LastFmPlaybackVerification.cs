@@ -1,9 +1,9 @@
 using System.Globalization;
-using System.Text;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Playback;
+using allstarr.Services.Common;
 
 namespace allstarr.Services.Scrobbling;
 
@@ -35,21 +35,28 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget
         var items = tracks.ValueKind == JsonValueKind.Array ? tracks.EnumerateArray().ToArray() :
             tracks.ValueKind == JsonValueKind.Object ? [tracks] : Array.Empty<JsonElement>();
         if (tracks.ValueKind is not (JsonValueKind.Array or JsonValueKind.Object)) return PlaybackScrobbleVerification.Unavailable;
+        var windowEntries = 0;
+        var looselyMatched = false;
         foreach (var item in items)
         {
             if (item.TryGetProperty("@attr", out var flags) && Text(flags, "nowplaying") == "true") continue;
             if (!item.TryGetProperty("date", out var date) || !long.TryParse(Text(date, "uts"), CultureInfo.InvariantCulture, out var at))
                 return PlaybackScrobbleVerification.Unavailable;
             if (Math.Abs(at - timestamp) > 1) continue;
-            if (item.TryGetProperty("artist", out var artist) &&
-                Same(Text(artist, "#text") ?? Text(artist, "name"), submission.Track.Artist) &&
-                Same(Text(item, "name"), submission.Track.Title)) return PlaybackScrobbleVerification.Found;
+            windowEntries++;
+            looselyMatched |= Same(Text(item, "name"), submission.Track.Title) ||
+                (item.TryGetProperty("artist", out var artist) &&
+                 Same(Text(artist, "#text") ?? Text(artist, "name"), submission.Track.Artist));
         }
+        // Last.fm can correct both submitted names. A lone listen at the saved second is sufficient evidence.
+        if (looselyMatched || windowEntries == 1) return PlaybackScrobbleVerification.Found;
+        if (windowEntries > 1) return PlaybackScrobbleVerification.Unavailable;
         // A truncated or malformed page cannot prove absence. Keep the bounded lookup on the review path.
         return IntProperty(attributes, "page") == 1 && Text(attributes, "totalPages") is "0" or "1"
             ? PlaybackScrobbleVerification.Absent : PlaybackScrobbleVerification.Unavailable;
     }
 
-    private static bool Same(string? left, string right) => string.Equals(left?.Trim().Normalize(NormalizationForm.FormC),
-        right.Trim().Normalize(NormalizationForm.FormC), StringComparison.OrdinalIgnoreCase);
+    private static bool Same(string? left, string right) =>
+        !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) &&
+        FuzzyMatcher.CalculateSimilarityAggressive(FuzzyMatcher.StripDecorators(left), FuzzyMatcher.StripDecorators(right)) >= 85;
 }
