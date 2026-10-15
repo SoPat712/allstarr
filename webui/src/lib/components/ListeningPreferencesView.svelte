@@ -1,9 +1,13 @@
 <script lang="ts">
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
+  import { ArrowDown, ArrowUp } from "@lucide/svelte";
   import {
     ApiError,
     listeningPreferences,
+    home,
+    type ProviderDefinition,
+    type UiSchema,
     type ExplicitFilter,
     type PersonalListeningPreferences,
   } from "$lib/api";
@@ -11,6 +15,8 @@
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Skeleton } from "$lib/components/ui/skeleton";
+  import { canonicalProviderId, humanize, providerDisplayName } from "$lib/sources";
+  import { move } from "$lib/settings";
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
     { value: "All", label: "All", description: "Show clean and explicit releases." },
@@ -22,6 +28,9 @@
   let explicitFilter = $state("");
   let showExternalLabel = $state(false);
   let showExplicitLabel = $state(false);
+  let providerDefinitions = $state<ProviderDefinition[]>([]);
+  let lyricsOrder = $state<string[]>([]);
+  let initialLyricsOrder = $state("");
   let loading = $state(true);
   let busy = $state(false);
   let error = $state("");
@@ -33,14 +42,31 @@
   const dirty = $derived(Boolean(snapshot) && (
     explicitFilter !== snapshot?.values.explicitFilter ||
     showExternalLabel !== snapshot?.values.showExternalLabel ||
-    showExplicitLabel !== snapshot?.values.showExplicitLabel
+    showExplicitLabel !== snapshot?.values.showExplicitLabel ||
+    lyricsOrder.join(",") !== initialLyricsOrder
   ));
+
+  function completeLyricsOrder(value?: string | null) {
+    const candidates = [...(value ?? "").split(","), ...providerDefinitions
+      .filter(provider => provider.categories?.includes("lyrics")).map(provider => provider.id).sort()];
+    const included = new Set<string>();
+    return candidates.map(id => id.trim()).filter(id => {
+      const canonical = canonicalProviderId(id);
+      if (!id || included.has(canonical)) return false;
+      included.add(canonical);
+      return true;
+    });
+  }
+
+  const lyricsName = (id: string) => providerDisplayName(providerDefinitions, id, humanize(id));
 
   function apply(next: PersonalListeningPreferences) {
     snapshot = next;
     explicitFilter = next.values.explicitFilter;
     showExternalLabel = next.values.showExternalLabel;
     showExplicitLabel = next.values.showExplicitLabel;
+    lyricsOrder = completeLyricsOrder(next.values.lyricsOrder);
+    initialLyricsOrder = lyricsOrder.join(",");
   }
 
   function messageFor(cause: unknown, action: string) {
@@ -63,7 +89,10 @@
     error = "";
     conflict = false;
     try {
-      apply(await listeningPreferences.get());
+      const [preferences, catalog] = await Promise.allSettled([listeningPreferences.get(), home.schema()]);
+      if (preferences.status === "rejected") throw preferences.reason;
+      providerDefinitions = catalog.status === "fulfilled" ? (catalog.value as UiSchema).providers ?? [] : [];
+      apply(preferences.value);
     } catch (cause) {
       error = messageFor(cause, "Listening preferences could not be loaded.");
     } finally {
@@ -82,6 +111,7 @@
         explicitFilter: selectedFilter,
         showExternalLabel,
         showExplicitLabel,
+        ...(lyricsOrder.join(",") !== initialLyricsOrder ? { lyricsOrder: lyricsOrder.join(",") } : {}),
         expectedRevision: snapshot.revision,
       }));
       toast.success("Listening preferences saved.");
@@ -182,6 +212,24 @@
         </label>
       </section>
 
+      <section class="lyrics-options" aria-label="Lyrics source order">
+        <div>
+          <h3>Lyrics source order</h3>
+          <p>Choose which sources your music apps try first. Synced lyrics are preferred; plain text is used when no source has timing. Sources must be enabled and available to your account.</p>
+        </div>
+        <ol class="lyrics-order-list">
+          {#each lyricsOrder as providerId, index (providerId)}
+            <li>
+              <strong>{lyricsName(providerId)}</strong>
+              <span class="lyrics-order-actions">
+                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} up`} disabled={busy || index === 0} onclick={() => lyricsOrder = move(lyricsOrder, index, -1)}><ArrowUp size={18} aria-hidden="true" /></Button>
+                <Button variant="ghost" size="icon" aria-label={`Move ${lyricsName(providerId)} down`} disabled={busy || index === lyricsOrder.length - 1} onclick={() => lyricsOrder = move(lyricsOrder, index, 1)}><ArrowDown size={18} aria-hidden="true" /></Button>
+              </span>
+            </li>
+          {/each}
+        </ol>
+      </section>
+
       <footer class="preferences-actions">
         <p>
           Household default: {snapshot.householdDefaults.explicitFilter === "ExplicitOnly" ? "Hide clean/edited versions" : snapshot.householdDefaults.explicitFilter === "CleanOnly" ? "Clean only" : snapshot.householdDefaults.explicitFilter}
@@ -203,6 +251,13 @@
 
 <style>
   .preferences-view { display: grid; min-width: 0; gap: var(--section-gap); }
+  .lyrics-options { display: grid; gap: var(--space-3); border-top: 1px solid var(--color-edge); padding: var(--surface-gutter); }
+  .lyrics-options h3 { margin: 0 0 .3rem; font-size: 1rem; font-weight: 600; }
+  .lyrics-options p { margin: 0; color: var(--color-ink-muted); line-height: 1.55; }
+  .lyrics-order-list { display: grid; gap: var(--space-2); margin: 0; padding: 0; list-style: none; }
+  .lyrics-order-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-3); border: 1px solid var(--color-edge); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); }
+  .lyrics-order-list strong { min-width: 0; overflow-wrap: anywhere; font-size: var(--text-sm); }
+  .lyrics-order-actions { display: flex; gap: var(--space-1); }
   :global(.preferences-loading) { min-height: 24rem; }
   .preferences-intro { padding-block: .2rem; }
   .preferences-intro h2 { margin: 0 0 .25rem; font-size: 1.375rem; line-height: 1.75rem; font-weight: 600; }

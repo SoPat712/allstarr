@@ -2,6 +2,8 @@
 
 Set the household source order in **Integrations → Routing → Lyrics**. Allstarr tries that order, prefers the first timed result and keeps the first plain result as fallback. An unavailable source does not prevent the remaining sources from being tried. Only enabled sources and accounts authorized for the listener can participate.
 
+Listeners can save their own source order in **Listening preferences → Lyrics source order**. This takes precedence over the household order in both protocols. Saving display preferences alone preserves the existing order; **Reset to household defaults** removes personal choices and follows the current household settings again. Concurrent edits require reloading the latest preferences before saving.
+
 ## LyricsPlus
 
 LyricsPlus requires no account. It looks up a song using its title, artists, album and duration. With no server URL configured, Allstarr tries `lyricsplus.binimum.org` and then `lyricsplus.prjktla.workers.dev`. Public service availability can change; a configured source is not a promise that either instance is online or has a particular song.

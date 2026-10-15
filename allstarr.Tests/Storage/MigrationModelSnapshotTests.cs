@@ -19,7 +19,7 @@ public sealed class MigrationModelSnapshotTests
             "20261010083000_CancelLegacyRematchJobs", "20261014145512_ConfirmPlaylistMembershipRemoval",
             "20261014162517_PreservePlaylistDestinationMode",
             "20261014170945_PublicPlaylistSources",
-            "20261014174328_BackfillPlaylistRemovalConfirmations"],
+            "20261014174328_BackfillPlaylistRemovalConfirmations", "20261015022113_PersonalLyricsOrder"],
             context.Database.GetMigrations());
     }
 }

@@ -402,7 +402,7 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                 .Where(item => item.OwnerUserId == userId && ListeningPreferenceKeys.All.Contains(item.Key))
                 .ToDictionaryAsync(item => item.Key, item => (long?)item.Revision,
                     StringComparer.OrdinalIgnoreCase, cancellationToken);
-            var writes = new[]
+            var writes = new List<RuntimeSettingWrite>
             {
                 new RuntimeSettingWrite(ListeningPreferenceKeys.ExplicitFilter, overrides.ExplicitFilter,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.ExplicitFilter)),
@@ -413,6 +413,9 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                     overrides.ShowExplicitLabel.ToString(CultureInfo.InvariantCulture),
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.ShowExplicitLabel))
             };
+            if (overrides.LyricsOrder != null)
+                writes.Add(new(ListeningPreferenceKeys.LyricsOrder, overrides.LyricsOrder,
+                    existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.LyricsOrder)));
             _ = await StageScopedBatchAsync(db, userId, writes, "personal-preferences", userId,
                 cancellationToken);
         }
@@ -487,7 +490,8 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         IReadOnlyDictionary<string, EffectiveRuntimeSetting> settings) => new(
         (string)settings[ListeningPreferenceKeys.ExplicitFilter].Value,
         (bool)settings[ListeningPreferenceKeys.ShowExternalLabel].Value,
-        (bool)settings[ListeningPreferenceKeys.ShowExplicitLabel].Value);
+        (bool)settings[ListeningPreferenceKeys.ShowExplicitLabel].Value,
+        settings[ListeningPreferenceKeys.LyricsOrder].NormalizedValue);
 
     private static string ComputePreferencesRevision(
         Guid? userId,

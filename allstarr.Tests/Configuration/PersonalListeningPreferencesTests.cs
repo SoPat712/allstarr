@@ -36,6 +36,46 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PersonalLyricsOrderPersistsForOnlyTheListenerAndResetRevealsLatestHouseholdOrder()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var saved = await service.UpdatePreferencesAsync(_userA,
+            new("All", true, true, "lrclib,lyricsplus,spotify"), initial.Revision);
+        Assert.Equal("lrclib,lyricsplus,spotify", saved.Values.LyricsOrder);
+        Assert.Equal(new[] { "lrclib", "lyricsplus", "spotify" },
+            (await new EffectiveProviderPolicyResolver(CreateService()).ResolveForUserAsync(_userA))
+                .GetProviderOrder(allstarr.Core.Capabilities.ProviderCapabilityKind.Lyrics));
+        var other = await service.GetPreferencesAsync(_userB);
+        Assert.Equal(initial.HouseholdDefaults.LyricsOrder, other.Values.LyricsOrder);
+        Assert.NotEqual(saved.Values.LyricsOrder, other.Values.LyricsOrder);
+        await service.ApplyBatchAsync([new("Providers:LyricsOrder", "musixmatch,lrclib,spotify")], "webui", _userB);
+        var current = await service.GetPreferencesAsync(_userA);
+        Assert.Equal(saved.Values.LyricsOrder, current.Values.LyricsOrder);
+        Assert.Equal("musixmatch,lrclib,spotify", current.HouseholdDefaults.LyricsOrder);
+        var reset = await service.UpdatePreferencesAsync(_userA, null, current.Revision);
+        Assert.Equal("musixmatch,lrclib,spotify", reset.Values.LyricsOrder);
+        Assert.True(reset.UsesHouseholdDefaults);
+    }
+
+    [Fact]
+    public async Task LegacyDisplayUpdatePreservesPersonalLyricsOrderAndInvalidOrderCannotPartiallyWrite()
+    {
+        var service = CreateService();
+        var initial = await service.GetPreferencesAsync(_userA);
+        var ordered = await service.UpdatePreferencesAsync(_userA,
+            new("All", true, true, "spotify,lrclib"), initial.Revision);
+        var display = await service.UpdatePreferencesAsync(_userA,
+            new("CleanOnly", false, false), ordered.Revision);
+        Assert.Equal("spotify,lrclib", display.Values.LyricsOrder);
+        foreach (var invalid in new[] { "spotify,SPOTIFY", "spotify,https://private.example", new string('x', 101) })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.UpdatePreferencesAsync(_userA,
+                new("ExplicitOnly", true, true, invalid), display.Revision));
+        Assert.Equal(display.Values, (await service.GetPreferencesAsync(_userA)).Values);
+        Assert.Equal(display.Revision, (await service.GetPreferencesAsync(_userA)).Revision);
+    }
+
+    [Fact]
     public async Task PersonalUpdate_IsIsolatedFromOtherUsersAndHouseholdSettings()
     {
         var service = CreateService();
@@ -45,9 +85,9 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
 
         var household = await service.GetPreferencesAsync(null);
         var userB = await service.GetPreferencesAsync(_userB);
-        Assert.Equal(new ListeningPreferences("CleanOnly", false, false), updatedA.Values);
+        Assert.Equal(new ListeningPreferences("CleanOnly", false, false, DefaultLyricsOrder), updatedA.Values);
         Assert.False(updatedA.UsesHouseholdDefaults);
-        Assert.Equal(new ListeningPreferences(), household.Values);
+        Assert.Equal(new ListeningPreferences(LyricsOrder: DefaultLyricsOrder), household.Values);
         Assert.Equal(household.Values, userB.Values);
         Assert.True(household.UsesHouseholdDefaults);
         Assert.True(userB.UsesHouseholdDefaults);
@@ -65,14 +105,15 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
         [
             new("Library:ExplicitFilter", "CleanOnly"),
             new("Playback:ShowExternalLabel", "false"),
-            new("Playback:ShowExplicitLabel", "false")
+            new("Playback:ShowExplicitLabel", "false"),
+            new("Providers:LyricsOrder", "lrclib,spotify")
         ], "webui", _userB);
 
         var recreated = CreateService();
         var restoredA = await recreated.GetPreferencesAsync(_userA);
         var inheritedB = await recreated.GetPreferencesAsync(_userB);
-        Assert.Equal(personal.Values, restoredA.Values);
-        Assert.Equal(new ListeningPreferences("CleanOnly", false, false), restoredA.HouseholdDefaults);
+        Assert.Equal(personal.Values with { LyricsOrder = "lrclib,spotify" }, restoredA.Values);
+        Assert.Equal(new ListeningPreferences("CleanOnly", false, false, "lrclib,spotify"), restoredA.HouseholdDefaults);
         Assert.NotEqual(personal.Revision, restoredA.Revision);
         Assert.Equal(restoredA.HouseholdDefaults, inheritedB.Values);
         Assert.True(inheritedB.UsesHouseholdDefaults);
@@ -95,7 +136,7 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
 
         var reset = await service.UpdatePreferencesAsync(_userA, null, current.Revision);
 
-        Assert.Equal(new ListeningPreferences("CleanOnly", true, false), reset.Values);
+        Assert.Equal(new ListeningPreferences("CleanOnly", true, false, DefaultLyricsOrder), reset.Values);
         Assert.Equal(reset.HouseholdDefaults, reset.Values);
         Assert.True(reset.UsesHouseholdDefaults);
         Assert.NotEqual(personal.Revision, reset.Revision);
@@ -204,6 +245,8 @@ public sealed class PersonalListeningPreferencesTests : IAsyncLifetime
 
         await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
     }
+
+    private static string DefaultLyricsOrder => ProviderOrderPolicyCatalog.Find(allstarr.Core.Capabilities.ProviderCapabilityKind.Lyrics)!.DefaultValue;
 
     private DurableRuntimeSettingsService CreateService()
     {
