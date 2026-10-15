@@ -24,6 +24,7 @@ public static partial class ContainerStorageLayout
         }
         configuration["Storage:DataDirectory"] = requested;
         if (!legacy) return;
+        configuration["Legacy:AllowedRoots"] = string.Join(',', mounts.Where(path => path is "/app/kept" or "/app/downloads"));
         configuration["Legacy:KeptPath"] = configuration["Library:KeptPath"] ?? "/app/kept";
         configuration["Legacy:DownloadPath"] = configuration["Library:DownloadPath"] ?? "/app/downloads";
         configuration["Library:KeptPath"] = Path.Combine(requested, "kept");

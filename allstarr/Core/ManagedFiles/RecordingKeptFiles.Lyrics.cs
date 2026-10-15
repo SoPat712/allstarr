@@ -16,6 +16,7 @@ public sealed partial class RecordingKeptFiles
         var writer = scope.ServiceProvider.GetService<IKeptLyricsSidecarService>();
         if (writer == null) return;
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        if (await db.Set<LegacyMediaAdoptionRecord>().AsNoTracking().AnyAsync(item => item.ManagedFileId == file.ManagedFileId, cancellationToken)) return;
         var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == listenerId && item.Enabled,
             cancellationToken);
         if (user == null || user.BackendType is not ("jellyfin" or "subsonic")) return;

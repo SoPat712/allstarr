@@ -22,7 +22,10 @@ public sealed partial class RecordingKeptFilesTests
 
         await migrator.MigrateAsync("20261015083606_RecordFavoriteIntentAtAcceptance");
 
-        Assert.Equal(triggers, await db.Database.SqlQueryRaw<string>(
+        string[] laterGuards = ["TR_legacy_media_immutable_delete", "TR_legacy_media_immutable_update", "TR_legacy_media_provenance",
+            "TR_legacy_original_file", "TR_legacy_original_reference", "TR_legacy_original_reference_delete"];
+        Assert.All(laterGuards, name => Assert.Contains(name, triggers));
+        Assert.Equal(triggers.Except(laterGuards).ToArray(), await db.Database.SqlQueryRaw<string>(
             "SELECT name AS Value FROM sqlite_master WHERE type = 'trigger' ORDER BY name").ToArrayAsync());
         Assert.Equal(audio, await File.ReadAllBytesAsync(published.Path));
         await db.Database.MigrateAsync();

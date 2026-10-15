@@ -4,7 +4,8 @@ public enum ManagedFilePlacementMethod
 {
     HardLink,
     Reflink,
-    Copy
+    Copy,
+    Adopted
 }
 
 public sealed record ManagedFileRoot(

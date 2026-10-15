@@ -14,7 +14,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public class DownloadsController : ControllerBase
+public partial class DownloadsController : ControllerBase
 {
     private static readonly string[] AudioExtensions = [".flac", ".mp3", ".m4a", ".aac", ".opus", ".ogg"];
     private static readonly Regex ProviderSuffix = new(
@@ -66,6 +66,7 @@ public class DownloadsController : ControllerBase
                     item.root,
                     qualifyPath,
                     ownership.GetValueOrDefault(Path.GetFullPath(item.path))))
+                .Concat(await LoadImportedDownloadsAsync(storage, cancellationToken))
                 .OrderBy(item => item.Artist)
                 .ThenBy(item => item.Album)
                 .ThenBy(item => item.Title)
@@ -101,6 +102,8 @@ public class DownloadsController : ControllerBase
     {
         try
         {
+            if (path?.StartsWith("imported/", StringComparison.Ordinal) == true)
+                return Conflict(new { error = "Imported originals are read-only. Copy the data and original media folders for backup or relocation." });
             if (string.IsNullOrWhiteSpace(path) || !IsSafeRequestedPath(storage, path))
                 return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
             if (!TryResolveExistingFile(storage, path, out var root, out var fullPath))
@@ -294,6 +297,8 @@ public class DownloadsController : ControllerBase
     {
         try
         {
+            if (path?.StartsWith("imported/", StringComparison.Ordinal) == true)
+                return await DownloadImportedFileAsync(path, storage, HttpContext.RequestAborted);
             if (string.IsNullOrWhiteSpace(path) || !IsSafeRequestedPath(storage, path))
                 return BadRequest(new { error = string.IsNullOrWhiteSpace(path) ? "Path is required" : "Invalid path" });
             if (!TryResolveExistingFile(storage, path, out _, out var fullPath))
@@ -326,7 +331,8 @@ public class DownloadsController : ControllerBase
         {
             var roots = ResolveListRoots(storage);
             var allFiles = roots.SelectMany(root => EnumerateFiles(root.Path).Select(path => (root, path))).ToArray();
-            if (allFiles.Length == 0) return NotFound(new { error = "No audio files found" });
+            var imported = await LoadImportedRecordsAsync(storage, HttpContext.RequestAborted);
+            if (allFiles.Length == 0 && imported.Length == 0) return NotFound(new { error = "No audio files found" });
 
             var memoryStream = new MemoryStream();
             using (var archive = new System.IO.Compression.ZipArchive(memoryStream, System.IO.Compression.ZipArchiveMode.Create, true))
@@ -345,6 +351,17 @@ public class DownloadsController : ControllerBase
                         await AddFileToArchiveAsync(archive, sidecarPath, sidecarRelativePath, addedEntries);
                     }
                 }
+                var placement = imported.Length == 0 ? null :
+                    HttpContext.RequestServices.GetRequiredService<Core.ManagedFiles.FilePlacementService>();
+                foreach (var item in imported)
+                {
+                    var record = Core.ManagedFiles.EfManagedFileOwnershipStore.Map(item.File)!;
+                    await using var input = placement!.OpenOwnedPlaybackRead(record, HttpContext.RequestAborted);
+                    var leaf = Path.GetFileName(record.CanonicalPath).Replace('\\', '_');
+                    var entry = archive.CreateEntry($"imported/{record.Id:N}/{leaf}");
+                    await using var output = entry.Open();
+                    await input.CopyToAsync(output, HttpContext.RequestAborted);
+                }
             }
             memoryStream.Position = 0;
             var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
@@ -353,6 +370,10 @@ public class DownloadsController : ControllerBase
         catch (ArgumentException exception)
         {
             return BadRequest(new { error = exception.Message });
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            return Conflict(new { error = "A file is missing or changed. Restore its mounted folder and retry the download." });
         }
         catch (Exception exception)
         {

@@ -752,7 +752,9 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
     private LegacyEnvMigrationService CreateService(
         int maxSecretBytes = 65536,
         BackendType backend = BackendType.Jellyfin,
-        ILegacyAccountVerifier? verifier = null)
+        ILegacyAccountVerifier? verifier = null,
+        allstarr.Core.ManagedFiles.LegacyMediaInventory? mediaInventory = null,
+        allstarr.Core.ManagedFiles.LegacyMediaImport? mediaImport = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -779,7 +781,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 "test-deployment",
                 true,
                 false,
-                null), accountVerifier: verifier);
+                null), accountVerifier: verifier, mediaInventory: mediaInventory, mediaImport: mediaImport);
     }
 
     private EncryptedSecretStore CreateSecretStore(int maxSecretBytes = 65536)

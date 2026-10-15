@@ -183,6 +183,16 @@ public sealed class ProviderHealthMigrationTests
             Assert.Equal($"CREATE INDEX \"IX_recording_kept_routes_{column}\" ON \"recording_kept_routes\" (\"{column}\")",
                 CollapseSql(Assert.Single(after, row => row.Name == $"IX_recording_kept_routes_{column}").Sql));
 
+        string[] adoptionObjects =
+        [
+            "legacy_media_adoptions", "IX_legacy_media_adoptions_CanonicalRecordingId", "IX_legacy_media_adoptions_ImportId",
+            "IX_legacy_media_adoptions_ManagedFileId", "TR_legacy_media_provenance", "TR_legacy_media_immutable_update",
+            "TR_legacy_media_immutable_delete", "TR_legacy_original_file", "TR_legacy_original_reference", "TR_legacy_original_reference_delete"
+        ];
+        Assert.DoesNotContain(before, row => adoptionObjects.Contains(row.Name));
+        Assert.Equal(adoptionObjects.Order(StringComparer.Ordinal),
+            after.Where(row => adoptionObjects.Contains(row.Name)).Select(row => row.Name).Order(StringComparer.Ordinal));
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -194,7 +204,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name))
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
