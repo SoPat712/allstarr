@@ -139,6 +139,11 @@ public sealed class ProviderHealthMigrationTests
         const string publicLinkIndex = "IX_playlist_link_public_source_target";
         const string publicSnapshotIndex = "IX_external_snapshot_public_version";
         const string subjectIndex = "IX_audit_subject_history";
+        const string downloadArtifactIndex = "IX_download_artifact_job_provider";
+        const string currentArtifactIndexSql = "CREATE UNIQUE INDEX \"IX_download_artifact_job_provider\" ON \"provider_download_artifacts\" (\"DurableJobId\", \"ProviderId\") WHERE \"SupersededAt\" IS NULL";
+        Assert.Equal(currentArtifactIndexSql, CollapseSql(Assert.Single(after, row => row.Name == downloadArtifactIndex).Sql));
+        Assert.Equal(currentArtifactIndexSql.Replace(" WHERE \"SupersededAt\" IS NULL", "", StringComparison.Ordinal),
+            CollapseSql(Assert.Single(before, row => row.Name == downloadArtifactIndex).Sql));
         Assert.Contains(before, row => row.Name == "job_attempts");
         Assert.Contains(before, row => row.Name == "IX_job_attempts_JobId_AttemptNumber");
         Assert.DoesNotContain(after, row => row.Name is "job_attempts" or "IX_job_attempts_JobId_AttemptNumber");
@@ -167,7 +172,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(keptObjects.Order(StringComparer.Ordinal),
             after.Where(row => keptObjects.Contains(row.Name)).Select(row => row.Name).Order(StringComparer.Ordinal));
         Assert.Equal(
-            ["\"SourceAccountRevision\" INTEGER NULL", "\"SourceExternalTrackId\" TEXT NULL"],
+            ["\"SourceAccountRevision\" INTEGER NULL", "\"SourceExternalTrackId\" TEXT NULL", "\"SupersededAt\" INTEGER NULL"],
             TableColumns(after, "provider_download_artifacts").Except(TableColumns(before, "provider_download_artifacts")).Order(StringComparer.Ordinal));
         Assert.Empty(TableColumns(before, "provider_download_artifacts").Except(TableColumns(after, "provider_download_artifacts")));
         foreach (var column in new[] { "ManagedFileId", "PublicationJobId", "PublishedByUserId", "SourceArtifactId" })
@@ -180,6 +185,7 @@ public sealed class ProviderHealthMigrationTests
             {
                 Sql = row.Sql.Replace("'Playback:ShowExplicitLabel')", "'Playback:ShowExplicitLabel', 'Providers:LyricsOrder')", StringComparison.Ordinal)
             } : row)
+            .Select(row => row.Name == downloadArtifactIndex ? row with { Sql = currentArtifactIndexSql } : row)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -309,7 +315,7 @@ public sealed class ProviderHealthMigrationTests
         (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||
         (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
             "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
-        (table == "provider_download_artifacts" && component is "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL") ||
+        (table == "provider_download_artifacts" && component is "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL" or "\"SupersededAt\" INTEGER NULL") ||
         (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
 
     private static string NormalizeNullability(string table, string component)

@@ -158,13 +158,31 @@ public sealed class ManagedTrackDownloadService(
                 command.ExternalTrackId);
             var candidateAccountId = candidate.Context.Account?.AccountId;
             var candidateAccountRevision = candidate.Context.Account?.Revision;
-            var prior = await artifacts.FindByJobAsync(
+            await artifacts.DiscardSupersededWorkspacesAsync(command.OwnerUserId, command.DurableJobId,
+                candidate.Provider.Id, cancellationToken);
+            var prior = await artifacts.ReadBindingAsync(
                 command.DurableJobId,
                 candidate.Provider.Id,
                 cancellationToken);
             if (prior != null)
             {
-                if (!CanReusePriorArtifact(
+                if (prior.OwnerUserId == command.OwnerUserId && prior.ProviderAccountId == candidateAccountId &&
+                    prior.SourceExternalTrackId == candidateTrack.Value &&
+                    prior.SourceAccountRevision is { } priorRevision && candidateAccountRevision is { } nextRevision &&
+                    nextRevision != priorRevision)
+                {
+                    if (nextRevision < priorRevision ||
+                        !await artifacts.SupersedeAsync(prior, nextRevision, command.Attempt, clock.UtcNow, cancellationToken))
+                        return ManagedTrackDownloadResult.Retry("managed_download_account_changed",
+                            "The download account changed. The download will retry with its current settings.");
+                    await artifacts.DiscardSupersededWorkspacesAsync(command.OwnerUserId, command.DurableJobId,
+                        candidate.Provider.Id, cancellationToken);
+                    prior = null;
+                }
+            }
+            if (prior != null)
+            {
+                if (prior.OwnerUserId != command.OwnerUserId || !CanReusePriorArtifact(
                         prior,
                         candidateAccountId,
                         candidateTrack,
@@ -184,6 +202,10 @@ public sealed class ManagedTrackDownloadService(
                         "The existing managed artifact belongs to a different provider source.");
                 }
 
+                var verified = await artifacts.FindByJobAsync(command.DurableJobId, candidate.Provider.Id, cancellationToken);
+                if (verified?.Id != prior.Id)
+                    return ManagedTrackDownloadResult.Retry("managed_download_account_changed",
+                        "The download source changed. The download will retry.");
                 LogOutcome(
                     index,
                     "existing-artifact",
@@ -192,7 +214,7 @@ public sealed class ManagedTrackDownloadService(
                     ProviderRouteOutcomeStatus.Succeeded,
                     "verified-artifact-reused",
                     nextProviderId: null);
-                return ManagedTrackDownloadResult.Success(prior);
+                return ManagedTrackDownloadResult.Success(verified);
             }
 
             var workspace = await artifacts.CreateWorkspaceAsync(new ProviderDownloadWorkspaceRequest(
@@ -200,7 +222,15 @@ public sealed class ManagedTrackDownloadService(
                 command.DurableJobId,
                 candidate.Provider.Id,
                 candidateAccountId,
-                command.IdempotencyKey), cancellationToken);
+                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                    System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new
+                    {
+                        command.IdempotencyKey,
+                        Provider = candidate.Provider.Id,
+                        Track = candidateTrack.Value,
+                        Account = candidateAccountId,
+                        Revision = candidateAccountRevision
+                    })))), cancellationToken);
             ProviderOutcome<ProviderDownloadedArtifact> outcome;
             try
             {

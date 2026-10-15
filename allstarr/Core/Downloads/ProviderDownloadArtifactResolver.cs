@@ -219,12 +219,52 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     public void DeleteTransientWorkspace(ProviderTransientDownloadWorkspace workspace)
     {
         if (!transientWorkspaces.TryRemove(workspace.Reference.WorkspaceId, out _)) return;
-        var directory = Contained(WorkspaceRoot(), workspace.Reference.WorkspaceId);
-        if (!Directory.Exists(directory)) return;
-        RejectSymlink(directory);
-        foreach (var path in Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.AllDirectories))
-            RejectSymlink(path);
+        DeleteWorkspaceDirectory(workspace.Reference.WorkspaceId);
+    }
+
+    private void DeleteWorkspaceDirectory(string workspaceId)
+    {
+        var directory = Contained(WorkspaceRoot(), workspaceId);
+        try { RejectSymlink(directory); }
+        catch (DirectoryNotFoundException) { return; }
+        catch (FileNotFoundException) { return; }
+        var pending = new Stack<string>();
+        pending.Push(directory);
+        while (pending.TryPop(out var parent))
+        {
+            foreach (var path in Directory.EnumerateFileSystemEntries(parent))
+            {
+                RejectSymlink(path);
+                if (Directory.Exists(path)) pending.Push(path);
+            }
+        }
         Directory.Delete(directory, recursive: true);
+    }
+
+    internal async Task<VerifiedProviderDownloadArtifact?> ReadBindingAsync(Guid jobId, string providerId,
+        CancellationToken cancellationToken)
+    {
+        var item = await store.FindByJobAsync(jobId, providerId, cancellationToken);
+        return item == null ? null : Result(item,
+            Contained(Contained(WorkspaceRoot(), item.WorkspaceId), NormalizeArtifactReference(item.RelativePath)));
+    }
+
+    internal Task<bool> SupersedeAsync(VerifiedProviderDownloadArtifact expected, long accountRevision,
+        int attempt, DateTimeOffset now, CancellationToken cancellationToken) =>
+        store.SupersedeAsync(expected, accountRevision, attempt, now, cancellationToken);
+
+    internal async Task DiscardSupersededWorkspacesAsync(Guid ownerUserId, Guid jobId, string? providerId,
+        CancellationToken cancellationToken)
+    {
+        foreach (var workspace in await store.FindDiscardableWorkspacesAsync(ownerUserId, jobId, providerId, cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (workspace.OwnerUserId != ownerUserId || workspace.DurableJobId != jobId ||
+                (providerId != null && workspace.ProviderId != providerId) || workspace.WorkspaceId.Length != 64 ||
+                workspace.WorkspaceId.Any(character => !char.IsAsciiHexDigit(character)))
+                throw new InvalidOperationException("The superseded workspace ownership is invalid.");
+            DeleteWorkspaceDirectory(workspace.WorkspaceId);
+        }
     }
 
     public async Task<VerifiedProviderDownloadArtifact?> FindByJobAsync(Guid jobId, string providerId, CancellationToken cancellationToken = default)

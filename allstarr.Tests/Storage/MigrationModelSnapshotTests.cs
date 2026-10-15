@@ -20,7 +20,7 @@ public sealed class MigrationModelSnapshotTests
             "20261014162517_PreservePlaylistDestinationMode",
             "20261014170945_PublicPlaylistSources",
             "20261014174328_BackfillPlaylistRemovalConfirmations", "20261015022113_PersonalLyricsOrder",
-            "20261015045010_RecordingLyricsSourceChoices", "20261015064546_SimplifyDurableJobs", "20261015072034_HouseholdKeptRecordingRoutes", "20261015083606_RecordFavoriteIntentAtAcceptance", "20261015090448_RetainKeptRecordingDisplayMetadata"],
+            "20261015045010_RecordingLyricsSourceChoices", "20261015064546_SimplifyDurableJobs", "20261015072034_HouseholdKeptRecordingRoutes", "20261015083606_RecordFavoriteIntentAtAcceptance", "20261015090448_RetainKeptRecordingDisplayMetadata", "20261015165744_SupersedeDownloadArtifacts"],
             context.Database.GetMigrations());
     }
 }

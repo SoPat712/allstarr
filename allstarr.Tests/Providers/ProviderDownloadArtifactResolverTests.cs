@@ -235,6 +235,11 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
         public Task<ProviderDownloadArtifactEntity> AddVerifiedAsync(ProviderDownloadArtifactEntity value, CancellationToken token)
         { var existing = Artifacts.SingleOrDefault(item => item.WorkspaceRecordId == value.WorkspaceRecordId && item.ProviderArtifactId == value.ProviderArtifactId); if (existing is not null) { if (existing.ContentSha256 != value.ContentSha256) throw new InvalidOperationException(); return Task.FromResult(existing); } Artifacts.Add(value); return Task.FromResult(value); }
         public Task<ProviderDownloadArtifactEntity?> FindByJobAsync(Guid jobId, string provider, CancellationToken token) => Task.FromResult(Artifacts.SingleOrDefault(item => item.DurableJobId == jobId && item.ProviderId == provider));
+        public Task<bool> SupersedeAsync(VerifiedProviderDownloadArtifact expected, long revision, int attempt,
+            DateTimeOffset now, CancellationToken token) => Task.FromResult(false);
+        public Task<IReadOnlyList<ProviderDownloadWorkspaceEntity>> FindDiscardableWorkspacesAsync(Guid owner,
+            Guid job, string? provider, CancellationToken token) =>
+            Task.FromResult<IReadOnlyList<ProviderDownloadWorkspaceEntity>>([]);
         public Task MarkPlacedAsync(Guid id, Guid managedId, CancellationToken token) { var item = Artifacts.Single(value => value.Id == id); item.State = ProviderDownloadArtifactState.Placed; item.ManagedFileId = managedId; return Task.CompletedTask; }
     }
 }
