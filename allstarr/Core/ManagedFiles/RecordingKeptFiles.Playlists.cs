@@ -179,11 +179,10 @@ public sealed partial class RecordingKeptFiles
                                   metadata.BackendPrincipalId == user.BackendPrincipalId
                             select entry).SingleOrDefaultAsync(cancellationToken);
         if (source == null) return null;
-        var projection = await new DurablePlaylistProjectionReader(factory, libraryAccess)
-            .ReadForRetentionAsync(db, ownerId, link.Id, access, cancellationToken);
-        if (projection?.SnapshotId != request.SourceSnapshotId) return null;
-        var current = projection.Entries.SingleOrDefault(item => item.Position == source.SourcePosition &&
-            item.ExternalSnapshotId == source.ExternalMetadataSnapshotId);
+        var current = await new DurablePlaylistProjectionReader(factory, libraryAccess)
+            .ReadRetentionEntryAsync(db, ownerId, link.Id, request.SourceSnapshotId, source.Id, access,
+                cancellationToken);
+        if (current?.ExternalSnapshotId != source.ExternalMetadataSnapshotId) return null;
         if (current == null || current.RouteKind != "external" || current.RouteProviderId != request.ProviderId ||
             current.ExternalId != request.ExternalId) return null;
         var actor = new ProviderActorContext(ProviderActorKind.User, ownerId,

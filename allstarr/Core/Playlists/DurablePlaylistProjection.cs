@@ -217,6 +217,261 @@ public sealed class DurablePlaylistProjectionReader(
             .ProjectAsync(database, snapshot, ownerUserId, cancellationToken, access);
     }
 
+    /// <summary>
+    /// Reads one retained source row without materializing the complete playlist.
+    /// The batch overload below is the shared bounded loader for retention workers.
+    /// </summary>
+    internal async Task<DurablePlaylistEntryProjection?> ReadRetentionEntryAsync(
+        AllstarrDbContext database,
+        Guid ownerUserId,
+        Guid playlistLinkId,
+        Guid expectedCurrentSnapshotId,
+        Guid sourceEntryId,
+        BackendLibraryAccessContext access,
+        CancellationToken cancellationToken)
+    {
+        var entries = await ReadRetentionEntriesAsync(database, ownerUserId, playlistLinkId,
+            expectedCurrentSnapshotId, [sourceEntryId], access, cancellationToken);
+        return entries.GetValueOrDefault(sourceEntryId);
+    }
+
+    /// <summary>
+    /// Loads only the requested source entries and their route inputs. It deliberately
+    /// omits full-list reconciliation, sync history, and UI source projections.
+    /// </summary>
+    internal async Task<IReadOnlyDictionary<Guid, DurablePlaylistEntryProjection>> ReadRetentionEntriesAsync(
+        AllstarrDbContext database,
+        Guid ownerUserId,
+        Guid playlistLinkId,
+        Guid expectedCurrentSnapshotId,
+        IReadOnlyCollection<Guid> sourceEntryIds,
+        BackendLibraryAccessContext access,
+        CancellationToken cancellationToken)
+    {
+        if (sourceEntryIds.Count == 0) return new Dictionary<Guid, DurablePlaylistEntryProjection>();
+
+        var snapshot = await database.PlaylistSourceSnapshots.AsNoTracking()
+            .Where(item => item.PlaylistLinkId == playlistLinkId && item.OwnerUserId == ownerUserId &&
+                           item.PublishedAt != null)
+            .OrderByDescending(item => item.SnapshotVersion)
+            .ThenByDescending(item => item.RetrievedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (snapshot == null || snapshot.Id != expectedCurrentSnapshotId)
+            return new Dictionary<Guid, DurablePlaylistEntryProjection>();
+
+        var link = await database.PlaylistLinks.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == playlistLinkId && item.OwnerUserId == ownerUserId &&
+                item.ProviderAccountId == snapshot.ProviderAccountId, cancellationToken);
+        var user = await database.Users.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == ownerUserId && item.Enabled, cancellationToken);
+        var principal = access.Context?.Principal;
+        if (link == null || user == null ||
+            user.BackendType != link.TargetProtocol ||
+            user.BackendInstanceId != link.TargetBackendInstanceId ||
+            principal != null &&
+            (principal.UserId != ownerUserId ||
+             principal.BackendType != link.TargetProtocol ||
+             principal.BackendInstanceId != link.TargetBackendInstanceId ||
+             principal.BackendPrincipalId != user.BackendPrincipalId))
+            return new Dictionary<Guid, DurablePlaylistEntryProjection>();
+
+        var requestedIds = sourceEntryIds.Distinct().ToArray();
+        var requestedEntries = await database.PlaylistSourceEntries.AsNoTracking()
+            .Where(item => requestedIds.Contains(item.Id) && item.PlaylistSourceSnapshotId == snapshot.Id)
+            .OrderBy(item => item.SourcePosition)
+            .ToListAsync(cancellationToken);
+        if (requestedEntries.Count == 0)
+            return new Dictionary<Guid, DurablePlaylistEntryProjection>();
+
+        var externalIds = requestedEntries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
+        var external = await database.ExternalMetadataSnapshots.AsNoTracking()
+            .Where(item => externalIds.Contains(item.Id) && item.OwnerUserId == ownerUserId &&
+                           item.ProviderAccountId == link.ProviderAccountId &&
+                           item.Protocol == link.TargetProtocol &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           item.BackendPrincipalId == user.BackendPrincipalId &&
+                           item.ResourceKind == "track")
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var rows = requestedEntries
+            .Where(item => external.ContainsKey(item.ExternalMetadataSnapshotId))
+            .Select(item => (Entry: item, External: external[item.ExternalMetadataSnapshotId]))
+            .ToArray();
+        if (rows.Length == 0)
+            return new Dictionary<Guid, DurablePlaylistEntryProjection>();
+
+        var identityIds = rows.Where(item => item.External.ProviderTrackIdentityId.HasValue)
+            .Select(item => item.External.ProviderTrackIdentityId!.Value).Distinct().ToArray();
+        var externalHashes = rows.Select(item => item.External.ExternalIdHash)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var sourceCandidates = await database.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
+                           (identityIds.Contains(item.Id) || externalHashes.Contains(item.ExternalIdHash)))
+            .ToListAsync(cancellationToken);
+        var sourceIdentityIndex = BuildRetentionSourceIdentityIndex(sourceCandidates);
+        var scopedSourceIdentities = external.Values
+            .Select(item => (item.Id, Identity: SelectRetentionSourceIdentity(item, sourceIdentityIndex)))
+            .Where(item => item.Identity != null)
+            .ToDictionary(item => item.Id, item => item.Identity!);
+
+        var externalValues = external.Values.ToArray();
+        var overrideRecords = await ManualTrackOverrides.LoadAsync(
+            database, ownerUserId, externalValues, cancellationToken);
+        var overrides = ManualTrackOverrides.Index(externalValues, overrideRecords, ownerUserId);
+
+        var matchIds = rows.Where(item => item.Entry.PublishedTrackMatchId.HasValue)
+            .Select(item => item.Entry.PublishedTrackMatchId!.Value).Distinct().ToArray();
+        var matches = matchIds.Length == 0
+            ? new Dictionary<Guid, TrackMatchRecord>()
+            : await database.TrackMatches.AsNoTracking()
+                .Where(item => matchIds.Contains(item.Id) && item.OwnerUserId == ownerUserId)
+                .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var canonicalIds = scopedSourceIdentities.Values.Select(item => item.CanonicalRecordingId)
+            .Concat(matches.Values.Where(item => item.CanonicalRecordingId.HasValue)
+                .Select(item => item.CanonicalRecordingId!.Value))
+            .Distinct().ToArray();
+        var identities = canonicalIds.Length == 0
+            ? []
+            : await database.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => canonicalIds.Contains(item.CanonicalRecordingId) &&
+                               item.ResourceKind == ProviderResourceKind.Track &&
+                               (item.Verification == ProviderIdentityVerification.Verified ||
+                                item.Verification == ProviderIdentityVerification.Pinned))
+                .ToListAsync(cancellationToken);
+        var providerOrder = await ResolveProviderOrderAsync(
+            link.SourceProviderId, identities, overrides.Values, ownerUserId, access, cancellationToken);
+        var libraryIds = matches.Values.Where(item => item.LibraryTrackId.HasValue)
+            .Select(item => item.LibraryTrackId!.Value)
+            .Concat(overrides.Values.Select(item => item.Effective?.LibraryTrackId)
+                .OfType<Guid>()).Distinct().ToArray();
+        var matchedCanonicalIds = matches.Values.Where(item => item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value)
+            .Concat(canonicalIds).Distinct().ToArray();
+        var library = await LibraryTrackAccess.Query(database, access)
+            .Where(item => (libraryIds.Contains(item.Id) ||
+                           item.CanonicalRecordingId.HasValue && matchedCanonicalIds.Contains(item.CanonicalRecordingId.Value)) &&
+                           item.BackendInstanceId == link.TargetBackendInstanceId &&
+                           (link.TargetProtocol == "jellyfin"
+                               ? item.Protocol == "jellyfin"
+                               : item.Protocol == "subsonic" || item.Protocol == "opensubsonic" ||
+                                 item.Protocol == "navidrome"))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+
+        var identitiesByCanonical = identities.GroupBy(item => item.CanonicalRecordingId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<ProviderTrackIdentityRecord>)group.ToArray());
+        var libraryByCanonical = library.Values.Where(item => item.CanonicalRecordingId.HasValue)
+            .GroupBy(item => item.CanonicalRecordingId!.Value)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var projected = new Dictionary<Guid, DurablePlaylistEntryProjection>(rows.Length);
+        foreach (var row in rows)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var match = row.Entry.PublishedTrackMatchId is { } matchId
+                ? matches.GetValueOrDefault(matchId)
+                : null;
+            var layers = overrides.GetValueOrDefault(row.External.Id) ?? new(null, null);
+            var sourceIdentity = scopedSourceIdentities.GetValueOrDefault(row.External.Id);
+            var effectiveCanonicalId = match?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
+            var entryIdentities = effectiveCanonicalId is { } canonicalId
+                ? identitiesByCanonical.GetValueOrDefault(canonicalId) ?? []
+                : Array.Empty<ProviderTrackIdentityRecord>();
+            var entryLibrary = new Dictionary<Guid, LibraryTrackRecord>();
+            if (match?.LibraryTrackId is { } matchLibraryId && library.TryGetValue(matchLibraryId, out var matchLibrary))
+                entryLibrary[matchLibrary.Id] = matchLibrary;
+            if (layers.Effective?.LibraryTrackId is { } manualLibraryId && library.TryGetValue(manualLibraryId, out var manualLibrary))
+                entryLibrary[manualLibrary.Id] = manualLibrary;
+            if (sourceIdentity?.CanonicalRecordingId is { } sourceCanonical &&
+                libraryByCanonical.TryGetValue(sourceCanonical, out var sourceLibraries))
+                foreach (var item in sourceLibraries) entryLibrary[item.Id] = item;
+            if (match?.CanonicalRecordingId is { } matchCanonical &&
+                libraryByCanonical.TryGetValue(matchCanonical, out var matchLibraries))
+                foreach (var item in matchLibraries) entryLibrary[item.Id] = item;
+            var sourceMap = sourceIdentity == null
+                ? new Dictionary<Guid, ProviderTrackIdentityRecord>()
+                : new Dictionary<Guid, ProviderTrackIdentityRecord> { [row.External.Id] = sourceIdentity };
+            projected[row.Entry.Id] = ProjectEntry(row.Entry, row.External, sourceMap,
+                entryIdentities, providerOrder, match,
+                new Dictionary<Guid, ManualTrackOverrideLayers> { [row.External.Id] = layers }, entryLibrary);
+        }
+        return projected;
+    }
+
+    private sealed record RetentionSourceIdentityIndex(
+        IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord> ById,
+        IReadOnlyDictionary<(string ProviderId, Guid ProviderAccountId, string ExternalIdHash), ProviderTrackIdentityRecord> Accounts,
+        IReadOnlyDictionary<(string ProviderId, string ExternalIdHash), ProviderTrackIdentityRecord> Catalog);
+
+    private static RetentionSourceIdentityIndex BuildRetentionSourceIdentityIndex(
+        IEnumerable<ProviderTrackIdentityRecord> identities)
+    {
+        var materialized = identities.ToArray();
+        var eligible = materialized.Where(identity =>
+            (identity.Scope is ProviderIdentityScope.Catalog or ProviderIdentityScope.Account) &&
+            (identity.Verification is ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned));
+        static ProviderTrackIdentityRecord SelectBest(IEnumerable<ProviderTrackIdentityRecord> candidates) => candidates
+            .OrderByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
+            .ThenByDescending(identity => identity.VerifiedAt)
+            .ThenBy(identity => identity.Id)
+            .First();
+
+        var accounts = eligible
+            .Where(identity => identity.Scope == ProviderIdentityScope.Account && identity.ProviderAccountId.HasValue)
+            .GroupBy(identity => (
+                ProviderId: identity.ProviderId.ToLowerInvariant(),
+                ProviderAccountId: identity.ProviderAccountId!.Value,
+                identity.ExternalIdHash))
+            .ToDictionary(group => group.Key, group => SelectBest(group));
+        var catalog = eligible
+            .Where(identity => identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue)
+            .GroupBy(identity => (ProviderId: identity.ProviderId.ToLowerInvariant(), identity.ExternalIdHash))
+            .ToDictionary(group => group.Key, group => SelectBest(group));
+        return new(materialized.ToDictionary(identity => identity.Id), accounts, catalog);
+    }
+
+    private static ProviderTrackIdentityRecord? SelectRetentionSourceIdentity(
+        ExternalMetadataSnapshotRecord external,
+        RetentionSourceIdentityIndex index)
+    {
+        if (external.ProviderTrackIdentityId is { } linkedId &&
+            index.ById.TryGetValue(linkedId, out var linked) &&
+            MatchesSourceIdentity(external, linked))
+            return linked;
+
+        if (external.ProviderAccountId is { } accountId &&
+            index.Accounts.TryGetValue((external.ProviderId.ToLowerInvariant(), accountId, external.ExternalIdHash),
+                out var account) &&
+            MatchesSourceIdentity(external, account))
+            return account;
+
+        return index.Catalog.TryGetValue((external.ProviderId.ToLowerInvariant(), external.ExternalIdHash),
+            out var catalog) && MatchesSourceIdentity(external, catalog) ? catalog : null;
+    }
+
+    private async Task<IReadOnlyList<string>> ResolveProviderOrderAsync(
+        string sourceProviderId,
+        IEnumerable<ProviderTrackIdentityRecord> identities,
+        IEnumerable<ManualTrackOverrideLayers> overrides,
+        Guid viewerUserId,
+        BackendLibraryAccessContext access,
+        CancellationToken cancellationToken)
+    {
+        IReadOnlyList<string> fallback = new[] { sourceProviderId }
+            .Concat(identities.Select(item => item.ProviderId))
+            .Concat(overrides.Select(item => item.Effective?.TargetProviderId).OfType<string>())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (providerGateway == null && effectivePolicies != null)
+        {
+            var policy = await effectivePolicies.ResolveForUserAsync(viewerUserId, cancellationToken);
+            fallback = policy.ApplyProviderAvailability(ProviderCapabilityKind.Streaming, fallback);
+        }
+        return providerGateway == null
+            ? fallback
+            : access.Context?.Actor is { } actor
+                ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken)
+                : [];
+    }
+
     private async Task<DurablePlaylistProjection> ProjectAsync(
         AllstarrDbContext database,
         PlaylistSourceSnapshotRecord snapshot,
@@ -265,44 +520,13 @@ public sealed class DurablePlaylistProjectionReader(
             })
             .Where(item => item.Identity != null)
             .ToDictionary(item => item.Id, item => item.Identity!);
-        var eligibleSourceIdentities = sourceIdentities.Values
-            .Where(identity =>
-                identity.Scope is ProviderIdentityScope.Catalog or ProviderIdentityScope.Account &&
-                identity.Verification is ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned)
-            .ToArray();
-        var accountSourceIdentities = eligibleSourceIdentities
-            .Where(identity => identity.Scope == ProviderIdentityScope.Account &&
-                               identity.ProviderAccountId.HasValue)
-            .GroupBy(identity => (
-                ProviderId: identity.ProviderId.ToLowerInvariant(),
-                ProviderAccountId: identity.ProviderAccountId!.Value,
-                identity.ExternalIdHash))
-            .ToDictionary(group => group.Key, group => group
-                .OrderByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
-                .ThenByDescending(identity => identity.VerifiedAt)
-                .First());
-        var catalogSourceIdentities = eligibleSourceIdentities
-            .Where(identity => identity.Scope == ProviderIdentityScope.Catalog &&
-                               !identity.ProviderAccountId.HasValue)
-            .GroupBy(identity => (
-                ProviderId: identity.ProviderId.ToLowerInvariant(),
-                identity.ExternalIdHash))
-            .ToDictionary(group => group.Key, group => group
-                .OrderByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
-                .ThenByDescending(identity => identity.VerifiedAt)
-                .First());
+        var sourceIdentityIndex = BuildRetentionSourceIdentityIndex(sourceIdentities.Values);
         var scopedSourceIdentities = external.Values
             .Select(item =>
             {
                 if (linkedSourceIdentities.TryGetValue(item.Id, out var linked))
                     return (item.Id, Identity: linked);
-                var fallback = item.ProviderAccountId.HasValue ? accountSourceIdentities.GetValueOrDefault((
-                    item.ProviderId.ToLowerInvariant(), item.ProviderAccountId.Value, item.ExternalIdHash)) : null;
-                fallback ??= catalogSourceIdentities.GetValueOrDefault((
-                    item.ProviderId.ToLowerInvariant(), item.ExternalIdHash));
-                if (fallback != null && !MatchesSourceIdentity(item, fallback))
-                    fallback = null;
-                return (item.Id, Identity: fallback);
+                return (item.Id, Identity: SelectRetentionSourceIdentity(item, sourceIdentityIndex));
             })
             .Where(item => item.Identity != null)
             .ToDictionary(item => item.Id, item => item.Identity!);
@@ -320,25 +544,6 @@ public sealed class DurablePlaylistProjectionReader(
             database, viewerUserId, external.Values.ToArray(), cancellationToken);
         var overrides = ManualTrackOverrides.Index(external.Values, overrideRecords, viewerUserId);
         var access = retainedAccess ?? await libraryAccess.ResolveUserAsync(viewerUserId, cancellationToken);
-        IReadOnlyList<string> fallbackProviderOrder = new[] { link.SourceProviderId }
-            .Concat(identities.Select(item => item.ProviderId))
-            .Concat(overrides.Values.Select(item => item.Effective?.TargetProviderId)
-                .OfType<string>())
-            .Distinct(StringComparer.Ordinal)
-            .Order(StringComparer.Ordinal)
-            .ToArray();
-        if (providerGateway == null && effectivePolicies != null)
-        {
-            var effectivePolicy = await effectivePolicies.ResolveForUserAsync(
-                viewerUserId, cancellationToken);
-            fallbackProviderOrder = effectivePolicy.ApplyProviderAvailability(
-                ProviderCapabilityKind.Streaming, fallbackProviderOrder);
-        }
-        var providerOrder = providerGateway == null
-            ? fallbackProviderOrder
-            : access.Context?.Actor is { } actor
-                ? await providerGateway.GetPlayableProviderOrderAsync(actor, cancellationToken)
-                : [];
         var publishedMatchIds = entries
             .Where(item => item.PublishedTrackMatchId.HasValue)
             .Select(item => item.PublishedTrackMatchId!.Value)
@@ -348,6 +553,23 @@ public sealed class DurablePlaylistProjectionReader(
             .Where(item => publishedMatchIds.Contains(item.Id) &&
                            item.OwnerUserId == ownerUserId)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var matchedCanonicalIdsForIdentities = publishedMatches.Values
+            .Where(item => item.CanonicalRecordingId.HasValue)
+            .Select(item => item.CanonicalRecordingId!.Value)
+            .Except(canonicalIds)
+            .ToArray();
+        if (matchedCanonicalIdsForIdentities.Length != 0)
+        {
+            var matchedIdentities = await database.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => matchedCanonicalIdsForIdentities.Contains(item.CanonicalRecordingId) &&
+                               item.ResourceKind == ProviderResourceKind.Track &&
+                               (item.Verification == ProviderIdentityVerification.Verified ||
+                                item.Verification == ProviderIdentityVerification.Pinned))
+                .ToListAsync(cancellationToken);
+            identities = identities.Concat(matchedIdentities).ToList();
+        }
+        var providerOrder = await ResolveProviderOrderAsync(
+            link.SourceProviderId, identities, overrides.Values, viewerUserId, access, cancellationToken);
         var libraryIds = publishedMatches.Values
             .Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
@@ -613,7 +835,8 @@ public sealed class DurablePlaylistProjectionReader(
     {
         var manual = overrides.GetValueOrDefault(external.Id)?.Effective;
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
-        var route = TrackRouteProjector.Project(external, match, manual, identity, library.Values, identities, providerOrder);
+        var route = TrackRouteProjector.Project(
+            external, match, manual, identity, library.Values, identities, providerOrder);
         var classification = route.Classification;
         var local = route.LibraryTrack;
         var backendItemId = local?.BackendItemId;
