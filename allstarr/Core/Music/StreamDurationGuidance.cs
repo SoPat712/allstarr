@@ -12,18 +12,15 @@ internal static class StreamDurationGuidance
 {
     private const int PrefixLimit = 1024 * 1024;
 
-    public static void Attach(ProtocolProviderStream routed, Func<Task<Song?>> metadata, HttpResponse response)
+    public static void Attach(ProtocolProviderStream routed, Func<Task<Song?>> metadata)
     {
         if (routed.IsCached || routed.Lease.SupportsByteRanges || routed.Response.StatusCode != HttpStatusCode.OK)
             return;
         var container = routed.Lease.Media.Container.ToLowerInvariant();
         if (container is not ("flac" or "mp3" or "mp4" or "m4a")) return;
         var original = routed.Response.Content;
-        var replacement = new StreamContent(new DeferredGuidanceStream(original, async cancellationToken =>
-        {
-            await response.StartAsync(cancellationToken);
-            return await PrepareAsync(original, routed, container, metadata, cancellationToken);
-        }));
+        var replacement = new GuidedContent(new DeferredGuidanceStream(original, cancellationToken =>
+            PrepareAsync(original, routed, container, metadata, cancellationToken)));
         foreach (var header in original.Headers)
             replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         // An optional FLAC ID3 prelude is removed lazily, so its final length is not known at header time.
@@ -31,7 +28,7 @@ internal static class StreamDurationGuidance
         routed.Response.Content = replacement;
     }
 
-    private static async Task<Stream> PrepareAsync(HttpContent original, ProtocolProviderStream routed, string container,
+    private static async Task<PreparedAudio> PrepareAsync(HttpContent original, ProtocolProviderStream routed, string container,
         Func<Task<Song?>> metadata, CancellationToken cancellationToken)
     {
         var source = await original.ReadAsStreamAsync(cancellationToken);
@@ -95,7 +92,7 @@ internal static class StreamDurationGuidance
             {
                 try
                 {
-                    var song = await metadata();
+                    var song = await metadata().WaitAsync(cancellationToken);
                     duration = song?.PreciseDuration ?? (song?.Duration is > 0 ? TimeSpan.FromSeconds(song.Duration.Value) : null);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -103,7 +100,7 @@ internal static class StreamDurationGuidance
             }
             if (duration.HasValue) MediaDurationHeaders.TryPatch(prepared.AsSpan(skip), container, duration.Value);
         }
-        return new PrefetchedStream(source, original, prepared.AsMemory(skip));
+        return new(new PrefetchedStream(source, original, prepared.AsMemory(skip)), skip);
     }
 
     private static async Task ReadUntilAsync(Stream source, MemoryStream prefix, int length, CancellationToken cancellationToken)
@@ -117,9 +114,19 @@ internal static class StreamDurationGuidance
         }
     }
 
-    private sealed class DeferredGuidanceStream(HttpContent owner, Func<CancellationToken, Task<Stream>> prepare) : Stream
+    internal static long? DeclaredLength(HttpContent content) => (content as GuidedContent)?.DeclaredLength;
+
+    private sealed class GuidedContent(DeferredGuidanceStream source) : StreamContent(source)
     {
-        private Task<Stream>? prepared;
+        public long? DeclaredLength => source.DeclaredLength;
+    }
+
+    private readonly record struct PreparedAudio(Stream Stream, int SkippedBytes);
+
+    private sealed class DeferredGuidanceStream(HttpContent owner, Func<CancellationToken, Task<PreparedAudio>> prepare) : Stream
+    {
+        private Task<PreparedAudio>? prepared;
+        public long? DeclaredLength { get; private set; }
         private bool disposed;
         public override bool CanRead => !disposed;
         public override bool CanSeek => false;
@@ -135,8 +142,10 @@ internal static class StreamDurationGuidance
             ObjectDisposedException.ThrowIf(disposed, this);
             cancellationToken.ThrowIfCancellationRequested();
             if (buffer.IsEmpty) return 0;
-            var stream = await (prepared ??= prepare(cancellationToken));
-            return await stream.ReadAsync(buffer, cancellationToken);
+            var audio = await (prepared ??= prepare(cancellationToken));
+            DeclaredLength = owner.Headers.ContentLength - audio.SkippedBytes;
+            if (DeclaredLength is < 0) throw new IOException("The media prelude exceeded the declared length.");
+            return await audio.Stream.ReadAsync(buffer, cancellationToken);
         }
         protected override void Dispose(bool disposing)
         {

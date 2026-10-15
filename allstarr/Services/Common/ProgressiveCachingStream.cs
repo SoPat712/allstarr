@@ -1,95 +1,268 @@
+using System.Diagnostics;
+
 namespace allstarr.Services.Common;
 
+internal readonly record struct ProgressiveCacheReadState(
+    long AvailableLength,
+    long? TotalLength,
+    bool Finished,
+    bool Failed,
+    Task Changed,
+    Task Completion);
+
 /// <summary>
-/// Relays a sequential upstream audio response immediately while writing the same
-/// bytes to a temporary cache artifact. The artifact is published only after EOF.
+/// Reads a cache file while its owner publishes availability and completion state.
 /// </summary>
 public sealed class ProgressiveCachingStream : Stream
 {
     private readonly Stream source;
-    private readonly Stream cache;
-    private readonly Func<Task> complete;
-    private readonly Action abort;
-    private bool completed;
-    private bool disposed;
+    private readonly Func<ProgressiveCacheReadState> readState;
+    private readonly Action closed;
+    private readonly Action? started;
+    private readonly TimeSpan waitTimeout;
+    private long position;
+    private int startedInvoked;
+    private int disposed;
 
-    public ProgressiveCachingStream(
-        Stream source,
-        Stream cache,
-        string contentType,
-        Func<Task> complete,
-        Action abort)
+    internal ProgressiveCachingStream(
+        Stream file,
+        Func<ProgressiveCacheReadState> state,
+        Action closed,
+        TimeSpan waitTimeout,
+        Action? started = null)
     {
-        this.source = source;
-        this.cache = cache;
-        ContentType = contentType;
-        this.complete = complete;
-        this.abort = abort;
+        ArgumentNullException.ThrowIfNull(file);
+        ArgumentNullException.ThrowIfNull(state);
+        ArgumentNullException.ThrowIfNull(closed);
+        if (waitTimeout < TimeSpan.Zero || waitTimeout == Timeout.InfiniteTimeSpan)
+            throw new ArgumentOutOfRangeException(nameof(waitTimeout));
+
+        source = file;
+        readState = state;
+        this.closed = closed;
+        this.waitTimeout = waitTimeout;
+        this.started = started;
     }
 
-    public string ContentType { get; }
-    public override bool CanRead => !disposed && source.CanRead;
-    public override bool CanSeek => false;
+    public override bool CanRead => Volatile.Read(ref disposed) == 0 && source.CanRead;
+
+    public override bool CanSeek =>
+        Volatile.Read(ref disposed) == 0 && source.CanSeek && TryGetTotalLength(out _);
+
     public override bool CanWrite => false;
-    public override long Length => throw new NotSupportedException();
+
+    public override long Length
+    {
+        get
+        {
+            ThrowIfDisposed();
+            if (!TryGetTotalLength(out var length))
+                throw new NotSupportedException();
+            return length;
+        }
+    }
+
     public override long Position
     {
-        get => throw new NotSupportedException();
-        set => throw new NotSupportedException();
+        get
+        {
+            ThrowIfDisposed();
+            return position;
+        }
+        set => Seek(value, SeekOrigin.Begin);
     }
 
     public override int Read(byte[] buffer, int offset, int count)
     {
-        var read = source.Read(buffer, offset, count);
-        if (read > 0)
-        {
-            cache.Write(buffer, offset, read);
-        }
-        else
-        {
-            CompleteAsync().GetAwaiter().GetResult();
-        }
-
-        return read;
+        ArgumentNullException.ThrowIfNull(buffer);
+        return ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();
     }
 
-    public override async ValueTask<int> ReadAsync(
-        Memory<byte> buffer,
+    public override Task<int> ReadAsync(
+        byte[] buffer,
+        int offset,
+        int count,
         CancellationToken cancellationToken = default)
     {
-        var read = await source.ReadAsync(buffer, cancellationToken);
-        if (read > 0)
-        {
-            // Cache completion belongs to the server, not to the client request.
-            await cache.WriteAsync(buffer[..read], CancellationToken.None);
-        }
-        else
-        {
-            await CompleteAsync();
-        }
-
-        return read;
+        ArgumentNullException.ThrowIfNull(buffer);
+        return ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
     }
 
-    private async Task CompleteAsync()
+    public override ValueTask<int> ReadAsync(
+        Memory<byte> buffer,
+        CancellationToken cancellationToken = default) =>
+        ReadReaderAsync(buffer, cancellationToken);
+
+    private async ValueTask<int> ReadReaderAsync(Memory<byte> buffer, CancellationToken cancellationToken)
     {
-        if (completed) return;
-        completed = true;
-        await cache.FlushAsync(CancellationToken.None);
-        await cache.DisposeAsync();
-        await source.DisposeAsync();
-        await complete();
+        ThrowIfDisposed();
+        if (buffer.IsEmpty) return 0;
+        cancellationToken.ThrowIfCancellationRequested();
+        InvokeStarted();
+        var waitingSince = Stopwatch.GetTimestamp();
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var snapshot = readState();
+            if (snapshot.Failed || snapshot.AvailableLength < 0 || snapshot.TotalLength is < 0 ||
+                snapshot.TotalLength is { } total && snapshot.AvailableLength > total)
+                throw FailedTransfer();
+            var available = snapshot.AvailableLength - position;
+            if (available > 0)
+            {
+                var count = (int)Math.Min(available, buffer.Length);
+                try
+                {
+                    source.Position = position;
+                    var read = await source.ReadAsync(buffer[..count], cancellationToken);
+                    if (read <= 0 || read > count) throw FailedTransfer();
+                    position += read;
+                    return read;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch { throw FailedTransfer(); }
+            }
+            if (snapshot.Finished)
+            {
+                await AwaitCompletionAsync(snapshot.Completion, cancellationToken);
+                return 0;
+            }
+            await WaitForChangeAsync(snapshot.Changed, waitTimeout - Stopwatch.GetElapsedTime(waitingSince), cancellationToken);
+        }
     }
+
+    private bool TryGetTotalLength(out long length)
+    {
+        length = 0;
+        if (Volatile.Read(ref disposed) != 0)
+            return false;
+        var total = readState().TotalLength;
+        if (total is not { } value || value < 0)
+            return false;
+        length = value;
+        return true;
+    }
+
+    private async ValueTask WaitForChangeAsync(
+        Task changed,
+        TimeSpan remaining,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (remaining <= TimeSpan.Zero) throw new TimeoutException();
+            await changed.WaitAsync(remaining, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (TimeoutException)
+        {
+            throw new IOException("The progressive media cache did not advance before the read timeout.");
+        }
+        catch
+        {
+            throw FailedTransfer();
+        }
+    }
+
+    private static async ValueTask AwaitCompletionAsync(
+        Task completion,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await completion.WaitAsync(cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            throw FailedTransfer();
+        }
+    }
+
+    private void InvokeStarted()
+    {
+        if (Interlocked.Exchange(ref startedInvoked, 1) == 0)
+            started?.Invoke();
+    }
+
+    private long RequireTotalLength()
+    {
+        ThrowIfDisposed();
+        if (!source.CanSeek || !TryGetTotalLength(out var length))
+            throw new NotSupportedException();
+        return length;
+    }
+
+    private void ThrowIfDisposed()
+    {
+        if (Volatile.Read(ref disposed) != 0)
+            throw new ObjectDisposedException(nameof(ProgressiveCachingStream));
+    }
+
+    private static IOException FailedTransfer() =>
+        new("The progressive media transfer failed.");
+
+    public override void Flush() => throw new NotSupportedException();
+
+    public override long Seek(long offset, SeekOrigin origin)
+    {
+        var total = RequireTotalLength();
+        long target;
+        try
+        {
+            target = origin switch
+            {
+                SeekOrigin.Begin => offset,
+                SeekOrigin.Current => checked(position + offset),
+                SeekOrigin.End => checked(total + offset),
+                _ => throw new ArgumentOutOfRangeException(nameof(origin))
+            };
+        }
+        catch (OverflowException)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        }
+
+        if (target < 0 || target > total)
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        try
+        {
+            source.Seek(target, SeekOrigin.Begin);
+        }
+        catch
+        {
+            throw FailedTransfer();
+        }
+
+        position = target;
+        return position;
+    }
+
+    public override void SetLength(long value) => throw new NotSupportedException();
+
+    public override void Write(byte[] buffer, int offset, int count) =>
+        throw new NotSupportedException();
 
     protected override void Dispose(bool disposing)
     {
-        if (disposed) return;
-        disposed = true;
-        if (disposing && !completed)
+        if (Interlocked.Exchange(ref disposed, 1) != 0)
+            return;
+        if (disposing)
         {
-            source.Dispose();
-            cache.Dispose();
-            abort();
+            try
+            {
+                source.Dispose();
+            }
+            finally
+            {
+                closed();
+            }
         }
 
         base.Dispose(disposing);
@@ -97,20 +270,17 @@ public sealed class ProgressiveCachingStream : Stream
 
     public override async ValueTask DisposeAsync()
     {
-        if (disposed) return;
-        disposed = true;
-        if (!completed)
+        if (Interlocked.Exchange(ref disposed, 1) != 0)
+            return;
+        try
         {
             await source.DisposeAsync();
-            await cache.DisposeAsync();
-            abort();
         }
-
-        GC.SuppressFinalize(this);
+        finally
+        {
+            closed();
+            GC.SuppressFinalize(this);
+        }
     }
 
-    public override void Flush() => throw new NotSupportedException();
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-    public override void SetLength(long value) => throw new NotSupportedException();
-    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 }

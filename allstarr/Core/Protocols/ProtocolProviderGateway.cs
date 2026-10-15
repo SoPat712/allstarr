@@ -140,7 +140,8 @@ public sealed record ProtocolProviderStream(
     Guid? ServingAccountId = null,
     bool IsCached = false,
     ProviderAudioQuality EffectiveQuality = ProviderAudioQuality.Any,
-    string SelectionReason = "provider-priority");
+    string SelectionReason = "provider-priority",
+    long? ServingAccountRevision = null);
 
 public sealed partial class ProtocolProviderGateway(
     IProviderRouter router,
@@ -1103,7 +1104,7 @@ public sealed partial class ProtocolProviderGateway(
                     candidate.Context.Account?.AccountId,
                     quality);
             var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
-                servingTrack, cacheScope, protocol.CancellationToken);
+                servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision);
             if (cached != null)
                 return await OpenedAsync(cached with { SelectionReason = $"{routeReason}:managed-cache" }, candidate.Context, servingTrack);
             var leaseRequest = new ProviderStreamLeaseRequest(
@@ -1150,7 +1151,8 @@ public sealed partial class ProtocolProviderGateway(
                 return await OpenedAsync(new ProtocolProviderStream(response, lease, candidate.Provider.Id,
                     servingTrack.Value, candidate.Context.Account?.AccountId,
                     EffectiveQuality: quality,
-                    SelectionReason: $"{routeReason}:remote"), candidate.Context, servingTrack);
+                    SelectionReason: $"{routeReason}:remote",
+                    ServingAccountRevision: candidate.Context.Account?.Revision), candidate.Context, servingTrack);
             }
             var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
             if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
