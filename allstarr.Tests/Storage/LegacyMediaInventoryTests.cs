@@ -51,6 +51,44 @@ public sealed class LegacyMediaInventoryTests : IDisposable
     }
 
     [Fact]
+    public async Task Preview_SkipsOnlyAlreadyOwnedFilesInsideTheLegacyMount()
+    {
+        Create("kept/Artist/Album/Original [deezer-123].flac");
+        var managed = Create("kept/Allstarr/Artist/Album/New [qobuz-456].flac");
+        Create("kept/Allstarr/Album/Original [deezer-789].flac");
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            var rootId = Guid.CreateVersion7();
+            db.ManagedFiles.Add(new ManagedFileOwnershipEntity
+            {
+                Id = Guid.CreateVersion7(),
+                RootId = rootId,
+                TargetRootPath = Path.Combine(root, "kept", "Allstarr"),
+                CanonicalPath = managed,
+                ContentSha256 = new string('a', 64),
+                Length = 22,
+                PlacementMethod = ManagedFilePlacementMethod.Copy,
+                ScopeKey = ManagedFileScopeKey.Create(null, rootId),
+                IsManaged = true,
+                CreatedAt = DateTimeOffset.UtcNow,
+                Revision = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Legacy:AllowedRoots"] = Path.Combine(root, "kept"),
+            ["Legacy:KeptPath"] = Path.Combine(root, "kept"),
+            ["Library:KeptPath"] = Path.Combine(root, "kept", "Allstarr")
+        }).Build();
+        var plan = new LegacyMediaInventory(configuration, services.GetRequiredService<IServiceScopeFactory>(), new InventoryFactory(database.Options))
+            .Preview(Document("STORAGE_MODE=Permanent"));
+        Assert.Equal(["123", "789"], plan.Files.Select(item => item.ExternalId!).Order().ToArray());
+        Assert.Equal("original fixture bytes", File.ReadAllText(managed));
+    }
+
+    [Fact]
     public void Preview_NeverFollowsLinksOrOutsideRootOverrides()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -81,6 +119,11 @@ public sealed class LegacyMediaInventoryTests : IDisposable
         File.WriteAllText(path, "original fixture bytes");
         Assert.Throws<IOException>(() => files.ValidateLegacySnapshot(snapshot));
         Assert.Equal("original fixture bytes", File.ReadAllText(path + ".original"));
+    }
+
+    private sealed class InventoryFactory(DbContextOptions<AllstarrDbContext> options) : IDbContextFactory<AllstarrDbContext>
+    {
+        public AllstarrDbContext CreateDbContext() => new(options);
     }
 
     private string Create(string relative)

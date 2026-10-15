@@ -25,6 +25,25 @@ public sealed class FilePlacementServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task PlaceAsync_AfterLegacyUpgradeWritesUnderTheExistingKeptMount()
+    {
+        var configuration = new Microsoft.Extensions.Configuration.ConfigurationManager();
+        allstarr.Core.Storage.ContainerStorageLayout.Configure(configuration, true,
+            ["/app/cache", "/app/downloads", "/app/kept"]);
+        // Map container mount paths into this isolated filesystem fixture.
+        var selected = Path.Combine(testRoot, configuration["Library:KeptPath"]!.TrimStart('/'));
+        var original = CreateSource("app/kept/Artist/Album/Original.flac", "original kept bytes");
+        var source = CreateSource("source/new.flac", "new kept bytes");
+        var service = new FilePlacementService(new MemoryOwnershipStore(), new RecordingOperations(false, false));
+        var result = await service.PlaceAsync(Request(source, selected, false));
+        Assert.StartsWith(Path.Combine(testRoot, "app", "kept", "Allstarr") + Path.DirectorySeparatorChar,
+            result.File.CanonicalPath, StringComparison.Ordinal);
+        Assert.Equal("new kept bytes", await File.ReadAllTextAsync(result.File.CanonicalPath));
+        Assert.Equal("original kept bytes", await File.ReadAllTextAsync(original));
+        Assert.False(Directory.Exists(Path.Combine(testRoot, "app", "cache")));
+    }
+
+    [Fact]
     public async Task PlaceAsync_RendersSafeTemplateAndCopiesUnownedSource()
     {
         var source = CreateSource("source/song.flac", "audio-payload");
