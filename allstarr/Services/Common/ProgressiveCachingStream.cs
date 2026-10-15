@@ -20,6 +20,7 @@ public sealed class ProgressiveCachingStream : Stream
     private readonly Action closed;
     private readonly Action? started;
     private readonly TimeSpan waitTimeout;
+    private readonly TimeSpan initialWaitTimeout;
     private long position;
     private int startedInvoked;
     private int disposed;
@@ -29,18 +30,22 @@ public sealed class ProgressiveCachingStream : Stream
         Func<ProgressiveCacheReadState> state,
         Action closed,
         TimeSpan waitTimeout,
-        Action? started = null)
+        Action? started = null,
+        TimeSpan? initialWaitTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(state);
         ArgumentNullException.ThrowIfNull(closed);
         if (waitTimeout < TimeSpan.Zero || waitTimeout == Timeout.InfiniteTimeSpan)
             throw new ArgumentOutOfRangeException(nameof(waitTimeout));
+        if (initialWaitTimeout is { } initial && (initial < TimeSpan.Zero || initial == Timeout.InfiniteTimeSpan))
+            throw new ArgumentOutOfRangeException(nameof(initialWaitTimeout));
 
         source = file;
         readState = state;
         this.closed = closed;
         this.waitTimeout = waitTimeout;
+        this.initialWaitTimeout = initialWaitTimeout ?? waitTimeout;
         this.started = started;
     }
 
@@ -100,6 +105,7 @@ public sealed class ProgressiveCachingStream : Stream
         cancellationToken.ThrowIfCancellationRequested();
         InvokeStarted();
         var waitingSince = Stopwatch.GetTimestamp();
+        long observedLength = 0;
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -107,6 +113,11 @@ public sealed class ProgressiveCachingStream : Stream
             if (snapshot.Failed || snapshot.AvailableLength < 0 || snapshot.TotalLength is < 0 ||
                 snapshot.TotalLength is { } total && snapshot.AvailableLength > total)
                 throw FailedTransfer();
+            if (snapshot.AvailableLength > observedLength)
+            {
+                observedLength = snapshot.AvailableLength;
+                waitingSince = Stopwatch.GetTimestamp();
+            }
             var available = snapshot.AvailableLength - position;
             if (available > 0)
             {
@@ -127,7 +138,8 @@ public sealed class ProgressiveCachingStream : Stream
                 await AwaitCompletionAsync(snapshot.Completion, cancellationToken);
                 return 0;
             }
-            await WaitForChangeAsync(snapshot.Changed, waitTimeout - Stopwatch.GetElapsedTime(waitingSince), cancellationToken);
+            var timeout = observedLength == 0 ? initialWaitTimeout : waitTimeout;
+            await WaitForChangeAsync(snapshot.Changed, timeout - Stopwatch.GetElapsedTime(waitingSince), cancellationToken);
         }
     }
 

@@ -40,7 +40,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         cancellationToken.ThrowIfCancellationRequested();
         if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value), out var transfer))
         {
-            var reader = transfer.TryOpen(initial: false);
+            var reader = transfer.TryOpen();
             if (reader != null)
             {
                 var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(reader) };
@@ -133,7 +133,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             TryDelete(partial);
             return;
         }
-        var reader = transfer.TryOpen(initial: true);
+        var reader = transfer.TryOpen();
         if (reader == null)
         {
             transfer.Stop();
@@ -218,7 +218,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         public void StartWorker() => Work = Task.Run(RunAsync);
         public void Stop() => cancel.Cancel();
 
-        public Stream? TryOpen(bool initial)
+        public Stream? TryOpen()
         {
             lock (gate)
             {
@@ -230,7 +230,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 readers++;
                 cancel.CancelAfter(Timeout.InfiniteTimeSpan);
                 return new ProgressiveCachingStream(file, Snapshot, Closed,
-                    TimeSpan.FromSeconds(initial || total == null ? 30 : 3), () => ready.TrySetResult());
+                    TimeSpan.FromSeconds(3), () => ready.TrySetResult(), TimeSpan.FromSeconds(30));
             }
         }
 

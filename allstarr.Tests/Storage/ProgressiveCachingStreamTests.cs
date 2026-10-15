@@ -208,13 +208,13 @@ public sealed class ProgressiveCachingStreamTests
     }
 
     [Fact]
-    public async Task SeekAheadWait_HasOneDeadlineEvenWhenThePrefixKeepsGrowing()
+    public async Task SeekAheadWait_SpuriousNotificationsDoNotResetTheStallTimeout()
     {
         await using var file = FixtureFile(new byte[100]);
         using var canceled = new CancellationTokenSource();
-        var available = 0;
+        var available = 1;
         await using var reader = new ProgressiveCachingStream(file,
-            () => new(Interlocked.Increment(ref available), 100, false, false,
+            () => new(available, 100, false, false,
                 Task.Delay(10, canceled.Token), Task.CompletedTask), () => { }, TimeSpan.FromMilliseconds(80));
         reader.Position = 80;
         var pending = reader.ReadAsync(new byte[1], canceled.Token).AsTask();
@@ -231,8 +231,76 @@ public sealed class ProgressiveCachingStreamTests
         }
     }
 
+    [Fact]
+    public async Task SeekFifteenSecondsAhead_WaitsWhileTheProducerKeepsAdvancing()
+    {
+        const int bytesPerSecond = 1024;
+        var payload = Enumerable.Range(0, 17 * bytesPerSecond).Select(index => (byte)(index % 251)).ToArray();
+        await using var file = FixtureFile(payload);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var gate = new object();
+        var available = bytesPerSecond;
+        var changed = Signal();
+        ProgressiveCacheReadState State()
+        {
+            lock (gate) return new(available, payload.Length, false, false, changed.Task, Task.CompletedTask);
+        }
+        await using var reader = new ProgressiveCachingStream(file, State, () => { }, TimeSpan.FromSeconds(3));
+        reader.Position = 15 * bytesPerSecond;
+        var producer = Task.Run(async () =>
+        {
+            for (var seconds = 1; seconds <= 15; seconds++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1), cancellation.Token);
+                TaskCompletionSource previous;
+                lock (gate)
+                {
+                    available += bytesPerSecond;
+                    previous = changed;
+                    changed = Signal();
+                }
+                previous.TrySetResult();
+            }
+        }, cancellation.Token);
+        try
+        {
+            var buffer = new byte[32];
+            Assert.Equal(buffer.Length, await reader.ReadAsync(buffer, cancellation.Token));
+            Assert.Equal(payload[(15 * bytesPerSecond)..(15 * bytesPerSecond + buffer.Length)], buffer);
+            Assert.Equal(16 * bytesPerSecond, available);
+        }
+        finally
+        {
+            cancellation.Cancel();
+            try { await producer; }
+            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        }
+    }
+
     private static TaskCompletionSource Signal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    [Fact]
+    public async Task LongerInitialWaitAppliesOnlyWhileNoBytesHaveArrived()
+    {
+        await using var file = FixtureFile(new byte[100]);
+        var available = 0;
+        var changed = Signal();
+        await using var reader = new ProgressiveCachingStream(file,
+            () => new(Volatile.Read(ref available), 100, false, false, changed.Task, Task.CompletedTask),
+            () => { }, TimeSpan.FromMilliseconds(50), initialWaitTimeout: TimeSpan.FromSeconds(2));
+        var first = reader.ReadAsync(new byte[1]).AsTask();
+        await Task.Delay(150);
+        Assert.False(first.IsCompleted);
+        Volatile.Write(ref available, 1);
+        var previous = changed;
+        changed = Signal();
+        previous.TrySetResult();
+        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(1)));
+        reader.Position = 80;
+        await Assert.ThrowsAsync<IOException>(() => reader.ReadAsync(new byte[1]).AsTask()
+            .WaitAsync(TimeSpan.FromMilliseconds(500)));
+    }
 
     private static Task NeverCompletingTask() =>
         new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously).Task;

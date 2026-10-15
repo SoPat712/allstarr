@@ -10,6 +10,8 @@ using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using System.Collections.Concurrent;
 
 namespace allstarr.Tests;
 
@@ -99,6 +101,39 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
 
     private const string MissingMacroPayload =
         """{"message":{"header":{"status_code":200},"body":{"macro_calls":{}}}}""";
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProductionHttpClientNeverLogsTheQueryTokenEvenOnTransportFailure(bool fail)
+    {
+        const string token = "fixture-desktop-token+&=private";
+        var logs = new CapturedLogs();
+        var handler = new FixtureHttpHandler { ThrowRequestUriInException = fail };
+        var services = new ServiceCollection();
+        services.AddLogging(builder => builder.SetMinimumLevel(LogLevel.Trace).AddProvider(logs));
+        services.AddSingleton<IApplicationCache>(new TestMemoryApplicationCache());
+        services.AddSingleton<IProviderAccountSecretAccessor>(new FixtureSecretAccessor(token));
+        services.AddBuiltInLyricsCapabilities();
+        services.AddHttpClient(MusixmatchLyricsCapabilityAdapter.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => handler);
+        services.AddHttpClient("logging-control").ConfigurePrimaryHttpMessageHandler(() => new FixtureHttpHandler());
+        await using var provider = services.BuildServiceProvider();
+        using (var control = provider.GetRequiredService<IHttpClientFactory>().CreateClient("logging-control"))
+        using (await control.GetAsync("https://logging-control.invalid/probe")) { }
+        Assert.Contains(logs.Messages, entry => entry.Category.StartsWith("System.Net.Http.HttpClient.logging-control.", StringComparison.Ordinal));
+        logs.Messages.Clear();
+
+        var result = await provider.GetRequiredService<MusixmatchLyricsCapabilityAdapter>()
+            .FetchLyricsAsync(Context(AccountA), LyricsRequest());
+
+        Assert.Equal(!fail, result.IsSuccess);
+        Assert.Equal(token, ParseQuery(handler.RequestUri!)["usertoken"]);
+        Assert.DoesNotContain(logs.Messages, entry => entry.Category.StartsWith("System.Net.Http.HttpClient.MusixmatchLyrics.", StringComparison.Ordinal));
+        var text = string.Join('\n', logs.Messages.Select(entry => entry.Message));
+        Assert.DoesNotContain(token, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Uri.EscapeDataString(token), text, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
     public void Registration_RequiresAccountDeclaresBothScopesTokenAndFixedOrigin()
@@ -693,6 +728,7 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
 
     private sealed class FixtureHttpHandler : HttpMessageHandler
     {
+        public bool ThrowRequestUriInException { get; set; }
         public HttpStatusCode StatusCode { get; set; } = HttpStatusCode.OK;
         public string Payload { get; set; } = TimedMacroPayload;
         public TimeSpan? RetryAfter { get; set; }
@@ -709,6 +745,7 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
             Requests++;
             Method = request.Method;
             RequestUri = request.RequestUri;
+            if (ThrowRequestUriInException) throw new HttpRequestException($"Failed request {request.RequestUri}");
             Cookie = request.Headers.TryGetValues("Cookie", out var values)
                 ? values.SingleOrDefault()
                 : null;
@@ -722,6 +759,23 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
             if (RetryAfter is { } retry)
                 response.Headers.RetryAfter = new RetryConditionHeaderValue(retry);
             return Task.FromResult(response);
+        }
+    }
+
+    private sealed class CapturedLogs : ILoggerProvider
+    {
+        public ConcurrentQueue<(string Category, string Message)> Messages { get; } = new();
+        public ILogger CreateLogger(string categoryName) => new Capture(this, categoryName);
+        public void Dispose() { }
+        private sealed class Capture(CapturedLogs owner, string category) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+            public bool IsEnabled(LogLevel logLevel) => true;
+            public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter) => owner.Messages.Enqueue((category,
+                    formatter(state, exception) + exception?.ToString() +
+                    (state is IEnumerable<KeyValuePair<string, object?>> fields
+                        ? string.Join('|', fields.Select(field => field.Value?.ToString())) : state?.ToString())));
         }
     }
 
