@@ -192,7 +192,7 @@ public sealed partial class PlaylistTrackRetentionQueueTests : IAsyncLifetime
         Assert.Equal("Stable song", payload.Title);
         Assert.Equal(["First artist", "Second artist"], payload.Artists);
         Assert.Equal("Stable album", payload.Album);
-        Assert.Equal($"playlist-retain:{payload.RetentionKey}:{plan.SourceSnapshotId:N}:{link.Revision}", job.IdempotencyKey);
+        Assert.Equal($"playlist-retain:{payload.RetentionKey}:unbound:{sourceEntryId:N}:{plan.SourceSnapshotId:N}:{link.Revision}", job.IdempotencyKey);
         Assert.Null(db.Model.FindEntityType("allstarr.Core.Storage.OutboxMessageRecord"));
     }
 
@@ -310,8 +310,13 @@ public sealed partial class PlaylistTrackRetentionQueueTests : IAsyncLifetime
 
     public async Task DisposeAsync() => await _database.DisposeAsync();
 
-    private PlaylistTrackRetentionQueue RetentionQueue() =>
-        new(_jobs, new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")), _factory);
+    private PlaylistTrackRetentionQueue RetentionQueue()
+    {
+        var state = new DurableStorageState(_database.StorageOptions);
+        state.Set(DurableStorageReadiness.Ready);
+        return new(_jobs, new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")),
+            _factory, new TrackIdentityService(_factory, state, new FixedClock(_now)));
+    }
 
     private PlaylistLinkRecord Link(PlaylistTrackRetention retention) => new()
     {

@@ -109,7 +109,7 @@ public sealed partial class RecordingKeptFilesTests
         await persistence.UpdateLinkAsync(PlaylistContext(), payload.PlaylistLinkId, RetentionUpdate(1, true));
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var access = new TestBackendLibraryAccess(factory, "music");
-        var retention = new PlaylistTrackRetentionQueue(jobs, new(factory, access, gateway.Object), factory);
+        var retention = new PlaylistTrackRetentionQueue(jobs, new(factory, access, gateway.Object), factory, identities);
         Assert.Equal(0, await retention.EnqueuePublishedAsync(staleLink, "followup", default));
         gateway.VerifyNoOtherCalls();
         await using var db = new AllstarrDbContext(database.Options);
