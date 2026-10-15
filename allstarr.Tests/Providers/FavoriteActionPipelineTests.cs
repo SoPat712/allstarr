@@ -373,7 +373,7 @@ public sealed partial class FavoriteActionPipelineTests : IAsyncLifetime
         var access = new TestBackendLibraryAccess(_factory, "music");
         access.Permissions[_otherUserId] = BackendLibraryAccess.Unavailable;
         var download = await new FavoriteDownloadActionExecutor(null!, _factory, access)
-            .ExecuteAsync(favoriteEvent, action, default);
+            .ExecuteAsync(favoriteEvent, action, 1, default);
         Assert.True(download.Succeeded);
 
         favoriteEvent.OwnerUserId = _otherUserId;
@@ -466,7 +466,7 @@ public sealed partial class FavoriteActionPipelineTests : IAsyncLifetime
     {
         public string ActionType => actionType;
         public Task<FavoriteActionExecutionResult> ExecuteAsync(FavoriteEventRecord favoriteEvent,
-            FavoriteActionRecord action, CancellationToken cancellationToken)
+            FavoriteActionRecord action, int executionAttempt, CancellationToken cancellationToken)
         {
             calls.Add(actionType);
             return Task.FromResult(result?.Invoke() ?? FavoriteActionExecutionResult.Success());

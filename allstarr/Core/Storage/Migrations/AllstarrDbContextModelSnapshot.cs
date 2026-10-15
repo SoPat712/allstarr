@@ -1440,6 +1440,10 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<long>("CreatedAt")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("DisplayMetadataJson")
+                        .HasMaxLength(16000)
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid>("ManagedFileId")
                         .HasColumnType("TEXT");
 

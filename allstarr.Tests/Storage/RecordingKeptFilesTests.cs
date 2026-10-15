@@ -495,7 +495,7 @@ public sealed partial class RecordingKeptFilesTests : IAsyncLifetime
     private RecordingKeptFiles Service() => new(factory, artifacts, services.GetRequiredService<IServiceScopeFactory>(),
         placement, identities, new SystemPlatformClock());
     private KeptRecordingPublication Request() => new(recordingId, owner, jobId, artifact.Id,
-        "deezer", $"heart:{owner:N}:{recordingId:N}", new("Fixture", "Artist", Extension: ".flac"))
+        "deezer", $"keep:fixture:{owner:N}:{recordingId:N}", new("Fixture", "Artist", Extension: ".flac"))
     { AttemptNumber = 1 };
     private static UserRecord User(Guid id) => new()
     {

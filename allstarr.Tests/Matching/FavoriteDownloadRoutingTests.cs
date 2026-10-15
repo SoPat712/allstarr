@@ -126,14 +126,16 @@ public sealed class FavoriteDownloadRoutingTests : IAsyncLifetime
             loggerFactory.CreateLogger<ManagedTrackDownloadService>());
         var executor = new FavoriteDownloadActionExecutor(managedDownloads, _factory, new TestBackendLibraryAccess(_factory, "music"));
 
-        var result = await executor.ExecuteAsync(favoriteEvent, action, default);
+        var result = await executor.ExecuteAsync(favoriteEvent, action, 1, default);
         action.AttemptCount = 2;
-        var retried = await executor.ExecuteAsync(favoriteEvent, action, default);
+        var retried = await executor.ExecuteAsync(favoriteEvent, action, 1, default);
 
         Assert.False(result.Succeeded);
         Assert.False(retried.Succeeded);
         Assert.Equal("favorite_download_route_unavailable", result.ErrorCode);
         Assert.Equal("favorite_download_route_unavailable", retried.ErrorCode);
+        router.Verify(item => item.PlanAsync<IProviderDownloadCapability>(It.Is<ProviderRouteRequest>(
+            request => request.OperationId == "recording-keep")), Times.Exactly(2));
         var log = output.ToString();
         var entries = log.Split('\n', StringSplitOptions.RemoveEmptyEntries)
             .Select(line => JsonSerializer.Deserialize<JsonElement>(line).GetProperty("fields"))

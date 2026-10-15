@@ -45,6 +45,7 @@ public static class ManagedFileOwnershipModelConfiguration
             entity.ToTable("recording_kept_routes");
             entity.HasKey(item => item.CanonicalRecordingId);
             entity.Property(item => item.CanonicalRecordingId).ValueGeneratedNever();
+            entity.Property(item => item.DisplayMetadataJson).HasMaxLength(16000);
             entity.Property(item => item.Revision).IsConcurrencyToken();
             entity.HasOne<CanonicalRecordingRecord>().WithMany().HasForeignKey(item => item.CanonicalRecordingId)
                 .OnDelete(DeleteBehavior.Restrict);

@@ -4,6 +4,9 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Storage;
 using allstarr.Core.Protocols;
 using allstarr.Core.Matching;
+using allstarr.Core.ManagedFiles;
+using allstarr.Core.Operations;
+using allstarr.Core.Capabilities;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Favorites;
@@ -11,13 +14,18 @@ namespace allstarr.Core.Favorites;
 public sealed class FavoriteDownloadActionExecutor(
     ManagedTrackDownloadService managedDownloads,
     IDbContextFactory<AllstarrDbContext> factory,
-    IBackendLibraryAccessResolver libraryAccess) : IFavoriteActionExecutor
+    IBackendLibraryAccessResolver libraryAccess,
+    RecordingKeptFiles? keptFiles = null,
+    ITrackIdentityService? identities = null,
+    IProtocolProviderGateway? providerGateway = null,
+    IPlatformClock? clock = null) : IFavoriteActionExecutor
 {
     public string ActionType => "download";
 
     public async Task<FavoriteActionExecutionResult> ExecuteAsync(
         FavoriteEventRecord favoriteEvent,
         FavoriteActionRecord action,
+        int executionAttempt,
         CancellationToken cancellationToken)
     {
         var external = ParseExternalTrack(favoriteEvent.ItemId);
@@ -25,7 +33,14 @@ public sealed class FavoriteDownloadActionExecutor(
             return FavoriteActionExecutionResult.Failure(
                 "favorite_download_external_id_required",
                 "The favorite item has no provider track identity for download.");
-        if (await HasLocalMatchAsync(factory, libraryAccess, favoriteEvent, cancellationToken))
+        var knownRecording = identities == null ? null : await identities.ResolveRecordingAsync(
+            new ProviderActorContext(ProviderActorKind.User, favoriteEvent.OwnerUserId,
+                new(favoriteEvent.Protocol, favoriteEvent.BackendInstanceId, favoriteEvent.BackendPrincipalId)),
+            favoriteEvent.ItemId, cancellationToken);
+        if (await HasLocalMatchAsync(factory, libraryAccess, favoriteEvent, cancellationToken, knownRecording?.Id))
+            return FavoriteActionExecutionResult.Success();
+        if (keptFiles != null && await keptFiles.RetainFavoriteAsync(
+                new(favoriteEvent.OwnerUserId, favoriteEvent.JobId, executionAttempt), cancellationToken) != null)
             return FavoriteActionExecutionResult.Success();
 
         var result = await managedDownloads.ExecuteAsync(
@@ -36,11 +51,69 @@ public sealed class FavoriteDownloadActionExecutor(
                 external.Value.Id,
                 favoriteEvent.CorrelationId,
                 action.IdempotencyKey,
-                action.AttemptCount,
-                "favorite-download"),
+                executionAttempt,
+                "recording-keep"),
             cancellationToken);
-        return MapResult(result);
+        if (!result.Succeeded) return MapResult(result);
+        if (keptFiles == null || identities == null || providerGateway == null ||
+            result.Artifact is not { State: ProviderDownloadArtifactState.Verified } artifact)
+            return FavoriteActionExecutionResult.Failure("favorite_keep_unavailable",
+                "The download could not be attached to a kept recording.");
+        try
+        {
+            var protocol = new ProtocolExecutionContext(
+                favoriteEvent.Protocol == "jellyfin" ? ProtocolKind.Jellyfin : ProtocolKind.Subsonic,
+                favoriteEvent.BackendInstanceId, favoriteEvent.BackendPrincipalId,
+                new(favoriteEvent.OwnerUserId, favoriteEvent.Protocol, favoriteEvent.BackendInstanceId,
+                    favoriteEvent.BackendPrincipalId, "Listener", false), favoriteEvent.CorrelationId,
+                (clock?.UtcNow ?? DateTimeOffset.UtcNow).AddMinutes(5), cancellationToken);
+            var recording = await identities.ResolveRecordingAsync(protocol.RequireActor(),
+                favoriteEvent.ItemId, cancellationToken);
+            if (recording == null)
+                return FavoriteActionExecutionResult.Retry("favorite_keep_identity_unavailable",
+                    "The song's recording identity is not ready yet.");
+            await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            var state = await db.Set<FavoriteStateRecord>().AsNoTracking().SingleOrDefaultAsync(item =>
+                item.OwnerUserId == favoriteEvent.OwnerUserId && item.Protocol == favoriteEvent.Protocol &&
+                item.BackendInstanceId == favoriteEvent.BackendInstanceId && item.ItemId == favoriteEvent.ItemId &&
+                item.LastEventId == favoriteEvent.Id && item.IsFavorite, cancellationToken);
+            if (state == null) return Superseded();
+            var song = await providerGateway.GetSongAsync(protocol, external.Value.Provider, external.Value.Id);
+            if (song == null)
+                return FavoriteActionExecutionResult.Retry("favorite_keep_metadata_unavailable",
+                    "The song information is unavailable right now. The kept copy will be retried.");
+            var metadataRecording = await identities.ResolveRecordingAsync(protocol.RequireActor(),
+                song.CanonicalRecordingId?.ToString("D") ?? song.Id, cancellationToken);
+            if (metadataRecording?.Id != recording.Id)
+                return FavoriteActionExecutionResult.Failure("favorite_keep_metadata_mismatch",
+                    "The song information no longer matches this recording. Refresh the song and try again.");
+            var title = song.Title;
+            var artists = song.Artists is { Count: > 0 } ? song.Artists.ToArray() :
+                new[] { string.IsNullOrWhiteSpace(song.Artist) ? "Unknown artist" : song.Artist };
+            var duration = song.PreciseDuration?.TotalMilliseconds ?? song.Duration * 1000d;
+            var metadata = new KeptRecordingMetadata(title, artists, song.Album,
+                duration is { } milliseconds ? checked((long)Math.Round(milliseconds)) : null,
+                song.ExplicitContentLyrics);
+            await keptFiles.PublishAsync(new(recording.Id, favoriteEvent.OwnerUserId, favoriteEvent.JobId,
+                artifact.Id, artifact.ProviderId, $"heart:{state.Id:N}", new(title, artists[0], song.Album))
+            { AttemptNumber = executionAttempt, Metadata = metadata }, cancellationToken);
+            return FavoriteActionExecutionResult.Success();
+        }
+        catch (UnauthorizedAccessException) { return Superseded(); }
+        catch (IOException)
+        {
+            return FavoriteActionExecutionResult.Retry("favorite_keep_io_failed",
+                "The kept copy could not be saved yet. It will be retried.");
+        }
+        catch (ArgumentException)
+        {
+            return FavoriteActionExecutionResult.Failure("favorite_keep_metadata_invalid",
+                "The song's display information could not be saved.");
+        }
     }
+
+    private static FavoriteActionExecutionResult Superseded() => FavoriteActionExecutionResult.Failure(
+        "favorite_action_superseded", "A newer favorite request replaced this download.");
 
     private static FavoriteActionExecutionResult MapResult(ManagedTrackDownloadResult result)
     {
@@ -90,9 +163,12 @@ public sealed class FavoriteDownloadActionExecutor(
     }
 
     internal static async Task<bool> HasLocalMatchAsync(IDbContextFactory<AllstarrDbContext> factory,
-        IBackendLibraryAccessResolver libraryAccess, FavoriteEventRecord favoriteEvent, CancellationToken cancellationToken)
+        IBackendLibraryAccessResolver libraryAccess, FavoriteEventRecord favoriteEvent, CancellationToken cancellationToken,
+        Guid? canonicalRecordingId = null)
     {
         var external = ParseExternalTrack(favoriteEvent.ItemId);
+        if (canonicalRecordingId == null && external is { Provider: "allstarr" } &&
+            Guid.TryParse(external.Value.Id, out var canonicalId)) canonicalRecordingId = canonicalId;
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var access = await libraryAccess.ResolveUserAsync(favoriteEvent.OwnerUserId, cancellationToken);
         var candidates = await LibraryTrackAccess.Query(db, access).Where(item =>
@@ -100,6 +176,7 @@ public sealed class FavoriteDownloadActionExecutor(
             item.BackendInstanceId == favoriteEvent.BackendInstanceId).ToListAsync(cancellationToken);
         return external == null
             ? candidates.Any(item => item.BackendItemId == favoriteEvent.ItemId)
-            : candidates.Any(item => ProviderIdMatches(item.ProviderIdsJson, external.Value.Provider, external.Value.Id));
+            : candidates.Any(item => canonicalRecordingId != null && item.CanonicalRecordingId == canonicalRecordingId ||
+                ProviderIdMatches(item.ProviderIdsJson, external.Value.Provider, external.Value.Id));
     }
 }
