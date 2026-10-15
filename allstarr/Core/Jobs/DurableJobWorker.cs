@@ -20,6 +20,11 @@ public interface IDurableJobHandler
         CancellationToken cancellationToken);
 }
 
+public interface IDurableJobRecoveryHandler
+{
+    Task RecoverAsync(CancellationToken cancellationToken);
+}
+
 public sealed class DurableJobWorker : BackgroundService
 {
     private readonly DurableJobQueue _queue;
@@ -68,6 +73,8 @@ public sealed class DurableJobWorker : BackgroundService
                 if (!recoveryAttempted)
                 {
                     await _queue.RecoverInterruptedAsync(stoppingToken);
+                    foreach (var recovery in _handlers.Values.OfType<IDurableJobRecoveryHandler>())
+                        await recovery.RecoverAsync(stoppingToken);
                     recoveryAttempted = true;
                 }
 
