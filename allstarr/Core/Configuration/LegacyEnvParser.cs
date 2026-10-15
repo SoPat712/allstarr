@@ -90,6 +90,7 @@ public static class LegacyEnvParser
             ["DEEZER_MIN_REQUEST_INTERVAL_MS"] = "Deezer:MinRequestIntervalMs",
             ["QOBUZ_QUALITY"] = "Qobuz:Quality",
             ["QOBUZ_MIN_REQUEST_INTERVAL_MS"] = "Qobuz:MinRequestIntervalMs",
+            ["LYRICSPLUS_URL"] = "LyricsPlus:BaseUrl",
             ["APPLE_DOWNLOAD_URL"] = "AppleDownload:BaseUrl",
             ["APPLE_DOWNLOAD_QUALITY"] = "AppleDownload:Quality",
             ["APPLE_MUSIC_AIO_URL"] = "AppleDownload:BaseUrl",

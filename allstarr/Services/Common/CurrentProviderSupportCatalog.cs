@@ -63,8 +63,16 @@ public static class CurrentProviderSupportCatalog
             "A selected managed account cookie is resolved from its encrypted provider-account secret.",
             Capability("metadata", Unavailable, "No metadata capability is registered.", "none (unsupported)"),
             Capability("playlist", Supported, "Account-bound source paging, snapshots, artwork, provider-neutral matching, virtual reads, and manual/scheduled Jellyfin or Navidrome materialization.", "SpotifyPlaylistCapabilityAdapterTests; PlaylistOrchestrationIntegrationTests; VirtualPlaylistProtocolAdapterTests"),
-            Capability("lyrics", Supported, "Typed optional Spotify lyrics sidecar preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests"),
-            Capability("health", Partial, "Playlist and optional lyrics probes remain independently sampled, so one lane does not mask the other.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
+            Capability("lyrics", Supported, "Native account-bound Spotify lyrics reuse expiring tokens and preserve plain/timed content, source and stable revisions through shared Jellyfin/Subsonic routing.", "SpotifyPlaylistCapabilityAdapterTests; ProtocolLyricsResolverTests"),
+            Capability("health", Partial, "Playlist and native lyrics probes remain independently sampled, so one lane does not mask the other.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
+        Provider(
+            "lyricsplus", "lyricsplus", "LyricsPlus", "none",
+            "Public instances with fallback, or an exclusive optional self-hosted URL.",
+            Capability("lyrics", Supported, "Metadata lookup preserves plain content and millisecond line timing through the shared resolver.", "LyricsPlusCapabilityAdapterTests; ProtocolLyricsResolverTests")),
+        Provider(
+            "musixmatch", "musixmatch", "Musixmatch", "user",
+            "Desktop user token resolved from the selected encrypted Personal or Shared account.",
+            Capability("lyrics", Supported, "Identity-checked desktop macro responses prefer richsync, subtitles and plain lyrics with account-scoped caching.", "MusixmatchLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests")),
         Provider(
             "musicbrainz",
             "musicbrainz",

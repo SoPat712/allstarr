@@ -136,6 +136,20 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UpdateConfig_SavesAndProjectsOptionalLyricsPlusEndpoint()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
+        Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new ConfigUpdateRequest
+        { Updates = new Dictionary<string, string> { ["LYRICSPLUS_URL"] = "http://lyrics:3000/prefix" } }));
+        await using var db = await _factory.CreateDbContextAsync();
+        var stored = Assert.Single(await db.RuntimeSettings.ToListAsync());
+        Assert.Equal("LyricsPlus:BaseUrl", stored.Key);
+        var result = Assert.IsType<OkObjectResult>(await controller.GetConfig());
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        Assert.Equal("http://lyrics:3000/prefix", json.RootElement.GetProperty("lyricsPlus").GetProperty("baseUrl").GetString());
+    }
+
+    [Fact]
     public async Task UpdateConfig_SavesTheSharedAudioQualitySetting()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));

@@ -47,6 +47,8 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("listenbrainz", "scrobbling", CurrentProviderSupportCatalog.Supported);
         AssertState("listenbrainz", "recommendation", CurrentProviderSupportCatalog.Supported);
         AssertState("lrclib", "lyrics", CurrentProviderSupportCatalog.Supported);
+        AssertState("lyricsplus", "lyrics", CurrentProviderSupportCatalog.Supported);
+        AssertState("musixmatch", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("extensions", "download", CurrentProviderSupportCatalog.Supported);

@@ -129,6 +129,7 @@ public static class RuntimeSettingCatalog
         Text("Deezer:Quality", ["FLAC", "MP3_320", "MP3_128"], allowEmpty: true); Int("Deezer:MinRequestIntervalMs", 0, 60000);
         Text("Qobuz:Quality", ["FLAC", "FLAC_24_HIGH", "FLAC_24_LOW", "FLAC_16", "MP3_320"], allowEmpty: true);
         Int("Qobuz:MinRequestIntervalMs", 0, 60000);
+        items.Add(new("LyricsPlus:BaseUrl", RuntimeSettingValueType.String, "LyricsPlus:BaseUrl", AllowEmpty: true));
         items.Add(new("AppleDownload:BaseUrl", RuntimeSettingValueType.String, "AppleDownload:BaseUrl", AllowEmpty: true));
         items.Add(new("AppleDownload:Quality", RuntimeSettingValueType.String, "AppleDownload:Quality", AllowEmpty: true));
         items.AddRange(ProviderOrderPolicyCatalog.Definitions.Select(item => new RuntimeSettingDefinition(
@@ -565,6 +566,9 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (value.Length == 0 || value.Length > definition.MaximumLength ||
             definition.Choices is { Count: > 0 } && !definition.Choices.Contains(value))
             throw new ArgumentException($"Runtime setting '{definition.Key}' has an invalid string value.");
+        if (definition.Key == "LyricsPlus:BaseUrl" &&
+            !allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _))
+            throw new ArgumentException("The LyricsPlus URL must be an HTTP or HTTPS service URL without credentials, query or fragment.");
         if (definition.Key == "Library:PlaylistsDirectory" &&
             (value is "." or ".." || value.Contains('/') || value.Contains('\\') || value.Contains('\0')))
             throw new ArgumentException("Library:PlaylistsDirectory must be a single safe directory name.");
@@ -586,8 +590,7 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (raw.TrimStart().StartsWith('[')) parts = JsonSerializer.Deserialize<string[]>(raw, JsonOptions) ?? [];
         else parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var values = parts.Select(item => item.Trim().ToLowerInvariant())
-            .Where(item => item.Length > 0 &&
-                           (definition.Key != "Providers:LyricsOrder" || item != "lyricsplus"))
+            .Where(item => item.Length > 0)
             .ToArray();
         if (values.Length > 64 || values.Any(item => item.Length > 100 || !item.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')) ||
             values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != values.Length)

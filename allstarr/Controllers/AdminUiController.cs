@@ -1094,6 +1094,17 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
+            Id = "lyricsplus",
+            Name = "LyricsPlus",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public instances with fallback; optional self-hosted service"],
+            ConfigSchema = [Field("LYRICSPLUS_URL", "Optional self-hosted URL", "url", "lyricsPlus.baseUrl",
+                helpText: "Leave blank to use public instances with fallback. A configured service is used exclusively.")]
+        },
+        new()
+        {
             Id = "lrclib",
             Name = "LRCLib",
             Icon = "lyrics",

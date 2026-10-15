@@ -156,7 +156,19 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
 
         var lyrics = await service.ApplyBatchAsync(
             [new("Providers:LyricsOrder", "spotify,lyricsplus,apple-download,lrclib")], "legacy-import");
-        Assert.Equal("spotify,apple-download,lrclib", Assert.Single(lyrics.Settings).NormalizedValue);
+        Assert.Equal("spotify,lyricsplus,apple-download,lrclib", Assert.Single(lyrics.Settings).NormalizedValue);
+    }
+
+    [Fact]
+    public async Task LyricsPlusEndpointIsOptionalAndRejectsCredentialsOrQueryStrings()
+    {
+        var service = CreateService([]);
+        Assert.Equal(string.Empty, (await service.GetAsync("LyricsPlus:BaseUrl")).Value);
+        var saved = await service.ApplyBatchAsync([new("LyricsPlus:BaseUrl", "http://lyrics:3000/prefix")], "webui", _userId);
+        Assert.Equal("http://lyrics:3000/prefix", Assert.Single(saved.Settings).Value);
+        foreach (var value in new[] { "http://user:password@lyrics", "file:///tmp/lyrics", "https://lyrics.example/?secret=unsafe" })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+                [new("LyricsPlus:BaseUrl", value, 1)], "webui", _userId));
     }
 
     [Fact]

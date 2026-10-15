@@ -188,6 +188,7 @@ public class ConfigController : ControllerBase
                 trustedSubnets = _configuration.GetValue<string>("Admin:TrustedSubnets") ?? string.Empty,
                 redactSensitiveValues = _configuration.GetValue<bool>("Admin:RedactSensitiveValues", false)
             },
+            lyricsPlus = new { baseUrl = RuntimeString("LyricsPlus:BaseUrl", _configuration["LyricsPlus:BaseUrl"] ?? string.Empty) },
             spotifyApi = new
             {
                 enabled = RuntimeBool("SpotifyApi:Enabled", _spotifyApiSettings.Enabled),

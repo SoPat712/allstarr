@@ -3,6 +3,7 @@ using System.Text;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Lyrics;
 using allstarr.Services.Lyrics;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Providers.Lyrics;
 
@@ -78,6 +79,28 @@ public static class BuiltInLyricsCapabilityRegistration
 {
     public static IServiceCollection AddBuiltInLyricsCapabilities(this IServiceCollection services)
     {
+        services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new LyricsPlusCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(LyricsPlusCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            async token => (string)(await provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>()
+                .GetAsync("LyricsPlus:BaseUrl", token)).Value,
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => new ProviderRegistration(
+            new ProviderDescriptor("lyricsplus", "LyricsPlus", "Public lyrics with instance fallback or a self-hosted endpoint.",
+                ProviderOrigin.BuiltIn, "1", "lyricsplus-v2",
+                [new(ProviderCapabilityKind.Lyrics, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["fetchLyrics"])],
+                new ProviderPermissionDescriptor()), [provider.GetRequiredService<LyricsPlusCapabilityAdapter>()]));
+        services.AddHttpClient(MusixmatchLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new MusixmatchLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(MusixmatchLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
+            provider.GetRequiredService<IApplicationCache>()));
+        services.AddSingleton<ProviderRegistration>(provider => MusixmatchLyricsCapabilityAdapter.CreateRegistration(
+            provider.GetRequiredService<MusixmatchLyricsCapabilityAdapter>()));
         services.AddSingleton<ProviderRegistration>(provider => CreateRegistration(
             "lrclib",
             "LRCLib",

@@ -101,6 +101,21 @@ async function expectContainedMobileGeometry(page: Page) {
   expect(audit.navReserveErrors, "fixed mobile navigation must have matching content clearance").toEqual([]);
 }
 
+async function waitForSettledOptions(options: Locator, expectedText: string) {
+  await expect(options).toBeVisible();
+  await expect(options.getByRole("option").last()).toBeVisible();
+  let previousOptions = "";
+  await expect.poll(async () => {
+    const current = await options.getByRole("option").evaluateAll((items) => JSON.stringify(items.map((item) => {
+      const box = item.getBoundingClientRect();
+      return [item.textContent, box.x, box.y, box.width, box.height];
+    })));
+    const settled = current === previousOptions && current.includes(expectedText);
+    previousOptions = current;
+    return settled;
+  }, { message: "Options finish loading and positioning before selection" }).toBe(true);
+}
+
 const schema = {
   activeBackend: "Jellyfin",
   providers: [
@@ -1376,16 +1391,7 @@ for (const viewport of viewports) {
       const options = page.getByRole("listbox");
       await expect(options).toBeVisible();
       await expect(options.getByRole("option").last()).toBeVisible();
-      let previousOptions = "";
-      await expect.poll(async () => {
-        const current = await options.getByRole("option").evaluateAll((items) => JSON.stringify(items.map((item) => {
-          const box = item.getBoundingClientRect();
-          return [item.textContent, box.x, box.y, box.width, box.height];
-        })));
-        const settled = current === previousOptions && current.includes("ListenBrainz");
-        previousOptions = current;
-        return settled;
-      }, { message: "Source options finish loading and positioning before selection" }).toBe(true);
+      await waitForSettledOptions(options, "ListenBrainz");
       const listenBrainz = options.getByRole("option", { name: "ListenBrainz", exact: true });
       await expect(listenBrainz).toBeVisible();
       await expect(listenBrainz).toHaveAttribute("data-value", "listenbrainz");
@@ -5707,10 +5713,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const connect = page.getByRole("dialog", { name: "Connect a Source" });
     await expect(connect.getByRole("button", { name: "Account owner" })).toHaveText("Josh (you)");
     await connect.getByRole("button", { name: "Account owner" }).click();
+    await waitForSettledOptions(page.getByRole("listbox"), "Josh (you)");
     await page.getByRole("option", { name: "Allstarr", exact: true }).click();
+    await expect(connect.getByRole("button", { name: "Account owner" })).toHaveText("Allstarr");
     await expect(connect.getByText("Only that user's listening will use this account.")).toBeVisible();
     await connect.getByRole("button", { name: "Account owner" }).click();
+    await waitForSettledOptions(page.getByRole("listbox"), "Josh (you)");
     await page.getByRole("option", { name: "Josh (you)", exact: true }).click();
+    await expect(connect.getByRole("button", { name: "Account owner" })).toHaveText("Josh (you)");
     await connect.getByLabel("Media user token").fill("fixture-account-token");
     await connect.getByRole("button", { name: "Save and test" }).click();
     await expect(connect).toHaveCount(0);
@@ -5853,3 +5863,52 @@ test("Source selection and entered credentials survive a readiness refresh", asy
   await expect(dialog.getByRole("button", { name: "Source", exact: true })).toHaveText("ListenBrainz");
   await expect(dialog.getByLabel("ListenBrainz or Koito token")).toHaveValue("fixture-token");
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Lyrics services configure safely at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema, providers: [...schema.providers, {
+        id: "lyricsplus", name: "LyricsPlus", categories: ["lyrics"], connectionKind: "operator_managed",
+        description: "Public instances with fallback or your self-hosted service.",
+        configSchema: [{ key: "LYRICSPLUS_URL", label: "Optional self-hosted URL", type: "url", valuePath: "lyricsPlus.baseUrl",
+          helpText: "Leave blank to use public instances with fallback. A configured service is used exclusively." }],
+      }, {
+        id: "musixmatch", name: "Musixmatch", categories: ["lyrics"],
+        accountSettings: [{ key: "userToken", label: "Desktop user token", type: "password", sensitive: true, required: true,
+          helpText: "Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it." }],
+      }],
+    } }));
+    let endpoint = "";
+    let saved: Record<string, string> | undefined;
+    await page.route("**/api/admin/config", route => {
+      if (route.request().method() === "POST") {
+        saved = route.request().postDataJSON().updates;
+        endpoint = saved?.LYRICSPLUS_URL ?? "";
+        return route.fulfill({ json: { message: "Runtime configuration updated." } });
+      }
+      return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), lyricsPlus: { baseUrl: endpoint } } });
+    });
+    await page.goto("#/integrations/services/lyricsplus");
+    await expect(page.getByRole("heading", { name: "LyricsPlus", exact: true })).toBeVisible();
+    const url = page.locator('input[name="LYRICSPLUS_URL"]');
+    await expect(url).toHaveValue("");
+    await expect(page.getByText("Leave blank to use public instances with fallback. A configured service is used exclusively.")).toBeVisible();
+    await url.fill("http://lyrics:3000/prefix");
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect.poll(() => saved).toEqual({ LYRICSPLUS_URL: "http://lyrics:3000/prefix" });
+    await expectContainedMobileGeometry(page);
+    await page.goto("#/integrations/services/musixmatch");
+    await page.getByRole("button", { name: "Connect account", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+    const token = dialog.getByLabel("Desktop user token Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it.", { exact: true });
+    await expect(token).toHaveAttribute("type", "password");
+    await expect(dialog.getByText("Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it.")).toBeVisible();
+    await token.fill("synthetic-desktop-token");
+    await expectContainedMobileGeometry(page);
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+  });
+}
