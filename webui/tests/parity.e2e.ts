@@ -85,7 +85,7 @@ async function expectContainedMobileGeometry(page: Page) {
       if (undersizedTargets.length === 12) break;
     }
     const navReserveErrors: string[] = [];
-    const mobileNav = document.querySelector<HTMLElement>(".sidebar");
+    const mobileNav = document.querySelector<HTMLElement>(".mobile-navigation");
     const workspace = document.querySelector<HTMLElement>(".workspace");
     if (mobileNav && workspace && visible(mobileNav)) {
       const navHeight = mobileNav.getBoundingClientRect().height;
@@ -1808,7 +1808,7 @@ test("Subsonic Intelligence requests explicit scoped background access before in
   });
   expect((await indexRequest).postDataJSON()).toEqual({ credentialReferenceId, pageSize: 200 });
   await expect(dialog).toBeHidden();
-  await expect(page.locator(".library-setup-feedback")).toContainText("indexed and ready for Intelligence");
+  await expect(page.getByRole("status").filter({ hasText: "indexed and ready for Intelligence" })).toBeVisible();
   await expect(page.locator(".scope-value")).toContainText("Subsonic · Listener");
 });
 
@@ -2299,7 +2299,7 @@ test("failed extension packages can be retried without automatic activation", as
   await row.getByRole("button", { name: "Retry" }).click();
   await expect.poll(() => retryRequests).toBe(1);
   await expect(row.getByRole("button", { name: "Review permissions" })).toBeVisible();
-  await expect(page.locator(".action-feedback")).toContainText("Review permissions before enabling");
+  await expect(page.getByRole("status").filter({ hasText: "Review permissions before enabling" })).toBeVisible();
   expect(activationRequests).toBe(0);
 });
 
@@ -2408,7 +2408,7 @@ test("uninstall keeps refresh failures on the page after its dialog closes", asy
   await uninstall.getByRole("button", { name: "Uninstall" }).click();
   await expect.poll(() => uninstallRequests).toBe(1);
   await expect(uninstall).toBeHidden();
-  await expect(page.locator(".action-feedback")).toContainText("Some extension data is unavailable.");
+  await expect(page.locator(".degraded-banner").filter({ hasText: "Some extension data is unavailable." })).toBeVisible();
   await expect(page.locator('[role="alert"]')).toHaveCount(0);
 });
 
@@ -2948,7 +2948,7 @@ test(`Provider playlist update names both playlists and requires the checked con
     confirmationId: "a".repeat(64),
   });
   await expect(preview).toBeHidden();
-  await expect(details.getByText("Spotify update queued.")).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Spotify update queued." })).toBeVisible();
 });
 }
 
@@ -4013,33 +4013,27 @@ test("Integrations keep primary actions visible and report scoped degradation", 
   await expect(disabledStatus).toHaveCSS("border-top-style", "solid");
   await page.locator(".source-row").filter({ hasText: "Apple Music" }).getByRole("link").first().click();
   await expect(page.getByRole("button", { name: "Measure CTS" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Optional downloads" })).toBeVisible();
-  await expect(page.getByLabel("External provider URL")).toBeVisible();
-  await page.getByRole("button", { name: "Manage optional downloads" }).click();
-  const appleManager = page.getByRole("dialog", { name: "Apple Music – GAMDL" });
+  await expect(page.getByRole("region", { name: "Apple Music setup" })).toBeVisible();
+  await page.getByText("Advanced server settings", { exact: true }).click();
+  await expect(page.getByLabel("Optional playback gateway URL")).toBeVisible();
+  await page.getByRole("button", { name: "Sign in to Apple Music", exact: true }).click();
+  const appleManager = page.getByRole("dialog", { name: "Sign in to Apple Music" });
   await appleManager.getByLabel("Apple ID").fill("tester@example.test");
   await appleManager.getByLabel("Password").fill("password");
-  await appleManager.getByRole("button", { name: "Start login" }).click();
+  await appleManager.getByRole("button", { name: "Sign in", exact: true }).click();
   await appleManager.getByLabel("2FA code").fill("123456");
   await appleManager.getByRole("button", { name: "Submit 2FA" }).click();
-  await expect(appleManager.getByText("Apple Music – GAMDL is ready")).toBeVisible();
-  await expect(appleManager.locator('.source-metrics [data-slot="badge"]')).toHaveCount(3);
-  const appleProgress = await appleManager.locator(".apple-setup-progress li").evaluateAll((items) =>
-    items.map((item) => {
-      const rect = item.getBoundingClientRect();
-      return { contained: item.scrollWidth <= item.clientWidth, width: rect.width, x: rect.x };
-    }),
-  );
-  expect(appleProgress.every(({ contained }) => contained)).toBe(true);
-  expect(Math.max(...appleProgress.map(({ width }) => width)) - Math.min(...appleProgress.map(({ width }) => width))).toBeLessThanOrEqual(1);
-  expect(Math.max(...appleProgress.map(({ x }) => x)) - Math.min(...appleProgress.map(({ x }) => x))).toBeLessThanOrEqual(1);
-  expect(await appleManager.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth)).toBe(true);
-  const appleActionHeights = await appleManager.locator(":scope > .dialog-actions > *")
-    .evaluateAll((items) => items.map((item) => item.getBoundingClientRect().height));
-  expect(appleActionHeights.every((height) => height >= 44)).toBe(true);
-  await expect(appleManager.getByRole("link", { name: "Provider settings" }))
-    .toHaveAttribute("href", "#/integrations/services/apple-musickit");
-  await page.keyboard.press("Escape");
+  await expect(appleManager).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: "Signed in to Apple Music" })).toBeVisible();
+  const appleChecklist = page.locator(".apple-checklist li");
+  const appleProgress = await appleChecklist.evaluateAll(items => items.map(item => {
+    const rect = item.getBoundingClientRect(); return { contained: item.scrollWidth <= item.clientWidth, width: rect.width, x: rect.x };
+  }));
+  expect(appleProgress).toHaveLength(3);
+  expect(appleProgress.every(item => item.contained)).toBe(true);
+  expect(Math.max(...appleProgress.map(item => item.width)) - Math.min(...appleProgress.map(item => item.width))).toBeLessThanOrEqual(1);
+  expect(Math.max(...appleProgress.map(item => item.x)) - Math.min(...appleProgress.map(item => item.x))).toBeLessThanOrEqual(1);
+  await expectContainedMobileGeometry(page);
   await page.goto("#/integrations/accounts");
   await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
   const accountDetails = page.locator(".service-account.focused");
@@ -4158,7 +4152,7 @@ test("Maintenance creates verified backups, lists downloads, and reports failure
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   failCreate = true;
   await card.getByRole("button", { name: "Create verified backup" }).click();
-  await expect(page.getByRole("status").filter({ hasText: "Backup creation failed." })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "Backup creation failed." })).toBeVisible();
 });
 
 test("Maintenance stages a backup restore only after keyboard confirmation", async ({ page }) => {
@@ -4375,7 +4369,7 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
   await card.getByRole("button", { name: "Preview import" }).click();
   await card.getByRole("checkbox").check();
   await card.getByRole("button", { name: "Import preview" }).click();
-  await expect(card.getByText("Legacy settings imported.")).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Legacy settings imported." })).toBeVisible();
 });
 
 test("Maintenance reports cache budgets and confirms category purge", async ({ page }) => {
@@ -4907,7 +4901,7 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 1280, height: 800 
     await expect(filter).toBeFocused();
     expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
     releaseRefresh();
-    await expect(dialog.getByText("Playlist update queued.")).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "Playlist update queued." })).toBeVisible();
     await expect(scroll).toHaveAttribute("data-instance", "reading-position");
     expect(Math.abs(await scroll.evaluate((element) => element.scrollTop) - before)).toBeLessThanOrEqual(1);
 
@@ -4961,7 +4955,7 @@ test("Playlist operations show durable progress and confirm cancellation", async
   await dialog.getByRole("button", { name: "Actions" }).click();
   await page.getByRole("menuitem", { name: "Update playlist now" }).click();
   await update;
-  await expect(dialog.getByText("Playlist update queued.")).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "Playlist update queued." })).toBeVisible();
   await dialog.getByRole("button", { name: /Operation details:/ }).click();
   const operation = page.locator(".operation-popover");
   await expect(operation.getByText("Matching Test song", { exact: true }).first()).toBeVisible();
@@ -5649,4 +5643,193 @@ test("Missing-song export failures keep playlist details open for retry", async 
   expect((await downloaded).suggestedFilename()).toBe("missing-songs.csv");
   await expect(dialog.getByRole("alert")).toHaveCount(0);
   expect(requests).toBe(2);
+});
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Apple setup checklist and owner at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.route("**/api/admin/auth/me", route => route.fulfill({ json: {
+      authenticated: true, backend: "Jellyfin", user: { id: "backend-admin", allstarrUserId: "admin-owner", name: "Josh", isAdministrator: true },
+    } }));
+    const base = (responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] }).accounts[0];
+    let connected = false;
+    let staged = false;
+    let needsAttention = false;
+    let savedOwner: string | undefined;
+    let state = "logged_out";
+    await page.route("**/api/admin/apple-download/status", route => route.fulfill({ json: {
+      staged, daemon_running: true, wrapper_healthy: true, logged_in: state === "authenticated", login_state: state,
+      account: { state, maskedIdentifier: "j***@example.test" }, api_version: "2",
+    } }));
+    await page.route("**/api/admin/config", route => route.fulfill({ json: {
+      ...(responses["/api/admin/config"] as object), appleDownload: { baseUrl: "http://bundled-gateway.test", endpointManagedByDeployment: true },
+    } }));
+    await page.route("**/api/admin/providers/test/apple-musickit?**", route => route.fulfill({ json: { success: true, healthy: true } }));
+    await page.route("**/api/admin/provider-accounts", route => {
+      if (route.request().method() === "POST") {
+        savedOwner = route.request().postDataJSON().ownerUserId;
+        return route.fulfill({ json: { ...base, providerId: "apple-musickit", ownerUserId: savedOwner } });
+      }
+      return route.fulfill({ json: {
+      audienceUsers: [{ id: "other-owner", displayName: "Allstarr" }, { id: "admin-owner", displayName: "Josh" }],
+      accounts: connected ? [{ ...base, providerId: "apple-musickit", ownerUserId: "other-owner", ownerDisplayName: "Allstarr",
+        creatorDisplayName: "Josh", createdByUserId: "admin-owner", configuration: { storefront: "us" }, displayName: "Apple account", secret: { configured: !needsAttention, revoked: needsAttention } }] : [],
+    } });
+    });
+    await page.goto("#/integrations/services/apple-musickit");
+    const checklist = page.getByRole("region", { name: "Apple Music setup" });
+    await expect(checklist.getByText("Not connected", { exact: true })).toBeVisible();
+    await expect(checklist.getByText("Not set up", { exact: true })).toBeVisible();
+    await expect(checklist.getByText("Use the same Apple account for steps 1 and 2.")).toBeVisible();
+    await page.getByRole("button", { name: "Connect account", exact: true }).click();
+    const connect = page.getByRole("dialog", { name: "Connect a Source" });
+    await expect(connect.getByRole("button", { name: "Account owner" })).toHaveText("Josh (you)");
+    await connect.getByRole("button", { name: "Account owner" }).click();
+    await page.getByRole("option", { name: "Allstarr", exact: true }).click();
+    await expect(connect.getByText("Only that user's listening will use this account.")).toBeVisible();
+    await connect.getByRole("button", { name: "Account owner" }).click();
+    await page.getByRole("option", { name: "Josh (you)", exact: true }).click();
+    await connect.getByLabel("Media user token").fill("fixture-account-token");
+    await connect.getByRole("button", { name: "Save and test" }).click();
+    await expect(connect).toHaveCount(0);
+    expect(savedOwner).toBe("admin-owner");
+    await expect(page.getByRole("button", { name: "Connect account", exact: true })).toBeFocused();
+    connected = true; staged = true;
+    for (const [loginState, label] of [["logged_out", "Signed out"], ["awaiting_2fa", "Waiting for 2FA code"], ["authenticated", "Signed in"], ["account_mismatch", "Use the same Apple account"]]) {
+      state = loginState; await page.reload();
+      await expect(checklist).toContainText(label);
+      await expect(checklist).toContainText("Connected (us)");
+    }
+    needsAttention = true; state = "authenticated"; await page.reload();
+    await expect(checklist.getByText("Needs attention", { exact: true })).toBeVisible();
+    await expect(checklist).toContainText("j***@example.test");
+    await page.getByText("Advanced server settings", { exact: true }).click();
+    await expect(page.locator(".source-configuration-form output")).toHaveText("http://bundled-gateway.test");
+    await expect(page.locator('input[name="APPLE_DOWNLOAD_URL"]')).toHaveCount(0);
+    await expect(page.getByText("Configured by deployment.", { exact: true })).toBeVisible();
+    await expect(page.locator(".service-account-title")).toContainText("Personal · belongs to Allstarr (added by Josh)");
+    await expectContainedMobileGeometry(page);
+    const gaps = await page.locator(".service-page").evaluate(element => {
+      const cards = [...element.children].filter(item => item.classList.contains("settings-card"));
+      return cards.slice(1).map((card, index) => card.getBoundingClientRect().top - cards[index].getBoundingClientRect().bottom);
+    });
+    expect(gaps.length).toBeGreaterThan(0);
+    expect(gaps.every(gap => Math.abs(gap - 20) <= 1)).toBe(true);
+    await page.screenshot({ path: `/tmp/allstarr-apple-checklist-${width}-${theme}.png`, fullPage: true });
+  });
+
+  test(`Apple sign-in waits for setup and closes with toast at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    let release!: () => void;
+    const delayed = { promise: new Promise<void>(resolve => { release = resolve; }), resolve: () => release() };
+    let signedIn = false;
+    await page.route("**/api/admin/apple-download/status", async route => {
+      await delayed.promise;
+      return route.fulfill({ json: { staged: true, daemon_running: true, wrapper_healthy: true,
+        logged_in: signedIn, login_state: signedIn ? "authenticated" : "logged_out" } });
+    });
+    await page.route("**/api/admin/apple-download/login", route => {
+      signedIn = true; return route.fulfill({ json: { logged_in: true, login_state: "authenticated" } });
+    });
+    await page.goto("#/integrations/services/apple-musickit");
+    await page.getByRole("button", { name: "Sign in to Apple Music", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Sign in to Apple Music" });
+    await expect(dialog.getByText("Checking setup…", { exact: true })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Upload package" })).toHaveCount(0);
+    delayed.resolve();
+    await dialog.getByLabel("Apple ID", { exact: true }).fill("fixture@example.test");
+    await dialog.getByLabel("Password", { exact: true }).fill("fixture-password");
+    await expect(dialog.locator("details")).not.toHaveAttribute("open", "");
+    await dialog.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("status").filter({ hasText: "Signed in to Apple Music" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Apple Music setup" })).toContainText("Signed in");
+    await expect(page.getByRole("button", { name: "Manage Apple Music sign-in", exact: true })).toBeFocused();
+    await expectContainedMobileGeometry(page);
+  });
+
+  test(`Shared toasts stack, pause and stay above navigation at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await page.emulateMedia({ reducedMotion: "reduce" }); await mockApi(page);
+    await page.route("**/api/admin/providers/test/lumen-audio?**", route => route.fulfill({ json: { success: true, healthy: true } }));
+    await page.clock.install();
+    await page.goto("#/integrations/services/lumen-audio");
+    const action = page.locator(".service-account").getByRole("button", { name: "Test connection", exact: true });
+    const region = page.getByRole("region", { name: "Notifications" });
+    for (let index = 0; index < 4; index++) {
+      await action.click(); await expect(action).toBeEnabled();
+      await expect(region.locator(".toast")).toHaveCount(Math.min(index + 1, 3));
+    }
+    const item = region.locator(".toast").last();
+    await expect(item).toHaveAttribute("role", "status"); await expect(item).toHaveAttribute("aria-live", "polite");
+    await expect(item).toHaveCSS("animation-duration", "0s");
+    const box = await region.boundingBox(); expect(box).not.toBeNull();
+    if (width === 390) {
+      const nav = await page.locator(".mobile-navigation").boundingBox();
+      expect(box!.x).toBeCloseTo(16, 0); expect(box!.width).toBeCloseTo(width - 32, 0);
+      expect(box!.y + box!.height).toBeLessThanOrEqual(nav!.y - 8);
+    } else {
+      expect(width - box!.x - box!.width).toBeCloseTo(24, 0); expect(844 - box!.y - box!.height).toBeCloseTo(24, 0);
+    }
+    await item.hover(); await page.clock.runFor(6000); await expect(item).toBeVisible();
+    await item.getByRole("button", { name: "Dismiss notification" }).focus(); await page.mouse.move(0, 0);
+    await page.clock.runFor(6000); await expect(item).toBeVisible();
+    await page.screenshot({ path: `/tmp/allstarr-toasts-${width}-${theme}.png` });
+    await page.keyboard.press("Enter"); await expect(region.locator(".toast")).toHaveCount(0);
+  });
+}
+
+test("Playback diagnostic errors stay readable and persistent", async ({ page }) => {
+  await mockApi(page); await page.clock.install();
+  await page.route("**/api/admin/provider-diagnostics/deep-stream", route => route.fulfill({ status: 422, json: {
+    stage: "first-byte", failureCode: "endpoint-unreachable", error: "raw-private-provider-payload",
+  } }));
+  await page.goto("#/integrations/services/lumen-audio");
+  await page.getByRole("button", { name: "Measure CTS", exact: true }).click();
+  const notification = page.getByRole("alert").filter({ hasText: "audio" });
+  await expect(notification).toBeVisible(); await expect(page.getByText("raw-private-provider-payload")).toHaveCount(0);
+  await page.clock.runFor(10000); await expect(notification).toBeVisible();
+  await notification.getByRole("button", { name: "Dismiss notification" }).click(); await expect(notification).toHaveCount(0);
+});
+
+test("Source selection and entered credentials survive a readiness refresh", async ({ page }) => {
+  await mockApi(page);
+  let connectedProvider = "lumen-audio";
+  const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };
+  await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: {
+    ...fixture, accounts: [{ ...fixture.accounts[0], providerId: connectedProvider }],
+  } }));
+  await page.addInitScript(() => {
+    let revision = 1;
+    const listeners = new Map<string, ((event: MessageEvent) => void)[]>();
+    class FixtureEventSource {
+      addEventListener(name: string, listener: (event: MessageEvent) => void) { listeners.set(name, [...(listeners.get(name) ?? []), listener]); }
+      removeEventListener() {} close() {}
+    }
+    Object.defineProperty(window, "EventSource", { value: FixtureEventSource });
+    window.__emitAllstarrUpdate = () => {
+      for (const listener of listeners.get("update") ?? []) listener(new MessageEvent("update", { data: JSON.stringify({ resource: "provider-accounts", revision: ++revision }) }));
+    };
+  });
+  await page.goto("#/integrations/services");
+  await page.getByRole("button", { name: "Connect Source" }).click();
+  const dialog = page.getByRole("dialog", { name: "Connect a Source" });
+  await dialog.getByRole("button", { name: "Source", exact: true }).click();
+  const optionsBefore = await page.getByRole("option").allTextContents();
+  connectedProvider = "listenbrainz";
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+  await expect(page.locator(".source-row").filter({ hasText: "ListenBrainz" }).locator(".source-row-timing")).toContainText("1 of 1 account on");
+  expect(await page.getByRole("option").allTextContents()).toEqual(optionsBefore);
+  await page.getByRole("option", { name: "ListenBrainz", exact: true }).click();
+  await dialog.getByLabel("ListenBrainz or Koito token").fill("fixture-token");
+  const refreshed = page.waitForResponse(response => response.url().endsWith("/api/admin/ui/schema"));
+  await page.evaluate(() => window.__emitAllstarrUpdate?.());
+  await refreshed;
+  await expect(dialog.getByRole("button", { name: "Source", exact: true })).toHaveText("ListenBrainz");
+  await expect(dialog.getByLabel("ListenBrainz or Koito token")).toHaveValue("fixture-token");
 });

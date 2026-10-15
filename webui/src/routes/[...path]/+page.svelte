@@ -5,6 +5,7 @@
   import { adminUrl } from "$lib/admin-url";
   import { adminOidc, type OidcStatus } from "$lib/admin-oidc";
   import { liveUpdates } from "$lib/live-updates.svelte";
+  import { toast } from "$lib/toasts";
   import RouteError from "$lib/components/RouteError.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
   import UiIcon from "$lib/components/UiIcon.svelte";
@@ -66,6 +67,8 @@
   let loadedViewKey = $state("");
   let viewError = $state("");
   let viewRequest = 0;
+
+  $effect(() => { if (!session?.authenticated) toast.clear(); });
 
   const administrator = $derived(session?.user?.isAdministrator === true);
   // Intelligence remains available only in the explicit development composition.
@@ -136,6 +139,7 @@
                 : route.startsWith("/integrations")
                   ? {
                       section: route.split("/")[2] || "services",
+                      currentUserId: session?.user?.allstarrUserId ?? "",
                       administrator,
                       initialSource: routeQuery.get("source") ?? "",
                       initialSection: routeQuery.get("section") ?? "data",

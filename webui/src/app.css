@@ -1285,13 +1285,6 @@
     padding: 0.9rem 1rem;
   }
 
-  .playlist-feedback {
-    margin: 0;
-    border-bottom: 1px solid var(--color-edge);
-    color: var(--color-ink-muted);
-    padding: 0.8rem var(--surface-gutter);
-    font-size: 0.78rem;
-  }
 
   .playlist-toolbar h2,
   .playlist-hero h2,
@@ -1604,7 +1597,6 @@
   .playlist-detail-dialog > .playlist-view-switcher,
   .playlist-detail-dialog > .playlist-detail-coverage,
   .playlist-detail-dialog > .playlist-meta-strip,
-  .playlist-detail-dialog > .action-feedback,
   .playlist-detail-dialog > .track-toolbar {
     flex: none;
   }
@@ -1774,15 +1766,6 @@
     font-size: var(--text-xs);
   }
 
-  .action-feedback {
-    margin: 0;
-    border: 1px solid var(--color-edge);
-    border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--color-signal) 7%, transparent);
-    color: var(--color-signal-text);
-    padding: 0.55rem 1rem;
-    font-size: var(--text-xs);
-  }
 
   .operation-trigger {
     display: flex;
@@ -4253,7 +4236,6 @@
   }
 
   .source-configuration-form {
-    margin-top: var(--space-4);
     border: 1px solid var(--color-edge);
     border-radius: var(--radius-md);
   }
@@ -7078,8 +7060,7 @@
     gap: var(--space-6);
   }
 
-  .settings-content > .degraded-banner,
-  .settings-content > .action-feedback {
+  .settings-content > .degraded-banner {
     margin: 0;
   }
 
@@ -8465,9 +8446,6 @@
   }
 
   .routing-view > .degraded-banner,
-  .routing-view > .action-feedback {
-    margin: 0;
-  }
 
   .routing-quality {
     grid-template-columns: minmax(0, 1fr) !important;
@@ -8927,14 +8905,7 @@
     font-weight: 600;
   }
 
-  .extension-attention > .action-feedback,
-  .sources-panel > .action-feedback {
-    margin: 0;
-  }
 
-  .service-extension-feedback {
-    margin: 0 var(--space-6) var(--space-3);
-  }
 
   .service-extension .extension-package {
     border-top: 1px solid var(--color-edge);
@@ -9599,4 +9570,25 @@
     justify-self: start;
     margin-inline: 0;
   }
+}
+
+@layer components {
+  .settings-card > header:only-child { padding-bottom: var(--space-5); }
+  .inline-status { color: var(--color-ink-muted); font-size: var(--text-sm); margin: var(--space-3) 0; }
+}
+
+@layer components {
+  .apple-checklist ol { list-style: none; margin: 0; padding: 0 var(--space-6) var(--space-5); }
+  .apple-checklist li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-4) 0; border-top: 1px solid var(--color-edge); }
+  .apple-checklist li > div { min-width: 0; }
+  .apple-checklist li p { margin: var(--space-2) 0; color: var(--color-ink-muted); font-size: var(--text-sm); }
+  .apple-checklist li > [data-slot=button] { flex: none; }
+  .source-advanced-settings > summary { padding: var(--space-5) var(--space-6); cursor: pointer; min-height: 44px; font-weight: 600; }
+  .apple-advanced > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; font-weight: 600; }
+  .apple-advanced { border-top: 1px solid var(--color-edge); padding-top: var(--space-2); }
+  @media (max-width: 649px) { .apple-checklist li { align-items: stretch; flex-direction: column; } }
+}
+
+@layer components {
+  .service-account-actions > [data-slot=button], .service-check > [data-slot=button] { min-height: var(--control-md); }
 }

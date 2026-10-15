@@ -4,6 +4,7 @@
   let {
     section = "services",
     administrator,
+    currentUserId = "",
     initialSource = "",
     initialSection = "data",
     initialConnect = false,
@@ -13,6 +14,7 @@
   }: {
     section?: string;
     administrator: boolean;
+    currentUserId?: string;
     initialSource?: string;
     initialSection?: string;
     initialConnect?: boolean;
@@ -27,6 +29,7 @@
   <SourcesView
     mode={section === "accounts" ? "accounts" : "services"}
     {administrator}
+    {currentUserId}
     {initialSource}
     {initialSection}
     {initialConnect}

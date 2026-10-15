@@ -239,7 +239,8 @@ def create_app(
         except ProcessFailure as exc:
             shutil.rmtree(root, ignore_errors=True)
             status = 504 if exc.code == "process_timeout" else 403 if exc.code == "account_mismatch" else 502
-            raise HTTPException(status_code=status, detail=exc.code) from None
+            raise HTTPException(status_code=status, detail=exc.code,
+                headers={"X-Allstarr-Failure-Code": "account_mismatch"} if exc.code == "account_mismatch" else None) from None
         except Exception:
             shutil.rmtree(root, ignore_errors=True)
             raise HTTPException(status_code=502, detail="download_failed") from None

@@ -409,8 +409,12 @@ public class AppleMusicController : ControllerBase
             ["logged_in"] = string.Equals(state, "authenticated", StringComparison.Ordinal)
         };
 
-        CopyString(source, account, "username");
-        CopyString(source, account, "apple_id");
+        var identifier = GetString(source, "apple_id") ?? GetString(source, "username");
+        if (!string.IsNullOrWhiteSpace(identifier) && identifier.Length <= 320 && !identifier.Any(char.IsControl))
+        {
+            var at = identifier.IndexOf('@');
+            account["maskedIdentifier"] = identifier[..1] + "***" + (at > 0 ? identifier[at..] : string.Empty);
+        }
         CopyString(source, account, "storefront");
         return account;
     }

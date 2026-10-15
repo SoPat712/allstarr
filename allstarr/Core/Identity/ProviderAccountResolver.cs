@@ -9,7 +9,8 @@ public sealed record ProviderAccountResolutionRequest(
     string Capability,
     Guid? RequestedAccountId = null,
     IReadOnlyCollection<ProviderAccountScope>? AllowedScopes = null,
-    bool AllowSharedAccount = true);
+    bool AllowSharedAccount = true,
+    bool AllowManagedDiagnosticAccount = false);
 
 public sealed record ResolvedProviderAccount(ProviderAccountRecord Account, string Reason);
 
@@ -35,9 +36,14 @@ public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext>
         var allowPersonal = request.AllowedScopes == null || request.AllowedScopes.Contains(ProviderAccountScope.Personal);
         var allowShared = request.AllowSharedAccount &&
             (request.AllowedScopes == null || request.AllowedScopes.Contains(ProviderAccountScope.Shared));
+        var allowManagedDiagnosticAccount = request.AllowManagedDiagnosticAccount &&
+            request.Principal.IsAdministrator &&
+            request.RequestedAccountId.HasValue &&
+            allowPersonal;
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .Where(item => item.Enabled && item.ProviderId == providerId &&
                 (allowPersonal && item.OwnerUserId == request.Principal.UserId ||
+                 allowManagedDiagnosticAccount && item.Id == request.RequestedAccountId && item.OwnerUserId.HasValue ||
                  allowShared && item.OwnerUserId == null))
             .Where(item => !item.SecretReferenceId.HasValue || context.SecretReferences.Any(secret =>
                 secret.Id == item.SecretReferenceId && secret.RevokedAt == null))

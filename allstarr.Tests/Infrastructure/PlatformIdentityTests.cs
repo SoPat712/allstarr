@@ -275,6 +275,54 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
             new(b with { IsAdministrator = true }, "deezer", "metadata", personal.Id)));
     }
 
+    [Fact]
+    public async Task ManagedDiagnosticAccount_RequiresAdministratorAndExplicitSelection()
+    {
+        var identities = Resolver(Options());
+        var administrator = (await identities.ResolveAsync(new BackendIdentityDescriptor(
+            "Jellyfin", "diagnostic-admin", IsAdministrator: true)))!;
+        var owner = (await identities.ResolveAsync(new BackendIdentityDescriptor(
+            "Jellyfin", "diagnostic-owner")))!;
+        var personal = Account("qobuz", ProviderAccountScope.Personal, owner.UserId);
+        await AddAccounts(personal);
+
+        var routes = new DurableProviderRouteAccountResolver(
+            new ProviderAccountResolver(_factory),
+            new AccountHealth(personal.Id, ProviderRouteHealthState.Healthy, false));
+        var adminActor = new ProviderActorContext(
+            ProviderActorKind.Administrator,
+            administrator.UserId,
+            new ProviderBackendPrincipal("jellyfin", "fixture", "diagnostic-admin"));
+        var listenerActor = new ProviderActorContext(
+            ProviderActorKind.User,
+            administrator.UserId,
+            new ProviderBackendPrincipal("jellyfin", "fixture", "diagnostic-admin"));
+
+        var defaultAdminRequest = new ProviderRouteAccountRequest(
+            adminActor, "qobuz", ProviderCapabilityKind.Streaming, personal.Id);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => routes.ResolveAsync(defaultAdminRequest));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => routes.ResolveAsync(
+            new ProviderRouteAccountRequest(
+                listenerActor, "qobuz", ProviderCapabilityKind.Streaming, personal.Id)));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => routes.ResolveAsync(
+            defaultAdminRequest with { AllowManagedDiagnosticAccount = true, Actor = listenerActor }));
+
+        var automatic = await routes.ResolveAsync(defaultAdminRequest with
+        {
+            RequestedAccountId = null,
+            AllowManagedDiagnosticAccount = true
+        });
+        Assert.Null(automatic);
+
+        var resolved = await routes.ResolveAsync(defaultAdminRequest with
+        {
+            AllowManagedDiagnosticAccount = true
+        });
+        Assert.NotNull(resolved);
+        Assert.Equal(personal.Id, resolved.Account.AccountId);
+        Assert.Equal(owner.UserId, resolved.Account.OwnerUserId);
+    }
+
     private BackendIdentityResolver Resolver(IdentityOptions options) => new(
         _factory,
         _state,

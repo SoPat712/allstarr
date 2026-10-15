@@ -246,6 +246,130 @@ public sealed class ProviderCtsDiagnosticRunnerTests
     }
 
     [Fact]
+    public async Task Measure_ManagedDiagnosticAccountScopesExecutionToOwnerAndAuditsAdministrator()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var administratorId = Guid.CreateVersion7();
+        var ownerId = Guid.CreateVersion7();
+        var accountId = Guid.CreateVersion7();
+        var now = DateTimeOffset.UtcNow;
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            db.Users.AddRange(
+                new UserRecord
+                {
+                    Id = administratorId,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "fixture",
+                    BackendPrincipalId = "diagnostic-admin",
+                    DisplayName = "Diagnostic administrator",
+                    IsAdmin = true,
+                    Enabled = true,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    LastSeenAt = now
+                },
+                new UserRecord
+                {
+                    Id = ownerId,
+                    BackendType = "jellyfin",
+                    BackendInstanceId = "fixture",
+                    BackendPrincipalId = "account-owner",
+                    DisplayName = "Account owner",
+                    Enabled = true,
+                    CreatedAt = now,
+                    UpdatedAt = now,
+                    LastSeenAt = now
+                });
+            db.ProviderAccounts.Add(new ProviderAccountRecord
+            {
+                Id = accountId,
+                OwnerUserId = ownerId,
+                ProviderId = "qobuz",
+                DisplayName = "Owner Qobuz",
+                Enabled = true,
+                Revision = 4,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var lease = new ProviderStreamLease(
+            "fixture-lease",
+            new Uri("https://media.example.test/diagnostic"),
+            DateTimeOffset.UtcNow.AddMinutes(1),
+            supportsByteRanges: false,
+            supportsSeeking: false,
+            new ProviderMediaFormat("audio/mpeg", "mp3", "mp3"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3, 4])
+            }));
+        ProviderExecutionContext? observedExecution = null;
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => observedExecution = context)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        IProviderStreamingCapability? registered = streaming.Object;
+        var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
+        providers.Setup(item => item.TryGetCapability<IProviderStreamingCapability>(
+                "qobuz", ProviderCapabilityKind.Streaming, out registered))
+            .Returns(true);
+        providers.Setup(item => item.GetRequired("qobuz"))
+            .Returns(Descriptor("qobuz", ProviderAccountRequirement.Required));
+        var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
+        observer.Setup(item => item.Observe(
+            It.IsAny<ProviderExecutionContext>(), ProviderCapabilityKind.Streaming, null,
+            It.IsAny<TimeSpan>()));
+        var accounts = new DurableProviderRouteAccountResolver(
+            new allstarr.Core.Identity.ProviderAccountResolver(new Factory(database.Options)),
+            Mock.Of<IProviderRouteHealthSource>());
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(
+            providers.Object,
+            accounts,
+            selector,
+            observer.Object,
+            new Factory(database.Options));
+        var actor = new ProviderActorContext(
+            ProviderActorKind.Administrator,
+            administratorId,
+            new ProviderBackendPrincipal("jellyfin", "fixture", "diagnostic-admin"));
+
+        var result = await runner.MeasureAsync(
+            actor,
+            "qobuz",
+            accountId,
+            ProviderAudioQuality.Lossless,
+            "managed-diagnostic-correlation",
+            "managed-diagnostic-track");
+
+        Assert.True(result.Succeeded);
+        Assert.NotNull(observedExecution);
+        Assert.Equal(ProviderActorKind.Administrator, observedExecution.Actor.Kind);
+        Assert.Equal(administratorId, observedExecution.Actor.UserId);
+        Assert.Equal(ownerId, observedExecution.Actor.ActingForUserId);
+        Assert.Equal(ownerId, observedExecution.Actor.EffectiveUserId);
+        Assert.Equal(ownerId, observedExecution.Account!.OwnerUserId);
+        Assert.Equal(4, observedExecution.Account.Revision);
+
+        await using var verification = new AllstarrDbContext(database.Options);
+        var audit = Assert.Single(await verification.AuditEvents.AsNoTracking()
+            .Where(item => item.Category == "provider-cts")
+            .ToListAsync());
+        Assert.Equal(administratorId, audit.ActorUserId);
+        Assert.Equal("managed-diagnostic-correlation", audit.CorrelationId);
+        Assert.Equal("succeeded", audit.Outcome);
+        Assert.Contains(accountId.ToString(), audit.DetailsJson, StringComparison.OrdinalIgnoreCase);
+        streaming.VerifyAll();
+        providers.VerifyAll();
+        observer.VerifyAll();
+    }
+
+    [Fact]
     public async Task Measure_SearchesTheProviderWhenNoKnownTrackIsStored()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
@@ -326,6 +450,32 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             result.Error);
         metadata.Verify(item => item.SearchTracksAsync(
             It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(3));
+    }
+
+    [Theory]
+    [InlineData("account_mismatch", "account_mismatch")]
+    [InlineData("raw-private-provider-payload", "http-403")]
+    public async Task MeasurePreservesOnlyRecognizedSafeFailureCodes(string code, string expected)
+    {
+        var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry, (_, _) =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("raw-private-provider-payload") };
+                response.Headers.Add("X-Allstarr-Failure-Code", code);
+                return Task.FromResult(response);
+            });
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), selector, Mock.Of<IProviderOutcomeObserver>());
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "failure-code", "track");
+        Assert.False(result.Succeeded);
+        Assert.Equal("first-byte", result.Stage);
+        Assert.Equal(expected, result.Error);
+        Assert.DoesNotContain("raw-private", JsonSerializer.Serialize(result), StringComparison.Ordinal);
     }
 
     private static ProviderActorContext Actor() => new(

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
   import { Skeleton } from "$lib/components/ui/skeleton";
@@ -100,7 +101,6 @@
   let error = $state("");
   let degraded = $state("");
   const playbackProviders = $derived(playableProviderIds(providers));
-  let feedback = $state("");
   let action = $state("");
   let loadVersion = 0;
 
@@ -217,13 +217,13 @@
 
   async function matchSaved(message: string) {
     const resolved = selected;
-    feedback = message;
+    toast.success(message);
     await load();
     if (resolved) removeResolvedFromQueue(resolved);
   }
 
   async function rematchAllQueued(_jobId: string, message: string) {
-    feedback = message;
+    toast.success(message);
     await load();
   }
 
@@ -232,10 +232,10 @@
     action = `rematch:${match.externalSnapshotId}`;
     try {
       await matchReview.rematch(match.externalSnapshotId);
-      feedback = `${match.title || "Track"} rematched.`;
+      toast.success(`${match.title || "Track"} rematched.`);
       await load();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Rematch failed.";
+      toast.error(cause instanceof Error ? cause.message : "Rematch failed.");
     } finally {
       action = "";
     }
@@ -255,11 +255,11 @@
         authorityScope: "personal",
         expectedAuthority: expectedAuthorityForScope(match, "personal"),
       });
-      feedback = "Highest-confidence candidate accepted.";
+      toast.success("Highest-confidence candidate accepted.");
       await load();
       removeResolvedFromQueue(match);
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The candidate could not be accepted.";
+      toast.error(cause instanceof Error ? cause.message : "The candidate could not be accepted.");
     } finally {
       action = "";
     }
@@ -300,20 +300,20 @@
             destructive.authorityScope,
           ),
         });
-        feedback = "Candidate rejected.";
+        toast.success("Candidate rejected.");
       } else if (destructive.kind === "manual_rematch") {
         await manualMatchAuthority.rematch(destructive.authority);
-        feedback = `${scopeLabel(authorityScopeOf(destructive.authority))} decision cleared and track rematched.`;
+        toast.success(`${scopeLabel(authorityScopeOf(destructive.authority))} decision cleared and track rematched.`);
       } else {
         await manualMatchAuthority.delete(destructive.authority);
-        feedback = `${scopeLabel(authorityScopeOf(destructive.authority))} decision cleared.`;
+        toast.success(`${scopeLabel(authorityScopeOf(destructive.authority))} decision cleared.`);
       }
       destructiveOpen = false;
       dialogOpen = false;
       await load();
       if (destructive.kind === "reject") removeResolvedFromQueue(destructive.match);
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "The action failed.";
+      toast.error(cause instanceof Error ? cause.message : "The action failed.");
     } finally {
       action = "";
     }
@@ -458,7 +458,7 @@
         <Button type="submit" variant="secondary">Apply</Button>
       </form>
 
-      {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
 
       <div class="mapping-rows">
         {#each data.matches as match}

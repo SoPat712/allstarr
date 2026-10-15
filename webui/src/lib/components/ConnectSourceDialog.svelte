@@ -12,6 +12,7 @@
     open = $bindable(false),
     providers,
     administrator,
+    currentUserId = "",
     testConnection = false,
     account = null,
     users = [],
@@ -21,6 +22,7 @@
     open: boolean;
     providers: ProviderDefinition[];
     administrator: boolean;
+    currentUserId?: string;
     testConnection?: boolean;
     account?: ProviderAccount | null;
     users?: { id: string; displayName: string }[];
@@ -33,8 +35,9 @@
   let ownerUserId = $state("");
   let saving = $state(false);
   let error = $state("");
+  let initialized = $state(false);
 
-  const choices = $derived(providers.filter((provider) => accountSettings(provider).length));
+  let choices = $state<ProviderDefinition[]>([]);
   const selected = $derived(
     choices.find((provider) => provider.id === (account?.providerId ?? providerId)) ?? choices[0],
   );
@@ -43,8 +46,17 @@
     account?.configuration?.[key] ?? fallback;
 
   $effect(() => {
-    if (open && choices[0]) providerId = account?.providerId || initialProviderId || choices[0].id;
-    if (!open) { error = ""; scope = "Personal"; ownerUserId = ""; }
+    if (!open) {
+      choices = providers.filter((provider) => accountSettings(provider).length);
+      initialized = false; error = ""; scope = "Personal"; ownerUserId = "";
+    } else if (!initialized) {
+      choices = providers.filter((provider) => accountSettings(provider).length);
+      if (choices[0]) {
+        initialized = true;
+        providerId = account?.providerId || initialProviderId || choices[0].id;
+        ownerUserId = currentUserId;
+      }
+    }
   });
 
   async function create(event: SubmitEvent) {
@@ -128,7 +140,8 @@
               </span>
             </label>
             {#if administrator && scope === "Personal" && users.length > 0}
-              <label class="field"><span>Account owner</span><SelectField bind:value={ownerUserId} label="Account owner" options={users.map((user) => ({ value: user.id, label: user.displayName }))} /></label>
+              <label class="field"><span>Account owner</span><SelectField bind:value={ownerUserId} label="Account owner" options={users.map((user) => ({ value: user.id, label: user.displayName + (user.id === currentUserId ? " (you)" : "") }))} /></label>
+              {#if ownerUserId && ownerUserId !== currentUserId}<p class="credential-safety">Only that user's listening will use this account.</p>{/if}
             {/if}
             <label class="field"><span>Connection name</span><input name="displayName" placeholder={selected.name} /></label>
             <label class="field">

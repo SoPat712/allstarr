@@ -9,7 +9,8 @@ public sealed record ProviderRouteAccountRequest(
     ProviderCapabilityKind Capability,
     Guid? RequestedAccountId,
     IReadOnlyCollection<ProviderAccountScope>? AllowedScopes = null,
-    bool AllowSharedAccount = true);
+    bool AllowSharedAccount = true,
+    bool AllowManagedDiagnosticAccount = false);
 
 public sealed record ProviderRouteAccountResolution(
     ProviderAccountContext Account,

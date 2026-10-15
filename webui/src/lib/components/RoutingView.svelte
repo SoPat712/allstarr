@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   let { embedded = false }: { embedded?: boolean } = $props();
   import { onMount } from "svelte";
   import { ArrowDown, ArrowUp, GripVertical, Lock } from "@lucide/svelte";
@@ -20,7 +21,6 @@
   let refreshing = $state(false);
   let action = $state("");
   let error = $state("");
-  let feedback = $state("");
   let dragging = $state<{ groupId: string; index: number } | null>(null);
   let dirtyOrderIds = $state<string[]>([]);
   let policyDirty = $state(false);
@@ -65,10 +65,10 @@
     try {
       await settings.save({ [group.envKey]: (orders[group.id] ?? []).join(",") });
       dirtyOrderIds = dirtyOrderIds.filter((id) => id !== group.id);
-      feedback = `${group.label} saved.`;
+      toast.success(`${group.label} saved.`);
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Provider routing could not be saved.";
+      toast.error(cause instanceof Error ? cause.message : "Provider routing could not be saved.");
     } finally {
       action = "";
     }
@@ -79,7 +79,7 @@
     const providerId = order[index];
     orders = { ...orders, [group.id]: move(order, index, direction) };
     if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
-    feedback = `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.`;
+    toast.success(`${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + direction + 1}.`);
   }
 
   function dropProvider(group: PriorityGroup, index: number) {
@@ -89,7 +89,7 @@
     order.splice(index, 0, providerId);
     orders = { ...orders, [group.id]: order };
     if (!dirtyOrderIds.includes(group.id)) dirtyOrderIds = [...dirtyOrderIds, group.id];
-    feedback = `${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.`;
+    toast.success(`${provider(providerId)?.name ?? humanize(providerId)} moved to position ${index + 1}.`);
     dragging = null;
   }
 
@@ -102,10 +102,10 @@
     try {
       await settings.save(updates);
       policyDirty = false;
-      feedback = "Playback and matching preferences saved.";
+      toast.success("Playback and matching preferences saved.");
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : "Playback and matching preferences could not be saved.";
+      toast.error(cause instanceof Error ? cause.message : "Playback and matching preferences could not be saved.");
     } finally {
       action = "";
     }
@@ -146,7 +146,7 @@
         <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
       </div>
     {/if}
-    {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
     {#if policyFields.length}
       <form class="settings-card routing-policy" aria-label="Playback and matching" oninput={() => { policyDirty = true; }} onsubmit={savePolicy}>
         <header><div><h3>Quality and matching</h3><small>Earlier services in the order below win close matches: the first gets 5 confidence points, the second 3, the third 1.</small></div></header>

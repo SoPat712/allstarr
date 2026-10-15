@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Checkbox } from "$lib/components/ui/checkbox";
@@ -68,7 +69,6 @@
   let refreshing = $state(false);
   let action = $state("");
   let error = $state("");
-  let feedback = $state("");
   let purgeTarget = $state("");
   let purgeOpen = $state(false);
   let restoreOpen = $state(false);
@@ -178,10 +178,10 @@
     try {
       await settings.save(updates);
       markSaved(item.id);
-      feedback = `${item.label} settings saved.`;
+      toast.success(`${item.label} settings saved.`);
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : `${item.label} could not be saved.`;
+      toast.error(cause instanceof Error ? cause.message : `${item.label} could not be saved.`);
     } finally {
       action = "";
     }
@@ -192,12 +192,12 @@
     action = name;
     try {
       const result = await operation();
-      feedback = "message" in (result as object)
+      toast.success("message" in (result as object)
         ? String((result as { message: unknown }).message)
-        : message;
+        : message);
       await refresh();
     } catch (cause) {
-      feedback = cause instanceof Error ? cause.message : `${message} failed.`;
+      toast.error(cause instanceof Error ? cause.message : `${message} failed.`);
     } finally {
       action = "";
     }
@@ -222,7 +222,7 @@
     restoreError = "";
     try {
       const result = await settings.restore(restoreFile);
-      feedback = result.message;
+      toast.success(result.message);
       restoreOpen = false;
       restoreFile = null;
       await refresh();
@@ -286,7 +286,7 @@
           <Button variant="secondary" size="sm" disabled={refreshing} onclick={() => void refresh()}>{refreshing ? "Trying again…" : "Retry"}</Button>
         </div>
       {/if}
-      {#if feedback}<p class="action-feedback" role="status">{feedback}</p>{/if}
+
       {#if serverChanged}
         <div class="degraded-banner" role="status">
           <p><strong>Someone else changed these settings.</strong> Your unsaved edits are kept.</p>
