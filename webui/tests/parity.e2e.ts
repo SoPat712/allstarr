@@ -1921,11 +1921,14 @@ for (const theme of ["light", "dark"] as const) {
       const fixture = structuredClone(responses["/api/admin/ui/now-playing"]) as { items: Record<string, unknown>[] };
       fixture.items[0].sourceConfirmed = state !== "unknown";
       fixture.items[0].cached = state === "cached";
+      fixture.items[0].seekRung = state === "cached" ? "progressive-cache" : "sequential";
       await page.route("**/api/admin/ui/now-playing", (route) => route.fulfill({ json: fixture }));
       await page.goto("#/");
       const playing = page.getByRole("region", { name: "Now playing" });
       await expect(playing).toContainText(state === "unknown" ? "Catalog source · playback unconfirmed" :
         state === "cached" ? "Cached from" : "Playing from");
+      await expect(playing).toContainText(state === "unknown" ? "Seeking unconfirmed" :
+        state === "cached" ? "Seeking available as audio downloads" : "Full stream · client buffering");
       await expectContainedMobileGeometry(page);
       await page.screenshot({ path: `test-results/playback-source-${theme}-${state}.png`, fullPage: true });
       await page.setViewportSize({ width: 1280, height: 900 });

@@ -181,6 +181,7 @@ export type NowPlayingItem = {
   sourceConfirmed?: boolean;
   cached?: boolean;
   routeReason?: string | null;
+  seekRung?: string | null;
   artworkUrl?: string | null;
   positionSeconds: number;
   durationSeconds?: number | null;

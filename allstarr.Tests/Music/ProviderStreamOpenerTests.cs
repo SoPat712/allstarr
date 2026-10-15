@@ -158,7 +158,8 @@ public sealed class ProviderStreamOpenerTests
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal",
             new allstarr.Core.Identity.AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "principal", "Listener", false),
-            "delayed-stream", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
+            "delayed-stream", DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None,
+            new ProtocolClientDescriptor("client", "device"));
         string? registeredPath = null;
         var library = new Mock<allstarr.Services.Local.ILocalLibraryService>(MockBehavior.Strict);
         library.Setup(item => item.GetLocalPathForExternalSongAsync(
@@ -179,9 +180,12 @@ public sealed class ProviderStreamOpenerTests
         using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
         upstream.Content.Headers.ContentType = new("audio/flac");
         if (truncated) upstream.Content.Headers.ContentLength = Flac().Length + 1;
+        using var activity = new allstarr.Services.Common.PlaybackDeliveryActivityStore();
+        var routed = new ProtocolProviderStream(upstream, SequentialLease(), "deezer", "42");
+        activity.StreamOpened(protocol, "ext-deezer-song-42", ProviderAudioQuality.Any, routed);
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.OpenStreamAsync(protocol, "deezer", "42", ProviderAudioQuality.Any, null, false))
-            .ReturnsAsync(new ProtocolProviderStream(upstream, SequentialLease(), "deezer", "42"));
+            .ReturnsAsync(routed);
         gateway.Setup(item => item.GetSongAsync(protocol, "deezer", "42"))
             .ReturnsAsync(new Song { PreciseDuration = TimeSpan.FromSeconds(2.5) });
         var http = new DefaultHttpContext();
@@ -196,8 +200,10 @@ public sealed class ProviderStreamOpenerTests
         http.RequestServices = provider;
         try
         {
-            var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), cache)
+            var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), cache, activity)
                 .OpenAsync(http, protocol, "deezer", "42", ProviderAudioQuality.Any).WaitAsync(TimeSpan.FromSeconds(1));
+            Assert.Equal(cacheEnabled ? "sequential-cache" : "sequential",
+                activity.StreamFor(protocol, "ext-deezer-song-42", ProviderAudioQuality.Any)!.SeekRung);
             Assert.False(source.ReadStarted);
             var execution = result.ExecuteResultAsync(new ActionContext(http, new Microsoft.AspNetCore.Routing.RouteData(),
                 new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor()));
@@ -216,6 +222,7 @@ public sealed class ProviderStreamOpenerTests
             var delivered = body.ToArray();
             Assert.Equal(120000UL, BinaryPrimitives.ReadUInt64BigEndian(delivered.AsSpan(18, 8)) & ((1UL << 36) - 1));
             Assert.Equal(Flac()[26..], delivered[26..]);
+            Assert.Equal("flac-duration", activity.StreamFor(protocol, "ext-deezer-song-42", ProviderAudioQuality.Any)!.SeekRung);
             gateway.Verify(item => item.GetSongAsync(protocol, "deezer", "42"), Times.Once);
             if (cacheEnabled)
             {

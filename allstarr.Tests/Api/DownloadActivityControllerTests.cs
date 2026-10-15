@@ -65,6 +65,7 @@ public sealed class DownloadActivityControllerTests
         Assert.Equal(confirmed, item.GetProperty("SourceConfirmed").GetBoolean());
         Assert.Equal(confirmed ? "provider-priority" : null,
             item.GetProperty("RouteReason").GetString());
+        Assert.Equal(confirmed ? "sequential" : null, item.GetProperty("SeekRung").GetString());
         Assert.Equal(0.25, item.GetProperty("Progress").GetDouble());
         Assert.True(item.GetProperty("Scrobbled").GetBoolean());
         Assert.Equal(60, item.GetProperty("ScrobbleThresholdSeconds").GetDouble());

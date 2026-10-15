@@ -174,8 +174,10 @@ public sealed partial class ManagedTrackCacheServiceTests
         public void Dispose() => Stopping.Dispose();
     }
 
-    [Fact]
-    public async Task AuthorizedGateway_ReusesExactRevisionWithoutOpeningAnotherLease()
+    [Theory]
+    [InlineData(4)]
+    [InlineData(3)]
+    public async Task AuthorizedGateway_ReusesExactRevisionWithoutOpeningAnotherLease(long previousRevision)
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
@@ -201,9 +203,24 @@ public sealed partial class ManagedTrackCacheServiceTests
                 return new ProviderRoutePlan<IProviderStreamingCapability>(request, [candidate],
                     new(request.CorrelationId, ProviderCapabilityKind.Streaming, "deezer", account.AccountId, []));
             });
+        using var activity = new PlaybackDeliveryActivityStore();
+        var protocol = Context();
+        using var previousResponse = new HttpResponseMessage(HttpStatusCode.OK);
+        activity.StreamOpened(protocol, "ext-deezer-song-track-1", ProviderAudioQuality.Any,
+            ProviderStream(previousResponse) with
+            { ServingExternalId = "track-1", ServingAccountId = fixture.Scope.ProviderAccountId, ServingAccountRevision = previousRevision });
         var gateway = new ProtocolProviderGateway(router.Object, registry,
-            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), managedTrackCache: fixture.Service);
-        var opened = await gateway.OpenStreamAsync(Context(), "deezer", "track-1", ProviderAudioQuality.Any, "bytes=2-3");
+            Mock.Of<IHttpClientFactory>(MockBehavior.Strict), managedTrackCache: fixture.Service, playbackActivity: activity);
+        if (previousRevision != 4)
+        {
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() => gateway.OpenStreamAsync(protocol,
+                "deezer", "track-1", ProviderAudioQuality.Any, "bytes=2-3"));
+            Assert.Equal(HttpStatusCode.Conflict, error.StatusCode);
+            capability.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+            return;
+        }
+        var opened = await gateway.OpenStreamAsync(protocol, "deezer", "track-1", ProviderAudioQuality.Any, "bytes=2-3");
         Assert.NotNull(opened);
         Assert.True(opened.IsCached);
         Assert.Equal(4, opened.ServingAccountRevision);

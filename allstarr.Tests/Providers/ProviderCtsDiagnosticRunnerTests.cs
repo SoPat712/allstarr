@@ -22,6 +22,8 @@ public sealed class ProviderCtsDiagnosticRunnerTests
     [InlineData("items 0-9/100", 10, "sequential")]
     [InlineData("bytes */100", 10, "sequential")]
     [InlineData("invalid", 10, "sequential")]
+    [InlineData("bytes 10-19/100", 10, "sequential")]
+    [InlineData("bytes 0-8/100", 9, "sequential")]
     public void SeekRung_RequiresActualBytesAndKnownTotal(string contentRange, long length, string expected)
     {
         var result = new ProviderCtsDiagnosticResult
@@ -30,14 +32,19 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             LeaseSupportsByteRanges = true,
             LeaseSupportsSeeking = false,
             UpstreamStatusCode = 206,
+            RequestedRange = "bytes=0-9",
             ContentRange = contentRange,
             ContentLength = length
         };
         Assert.Equal(expected, result.SeekRung);
     }
 
-    [Fact]
-    public async Task Measure_BoundsAndRedactsTheRecordedMediaSample()
+    [Theory]
+    [InlineData("honored")]
+    [InlineData("ignored")]
+    [InlineData("wrong-start")]
+    [InlineData("wrong-end")]
+    public async Task Measure_BoundsAndRedactsTheRecordedMediaSample(string rangeBehavior)
     {
         const int sampleLimit = 65_536;
         var userId = Guid.CreateVersion7();
@@ -56,12 +63,18 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             (request, _) =>
             {
                 observedRange = request.Headers.Range?.ToString();
-                var response = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                var response = new HttpResponseMessage(rangeBehavior == "ignored" ? HttpStatusCode.OK : HttpStatusCode.PartialContent)
                 {
-                    Content = new ByteArrayContent(body)
+                    Content = new ByteArrayContent(rangeBehavior == "ignored" ? body :
+                        body[..(rangeBehavior == "wrong-end" ? sampleLimit - 1 : sampleLimit)])
                 };
                 response.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/flac");
-                response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, body.Length - 1, body.Length);
+                response.Content.Headers.ContentRange = rangeBehavior switch
+                {
+                    "wrong-start" => new ContentRangeHeaderValue(1, sampleLimit, body.Length),
+                    "wrong-end" => new ContentRangeHeaderValue(0, sampleLimit - 2, body.Length),
+                    _ => new ContentRangeHeaderValue(0, sampleLimit - 1, body.Length)
+                };
                 response.Headers.AcceptRanges.Add("bytes");
                 response.Headers.TryAddWithoutValidation("X-Cache", "HIT private-cache-node");
                 return Task.FromResult(response);
@@ -96,7 +109,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         health.Setup(item => item.Observe(
             It.Is<ProviderExecutionContext>(context => context.ProviderId == "qobuz" && context.Account != null &&
                 context.Account.AccountId == accountId && context.Account.Revision == 1),
-            ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+            ProviderCapabilityKind.Streaming, It.IsAny<ProviderError?>(), It.IsAny<TimeSpan>()));
         using var selector = new ProviderCtsTrackSelector(
             Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
         var runner = new ProviderCtsDiagnosticRunner(
@@ -117,14 +130,25 @@ public sealed class ProviderCtsDiagnosticRunnerTests
             "fixture-correlation",
             "private-track-id");
 
+        if (rangeBehavior.StartsWith("wrong-", StringComparison.Ordinal))
+        {
+            Assert.False(result.Succeeded);
+            Assert.Equal("response-range", result.Stage);
+            Assert.Equal("range-response-mismatch", result.Error);
+            Assert.Equal(0, result.SampleBytes);
+            Assert.Equal("unavailable", result.SeekRung);
+            health.VerifyAll();
+            return;
+        }
         Assert.True(result.Succeeded);
         Assert.Equal("bytes=0-65535", observedRange);
         Assert.Equal(sampleLimit, result.SampleBytes);
         Assert.Equal(sampleLimit, result.Limit.SampleBytes);
-        Assert.Equal(206, result.UpstreamStatusCode);
-        Assert.Equal(body.Length, result.ContentLength);
-        Assert.Equal($"bytes 0-{body.Length - 1}/{body.Length}", result.ContentRange);
-        Assert.True(result.AcceptsByteRanges);
+        Assert.Equal(rangeBehavior == "ignored" ? 200 : 206, result.UpstreamStatusCode);
+        Assert.Equal(rangeBehavior == "ignored" ? body.Length : sampleLimit, result.ContentLength);
+        Assert.Equal(rangeBehavior == "ignored" ? null : $"bytes 0-{sampleLimit - 1}/{body.Length}", result.ContentRange);
+        Assert.Equal(rangeBehavior != "ignored", result.AcceptsByteRanges);
+        Assert.Equal(rangeBehavior == "ignored" ? "sequential" : "byte-range", result.SeekRung);
         Assert.True(result.LeaseSupportsByteRanges);
         Assert.True(result.LeaseSupportsSeeking);
         Assert.Equal(media, result.Media);
