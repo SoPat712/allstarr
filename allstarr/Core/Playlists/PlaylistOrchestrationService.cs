@@ -462,6 +462,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
             await _libraryAccess.ResolveUserAsync(actor.EffectiveUserId!.Value, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var preparation = _kept == null ? null : await _kept.PreparePlaylistInterestsAsync(db,
+            playlistLinkId, expectedLinkRevision, actor.EffectiveUserId!.Value, access, cancellationToken,
+            new(sourceSnapshotId, RematchedExternalIds: externalSnapshotIds));
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var link = await db.PlaylistLinks.SingleOrDefaultAsync(item =>
             item.Id == playlistLinkId,
@@ -487,20 +490,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             .ToListAsync(cancellationToken);
         if (entries.Select(item => item.ExternalMetadataSnapshotId).Distinct().Count() != externalIds.Length)
             throw new DbUpdateConcurrencyException("The rematched playlist rows changed before publication.");
-        var decisions = db.TrackMatches.AsNoTracking()
-            .Where(item => item.OwnerUserId == link.OwnerUserId &&
-                           externalIds.Contains(item.ExternalSnapshotId));
-        var versions = decisions.GroupBy(item => item.ExternalSnapshotId).Select(group => new
-        {
-            ExternalSnapshotId = group.Key,
-            DecisionVersion = group.Max(item => item.DecisionVersion)
-        });
-        var latest = await (from decision in decisions
-                            join version in versions
-                                on new { decision.ExternalSnapshotId, decision.DecisionVersion }
-                                equals new { version.ExternalSnapshotId, version.DecisionVersion }
-                            select decision)
-            .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        var latest = await DurablePlaylistProjectionReader.LoadLatestRematchDecisionsAsync(db,
+            link.OwnerUserId, externalIds, cancellationToken);
         if (latest.Count != externalIds.Length)
             throw new InvalidOperationException("A rematched playlist cannot publish without one decision per source entry.");
         foreach (var entry in entries)
@@ -508,7 +499,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         await db.SaveChangesAsync(cancellationToken);
         if (_kept != null)
         {
-            await _kept.StagePlaylistInterestsAsync(db, link, access, execution.CorrelationId, cancellationToken);
+            await _kept.StagePlaylistInterestsAsync(db, link, access, execution.CorrelationId, cancellationToken,
+                preparation: preparation);
             await db.SaveChangesAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
@@ -589,7 +581,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         }
     }
 
-    private async Task PublishGenerationAsync(
+    internal async Task PublishGenerationAsync(
         PlaylistLinkRecord link,
         PlaylistSourceSnapshotRecord snapshot,
         IReadOnlyDictionary<Guid, Guid?> decisionIds,
@@ -598,6 +590,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
             await _libraryAccess.ResolveUserAsync(link.OwnerUserId, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var preparation = _kept == null ? null : await _kept.PreparePlaylistInterestsAsync(db,
+            link.Id, link.Revision, link.OwnerUserId, access, cancellationToken, new(snapshot.Id, decisionIds));
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var published = await db.PlaylistSourceSnapshots.SingleAsync(item =>
             item.Id == snapshot.Id &&
@@ -627,7 +621,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         if (_kept != null)
         {
             var currentLink = await db.PlaylistLinks.AsNoTracking().SingleAsync(item => item.Id == link.Id, cancellationToken);
-            await _kept.StagePlaylistInterestsAsync(db, currentLink, access, published.CorrelationId, cancellationToken);
+            await _kept.StagePlaylistInterestsAsync(db, currentLink, access, published.CorrelationId, cancellationToken,
+                preparation: preparation);
             await db.SaveChangesAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);

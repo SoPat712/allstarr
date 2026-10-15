@@ -8,6 +8,9 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
 
+internal sealed record PlaylistRetentionPublication(Guid SnapshotId,
+    IReadOnlyDictionary<Guid, Guid?>? Decisions = null, IReadOnlyCollection<Guid>? RematchedExternalIds = null);
+
 public sealed record DurablePlaylistEntryProjection(
     int Position,
     Guid ExternalSnapshotId,
@@ -209,20 +212,16 @@ public sealed class DurablePlaylistProjectionReader(
 
     internal async Task<DurablePlaylistProjection?> ReadForRetentionAsync(
         AllstarrDbContext database, Guid ownerUserId, Guid playlistLinkId,
-        BackendLibraryAccessContext access, CancellationToken cancellationToken)
+        BackendLibraryAccessContext access, CancellationToken cancellationToken, PlaylistRetentionPublication? publication = null)
     {
-        var snapshot = await database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.PlaylistLinkId == playlistLinkId && item.OwnerUserId == ownerUserId &&
-                           item.PublishedAt != null)
-            .OrderByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.RetrievedAt)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (snapshot == null) return null;
+        var snapshot = await RetentionSnapshotAsync(database, ownerUserId, playlistLinkId, publication, cancellationToken);
+        if (snapshot == null || publication != null && snapshot.Id != publication.SnapshotId) return null;
         var sourceIds = await database.PlaylistSourceEntries.AsNoTracking()
             .Where(item => item.PlaylistSourceSnapshotId == snapshot.Id)
             .Select(item => item.Id).ToArrayAsync(cancellationToken);
         var entries = await new DurablePlaylistProjectionReader(factory, libraryAccess)
             .ReadRetentionEntriesAsync(database, ownerUserId, playlistLinkId, snapshot.Id,
-                sourceIds, access, cancellationToken);
+                sourceIds, access, cancellationToken, publication);
         if (entries.Count != sourceIds.Length)
             throw new UnauthorizedAccessException("The retained playlist projection is no longer fully available.");
         var link = await database.PlaylistLinks.AsNoTracking().SingleAsync(item =>
@@ -262,16 +261,11 @@ public sealed class DurablePlaylistProjectionReader(
         Guid expectedCurrentSnapshotId,
         IReadOnlyCollection<Guid> sourceEntryIds,
         BackendLibraryAccessContext access,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, PlaylistRetentionPublication? publication = null)
     {
         if (sourceEntryIds.Count == 0) return new Dictionary<Guid, DurablePlaylistEntryProjection>();
 
-        var snapshot = await database.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => item.PlaylistLinkId == playlistLinkId && item.OwnerUserId == ownerUserId &&
-                           item.PublishedAt != null)
-            .OrderByDescending(item => item.SnapshotVersion)
-            .ThenByDescending(item => item.RetrievedAt)
-            .FirstOrDefaultAsync(cancellationToken);
+        var snapshot = await RetentionSnapshotAsync(database, ownerUserId, playlistLinkId, publication, cancellationToken);
         if (snapshot == null || snapshot.Id != expectedCurrentSnapshotId)
             return new Dictionary<Guid, DurablePlaylistEntryProjection>();
 
@@ -298,6 +292,23 @@ public sealed class DurablePlaylistProjectionReader(
             .ToListAsync(cancellationToken);
         if (requestedEntries.Count == 0)
             return new Dictionary<Guid, DurablePlaylistEntryProjection>();
+
+        if (publication?.Decisions is { } decisions)
+        {
+            if (decisions.Count != requestedEntries.Count || requestedEntries.Any(entry =>
+                    !decisions.TryGetValue(entry.Id, out var id) || id == null))
+                throw new InvalidOperationException("The publication requires one decision per source entry.");
+            foreach (var entry in requestedEntries) entry.PublishedTrackMatchId = decisions[entry.Id];
+        }
+        else if (publication?.RematchedExternalIds is { } rematched)
+        {
+            var latest = await LoadLatestRematchDecisionsAsync(database, ownerUserId, rematched, cancellationToken);
+            if (latest.Count != rematched.Distinct().Count() ||
+                requestedEntries.Select(entry => entry.ExternalMetadataSnapshotId).Intersect(rematched).Count() != latest.Count)
+                throw new InvalidOperationException("The rematched publication requires one decision per source entry.");
+            foreach (var entry in requestedEntries)
+                if (latest.TryGetValue(entry.ExternalMetadataSnapshotId, out var decision)) entry.PublishedTrackMatchId = decision.Id;
+        }
 
         var externalIds = requestedEntries.Select(item => item.ExternalMetadataSnapshotId).Distinct().ToArray();
         var external = await database.ExternalMetadataSnapshots.AsNoTracking()
@@ -409,6 +420,36 @@ public sealed class DurablePlaylistProjectionReader(
                 new Dictionary<Guid, ManualTrackOverrideLayers> { [row.External.Id] = layers }, entryLibrary);
         }
         return projected;
+    }
+
+    private static Task<PlaylistSourceSnapshotRecord?> RetentionSnapshotAsync(AllstarrDbContext database,
+        Guid ownerUserId, Guid playlistLinkId, PlaylistRetentionPublication? publication, CancellationToken cancellationToken)
+    {
+        var query = database.PlaylistSourceSnapshots.AsNoTracking().Where(item =>
+            item.PlaylistLinkId == playlistLinkId && item.OwnerUserId == ownerUserId);
+        var candidateId = publication?.SnapshotId;
+        return query.Where(item => item.PublishedAt != null || item.Id == candidateId)
+            .OrderByDescending(item => item.SnapshotVersion).ThenByDescending(item => item.RetrievedAt)
+            .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    internal static async Task<Dictionary<Guid, TrackMatchRecord>> LoadLatestRematchDecisionsAsync(
+        AllstarrDbContext database, Guid ownerUserId, IReadOnlyCollection<Guid> externalSnapshotIds,
+        CancellationToken cancellationToken)
+    {
+        var externalIds = externalSnapshotIds.Distinct().ToArray();
+        var decisions = database.TrackMatches.AsNoTracking().Where(item =>
+            item.OwnerUserId == ownerUserId && EF.Parameter(externalIds).Contains(item.ExternalSnapshotId));
+        var versions = decisions.GroupBy(item => item.ExternalSnapshotId).Select(group => new
+        {
+            ExternalSnapshotId = group.Key,
+            DecisionVersion = group.Max(item => item.DecisionVersion)
+        });
+        return await (from decision in decisions
+                      join version in versions
+                          on new { decision.ExternalSnapshotId, decision.DecisionVersion }
+                          equals new { version.ExternalSnapshotId, version.DecisionVersion }
+                      select decision).ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
     }
 
     private sealed record RetentionSourceIdentityIndex(

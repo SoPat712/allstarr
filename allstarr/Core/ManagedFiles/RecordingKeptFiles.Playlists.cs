@@ -28,7 +28,7 @@ public sealed partial class RecordingKeptFiles
         if (!deleting && link.TrackRetention == PlaylistTrackRetention.KeepAll)
         {
             if (preparation != null && ReferenceEquals(preparation.Database, db) &&
-                preparation.LinkId == link.Id && preparation.LinkRevision + 1 == link.Revision &&
+                preparation.LinkId == link.Id && preparation.ResultingLinkRevision == link.Revision &&
                 preparation.DataVersion == await ReadPlaylistDataVersionAsync(db, cancellationToken))
             {
                 projection = preparation.Projection;
@@ -104,13 +104,13 @@ public sealed partial class RecordingKeptFiles
 
     private async Task<(DurablePlaylistProjection? Projection, Dictionary<string, Guid> Desired, IReadOnlyDictionary<int, Guid?> Recordings)> ReadPlaylistInterestsAsync(
         AllstarrDbContext db, PlaylistLinkRecord link, UserRecord user, BackendLibraryAccessContext access,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, PlaylistRetentionPublication? publication = null)
     {
         var prefix = $"playlist:{link.Id:N}:";
         var desired = new Dictionary<string, Guid>(StringComparer.Ordinal);
         if (libraryAccess == null) throw Denied();
         var projection = await new DurablePlaylistProjectionReader(factory, libraryAccess)
-            .ReadForRetentionAsync(db, link.OwnerUserId, link.Id, access, cancellationToken);
+            .ReadForRetentionAsync(db, link.OwnerUserId, link.Id, access, cancellationToken, publication);
         var actor = new ProviderActorContext(ProviderActorKind.User, user.Id,
             new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
         var entries = (projection?.Entries ?? []).Where(item =>
