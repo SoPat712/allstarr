@@ -25,6 +25,20 @@ public static class ProviderOrderPolicyCatalog
 
     public static ProviderOrderPolicyDefinition? Find(ProviderCapabilityKind capability) =>
         Definitions.FirstOrDefault(item => item.Capability == capability);
+
+    internal static IReadOnlyList<string> NormalizeOrder(
+        ProviderCapabilityKind capability, IEnumerable<string> configured)
+    {
+        var order = configured
+            .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        return capability == ProviderCapabilityKind.Lyrics
+            ? new[] { "backend", "kept" }.Where(item => !order.Contains(item, StringComparer.Ordinal))
+                .Concat(order).ToArray()
+            : order;
+    }
+
 }
 
 public sealed record EffectiveProviderPolicySnapshot(
@@ -56,8 +70,7 @@ public sealed record EffectiveProviderPolicySnapshot(
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var availableSet = available.ToHashSet(StringComparer.Ordinal);
-        return GetProviderOrder(capability)
-            .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
+        return ProviderOrderPolicyCatalog.NormalizeOrder(capability, GetProviderOrder(capability))
             .Where(availableSet.Contains)
             .Concat(available.Order(StringComparer.Ordinal))
             .Distinct(StringComparer.Ordinal)

@@ -159,6 +159,29 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal("spotify,lyricsplus,apple-download,lrclib", Assert.Single(lyrics.Settings).NormalizedValue);
     }
 
+    [Theory]
+    [InlineData(false, "lrclib,spotify", "backend,kept,lrclib,spotify")]
+    [InlineData(true, "lrclib,spotify", "backend,kept,lrclib,spotify")]
+    [InlineData(false, "lrclib,backend,spotify", "kept,lrclib,backend,spotify")]
+    [InlineData(true, "lrclib,backend,spotify", "kept,lrclib,backend,spotify")]
+    [InlineData(false, "kept,spotify,backend,lrclib", "kept,spotify,backend,lrclib")]
+    [InlineData(true, "kept,spotify,backend,lrclib", "kept,spotify,backend,lrclib")]
+    public async Task LegacyLyricsOrderKeepsMissingLocalSourcesFirstAndPreservesExplicitPositions(
+        bool durable, string savedOrder, string expected)
+    {
+        var service = CreateService(durable ? [] : new Dictionary<string, string?>
+        {
+            ["MULTI_PROVIDER_LYRICS_ORDER"] = savedOrder
+        });
+        if (durable)
+            await service.ApplyBatchAsync([new("Providers:LyricsOrder", savedOrder)], "legacy-import");
+        var policy = await new EffectiveProviderPolicyResolver(service).ResolveForUserAsync(_userB);
+
+        Assert.Equal(expected.Split(','), policy.ApplyProviderAvailability(
+            ProviderCapabilityKind.Lyrics, ["spotify", "backend", "lrclib", "kept"]));
+        Assert.Equal(savedOrder, (await service.GetAsync("Providers:LyricsOrder")).NormalizedValue);
+    }
+
     [Fact]
     public async Task LyricsPlusEndpointIsOptionalAndRejectsCredentialsOrQueryStrings()
     {
