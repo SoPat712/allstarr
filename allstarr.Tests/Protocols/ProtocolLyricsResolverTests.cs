@@ -10,11 +10,61 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
+using allstarr.Core.Downloads;
+using allstarr.Core.Matching;
 
 namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsResolverTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task IndexedKeptSourceParticipatesLazilyForNativeAndProviderSongs(bool native)
+    {
+        var context = LyricsContext();
+        var song = LyricsSong();
+        song.Id = native ? "native-item" : "ext-spotify-song-exact";
+        song.IsLocal = native;
+        song.ExternalProvider = native ? null : "spotify";
+        song.ExternalId = native ? null : "exact";
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["kept", "lrclib"]);
+        var kept = new Mock<IKeptLyricsReader>(MockBehavior.Strict);
+        kept.Setup(item => item.ReadAsync(context, song, It.Is<IReadOnlyList<KeptLyricsIdentity>>(
+                ids => ids.Count == 1 && ids[0] == new KeptLyricsIdentity("spotify", "exact"))))
+            .ReturnsAsync(new allstarr.Models.Lyrics.LyricsInfo { SyncedLyrics = "[00:01.234]Owned" });
+        var index = new Mock<ILibraryIndexService>(MockBehavior.Strict);
+        if (native) index.Setup(item => item.FindByBackendItemAsync(context, "native-item", context.CancellationToken))
+            .ReturnsAsync(new IndexedLibraryTrack(Guid.CreateVersion7(), "native-item", "/untrusted/never-use.flac",
+                "Fixture", "Artist", "Album", null, null, null, null, null, null, null,
+                new Dictionary<string, string> { ["spotify"] = "exact" }, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, 0));
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+                keptLyrics: kept.Object, libraryIndex: index.Object)
+            .FindAsync(context, song, song.Id);
+        Assert.Equal("kept", result?.Source);
+        Assert.Equal("[00:01.234]Owned", result?.SyncedLyrics);
+        kept.VerifyAll();
+        index.VerifyAll();
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task EarlierTimedSourceDoesNotReadTheKeptIndexOrFiles()
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "kept"]);
+        var kept = new Mock<IKeptLyricsReader>(MockBehavior.Strict);
+        var index = new Mock<ILibraryIndexService>(MockBehavior.Strict);
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+            keptLyrics: kept.Object, libraryIndex: index.Object).FindAsync(context, LyricsSong(), "native-item");
+        Assert.Equal("lrclib", result?.Source);
+        kept.VerifyNoOtherCalls();
+        index.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task NativeCallbackCannotJumpAheadOfTheGatewayHouseholdOrderWithoutPersonalPolicy()
     {

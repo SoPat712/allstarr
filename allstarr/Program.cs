@@ -344,6 +344,7 @@ builder.Services.AddSingleton<LrclibService>();
 builder.Services.AddSingleton<ProtocolStreamingResponseAdapter>();
 builder.Services.AddSingleton<ManagedTrackCacheService>();
 builder.Services.AddSingleton<IProtocolLyricsResolver, ProtocolLyricsResolver>();
+builder.Services.AddSingleton<IKeptLyricsReader, KeptLyricsReader>();
 builder.Services.AddSingleton<JellyfinProxyService>();
 
 if (backendType == BackendType.Jellyfin)

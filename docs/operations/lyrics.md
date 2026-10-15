@@ -8,6 +8,10 @@ Listeners can save their own source order in **Listening preferences → Lyrics 
 
 Native parsing follows the [Jellyfin 10.11 lyrics DTOs](https://github.com/jellyfin/jellyfin/tree/v10.11.0/MediaBrowser.Model/Lyrics) and [OpenSubsonic structured lyrics](https://opensubsonic.netlify.app/docs/responses/structuredlyrics/). Verified times retain millisecond precision, and plain text is not assigned invented timestamps.
 
+**Kept LRC** reads the sibling `.lrc` of an indexed download under `Library:DownloadPath`'s `permanent` or `kept` directory. It follows Media server lyrics in the default order and can be moved or disabled. Existing saved orders are retained. Provider songs use their exact source identity; native songs use source IDs from the current listener's accessible library index. Unindexed files, cache paths, filenames and artist/title similarity do not establish an association.
+
+Personal account downloads remain available only to that account's owner; shared accounts and anonymous legacy mappings remain subject to managed-file ownership. Disabled accounts and users, removed files, symlinks, missing audio, invalid UTF-8 and sidecars larger than 2 MiB are skipped so another source can answer. Reading lyrics never writes either file. Timed sidecars preserve their raw LRC; protocol projections apply a global offset once, with positive offsets showing lyrics sooner, following the OpenSubsonic convention. Plain projections omit LRC metadata tags and retain the actual words.
+
 ## LyricsPlus
 
 LyricsPlus requires no account. It looks up a song using its title, artists, album and duration. With no server URL configured, Allstarr tries `lyricsplus.binimum.org` and then `lyricsplus.prjktla.workers.dev`. Public service availability can change; a configured source is not a promise that either instance is online or has a particular song.

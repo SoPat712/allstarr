@@ -100,6 +100,8 @@ Use the up and down buttons in **Lyrics source order** to choose which available
 
 **Media server lyrics** can be moved with the same controls. If they win, the music app receives the media server's original lyric response, including its language and timing details.
 
+**Kept LRC** uses existing lyrics beside an indexed kept download. It follows media-server lyrics by default and can be moved or disabled. Allstarr checks the listener's account and file ownership; missing or unreadable sidecars fall through to another source. Timed lyrics are preferred over plain words, and reading a sidecar never changes the audio or lyrics file.
+
 ### Settings
 
 Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.

@@ -331,6 +331,7 @@ public sealed class HostCompositionTests
         var lyrics = Assert.Single(schema.PriorityGroups, item => item.Id == "lyrics");
         Assert.Null(lyrics.PinnedProvider);
         Assert.Equal("backend", lyrics.Providers[0]);
+        Assert.Equal("kept", lyrics.Providers[1]);
         Assert.DoesNotContain(schema.Providers, item => item.Id is "backend" or "kept");
         Assert.NotNull(streaming.PinnedProvider);
     }

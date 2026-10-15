@@ -5,6 +5,8 @@ using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Services.Common;
 using allstarr.Core.Settings;
+using allstarr.Core.Downloads;
+using allstarr.Core.Matching;
 
 namespace allstarr.Core.Protocols;
 
@@ -30,7 +32,9 @@ public sealed class ProtocolLyricsResolver(
     IProtocolProviderGateway providers,
     ILogger<ProtocolLyricsResolver> logger,
     OdesliService? odesli = null,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProtocolLyricsResolver
+    IEffectiveProviderPolicyResolver? effectivePolicies = null,
+    IKeptLyricsReader? keptLyrics = null,
+    ILibraryIndexService? libraryIndex = null) : IProtocolLyricsResolver
 {
     public Task<LyricsInfo?> FindAsync(ProtocolExecutionContext protocol, Song song, string resourceKey,
         ProtocolLyricsSources sources) => FindCoreAsync(protocol, song, resourceKey,
@@ -63,6 +67,33 @@ public sealed class ProtocolLyricsResolver(
         var localSources = new Dictionary<string, Func<CancellationToken, Task<LyricsInfo?>>>(StringComparer.Ordinal);
         if (sources?.Backend != null) localSources.Add("backend", sources.Backend);
         if (sources?.Kept != null) localSources.Add("kept", sources.Kept);
+        else if (keptLyrics != null)
+            localSources.Add("kept", async token =>
+            {
+                var identities = new List<KeptLyricsIdentity>();
+                if (song.IsLocal)
+                {
+                    if (libraryIndex == null || string.IsNullOrWhiteSpace(song.Id)) return null;
+                    var native = await libraryIndex.FindByBackendItemAsync(protocol, song.Id, token);
+                    if (native == null) return null;
+                    identities.AddRange(native.ProviderTrackIds.OrderBy(pair => pair.Key, StringComparer.Ordinal)
+                        .Select(pair => new KeptLyricsIdentity(pair.Key, pair.Value)));
+                }
+                else
+                {
+                    var provider = sourceProvider ?? song.ExternalProvider;
+                    var externalId = sourceExternalId ?? song.ExternalId;
+                    if (!string.IsNullOrWhiteSpace(provider) && !string.IsNullOrWhiteSpace(externalId))
+                        identities.Add(new(provider, externalId));
+                    else
+                    {
+                        var parsed = allstarr.Services.Local.LocalLibraryService.ParseExternalResource(song.Id);
+                        if (parsed.isExternal && parsed.type == "song" && parsed.provider != "allstarr")
+                            identities.Add(new(parsed.provider!, parsed.externalId!));
+                    }
+                }
+                return identities.Count == 0 ? null : await keptLyrics.ReadAsync(protocol, song, identities);
+            });
         IReadOnlyList<string> order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics).Concat(localSources.Keys)
             .Distinct(StringComparer.Ordinal).ToArray();
         if (effectivePolicies != null && protocol.Actor?.EffectiveUserId is { } userId)
