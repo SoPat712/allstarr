@@ -10,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
-public sealed class JobsControllerTests : IAsyncLifetime
+public sealed partial class JobsControllerTests : IAsyncLifetime
 {
     private readonly Guid _userId = Guid.CreateVersion7();
     private readonly Guid _otherUserId = Guid.CreateVersion7();

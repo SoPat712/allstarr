@@ -136,10 +136,11 @@ public sealed class FavoriteDisplayBackfillJobHandler(
 }
 
 public sealed class FavoriteDisplayBackfillService(FavoriteDisplayBackfillQueue queue, DurableStorageState storage,
-    ILogger<FavoriteDisplayBackfillService> logger) : BackgroundService
+    ILogger<FavoriteDisplayBackfillService> logger, BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        taskActivity?.Register("favorite-display-backfill", "Saved favorite details", TimeSpan.FromMinutes(1));
         while (!stoppingToken.IsCancellationRequested)
         {
             if (storage.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
@@ -147,11 +148,17 @@ public sealed class FavoriteDisplayBackfillService(FavoriteDisplayBackfillQueue 
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
                 continue;
             }
-            try { await queue.EnqueuePendingAsync(stoppingToken); }
+            taskActivity?.Started("favorite-display-backfill");
+            try
+            {
+                await queue.EnqueuePendingAsync(stoppingToken);
+                if (taskActivity != null) await taskActivity.CompletedAsync("favorite-display-backfill", true, stoppingToken);
+            }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 logger.LogWarning("Favorite display recovery discovery failed ({ErrorType})", error.GetType().Name);
+                if (taskActivity != null) await taskActivity.CompletedAsync("favorite-display-backfill", false, stoppingToken);
             }
             await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
         }

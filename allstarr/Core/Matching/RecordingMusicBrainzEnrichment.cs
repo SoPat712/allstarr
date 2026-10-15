@@ -53,11 +53,12 @@ public sealed class RecordingMusicBrainzEnrichmentService(
     RecordingMusicBrainzEnrichmentQueue queue,
     DurableStorageState storage,
     IOptions<MusicBrainzSettings> settings,
-    ILogger<RecordingMusicBrainzEnrichmentService> logger) : BackgroundService
+    ILogger<RecordingMusicBrainzEnrichmentService> logger, BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (!settings.Value.Enabled) return;
+        taskActivity?.Register("recording-enrichment", "Recording identity backfill", TimeSpan.FromHours(1));
         while (!stoppingToken.IsCancellationRequested)
         {
             if (storage.GetSnapshot().Readiness != DurableStorageReadiness.Ready)
@@ -65,11 +66,17 @@ public sealed class RecordingMusicBrainzEnrichmentService(
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
                 continue;
             }
-            try { await queue.EnqueuePendingAsync(stoppingToken); }
+            taskActivity?.Started("recording-enrichment");
+            try
+            {
+                await queue.EnqueuePendingAsync(stoppingToken);
+                if (taskActivity != null) await taskActivity.CompletedAsync("recording-enrichment", true, stoppingToken);
+            }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { return; }
             catch (Exception error)
             {
                 logger.LogWarning("Recording enrichment discovery failed ({ErrorType})", error.GetType().Name);
+                if (taskActivity != null) await taskActivity.CompletedAsync("recording-enrichment", false, stoppingToken);
             }
             await Task.Delay(TimeSpan.FromHours(1), stoppingToken);
         }

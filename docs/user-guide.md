@@ -88,7 +88,13 @@ Each viewer's external tracks use accounts available to that viewer. If no eligi
 
 ### Activity
 
-Activity groups operational events by outcome and shows target, source, and correlation details. Listeners see only their own activity, downloads, job details, progress, and live updates. Administrators can inspect household activity. Use it with container logs when a durable job or provider call fails.
+Activity has three views. Listeners see their own work; administrators see work across the household.
+
+- **Queue** shows waiting, running, retrying and deferred jobs. Known progress and the next attempt time appear with each job. **Cancel job** requests a stop at the worker's next safe point and preserves completed work.
+- **History** shows finished jobs, retained attempt history, safe failure messages and the operational event feed. Filter jobs by type and state, load earlier jobs or attempts, and use the event feed's existing source, category and search filters. Attempt details expire sooner than the latest job outcome.
+- **Tasks** shows playlist schedules with their last and next run. **Run now** uses the playlist's existing update rules. Administrators also see automatic retention, cache cleanup, library indexing and backfill checks. Maintenance next-check times are approximate; individual kept-copy deletions remain subject to their twenty-four-hour grace period and current references.
+
+The existing update stream refreshes these views. If it disconnects, Activity shows the reconnect state and checks periodically; reconnecting refreshes the visible work. Errors retain already-loaded records and offer a retry. Use Activity with container logs when a durable job or provider call fails.
 
 ### Listening preferences
 

@@ -202,3 +202,19 @@ export function outcomeClass(state: string) {
     return "rejected";
   return "";
 }
+
+
+export const jobNames: Record<string, string> = {
+  "playlist.materialize": "Update playlist",
+  "playback.signal": "Record a listen", "favorite.process": "Update favorites", "favorite.display-backfill": "Recover favorite details",
+  "recording.kept-cleanup": "Remove unused kept copy", "recording.keep": "Keep a song", "playlist.retain-track": "Keep playlist song",
+  "track-match.rematch": "Refresh matches", "library.index": "Refresh library index", "recording.musicbrainz.enrich": "Identify recording", "recording.odesli.enrich": "Find recording links",
+};
+export function jobName(type: string) { return jobNames[type] ?? humanize(type); }
+export function jobState(state: string) {
+  return ({ Pending: "Waiting", Running: "Running", RetryScheduled: "Retrying", Deferred: "Deferred", Succeeded: "Completed", Failed: "Failed", Cancelled: "Cancelled" } as Record<string, string>)[state] ?? humanize(state);
+}
+export function progressPercent(completed?: number | null, total?: number | null) {
+  return typeof total === "number" && Number.isFinite(total) && total > 0 && typeof completed === "number" && Number.isFinite(completed)
+    ? Math.min(100, Math.max(0, Math.round(completed / total * 100))) : null;
+}

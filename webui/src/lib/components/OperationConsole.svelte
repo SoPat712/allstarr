@@ -40,7 +40,7 @@
     data?.progress.filter((item) => item.jobId === job?.id) ?? [],
   ));
   const latest = $derived(entries[0] ? progressDetails(entries[0]) : {});
-  const active = $derived(job && ["Pending", "Running", "Deferred"].includes(job.state));
+  const active = $derived(job && ["Pending", "Running", "RetryScheduled", "Deferred"].includes(job.state));
   const percent = $derived(
     latest.total ? Math.min(100, Math.round(((latest.completed ?? 0) / latest.total) * 100)) : null,
   );
@@ -50,8 +50,8 @@
       data = await home.jobs();
       const next = selectJob(data);
       const reachedTerminal = observedJobId === next?.id &&
-          observedState && ["Pending", "Running", "Deferred"].includes(observedState) &&
-          !["Pending", "Running", "Deferred"].includes(next?.state ?? "");
+          observedState && ["Pending", "Running", "RetryScheduled", "Deferred"].includes(observedState) &&
+          !["Pending", "Running", "RetryScheduled", "Deferred"].includes(next?.state ?? "");
       if (next) {
         observedJobId = next.id;
         observedState = next.state;

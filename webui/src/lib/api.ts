@@ -91,6 +91,12 @@ export type Job = {
   id: string;
   type: string;
   state: string;
+  ownerName?: string | null;
+  canCancel?: boolean;
+  createdAt?: string;
+  completedAt?: string | null;
+  lastAttemptOutcome?: string | null;
+  lastAttemptCompletedAt?: string | null;
   attemptCount?: number;
   failureCount?: number;
   deferralCount?: number;
@@ -110,7 +116,10 @@ export type JobProgress = {
   createdAt: string;
 };
 
-export type JobResponse = { jobs: Job[]; progress: JobProgress[] };
+export type JobResponse = { jobs: Job[]; progress: JobProgress[]; hasMore?: boolean; nextCursor?: string | null; nextCursorId?: string | null };
+export type JobAttempt = { attemptNumber: number; startedAt: string; completedAt?: string | null; outcome?: string | null; errorCode?: string | null; errorMessage?: string | null };
+export type JobDetail = { job: Job; attempts: JobAttempt[]; hasMore: boolean; nextCursor?: string | null; nextCursorId?: string | null };
+export type ActivityTask = { id: string; name: string; kind: string; state: string; enabled: boolean; ownerName?: string | null; cadence: string; detail?: string; lastRunAt?: string | null; nextRunAt?: string | null; runPlaylistLinkId?: string | null };
 
 export type ActivityItem = {
   id: string;
@@ -2097,4 +2106,21 @@ export const appleDownload = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ code }),
     }),
+};
+
+
+export const activityWork = {
+  jobs: (view: "queue" | "history", state = "", type = "", before = "", beforeId = "") => {
+    const query = new URLSearchParams({ view, limit: "50" });
+    if (state) query.set("state", state);
+    if (type) query.set("type", type);
+    if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
+    return json<JobResponse>(`/api/admin/jobs?${query}`);
+  },
+  detail: (id: string, before = "", beforeId = "") => {
+    const query = new URLSearchParams({ limit: "25" });
+    if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
+    return json<JobDetail>(`/api/admin/jobs/${encodeURIComponent(id)}?${query}`);
+  },
+  tasks: () => json<{ items: ActivityTask[]; hasMore?: boolean }>("/api/admin/activity/tasks"),
 };

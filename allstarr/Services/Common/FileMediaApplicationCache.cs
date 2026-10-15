@@ -1062,13 +1062,28 @@ public sealed class HybridApplicationCache(
 
 public sealed class ApplicationCacheMaintenanceService(
     HybridApplicationCache cache,
-    ILogger<ApplicationCacheMaintenanceService> logger) : BackgroundService
+    ILogger<ApplicationCacheMaintenanceService> logger, allstarr.Core.Operations.BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
-    public Task<int> RunOnceAsync(CancellationToken cancellationToken = default) =>
-        cache.CleanupAsync(cancellationToken);
+    public async Task<int> RunOnceAsync(CancellationToken cancellationToken = default)
+    {
+        taskActivity?.Register("media-cache-cleanup", "Media cache cleanup", cache.CleanupInterval, false);
+        taskActivity?.Started("media-cache-cleanup");
+        try
+        {
+            var deleted = await cache.CleanupAsync(cancellationToken);
+            if (taskActivity != null) await taskActivity.CompletedAsync("media-cache-cleanup", true, cancellationToken);
+            return deleted;
+        }
+        catch
+        {
+            if (taskActivity != null) await taskActivity.CompletedAsync("media-cache-cleanup", false, cancellationToken);
+            throw;
+        }
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        taskActivity?.Register("media-cache-cleanup", "Media cache cleanup", cache.CleanupInterval, false);
         using var timer = new PeriodicTimer(cache.CleanupInterval);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {

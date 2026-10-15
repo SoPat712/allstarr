@@ -16,7 +16,7 @@ public sealed class AuditEventRetentionService(
     IServiceScopeFactory scopeFactory,
     IConfiguration configuration,
     TimeProvider timeProvider,
-    ILogger<AuditEventRetentionService> logger) : BackgroundService
+    ILogger<AuditEventRetentionService> logger, BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
     private readonly TimeSpan retention = TimeSpan.FromDays(Math.Clamp(
         configuration.GetValue("Operations:EventLog:RetentionDays", 30), 1, 3650));
@@ -33,6 +33,7 @@ public sealed class AuditEventRetentionService(
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        taskActivity?.Register("event-retention", "Activity retention", interval);
         await PruneNowAsync(stoppingToken);
 
         using var timer = new PeriodicTimer(interval, timeProvider);
@@ -44,6 +45,8 @@ public sealed class AuditEventRetentionService(
 
     public async Task PruneNowAsync(CancellationToken cancellationToken = default)
     {
+        taskActivity?.Register("event-retention", "Activity retention", interval);
+        taskActivity?.Started("event-retention");
         try
         {
             var now = timeProvider.GetUtcNow();
@@ -122,6 +125,7 @@ public sealed class AuditEventRetentionService(
                     deletedJobs,
                     cutoff);
             }
+            if (taskActivity != null) await taskActivity.CompletedAsync("event-retention", true, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -129,6 +133,7 @@ public sealed class AuditEventRetentionService(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Event-log retention failed; cleanup will retry at the next interval.");
+            if (taskActivity != null) await taskActivity.CompletedAsync("event-retention", false, cancellationToken);
         }
     }
 
