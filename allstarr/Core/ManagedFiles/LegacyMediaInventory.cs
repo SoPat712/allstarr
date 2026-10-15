@@ -2,11 +2,14 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using allstarr.Core.Configuration;
+using allstarr.Core.Storage;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace allstarr.Core.ManagedFiles;
 
-public sealed partial class LegacyMediaInventory(IConfiguration configuration, IServiceScopeFactory scopes)
+public sealed partial class LegacyMediaInventory(IConfiguration configuration, IServiceScopeFactory scopes,
+    IDbContextFactory<AllstarrDbContext>? factory = null)
 {
     public LegacyMediaPlan Preview(LegacyEnvDocument document, CancellationToken token = default)
     {
@@ -83,6 +86,17 @@ public sealed partial class LegacyMediaInventory(IConfiguration configuration, I
                 }
                 catch (Exception error) when (error is IOException or UnauthorizedAccessException)
                 { notices.Add("An unavailable or unsafe media entry was skipped. Check the mounted roots and preview again."); }
+            }
+        }
+        if (factory != null && found.Count > 0)
+        {
+            using var db = factory.CreateDbContext();
+            var paths = found.Keys.ToArray();
+            foreach (var path in db.ManagedFiles.AsNoTracking().Where(item => paths.Contains(item.CanonicalPath) &&
+                         item.PlacementMethod != ManagedFilePlacementMethod.Adopted).Select(item => item.CanonicalPath))
+            {
+                token.ThrowIfCancellationRequested();
+                found.Remove(path);
             }
         }
         return new(found.Values.OrderBy(item => item.Path, StringComparer.Ordinal).ToArray(), notices.Order(StringComparer.Ordinal).ToArray());

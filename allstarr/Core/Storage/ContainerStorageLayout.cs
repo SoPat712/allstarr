@@ -27,10 +27,21 @@ public static partial class ContainerStorageLayout
         configuration["Legacy:AllowedRoots"] = string.Join(',', mounts.Where(path => path is "/app/kept" or "/app/downloads"));
         configuration["Legacy:KeptPath"] = configuration["Library:KeptPath"] ?? "/app/kept";
         configuration["Legacy:DownloadPath"] = configuration["Library:DownloadPath"] ?? "/app/downloads";
-        configuration["Library:KeptPath"] = Path.Combine(requested, "kept");
-        configuration["Library:DownloadPath"] = Path.Combine(requested, "downloads");
+        var mediaMounts = mounts.Where(path => path is "/app/kept" or "/app/downloads").ToArray();
+        configuration["Library:KeptPath"] = PlacementRoot(configuration["Legacy:KeptPath"],
+            IsPersistent("/app/kept", mediaMounts) ? "/app/kept" : "/app/downloads/kept", "kept");
+        configuration["Library:DownloadPath"] = PlacementRoot(configuration["Legacy:DownloadPath"],
+            "/app/downloads", "downloads");
         configuration["Cache:MediaDirectory"] = Path.Combine(requested, "cache", "media");
         configuration["Storage:LegacyLayout"] = "true";
+
+        string PlacementRoot(string? previous, string conventional, string fallback)
+        {
+            var root = !string.IsNullOrWhiteSpace(previous) && Path.IsPathRooted(previous) &&
+                IsPersistent(Path.GetFullPath(previous), mediaMounts) ? Path.GetFullPath(previous) : conventional;
+            return IsPersistent(root, mediaMounts)
+                ? Path.Combine(root, "Allstarr") : Path.Combine(requested, fallback);
+        }
     }
 
     public static IReadOnlyList<string> PersistentMounts(string mountInfo) => mountInfo.Split('\n')

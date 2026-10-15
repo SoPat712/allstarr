@@ -42,7 +42,7 @@ public sealed class ContainerStorageLayoutTests
     }
 
     [Fact]
-    public void LegacyRoots_AreDiscoveryInputsRatherThanNewWriteTargets()
+    public void LegacyRoots_KeepManagedPlacementInsideExistingMediaMounts()
     {
         var settings = new ConfigurationManager();
         settings["Library:DownloadPath"] = "/app/downloads/cache";
@@ -50,8 +50,26 @@ public sealed class ContainerStorageLayoutTests
         ContainerStorageLayout.Configure(settings, true, ["/app/cache", "/app/downloads"]);
         Assert.Equal("/app/downloads/cache", settings["Legacy:DownloadPath"]);
         Assert.Equal("/app/downloads/kept", settings["Legacy:KeptPath"]);
-        Assert.Equal("/app/cache/allstarr-v3/downloads", settings["Library:DownloadPath"]);
-        Assert.Equal("/app/cache/allstarr-v3/kept", settings["Library:KeptPath"]);
+        Assert.Equal("/app/downloads/cache/Allstarr", settings["Library:DownloadPath"]);
+        Assert.Equal("/app/downloads/kept/Allstarr", settings["Library:KeptPath"]);
+    }
+
+    [Theory]
+    [InlineData(null, null, "/app/kept/Allstarr", "/app/downloads/Allstarr")]
+    [InlineData("/outside/kept", "/outside/downloads", "/app/kept/Allstarr", "/app/downloads/Allstarr")]
+    [InlineData("/app/kept/music", "/app/downloads/music", "/app/kept/music/Allstarr", "/app/downloads/music/Allstarr")]
+    public void LegacyMediaMounts_RemainTheWriteTargetsAfterUpgrade(string? kept, string? downloads,
+        string expectedKept, string expectedDownloads)
+    {
+        var settings = new ConfigurationManager();
+        settings["Library:KeptPath"] = kept;
+        settings["Library:DownloadPath"] = downloads;
+        ContainerStorageLayout.Configure(settings, true, ["/app/cache", "/app/kept", "/app/downloads"]);
+        new ServiceCollection().AddDurableStorage(settings, new Mock<IHostEnvironment>().Object);
+        Assert.Equal(expectedKept, settings["Library:KeptPath"]);
+        Assert.Equal(expectedDownloads, settings["Library:DownloadPath"]);
+        Assert.Equal("/app/cache/allstarr-v3", settings["Storage:DataDirectory"]);
+        Assert.Equal("/app/cache/allstarr-v3/cache/media", settings["Cache:MediaDirectory"]);
     }
 
     [Fact]
