@@ -15,7 +15,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Skeleton } from "$lib/components/ui/skeleton";
-  import { canonicalProviderId, humanize, providerDisplayName } from "$lib/sources";
+  import { canonicalProviderId, lyricsSourceDisplayName } from "$lib/sources";
   import { move } from "$lib/settings";
 
   const filterOptions: Array<{ value: ExplicitFilter; label: string; description: string }> = [
@@ -47,7 +47,7 @@
   ));
 
   function completeLyricsOrder(value?: string | null) {
-    const candidates = [...(value ?? "").split(","), ...providerDefinitions
+    const candidates = [...(value ?? "").split(","), "backend", ...providerDefinitions
       .filter(provider => provider.categories?.includes("lyrics")).map(provider => provider.id).sort()];
     const included = new Set<string>();
     return candidates.map(id => id.trim()).filter(id => {
@@ -58,7 +58,7 @@
     });
   }
 
-  const lyricsName = (id: string) => providerDisplayName(providerDefinitions, id, humanize(id));
+  const lyricsName = (id: string) => lyricsSourceDisplayName(providerDefinitions, id);
 
   function apply(next: PersonalListeningPreferences) {
     snapshot = next;
@@ -215,7 +215,7 @@
       <section class="lyrics-options" aria-label="Lyrics source order">
         <div>
           <h3>Lyrics source order</h3>
-          <p>Choose which sources your music apps try first. Synced lyrics are preferred; plain text is used when no source has timing. Sources must be enabled and available to your account.</p>
+          <p>Choose when your music apps try media-server lyrics and other sources. Synced lyrics are preferred; plain text is used when no source has timing. Sources must be enabled and available to your account.</p>
         </div>
         <ol class="lyrics-order-list">
           {#each lyricsOrder as providerId, index (providerId)}

@@ -328,6 +328,11 @@ public sealed class HostCompositionTests
 
         Assert.Equal(["qobuz", "deezer"], streaming.Providers.Take(2));
         Assert.Equal("disabled", Assert.Single(schema.Providers, item => item.Id == "deezer").Status);
+        var lyrics = Assert.Single(schema.PriorityGroups, item => item.Id == "lyrics");
+        Assert.Null(lyrics.PinnedProvider);
+        Assert.Equal("backend", lyrics.Providers[0]);
+        Assert.DoesNotContain(schema.Providers, item => item.Id is "backend" or "kept");
+        Assert.NotNull(streaming.PinnedProvider);
     }
 
     [Fact]

@@ -15,6 +15,87 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsResolverTests
 {
+    [Fact]
+    public async Task NativeCallbackCannotJumpAheadOfTheGatewayHouseholdOrderWithoutPersonalPolicy()
+    {
+        var context = LyricsContext();
+        var providers = LyricsProviders(context, ProviderLyricsFormat.LineTimed, ProviderLyricsFormat.LineTimed);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "backend"]);
+        var nativeCalls = 0;
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "native-song", new ProtocolLyricsSources(Backend: _ =>
+            {
+                nativeCalls++;
+                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { SyncedLyrics = "[00:01.000]Native" });
+            }));
+        Assert.Equal("lrclib", result?.Source);
+        Assert.Equal(0, nativeCalls);
+    }
+
+    [Theory]
+    [InlineData("backend,kept,lrclib", true, true, "backend")]
+    [InlineData("lrclib,backend,kept", true, true, "lrclib")]
+    [InlineData("backend,kept,lrclib", false, true, "kept")]
+    [InlineData("backend,kept,lrclib", false, false, "backend")]
+    public async Task LocalSourcesUseTheListenersOrderAndTheSameTimedPreference(
+        string order, bool backendTimed, bool laterTimed, string expected)
+    {
+        var context = LyricsContext();
+        var calls = new List<string>();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120))
+            .Callback(() => calls.Add("lrclib"))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
+                laterTimed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
+                laterTimed ? "[00:01.234]Provider" : "Provider"));
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(context.Actor!.EffectiveUserId!.Value, context.CancellationToken))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
+            { [ProviderCapabilityKind.Lyrics] = [.. order.Split(',')] }.ToImmutableDictionary(),
+                ImmutableHashSet<string>.Empty, "lossless", 0.07));
+        Task<allstarr.Models.Lyrics.LyricsInfo?> Read(string source, bool timed, CancellationToken token)
+        {
+            Assert.Equal(context.CancellationToken, token);
+            calls.Add(source);
+            return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new()
+            { Source = source, SyncedLyrics = timed ? "[00:01.234]Local" : null, PlainLyrics = timed ? null : "Local" });
+        }
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+                effectivePolicies: policies.Object).FindAsync(context, LyricsSong(), "native-song",
+            new ProtocolLyricsSources(token => Read("backend", backendTimed, token), token => Read("kept", laterTimed, token)));
+        Assert.Equal(expected, result?.Source);
+        Assert.Equal(laterTimed || backendTimed, result?.SyncedLyrics != null);
+        Assert.Equal(order.Split(',').Take(calls.Count), calls);
+        policies.VerifyAll();
+    }
+
+    [Fact]
+    public async Task DisabledLocalSourcesAreNotReadAndCancellationDuringReplyStopsFallback()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var context = LyricsContext(cancellation.Token);
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns([]);
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(context.Actor!.EffectiveUserId!.Value, context.CancellationToken))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(new Dictionary<ProviderCapabilityKind, ImmutableArray<string>>
+            { [ProviderCapabilityKind.Lyrics] = ["backend", "kept"] }.ToImmutableDictionary(),
+                ImmutableHashSet.Create("backend"), "lossless", 0.07));
+        var sources = new ProtocolLyricsSources(_ => throw new InvalidOperationException("Disabled source was read"),
+            _ =>
+            {
+                cancellation.Cancel();
+                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { SyncedLyrics = "[00:01.000]Canceled" });
+            });
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ProtocolLyricsResolver(providers.Object,
+            NullLogger<ProtocolLyricsResolver>.Instance, effectivePolicies: policies.Object)
+            .FindAsync(context, LyricsSong(), "native-song", sources));
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("lrclib")]
     [InlineData("lyricsplus")]

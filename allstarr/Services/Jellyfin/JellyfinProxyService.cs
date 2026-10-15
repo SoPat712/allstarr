@@ -71,7 +71,7 @@ public class JellyfinProxyService
                $"Token=\"{_settings.ApiKey}\"";
     }
 
-    public async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsync(string endpoint, Dictionary<string, string>? queryParams = null, IHeaderDictionary? clientHeaders = null)
+    public async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsync(string endpoint, Dictionary<string, string>? queryParams = null, IHeaderDictionary? clientHeaders = null, CancellationToken cancellationToken = default)
     {
         if (endpoint.Contains('?'))
         {
@@ -83,7 +83,7 @@ public class JellyfinProxyService
             // This is required for endpoints that legitimately repeat keys like Fields=...
             if (queryParams == null || queryParams.Count == 0)
             {
-                return await GetJsonAsyncInternal(BuildUrl(endpoint), clientHeaders);
+                return await GetJsonAsyncInternal(BuildUrl(endpoint), clientHeaders, cancellationToken);
             }
 
             var preservedParams = new List<string>();
@@ -110,11 +110,11 @@ public class JellyfinProxyService
                 ? BuildUrl(baseEndpoint)
                 : NormalizeQueryCredentials($"{BuildUrl(baseEndpoint)}?{mergedQuery}");
 
-            return await GetJsonAsyncInternal(url, clientHeaders);
+            return await GetJsonAsyncInternal(url, clientHeaders, cancellationToken);
         }
 
         var finalUrl = BuildUrl(endpoint, queryParams);
-        return await GetJsonAsyncInternal(finalUrl, clientHeaders);
+        return await GetJsonAsyncInternal(finalUrl, clientHeaders, cancellationToken);
     }
 
     // Catch-all relays must preserve arbitrary bodies and client-owned authentication.
@@ -174,18 +174,18 @@ public class JellyfinProxyService
         return response;
     }
 
-    private async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string url, IHeaderDictionary? clientHeaders)
+    private async Task<(JsonDocument? Body, int StatusCode)> GetJsonAsyncInternal(string url, IHeaderDictionary? clientHeaders, CancellationToken cancellationToken)
     {
         using var request = CreateClientGetRequest(url, clientHeaders, out var isBrowserStaticRequest, out var isPublicEndpoint);
 
         LogOutboundRequest(HttpMethod.Get, url);
 
-        using var response = await _httpClient.SendAsync(request);
+        using var response = await _httpClient.SendAsync(request, cancellationToken);
 
         var statusCode = (int)response.StatusCode;
 
         // Preserve JSON error bodies so clients can respond to authentication failures.
-        var content = await response.Content.ReadAsStringAsync();
+        var content = await response.Content.ReadAsStringAsync(cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -628,7 +628,7 @@ public class JellyfinProxyService
         return await GetJsonAsync("Items", queryParams, clientHeaders);
     }
 
-    public async Task<(JsonDocument? Body, int StatusCode)> GetItemAsync(string itemId, IHeaderDictionary? clientHeaders = null)
+    public async Task<(JsonDocument? Body, int StatusCode)> GetItemAsync(string itemId, IHeaderDictionary? clientHeaders = null, CancellationToken cancellationToken = default)
     {
         var queryParams = new Dictionary<string, string>
         {
@@ -648,7 +648,7 @@ public class JellyfinProxyService
             };
         }
 
-        var (body, statusCode) = await GetJsonAsync("Items", queryParams, effectiveHeaders);
+        var (body, statusCode) = await GetJsonAsync("Items", queryParams, effectiveHeaders, cancellationToken);
         using (body)
         {
             if (statusCode != StatusCodes.Status200OK || body == null ||

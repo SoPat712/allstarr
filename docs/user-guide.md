@@ -98,6 +98,8 @@ The **[A]** external and **[E]** explicit title markers can be toggled independe
 
 Use the up and down buttons in **Lyrics source order** to choose which available sources your music apps try first. Allstarr prefers synced lyrics and retains plain text when no source provides timing. Your order applies only to your listener account and still requires enabled sources and authorized accounts. Resetting preferences restores the latest household order as well as your display defaults.
 
+**Media server lyrics** can be moved with the same controls. If they win, the music app receives the media server's original lyric response, including its language and timing details.
+
 ### Settings
 
 Settings owns deployment behavior rather than provider credentials: playback quality, matching preferences, cache behavior, maintenance, backup, restore, and other operator policy. Controls that affect one feature stay near that feature when possible.

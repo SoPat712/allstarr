@@ -91,6 +91,9 @@ export const providerDisplayName = (
   fallback = "Unknown source",
 ) => providerId ? findProviderDefinition(providers, providerId)?.name ?? fallback : fallback;
 
+export const lyricsSourceDisplayName = (providers: ProviderDefinition[], id: string) =>
+  id === "backend" ? "Media server lyrics" : id === "kept" ? "Kept LRC" : providerDisplayName(providers, id, humanize(id));
+
 export function accountSubtitle(account: { scope: string; customLabel?: string | null }) {
   const audience = account.scope === "Shared" ? "Shared with everyone" : "Personal";
   return account.customLabel ? `${audience} · ${account.customLabel}` : audience;

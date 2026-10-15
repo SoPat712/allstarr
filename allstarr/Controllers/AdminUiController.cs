@@ -1348,9 +1348,9 @@ public class AdminUiController : ControllerBase
                 ProviderCapabilityKind.Lyrics,
                 "lyrics",
                 "Lyrics priority",
-                "Order used for lyrics lookup when a song is played or requested.",
+                "Choose when media-server lyrics and other available sources are tried. Synced lyrics are preferred.",
                 null,
-                pinnedProvider: pinnedLocalProvider,
+                pinnedProvider: null,
                 policy: policy)
         ];
     }
@@ -1400,6 +1400,8 @@ public class AdminUiController : ControllerBase
                 .Where(providerId => !providers.Contains(providerId, StringComparer.OrdinalIgnoreCase))
                 .OrderBy(providerId => providerId, StringComparer.Ordinal));
         }
+        if (capability == ProviderCapabilityKind.Lyrics && !providers.Contains("backend", StringComparer.Ordinal))
+            providers.Add("backend");
         return new AdminUiPriorityGroup
         {
             Id = id,

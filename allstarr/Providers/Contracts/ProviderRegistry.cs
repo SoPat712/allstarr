@@ -215,6 +215,8 @@ public static class ProviderRegistrationValidator
     public static ProviderRegistration Validate(ProviderRegistration registration)
     {
         ArgumentNullException.ThrowIfNull(registration);
+        if (registration.Aliases.Any(ProviderContractValidation.IsLocalLyricsSource))
+            throw new InvalidOperationException("Local lyrics source IDs cannot be used as provider aliases.");
         var descriptor = ProviderManifestValidator.Validate(registration.Descriptor);
         if (registration.Implementations.Any(item => item == null))
         {
@@ -343,6 +345,8 @@ public static class ProviderManifestValidator
     public static ProviderDescriptor Validate(ProviderDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
+        if (ProviderContractValidation.IsLocalLyricsSource(descriptor.Id))
+            throw new InvalidOperationException("Local lyrics source IDs cannot be registered as providers.");
         if (!descriptor.SdkVersion.Equals("1", StringComparison.Ordinal))
         {
             throw new InvalidOperationException(

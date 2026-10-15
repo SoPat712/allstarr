@@ -5,6 +5,7 @@ import {
   accountSubtitle,
   accountOwnershipLabel,
   providerDisplayName,
+  lyricsSourceDisplayName,
   audienceLabel,
   ctsMeasurementLabel,
   sourceMetrics,
@@ -35,6 +36,11 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("names local lyric sources without fake provider services", () => {
+    expect(lyricsSourceDisplayName([], "backend")).toBe("Media server lyrics");
+    expect(lyricsSourceDisplayName([], "kept")).toBe("Kept LRC");
+    expect(lyricsSourceDisplayName([{ id: "lrclib", name: "LRCLIB" }], "lrclib")).toBe("LRCLIB");
+  });
   it("shows audience and only an explicitly supplied custom label", () => {
     expect(accountSubtitle({ scope: "Personal", customLabel: null })).toBe("Personal");
     expect(accountSubtitle({ scope: "Shared" })).toBe("Shared with everyone");

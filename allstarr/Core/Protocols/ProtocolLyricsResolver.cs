@@ -8,8 +8,15 @@ using allstarr.Core.Settings;
 
 namespace allstarr.Core.Protocols;
 
+public sealed record ProtocolLyricsSources(
+    Func<CancellationToken, Task<LyricsInfo?>>? Backend = null,
+    Func<CancellationToken, Task<LyricsInfo?>>? Kept = null);
+
 public interface IProtocolLyricsResolver
 {
+    Task<LyricsInfo?> FindAsync(ProtocolExecutionContext protocol, Song song, string resourceKey,
+        ProtocolLyricsSources sources);
+
     Task<LyricsInfo?> FindAsync(
         ProtocolExecutionContext protocol,
         Song song,
@@ -25,13 +32,27 @@ public sealed class ProtocolLyricsResolver(
     OdesliService? odesli = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProtocolLyricsResolver
 {
-    public async Task<LyricsInfo?> FindAsync(
+    public Task<LyricsInfo?> FindAsync(ProtocolExecutionContext protocol, Song song, string resourceKey,
+        ProtocolLyricsSources sources) => FindCoreAsync(protocol, song, resourceKey,
+        song.ExternalProvider, song.ExternalId, song.SpotifyId, sources);
+
+    public Task<LyricsInfo?> FindAsync(
         ProtocolExecutionContext protocol,
         Song song,
         string resourceKey,
         string? sourceProvider = null,
         string? sourceExternalId = null,
-        string? spotifyTrackId = null)
+        string? spotifyTrackId = null) => FindCoreAsync(protocol, song, resourceKey,
+        sourceProvider, sourceExternalId, spotifyTrackId, null);
+
+    private async Task<LyricsInfo?> FindCoreAsync(
+        ProtocolExecutionContext protocol,
+        Song song,
+        string resourceKey,
+        string? sourceProvider,
+        string? sourceExternalId,
+        string? spotifyTrackId,
+        ProtocolLyricsSources? sources)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         ArgumentNullException.ThrowIfNull(song);
@@ -39,7 +60,11 @@ public sealed class ProtocolLyricsResolver(
         protocol.CancellationToken.ThrowIfCancellationRequested();
         var artists = song.Artists.Count > 0 ? song.Artists : [song.Artist];
 
-        var order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics);
+        var localSources = new Dictionary<string, Func<CancellationToken, Task<LyricsInfo?>>>(StringComparer.Ordinal);
+        if (sources?.Backend != null) localSources.Add("backend", sources.Backend);
+        if (sources?.Kept != null) localSources.Add("kept", sources.Kept);
+        IReadOnlyList<string> order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics).Concat(localSources.Keys)
+            .Distinct(StringComparer.Ordinal).ToArray();
         if (effectivePolicies != null && protocol.Actor?.EffectiveUserId is { } userId)
         {
             var effectivePolicy = await effectivePolicies.ResolveForUserAsync(
@@ -58,35 +83,48 @@ public sealed class ProtocolLyricsResolver(
             protocol.CancellationToken.ThrowIfCancellationRequested();
             try
             {
-                var externalId = ResolveExternalId(
-                    providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
-                if (externalId == null && sourceUrl != null && odesli != null)
-                    externalId = await odesli.TranslateCachedTrackUrlAsync(
-                        sourceUrl, providerId, protocol.CancellationToken);
-                if (externalId == null) continue;
-                var result = await providers.GetLyricsAsync(
-                    protocol,
-                    providerId,
-                    externalId,
-                    ProviderLyricsFormat.LineTimed,
-                    song.Title,
-                    artists,
-                    song.Album,
-                    song.Duration);
-                protocol.CancellationToken.ThrowIfCancellationRequested();
-                if (string.IsNullOrWhiteSpace(result?.Content)) continue;
-                var lyrics = new LyricsInfo
+                LyricsInfo? lyrics;
+                if (localSources.TryGetValue(providerId, out var readLocal))
                 {
-                    TrackName = song.Title,
-                    ArtistName = string.Join(", ", artists),
-                    AlbumName = song.Album,
-                    Duration = song.Duration ?? 0,
-                    PlainLyrics = result.Format == ProviderLyricsFormat.PlainText ? result.Content : null,
-                    SyncedLyrics = result.Format == ProviderLyricsFormat.PlainText ? null : result.Content,
-                    Source = result.Source,
-                    Revision = result.Revision
-                };
-                if (result.Format != ProviderLyricsFormat.PlainText) return lyrics;
+                    lyrics = await readLocal(protocol.CancellationToken);
+                    if (lyrics != null) lyrics.Source = providerId;
+                }
+                else
+                {
+                    if (providerId is "backend" or "kept") continue;
+                    var externalId = ResolveExternalId(
+                        providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
+                    if (externalId == null && sourceUrl != null && odesli != null)
+                        externalId = await odesli.TranslateCachedTrackUrlAsync(
+                            sourceUrl, providerId, protocol.CancellationToken);
+                    if (externalId == null) continue;
+                    var result = await providers.GetLyricsAsync(
+                        protocol,
+                        providerId,
+                        externalId,
+                        ProviderLyricsFormat.LineTimed,
+                        song.Title,
+                        artists,
+                        song.Album,
+                        song.Duration);
+                    protocol.CancellationToken.ThrowIfCancellationRequested();
+                    if (string.IsNullOrWhiteSpace(result?.Content)) continue;
+                    lyrics = new LyricsInfo
+                    {
+                        TrackName = song.Title,
+                        ArtistName = string.Join(", ", artists),
+                        AlbumName = song.Album,
+                        Duration = song.Duration ?? 0,
+                        PlainLyrics = result.Format == ProviderLyricsFormat.PlainText ? result.Content : null,
+                        SyncedLyrics = result.Format == ProviderLyricsFormat.PlainText ? null : result.Content,
+                        Source = result.Source,
+                        Revision = result.Revision
+                    };
+                }
+                protocol.CancellationToken.ThrowIfCancellationRequested();
+                if (lyrics == null || string.IsNullOrWhiteSpace(lyrics.SyncedLyrics) && string.IsNullOrWhiteSpace(lyrics.PlainLyrics))
+                    continue;
+                if (!string.IsNullOrWhiteSpace(lyrics.SyncedLyrics)) return lyrics;
                 plainFallback ??= lyrics;
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
