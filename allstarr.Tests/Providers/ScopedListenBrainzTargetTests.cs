@@ -113,6 +113,108 @@ public sealed class ScopedListenBrainzTargetTests
         Assert.Equal(0, handler.Calls);
     }
 
+    [Theory]
+    [InlineData("http://127.0.0.1:9078/1/")]
+    [InlineData("http://192.168.20.10:9078/1/")]
+    [InlineData("http://10.1.2.3:4110/apis/listenbrainz/1/")]
+    [InlineData("http://172.16.0.2:9078/1/")]
+    [InlineData("http://[fd00::1]:4110/apis/listenbrainz/1/")]
+    [InlineData("http://multi-scrobbler:9078/1/")]
+    public async Task PrivateHttpService_ReceivesTheConfiguredSubmission(string address)
+    {
+        var handler = new CaptureHandler();
+        var target = new ListenBrainzScopedPlaybackScrobbleTarget(new HttpClient(handler),
+            new AccountAccessor(JsonSerializer.Serialize(new { token = "fixture-token", baseUrl = address })));
+        await target.DeliverAsync(Scope(), PlaybackTransition.Submission,
+            new ScopedPlaybackTrack("Track", "Artist", null, 180000), null, DateTimeOffset.UtcNow, "signal", default);
+        Assert.Equal(address + "submit-listens", handler.RequestUri);
+        Assert.Equal("fixture-token", handler.AuthorizationParameter);
+    }
+
+    [Theory]
+    [InlineData("10.0.0.1", true)]
+    [InlineData("172.31.0.1", true)]
+    [InlineData("192.168.0.1", true)]
+    [InlineData("127.0.0.1", true)]
+    [InlineData("::1", true)]
+    [InlineData("fd00::1", true)]
+    [InlineData("8.8.8.8", false)]
+    [InlineData("172.32.0.1", false)]
+    [InlineData("169.254.169.254", false)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("::", false)]
+    [InlineData("ff02::1", false)]
+    [InlineData("2001:4860:4860::8888", false)]
+    public void HttpConnection_RequiresEveryResolvedAddressToBePrivate(string address, bool expected)
+    {
+        Assert.Equal(expected, allstarr.Services.Common.ListenBrainzServiceEndpoint.AllowsResolvedAddresses(
+            new("http://scrobbler.internal/1/"), [IPAddress.Parse(address)]));
+        Assert.False(allstarr.Services.Common.ListenBrainzServiceEndpoint.AllowsResolvedAddresses(
+            new("http://scrobbler.internal/1/"), [IPAddress.Parse("10.0.0.1"), IPAddress.Parse("8.8.8.8")]));
+    }
+
+    [Theory]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    public async Task FirstClassTargets_UseTheSharedSenderWithDistinctIdentities(string providerId)
+    {
+        var handler = new CaptureHandler();
+        var accounts = new AccountAccessor("{\"token\":\"fixture-token\",\"baseUrl\":\"http://127.0.0.1:9078/1/\"}");
+        using var http = new HttpClient(handler);
+        IExactScopePlaybackScrobbleTarget target = providerId == "koito"
+            ? new KoitoPlaybackScrobbleTarget(http, accounts) : new MultiScrobblerPlaybackScrobbleTarget(http, accounts);
+        Assert.Equal(providerId, target.ProviderId);
+        await target.DeliverAsync(Scope(), PlaybackTransition.Submission, new("Track", "Artist", null, 180000),
+            null, DateTimeOffset.FromUnixTimeSeconds(123456), "signal", default);
+        Assert.Equal("http://127.0.0.1:9078/1/submit-listens", handler.RequestUri);
+        Assert.Equal("fixture-token", handler.AuthorizationParameter);
+        Assert.Contains("123456", handler.Body);
+    }
+
+    [Fact]
+    public async Task PrivateHttpTransport_SendsTokenToTheCheckedSocketAndDoesNotFollowRedirects()
+    {
+        using var portProbe = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0);
+        portProbe.Start();
+        var port = ((IPEndPoint)portProbe.LocalEndpoint).Port;
+        portProbe.Stop();
+        using var listener = new HttpListener();
+        var root = $"http://localhost:{port}/";
+        listener.Prefixes.Add(root);
+        listener.Start();
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var count = 0;
+        string? authorization = null;
+        var serve = Task.Run(async () =>
+        {
+            while (!cancellation.IsCancellationRequested)
+            {
+                var request = await listener.GetContextAsync().WaitAsync(cancellation.Token);
+                count++;
+                authorization = request.Request.Headers["Authorization"];
+                request.Response.StatusCode = count == 1 ? 302 : 200;
+                if (count == 1) request.Response.RedirectLocation = root + "unexpected/";
+                request.Response.Close();
+            }
+        });
+        try
+        {
+            using var http = new HttpClient(allstarr.Services.Common.ListenBrainzServiceEndpoint.CreateHttpHandler());
+            var target = new ListenBrainzScopedPlaybackScrobbleTarget(http,
+                new AccountAccessor(JsonSerializer.Serialize(new { token = "fixture-token", baseUrl = root + "1/" })));
+            var result = await target.DeliverAsync(Scope(), PlaybackTransition.Submission,
+                new("Track", "Artist", null, 180000), null, DateTimeOffset.UtcNow, "signal", cancellation.Token);
+            Assert.Equal(1, count);
+            Assert.Equal("Token fixture-token", authorization);
+            Assert.Equal(ScopedPlaybackScrobbleOutcome.PermanentFailure, result.Outcome);
+        }
+        finally
+        {
+            cancellation.Cancel(); listener.Stop();
+            try { await serve; } catch (OperationCanceledException) { } catch (HttpListenerException) { }
+        }
+    }
+
     private static IntelligenceScope Scope() => new(Guid.NewGuid(), "jellyfin", "backend");
 
     private sealed class AccountAccessor(string json = "{\"token\":\"test-token\"}")

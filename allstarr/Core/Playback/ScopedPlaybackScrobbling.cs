@@ -214,6 +214,8 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 {
                     "lastfm" => "Last.fm",
                     "listenbrainz" => "ListenBrainz",
+                    "multi-scrobbler" => "multi-scrobbler",
+                    "koito" => "Koito",
                     _ => providerId
                 }).ToArray();
                 var reasonCode = retryableFailure?.Code ?? permanentFailure?.Code ??

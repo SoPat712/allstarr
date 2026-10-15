@@ -1114,7 +1114,7 @@ public class AdminUiController : ControllerBase
         ];
 
         providers.AddRange(CurrentProviderSupportCatalog.All
-            .Where(item => item.Id is "lastfm" or "listenbrainz")
+            .Where(item => item.Id is "lastfm" or "listenbrainz" or "multi-scrobbler" or "koito")
             .Select(item => new AdminUiProvider
             {
                 Id = item.Id,

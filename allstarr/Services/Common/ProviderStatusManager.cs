@@ -50,6 +50,8 @@ public class ProviderStatusManager
         ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
+        ("multi-scrobbler", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
+        ("koito", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("audiomuse-ai", ProviderCapabilities.Intelligence, ProviderAccountRequirement.Required)
     ];
 
@@ -618,8 +620,8 @@ public class ProviderStatusManager
                 IsConfiguredValue(SecretValue(secrets, "apikey")) &&
                 IsConfiguredValue(SecretValue(secrets, "sharedsecret")) &&
                 IsConfiguredValue(SecretValue(secrets, "sessionkey")),
-            ("listenbrainz", ProviderCapabilities.Scrobbling) =>
-                IsConfiguredValue(SecretValue(secrets, "token", "usertoken")),
+            ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) =>
+                IsConfiguredValue(SecretValue(secrets, "token", "usertoken")) && HasListeningEndpoint(baseline.Provider, secrets),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) =>
                 AudioMuseCredential.TryBaseUri(SecretValue(secrets, "baseurl"), out _),
             _ => null
@@ -657,7 +659,7 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
-            ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
+            ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
             _ => false
         };
@@ -675,7 +677,7 @@ public class ProviderStatusManager
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
             ("lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
-            ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
+            ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
             _ => false
         };
@@ -712,7 +714,7 @@ public class ProviderStatusManager
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
             ("lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
-            ("listenbrainz", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(accountSecrets, cancellationToken)),
+            ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(provider, accountSecrets, cancellationToken)),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
             _ => new ProbeOutcome(false, "probe_not_available")
         };
@@ -817,7 +819,14 @@ public class ProviderStatusManager
         return response.IsSuccessStatusCode;
     }
 
+    private static bool HasListeningEndpoint(string provider, IReadOnlyDictionary<string, string>? secrets)
+    {
+        try { ListenBrainzServiceEndpoint.FromSecret(secrets, provider); return true; }
+        catch (InvalidOperationException) { return false; }
+    }
+
     private async Task<bool> TestListenBrainzAsync(
+        string provider,
         IReadOnlyDictionary<string, string>? secrets,
         CancellationToken cancellationToken)
     {
@@ -827,7 +836,7 @@ public class ProviderStatusManager
             return false;
         }
 
-        var baseUri = ListenBrainzServiceEndpoint.FromSecret(secrets);
+        var baseUri = ListenBrainzServiceEndpoint.FromSecret(secrets, provider);
         using var client = _httpClientFactory.CreateClient("LastFm");
         using var request = new HttpRequestMessage(HttpMethod.Get,
             ListenBrainzServiceEndpoint.Route(baseUri, "validate-token"));

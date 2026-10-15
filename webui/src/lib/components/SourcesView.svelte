@@ -26,6 +26,7 @@
     type ProviderSummary,
     type UiSchema,
   } from "$lib/api";
+  import ScrobbleDeliveries from "$lib/components/ScrobbleDeliveries.svelte";
   import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
   import AppleDownloadDialog from "$lib/components/AppleDownloadDialog.svelte";
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
@@ -620,6 +621,10 @@
         </section>
       {/if}
 
+      {#if ["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(source.id)}
+        {#key source.id}<ScrobbleDeliveries {accounts} targetId={source.id} onConfigure={configure} />{/key}
+      {/if}
+
       {#if (source.runtimeCapabilities ?? []).length && !sourceAccounts.length}
         <section class="settings-card" aria-labelledby="service-checks-title">
           <header><div><h3 id="service-checks-title">Checks</h3><small>What this service can do right now.</small></div></header>
@@ -684,6 +689,10 @@
     </div>
   {/if}
 
+
+  {#if mode === "accounts" && !pageId}
+    <ScrobbleDeliveries {accounts} onConfigure={configure} />
+  {/if}
 
   <div class="sources-layout" aria-busy={refreshing}>
     {#if pageId}

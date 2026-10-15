@@ -34,8 +34,11 @@ public static class PlaybackRegistration
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
         services.AddHttpClient<IExactScopePlaybackScrobbleTarget, ListenBrainzScopedPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
-            .RemoveAllLoggers()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+            .RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(ListenBrainzServiceEndpoint.CreateHttpHandler);
+        services.AddHttpClient<IExactScopePlaybackScrobbleTarget, MultiScrobblerPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
+            .RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(ListenBrainzServiceEndpoint.CreateHttpHandler);
+        services.AddHttpClient<IExactScopePlaybackScrobbleTarget, KoitoPlaybackScrobbleTarget>(client => client.Timeout = TimeSpan.FromSeconds(10))
+            .RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(ListenBrainzServiceEndpoint.CreateHttpHandler);
         services.AddSingleton<IDurableJobHandler, PlaybackSignalJobHandler>();
         return services;
     }

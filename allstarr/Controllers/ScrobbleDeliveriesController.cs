@@ -14,14 +14,20 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
     PlaybackScrobbleRepair repair) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] Guid? before = null, CancellationToken token = default)
+    public async Task<IActionResult> List([FromQuery] Guid? before = null, CancellationToken token = default, [FromQuery] bool attentionOnly = false, [FromQuery] string? targetId = null)
     {
         if (Session() is not { AllstarrUserId: { } user }) return Forbid();
         await using var db = await factory.CreateDbContextAsync(token);
         var query = db.PlaybackDeliveryCheckpoints.AsNoTracking().Where(x => x.OwnerUserId == user &&
             x.Kind == PlaybackScrobbleDeliveryKind.Completed);
+        if (targetId != null) query = query.Where(x => x.TargetId == targetId);
+        if (attentionOnly) query = query.Where(x => x.State == ScopedPlaybackScrobbleOutcome.PermanentFailure ||
+            x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.SubmissionJson != null);
         if (before is { } cursor) query = query.Where(x => x.Id.CompareTo(cursor) < 0);
         var rows = await query.OrderByDescending(x => x.Id).Take(100).ToArrayAsync(token);
+        var candidates = await db.ProviderAccounts.AsNoTracking().Where(x => x.Enabled &&
+            (x.OwnerUserId == user || x.OwnerUserId == null)).Select(x => new { x.Id, x.ProviderId, x.OwnerUserId })
+            .ToArrayAsync(token);
         var items = rows.Select(x => new
         {
             x.Id,
@@ -33,6 +39,11 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
             x.RequiresReauthentication,
             x.DestinationAccountId,
             x.DestinationAccountRevision,
+            availableDestinationAccountIds = x.DestinationAccountId == null
+                ? candidates.Where(a => a.ProviderId == x.TargetId).Select(a => a.Id).ToArray() : [],
+            suggestedDestinationAccountId = x.DestinationAccountId == null
+                ? candidates.Where(a => a.ProviderId == x.TargetId).OrderBy(a => a.OwnerUserId == null)
+                    .ThenBy(a => a.Id).Select(a => (Guid?)a.Id).FirstOrDefault() : null,
             x.SendCount,
             x.RetryAfter,
             x.AttemptStartedAt,
@@ -42,7 +53,7 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
         return Ok(new { items });
     }
 
-    public sealed record RepairRequest(long Revision, string Action, long? AccountRevision = null);
+    public sealed record RepairRequest(long Revision, string Action, long? AccountRevision = null, Guid? DestinationAccountId = null);
 
     [HttpPost("{deliveryId:guid}/resolve")]
     public async Task<IActionResult> Resolve(Guid deliveryId, [FromBody] RepairRequest request, CancellationToken token)
@@ -50,7 +61,7 @@ public sealed class ScrobbleDeliveriesController(IDbContextFactory<AllstarrDbCon
         if (Session() is not { AllstarrUserId: { } user }) return Forbid();
         try
         {
-            return await repair.ResolveAsync(user, deliveryId, request.Revision, request.Action, request.AccountRevision, token)
+            return await repair.ResolveAsync(user, deliveryId, request.Revision, request.Action, request.AccountRevision, token, request.DestinationAccountId)
                 ? Ok(new { resolved = true }) : NotFound();
         }
         catch (UnauthorizedAccessException) { return Forbid(); }
