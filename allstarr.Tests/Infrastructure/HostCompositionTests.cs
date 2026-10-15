@@ -238,6 +238,27 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
+    public async Task LyricsSourcesExposeTheirExistingSetupAndRoutingSurface()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        using var scope = factory.Services.CreateScope();
+        var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
+        controller.ControllerContext = Context(administrator: true);
+        var schema = Assert.IsType<AdminUiSchemaResponse>(
+            Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
+        var plus = Assert.Single(schema.Providers, item => item.Id == "lyricsplus");
+        Assert.Equal("operator_managed", plus.ConnectionKind);
+        Assert.Equal("lyricsPlus.baseUrl", Assert.Single(plus.ConfigSchema).ValuePath);
+        var musixmatch = Assert.Single(schema.Providers, item => item.Id == "musixmatch");
+        var secret = Assert.Single(musixmatch.AccountSettings);
+        Assert.Equal("userToken", secret.Key);
+        Assert.True(secret.Required);
+        Assert.True(secret.Sensitive);
+        Assert.Contains("desktop", secret.HelpText!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("lyrics", musixmatch.Categories);
+    }
+
+    [Fact]
     public async Task AdministratorSchema_RetainsFullManagementSurface()
     {
         using var factory = new AllstarrFactory("Jellyfin");

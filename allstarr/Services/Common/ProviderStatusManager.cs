@@ -46,6 +46,8 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("audiomuse-ai", ProviderCapabilities.Intelligence, ProviderAccountRequirement.Required)
@@ -553,7 +555,7 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
 
-            ("lrclib", ProviderCapabilities.Lyrics) =>
+            ("lrclib" or "lyricsplus", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
 
             _ => (ProviderConfigurationState.NeedsConfiguration, "unsupported_capability")
@@ -602,6 +604,7 @@ public class ProviderStatusManager
 
         bool? configured = (baseline.Provider, baseline.Capability) switch
         {
+            ("musixmatch", ProviderCapabilities.Lyrics) => IsConfiguredValue(SecretValue(secrets, "usertoken")),
             ("apple-musickit", _) => IsConfiguredValue(SecretValue(secrets, "musicusertoken", "mediausertoken")) &&
                 (baseline.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist || IsConfiguredValue(_appleMusicSettings.BaseUrl)),
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
@@ -652,7 +655,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrclib", ProviderCapabilities.Lyrics) => true,
+            ("lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -670,7 +673,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrclib", ProviderCapabilities.Lyrics) => true,
+            ("lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -707,6 +710,7 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken)),
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
+            ("lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(accountSecrets, cancellationToken)),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
@@ -836,6 +840,37 @@ public class ProviderStatusManager
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
         return document.RootElement.TryGetProperty("valid", out var valid) && valid.ValueKind == JsonValueKind.True;
+    }
+
+    private async Task<ProbeOutcome> TestMetadataLyricsAsync(string provider,
+        IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(ProbeTimeout);
+        var request = new ProviderLyricsRequest(Guid.NewGuid(), new(provider, ProviderResourceKind.Track, "connection-probe"),
+            availabilityOnly: true, trackTitle: "Never Gonna Give You Up", artistNames: ["Rick Astley"], durationSeconds: 215);
+        ProviderOutcome<ProviderLyricsResult> result;
+        if (provider == "musixmatch")
+        {
+            var token = SecretValue(secrets, "usertoken");
+            if (!IsConfiguredValue(token)) return new(false, "account_needs_configuration");
+            using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.HttpClientName);
+            result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
+                client, token!, request, timeout.Token);
+        }
+        else
+        {
+            using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Lyrics.LyricsPlusCapabilityAdapter.HttpClientName);
+            var adapter = new allstarr.Core.Providers.Lyrics.LyricsPlusCapabilityAdapter(client, null,
+                async ct => _services?.GetService<allstarr.Core.Settings.IDurableRuntimeSettings>() is { } settings
+                    ? (string)(await settings.GetAsync("LyricsPlus:BaseUrl", ct)).Value
+                    : _configuration["LyricsPlus:BaseUrl"] ?? string.Empty);
+            var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
+                new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                    true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(ProbeTimeout), timeout.Token);
+            result = await adapter.FetchLyricsAsync(context, request);
+        }
+        return new(result.IsSuccess, result.Error?.Code);
     }
 
     private async Task<bool> TestLrclibAsync(CancellationToken cancellationToken)
@@ -1007,10 +1042,9 @@ public class ProviderStatusManager
 
         foreach (var name in names)
         {
-            if (values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
-            {
-                return value;
-            }
+            var value = values.FirstOrDefault(item =>
+                NormalizeSettingKey(item.Key) == NormalizeSettingKey(name) && !string.IsNullOrWhiteSpace(item.Value)).Value;
+            if (!string.IsNullOrWhiteSpace(value)) return value;
         }
 
         return null;
@@ -1038,10 +1072,7 @@ public class ProviderStatusManager
     private List<string> GetPlaylistOrder() =>
         GetProviderOrder(ProviderCapabilityKind.Playlist);
 
-    private List<string> GetLyricsOrder() =>
-        GetProviderOrder(ProviderCapabilityKind.Lyrics)
-            .Where(provider => provider != "lyricsplus")
-            .ToList();
+    private List<string> GetLyricsOrder() => GetProviderOrder(ProviderCapabilityKind.Lyrics);
 
     private List<string> GetProviderOrder(ProviderCapabilityKind capability)
     {

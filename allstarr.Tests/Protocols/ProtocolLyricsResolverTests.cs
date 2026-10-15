@@ -15,8 +15,11 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsResolverTests
 {
-    [Fact]
-    public async Task Resolver_DeezerTrackFallsBackToLrclibWithFullMetadata()
+    [Theory]
+    [InlineData("lrclib")]
+    [InlineData("lyricsplus")]
+    [InlineData("musixmatch")]
+    public async Task Resolver_DeezerTrackFallsBackToMetadataLyricsWithFullMetadata(string metadataProvider)
     {
         var protocol = new ProtocolExecutionContext(
             ProtocolKind.Jellyfin,
@@ -28,10 +31,10 @@ public sealed class ProtocolLyricsResolverTests
             CancellationToken.None);
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics))
-            .Returns(["spotify", "lrclib"]);
+            .Returns(["spotify", metadataProvider]);
         providers.Setup(item => item.GetLyricsAsync(
                 protocol,
-                "lrclib",
+                metadataProvider,
                 It.Is<string>(value => value.Length == 64),
                 ProviderLyricsFormat.LineTimed,
                 "Fixture song",
@@ -41,7 +44,7 @@ public sealed class ProtocolLyricsResolverTests
                 180))
             .ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available,
-                "lrclib",
+                metadataProvider,
                 ProviderLyricsFormat.LineTimed,
                 "[00:01.00]Fixture line\n",
                 "sha256:fixture"));
@@ -61,7 +64,7 @@ public sealed class ProtocolLyricsResolverTests
         Assert.NotNull(result);
         Assert.Equal("[00:01.00]Fixture line\n", result.SyncedLyrics);
         Assert.Null(result.PlainLyrics);
-        Assert.Equal("lrclib", result.Source);
+        Assert.Equal(metadataProvider, result.Source);
         Assert.Equal("sha256:fixture", result.Revision);
         providers.Verify(item => item.GetLyricsAsync(
             It.IsAny<ProtocolExecutionContext>(), "spotify", It.IsAny<string>(),

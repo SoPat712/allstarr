@@ -18,6 +18,48 @@ namespace allstarr.Tests;
 public sealed class ProviderStatusManagerTests
 {
     [Fact]
+    public void LyricsPlusIsAccountFreeAndMusixmatchRequiresItsManagedToken()
+    {
+        var manager = CreateManager(new Dictionary<string, string?>
+        { ["MULTI_PROVIDER_LYRICS_ORDER"] = "lyricsplus,musixmatch,lrclib" });
+        Assert.Equal(new[] { "lyricsplus", "lrclib" }, manager.GetEnabledLyricsProviders());
+        Assert.Equal(ProviderConfigurationState.NotRequired,
+            manager.GetAccountFreeStatus("lyricsplus", "lyrics").Configuration);
+        Assert.Throws<InvalidOperationException>(() => manager.GetAccountFreeStatus("musixmatch", "lyrics"));
+        var account = Guid.NewGuid();
+        Assert.Equal(ProviderConfigurationState.NeedsConfiguration,
+            manager.GetManagedStatus("musixmatch", "lyrics", account, new Dictionary<string, string>()).Configuration);
+        Assert.Equal(ProviderConfigurationState.Configured,
+            manager.GetManagedStatus("musixmatch", "lyrics", account,
+                new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" }).Configuration);
+    }
+
+    [Theory]
+    [InlineData("lyricsplus", true)]
+    [InlineData("lyricsplus", false)]
+    [InlineData("musixmatch", true)]
+    [InlineData("musixmatch", false)]
+    public async Task NewLyricsProbesReuseTheirNativeTransportAndSafeOutcomes(string provider, bool healthy)
+    {
+        var payload = provider == "lyricsplus" ? "{\"type\":\"None\",\"lyrics\":[]}"
+            : $"{{\"message\":{{\"header\":{{\"status_code\":{(healthy ? 404 : 401)}}},\"body\":{{}}}}}}";
+        var handler = new QueuedResponseHandler(Json(
+            provider == "lyricsplus" && !healthy ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK, payload));
+        var manager = CreateManager(new Dictionary<string, string?> { ["LyricsPlus:BaseUrl"] = "http://lyrics:3000/prefix" },
+            httpClientFactory: new HandlerHttpClientFactory(handler));
+        var status = provider == "lyricsplus"
+            ? await manager.TestAccountFreeProviderCapabilityAsync(provider, "lyrics")
+            : await manager.TestManagedProviderCapabilityAsync(provider, "lyrics", Guid.NewGuid(),
+                new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" });
+        Assert.Equal(healthy, status.Health == ProviderHealthState.Healthy);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(provider == "lyricsplus" ? "lyrics" : "apic-desktop.musixmatch.com", request.Host);
+        if (provider == "musixmatch")
+            Assert.Contains("usertoken=synthetic-desktop-token", request.Query, StringComparison.Ordinal);
+        if (!healthy) Assert.Equal(provider == "lyricsplus" ? "rate-limited" : "unauthorized", status.ReasonCode);
+    }
+
+    [Fact]
     public void AppleMediaReadinessUsesBackgroundDiscoveryEvenWithoutAnAccountTest()
     {
         var clock = new FakeClock(DateTimeOffset.UtcNow);

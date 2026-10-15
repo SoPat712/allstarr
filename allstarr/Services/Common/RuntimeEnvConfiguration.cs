@@ -65,6 +65,7 @@ public static class RuntimeEnvConfiguration
             ["SPOTIFY_API_ENABLED"] = ["SpotifyApi:Enabled"],
             ["SPOTIFY_API_SESSION_COOKIE"] = ["SpotifyApi:SessionCookie"],
             ["SPOTIFY_API_SESSION_COOKIE_SET_DATE"] = ["SpotifyApi:SessionCookieSetDate"],
+            ["LYRICSPLUS_URL"] = ["LyricsPlus:BaseUrl"],
             ["SPOTIFY_API_CACHE_DURATION_MINUTES"] = ["SpotifyApi:CacheDurationMinutes"],
             ["SPOTIFY_API_RATE_LIMIT_DELAY_MS"] = ["SpotifyApi:RateLimitDelayMs"],
             ["SPOTIFY_API_PREFER_ISRC_MATCHING"] = ["SpotifyApi:PreferIsrcMatching"],

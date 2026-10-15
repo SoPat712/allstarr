@@ -33,6 +33,13 @@ The audit clones are temporary working copies outside this repository. Allstarr 
 | --- | --- | --- | --- |
 | [Jellyfin Spotify Import `93265c3`](https://github.com/Viperinius/jellyfin-plugin-spotify-import/tree/93265c3834744f4c92b5c6e2f3d8460b8c2b19cb) | GPL-3.0 | Web-player queries support public playlist/profile discovery with anonymous tokens and account-bound library/Liked Songs reads. Public profiles expose ordered playlist URI, owner, name, and revision fields. | Independently implement these verified wire shapes through the existing typed playlist capability and matcher. Do not copy implementation code or add its separate matcher or Premium Web API path. Free-account behavior still requires live qualification. |
 
+## Lyrics
+
+| Project and audited revision | License found | What it proves | Allstarr decision |
+| --- | --- | --- | --- |
+| [LyricsPlus `8b2e1fe`](https://github.com/ibratabian17/LyricsPlus/tree/8b2e1fe3f92536158d471177f7f17f9820407c5b) | Apache-2.0 | V2 title/artist lookup returns plain or millisecond line/word timelines; public misses and busy responses are distinct. | Independently implement the wire contract through the typed lyrics capability, with public-instance fallback or an exclusive operator-selected self-hosted URL. Preserve truthful line timing and use the existing cache. Public availability needs separate qualification. |
+| [Navidrome Musixmatch plugin `22dc7c1`](https://github.com/Myzel394/navidrome-musixmatch-plugin/tree/22dc7c1e9c12ba7c900dd8abbd52c74efd9d4310) | MIT | The desktop macro endpoint supplies matched identity, richsync, subtitle and plain representations with nested API statuses. | Independently implement the request and parser using the configured encrypted desktop user token. Keep tokens out of logs and cache keys. Do not copy anonymous-token bootstrap, website scraping or raw-payload debug logging. |
+
 ## Listening and scrobbling
 
 | Project and audited revision | License found | What it proves | Allstarr decision |
