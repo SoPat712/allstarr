@@ -1,4 +1,6 @@
 using System.Text;
+using allstarr.Core.Capabilities;
+using allstarr.Core.ManagedFiles;
 using allstarr.Core.Protocols;
 using allstarr.Core.Music;
 using allstarr.Core.Storage;
@@ -24,7 +26,8 @@ public interface IKeptLyricsReader
 
 public sealed class KeptLyricsReader(
     IDbContextFactory<AllstarrDbContext> factory,
-    IConfiguration configuration) : IKeptLyricsReader
+    IConfiguration configuration,
+    RecordingKeptFiles? keptFiles = null) : IKeptLyricsReader
 {
     private const int MaximumLyricsBytes = 2 * 1024 * 1024;
 
@@ -64,6 +67,25 @@ public sealed class KeptLyricsReader(
 
         var roots = GetAllowedRoots(configuration);
         LyricsInfo? plainFallback = null;
+
+        // A canonical recording can be proven from the retained route even when the
+        // caller has no provider alias (or the original source account is retired).
+        if (keptFiles != null && actor != null &&
+            song.CanonicalRecordingId is { } canonical && canonical != Guid.Empty)
+        {
+            var kept = await keptFiles.FindAsync(actor, canonical, cancellationToken);
+            if (kept != null)
+            {
+                var text = await ReadKeptSidecarAsync(kept, cancellationToken);
+                if (text != null)
+                {
+                    var candidate = ParseCandidate(song, text, cancellationToken, out var timed);
+                    if (timed) return candidate;
+                    if (candidate != null) plainFallback = candidate;
+                }
+            }
+        }
+
         foreach (var identity in identities)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -71,6 +93,32 @@ public sealed class KeptLyricsReader(
                 string.IsNullOrWhiteSpace(identity.ProviderId) ||
                 string.IsNullOrWhiteSpace(identity.ExternalId))
                 continue;
+
+            if (keptFiles != null && actor != null)
+            {
+                KeptRecordingFile? kept;
+                try
+                {
+                    kept = await keptFiles.FindBySourceAsync(actor,
+                        new(identity.ProviderId, ProviderResourceKind.Track, identity.ExternalId),
+                        cancellationToken);
+                }
+                catch (ArgumentException)
+                {
+                    kept = null;
+                }
+
+                if (kept != null)
+                {
+                    var text = await ReadKeptSidecarAsync(kept, cancellationToken);
+                    if (text != null)
+                    {
+                        var candidate = ParseCandidate(song, text, cancellationToken, out var timed);
+                        if (timed) return candidate;
+                        if (candidate != null) plainFallback ??= candidate;
+                    }
+                }
+            }
 
             var mappings = await db.DownloadedSongMappings
                 .AsNoTracking()
@@ -106,19 +154,75 @@ public sealed class KeptLyricsReader(
                 if (text == null)
                     continue;
 
-                var parsed = MusicLyrics.ParseSyncedLines(text);
                 cancellationToken.ThrowIfCancellationRequested();
-                if (parsed.Any(item => !string.IsNullOrWhiteSpace(item.Text)))
-                    return CreateLyrics(song, text, synced: true);
-                var plain = PlainText(text);
-                if (parsed.Count != 0 || string.IsNullOrWhiteSpace(plain))
-                    continue;
-                plainFallback ??= CreateLyrics(song, plain, synced: false);
+                var candidate = ParseCandidate(song, text, cancellationToken, out var timed);
+                if (timed) return candidate;
+                if (candidate != null) plainFallback ??= candidate;
             }
         }
 
         cancellationToken.ThrowIfCancellationRequested();
         return plainFallback;
+    }
+
+    private static LyricsInfo? ParseCandidate(Song song, string text, CancellationToken cancellationToken, out bool timed)
+    {
+        var parsed = MusicLyrics.ParseSyncedLines(text);
+        cancellationToken.ThrowIfCancellationRequested();
+        if (parsed.Any(item => !string.IsNullOrWhiteSpace(item.Text)))
+        {
+            timed = true;
+            return CreateLyrics(song, text, synced: true);
+        }
+
+        var plain = PlainText(text);
+        if (parsed.Count != 0 || string.IsNullOrWhiteSpace(plain))
+        {
+            timed = false;
+            return null;
+        }
+
+        timed = false;
+        return CreateLyrics(song, plain, synced: false);
+    }
+
+    private static async Task<string?> ReadKeptSidecarAsync(
+        KeptRecordingFile kept,
+        CancellationToken cancellationToken)
+    {
+        if (!TryGetTrustedKeptPath(kept.Path, out var audioPath) || !File.Exists(audioPath))
+            return null;
+
+        var sidecarCandidate = Path.ChangeExtension(audioPath, ".lrc");
+        if (!TryGetTrustedKeptPath(sidecarCandidate, out var sidecarPath) || !File.Exists(sidecarPath))
+            return null;
+
+        return await ReadSidecarAsync(sidecarPath, cancellationToken);
+    }
+
+    private static bool TryGetTrustedKeptPath(string? path, out string fullPath)
+    {
+        fullPath = string.Empty;
+        if (string.IsNullOrWhiteSpace(path) || ContainsTraversal(path))
+            return false;
+
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+            if (string.IsNullOrEmpty(Path.GetFileName(fullPath)) || HasLinkInPath(fullPath))
+            {
+                fullPath = string.Empty;
+                return false;
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (
+            exception is ArgumentException or IOException or UnauthorizedAccessException or NotSupportedException)
+        {
+            fullPath = string.Empty;
+            return false;
+        }
     }
 
     private static IReadOnlyList<string> GetAllowedRoots(IConfiguration configuration)

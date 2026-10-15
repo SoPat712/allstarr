@@ -100,7 +100,7 @@ Use the up and down buttons in **Lyrics source order** to choose which available
 
 **Media server lyrics** can be moved with the same controls. If they win, the music app receives the media server's original lyric response, including its language and timing details.
 
-**Kept LRC** uses existing lyrics beside an indexed kept download. It follows media-server lyrics by default and can be moved or disabled. Allstarr checks the listener's account and file ownership; missing or unreadable sidecars fall through to another source. Timed lyrics are preferred over plain words, and reading a sidecar never changes the audio or lyrics file.
+**Kept LRC** reads lyrics beside a verified household kept copy, including copies saved under a custom kept root or from an account that is now disconnected. Creating or reusing a kept copy also tries to save missing lyrics using household sources and preferences. It follows media-server lyrics by default and can be moved or disabled. Allstarr checks the listener's account and file ownership; missing or unreadable sidecars fall through to another source. Timed lyrics are preferred over plain words, and reading a sidecar never changes the audio or lyrics file.
 
 To fix a song's lyrics, open its match details and select **Wrong lyrics?**. Preview each available source, then select **Use this source for this recording**. This saves a source preference, including a plain-text source when you prefer it; it does not freeze the words. If that source becomes unavailable or disabled, Allstarr uses the normal source order until it returns.
 
