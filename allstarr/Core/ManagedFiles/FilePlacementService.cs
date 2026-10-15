@@ -6,7 +6,19 @@ namespace allstarr.Core.ManagedFiles;
 
 public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, IManagedFileOperations files)
 {
-    public async Task<ManagedFilePlacementResult> PlaceAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken = default)
+    public Task<ManagedFilePlacementResult> PlaceAsync(ManagedFilePlacementRequest request, CancellationToken cancellationToken = default) =>
+        PlaceAsync(request, reuseExisting: true, cancellationToken);
+
+    internal Task<ManagedFilePlacementResult> PlaceFreshHouseholdAsync(
+        ManagedFilePlacementRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Root.OwnerUserId != null || request.SourceJobId != null)
+            throw new UnauthorizedAccessException("Fresh kept placement requires household ownership.");
+        return PlaceAsync(request, reuseExisting: false, cancellationToken);
+    }
+
+    private async Task<ManagedFilePlacementResult> PlaceAsync(
+        ManagedFilePlacementRequest request, bool reuseExisting, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
         if (!StringComparer.Ordinal.Equals(
@@ -26,7 +38,9 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
         ValidateExpectedSource(request, fingerprint, length);
         var referenceKey = ResolveReferenceKey(request);
         var journal = PlacementJournalPath(root, request, referenceKey);
-        var compatible = await ownership.FindCompatibleAsync(request.Root.Id, fingerprint, request.ScopeKey, cancellationToken);
+        var compatible = reuseExisting
+            ? await ownership.FindCompatibleAsync(request.Root.Id, fingerprint, request.ScopeKey, cancellationToken)
+            : null;
         if (compatible is not null && File.Exists(compatible.CanonicalPath))
         {
             ValidateCompatibleOwnership(request, compatible);
@@ -37,7 +51,7 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             return new(reused, true);
         }
 
-        var requestedRecord = await ownership.FindByPathAsync(requestedTarget, cancellationToken);
+        var requestedRecord = reuseExisting ? await ownership.FindByPathAsync(requestedTarget, cancellationToken) : null;
         if (requestedRecord is not null && requestedRecord.ContentSha256 == fingerprint && File.Exists(requestedTarget))
         {
             ValidateCompatibleOwnership(request, requestedRecord);
