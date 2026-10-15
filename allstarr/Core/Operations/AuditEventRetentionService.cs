@@ -26,6 +26,10 @@ public sealed class AuditEventRetentionService(
         configuration.GetValue("Operations:EventLog:CleanupBatchSize", 1000), 100, 10000);
     private readonly int maximumRows = Math.Clamp(
         configuration.GetValue("Operations:EventLog:MaximumRows", 250000), 1000, 5000000);
+    // Job attempt history is high-volume; it expires sooner and is trimmed first so it
+    // cannot crowd administrator and security events out of the shared row limit.
+    private readonly TimeSpan jobHistoryRetention = TimeSpan.FromDays(Math.Clamp(
+        configuration.GetValue("Operations:EventLog:JobHistoryRetentionDays", 7), 1, 3650));
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -42,8 +46,10 @@ public sealed class AuditEventRetentionService(
     {
         try
         {
-            var deleted = 0;
-            var cutoff = timeProvider.GetUtcNow() - retention;
+            var now = timeProvider.GetUtcNow();
+            var cutoff = now - retention;
+            var deleted = await PruneJobHistoryAsync(
+                now - (jobHistoryRetention < retention ? jobHistoryRetention : retention), cancellationToken);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -80,7 +86,8 @@ public sealed class AuditEventRetentionService(
                 {
                     var take = Math.Min(batchSize, overflow);
                     var candidates = await Deletable(database)
-                        .OrderBy(item => item.CreatedAt)
+                        .OrderBy(item => item.Category == JobHistoryCategory ? 0 : 1)
+                        .ThenBy(item => item.CreatedAt)
                         .ThenBy(item => item.Id)
                         .Take(take)
                         .ToListAsync(cancellationToken);
@@ -123,6 +130,31 @@ public sealed class AuditEventRetentionService(
         {
             logger.LogWarning(exception, "Event-log retention failed; cleanup will retry at the next interval.");
         }
+    }
+
+    private const string JobHistoryCategory = "job-attempt";
+
+    private async Task<int> PruneJobHistoryAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        var deleted = 0;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await using var scope = scopeFactory.CreateAsyncScope();
+            var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            var candidates = await Deletable(database)
+                .Where(item => item.Category == JobHistoryCategory && item.CreatedAt < cutoff)
+                .OrderBy(item => item.CreatedAt)
+                .ThenBy(item => item.Id)
+                .Take(batchSize)
+                .ToListAsync(cancellationToken);
+            if (candidates.Count == 0) break;
+
+            database.AuditEvents.RemoveRange(candidates);
+            await database.SaveChangesAsync(cancellationToken);
+            deleted += candidates.Count;
+            if (candidates.Count < batchSize) break;
+        }
+        return deleted;
     }
 
     private async Task<int> PrunePlaybackJobsAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)

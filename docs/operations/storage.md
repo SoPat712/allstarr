@@ -56,7 +56,8 @@ A background cleanup keeps the event log and finished playback jobs from growing
 | Setting | Default | Purpose |
 | --- | --- | --- |
 | `Operations__EventLog__RetentionDays` | `30` | Age after which unreferenced events and finished playback jobs are removed (1–3650) |
-| `Operations__EventLog__MaximumRows` | `250000` | Oldest unreferenced events beyond this count are removed (1000–5000000) |
+| `Operations__EventLog__MaximumRows` | `250000` | Oldest unreferenced events beyond this count are removed, job attempt history first (1000–5000000) |
+| `Operations__EventLog__JobHistoryRetentionDays` | `7` | Age after which job attempt history is removed; never longer than `RetentionDays` (1–3650) |
 | `Operations__EventLog__CleanupIntervalMinutes` | `360` | Time between cleanup passes; one also runs at startup (5–10080) |
 | `Operations__EventLog__CleanupBatchSize` | `1000` | Rows deleted per batch (100–10000) |
 

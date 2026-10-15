@@ -263,6 +263,9 @@ public sealed class RecordingLyricsReviewTests
         Assert.Equal(saved, result);
         fixture.Choices.Verify(item => item.SetAsync(
             fixture.Context, RecordingId, "spotify", "personal", expected), Times.Once);
+        // Only the chosen source is re-read, so other slow or changing sources cannot block the save.
+        fixture.Lyrics.Verify(item => item.FindAllAsync(fixture.Context, It.IsAny<Song>(), RecordingId.ToString("N"),
+            It.Is<ProtocolLyricsSources?>(sources => sources != null && sources.OnlySourceId == "spotify")), Times.Once);
     }
 
     [Fact]

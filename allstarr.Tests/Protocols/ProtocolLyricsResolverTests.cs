@@ -51,6 +51,28 @@ public sealed class ProtocolLyricsResolverTests
     }
 
     [Fact]
+    public async Task OnlySourceReadsJustThatSource()
+    {
+        var context = LyricsContext();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "backend"]);
+        var nativeCalls = 0;
+        var candidates = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAllAsync(context, LyricsSong(), "native-song", new ProtocolLyricsSources(Backend: _ =>
+            {
+                nativeCalls++;
+                return Task.FromResult<allstarr.Models.Lyrics.LyricsInfo?>(new() { SyncedLyrics = "[00:01.000]Native" });
+            })
+            { OnlySourceId = "backend" });
+
+        var candidate = Assert.Single(candidates);
+        Assert.Equal("backend", candidate.SourceId);
+        Assert.Equal(1, nativeCalls);
+        providers.Verify(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics), Times.Once);
+        providers.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task EarlierTimedSourceDoesNotReadTheKeptIndexOrFiles()
     {
         var context = LyricsContext();

@@ -14,7 +14,11 @@ namespace allstarr.Core.Protocols;
 public sealed record ProtocolLyricsSources(
     Func<CancellationToken, Task<LyricsInfo?>>? Backend = null,
     Func<CancellationToken, Task<LyricsInfo?>>? Kept = null,
-    bool HouseholdOnly = false);
+    bool HouseholdOnly = false)
+{
+    /// <summary>Reads only this source, still subject to the listener's availability policy.</summary>
+    public string? OnlySourceId { get; init; }
+}
 
 public sealed record ProtocolLyricsCandidate(string SourceId, LyricsInfo? Lyrics);
 
@@ -226,6 +230,8 @@ public sealed class ProtocolLyricsResolver(
 
         if (preferredSourceId != null && order.Contains(preferredSourceId, StringComparer.Ordinal))
             order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
+        if (sources?.OnlySourceId is { } onlySource)
+            order = order.Where(item => string.Equals(item, onlySource, StringComparison.Ordinal)).ToArray();
 
         foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
         {
