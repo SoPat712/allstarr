@@ -14,7 +14,8 @@ public enum LegacyEnvDisposition
     PerUserManual,
     PlaylistHandoff,
     IgnoredDeprecated,
-    Unknown
+    Unknown,
+    ExtensionRegistry
 }
 
 public sealed record LegacyEnvEntry(
@@ -93,7 +94,6 @@ public static class LegacyEnvParser
             ["LYRICSPLUS_URL"] = "LyricsPlus:BaseUrl",
             ["APPLE_DOWNLOAD_URL"] = "AppleDownload:BaseUrl",
             ["APPLE_DOWNLOAD_QUALITY"] = "AppleDownload:Quality",
-            ["APPLE_MUSIC_AIO_URL"] = "AppleDownload:BaseUrl",
             ["APPLE_MUSIC_QUALITY"] = "AppleDownload:Quality",
             ["MUSICBRAINZ_ENABLED"] = "MusicBrainz:Enabled",
             ["MULTI_PROVIDER_METADATA_ORDER"] = "Providers:MetadataOrder",
@@ -174,7 +174,9 @@ public static class LegacyEnvParser
     private static readonly HashSet<string> IgnoredKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "SPOTIFY_LYRICS_API_URL",
-        "MUSIC_SERVICE", "EXTENSION_REPOSITORIES", "VALKEY_MAX_MEMORY", "REDIS_ENABLED",
+        "MUSIC_SERVICE", "VALKEY_MAX_MEMORY", "REDIS_ENABLED",
+        "CACHE_SPOTIFY_MATCHED_TRACKS_DAYS", "CACHE_SPOTIFY_PLAYLIST_ITEMS_HOURS",
+        "SQUIDWTF_QUALITY", "SQUIDWTF_MIN_REQUEST_INTERVAL_MS", "MAX_CONCURRENT_DOWNLOADS", "COMPOSE_BAKE",
         "REDIS_CONNECTION_STRING", "REDIS_DATA_PATH", "REDIS_HOST", "REDIS_PORT",
         "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_DATABASE", "REDIS_DB", "REDIS_SSL",
         "SPOTIFY_IMPORT_SYNC_START_HOUR", "SPOTIFY_IMPORT_SYNC_START_MINUTE",
@@ -248,6 +250,14 @@ public static class LegacyEnvParser
                 if (entryIndexes.TryGetValue(key, out var priorIndex))
                 {
                     var prior = entries[priorIndex];
+                    if (entry.Value.Length == 0 && prior.Value.Length > 0)
+                    {
+                        entries[priorIndex] = prior with
+                        {
+                            OverriddenLineNumbers = [.. prior.OverriddenLineNumbers ?? [], index + 1]
+                        };
+                        continue;
+                    }
                     entry = entry with
                     {
                         OverriddenLineNumbers = prior.OverriddenLineNumbers is { Count: > 0 } priorLines
@@ -288,8 +298,52 @@ public static class LegacyEnvParser
         }
     }
 
+    internal static string[] RegistryUrls(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        string[] urls;
+        try
+        {
+            urls = value.TrimStart().StartsWith('[') ? JsonSerializer.Deserialize<string[]>(value) ?? [] :
+                value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        }
+        catch (JsonException) { throw new ArgumentException("Invalid registry list."); }
+        if (urls.Length > 32) throw new ArgumentException("Too many registries.");
+        return urls.Select(url => Uri.TryCreate(url, UriKind.Absolute, out var uri) && uri.Scheme == "https" &&
+                uri.UserInfo.Length == 0 && uri.Query.Length == 0 && uri.Fragment.Length == 0 && uri.AbsoluteUri.Length <= 1000
+                ? uri.AbsoluteUri : throw new ArgumentException("Invalid registry address."))
+            .Distinct(StringComparer.Ordinal).ToArray();
+    }
+
     private static LegacyEnvEntry Classify(string key, string value, int line)
     {
+        if (key.Equals("EXTENSION_REPOSITORIES", StringComparison.OrdinalIgnoreCase))
+        {
+            try
+            {
+                RegistryUrls(value);
+                return new(key, value, line, LegacyEnvDisposition.ExtensionRegistry, "import_registry",
+                    "Import reviewed registry addresses disabled. Enable each registry in Integrations before installing an extension.", true);
+            }
+            catch (ArgumentException)
+            {
+                return new(key, value, line, LegacyEnvDisposition.ExtensionRegistry, "conflict_invalid_value",
+                    "Use HTTPS registry addresses without credentials, query strings or fragments.", true);
+            }
+        }
+        if (key.Equals("APPLE_MUSIC_AIO_URL", StringComparison.OrdinalIgnoreCase))
+            return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "setup_apple",
+                "The old Apple service is retired. Enable optional Apple downloads from the setup guide.", true);
+        if (key.Equals("MUSIC_SERVICE", StringComparison.OrdinalIgnoreCase) && value.Equals("SquidWTF", StringComparison.OrdinalIgnoreCase))
+            return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "choose_source",
+                "SquidWTF is no longer available. Choose a source in Integrations; no replacement is selected automatically.", false);
+        if (key.Equals("MUSIC_SERVICE", StringComparison.OrdinalIgnoreCase) && value.ToLowerInvariant() is "deezer" or "qobuz")
+            return new(key, value.ToLowerInvariant(), line, LegacyEnvDisposition.DurableSetting, "import_if_absent",
+                "Use the previous music source first in streaming order. Review other capabilities in Routing.", false, "Providers:StreamingOrder");
+        if (key.StartsWith("MULTI_PROVIDER_", StringComparison.OrdinalIgnoreCase))
+            value = string.Join(',', value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(item => !item.Equals("squidwtf", StringComparison.OrdinalIgnoreCase))
+                .Select(item => item.Equals("applemusic", StringComparison.OrdinalIgnoreCase) ? "apple-musickit" : item));
         if (key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase))
         {
             return new(key, value, line, LegacyEnvDisposition.PlaylistHandoff,

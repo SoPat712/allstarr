@@ -14,7 +14,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
-public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
+public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
     private readonly Guid _userId = Guid.CreateVersion7();
@@ -232,10 +232,12 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             """), Actor());
 
         var backend = Assert.Single(preview.Items, item => item.Key == "BACKEND_TYPE");
-        Assert.Equal("quarantine_deployment_backend", backend.Action);
+        Assert.Equal("conflict_invalid_value", backend.Action);
         Assert.Equal(0, preview.BackendIdentityCount);
 
-        await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+        Assert.False(preview.CanApply);
+        var error = await Assert.ThrowsAsync<LegacyEnvMigrationException>(() => service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor()));
+        Assert.Equal("preview_not_applicable", error.Code);
 
         await using var db = await _factory.CreateDbContextAsync();
         var identity = Assert.Single(await db.Users.ToListAsync());
@@ -383,7 +385,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
             var listenBrainz = Assert.Single(accounts, account => account.ProviderId == "listenbrainz");
             Assert.Equal("ListenBrainz", listenBrainz.DisplayName);
             Assert.Equal("Spotify", Assert.Single(accounts, account => account.ProviderId == "spotify").DisplayName);
-            Assert.True(listenBrainz.Enabled);
+            Assert.False(listenBrainz.Enabled);
             Assert.Equal(ProviderAccountScope.Personal, listenBrainz.Scope);
             Assert.Equal(_userId, listenBrainz.OwnerUserId);
             Assert.All(accounts, account => Assert.NotNull(account.SecretReferenceId));
@@ -457,7 +459,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
         var account = Assert.Single(await db.ProviderAccounts.ToListAsync());
         Assert.Equal(ProviderAccountScope.Personal, account.Scope);
         Assert.Equal(_userId, account.OwnerUserId);
-        Assert.True(account.Enabled);
+        Assert.False(account.Enabled);
         Assert.Equal("Last.fm", account.DisplayName);
         using var lease = await OpenSecretAsync(account.SecretReferenceId!.Value, _userId);
         using var secret = JsonDocument.Parse(lease.Value);
@@ -749,7 +751,8 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
 
     private LegacyEnvMigrationService CreateService(
         int maxSecretBytes = 65536,
-        BackendType backend = BackendType.Jellyfin)
+        BackendType backend = BackendType.Jellyfin,
+        ILegacyAccountVerifier? verifier = null)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
@@ -776,7 +779,7 @@ public sealed class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 "test-deployment",
                 true,
                 false,
-                null));
+                null), accountVerifier: verifier);
     }
 
     private EncryptedSecretStore CreateSecretStore(int maxSecretBytes = 65536)

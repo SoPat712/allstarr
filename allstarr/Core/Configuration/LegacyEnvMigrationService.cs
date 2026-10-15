@@ -79,6 +79,7 @@ public sealed record LegacyEnvMigrationApplyResult(
     public int BackendIdentitiesCreated { get; init; }
     public int PlaylistLinksCreated { get; init; }
     public int SchedulesCreated { get; init; }
+    public IReadOnlyList<LegacyAccountCheck> AccountChecks { get; init; } = [];
 }
 
 public sealed record LegacyEnvMigrationStatus(
@@ -93,7 +94,7 @@ public sealed class LegacyEnvMigrationException(string code, string message) : E
     public string Code { get; } = code;
 }
 
-public sealed class LegacyEnvMigrationService
+public sealed partial class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private const int MaximumPreviewCount = 64;
@@ -106,6 +107,8 @@ public sealed class LegacyEnvMigrationService
     private readonly IPlatformClock _clock;
     private readonly BackendSelectionAuthority _backendSelection;
     private readonly IProviderRegistry? _registry;
+    private readonly ILegacyAccountVerifier? _accountVerifier;
+    private readonly IConfiguration? _configuration;
     private readonly ConcurrentDictionary<string, PreviewState> _previews = new(StringComparer.Ordinal);
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
 
@@ -115,8 +118,10 @@ public sealed class LegacyEnvMigrationService
         EncryptedSecretStore secrets,
         IPlatformClock clock,
         BackendSelectionAuthority? backendSelection = null,
-        IProviderRegistry? registry = null) =>
-        (_factory, _settings, _secrets, _clock, _backendSelection, _registry) = (
+        IProviderRegistry? registry = null,
+        ILegacyAccountVerifier? accountVerifier = null,
+        IConfiguration? configuration = null) =>
+        (_factory, _settings, _secrets, _clock, _backendSelection, _registry, _accountVerifier, _configuration) = (
             factory,
             settings,
             secrets,
@@ -127,7 +132,7 @@ public sealed class LegacyEnvMigrationService
                 "test-default",
                 false,
                 false,
-                null), registry);
+                null), registry, accountVerifier, configuration);
 
     public async Task<LegacyEnvMigrationStatus> GetStatusAsync(
         CancellationToken cancellationToken = default)
@@ -235,6 +240,22 @@ public sealed class LegacyEnvMigrationService
             var action = entry.Action;
             var reason = entry.Reason;
             long? existingRevision = null;
+            if ((entry.Key.Equals("BACKEND_TYPE", StringComparison.OrdinalIgnoreCase) ||
+                 entry.Key.Equals("Backend__Type", StringComparison.OrdinalIgnoreCase)) &&
+                !entry.Value.Equals(_backendSelection.EffectiveValue, StringComparison.OrdinalIgnoreCase))
+            {
+                action = "conflict_invalid_value";
+                reason = "The imported backend differs from the active media server. Select the matching deployment before importing.";
+                conflicts.Add(reason);
+            }
+            if (entry.Key.Equals($"{_backendSelection.EffectiveValue.ToUpperInvariant()}_URL", StringComparison.OrdinalIgnoreCase) &&
+                _configuration?[$"{_backendSelection.EffectiveValue}:Url"] is { Length: > 0 } activeUrl &&
+                !entry.Value.TrimEnd('/').Equals(activeUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase))
+            {
+                action = "conflict_invalid_value";
+                reason = "The imported media server address differs from the active connection. Use the matching deployment before importing.";
+                conflicts.Add(reason);
+            }
             if (entry.Disposition == LegacyEnvDisposition.PlaylistHandoff)
             {
                 action = document.Playlists.All(item =>
@@ -247,7 +268,13 @@ public sealed class LegacyEnvMigrationService
             }
             if (entry.Disposition == LegacyEnvDisposition.DurableSetting)
             {
-                if (entry.Value.Length == 0)
+                if (entry.Key == "MUSIC_SERVICE" && document.Entries.Any(other => other.Key != entry.Key &&
+                        other.DurableKey == entry.DurableKey && other.Value.Length > 0))
+                {
+                    action = "skip_explicit_order";
+                    reason = "The explicit streaming order takes precedence over the old single-source setting.";
+                }
+                else if (entry.Value.Length == 0)
                 {
                     action = "ignore_empty";
                     reason = "Empty values are not imported into durable settings.";
@@ -346,7 +373,7 @@ public sealed class LegacyEnvMigrationService
                 .Select(item => item.ProviderId).Where(item => item != null)
                 .Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             previewItems.Count(item => item.Action is "retain_in_deployment" or "per_user_manual" or
-                "manual_review" or "deprecated_manual_review" or "requires_target_selection"),
+                "manual_review" or "deprecated_manual_review" or "requires_target_selection" or "choose_source" or "setup_apple"),
             previewItems,
             accountPreviews,
             document.Playlists,
@@ -448,6 +475,7 @@ public sealed class LegacyEnvMigrationService
                     }
                 }
 
+                var checkedAccounts = await CheckAccountsAsync(state, cancellationToken);
                 var currentRevision = await ComputeRevisionAsync(
                     state.Document.SourceSha256,
                     state.ActorUserId,
@@ -474,6 +502,9 @@ public sealed class LegacyEnvMigrationService
                     state.ClearPlaintext();
                     return state.Result;
                 }
+
+                if (!await db.Users.AnyAsync(item => item.Id == state.ActorUserId && item.Enabled && item.IsAdmin, cancellationToken))
+                    throw new LegacyEnvMigrationException("user_unavailable", "An active administrator is required.");
 
                 var settingWrites = state.Items
                     .Where(item => item.Action == "import_if_absent" && item.DurableKey != null)
@@ -517,10 +548,11 @@ public sealed class LegacyEnvMigrationService
 
                     var account = new ProviderAccountRecord
                     {
-                        Id = Guid.CreateVersion7(),
+                        Id = checkedAccounts[provider.ProviderId].Id,
+                        CreatedByUserId = state.ActorUserId,
                         ProviderId = provider.ProviderId,
                         DisplayName = ImportedAccountName(provider.ProviderId),
-                        Enabled = false,
+                        Enabled = checkedAccounts[provider.ProviderId].Check.Enabled,
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow
                     };
@@ -572,11 +604,12 @@ public sealed class LegacyEnvMigrationService
 
                     var account = new ProviderAccountRecord
                     {
-                        Id = Guid.CreateVersion7(),
+                        Id = checkedAccounts[providerId].Id,
+                        CreatedByUserId = state.ActorUserId,
                         OwnerUserId = state.ActorUserId.Value,
                         ProviderId = providerId,
                         DisplayName = ImportedAccountName(providerId),
-                        Enabled = true,
+                        Enabled = checkedAccounts[providerId].Check.Enabled,
                         CreatedAt = _clock.UtcNow,
                         UpdatedAt = _clock.UtcNow
                     };
@@ -704,6 +737,22 @@ public sealed class LegacyEnvMigrationService
                     createdSchedules.Add(schedule);
                 }
 
+                foreach (var entry in state.Document.Entries.Where(item => item.Action == "import_registry"))
+                    foreach (var url in LegacyEnvParser.RegistryUrls(entry.Value))
+                    {
+                        if (await db.ExtensionRegistries.AnyAsync(item => item.RegistryUrl == url, cancellationToken)) continue;
+                        db.ExtensionRegistries.Add(new ExtensionRegistryRecord
+                        {
+                            Id = Guid.CreateVersion7(),
+                            Name = new Uri(url).Host,
+                            RegistryUrl = url,
+                            Enabled = false,
+                            CreatedAt = _clock.UtcNow,
+                            UpdatedAt = _clock.UtcNow,
+                            Revision = 1
+                        });
+                    }
+
                 var appliedAt = _clock.UtcNow;
                 OnboardingStateRecord? onboardingState = null;
                 if (state.ActorUserId.HasValue)
@@ -745,7 +794,7 @@ public sealed class LegacyEnvMigrationService
                     state.Items.Count(item => item.Action is "conflict_existing" or "ignore_empty"),
                     state.ProviderAccounts.Count(item => item.Action == "conflict_existing"),
                     state.Items.Count(item => item.Action is "retain_in_deployment" or "per_user_manual" or
-                        "manual_review" or "deprecated_manual_review" or "requires_target_selection"),
+                        "manual_review" or "deprecated_manual_review" or "requires_target_selection" or "choose_source" or "setup_apple"),
                     state.Document.Playlists.Count(IsPlaylistHandoffPending),
                     createdProviders,
                     state.Document.SourceSha256,
@@ -753,7 +802,8 @@ public sealed class LegacyEnvMigrationService
                 {
                     BackendIdentitiesCreated = 0,
                     PlaylistLinksCreated = createdPlaylistLinks.Count,
-                    SchedulesCreated = createdSchedules.Count
+                    SchedulesCreated = createdSchedules.Count,
+                    AccountChecks = checkedAccounts.Values.Select(item => item.Check).ToArray()
                 };
                 db.AuditEvents.Add(audit);
                 db.LegacyEnvImports.Add(new LegacyEnvImportRecord
@@ -987,7 +1037,7 @@ public sealed class LegacyEnvMigrationService
                 "conflict_existing" => "A global account already exists; migration will not overwrite or duplicate it.",
                 "conflict_invalid_value" => populated.First(item => item.Action == "conflict_invalid_value").Reason,
                 "conflict_incomplete" => populated[0].Reason,
-                _ => "Create a disabled global account with encrypted credentials for administrator review."
+                _ => "Import encrypted credentials, test the connection and enable the account only when verification succeeds."
             };
             if (action.StartsWith("conflict_", StringComparison.Ordinal))
             {
@@ -1058,14 +1108,6 @@ public sealed class LegacyEnvMigrationService
                     TargetBackendInstanceId = identity.BackendInstanceId
                 };
             }
-            if (item.LocalTracksPosition == "last")
-            {
-                return item with
-                {
-                    Action = "requires_behavior_review",
-                    Reason = "The current playlist model preserves manual entries but cannot safely infer the legacy 'local tracks last' ordering rule."
-                };
-            }
             if (!spotifyAccountReady)
             {
                 return item with
@@ -1077,7 +1119,7 @@ public sealed class LegacyEnvMigrationService
             return item with
             {
                 Action = "import_playlist_link",
-                Reason = "Create an active durable playlist link and schedule.",
+                Reason = "Create a durable playlist link and schedule using source order; the old first/last ordering is retired.",
                 TargetProtocol = identity.BackendType,
                 TargetBackendInstanceId = identity.BackendInstanceId
             };
@@ -1251,6 +1293,7 @@ public sealed class LegacyEnvMigrationService
         LegacyEnvDisposition.PerUserManual => "per_user_manual",
         LegacyEnvDisposition.PlaylistHandoff => "playlist_handoff",
         LegacyEnvDisposition.IgnoredDeprecated => "ignored_deprecated",
+        LegacyEnvDisposition.ExtensionRegistry => "extension_registry",
         _ => "unknown"
     };
 
