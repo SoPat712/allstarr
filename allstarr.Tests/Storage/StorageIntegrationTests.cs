@@ -320,7 +320,7 @@ public sealed class StorageIntegrationTests
                 Assert.False(account.Enabled);
                 Assert.NotNull(account.SecretReferenceId);
                 var personalAccount = Assert.Single(accounts, item => item.ProviderId == "lastfm");
-                Assert.True(personalAccount.Enabled);
+                Assert.False(personalAccount.Enabled);
                 Assert.Equal(userId, personalAccount.OwnerUserId);
                 Assert.Single(await db.AuditEvents.AsNoTracking().ToListAsync());
 

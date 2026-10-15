@@ -29,7 +29,7 @@ public sealed class LegacyEnvParserTests
         AssertEntry(document, "JELLYFIN_URL", LegacyEnvDisposition.DeploymentChecklist, "retain_in_deployment", false);
         AssertEntry(document, "JELLYFIN_API_KEY", LegacyEnvDisposition.DeploymentChecklist, "retain_in_deployment", true);
         AssertEntry(document, "SCROBBLING_LASTFM_SESSION_KEY", LegacyEnvDisposition.PerUserManual, "per_user_manual", true);
-        AssertEntry(document, "MUSIC_SERVICE", LegacyEnvDisposition.IgnoredDeprecated, "deprecated_manual_review", false);
+        AssertEntry(document, "MUSIC_SERVICE", LegacyEnvDisposition.DurableSetting, "import_if_absent", false);
         AssertEntry(document, "UNKNOWN_TOKEN", LegacyEnvDisposition.Unknown, "manual_review", true);
         Assert.DoesNotContain("deezer-secret", document.SourceSha256, StringComparison.Ordinal);
     }
@@ -143,8 +143,9 @@ public sealed class LegacyEnvParserTests
         foreach (var key in new[] { "POSTGRES_DB", "ADMIN__ENABLE_ENV_EXPORT", "CORS__ALLOWED_ORIGINS" })
             AssertEntry(document, key, LegacyEnvDisposition.DeploymentChecklist, "retain_in_deployment", false);
         AssertEntry(document, "SPOTIFY_API_SESSION_COOKIES", LegacyEnvDisposition.PerUserManual, "per_user_manual", true);
-        foreach (var key in new[] { "EXTENSION_REPOSITORIES", "SPOTIFY_IMPORT_PLAYLIST_IDS", "VALKEY_MAX_MEMORY", "REDIS_DATA_PATH" })
+        foreach (var key in new[] { "SPOTIFY_IMPORT_PLAYLIST_IDS", "VALKEY_MAX_MEMORY", "REDIS_DATA_PATH" })
             AssertEntry(document, key, LegacyEnvDisposition.IgnoredDeprecated, "deprecated_manual_review", false);
+        AssertEntry(document, "EXTENSION_REPOSITORIES", LegacyEnvDisposition.ExtensionRegistry, "import_registry", true);
         AssertEntry(document, "UNKNOWN_SETTING", LegacyEnvDisposition.Unknown, "manual_review", false);
     }
 

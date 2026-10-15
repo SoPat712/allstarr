@@ -61,6 +61,7 @@ builder.Services.AddDurableStorage(
     builder.Environment);
 builder.Services.AddDurableRuntimeSettings();
 builder.Services.AddEncryptedSecretStore(builder.Configuration);
+builder.Services.AddSingleton<ILegacyAccountVerifier, LegacyAccountVerifier>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.OnboardingStateService>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
