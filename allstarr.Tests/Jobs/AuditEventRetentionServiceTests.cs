@@ -112,6 +112,50 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
+    [Fact]
+    public async Task PruneNowAsync_ExpiresJobHistorySoonerThanOtherEvents()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            database.AuditEvents.AddRange(
+                Event(now.AddDays(-8), "admin-old"),
+                Event(now.AddDays(-8), "job-old", "job-attempt"),
+                Event(now.AddDays(-6), "job-recent", "job-attempt"));
+            await database.SaveChangesAsync();
+        }
+
+        await Worker(retentionDays: 30, maximumRows: 1000).PruneNowAsync();
+
+        await using var verification = provider.CreateAsyncScope();
+        var remaining = await verification.ServiceProvider.GetRequiredService<AllstarrDbContext>()
+            .AuditEvents.AsNoTracking().OrderBy(item => item.Action).Select(item => item.Action).ToListAsync();
+        Assert.Equal(["admin-old", "job-recent"], remaining);
+    }
+
+    [Fact]
+    public async Task PruneNowAsync_TrimsJobHistoryBeforeOtherEventsWhenOverTheRowLimit()
+    {
+        var now = DateTimeOffset.UtcNow;
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            database.AuditEvents.AddRange(Enumerable.Range(0, 1000)
+                .Select(index => Event(now.AddDays(-2).AddSeconds(index), $"admin-{index:D4}")));
+            database.AuditEvents.AddRange(Enumerable.Range(0, 10)
+                .Select(index => Event(now.AddSeconds(index), $"job-{index:D2}", "job-attempt")));
+            await database.SaveChangesAsync();
+        }
+
+        await Worker(retentionDays: 365, maximumRows: 1000).PruneNowAsync();
+
+        await using var verification = provider.CreateAsyncScope();
+        var context = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+        Assert.Equal(1000, await context.AuditEvents.CountAsync(item => item.Category == "test"));
+        Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
+    }
+
     private AuditEventRetentionService Worker(int retentionDays, int maximumRows)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -143,10 +187,10 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         UpdatedAt = finishedAt
     };
 
-    private static AuditEventRecord Event(DateTimeOffset createdAt, string action) => new()
+    private static AuditEventRecord Event(DateTimeOffset createdAt, string action, string category = "test") => new()
     {
         Id = Guid.NewGuid(),
-        Category = "test",
+        Category = category,
         Action = action,
         Outcome = "success",
         CorrelationId = Guid.NewGuid().ToString("N"),

@@ -79,11 +79,19 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         _choices = choices;
     }
 
-    public async Task<RecordingLyricsReviewResult> GetAsync(
+    public Task<RecordingLyricsReviewResult> GetAsync(
         ProtocolExecutionContext context,
         Guid recordingId,
         string scope,
-        Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null)
+        Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend = null) =>
+        ReviewAsync(context, recordingId, scope, readBackend, onlySourceId: null);
+
+    private async Task<RecordingLyricsReviewResult> ReviewAsync(
+        ProtocolExecutionContext context,
+        Guid recordingId,
+        string scope,
+        Func<string, CancellationToken, Task<LyricsInfo?>>? readBackend,
+        string? onlySourceId)
     {
         var token = RequireContext(context);
         var reviewScope = ParseScope(scope);
@@ -150,7 +158,10 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
             context,
             MusicLyrics.ForLookup(song),
             recording.Id.ToString("N"),
-            new ProtocolLyricsSources(Backend: backend, HouseholdOnly: reviewScope == ReviewScope.Household));
+            new ProtocolLyricsSources(Backend: backend, HouseholdOnly: reviewScope == ReviewScope.Household)
+            {
+                OnlySourceId = onlySourceId
+            });
         token.ThrowIfCancellationRequested();
         var sources = (candidates ?? Array.Empty<ProtocolLyricsCandidate>())
             .Select(candidate => ProjectSource(recording.Id, candidate))
@@ -176,7 +187,8 @@ public sealed class RecordingLyricsReview : IRecordingLyricsReview
         var reviewScope = ParseScope(scope);
         ArgumentNullException.ThrowIfNull(expected);
         token.ThrowIfCancellationRequested();
-        var preview = await GetAsync(context, recordingId, ScopeName(reviewScope), readBackend);
+        // Revalidate only the chosen source so an unrelated slow or changing source cannot block the save.
+        var preview = await ReviewAsync(context, recordingId, ScopeName(reviewScope), readBackend, sourceId);
         token.ThrowIfCancellationRequested();
         var source = preview.Sources.FirstOrDefault(item =>
             string.Equals(item.SourceId, sourceId, StringComparison.Ordinal));

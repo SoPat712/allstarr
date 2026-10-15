@@ -249,7 +249,8 @@ public sealed class KeptLyricsReader(
             if (!info.Exists || info.Length > MaximumLyricsBytes)
                 return null;
 
-            var bytes = new byte[MaximumLyricsBytes + 1];
+            // Size the buffer from the file (already capped above); one extra byte detects growth.
+            var bytes = new byte[checked((int)info.Length + 1)];
             var length = 0;
             await using (var stream = new FileStream(
                              path,
@@ -272,7 +273,7 @@ public sealed class KeptLyricsReader(
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (length > MaximumLyricsBytes)
+            if (length > MaximumLyricsBytes || length > info.Length)
                 return null;
 
             var text = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true)

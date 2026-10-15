@@ -136,9 +136,13 @@ public sealed partial class RecordingKeptFiles
     private static async Task CancelCleanupAsync(AllstarrDbContext db, Guid fileId, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
+        // Narrow in SQL to payloads naming this file; each row is still confirmed by
+        // deserializing below, so a coincidental substring match cannot cancel it.
+        var fileText = fileId.ToString("D");
         var pending = await db.Jobs.Where(item => item.Type == KeptCleanupJobType &&
             (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled ||
-             item.State == DurableJobState.Running)).ToArrayAsync(cancellationToken);
+             item.State == DurableJobState.Running) &&
+            item.PayloadJson.Contains(fileText)).ToArrayAsync(cancellationToken);
         foreach (var job in pending)
         {
             KeptRecordingCleanupPayload? payload;
