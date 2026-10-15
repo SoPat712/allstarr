@@ -168,6 +168,7 @@ jobs:
       - webui
       - apple-contracts
       - compose-contracts
+      - v2-image-upgrade
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -214,3 +215,12 @@ jobs:
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml --profile apple config --quiet
+
+  v2-image-upgrade:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Qualify image in unchanged legacy layout
+        run: bash tools/tests/v2_image_upgrade.sh
