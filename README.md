@@ -84,15 +84,14 @@ Provider availability depends on connected accounts, optional sidecars, permissi
 
 ## Optional services
 
-Spotify lyrics and Apple/GAMDL download support are explicit Compose profiles, not default dependencies.
+Apple/GAMDL download support uses an optional Compose profile.
 
 ```bash
-./allstarr.sh enable spotify-lyrics
 ./allstarr.sh install-apple x86_64
 ./allstarr.sh up
 ```
 
-The Apple profile requires a legally obtained compatible APK/APKM supplied by the operator. Allstarr does not distribute Apple binaries. Follow the [Apple provider](docs/operations/apple-download-provider.md) and [Spotify lyrics](docs/operations/spotify-lyrics-sidecar.md) guides.
+Spotify lyrics run inside Allstarr using a selected Spotify account. The Apple profile requires a legally obtained compatible APK/APKM supplied by the operator. Allstarr does not distribute Apple binaries. Follow the [Apple provider](docs/operations/apple-download-provider.md) and [Spotify lyrics](docs/operations/spotify-lyrics.md) guides.
 
 ## Documentation
 

@@ -1,4 +1,5 @@
 using allstarr.Core.Music;
+using allstarr.Core.Protocols;
 using System.Text.RegularExpressions;
 using TagLib;
 using allstarr.Models.Domain;
@@ -16,7 +17,8 @@ public interface IKeptLyricsSidecarService
         Song? song = null,
         string? externalProvider = null,
         string? externalId = null,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        ProtocolExecutionContext? protocol = null);
 }
 
 public class KeptLyricsSidecarService : IKeptLyricsSidecarService
@@ -25,17 +27,14 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         @"\[(?<provider>[A-Za-z0-9_-]+)-(?<externalId>[^\]]+)\]$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-    private readonly LyricsOrchestrator _lyricsOrchestrator;
-    private readonly OdesliService _odesliService;
+    private readonly IProtocolLyricsResolver _lyrics;
     private readonly ILogger<KeptLyricsSidecarService> _logger;
 
     public KeptLyricsSidecarService(
-        LyricsOrchestrator lyricsOrchestrator,
-        OdesliService odesliService,
+        IProtocolLyricsResolver lyrics,
         ILogger<KeptLyricsSidecarService> logger)
     {
-        _lyricsOrchestrator = lyricsOrchestrator;
-        _odesliService = odesliService;
+        _lyrics = lyrics;
         _logger = logger;
     }
 
@@ -49,7 +48,8 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
         Song? song = null,
         string? externalProvider = null,
         string? externalId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ProtocolExecutionContext? protocol = null)
     {
         if (string.IsNullOrWhiteSpace(audioFilePath) || !System.IO.File.Exists(audioFilePath))
         {
@@ -81,24 +81,30 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
 
             if (string.IsNullOrWhiteSpace(title) || artistNames.Count == 0)
             {
-                _logger.LogDebug("Skipping lyrics sidecar generation for {Path}: missing title or artist metadata", audioFilePath);
+                _logger.LogDebug("Skipping lyrics sidecar generation without title and artist metadata");
                 return null;
             }
 
-            var spotifyTrackId = FirstNonEmpty(song?.SpotifyId);
-            if (string.IsNullOrWhiteSpace(spotifyTrackId) &&
-                !string.IsNullOrWhiteSpace(externalProvider) &&
-                !string.IsNullOrWhiteSpace(externalId))
+            if (protocol?.Actor == null) return null;
+            using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, protocol.CancellationToken);
+            cancellation.Token.ThrowIfCancellationRequested();
+            var context = protocol.CancellationToken == cancellationToken ? protocol : new ProtocolExecutionContext(
+                protocol.Protocol, protocol.BackendInstanceId, protocol.VerifiedBackendPrincipalId, protocol.Principal,
+                protocol.CorrelationId, protocol.Deadline, cancellation.Token, protocol.Client)
+            { Policy = protocol.Policy, RequestedItemId = protocol.RequestedItemId };
+            var lookup = MusicLyrics.ForLookup(new Song
             {
-                spotifyTrackId = await ResolveSpotifyTrackIdAsync(externalProvider, externalId, cancellationToken);
-            }
-
-            var lyrics = await _lyricsOrchestrator.GetLyricsAsync(
-                trackName: title,
-                artistNames: artistNames.ToArray(),
-                albumName: album,
-                durationSeconds: durationSeconds,
-                spotifyTrackId: spotifyTrackId);
+                Title = title,
+                Artist = artistNames[0],
+                Artists = artistNames,
+                Album = album,
+                Duration = Math.Clamp(durationSeconds, 0, 86_400),
+                SpotifyId = song?.SpotifyId
+            });
+            var resourceKey = externalProvider != null && externalId != null ? $"{externalProvider}:{externalId}" :
+                Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(audioFilePath)));
+            var lyrics = await _lyrics.FindAsync(context, lookup, resourceKey,
+                externalProvider, externalId, lookup.SpotifyId);
 
             if (lyrics == null)
             {
@@ -117,26 +123,24 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
                 return null;
             }
 
-            await System.IO.File.WriteAllTextAsync(sidecarPath, lrcContent, cancellationToken);
-            _logger.LogInformation("Saved lyrics sidecar: {SidecarPath}", sidecarPath);
+            context.CancellationToken.ThrowIfCancellationRequested();
+            var temporary = Path.Combine(Path.GetDirectoryName(sidecarPath)!, $".lyrics-{Guid.NewGuid():N}.tmp");
+            try
+            {
+                await System.IO.File.WriteAllTextAsync(temporary, lrcContent, context.CancellationToken);
+                context.CancellationToken.ThrowIfCancellationRequested();
+                System.IO.File.Move(temporary, sidecarPath);
+            }
+            finally { System.IO.File.Delete(temporary); }
+            _logger.LogInformation("Saved a lyrics sidecar");
             return sidecarPath;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested || protocol?.CancellationToken.IsCancellationRequested == true) { throw; }
+        catch (Exception)
         {
-            _logger.LogDebug(ex, "Failed to create lyrics sidecar for {Path}", audioFilePath);
+            _logger.LogDebug("Could not create a lyrics sidecar");
             return null;
         }
-    }
-
-    private async Task<string?> ResolveSpotifyTrackIdAsync(
-        string externalProvider,
-        string externalId,
-        CancellationToken cancellationToken)
-    {
-        var sourceUrl = OdesliService.BuildTrackUrl(externalProvider, externalId);
-        return sourceUrl == null
-            ? null
-            : await _odesliService.ConvertUrlToSpotifyIdAsync(sourceUrl, cancellationToken);
     }
 
     private static (string? Provider, string? ExternalId) ParseExternalReferenceFromPath(string audioFilePath)

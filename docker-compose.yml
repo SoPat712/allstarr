@@ -16,7 +16,6 @@ services:
       Admin__ContainerGateway: auto
       Storage__DataDirectory: "/app/data"
       AppleDownload__SetupUploadDirectory: "/app/apple-upload"
-      SpotifyApi__LyricsApiUrl: "${SPOTIFY_LYRICS_API_URL:-http://spotify-lyrics:8080}"
       AppleDownload__BaseUrl: "${APPLE_DOWNLOAD_BASE_URL:-http://apple-gateway:8000}"
     volumes:
     - "${ALLSTARR_DATA_PATH:-allstarr-data}:/app/data"
@@ -41,33 +40,6 @@ services:
     security_opt:
     - no-new-privileges:true
     build: "."
-  spotify-lyrics:
-    image: akashrchandran/spotify-lyrics-api@sha256:c95749ad939ba136893f16604e90e7f3f070beb2dea3aaa955646ec08330b4c6
-    platform: linux/amd64
-    restart: unless-stopped
-    environment:
-      SP_DC: "${SPOTIFY_API_SESSION_COOKIE:-}"
-    networks:
-    - allstarr
-    security_opt:
-    - no-new-privileges:true
-    healthcheck:
-      test:
-      - CMD
-      - curl
-      - "--max-time"
-      - '3'
-      - "--silent"
-      - "--show-error"
-      - "--output"
-      - "/dev/null"
-      - http://127.0.0.1:8080/
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    profiles:
-    - spotify-lyrics
   apple-gateway:
     build:
       context: "./sidecars/apple-gateway"

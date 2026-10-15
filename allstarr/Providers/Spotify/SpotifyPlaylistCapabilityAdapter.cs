@@ -38,13 +38,14 @@ public sealed class EncryptedProviderAccountSecretAccessor(EncryptedSecretStore 
     }
 }
 
-public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapability
+public sealed partial class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapability
 {
     public const string StableProviderId = "spotify";
     public const string HttpClientName = "SpotifyAccountBound";
     private static readonly Uri WebApiOrigin = new("https://api.spotify.com/");
     private readonly SpotifyApiSettings _settings;
     private readonly HttpClient _http;
+    private readonly IApplicationCache? _cache;
     private readonly SpotifyPathfinderPlaylistClient _pathfinder;
     private readonly SpotifyWebTokenExchange _tokenExchange;
     private readonly ILogger<SpotifyPathfinderPlaylistClient>? _logger;
@@ -68,6 +69,7 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
     {
         _settings = settings ?? new();
         _http = http;
+        _cache = cache;
         _logger = logger;
         _pathfinder = new SpotifyPathfinderPlaylistClient(http, cache, logger, _settings);
         _tokenExchange = new SpotifyWebTokenExchange(http, secrets, _settings, timeProvider ?? TimeProvider.System);
@@ -155,12 +157,14 @@ public sealed class SpotifyPlaylistCapabilityAdapter : IProviderPlaylistCapabili
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Lyrics,
                     ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.None,
+                    ProviderAccountRequirement.Required,
                     "1",
-                    ["fetchLyrics"])
+                    ["fetchLyrics"],
+                    [Core.Storage.ProviderAccountScope.Shared, Core.Storage.ProviderAccountScope.Personal])
             ],
             new ProviderPermissionDescriptor(
-                [new Uri("https://open.spotify.com/"), new Uri("https://api.spotify.com/")],
+                [new Uri("https://open.spotify.com/"), new Uri("https://api.spotify.com/"),
+                    new Uri("https://spclient.wg.spotify.com/")],
                 cache: false,
                 secretSettingKeys: ["sessionCookie"]),
             settings:

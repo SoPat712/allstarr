@@ -85,23 +85,6 @@ public static class BuiltInLyricsCapabilityRegistration
         return services;
     }
 
-    public static BuiltInLyricsCapabilityAdapter CreateSpotify(SpotifyLyricsService service) => new(
-        "spotify",
-        async (request, cancellationToken) =>
-        {
-            var id = request.ProviderTrackId.Value
-                .Replace("spotify:track:", "", StringComparison.OrdinalIgnoreCase)
-                .Trim();
-            if (id.Length != 22 || id.Contains(':') || id.Contains("local", StringComparison.OrdinalIgnoreCase))
-                return null;
-            // ponytail: legacy service lacks a cancellation parameter; bound the caller now,
-            // thread the token into its HttpClient only if orphaned sidecar requests are observed.
-            var result = await service.GetLyricsByTrackIdAsync(id).WaitAsync(cancellationToken);
-            var lyrics = result == null ? null : service.ToLyricsInfo(result);
-            if (lyrics != null) lyrics.Source ??= "spotify";
-            return lyrics;
-        });
-
     public static BuiltInLyricsCapabilityAdapter CreateLrclib(LrclibService service) => new(
         "lrclib",
         async (request, cancellationToken) =>

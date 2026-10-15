@@ -213,5 +213,4 @@ jobs:
           SPOTIFY_API_SESSION_COOKIE: ci-placeholder
         run: |
           docker compose -f docker-compose.yml config --quiet
-          docker compose -f docker-compose.yml --profile spotify-lyrics config --quiet
           docker compose -f docker-compose.yml --profile apple config --quiet

@@ -78,7 +78,6 @@ public static class LegacyEnvParser
             ["SPOTIFY_API_CACHE_DURATION_MINUTES"] = "SpotifyApi:CacheDurationMinutes",
             ["SPOTIFY_API_RATE_LIMIT_DELAY_MS"] = "SpotifyApi:RateLimitDelayMs",
             ["SPOTIFY_API_PREFER_ISRC_MATCHING"] = "SpotifyApi:PreferIsrcMatching",
-            ["SPOTIFY_LYRICS_API_URL"] = "SpotifyApi:LyricsApiUrl",
             ["SCROBBLING_ENABLED"] = "Scrobbling:Enabled",
             ["SCROBBLING_LOCAL_TRACKS_ENABLED"] = "Scrobbling:LocalTracksEnabled",
             ["SCROBBLING_SYNTHETIC_LOCAL_PLAYED_SIGNAL_ENABLED"] = "Scrobbling:SyntheticLocalPlayedSignalEnabled",
@@ -173,6 +172,7 @@ public static class LegacyEnvParser
 
     private static readonly HashSet<string> IgnoredKeys = new(StringComparer.OrdinalIgnoreCase)
     {
+        "SPOTIFY_LYRICS_API_URL",
         "MUSIC_SERVICE", "EXTENSION_REPOSITORIES", "VALKEY_MAX_MEMORY", "REDIS_ENABLED",
         "REDIS_CONNECTION_STRING", "REDIS_DATA_PATH", "REDIS_HOST", "REDIS_PORT",
         "REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_DATABASE", "REDIS_DB", "REDIS_SSL",

@@ -39,6 +39,14 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task RetiredSpotifySidecarCannotBeConfigured()
+    {
+        var service = CreateService([]);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("SpotifyApi:LyricsApiUrl", "http://obsolete.example.test")], "webui", _userId));
+    }
+
+    [Fact]
     public async Task Get_ReportsBootstrapFallbackThenTypedDurableOverride()
     {
         var service = CreateService(new Dictionary<string, string?> { ["Cache:SearchResultsMinutes"] = "7" });
@@ -275,7 +283,6 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             new("AppleDownload:Quality", "alac-24-96"),
             new("Qobuz:Quality", "FLAC_24_LOW"),
             new("Matching:LocalPreferencePercent", "11"),
-            new("SpotifyApi:LyricsApiUrl", "http://spotify-lyrics:8080"),
             new("SpotifyImport:Playlists", "[[\"Discover Weekly\",\"source-id\",\"target-id\",\"last\",\"0 8 * * *\"]]")
         ], "webui", _userId);
         Assert.False(accounts.ListenersCanConnectOwnAccounts);
@@ -298,7 +305,6 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Equal("http://compose-apple-gateway:8000", apple.BaseUrl);
         Assert.Equal("aac-96", apple.Quality);
         Assert.Equal("MP3_320", qobuz.Quality);
-        Assert.Equal("http://spotify-lyrics:8080", spotifyApi.LyricsApiUrl);
         var importedPlaylist = Assert.Single(spotifyImport.Playlists);
         Assert.Equal("Discover Weekly", importedPlaylist.Name);
         Assert.Equal("target-id", importedPlaylist.JellyfinId);

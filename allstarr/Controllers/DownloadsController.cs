@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
@@ -25,19 +26,22 @@ public class DownloadsController : ControllerBase
     private readonly IKeptLyricsSidecarService? _keptLyricsSidecarService;
     private readonly IProviderRegistry? _providerRegistry;
     private readonly IDbContextFactory<AllstarrDbContext>? _contextFactory;
+    private readonly AdminProtocolExecutionContextFactory? _protocolContexts;
 
     public DownloadsController(
         ILogger<DownloadsController> logger,
         IConfiguration configuration,
         IKeptLyricsSidecarService? keptLyricsSidecarService = null,
         IProviderRegistry? providerRegistry = null,
-        IDbContextFactory<AllstarrDbContext>? contextFactory = null)
+        IDbContextFactory<AllstarrDbContext>? contextFactory = null,
+        AdminProtocolExecutionContextFactory? protocolContexts = null)
     {
         _logger = logger;
         _configuration = configuration;
         _keptLyricsSidecarService = keptLyricsSidecarService;
         _providerRegistry = providerRegistry;
         _contextFactory = contextFactory;
+        _protocolContexts = protocolContexts;
     }
 
     [HttpGet("downloads")]
@@ -612,7 +616,12 @@ public class DownloadsController : ControllerBase
     {
         var sidecarPath = _keptLyricsSidecarService?.GetSidecarPath(audioFilePath) ?? Path.ChangeExtension(audioFilePath, ".lrc");
         if (System.IO.File.Exists(sidecarPath) || _keptLyricsSidecarService == null) return sidecarPath;
-        var generatedSidecar = await _keptLyricsSidecarService.EnsureSidecarAsync(audioFilePath, cancellationToken: cancellationToken);
+        var protocol = HttpContext.Items[ProtocolExecutionContextFactory.HttpContextItemKey] as ProtocolExecutionContext;
+        if (protocol == null && _protocolContexts != null &&
+            HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is AdminAuthSession session)
+            protocol = await _protocolContexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken);
+        var generatedSidecar = await _keptLyricsSidecarService.EnsureSidecarAsync(audioFilePath,
+            cancellationToken: cancellationToken, protocol: protocol);
         return generatedSidecar ?? sidecarPath;
     }
 

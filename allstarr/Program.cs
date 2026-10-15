@@ -412,13 +412,6 @@ else
     builder.Services.AddSingleton<IStartupValidator, SubsonicStartupValidator>();
 }
 
-var probeOptionalProvidersAtStartup =
-    builder.Configuration.GetValue<bool>("StartupValidation:ProbeOptionalProviders");
-if (probeOptionalProvidersAtStartup)
-{
-    builder.Services.AddSingleton<IStartupValidator, LyricsStartupValidator>();
-}
-
 // Tests and local contract hosts must never call live providers during startup.
 if (!builder.Environment.IsEnvironment("Testing"))
 {
@@ -430,8 +423,6 @@ builder.Services.AddHostedService<CacheCleanupService>();
 builder.Services.Configure<SpotifyApiSettings>(builder.Configuration.GetSection("SpotifyApi"));
 builder.Services.AddSingleton<allstarr.Services.Spotify.SpotifySessionCookieService>();
 
-builder.Services.AddSingleton<allstarr.Services.Lyrics.SpotifyLyricsService>();
-builder.Services.AddSingleton<allstarr.Services.Lyrics.LyricsOrchestrator>();
 builder.Services.AddSingleton<allstarr.Services.Lyrics.IKeptLyricsSidecarService, allstarr.Services.Lyrics.KeptLyricsSidecarService>();
 
 builder.Services.Configure<ScrobblingSettings>(builder.Configuration.GetSection("Scrobbling"));

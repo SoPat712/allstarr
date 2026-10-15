@@ -27,12 +27,7 @@ The optional Apple setup upload folder remains a separate bind mount. Apple gate
 
 ## Optional profiles
 
-Spotify lyrics uses the pinned upstream image already declared in the native `spotify-lyrics` profile:
-
-```bash
-./allstarr.sh enable spotify-lyrics
-./allstarr.sh up
-```
+Spotify lyrics run inside Allstarr and require an enabled Spotify account with a saved session cookie. They do not enable a Compose profile. See [Spotify lyrics](spotify-lyrics.md) for setup and migration from the retired container.
 
 Apple download requires a legally obtained supported Apple Music Android package. Upload it through the Apple source setup, then run:
 
@@ -42,7 +37,7 @@ Apple download requires a legally obtained supported Apple Music Android package
 
 Use `arm64-v8a` on an ARM64 Docker host. The script verifies the staged package and upstream wrapper inputs before enabling the native `apple` profile. Allstarr distributes its own thin integration layer, not the upstream provider implementation or Apple package.
 
-See [Spotify lyrics](spotify-lyrics-sidecar.md) and [Apple download](apple-download-provider.md).
+See [Spotify lyrics](spotify-lyrics.md) and [Apple download](apple-download-provider.md).
 
 ## Update
 
@@ -65,7 +60,6 @@ To move an entire installation, stop Allstarr and copy the complete data folder 
 ```bash
 ./allstarr.sh status
 ./allstarr.sh logs allstarr
-./allstarr.sh disable spotify-lyrics
 ./allstarr.sh disable apple
 ./allstarr.sh down
 ```
