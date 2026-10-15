@@ -145,6 +145,32 @@ public sealed class TrackClassifierTests
         }
     }
 
+    [Fact]
+    public void MatchedCanonicalUsesItsVerifiedRoutesWithoutChangingTheSourceIdentity()
+    {
+        var original = Guid.CreateVersion7();
+        var matched = Guid.CreateVersion7();
+        var source = Identity(original, "deezer", "source");
+        source.Scope = ProviderIdentityScope.Account;
+        source.ProviderAccountId = Guid.CreateVersion7();
+        var target = Identity(matched, "qobuz", "matched-track");
+        var privateTarget = Identity(matched, "qobuz", "other-account");
+        privateTarget.Scope = ProviderIdentityScope.Account;
+        privateTarget.ProviderAccountId = Guid.CreateVersion7();
+        var decision = Decision(Guid.Empty, TrackMatchState.Accepted, 1, .9);
+        decision.LibraryTrackId = null;
+        decision.CanonicalRecordingId = matched;
+
+        var projection = TrackRouteProjector.Project(new ExternalMetadataSnapshotRecord(),
+            decision, null, source, [], [source, target, privateTarget], ["deezer", "qobuz"]);
+
+        Assert.Equal(matched, projection.CanonicalRecordingId);
+        var route = Assert.Single(projection.Classification.ProviderRoutes);
+        Assert.Equal("qobuz", route.ProviderId);
+        Assert.Equal("matched-track", route.ExternalId);
+        Assert.Equal(original, source.CanonicalRecordingId);
+    }
+
     private static TrackMatchRecord Decision(
         Guid local,
         TrackMatchState state,

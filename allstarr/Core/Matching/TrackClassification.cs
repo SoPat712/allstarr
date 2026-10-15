@@ -119,7 +119,8 @@ public static class TrackClassifier
                 sourceIdentity,
                 providerIdentities ?? [],
                 providerPriority ?? [],
-                manual);
+                manual,
+                decision?.CanonicalRecordingId);
         var hasManualProviderRoute = providerRoutes.FirstOrDefault()?.IsManual == true;
         var hasManualLibraryRoute = manual?.Decision == ManualOverrideDecision.Pin &&
                                     manual.LibraryTrackId.HasValue &&

@@ -10,7 +10,8 @@ public static class DurableProviderRouteSelector
         ProviderTrackIdentityRecord? source,
         IEnumerable<ProviderTrackIdentityRecord> identities,
         IReadOnlyList<string> providerPriority,
-        ManualTrackOverrideRecord? manual = null)
+        ManualTrackOverrideRecord? manual = null,
+        Guid? canonicalRecordingId = null)
     {
         var priority = providerPriority
             .Select((providerId, index) => (providerId, index))
@@ -24,9 +25,10 @@ public static class DurableProviderRouteSelector
             ? new DurableProviderRoute(manual.TargetProviderId, manual.TargetExternalId, true)
             : null;
         if (source == null) return manualRoute == null ? [] : [manualRoute];
+        var canonicalId = canonicalRecordingId ?? source.CanonicalRecordingId;
         var automatic = identities
             .Where(item =>
-                item.CanonicalRecordingId == source.CanonicalRecordingId &&
+                item.CanonicalRecordingId == canonicalId &&
                 item.ResourceKind == ProviderResourceKind.Track &&
                 (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id) &&
                 item.VerificationMethod != "source-snapshot-hash" &&
