@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Models.Settings;
@@ -10,20 +11,46 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Common;
 
-public sealed class ManagedTrackCacheService(
-    IConfiguration configuration,
-    IOptions<SubsonicSettings> settings,
-    ILocalLibraryService localLibrary,
-    ILogger<ManagedTrackCacheService> logger)
+public sealed class ManagedTrackCacheService : IAsyncDisposable
 {
-    private readonly ConcurrentDictionary<string, byte> active = new(StringComparer.OrdinalIgnoreCase);
+    private readonly IConfiguration configuration;
+    private readonly IOptions<SubsonicSettings> settings;
+    private readonly ILocalLibraryService localLibrary;
+    private readonly ILogger<ManagedTrackCacheService> logger;
+    private readonly ConcurrentDictionary<string, Transfer> active = new(StringComparer.Ordinal);
+    private readonly object lifecycle = new();
+    private readonly CancellationTokenSource shutdown;
+    private bool disposed;
+    private Task? disposal;
+
+    public ManagedTrackCacheService(IConfiguration configuration, IOptions<SubsonicSettings> settings,
+        ILocalLibraryService localLibrary, ILogger<ManagedTrackCacheService> logger,
+        IHostApplicationLifetime? lifetime = null)
+    {
+        this.configuration = configuration;
+        this.settings = settings;
+        this.localLibrary = localLibrary;
+        this.logger = logger;
+        shutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? CancellationToken.None);
+    }
 
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
-        DownloadedSongMappingScope scope, CancellationToken cancellationToken)
+        DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var path = await localLibrary.GetLocalPathForExternalSongAsync(
-            scope, track.ProviderId, track.Value);
+        if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value), out var transfer))
+        {
+            var reader = transfer.TryOpen(initial: false);
+            if (reader != null)
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(reader) };
+                response.Content.Headers.ContentType = new(transfer.Media.MimeType);
+                return new(response, CacheLease(transfer.Media, reader.CanSeek), track.ProviderId, track.Value,
+                    scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
+                    SelectionReason: "progressive-cache", ServingAccountRevision: accountRevision);
+            }
+        }
+        var path = await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
         if (path == null) return null;
         try
         {
@@ -50,177 +77,262 @@ public sealed class ManagedTrackCacheService(
             try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return new ProtocolProviderStream(response, new ProviderStreamLease("managed-cache",
-                new Uri("https://allstarr.invalid/managed-cache"), DateTimeOffset.UtcNow.AddHours(1),
-                true, true, new ProviderMediaFormat(mime, extension, extension),
-                ProviderStreamRetryBehavior.DoNotRetry), track.ProviderId, track.Value,
-                scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality);
+            return new(response, CacheLease(new(mime, extension, extension), true), track.ProviderId, track.Value,
+                scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
+                ServingAccountRevision: accountRevision);
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
     }
 
-    public async Task WrapAsync(
-        ProtocolProviderStream stream,
-        ProtocolExecutionContext protocol,
-        string providerId,
-        string externalId,
-        bool headOnly,
-        Func<Task<Song?>> metadataFactory,
+    public async Task WrapAsync(ProtocolProviderStream stream, ProtocolExecutionContext protocol,
+        string providerId, string externalId, bool headOnly, Func<Task<Song?>> metadataFactory,
         CancellationToken cancellationToken)
     {
-        if (stream.IsCached || !IsCacheMode() ||
-            headOnly ||
-            !IsCompleteResponse(stream.Response)) return;
-        var actor = protocol.Actor;
-        if (actor == null) return;
-        var scope = new DownloadedSongMappingScope(
-            stream.ServingAccountId,
-            stream.EffectiveQuality);
-
-        // Older callers without a resolved identity must never cache fallback bytes as the requested track.
+        if (stream.IsCached || !IsCacheMode() || headOnly || !IsCompleteResponse(stream.Response) || protocol.Actor == null) return;
         if (stream.ServingExternalId == null && stream.ServingProviderId != providerId) return;
         providerId = stream.ServingProviderId;
         externalId = stream.ServingExternalId ?? externalId;
-
-        var key = $"{scope.Key}\n{providerId}\n{externalId}";
-        if (!active.TryAdd(key, 0)) return;
-
-        var cacheRoot = Path.Combine(
-            configuration["Library:DownloadPath"] ?? "./downloads",
-            "cache");
-        var incomingRoot = Path.Combine(cacheRoot, ".incoming");
-        var partialPath = Path.Combine(incomingRoot, $"provider-{Guid.NewGuid():N}.partial");
-        FileStream? output = null;
+        var scope = new DownloadedSongMappingScope(stream.ServingAccountId, stream.EffectiveQuality);
+        var key = Key(scope, stream.ServingAccountRevision, providerId, externalId);
+        if (active.ContainsKey(key)) return;
+        var cacheRoot = Path.Combine(configuration["Library:DownloadPath"] ?? "./downloads", "cache");
+        var partial = Path.Combine(cacheRoot, ".incoming", $"provider-{Guid.NewGuid():N}.partial");
+        FileStream output;
         try
         {
-            Directory.CreateDirectory(incomingRoot);
-            output = new FileStream(
-                partialPath,
-                FileMode.CreateNew,
-                FileAccess.Write,
-                FileShare.Read,
-                81920,
-                FileOptions.Asynchronous | FileOptions.SequentialScan);
+            Directory.CreateDirectory(Path.GetDirectoryName(partial)!);
+            output = new(partial, FileMode.CreateNew, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete,
+                81920, FileOptions.Asynchronous | FileOptions.SequentialScan);
         }
-        catch (Exception exception)
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            output?.Dispose();
-            active.TryRemove(key, out _);
-            logger.LogWarning(exception, "Could not open the managed track cache for {ProviderId}", providerId);
+            logger.LogWarning("Could not open the managed track cache for {ProviderId}", providerId);
             return;
         }
-
-        var originalContent = stream.Response.Content;
+        var original = stream.Response.Content;
         Stream source;
-        try
+        try { source = await original.ReadAsStreamAsync(cancellationToken); }
+        catch { await output.DisposeAsync(); TryDelete(partial); throw; }
+        Transfer? transfer = null;
+        lock (lifecycle)
         {
-            source = await originalContent.ReadAsStreamAsync(cancellationToken);
+            if (!disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
+            {
+                transfer = new(this, key, scope, providerId, externalId, stream.Lease.Media, cacheRoot,
+                    partial, output, original, source,
+                    stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
+                    metadataFactory, shutdown.Token);
+                active[key] = transfer;
+                transfer.StartWorker();
+            }
         }
-        catch
+        if (transfer == null)
         {
             await output.DisposeAsync();
-            TryDelete(partialPath);
-            active.TryRemove(key, out _);
-            throw;
+            TryDelete(partial);
+            return;
         }
-
-        Task<Song?> metadataTask;
-        try
+        var reader = transfer.TryOpen(initial: true);
+        if (reader == null)
         {
-            metadataTask = metadataFactory();
+            transfer.Stop();
+            throw new IOException("The progressive media cache could not open a reader.");
         }
-        catch (Exception exception)
-        {
-            logger.LogDebug(exception, "Track metadata was unavailable while caching {ProviderId}", providerId);
-            metadataTask = Task.FromResult<Song?>(null);
-        }
-        _ = metadataTask.ContinueWith(
-            task => _ = task.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default);
-
-        var mediaType = originalContent.Headers.ContentType?.MediaType ?? stream.Lease.Media.MimeType;
-        var replacement = new StreamContent(new ProgressiveCachingStream(
-            source,
-            output,
-            mediaType,
-            async () =>
-            {
-                originalContent.Dispose();
-                try
-                {
-                    var existing = await localLibrary.GetLocalPathForExternalSongAsync(
-                        scope, providerId, externalId);
-                    if (existing != null && File.Exists(existing))
-                    {
-                        TryDelete(partialPath);
-                        return;
-                    }
-
-                    Song? song = null;
-                    try
-                    {
-                        song = await metadataTask;
-                    }
-                    catch (Exception exception)
-                    {
-                        logger.LogDebug(exception, "Track metadata was unavailable while publishing {ProviderId}", providerId);
-                    }
-                    song ??= new Song
-                    {
-                        Id = $"ext-{providerId}-song-{externalId}",
-                        Title = externalId,
-                        Artist = "Unknown artist",
-                        Album = "Unknown album"
-                    };
-                    song.ExternalProvider = providerId;
-                    song.ExternalId = externalId;
-
-                    var finalPath = PathHelper.BuildTrackPath(
-                        cacheRoot,
-                        song.AlbumArtist ?? song.Artist,
-                        song.Album,
-                        song.Title,
-                        song.Track,
-                        Extension(stream.Lease.Media),
-                        providerId,
-                        externalId);
-                    Directory.CreateDirectory(Path.GetDirectoryName(finalPath)!);
-                    finalPath = PathHelper.ResolveUniquePath(finalPath);
-                    File.Move(partialPath, finalPath);
-                    try
-                    {
-                        song.LocalPath = finalPath;
-                        await localLibrary.RegisterDownloadedSongAsync(scope, song, finalPath);
-                    }
-                    catch
-                    {
-                        TryDelete(finalPath);
-                        throw;
-                    }
-                    logger.LogInformation("Published completed provider stream to the managed track cache for {ProviderId}", providerId);
-                }
-                catch (Exception exception)
-                {
-                    TryDelete(partialPath);
-                    logger.LogWarning(exception, "Could not publish the completed provider stream for {ProviderId}", providerId);
-                }
-                finally
-                {
-                    active.TryRemove(key, out _);
-                }
-            },
-            () =>
-            {
-                originalContent.Dispose();
-                TryDelete(partialPath);
-                active.TryRemove(key, out _);
-            }));
-        foreach (var header in originalContent.Headers)
-            replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        var replacement = new StreamContent(reader);
+        foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         stream.Response.Content = replacement;
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (lifecycle)
+        {
+            if (disposal != null) return new(disposal);
+            disposed = true;
+            disposal = StopAsync(active.Values.ToArray());
+            return new(disposal);
+        }
+    }
+
+    private async Task StopAsync(Transfer[] transfers)
+    {
+        await shutdown.CancelAsync();
+        await Task.WhenAll(transfers.Select(transfer => transfer.Work));
+        shutdown.Dispose();
+    }
+
+    private static string Key(DownloadedSongMappingScope scope, long? revision, string provider, string track) =>
+        $"{scope.Key}\n{revision}\n{provider}\n{track}";
+
+    private static ProviderStreamLease CacheLease(ProviderMediaFormat media, bool ranges) => new("managed-cache",
+        new Uri("https://allstarr.invalid/managed-cache"), DateTimeOffset.UtcNow.AddHours(1), ranges, ranges, media,
+        ProviderStreamRetryBehavior.DoNotRetry);
+
+    private sealed class Transfer
+    {
+        private readonly ManagedTrackCacheService owner;
+        private readonly string key;
+        private readonly DownloadedSongMappingScope scope;
+        private readonly string provider;
+        private readonly string track;
+        private readonly string cacheRoot;
+        private readonly FileStream output;
+        private readonly HttpContent original;
+        private readonly Stream source;
+        private readonly Func<Task<Song?>> metadata;
+        private readonly CancellationTokenSource cancel;
+        private readonly TaskCompletionSource ready = Signal();
+        private readonly TaskCompletionSource complete = Signal();
+        private readonly object gate = new();
+        private TaskCompletionSource changed = Signal();
+        private string path;
+        private long available;
+        private long? total;
+        private int readers;
+        private bool finished;
+        private bool failed;
+        private bool retired;
+        public ProviderMediaFormat Media { get; }
+        public Task Work { get; private set; } = Task.CompletedTask;
+
+        public Transfer(ManagedTrackCacheService owner, string key, DownloadedSongMappingScope scope,
+            string provider, string track, ProviderMediaFormat media, string cacheRoot, string path, FileStream output,
+            HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, CancellationToken stopping)
+        {
+            this.owner = owner; this.key = key; this.scope = scope; this.provider = provider; this.track = track;
+            Media = media; this.cacheRoot = cacheRoot; this.path = path; this.output = output;
+            this.original = original; this.source = source; this.total = total; this.metadata = metadata;
+            cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+        }
+
+        public void StartWorker() => Work = Task.Run(RunAsync);
+        public void Stop() => cancel.Cancel();
+
+        public Stream? TryOpen(bool initial)
+        {
+            lock (gate)
+            {
+                if (retired || failed || cancel.IsCancellationRequested) return null;
+                FileStream file;
+                try { file = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, FileOptions.Asynchronous); }
+                catch (IOException) { return null; }
+                catch (UnauthorizedAccessException) { return null; }
+                readers++;
+                cancel.CancelAfter(Timeout.InfiniteTimeSpan);
+                return new ProgressiveCachingStream(file, Snapshot, Closed,
+                    TimeSpan.FromSeconds(initial || total == null ? 30 : 3), () => ready.TrySetResult());
+            }
+        }
+
+        private ProgressiveCacheReadState Snapshot()
+        {
+            lock (gate) return new(available, total, finished, failed, changed.Task, complete.Task);
+        }
+
+        private void Advance(bool end = false, bool failure = false)
+        {
+            TaskCompletionSource signal;
+            lock (gate)
+            {
+                finished = end;
+                failed = failure;
+                if (end && !failure) total ??= available;
+                signal = changed;
+                changed = Signal();
+            }
+            signal.TrySetResult();
+        }
+
+        private void Closed()
+        {
+            lock (gate)
+            {
+                if (--readers == 0 && !finished)
+                    cancel.CancelAfter(TimeSpan.FromSeconds(10));
+            }
+        }
+
+        private async Task RunAsync()
+        {
+            var published = false;
+            var verified = false;
+            using var abort = cancel.Token.Register(original.Dispose);
+            try
+            {
+                await ready.Task.WaitAsync(cancel.Token);
+                Task<Song?> metadataTask;
+                try { metadataTask = metadata(); }
+                catch { metadataTask = Task.FromResult<Song?>(null); }
+                // Observe a metadata failure even when the audio source fails first.
+                _ = metadataTask.ContinueWith(task => _ = task.Exception, CancellationToken.None,
+                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+                var buffer = new byte[81920];
+                while (true)
+                {
+                    var read = await source.ReadAsync(buffer, cancel.Token);
+                    lock (gate) total ??= StreamDurationGuidance.DeclaredLength(original);
+                    if (read == 0) break;
+                    if (total is { } expected && read > expected - available)
+                        throw new IOException("The media source exceeded its declared length.");
+                    await output.WriteAsync(buffer.AsMemory(0, read), cancel.Token);
+                    await output.FlushAsync(cancel.Token);
+                    lock (gate) available = checked(available + read);
+                    Advance();
+                }
+                if (available == 0 || total is { } length && available != length)
+                    throw new IOException("The media source ended before its declared length.");
+                await output.DisposeAsync();
+                original.Dispose();
+                verified = true;
+                Advance(end: true);
+                published = await PublishAsync(metadataTask);
+            }
+            catch (Exception)
+            {
+                if (!verified) Advance(end: true, failure: true);
+                if (!cancel.IsCancellationRequested)
+                    owner.logger.LogWarning("The managed media transfer could not complete for {ProviderId}", provider);
+            }
+            finally
+            {
+                try { await output.DisposeAsync(); } catch (IOException) { }
+                try { original.Dispose(); } catch (IOException) { }
+                lock (gate) retired = true;
+                if (!published) TryDelete(path);
+                complete.TrySetResult();
+                owner.active.TryRemove(key, out _);
+                cancel.Dispose();
+            }
+        }
+
+        private async Task<bool> PublishAsync(Task<Song?> metadataTask)
+        {
+            var existing = await owner.localLibrary.GetLocalPathForExternalSongAsync(scope, provider, track);
+            if (existing != null && File.Exists(existing)) return false;
+            Song? song = null;
+            try { song = await metadataTask.WaitAsync(cancel.Token); }
+            catch (OperationCanceledException) when (cancel.IsCancellationRequested) { throw; }
+            catch (Exception) { }
+            song ??= new Song { Id = $"ext-{provider}-song-{track}", Title = track, Artist = "Unknown artist", Album = "Unknown album" };
+            song.ExternalProvider = provider;
+            song.ExternalId = track;
+            var final = PathHelper.BuildTrackPath(cacheRoot, song.AlbumArtist ?? song.Artist, song.Album,
+                song.Title, song.Track, Extension(Media), provider, track);
+            Directory.CreateDirectory(Path.GetDirectoryName(final)!);
+            lock (owner.lifecycle)
+            {
+                cancel.Token.ThrowIfCancellationRequested();
+                final = PathHelper.ResolveUniquePath(final);
+                lock (gate) { File.Move(path, final); path = final; }
+            }
+            song.LocalPath = final;
+            await owner.localLibrary.RegisterDownloadedSongAsync(scope, song, final);
+            owner.logger.LogInformation("Published completed provider stream to the managed track cache for {ProviderId}", provider);
+            return true;
+        }
+
+        private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     private bool IsCacheMode() => settings.Value.StorageMode == StorageMode.Cache;
@@ -270,7 +382,7 @@ public sealed class ManagedTrackCacheService(
         }
         catch
         {
-            // Cleanup is retried by the normal cache TTL sweep.
+            // Only paths created by this cache owner reach this helper.
         }
     }
 }

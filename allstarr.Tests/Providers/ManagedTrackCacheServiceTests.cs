@@ -13,12 +13,13 @@ using allstarr.Services.Common;
 using allstarr.Services.Local;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ManagedTrackCacheServiceTests
+public sealed partial class ManagedTrackCacheServiceTests
 {
     [Theory]
     [InlineData(false)]
@@ -46,8 +47,9 @@ public sealed class ManagedTrackCacheServiceTests
                 })
                 .Returns(Task.CompletedTask);
             var service = CreateService(root, "Cache", local.Object);
-            using var response = Response(HttpStatusCode.PartialContent, [1, 2, 3, 4]);
-            response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, 3, 4);
+            var bytes = Enumerable.Range(0, fallback ? 163_877 : 32_777).Select(value => (byte)(value % 251)).ToArray();
+            using var response = Response(HttpStatusCode.PartialContent, bytes);
+            response.Content.Headers.ContentRange = new ContentRangeHeaderValue(0, bytes.Length - 1, bytes.Length);
 
             await service.WrapAsync(
                 ProviderStream(response) with
@@ -69,10 +71,10 @@ public sealed class ManagedTrackCacheServiceTests
                 }),
                 CancellationToken.None);
 
-            Assert.Equal([1, 2, 3, 4], await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(bytes, await response.Content.ReadAsByteArrayAsync());
             Assert.NotNull(registeredPath);
             Assert.True(File.Exists(registeredPath));
-            Assert.Equal([1, 2, 3, 4], await File.ReadAllBytesAsync(registeredPath));
+            Assert.Equal(bytes, await File.ReadAllBytesAsync(registeredPath));
             local.VerifyAll();
         }
         finally
@@ -187,7 +189,10 @@ public sealed class ManagedTrackCacheServiceTests
         {
             var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
             var service = CreateService(root, "Cache", local.Object);
-            using var response = Response(HttpStatusCode.OK, [1, 2, 3, 4]);
+            var source = new ControlledSource(Enumerable.Range(0, 16).Select(value => (byte)value).ToArray(), false, false);
+            using var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
+            response.Content.Headers.ContentType = new("audio/flac");
+            response.Content.Headers.ContentLength = 16;
 
             await service.WrapAsync(
                 ProviderStream(response),
@@ -199,8 +204,14 @@ public sealed class ManagedTrackCacheServiceTests
                 CancellationToken.None);
 
             await using (var stream = await response.Content.ReadAsStreamAsync())
-                Assert.Equal(1, stream.ReadByte());
-
+            {
+                var first = new byte[1];
+                Assert.Equal(1, await stream.ReadAsync(first));
+                Assert.Equal(0, first[0]);
+                await source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            }
+            await service.DisposeAsync();
+            Assert.True(source.Closed);
             Assert.Empty(Directory.Exists(root)
                 ? Directory.GetFiles(root, "*", SearchOption.AllDirectories)
                 : []);
@@ -252,7 +263,8 @@ public sealed class ManagedTrackCacheServiceTests
     private static ManagedTrackCacheService CreateService(
         string root,
         string storageMode,
-        ILocalLibraryService local)
+        ILocalLibraryService local,
+        IHostApplicationLifetime? lifetime = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -267,7 +279,7 @@ public sealed class ManagedTrackCacheServiceTests
                 StorageMode = Enum.Parse<StorageMode>(storageMode)
             }),
             local,
-            NullLogger<ManagedTrackCacheService>.Instance);
+            NullLogger<ManagedTrackCacheService>.Instance, lifetime);
     }
 
     private static HttpResponseMessage Response(HttpStatusCode status, byte[] bytes)

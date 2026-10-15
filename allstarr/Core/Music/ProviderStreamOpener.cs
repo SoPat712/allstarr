@@ -51,7 +51,7 @@ public sealed class ProviderStreamOpener(
         Task<allstarr.Models.Domain.Song?> Metadata() => metadataTask ??= providers.GetSongAsync(context, routed.ServingProviderId, servingId);
         try
         {
-            if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata, http.Response);
+            if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata);
             if (cache != null)
                 await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
             return await responses.CreateAsync(http, routed.Response, http.RequestAborted, enableRangeProcessing: routed.IsCached);

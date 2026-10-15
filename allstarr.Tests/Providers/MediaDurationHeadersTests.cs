@@ -182,8 +182,7 @@ public sealed class MediaDurationHeadersTests
         var routed = new ProtocolProviderStream(response, new("sequential", new Uri("https://media.example.test/track"),
             DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/" + container, container, container),
             ProviderStreamRetryBehavior.DoNotRetry), "fixture");
-        StreamDurationGuidance.Attach(routed, () => throw new InvalidOperationException("Probe should supply duration"),
-            new Microsoft.AspNetCore.Http.DefaultHttpContext().Response);
+        StreamDurationGuidance.Attach(routed, () => throw new InvalidOperationException("Probe should supply duration"));
         Assert.Equal(expected, await response.Content.ReadAsByteArrayAsync());
     }
 

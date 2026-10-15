@@ -146,7 +146,14 @@ public sealed class ProviderStreamOpenerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task DelayedAudio_ReturnsHeadersWithinOneSecondAndPatchesLazilyFromCatalog(bool cacheEnabled)
+    public Task DelayedAudio_ReturnsHeadersWithinOneSecondAndPatchesLazilyFromCatalog(bool cacheEnabled) =>
+        VerifyBodyStartAsync(cacheEnabled, truncated: false);
+
+    [Fact]
+    public Task TruncatedDeclaredFlacCannotBePublishedAfterLazyNormalization() =>
+        VerifyBodyStartAsync(cacheEnabled: true, truncated: true);
+
+    private async Task VerifyBodyStartAsync(bool cacheEnabled, bool truncated)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", "principal",
@@ -168,9 +175,10 @@ public sealed class ProviderStreamOpenerTests
             { StorageMode = allstarr.Models.Settings.StorageMode.Cache }), library.Object,
             Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.ManagedTrackCacheService>.Instance) : null;
         using var canceled = new CancellationTokenSource();
-        var source = new DelayedAudio(Flac());
+        var source = new DelayedAudio(Flac(), delay: !truncated);
         using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(source) };
         upstream.Content.Headers.ContentType = new("audio/flac");
+        if (truncated) upstream.Content.Headers.ContentLength = Flac().Length + 1;
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.OpenStreamAsync(protocol, "deezer", "42", ProviderAudioQuality.Any, null, false))
             .ReturnsAsync(new ProtocolProviderStream(upstream, SequentialLease(), "deezer", "42"));
@@ -194,7 +202,15 @@ public sealed class ProviderStreamOpenerTests
             var execution = result.ExecuteResultAsync(new ActionContext(http, new Microsoft.AspNetCore.Routing.RouteData(),
                 new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor()));
             await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
-            Assert.True(source.ReadStarted);
+            await source.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            if (truncated)
+            {
+                await Assert.ThrowsAsync<IOException>(() => execution);
+                Assert.Null(registeredPath);
+                await cache!.DisposeAsync();
+                Assert.Empty(Directory.GetFiles(root, "*", SearchOption.AllDirectories));
+                return;
+            }
             Assert.False(execution.IsCompleted);
             await execution;
             var delivered = body.ToArray();
@@ -211,20 +227,49 @@ public sealed class ProviderStreamOpenerTests
         {
             canceled.Cancel();
             upstream.Dispose();
+            if (cache != null) await cache.DisposeAsync();
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }
 
-    private sealed class DelayedAudio(byte[] bytes) : MemoryStream(bytes)
+    [Fact]
+    public async Task CancelingBody_StopsWaitingForUnavailableDurationMetadata()
+    {
+        using var canceled = new CancellationTokenSource();
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var metadata = new TaskCompletionSource<Song?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var upstream = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(Flac()) };
+        var gateway = Gateway(upstream, false);
+        gateway.Setup(item => item.GetSongAsync(_context, "deezer", "42"))
+            .Callback(() => requested.TrySetResult()).Returns(metadata.Task);
+        var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter())
+            .OpenAsync(new DefaultHttpContext(), _context, "deezer", "42", ProviderAudioQuality.Any);
+        var reading = Assert.IsType<FileStreamResult>(result).FileStream.ReadAsync(new byte[50], canceled.Token).AsTask();
+        try
+        {
+            await requested.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            canceled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => reading.WaitAsync(TimeSpan.FromSeconds(1)));
+        }
+        finally
+        {
+            metadata.TrySetResult(null);
+            try { await reading; } catch (OperationCanceledException) { }
+        }
+    }
+
+    private sealed class DelayedAudio(byte[] bytes, bool delay = true) : MemoryStream(bytes)
     {
         public bool ReadStarted;
+        public readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public override bool CanSeek => false;
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             if (!ReadStarted)
             {
                 ReadStarted = true;
-                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+                Started.TrySetResult();
+                if (delay) await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
             }
             return await base.ReadAsync(buffer, cancellationToken);
         }
