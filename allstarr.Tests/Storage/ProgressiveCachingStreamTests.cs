@@ -232,49 +232,60 @@ public sealed class ProgressiveCachingStreamTests
     }
 
     [Fact]
+    public async Task SeekAhead_RechecksPublishedBytesWhenTheNotificationDeadlineWins()
+    {
+        var payload = Enumerable.Range(0, 8).Select(index => (byte)index).ToArray();
+        await using var file = FixtureFile(payload);
+        var snapshots = 0;
+        await using var reader = new ProgressiveCachingStream(file,
+            () => new(++snapshots >= 3 ? payload.Length : snapshots, payload.Length, false, false,
+                NeverCompletingTask(), Task.CompletedTask), () => { }, TimeSpan.FromMilliseconds(10));
+        reader.Position = 7;
+        snapshots = 0;
+
+        var buffer = new byte[1];
+        Assert.Equal(1, await reader.ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        Assert.Equal(payload[7], buffer[0]);
+        Assert.Equal(3, snapshots);
+    }
+
+    [Fact]
     public async Task SeekFifteenSecondsAhead_WaitsWhileTheProducerKeepsAdvancing()
     {
         const int bytesPerSecond = 1024;
         var payload = Enumerable.Range(0, 17 * bytesPerSecond).Select(index => (byte)(index % 251)).ToArray();
         await using var file = FixtureFile(payload);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(25));
-        var gate = new object();
+        var clock = new ProgressiveClock();
         var available = bytesPerSecond;
-        var changed = Signal();
+        var publishing = false;
         ProgressiveCacheReadState State()
         {
-            lock (gate) return new(available, payload.Length, false, false, changed.Task, Task.CompletedTask);
-        }
-        await using var reader = new ProgressiveCachingStream(file, State, () => { }, TimeSpan.FromSeconds(3));
-        reader.Position = 15 * bytesPerSecond;
-        var producer = Task.Run(async () =>
-        {
-            for (var seconds = 1; seconds <= 15; seconds++)
+            if (publishing)
             {
-                await Task.Delay(TimeSpan.FromSeconds(1), cancellation.Token);
-                TaskCompletionSource previous;
-                lock (gate)
-                {
-                    available += bytesPerSecond;
-                    previous = changed;
-                    changed = Signal();
-                }
-                previous.TrySetResult();
+                clock.Advance(TimeSpan.FromSeconds(1));
+                available += bytesPerSecond;
+                Assert.True(available <= 16 * bytesPerSecond);
             }
-        }, cancellation.Token);
-        try
-        {
-            var buffer = new byte[32];
-            Assert.Equal(buffer.Length, await reader.ReadAsync(buffer, cancellation.Token));
-            Assert.Equal(payload[(15 * bytesPerSecond)..(15 * bytesPerSecond + buffer.Length)], buffer);
-            Assert.Equal(16 * bytesPerSecond, available);
+            return new(available, payload.Length, false, false, Task.CompletedTask, Task.CompletedTask);
         }
-        finally
-        {
-            cancellation.Cancel();
-            try { await producer; }
-            catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
-        }
+        await using var reader = new ProgressiveCachingStream(file, State, () => { }, TimeSpan.FromSeconds(3),
+            timeProvider: clock);
+        reader.Position = 15 * bytesPerSecond;
+        publishing = true;
+
+        var buffer = new byte[32];
+        Assert.Equal(buffer.Length, await reader.ReadAsync(buffer));
+        Assert.Equal(payload[(15 * bytesPerSecond)..(15 * bytesPerSecond + buffer.Length)], buffer);
+        Assert.Equal(16 * bytesPerSecond, available);
+        Assert.Equal(TimeSpan.FromSeconds(15), clock.GetElapsedTime(0));
+    }
+
+    private sealed class ProgressiveClock : TimeProvider
+    {
+        private long ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => ticks;
+        public void Advance(TimeSpan elapsed) => ticks += elapsed.Ticks;
     }
 
     private static TaskCompletionSource Signal() =>
