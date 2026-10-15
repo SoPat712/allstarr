@@ -337,6 +337,14 @@ public sealed class FilePlacementService(IManagedFileOwnershipStore ownership, I
             throw new IOException("The placement source no longer matches its verified artifact.");
     }
 
+    internal Task VerifyOwnedFileAsync(ManagedFileRecord record, CancellationToken cancellationToken)
+    {
+        if (!record.IsManaged || record.ScopeKey != ManagedFileScopeKey.Create(record.OwnerUserId, record.RootId))
+            throw new UnauthorizedAccessException("The managed file ownership scope is invalid.");
+        return ValidateExistingManagedFileAsync(ValidateRoot(record.TargetRootPath), record,
+            record.ContentSha256, record.Length, cancellationToken);
+    }
+
     private async Task ValidateExistingManagedFileAsync(
         string root,
         ManagedFileRecord record,

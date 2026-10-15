@@ -1,15 +1,49 @@
+using System.Security.Cryptography;
+
 namespace allstarr.Core.ManagedFiles;
 
 public interface IManagedFileRemovalStore
 {
     Task<ManagedFileRecord?> GetAsync(Guid id, CancellationToken cancellationToken);
     Task MarkRemovedAsync(Guid id, CancellationToken cancellationToken);
+
+    // Implementations that have not adopted unpublished cleanup yet remain safe:
+    // callers must treat a false result as "nothing was revoked".
+    Task<bool> TryMarkUnpublishedRemovedAsync(
+        ManagedFileRecord expected,
+        CancellationToken cancellationToken) => Task.FromResult(false);
 }
 
 public sealed class ManagedFileRemovalService(
     IManagedFileRemovalStore store,
-    IManagedFileOperations? files = null)
+    IManagedFileOperations? files = null,
+    FilePlacementService? placement = null)
 {
+    public async Task<bool> RemoveUnpublishedAsync(
+        Guid id,
+        string requestingScopeKey,
+        CancellationToken cancellationToken = default)
+    {
+        if (id == Guid.Empty || string.IsNullOrWhiteSpace(requestingScopeKey)) return false;
+        var record = await store.GetAsync(id, cancellationToken);
+        if (record is null || !record.IsManaged || record.ReferenceCount != 0 ||
+            !StringComparer.Ordinal.Equals(record.ScopeKey, requestingScopeKey)) return false;
+
+        var existedBeforeValidation = File.Exists(record.CanonicalPath);
+        if (!await IsSafeCurrentFileAsync(record, existedBeforeValidation, cancellationToken)) return false;
+
+        if (!await store.TryMarkUnpublishedRemovedAsync(record, cancellationToken)) return false;
+
+        // A file which was absent while ownership was revoked must not be deleted
+        // if an unrelated file appears at the same path during the transaction.
+        if (!existedBeforeValidation || !File.Exists(record.CanonicalPath)) return true;
+        if (!await IsSafeCurrentFileAsync(record, true, cancellationToken)) return true;
+        // Durable revocation precedes this delete. If deletion fails, the record
+        // remains revoked and an operator can repair the orphan safely.
+        File.Delete(record.CanonicalPath);
+        return true;
+    }
+
     public async Task RemoveAsync(Guid id, string requestingScopeKey, bool explicitlyConfirmed, CancellationToken cancellationToken = default)
     {
         if (!explicitlyConfirmed)
@@ -44,6 +78,42 @@ public sealed class ManagedFileRemovalService(
             !StringComparer.Ordinal.Equals(record.FileSystemDeviceId, identity.DeviceId) ||
             !StringComparer.Ordinal.Equals(record.FileSystemFileId, identity.FileId))
             throw new UnauthorizedAccessException("The managed file identity changed after placement.");
+    }
+
+    private async Task<bool> IsSafeCurrentFileAsync(
+        ManagedFileRecord record,
+        bool fileExists,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            ValidateManagedPath(record);
+            if (!fileExists) return true;
+            if ((File.GetAttributes(record.CanonicalPath) & FileAttributes.ReparsePoint) != 0)
+                return false;
+            if (placement is not null)
+            {
+                await placement.VerifyOwnedFileAsync(record, cancellationToken);
+                return true;
+            }
+
+            ValidateFileIdentity(record);
+            var info = new FileInfo(record.CanonicalPath);
+            if (info.Length != record.Length) return false;
+            byte[] expected;
+            try { expected = Convert.FromHexString(record.ContentSha256); }
+            catch (FormatException) { return false; }
+            if (expected.Length != SHA256.HashSizeInBytes) return false;
+            await using var stream = new FileStream(record.CanonicalPath, FileMode.Open, FileAccess.Read,
+                FileShare.Read, 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+            var actual = await SHA256.HashDataAsync(stream, cancellationToken);
+            return CryptographicOperations.FixedTimeEquals(expected, actual);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          ArgumentException or NotSupportedException)
+        {
+            return false;
+        }
     }
 
     private static void ValidateManagedPath(ManagedFileRecord record)

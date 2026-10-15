@@ -124,6 +124,44 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
     public async Task<ManagedFileRecord?> GetAsync(Guid id, CancellationToken cancellationToken) =>
         Map(await Files.AsNoTracking().SingleOrDefaultAsync(item => item.Id == id && item.RemovedAt == null, cancellationToken));
 
+    public async Task<bool> TryMarkUnpublishedRemovedAsync(
+        ManagedFileRecord expected,
+        CancellationToken cancellationToken)
+    {
+        if (expected.Id == Guid.Empty || expected.ReferenceCount != 0 || !expected.IsManaged ||
+            !StringComparer.Ordinal.Equals(expected.ScopeKey,
+                ManagedFileScopeKey.Create(expected.OwnerUserId, expected.RootId))) return false;
+
+        // Physical deletion happens after this method returns. A caller-owned
+        // transaction could still roll back after that deletion, so cleanup must
+        // refuse to report success unless it owns the committing transaction.
+        if (dbContext.Database.CurrentTransaction is not null) return false;
+        await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
+        try
+        {
+            var entity = await Files.SingleOrDefaultAsync(item => item.Id == expected.Id && item.RemovedAt == null,
+                cancellationToken);
+            if (entity is null || !entity.IsManaged || entity.ReferenceCount != 0 || !Matches(entity, expected))
+                return false;
+            if (await References.AnyAsync(item => item.ManagedFileId == entity.Id && item.ReleasedAt == null,
+                    cancellationToken))
+                return false;
+            if (await dbContext.Set<RecordingKeptRouteEntity>().AnyAsync(item => item.ManagedFileId == entity.Id,
+                    cancellationToken))
+                return false;
+
+            entity.RemovedAt = DateTimeOffset.UtcNow;
+            entity.Revision++;
+            await dbContext.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return false;
+        }
+    }
+
     public async Task MarkRemovedAsync(Guid id, CancellationToken cancellationToken)
     {
         await using var transaction = await dbContext.Database.BeginTransactionAsync(cancellationToken);
@@ -196,6 +234,18 @@ public sealed class EfManagedFileOwnershipStore(AllstarrDbContext dbContext) : I
         FileSystemFileId = item.FileSystemFileId,
         FileSystemLinkCount = item.FileSystemLinkCount
     };
+
+    private static bool Matches(ManagedFileOwnershipEntity entity, ManagedFileRecord expected) =>
+        entity.Id == expected.Id && entity.RootId == expected.RootId &&
+        StringComparer.Ordinal.Equals(entity.TargetRootPath, expected.TargetRootPath) &&
+        StringComparer.Ordinal.Equals(entity.CanonicalPath, expected.CanonicalPath) &&
+        StringComparer.Ordinal.Equals(entity.ContentSha256, expected.ContentSha256) &&
+        entity.Length == expected.Length && entity.FileSystemDeviceId == expected.FileSystemDeviceId &&
+        entity.FileSystemFileId == expected.FileSystemFileId && entity.FileSystemLinkCount == expected.FileSystemLinkCount &&
+        entity.PlacementMethod == expected.PlacementMethod && entity.OwnerUserId == expected.OwnerUserId &&
+        entity.SourceJobId == expected.SourceJobId && StringComparer.Ordinal.Equals(entity.ScopeKey, expected.ScopeKey) &&
+        entity.ReferenceCount == expected.ReferenceCount && entity.IsManaged == expected.IsManaged &&
+        entity.CreatedAt == expected.CreatedAt;
 
     private static void ValidateReference(ManagedFileRecord record, ManagedFileReference reference)
     {

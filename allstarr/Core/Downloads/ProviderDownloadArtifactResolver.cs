@@ -141,10 +141,12 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
     }
 
     public async Task<VerifiedProviderDownloadArtifact> ResolveAsync(ProviderManagedWorkspaceReference workspace,
-        ProviderDownloadedArtifact output, CancellationToken cancellationToken = default)
+        ProviderDownloadedArtifact output, CancellationToken cancellationToken = default,
+        ProviderExternalResourceId? sourceTrack = null, long? sourceAccountRevision = null)
     {
         var persistedWorkspace = await store.GetWorkspaceAsync(workspace.WorkspaceId, cancellationToken)
             ?? throw new InvalidOperationException("The provider download workspace is not registered.");
+        var binding = ValidateSourceBinding(persistedWorkspace, sourceTrack, sourceAccountRevision);
         var workspaceRoot = Contained(WorkspaceRoot(), persistedWorkspace.WorkspaceId);
         RejectSymlink(workspaceRoot);
         var relative = NormalizeArtifactReference(output.ArtifactId);
@@ -166,6 +168,8 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             DurableJobId = persistedWorkspace.DurableJobId,
             ProviderId = persistedWorkspace.ProviderId,
             ProviderAccountId = persistedWorkspace.ProviderAccountId,
+            SourceExternalTrackId = binding.SourceExternalTrackId,
+            SourceAccountRevision = binding.SourceAccountRevision,
             ProviderArtifactId = output.ArtifactId,
             RelativePath = relative,
             ContentSha256 = hash,
@@ -325,6 +329,8 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         item.Id, item.WorkspaceRecordId, path, item.ContentSha256, item.Length, item.OwnerUserId,
         item.DurableJobId, item.ProviderId, item.ProviderAccountId, item.State, item.ManagedFileId)
     {
+        SourceExternalTrackId = item.SourceExternalTrackId,
+        SourceAccountRevision = item.SourceAccountRevision,
         MimeType = item.MimeType,
         Container = item.Container,
         Codec = item.Codec,
@@ -333,6 +339,31 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         BitDepth = item.BitDepth,
         Channels = item.Channels
     };
+
+    private static (string? SourceExternalTrackId, long? SourceAccountRevision) ValidateSourceBinding(
+        ProviderDownloadWorkspaceEntity workspace,
+        ProviderExternalResourceId? sourceTrack,
+        long? sourceAccountRevision)
+    {
+        if (sourceAccountRevision is < 0)
+            throw new InvalidOperationException("The provider account revision is invalid.");
+
+        if (sourceTrack == null)
+        {
+            if (sourceAccountRevision.HasValue)
+                throw new InvalidOperationException("A provider account revision requires a source track.");
+            return (null, null);
+        }
+
+        if (sourceTrack.ResourceKind != ProviderResourceKind.Track ||
+            !sourceTrack.ProviderId.Equals(workspace.ProviderId, StringComparison.Ordinal))
+            throw new InvalidOperationException("The source track does not belong to the download workspace.");
+
+        if (workspace.ProviderAccountId.HasValue != sourceAccountRevision.HasValue)
+            throw new InvalidOperationException("The source binding does not match the download account scope.");
+
+        return (sourceTrack.Value, sourceAccountRevision);
+    }
 
     private sealed class BoundedHashingWriteStream(
         Stream output,
