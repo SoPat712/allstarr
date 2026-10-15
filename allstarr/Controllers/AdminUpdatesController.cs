@@ -8,8 +8,10 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/updates")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessionService sessions) : ControllerBase
+public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessionService sessions,
+    TimeProvider? timeProvider = null) : ControllerBase
 {
+    private readonly TimeProvider pollingClock = timeProvider ?? TimeProvider.System;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [HttpGet("stream")]
@@ -86,7 +88,7 @@ public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessio
 
                 if (updates.Count < 100)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(1), token);
+                    await Task.Delay(TimeSpan.FromSeconds(1), pollingClock, token);
                 }
             }
         }
