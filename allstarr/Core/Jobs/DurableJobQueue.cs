@@ -73,7 +73,7 @@ public sealed record DurableJobProgressUpdate(
     string? DeferralReason = null,
     double? ThroughputPerSecond = null);
 
-public sealed class DurableJobQueue
+public sealed partial class DurableJobQueue
 {
     private readonly IDbContextFactory<AllstarrDbContext> _contextFactory;
     private readonly DurableJobOptions _options;
@@ -185,56 +185,8 @@ public sealed class DurableJobQueue
     }
 
     internal async Task<DurableJobEnqueueResult> EnqueueInExistingTransactionAsync<T>(
-        AllstarrDbContext context,
-        DurableJobEnqueueRequest<T> request,
-        CancellationToken cancellationToken = default)
-    {
-        ValidateEnqueueRequest(request.Type, request.IdempotencyKey, request.Priority, request.MaxAttempts, request.MaxDeferrals);
-        var payloadJson = _payloadPolicy.SerializeAndValidate(request.Payload);
-        var savedContext = await _contextAuthorizer.AuthorizeEnqueueAsync(
-            request.OwnerUserId, request.ProviderAccountId,
-            request.Capability, request.CorrelationId, cancellationToken, request.Type.Trim().ToLowerInvariant());
-        var scopeKey = CreateUserScopeKey(savedContext.OwnerUserId);
-        var type = request.Type.Trim().ToLowerInvariant();
-        var idempotencyKey = request.IdempotencyKey.Trim();
-        var now = _clock.UtcNow;
-        var maxAttempts = request.MaxAttempts ?? _options.DefaultMaxAttempts;
-        var maxDeferrals = request.MaxDeferrals ?? _options.DefaultMaxDeferrals;
-        var requestFingerprint = CreateRequestFingerprint(
-            payloadJson, request.Priority, maxAttempts, maxDeferrals, request.AvailableAt);
-        var existing = await context.Jobs.SingleOrDefaultAsync(
-            item => item.ScopeKey == scopeKey && item.Type == type && item.IdempotencyKey == idempotencyKey,
-            cancellationToken);
-        if (existing != null)
-        {
-            EnsureIdempotentRequestMatches(existing, savedContext, requestFingerprint);
-            return new DurableJobEnqueueResult(existing.Id, false);
-        }
-
-        var job = new DurableJobRecord
-        {
-            Id = Guid.CreateVersion7(),
-            ScopeKey = scopeKey,
-            OwnerUserId = savedContext.OwnerUserId,
-            ProviderAccountId = savedContext.ProviderAccountId,
-            ProviderCapability = savedContext.ProviderCapability,
-            PolicySnapshotJson = savedContext.PolicySnapshotJson,
-            RequestFingerprint = requestFingerprint,
-            CorrelationId = savedContext.CorrelationId,
-            Type = type,
-            PayloadJson = payloadJson,
-            IdempotencyKey = idempotencyKey,
-            State = DurableJobState.Pending,
-            Priority = request.Priority,
-            MaxAttempts = maxAttempts,
-            MaxDeferrals = maxDeferrals,
-            AvailableAt = request.AvailableAt ?? now,
-            CreatedAt = now,
-            UpdatedAt = now
-        };
-        context.Jobs.Add(job);
-        return new DurableJobEnqueueResult(job.Id, true);
-    }
+        AllstarrDbContext context, DurableJobEnqueueRequest<T> request, CancellationToken cancellationToken = default) =>
+        (await EnqueueManyInExistingTransactionAsync(context, [request], cancellationToken))[0];
 
     public async Task<int> RecoverInterruptedAsync(CancellationToken cancellationToken = default)
     {

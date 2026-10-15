@@ -4,23 +4,42 @@ namespace allstarr.Core.ManagedFiles;
 
 public sealed partial class EfManagedFileOwnershipStore
 {
-    internal async Task StageReferenceAsync(Guid fileId, string key, DateTimeOffset now,
+    internal Task StageReferenceAsync(Guid fileId, string key, DateTimeOffset now,
+        CancellationToken cancellationToken) => StageReferencesAsync(
+            new Dictionary<string, Guid>(StringComparer.Ordinal) { [key] = fileId }, now, cancellationToken);
+
+    internal async Task StageReferencesAsync(IReadOnlyDictionary<string, Guid> desired, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
         RequireReferenceTransaction();
-        var file = await Files.AsNoTracking().SingleAsync(item => item.Id == fileId && item.RemovedAt == null,
-            cancellationToken);
-        RequireHouseholdFile(file);
-        var reference = new ManagedFileReference(Guid.CreateVersion7(), fileId, null, file.ScopeKey, key, now);
-        ValidateReference(Map(file)!, reference);
-        var existing = await References.SingleOrDefaultAsync(item =>
-            item.ManagedFileId == fileId && item.ReferenceKey == key, cancellationToken);
-        if (existing == null) References.Add(ToEntity(reference));
-        else if (existing.ReleasedAt != null)
+        if (desired.Count == 0) return;
+        var fileIds = desired.Values.Distinct().ToArray();
+        var files = await Files.AsNoTracking().Where(item => EF.Parameter(fileIds).Contains(item.Id) && item.RemovedAt == null)
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        foreach (var fileId in fileIds)
         {
-            existing.ReleasedAt = null;
-            existing.Revision++;
+            if (!files.TryGetValue(fileId, out var file)) throw new InvalidOperationException("Managed file not found.");
+            RequireHouseholdFile(file);
         }
+        var keys = desired.Keys.ToArray();
+        var saved = await References.Where(item => EF.Parameter(fileIds).Contains(item.ManagedFileId) && EF.Parameter(keys).Contains(item.ReferenceKey))
+            .ToArrayAsync(cancellationToken);
+        var existing = saved.Concat(References.Local).DistinctBy(item => item.Id)
+            .ToDictionary(item => (item.ManagedFileId, item.ReferenceKey));
+        var additions = new List<ManagedFileReferenceEntity>();
+        foreach (var (key, fileId) in desired)
+        {
+            var file = files[fileId];
+            var reference = new ManagedFileReference(Guid.CreateVersion7(), fileId, null, file.ScopeKey, key, now);
+            ValidateReference(Map(file)!, reference);
+            if (!existing.TryGetValue((fileId, key), out var current)) additions.Add(ToEntity(reference));
+            else if (current.ReleasedAt != null)
+            {
+                current.ReleasedAt = null;
+                current.Revision++;
+            }
+        }
+        References.AddRange(additions);
     }
 
     internal async Task<Guid[]> StageReleaseAsync(string key, DateTimeOffset now,
@@ -41,6 +60,31 @@ public sealed partial class EfManagedFileOwnershipStore
             reference.Revision++;
         }
         return references.Select(item => item.ManagedFileId).Distinct().ToArray();
+    }
+
+    internal async Task<Guid[]> StageReleaseReferencesAsync(IReadOnlyCollection<Guid> referenceIds, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        RequireReferenceTransaction();
+        if (referenceIds.Count == 0) return [];
+        var rows = await References.Where(item => EF.Parameter(referenceIds).Contains(item.Id) && item.ReleasedAt == null)
+            .ToArrayAsync(cancellationToken);
+        var fileIds = rows.Select(item => item.ManagedFileId).Distinct().ToArray();
+        var files = await Files.AsNoTracking().Where(item => EF.Parameter(fileIds).Contains(item.Id) && item.RemovedAt == null)
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        foreach (var reference in rows)
+        {
+            if (!files.TryGetValue(reference.ManagedFileId, out var file)) throw new InvalidOperationException("Managed file not found.");
+            RequireHouseholdFile(file);
+            ValidateReference(Map(file)!, new(reference.Id, file.Id, reference.OwnerUserId,
+                reference.ScopeKey, reference.ReferenceKey, reference.CreatedAt));
+        }
+        foreach (var reference in rows)
+        {
+            reference.ReleasedAt = now;
+            reference.Revision++;
+        }
+        return fileIds;
     }
 
     internal async Task<bool> HasStagedActiveReferencesAsync(Guid fileId, CancellationToken cancellationToken)

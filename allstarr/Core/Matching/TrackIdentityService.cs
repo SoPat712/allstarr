@@ -115,6 +115,10 @@ public interface ITrackIdentityService
     Task<CanonicalRecordingIdentity?> ResolveRecordingAsync(
         ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyDictionary<string, CanonicalRecordingIdentity?>> ResolveRecordingsAsync(
+        ProviderActorContext actor, IReadOnlyCollection<string> publicIds,
+        CancellationToken cancellationToken = default);
+
     Task<TrackIdentityResolution?> ResolveTargetAsync(
         ProviderExecutionContext executionContext, Guid recordingId, ProviderTrackIdentityTarget target,
         CancellationToken cancellationToken = default);

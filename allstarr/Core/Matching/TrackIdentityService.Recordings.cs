@@ -274,44 +274,22 @@ public sealed partial class TrackIdentityService
     private async Task<CanonicalRecordingRecord?> FindRecordingByPublicIdAsync(
         AllstarrDbContext context, ProviderActorContext actor, string publicId, CancellationToken cancellationToken)
     {
-        var record = await context.CanonicalRecordings.SingleOrDefaultAsync(item => item.PublicId == publicId, cancellationToken);
-        if (record != null) return await FindSurvivorAsync(context, record.Id, cancellationToken);
-        if (Guid.TryParse(publicId, out var recordingId)) return await FindSurvivorAsync(context, recordingId, cancellationToken);
-        var (external, provider, type, externalId) = LocalLibraryService.ParseExternalResource(publicId);
-        if (!external || type != "song") return null;
-        var typedId = $"ext-{provider}-song-{externalId}";
-        var legacyId = $"ext-{provider}-{externalId}";
-        record = await context.CanonicalRecordings.SingleOrDefaultAsync(
-            item => item.PublicId == (publicId == typedId ? legacyId : typedId), cancellationToken);
-        if (record != null) return await FindSurvivorAsync(context, record.Id, cancellationToken);
-        if (provider == "allstarr" && Guid.TryParse(externalId, out recordingId))
-            return await FindSurvivorAsync(context, recordingId, cancellationToken);
-        provider = _registry?.ResolveProviderId(provider!) ?? provider;
-        var hash = CanonicalCatalogKeys.Hash(externalId!);
-        var userId = actor.EffectiveUserId;
-        var links = await context.ProviderTrackIdentities.AsNoTracking().Where(item =>
-            item.ProviderId == provider && item.ResourceKind == ProviderResourceKind.Track &&
-            item.CatalogNamespace == DefaultCatalog && item.ExternalIdHash == hash && item.ExternalId == externalId &&
-            item.Verification == ProviderIdentityVerification.Verified &&
-            item.VerificationMethod != "automatic-suggestion" &&
-            item.VerificationMethod != ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod &&
-            item.VerificationMethod != ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod &&
-            (item.Scope == ProviderIdentityScope.Catalog || userId != null &&
-                context.ProviderAccounts.Any(account => account.Id == item.ProviderAccountId && account.Enabled &&
-                    (account.OwnerUserId == null || account.OwnerUserId == userId))))
-            .Select(item => item.CanonicalRecordingId).Distinct().ToArrayAsync(cancellationToken);
-        // Ambiguous account/catalog aliases cannot establish a shared public identity.
-        return links.Length == 1 ? await FindSurvivorAsync(context, links[0], cancellationToken) : null;
+        if (publicId == null) return null;
+        var recordings = await FindRecordingsByPublicIdsAsync(context, actor, [publicId], cancellationToken);
+        return recordings[publicId];
     }
 
     private static async Task<CanonicalRecordingRecord?> FindSurvivorAsync(
-        AllstarrDbContext context, Guid recordingId, CancellationToken cancellationToken)
+        AllstarrDbContext context, Guid recordingId, CancellationToken cancellationToken,
+        IReadOnlyDictionary<Guid, CanonicalRecordingRecord>? preloaded = null)
     {
         var visited = new HashSet<Guid>();
         while (visited.Add(recordingId))
         {
-            var record = await context.CanonicalRecordings.Include(item => item.Identifiers)
-                .SingleOrDefaultAsync(item => item.Id == recordingId, cancellationToken);
+            var record = preloaded == null
+                ? await context.CanonicalRecordings.Include(item => item.Identifiers)
+                    .SingleOrDefaultAsync(item => item.Id == recordingId, cancellationToken)
+                : preloaded.GetValueOrDefault(recordingId);
             if (record?.MergedIntoId == null) return record;
             recordingId = record.MergedIntoId.Value;
         }

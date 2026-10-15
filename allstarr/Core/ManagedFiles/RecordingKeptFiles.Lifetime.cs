@@ -133,22 +133,26 @@ public sealed partial class RecordingKeptFiles
         }
     }
 
-    private static async Task CancelCleanupAsync(AllstarrDbContext db, Guid fileId, DateTimeOffset now,
+    private static Task CancelCleanupAsync(AllstarrDbContext db, Guid fileId, DateTimeOffset now,
+        CancellationToken cancellationToken) => CancelCleanupsAsync(db, [fileId], now, cancellationToken);
+
+    private static async Task CancelCleanupsAsync(AllstarrDbContext db, IReadOnlyCollection<Guid> fileIds, DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        // Narrow in SQL to payloads naming this file; each row is still confirmed by
-        // deserializing below, so a coincidental substring match cannot cancel it.
-        var fileText = fileId.ToString("D");
+        if (fileIds.Count == 0) return;
+        // Narrow in SQL to payloads naming these files, then confirm each typed payload.
+        var fileText = fileIds.Select(item => item.ToString("D")).ToArray();
+        var targets = fileIds.ToHashSet();
         var pending = await db.Jobs.Where(item => item.Type == KeptCleanupJobType &&
             (item.State == DurableJobState.Pending || item.State == DurableJobState.RetryScheduled ||
              item.State == DurableJobState.Running) &&
-            item.PayloadJson.Contains(fileText)).ToArrayAsync(cancellationToken);
+            fileText.Any(id => item.PayloadJson.Contains(id))).ToArrayAsync(cancellationToken);
         foreach (var job in pending)
         {
             KeptRecordingCleanupPayload? payload;
             try { payload = JsonSerializer.Deserialize<KeptRecordingCleanupPayload>(job.PayloadJson); }
             catch (JsonException) { continue; }
-            if (payload?.ManagedFileId != fileId) continue;
+            if (payload == null || !targets.Contains(payload.ManagedFileId)) continue;
             job.CancellationRequestedAt = now;
             if (job.State != DurableJobState.Running)
             {

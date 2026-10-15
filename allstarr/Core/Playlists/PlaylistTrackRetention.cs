@@ -119,7 +119,7 @@ public sealed class PlaylistTrackRetentionQueue(
                 StringComparer.Ordinal)
             .Select(group => group.First())
             .ToArray();
-        var queued = 0;
+        var requests = new List<DurableJobEnqueueRequest<PlaylistTrackRetentionJobPayload>>(tracks.Length);
         foreach (var entry in tracks)
         {
             var providerId = entry.ProviderId!.Trim().ToLowerInvariant();
@@ -142,12 +142,21 @@ public sealed class PlaylistTrackRetentionQueue(
                 MaxAttempts: 12,
                 MaxDeferrals: 100,
                 CorrelationId: correlationId);
-            var result = transactionContext == null
-                ? await jobs.EnqueueAsync(request, cancellationToken)
-                : await jobs.EnqueueInExistingTransactionAsync(transactionContext, request, cancellationToken);
-            if (result.Created) queued++;
+            requests.Add(request);
         }
-        return queued;
+        if (transactionContext != null)
+        {
+            var staged = await jobs.EnqueueManyInExistingTransactionAsync(transactionContext, requests, cancellationToken);
+            await jobs.PersistEnqueuedJobsAsync(transactionContext, staged, cancellationToken);
+            return staged.Count(item => item.Created);
+        }
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var results = await jobs.EnqueueManyInExistingTransactionAsync(db, requests, cancellationToken);
+        await jobs.PersistEnqueuedJobsAsync(db, results, cancellationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return results.Count(item => item.Created);
     }
 
     internal async Task<int> EnqueueProjectionInTransactionAsync(AllstarrDbContext db, PlaylistLinkRecord link,

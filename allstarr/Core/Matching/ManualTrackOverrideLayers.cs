@@ -32,7 +32,7 @@ internal static class ManualTrackOverrides
         var records = await db.ManualTrackOverrides.AsNoTracking().Where(item =>
                 (includeRevoked || item.RevokedAt == null) &&
                 (item.OwnerUserId == userId || item.OwnerUserId == null) &&
-                providers.Contains(item.SourceProviderId) && hashes.Contains(item.SourceExternalIdHash))
+                EF.Parameter(providers).Contains(item.SourceProviderId) && EF.Parameter(hashes).Contains(item.SourceExternalIdHash))
             .ToArrayAsync(cancellationToken);
         var requested = sources.ToHashSet();
         return records.Where(item => requested.Contains((item.SourceProviderId, item.SourceExternalIdHash))).ToArray();
