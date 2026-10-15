@@ -225,6 +225,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             ? await _libraryAccess.ResolveUserAsync(actor.EffectiveUserId!.Value, cancellationToken)
             : BackendLibraryAccessContext.Unavailable;
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var preparation = _kept != null && update.TrackRetention == PlaylistTrackRetention.KeepAll
+            ? await _kept.PreparePlaylistInterestsAsync(db, linkId, update.ExpectedRevision, actor.EffectiveUserId!.Value,
+                access, cancellationToken)
+            : null;
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var record = await db.PlaylistLinks.SingleOrDefaultAsync(item => item.Id == linkId, cancellationToken) ?? throw new KeyNotFoundException("Playlist link not found.");
         PersistenceGuard.RequireOwner(actor, record.OwnerUserId); if (record.Revision != update.ExpectedRevision) throw new DbUpdateConcurrencyException("The playlist link changed before this update.");
@@ -251,7 +255,8 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         await db.SaveChangesAsync(cancellationToken);
         if (retentionChanged && _kept != null)
         {
-            await _kept.StagePlaylistInterestsAsync(db, record, access, context.CorrelationId, cancellationToken);
+            await _kept.StagePlaylistInterestsAsync(db, record, access, context.CorrelationId, cancellationToken,
+                preparation: preparation);
             await db.SaveChangesAsync(cancellationToken);
         }
         await transaction.CommitAsync(cancellationToken);
