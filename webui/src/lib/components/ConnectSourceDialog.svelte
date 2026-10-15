@@ -170,7 +170,7 @@
                     name={field.key}
                     type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
                     value={field.sensitive ? "" : String(currentSetting(field.key, settingDefault(field)))}
-                    required={field.required}
+                    required={field.required && (!field.sensitive || !account?.configuredFields?.includes(field.key))}
                     autocomplete={field.key === "username" ? "username" : field.key === "password" ? "current-password" : "off"}
                   />
                 {/if}

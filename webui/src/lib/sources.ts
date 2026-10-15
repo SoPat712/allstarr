@@ -183,6 +183,15 @@ export function sourceTimingLabel(provider: ProviderDefinition, summary?: Provid
   return "Not applicable";
 }
 
+function listeningServiceSettings(required: boolean, tokenLabel = "Listening service token"): ProviderSetting[] {
+  return [
+    { key: "token", label: tokenLabel, type: "password", sensitive: true, required: true },
+    { key: "baseUrl", label: required ? "Listening address" : "Listening address (optional)", type: "url", required,
+      helpText: required ? "Paste the complete ListenBrainz-compatible base URL, including /1/. HTTPS is required outside your private network."
+        : "Leave blank for ListenBrainz. A compatible server can use HTTPS, or HTTP on your private network." },
+  ];
+}
+
 const builtInSettings: Record<string, ProviderSetting[]> = {
   spotify: [{
     key: "sessionCookie",
@@ -210,21 +219,9 @@ const builtInSettings: Record<string, ProviderSetting[]> = {
     { key: "password", label: "Last.fm password", type: "password", sensitive: true, required: true,
       helpText: "Used once to request a session and never stored." },
   ],
-  listenbrainz: [
-    {
-      key: "token",
-      label: "ListenBrainz or Koito token",
-      type: "password",
-      sensitive: true,
-      required: true,
-    },
-    {
-      key: "baseUrl",
-      label: "Where to send listens (optional)",
-      type: "url",
-      helpText: "Leave blank to send listens to ListenBrainz. To use Koito, paste its HTTPS listening address.",
-    },
-  ],
+  listenbrainz: listeningServiceSettings(false, "ListenBrainz token"),
+  "multi-scrobbler": listeningServiceSettings(true),
+  koito: listeningServiceSettings(true),
 };
 
 export function accountSettings(provider: ProviderDefinition) {

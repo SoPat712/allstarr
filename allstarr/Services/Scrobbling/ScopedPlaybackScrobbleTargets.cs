@@ -238,14 +238,14 @@ public sealed class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedR
     { var text = string.Concat(values.Where(x => x.Key != "format" && x.Key != "callback").Select(x => x.Key + x.Value)) + secret; return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(text))); }
 }
 
-public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
+public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts, string providerId = "listenbrainz")
     : IBoundPlaybackScrobbleTarget
 {
-    public string ProviderId => "listenbrainz";
+    public string ProviderId => providerId;
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);
     public Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) =>
         accounts.UseExactAsync(scope, account, (secret, _) => Task.FromResult(
-            ListenBrainzServiceEndpoint.FromSecret(secret).AbsoluteUri == "https://api.listenbrainz.org/1/"), token);
+            ProviderId == "listenbrainz" && ListenBrainzServiceEndpoint.FromSecret(secret, ProviderId).AbsoluteUri == "https://api.listenbrainz.org/1/"), token);
     public Task<ProviderAccountContext?> FindDestinationAsync(IntelligenceScope scope, CancellationToken token) =>
         accounts.FindAccountAsync(scope, ProviderId, token);
     public Task<ScopedPlaybackScrobbleResult> DeliverBoundAsync(IntelligenceScope scope, ProviderAccountContext account,
@@ -259,7 +259,7 @@ public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IS
         ScopedPlaybackTrack track, DateTimeOffset observedAt, CancellationToken ct)
     {
         var playing = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart;
-        var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret);
+        var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret, ProviderId);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             ListenBrainzServiceEndpoint.Route(baseUri, "submit-listens"));
         request.Headers.Authorization = new("Token", Required(secret, "token"));
@@ -294,16 +294,16 @@ public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IS
                 ScopedPlaybackScrobbleResult.Delivered(JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
             HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden => ScopedPlaybackScrobbleResult.Permanent(
                 ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                "Reconnect the selected ListenBrainz account and replace its expired or revoked credentials.", true,
+                "Reconnect the saved listening service account and replace its expired or revoked credentials.", true,
                 JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
             HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests or >= HttpStatusCode.InternalServerError =>
                 ScopedPlaybackScrobbleResult.Retrying(
                     ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                    "ListenBrainz could not accept the listen yet.", RetryAfter(response),
+                    "The listening service could not accept the listen yet.", RetryAfter(response),
                     JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
             _ => ScopedPlaybackScrobbleResult.Permanent(
                 ((int)response.StatusCode).ToString(CultureInfo.InvariantCulture),
-                "ListenBrainz rejected the listen.",
+                "The listening service rejected the listen.",
                 detailsJson: JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode }))
         };
     }
@@ -316,3 +316,9 @@ public sealed class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IS
         return response.StatusCode == HttpStatusCode.TooManyRequests ? TimeSpan.FromSeconds(30) : null;
     }
 }
+
+public sealed class MultiScrobblerPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
+    : ListenBrainzScopedPlaybackScrobbleTarget(http, accounts, "multi-scrobbler");
+
+public sealed class KoitoPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
+    : ListenBrainzScopedPlaybackScrobbleTarget(http, accounts, "koito");

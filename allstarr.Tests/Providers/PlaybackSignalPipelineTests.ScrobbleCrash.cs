@@ -19,14 +19,21 @@ public sealed partial class PlaybackSignalPipelineTests
     [InlineData("listenbrainz", "before-send", 1, false)]
     [InlineData("listenbrainz", "after-send", 2, false)]
     [InlineData("listenbrainz", "after-save", 1, false)]
+    [InlineData("multi-scrobbler", "after-send", 1, true)]
+    [InlineData("koito", "after-send", 1, true)]
     public async Task ScrobbleProcessKill_RecoversWithoutLosingOrDoublingTheListen(string provider,
         string stopAt, int expectedRequests, bool needsReview)
     {
         await AddScrobbleAccountAsync(provider);
         var accounts = new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets());
-        IExactScopePlaybackScrobbleTarget target = provider == "lastfm"
-            ? new LastFmScopedPlaybackScrobbleTarget(new(new ScrobbleHttp(HttpStatusCode.OK)), accounts)
-            : new ListenBrainzScopedPlaybackScrobbleTarget(new(new ScrobbleHttp(HttpStatusCode.OK)), accounts);
+        using var http = new HttpClient(new ScrobbleHttp(HttpStatusCode.OK));
+        IExactScopePlaybackScrobbleTarget target = provider switch
+        {
+            "lastfm" => new LastFmScopedPlaybackScrobbleTarget(http, accounts),
+            "multi-scrobbler" => new MultiScrobblerPlaybackScrobbleTarget(http, accounts),
+            "koito" => new KoitoPlaybackScrobbleTarget(http, accounts),
+            _ => new ListenBrainzScopedPlaybackScrobbleTarget(http, accounts)
+        };
         await new PlaybackSignalPipeline(jobs, scrobbleAcceptance: new(factory, jobs, [target]))
             .RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(100).Ticks));
         using var portProbe = new TcpListener(IPAddress.Loopback, 0);

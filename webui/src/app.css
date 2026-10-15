@@ -8881,6 +8881,7 @@
   }
 
   .source-filters > .filter-chip {
+    min-height: var(--control-md);
     flex: none;
   }
 

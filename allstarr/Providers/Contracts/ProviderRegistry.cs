@@ -345,6 +345,8 @@ public static class ProviderManifestValidator
     public static ProviderDescriptor Validate(ProviderDescriptor descriptor)
     {
         ArgumentNullException.ThrowIfNull(descriptor);
+        if (descriptor.Origin == ProviderOrigin.Extension && descriptor.Id is "lastfm" or "listenbrainz" or "multi-scrobbler" or "koito")
+            throw new InvalidOperationException("Scrobble service IDs are reserved for built-in delivery.");
         if (ProviderContractValidation.IsLocalLyricsSource(descriptor.Id))
             throw new InvalidOperationException("Local lyrics source IDs cannot be registered as providers.");
         if (!descriptor.SdkVersion.Equals("1", StringComparison.Ordinal))

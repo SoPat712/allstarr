@@ -141,6 +141,13 @@ describe("source presentation", () => {
     expect(settings[1].required).not.toBe(true);
   });
 
+  it.each(["multi-scrobbler", "koito"])("requires a token and listening address for %s", (id) => {
+    expect(accountSettings({ id, name: id })).toMatchObject([
+      { key: "token", type: "password", required: true },
+      { key: "baseUrl", type: "url", required: true },
+    ]);
+  });
+
   it("uses runtime readiness for operator-managed Sources", () => {
     const managed = {
       id: "apple-download",

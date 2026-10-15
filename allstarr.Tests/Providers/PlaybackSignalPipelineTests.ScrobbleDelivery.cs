@@ -20,7 +20,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var http = new ScrobbleHttp(HttpStatusCode.TooManyRequests);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, secrets));
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
         await using (var db = await factory.CreateDbContextAsync())
         {
             (await db.ProviderAccounts.SingleAsync(x => x.Id == account.Id)).Enabled = false;
@@ -28,7 +28,7 @@ public sealed partial class PlaybackSignalPipelineTests
         }
         await AddScrobbleAccountAsync();
         http.Status = HttpStatusCode.OK;
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
         Assert.Equal(1, http.Calls);
         Assert.Equal(account.Id, Assert.Single(secrets.Used.Select(x => x.AccountId).Distinct()));
     }
@@ -41,9 +41,9 @@ public sealed partial class PlaybackSignalPipelineTests
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
         var checkpoints = new FailAcceptedCheckpoint(new EfPlaybackDeliveryCheckpointStore(factory));
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], checkpoints, playbackTracks);
-        await Assert.ThrowsAnyAsync<Exception>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAnyAsync<Exception>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
         await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
-            new ScopedPlaybackScrobbleDelivery(factory, [target], checkpoints, playbackTracks).DeliverAsync(Payload(), default));
+            new ScopedPlaybackScrobbleDelivery(factory, [target], checkpoints, playbackTracks).DeliverAsync(AcceptedScrobblePayload(), default));
         Assert.Equal(1, http.Calls);
         await using var db = await factory.CreateDbContextAsync();
         var record = Assert.Single(await db.PlaybackDeliveryCheckpoints.ToListAsync());
@@ -100,8 +100,8 @@ public sealed partial class PlaybackSignalPipelineTests
         var http = new ScrobbleHttp(HttpStatusCode.TooManyRequests);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
         Assert.Equal(1, http.Calls);
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -112,8 +112,8 @@ public sealed partial class PlaybackSignalPipelineTests
             await db.SaveChangesAsync();
         }
         http.Status = HttpStatusCode.OK;
-        await delivery.DeliverAsync(Payload() with { ObservedAt = clock.UtcNow.AddHours(1) }, default);
-        await delivery.DeliverAsync(Payload(), default);
+        await delivery.DeliverAsync(AcceptedScrobblePayload() with { ObservedAt = clock.UtcNow.AddHours(1) }, default);
+        await delivery.DeliverAsync(AcceptedScrobblePayload(), default);
         Assert.Equal(2, http.Calls);
         Assert.Equal(http.Bodies[0], http.Bodies[1]);
     }
@@ -125,7 +125,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var http = new ScrobbleHttp(HttpStatusCode.Unauthorized);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
         PlaybackDeliveryCheckpointEntity row;
         await using (var db = await factory.CreateDbContextAsync())
         {
@@ -135,12 +135,14 @@ public sealed partial class PlaybackSignalPipelineTests
             await db.SaveChangesAsync();
         }
         var repair = new PlaybackScrobbleRepair(factory, jobs);
+        var replacementAccount = await AddScrobbleAccountAsync();
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repair.ResolveAsync(user, row.Id, row.Revision, "retry", 1, default, replacementAccount.Id));
         Assert.False(await repair.ResolveAsync(Guid.NewGuid(), row.Id, row.Revision, "retry", 2, default));
         await Assert.ThrowsAsync<InvalidOperationException>(() => repair.ResolveAsync(user, row.Id, row.Revision, "retry", 1, default));
         Assert.True(await repair.ResolveAsync(user, row.Id, row.Revision, "retry", 2, default));
         await Assert.ThrowsAsync<InvalidOperationException>(() => repair.ResolveAsync(user, row.Id, row.Revision, "retry", 2, default));
         http.Status = HttpStatusCode.OK;
-        await delivery.DeliverAsync(Payload(), default);
+        await delivery.DeliverAsync(AcceptedScrobblePayload(), default);
         await using var verify = await factory.CreateDbContextAsync();
         var saved = await verify.PlaybackDeliveryCheckpoints.SingleAsync();
         Assert.Equal(account.Id, saved.DestinationAccountId);
@@ -156,7 +158,7 @@ public sealed partial class PlaybackSignalPipelineTests
     public async Task ScrobbleDedupe_SurvivesListeningHistoryPurge(bool sweep)
     {
         await AddScrobbleAccountAsync();
-        var payload = Payload() with { OccurrenceKey = new string('c', 64) };
+        var payload = AcceptedScrobblePayload() with { OccurrenceKey = new string('c', 64) };
         var http = new ScrobbleHttp(HttpStatusCode.OK);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
@@ -189,7 +191,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var http = new ScrobbleHttp(HttpStatusCode.Unauthorized);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
         await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() =>
-            new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks).DeliverAsync(Payload(), default));
+            new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks).DeliverAsync(AcceptedScrobblePayload(), default));
         var controller = new allstarr.Controllers.ScrobbleDeliveriesController(factory, new(factory, jobs))
         { ControllerContext = new() { HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext() } };
         Assert.IsType<Microsoft.AspNetCore.Mvc.ForbidResult>(await controller.List());
@@ -219,6 +221,9 @@ public sealed partial class PlaybackSignalPipelineTests
         Assert.DoesNotContain("fixture-secret", json);
         await using var db = await factory.CreateDbContextAsync();
         var id = (await db.PlaybackDeliveryCheckpoints.SingleAsync()).Id;
+        var otherTarget = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await controller.List(attentionOnly: true, targetId: "koito"));
+        using (var none = JsonDocument.Parse(JsonSerializer.Serialize(otherTarget.Value)))
+            Assert.Empty(none.RootElement.GetProperty("items").EnumerateArray());
         var page = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await controller.List(id));
         using var empty = JsonDocument.Parse(JsonSerializer.Serialize(page.Value));
         Assert.Empty(empty.RootElement.GetProperty("items").EnumerateArray());
@@ -255,7 +260,7 @@ public sealed partial class PlaybackSignalPipelineTests
         await AddScrobbleAccountAsync();
         var http = new ScrobbleHttp(HttpStatusCode.OK);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
-        var payload = Payload();
+        var payload = AcceptedScrobblePayload();
         await new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks)
             .DeliverAsync(payload, default);
         var timestamp = (payload.ObservedAt - TimeSpan.FromTicks(payload.PositionTicks!.Value)).ToUnixTimeSeconds().ToString();
@@ -287,7 +292,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory,
             new EncryptedProviderAccountSecretAccessor(store)));
         await new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks)
-            .DeliverAsync(Payload(), default);
+            .DeliverAsync(AcceptedScrobblePayload(), default);
         Assert.Contains("sk=encrypted-only-session", Assert.Single(http.Bodies));
         await using var verify = await factory.CreateDbContextAsync();
         var receipt = await verify.PlaybackDeliveryCheckpoints.SingleAsync();
@@ -302,7 +307,7 @@ public sealed partial class PlaybackSignalPipelineTests
         var http = new ScrobbleHttp(HttpStatusCode.TooManyRequests);
         var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
         var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
-        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(AcceptedScrobblePayload(), default));
         await using (var db = await factory.CreateDbContextAsync())
         {
             db.LibraryTracks.RemoveRange(await db.LibraryTracks.ToArrayAsync());
@@ -310,10 +315,71 @@ public sealed partial class PlaybackSignalPipelineTests
             await db.SaveChangesAsync();
         }
         http.Status = HttpStatusCode.OK;
-        await delivery.DeliverAsync(Payload(), default);
+        await delivery.DeliverAsync(AcceptedScrobblePayload(), default);
         Assert.Equal(2, http.Calls);
         Assert.Equal(http.Bodies[0], http.Bodies[1]);
     }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LegacyScrobble_RequiresAnExplicitDestinationBeforeAnySend(bool configured)
+    {
+        var account = configured ? await AddScrobbleAccountAsync() : null;
+        if (!configured)
+        {
+            await using var legacy = await factory.CreateDbContextAsync();
+            legacy.PlaybackDeliveryCheckpoints.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = user,
+                SignalKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(Payload()),
+                OccurrenceKey = Payload().SignalKey,
+                TargetId = "lastfm",
+                Kind = PlaybackScrobbleDeliveryKind.Completed,
+                State = ScopedPlaybackScrobbleOutcome.Retrying,
+                UpdatedAt = clock.UtcNow
+            });
+            await legacy.SaveChangesAsync();
+        }
+        var http = new ScrobbleHttp(HttpStatusCode.OK);
+        var target = new LastFmScopedPlaybackScrobbleTarget(new(http), new ScopedRecommendationAccountAccessor(factory, new ScrobbleSecrets()));
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new EfPlaybackDeliveryCheckpointStore(factory), playbackTracks);
+        await Assert.ThrowsAsync<ScopedPlaybackScrobbleDeliveryException>(() => delivery.DeliverAsync(Payload(), default));
+        Assert.Equal(0, http.Calls);
+        await using var db = await factory.CreateDbContextAsync();
+        var row = await db.PlaybackDeliveryCheckpoints.AsNoTracking().SingleAsync();
+        Assert.Null(row.DestinationAccountId);
+        Assert.Equal("destination-unbound", row.ProviderCode);
+        account ??= await AddScrobbleAccountAsync();
+        var foreignUser = Guid.CreateVersion7();
+        var foreignAccount = Guid.CreateVersion7();
+        await using (var other = await factory.CreateDbContextAsync())
+        {
+            other.Users.Add(User(foreignUser, "jellyfin", "backend", "other-listener", "Other listener", clock.UtcNow));
+            other.ProviderAccounts.Add(new()
+            {
+                Id = foreignAccount,
+                OwnerUserId = foreignUser,
+                ProviderId = "lastfm",
+                DisplayName = "Other account",
+                Revision = 1,
+                Enabled = true,
+                CreatedAt = clock.UtcNow,
+                UpdatedAt = clock.UtcNow
+            });
+            await other.SaveChangesAsync();
+        }
+        var repair = new PlaybackScrobbleRepair(factory, jobs);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repair.ResolveAsync(user, row.Id, row.Revision, "retry", 1, default, foreignAccount));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => repair.ResolveAsync(user, row.Id, row.Revision, "retry", 1, default));
+        Assert.True(await repair.ResolveAsync(user, row.Id, row.Revision, "retry", 1, default, account.Id));
+        await delivery.DeliverAsync(AcceptedScrobblePayload(), default);
+        Assert.Equal(1, http.Calls);
+        Assert.Equal(account.Id, (await db.PlaybackDeliveryCheckpoints.AsNoTracking().SingleAsync()).DestinationAccountId);
+    }
+
+    private PlaybackSignalPayload AcceptedScrobblePayload() => Payload() with { DestinationTargets = ["lastfm", "listenbrainz", "multi-scrobbler", "koito"] };
 
     private async Task<ProviderAccountRecord> AddScrobbleAccountAsync(string providerId = "lastfm")
     {

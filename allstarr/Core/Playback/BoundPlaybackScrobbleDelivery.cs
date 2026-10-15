@@ -48,9 +48,33 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
             x.SignalKey == key && x.TargetId == target.ProviderId, token);
         if (row?.State is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored)
             return new(row.State, row.ProviderCode, row.SafeMessage, row.DetailsJson);
-        if (row?.State == ScopedPlaybackScrobbleOutcome.PermanentFailure)
+        if (row?.State == ScopedPlaybackScrobbleOutcome.PermanentFailure &&
+            (row.DestinationJson != null || row.ProviderCode == "destination-unbound"))
             return new(row.State, row.ProviderCode, row.SafeMessage, row.DetailsJson, RequiresReauthentication: row.RequiresReauthentication);
-        // Older queued signals bind once on their first upgraded execution.
+        if (row == null && payload.DestinationTargets == null && await target.FindDestinationAsync(payload.Scope, token) == null)
+            return null;
+        if (kind == PlaybackScrobbleDeliveryKind.Completed && (payload.DestinationTargets == null || row != null && row.DestinationJson == null))
+        {
+            row ??= new PlaybackDeliveryCheckpointEntity
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = payload.Scope.OwnerUserId,
+                OccurrenceKey = occurrence,
+                SignalKey = key,
+                TargetId = target.ProviderId,
+                Kind = kind
+            };
+            if (db.Entry(row).State == EntityState.Detached) db.Add(row);
+            row.SubmissionJson ??= JsonSerializer.Serialize(new PlaybackScrobbleSubmission(payload.Transition, track, payload.PositionTicks, occurredAt));
+            row.SignalPayloadJson ??= JsonSerializer.Serialize(payload with { DestinationTargets = [target.ProviderId] });
+            row.State = ScopedPlaybackScrobbleOutcome.PermanentFailure;
+            row.ProviderCode = "destination-unbound";
+            row.SafeMessage = "This older listen has no saved destination or confirmed outcome. Choose the intended account and check its history before retrying.";
+            row.UpdatedAt = DateTimeOffset.UtcNow;
+            row.Revision++;
+            await db.SaveChangesAsync(token);
+            return ScopedPlaybackScrobbleResult.Permanent(row.ProviderCode, row.SafeMessage);
+        }
         if (row?.DestinationJson == null)
         {
             var destination = await target.FindDestinationAsync(payload.Scope, token);

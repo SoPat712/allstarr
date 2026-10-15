@@ -1433,6 +1433,34 @@ export const home = {
   nowPlaying: () => json<{ items: NowPlayingItem[] }>("/api/admin/ui/now-playing"),
 };
 
+export type ScrobbleDelivery = {
+  id: string;
+  revision: number;
+  targetId: string;
+  state: "delivered" | "ignored" | "retrying" | "permanentfailure";
+  providerCode?: string | null;
+  safeMessage?: string | null;
+  requiresReauthentication: boolean;
+  destinationAccountId?: string | null;
+  destinationAccountRevision?: number | null;
+  suggestedDestinationAccountId?: string | null;
+  availableDestinationAccountIds?: string[];
+  sendCount: number;
+  retryAfter?: string | null;
+  attemptStartedAt?: string | null;
+  updatedAt: string;
+  submission?: { title: string; artist: string; occurredAt: string } | null;
+};
+
+export const scrobbling = {
+  deliveries: (before?: string, targetId?: string) => json<{ items: ScrobbleDelivery[] }>(
+    `/api/admin/scrobbling/deliveries?attentionOnly=true${targetId ? `&targetId=${encodeURIComponent(targetId)}` : ""}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
+  resolve: (delivery: ScrobbleDelivery, action: "retry" | "confirm-delivered", accountRevision?: number, destinationAccountId?: string) =>
+    json(`/api/admin/scrobbling/deliveries/${delivery.id}/resolve`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ revision: delivery.revision, action, accountRevision, destinationAccountId }),
+    }),
+};
+
 export const sources = {
   accounts: () =>
     json<{

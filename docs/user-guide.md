@@ -199,6 +199,10 @@ Favorite actions do not tag files, place music in the backend library, trigger l
 
 ## Listening and scrobbling
 
+Connect Last.fm, ListenBrainz, multi-scrobbler or Koito under **Integrations → Accounts**. ListenBrainz uses your user token; multi-scrobbler and Koito also need their complete ListenBrainz-compatible listening address. Addresses and tokens are encrypted with the account. HTTPS is required outside private networks. See [target setup](operations/scrobbling.md#connect-a-destination) for the exact address formats.
+
+Scrobbling works independently of optional listening-history retention. **Integrations → Accounts → Scrobble delivery** keeps retries, expired credentials and uncertain sends visible after playback stops. Reconnect the saved account before retrying. If the destination may already have accepted a listen, check its history and choose **Already in history** or explicitly retry the missing listen.
+
 Automatic history is opt-in in the development-only Intelligence workspace. Enable it under **Intelligence → Automation** for your backend account. Completed protocol plays then appear in **Overview** without a manual refresh. Listening apps can receive a private key there and may optionally forward completed listens to connected Last.fm or ListenBrainz accounts.
 
 Recommendation learning stays within your user and backend account. Local recommendations include only music libraries you can access. Plays, skips, favorites, playlist membership, and direct Discover feedback can influence later runs only when their signal types are enabled. A favorite raises the track's preference signal; removing the favorite cancels that contribution. Generated sets remain ephemeral in Intelligence until **Create in Jellyfin** or **Create in Subsonic** is used, while Automation can refresh and publish rotating personal sets on a schedule.

@@ -21,10 +21,15 @@ await queue.RecoverInterruptedAsync();
 var claim = await queue.ClaimNextAsync("crash-fixture");
 if (claim == null) return 2;
 var payload = claim.Payload.Deserialize<PlaybackSignalPayload>()!;
-var accounts = new ScopedRecommendationAccountAccessor(factory, new Secrets());
+var accounts = new ScopedRecommendationAccountAccessor(factory, new Secrets(provider));
 using var http = new HttpClient(new RedirectFixture(endpoint));
-IExactScopePlaybackScrobbleTarget target = provider == "lastfm"
-    ? new LastFmScopedPlaybackScrobbleTarget(http, accounts) : new ListenBrainzScopedPlaybackScrobbleTarget(http, accounts);
+IExactScopePlaybackScrobbleTarget target = provider switch
+{
+    "lastfm" => new LastFmScopedPlaybackScrobbleTarget(http, accounts),
+    "multi-scrobbler" => new MultiScrobblerPlaybackScrobbleTarget(http, accounts),
+    "koito" => new KoitoPlaybackScrobbleTarget(http, accounts),
+    _ => new ListenBrainzScopedPlaybackScrobbleTarget(http, accounts)
+};
 if (stopAt == "before-send") { File.WriteAllText(marker, "ready"); await Task.Delay(Timeout.Infinite); }
 IPlaybackDeliveryCheckpointStore checkpoints = new Checkpoints(new EfPlaybackDeliveryCheckpointStore(factory), marker, stopAt);
 var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], checkpoints, new Tracks());
@@ -48,10 +53,10 @@ sealed class Tracks : IPlaybackTrackResolver
     public Task<PlaybackTrackSnapshot?> ResolveAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken = default) =>
         Task.FromResult<PlaybackTrackSnapshot?>(new(null, null, "track-1", "Track", "Artist", null, 120000));
 }
-sealed class Secrets : IProviderAccountSecretAccessor
+sealed class Secrets(string provider) : IProviderAccountSecretAccessor
 {
     public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation, CancellationToken cancellationToken) =>
-        operation(System.Text.Encoding.UTF8.GetBytes("{\"apiKey\":\"fixture-key\",\"sharedSecret\":\"fixture-secret\",\"sessionKey\":\"fixture-session\",\"token\":\"fixture-token\"}"));
+        operation(System.Text.Encoding.UTF8.GetBytes((provider is "multi-scrobbler" or "koito" ? "{\"baseUrl\":\"http://127.0.0.1/1/\", " : "{") + "\"apiKey\":\"fixture-key\",\"sharedSecret\":\"fixture-secret\",\"sessionKey\":\"fixture-session\",\"token\":\"fixture-token\"}"));
 }
 sealed class RedirectFixture(string endpoint) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
 {

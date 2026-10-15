@@ -19,6 +19,19 @@ public sealed class ProviderRegistryTests
             BaseDescriptor("fixture-provider"), [new FakeMetadataCapability("fixture-provider")], [id])]));
     }
 
+    [Theory]
+    [InlineData("lastfm")]
+    [InlineData("listenbrainz")]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    public void ScrobbleServicesCannotBeReplacedByAnExtension(string id)
+    {
+        var registration = new ProviderRegistration(BaseDescriptor(id, origin: ProviderOrigin.Extension, entryPoint: "index.js"),
+            [new FakeMetadataCapability(id)]);
+        Assert.Throws<InvalidOperationException>(() => new ProviderRegistry([registration]));
+        Assert.Throws<InvalidOperationException>(() => new ProviderRegistry([]).RegisterOrReplaceExtension(registration));
+    }
+
     [Fact]
     public void Registry_ValidatesThenOrdersProvidersAndCapabilityQueriesDeterministically()
     {

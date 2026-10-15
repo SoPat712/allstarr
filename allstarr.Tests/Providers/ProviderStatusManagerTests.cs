@@ -399,8 +399,23 @@ public sealed class ProviderStatusManagerTests
         Assert.True(tested.IsReady);
     }
 
-    [Fact]
-    public async Task ManagedListenBrainzAccount_ValidatesItsOwnToken()
+    [Theory]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    public void CompatibleScrobbleTarget_NeedsAnExplicitEndpoint(string providerId)
+    {
+        var manager = CreateManager(new Dictionary<string, string?>());
+        var status = manager.GetManagedStatus(providerId, ProviderCapabilities.Scrobbling,
+            Guid.CreateVersion7(), new Dictionary<string, string> { ["token"] = "fixture-token" });
+        Assert.Equal(ProviderConfigurationState.NeedsConfiguration, status.Configuration);
+        Assert.False(status.IsReady);
+    }
+
+    [Theory]
+    [InlineData("listenbrainz")]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    public async Task ManagedListenBrainzAccount_ValidatesItsOwnToken(string providerId)
     {
         var handler = new QueuedResponseHandler(
             Json(HttpStatusCode.OK, "{\"valid\":true,\"user_name\":\"listener\"}"));
@@ -415,7 +430,7 @@ public sealed class ProviderStatusManagerTests
         };
 
         var tested = await manager.TestManagedProviderCapabilityAsync(
-            "listenbrainz", ProviderCapabilities.Scrobbling, accountId, secrets);
+            providerId, ProviderCapabilities.Scrobbling, accountId, secrets);
 
         Assert.Equal(ProviderHealthState.Healthy, tested.Health);
         Assert.True(tested.IsReady);

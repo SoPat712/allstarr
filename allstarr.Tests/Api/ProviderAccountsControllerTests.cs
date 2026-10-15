@@ -72,6 +72,8 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
     [Theory]
     [InlineData("lastfm", "Last.fm", "Personal")]
     [InlineData("listenbrainz", "ListenBrainz", "Shared")]
+    [InlineData("multi-scrobbler", "multi-scrobbler", "Personal")]
+    [InlineData("koito", "Koito", "Personal")]
     [InlineData("spotify", "Spotify", "Personal")]
     [InlineData("deezer", "Deezer", "Shared")]
     [InlineData("apple-musickit", "Apple Music", "Personal")]
@@ -89,6 +91,50 @@ public sealed class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("customLabel").ValueKind);
         await using var context = await _factory.CreateDbContextAsync();
         Assert.Equal(expected, (await context.ProviderAccounts.SingleAsync()).DisplayName);
+    }
+
+    [Theory]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    public async Task CompatibleScrobbleAccount_EncryptsConfigurationAndRetainsTokenOnUrlEdit(string providerId)
+    {
+        var controller = Controller(Session(_userId));
+        using var initial = JsonDocument.Parse("{\"token\":\"private-fixture-token\",\"baseUrl\":\"http://127.0.0.1:9078/1/\"}");
+        var created = Assert.IsType<CreatedAtActionResult>(await controller.Create(new() { ProviderId = providerId, Secret = initial.RootElement }));
+        using var receipt = JsonDocument.Parse(JsonSerializer.Serialize(created.Value));
+        var id = receipt.RootElement.GetProperty("Id").GetGuid();
+        using var replacement = JsonDocument.Parse("{\"baseUrl\":\"http://192.168.20.10:9078/1/\"}");
+        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(id, new() { Secret = replacement.RootElement }));
+        await using var db = await _factory.CreateDbContextAsync();
+        var account = await db.ProviderAccounts.SingleAsync();
+        Assert.Equal("{}", account.SettingsJson);
+        using var lease = await _secretStore.OpenAsync(account.SecretReferenceId!.Value,
+            new SecretAccessContext(_userId, $"provider-account:{providerId}:{id:N}"));
+        using var saved = JsonDocument.Parse(lease.Value);
+        Assert.Equal("private-fixture-token", saved.RootElement.GetProperty("token").GetString());
+        Assert.Equal("http://192.168.20.10:9078/1/", saved.RootElement.GetProperty("baseUrl").GetString());
+        var listed = JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value);
+        Assert.DoesNotContain("private-fixture-token", listed);
+        Assert.Contains("192.168.20.10", listed);
+        Assert.DoesNotContain("private-fixture-token", System.Text.Encoding.UTF8.GetString((await db.SecretVersions.FirstAsync()).Ciphertext));
+    }
+
+    [Theory]
+    [InlineData("http://8.8.8.8/1/")]
+    [InlineData("http://scrobbler.example/1/")]
+    [InlineData("http://[::]/1/")]
+    [InlineData("https://user:private-marker@example.org/1/")]
+    [InlineData("https://example.org/1/?token=private-marker")]
+    [InlineData("")]
+    public async Task CompatibleScrobbleAccount_RejectsUnsafeAddressBeforeStoringAnything(string address)
+    {
+        using var secret = JsonDocument.Parse(JsonSerializer.Serialize(new { token = "private-marker", baseUrl = address }));
+        var result = Assert.IsType<BadRequestObjectResult>(await Controller(Session(_userId)).Create(new()
+        { ProviderId = "multi-scrobbler", Secret = secret.RootElement }));
+        Assert.DoesNotContain("private-marker", JsonSerializer.Serialize(result.Value));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.ProviderAccounts.ToArrayAsync());
+        Assert.Empty(await db.SecretReferences.ToArrayAsync());
     }
 
     [Fact]

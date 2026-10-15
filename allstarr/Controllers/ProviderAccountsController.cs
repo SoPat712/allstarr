@@ -148,6 +148,10 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return BadRequest(new { error = scopeValidationError });
         }
 
+        if (request.Secret is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } supplied &&
+            ValidateScrobbleAddress(normalized.ProviderId, supplied) is { } addressError)
+            return BadRequest(new { error = addressError });
+
         var now = DateTimeOffset.UtcNow;
         var account = new ProviderAccountRecord
         {
@@ -279,6 +283,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
         }
 
         var bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
+        using var merged = JsonDocument.Parse(bytes);
+        if (ValidateScrobbleAddress(account.ProviderId, merged.RootElement) is { } addressError)
+            return BadRequest(new { error = addressError });
         var secret = await _secretStore.StoreAsync(
             account.OwnerUserId,
             $"provider-account:{account.ProviderId}:{account.Id:N}",
@@ -649,15 +656,10 @@ public sealed partial class ProviderAccountsController : ControllerBase
         CancellationToken cancellationToken)
     {
         var summaries = new Dictionary<Guid, AccountConfigurationSummary>();
-        if (_providerRegistry == null) return summaries;
-
         foreach (var account in accounts.Where(item => item.SecretReferenceId.HasValue))
         {
-            if (!_providerRegistry.TryGet(account.ProviderId, out var provider) ||
-                provider == null || provider.Settings.Count == 0)
-            {
-                continue;
-            }
+            var (fields, origin) = AccountFields(account.ProviderId);
+            if (fields.Count == 0) continue;
 
             using var lease = await _secretStore.OpenAsync(
                 account.SecretReferenceId!.Value,
@@ -668,9 +670,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
 
             var values = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
             var configured = new List<string>();
-            foreach (var setting in provider.Settings)
+            foreach (var setting in fields)
             {
-                if (!TryGetSettingValue(document.RootElement, setting.Key, provider.Origin, out var value) || !HasValue(value)) continue;
+                if (!TryGetSettingValue(document.RootElement, setting.Key, origin, out var value) || !HasValue(value)) continue;
                 configured.Add(setting.Key);
                 if (setting.ValueKind != ProviderSettingValueKind.Secret)
                     values[setting.Key] = value.Clone();
@@ -687,19 +689,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
         JsonElement replacement,
         CancellationToken cancellationToken)
     {
-        if (replacement.ValueKind != JsonValueKind.Object ||
-            !account.SecretReferenceId.HasValue ||
-            _providerRegistry == null ||
-            !_providerRegistry.TryGet(account.ProviderId, out var provider) ||
-            provider == null)
-        {
+        var (fields, origin) = AccountFields(account.ProviderId);
+        if (replacement.ValueKind != JsonValueKind.Object || !account.SecretReferenceId.HasValue || fields.Count == 0)
             return Encoding.UTF8.GetBytes(replacement.GetRawText());
-        }
-
-        var secretKeys = provider.Settings
-            .Where(item => item.ValueKind == ProviderSettingValueKind.Secret)
-            .Select(item => item.Key)
-            .ToArray();
+        var compatible = ListenBrainzServiceEndpoint.IsCompatibleTarget(account.ProviderId);
+        var secretKeys = fields.Where(item => item.ValueKind == ProviderSettingValueKind.Secret || compatible)
+            .Select(item => item.Key).ToArray();
         if (secretKeys.Length == 0) return Encoding.UTF8.GetBytes(replacement.GetRawText());
 
         using var lease = await _secretStore.OpenAsync(
@@ -711,18 +706,34 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return Encoding.UTF8.GetBytes(replacement.GetRawText());
 
         var values = replacement.EnumerateObject()
-            .ToDictionary(item => item.Name, item => item.Value.Clone(), provider.Origin == ProviderOrigin.BuiltIn
+            .ToDictionary(item => item.Name, item => item.Value.Clone(), origin == ProviderOrigin.BuiltIn
                 ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
         foreach (var key in secretKeys)
         {
-            if ((!values.TryGetValue(key, out var value) || !HasValue(value)) &&
-                TryGetSettingValue(current.RootElement, key, provider.Origin, out var existing))
+            if ((!values.TryGetValue(key, out var value) || key != "baseUrl" && !HasValue(value)) &&
+                TryGetSettingValue(current.RootElement, key, origin, out var existing))
             {
                 values[key] = existing.Clone();
             }
         }
 
         return JsonSerializer.SerializeToUtf8Bytes(values);
+    }
+
+    private (IReadOnlyList<ProviderSettingDescriptor> Fields, ProviderOrigin Origin) AccountFields(string providerId)
+    {
+        if (ListenBrainzServiceEndpoint.IsCompatibleTarget(providerId))
+            return ([new("token", ProviderSettingValueKind.Secret, ProviderSettingScope.ProviderAccount, "Token", required: true),
+                new("baseUrl", ProviderSettingValueKind.Text, ProviderSettingScope.ProviderAccount, "Listening address", required: providerId != "listenbrainz")], ProviderOrigin.BuiltIn);
+        return _providerRegistry != null && _providerRegistry.TryGet(providerId, out var provider) && provider != null
+            ? (provider.Settings, provider.Origin) : ([], ProviderOrigin.BuiltIn);
+    }
+
+    private static string? ValidateScrobbleAddress(string providerId, JsonElement configuration)
+    {
+        if (!ListenBrainzServiceEndpoint.IsCompatibleTarget(providerId)) return null;
+        try { ListenBrainzServiceEndpoint.FromSecret(configuration, providerId); return null; }
+        catch (InvalidOperationException) { return "Use a listening service base URL with HTTPS, or HTTP on a private address or intranet host name."; }
     }
 
     private string PublicSettingsJson(string providerId, byte[] configuration) =>
