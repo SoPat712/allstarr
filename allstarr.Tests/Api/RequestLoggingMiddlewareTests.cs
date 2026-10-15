@@ -7,6 +7,34 @@ namespace allstarr.Tests;
 
 public sealed class RequestLoggingMiddlewareTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MusixmatchQueryTokenIsNeverWrittenByRequestLogging(bool fail)
+    {
+        const string token = "fixture-musixmatch-token+&=private";
+        var messages = new List<string>();
+        var exceptions = new List<Exception>();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Debug:LogAllRequests"] = "true" }).Build();
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("allstarr.test");
+        context.Request.Path = "/ws/1.1/macro.subtitles.get";
+        context.Request.QueryString = new QueryString("?usertoken=" + Uri.EscapeDataString(token) + "&q_track=Fixture");
+        var middleware = new RequestLoggingMiddleware(_ => fail
+                ? throw new HttpRequestException("Failed upstream request " + context.Request.QueryString)
+                : Task.CompletedTask,
+            new CollectingLogger<RequestLoggingMiddleware>(messages, exceptions), configuration);
+        if (fail) await Assert.ThrowsAsync<HttpRequestException>(() => middleware.InvokeAsync(context));
+        else await middleware.InvokeAsync(context);
+        var text = string.Join('\n', messages);
+        Assert.Contains("usertoken=<redacted>", text, StringComparison.Ordinal);
+        Assert.DoesNotContain(token, text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Uri.EscapeDataString(token), text, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(exceptions);
+    }
+
     [Fact]
     public async Task InvokeAsync_AlwaysRedactsCredentialsAndPreservesRepeatedQueryKeys()
     {
