@@ -13,7 +13,7 @@ public sealed partial class RecordingKeptFiles
 {
     internal async Task StagePlaylistInterestsAsync(AllstarrDbContext db, PlaylistLinkRecord link,
         BackendLibraryAccessContext access, string correlationId, CancellationToken cancellationToken,
-        bool deleting = false)
+        bool deleting = false, PlaylistInterestPreparation? preparation = null)
     {
         if (db.Database.CurrentTransaction == null)
             throw new InvalidOperationException("Kept playlist interests require the playlist transaction.");
@@ -26,33 +26,15 @@ public sealed partial class RecordingKeptFiles
             user.BackendInstanceId != link.TargetBackendInstanceId) throw Denied();
         if (!deleting && link.TrackRetention == PlaylistTrackRetention.KeepAll)
         {
-            if (libraryAccess == null) throw Denied();
-            projection = await new DurablePlaylistProjectionReader(factory, libraryAccess)
-                .ReadForRetentionAsync(db, link.OwnerUserId, link.Id, access, cancellationToken);
-            var actor = new ProviderActorContext(ProviderActorKind.User, user.Id,
-                new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
-            var entries = (projection?.Entries ?? []).Where(item =>
-                item.RouteKind == "external" && item.RouteProviderId != null).ToArray();
-            var recordings = await ResolvePlaylistRecordingsAsync(db, actor, entries, cancellationToken);
-            var targets = recordings.Values.OfType<Guid>().Distinct().ToArray();
-            var routes = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
-                                join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
-                                join file in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals file.Id
-                                where file.RemovedAt == null && (EF.Parameter(targets).Contains(recording.Id) ||
-                                    recording.MergedIntoId.HasValue && EF.Parameter(targets).Contains(recording.MergedIntoId.Value))
-                                orderby route.CreatedAt, route.ManagedFileId
-                                select new { RecordingId = recording.Id, recording.MergedIntoId, FileId = file.Id })
-                .ToArrayAsync(cancellationToken);
-            var files = routes.SelectMany(item => item.MergedIntoId is { } merged
-                    ? new[] { (Target: item.RecordingId, Direct: true, item.FileId), (Target: merged, Direct: false, item.FileId) }
-                    : new[] { (Target: item.RecordingId, Direct: true, item.FileId) })
-                .GroupBy(item => item.Target).ToDictionary(group => group.Key,
-                    group => group.OrderByDescending(item => item.Direct).First().FileId);
-            foreach (var entry in entries)
+            if (preparation != null && ReferenceEquals(preparation.Database, db) &&
+                preparation.LinkId == link.Id && preparation.LinkRevision + 1 == link.Revision &&
+                preparation.DataVersion == await ReadPlaylistDataVersionAsync(db, cancellationToken))
             {
-                var key = prefix + PlaylistTrackRetentionQueue.RetentionKey(link.Id, entry.RouteProviderId!, entry.ExternalId);
-                desired[key] = recordings[entry.Position] is { } recordingId ? files.GetValueOrDefault(recordingId) : Guid.Empty;
+                projection = preparation.Projection;
+                desired = preparation.Desired.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
             }
+            else
+                (projection, desired) = await ReadPlaylistInterestsAsync(db, link, user, access, cancellationToken);
         }
 
         var now = clock.UtcNow;
@@ -111,6 +93,42 @@ public sealed partial class RecordingKeptFiles
             await new PlaylistTrackRetentionQueue(jobs, new(factory, libraryAccess!), factory)
                 .EnqueueProjectionInTransactionAsync(db, link, projection, correlationId, cancellationToken);
         }
+    }
+
+    private async Task<(DurablePlaylistProjection? Projection, Dictionary<string, Guid> Desired)> ReadPlaylistInterestsAsync(
+        AllstarrDbContext db, PlaylistLinkRecord link, UserRecord user, BackendLibraryAccessContext access,
+        CancellationToken cancellationToken)
+    {
+        var prefix = $"playlist:{link.Id:N}:";
+        var desired = new Dictionary<string, Guid>(StringComparer.Ordinal);
+        if (libraryAccess == null) throw Denied();
+        var projection = await new DurablePlaylistProjectionReader(factory, libraryAccess)
+            .ReadForRetentionAsync(db, link.OwnerUserId, link.Id, access, cancellationToken);
+        var actor = new ProviderActorContext(ProviderActorKind.User, user.Id,
+            new(user.BackendType, user.BackendInstanceId, user.BackendPrincipalId));
+        var entries = (projection?.Entries ?? []).Where(item =>
+            item.RouteKind == "external" && item.RouteProviderId != null).ToArray();
+        var recordings = await ResolvePlaylistRecordingsAsync(db, actor, entries, cancellationToken);
+        var targets = recordings.Values.OfType<Guid>().Distinct().ToArray();
+        var routes = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                            join recording in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals recording.Id
+                            join file in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals file.Id
+                            where file.RemovedAt == null && (EF.Parameter(targets).Contains(recording.Id) ||
+                                recording.MergedIntoId.HasValue && EF.Parameter(targets).Contains(recording.MergedIntoId.Value))
+                            orderby route.CreatedAt, route.ManagedFileId
+                            select new { RecordingId = recording.Id, recording.MergedIntoId, FileId = file.Id })
+            .ToArrayAsync(cancellationToken);
+        var files = routes.SelectMany(item => item.MergedIntoId is { } merged
+                ? new[] { (Target: item.RecordingId, Direct: true, item.FileId), (Target: merged, Direct: false, item.FileId) }
+                : new[] { (Target: item.RecordingId, Direct: true, item.FileId) })
+            .GroupBy(item => item.Target).ToDictionary(group => group.Key,
+                group => group.OrderByDescending(item => item.Direct).First().FileId);
+        foreach (var entry in entries)
+        {
+            var key = prefix + PlaylistTrackRetentionQueue.RetentionKey(link.Id, entry.RouteProviderId!, entry.ExternalId);
+            desired[key] = recordings[entry.Position] is { } recordingId ? files.GetValueOrDefault(recordingId) : Guid.Empty;
+        }
+        return (projection, desired);
     }
 
     public async Task<KeptRecordingFile?> RetainPlaylistAsync(DurableJobClaim claim,
