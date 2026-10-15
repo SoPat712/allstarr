@@ -15,6 +15,14 @@ public interface IBoundPlaybackScrobbleTarget : IExactScopePlaybackScrobbleTarge
     Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) => Task.FromResult(false);
 }
 
+public enum PlaybackScrobbleVerification { Unavailable, Found, Absent }
+
+public interface IVerifiablePlaybackScrobbleTarget : IBoundPlaybackScrobbleTarget
+{
+    Task<PlaybackScrobbleVerification> VerifyAsync(IntelligenceScope scope, ProviderAccountContext account,
+        PlaybackScrobbleSubmission submission, CancellationToken token);
+}
+
 public sealed record PlaybackScrobbleSubmission(PlaybackTransition Transition, ScopedPlaybackTrack Track,
     long? PositionTicks, DateTimeOffset OccurredAt);
 
@@ -49,7 +57,8 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         if (row?.State is ScopedPlaybackScrobbleOutcome.Delivered or ScopedPlaybackScrobbleOutcome.Ignored)
             return new(row.State, row.ProviderCode, row.SafeMessage, row.DetailsJson);
         if (row?.State == ScopedPlaybackScrobbleOutcome.PermanentFailure &&
-            (row.DestinationJson != null || row.ProviderCode == "destination-unbound"))
+            (row.DestinationJson != null || row.ProviderCode == "destination-unbound") &&
+            !(row.ProviderCode == "ambiguous" && target is IVerifiablePlaybackScrobbleTarget))
             return new(row.State, row.ProviderCode, row.SafeMessage, row.DetailsJson, RequiresReauthentication: row.RequiresReauthentication);
         if (row == null && payload.DestinationTargets == null && await target.FindDestinationAsync(payload.Scope, token) == null)
             return null;
@@ -90,12 +99,16 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         row.SignalPayloadJson ??= JsonSerializer.Serialize(payload);
         var submission = JsonSerializer.Deserialize<PlaybackScrobbleSubmission>(row.SubmissionJson)!;
         var replay = kind == PlaybackScrobbleDeliveryKind.NowPlaying;
-        if (row.AttemptStartedAt != null && !row.ReplaySafe && !replay)
+        if (!replay && !row.ReplaySafe && (row.AttemptStartedAt != null || row.ProviderCode == "ambiguous"))
         {
-            var ambiguous = ScopedPlaybackScrobbleResult.Permanent("ambiguous",
-                "The destination may already have accepted this listen. Check its history before marking delivered or explicitly retrying.");
-            await checkpoints.RecordAsync(payload.Scope.OwnerUserId, occurrence, key, kind, target.ProviderId, ambiguous, token);
-            return ambiguous;
+            var verification = await VerifyUncertainAsync(target, payload, account, submission, row, token);
+            if (verification != null)
+            {
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId, occurrence, key, kind, target.ProviderId, verification, token);
+                return verification;
+            }
+            // The single automatic resend is reserved durably before crossing the transport boundary.
+            row.AutomaticResendCount++;
         }
         try
         {
@@ -141,9 +154,32 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
             else
                 result = result with { RetryAfter = result.RetryAfter ?? TimeSpan.FromSeconds(Math.Min(21600, 30 * Math.Pow(2, Math.Min(row.SendCount - 1, 10)))) };
         }
-        // Never turn a failed local acknowledgement save into an automatic resend.
+        if (result.ProviderCode == "ambiguous" && target is IVerifiablePlaybackScrobbleTarget)
+            result = await VerifyUncertainAsync(target, payload, account, submission, row, token)
+                ?? ScopedPlaybackScrobbleResult.Retrying("verification-pending", "The listen will be checked again before any resend.", TimeSpan.FromMinutes(2));
+        // Never turn a failed local acknowledgement save into a blind resend.
         await checkpoints.RecordAsync(payload.Scope.OwnerUserId, occurrence, key, kind, target.ProviderId, result, token);
         return result;
+    }
+
+    private static async Task<ScopedPlaybackScrobbleResult?> VerifyUncertainAsync(IBoundPlaybackScrobbleTarget target,
+        PlaybackSignalPayload payload, ProviderAccountContext account, PlaybackScrobbleSubmission submission,
+        PlaybackDeliveryCheckpointEntity row, CancellationToken token)
+    {
+        var ambiguous = ScopedPlaybackScrobbleResult.Permanent("ambiguous",
+            "The destination may already have accepted this listen. Check its history before explicitly retrying.");
+        if (target is not IVerifiablePlaybackScrobbleTarget verifier) return ambiguous;
+        PlaybackScrobbleVerification verification;
+        try { verification = await verifier.VerifyAsync(payload.Scope, account, submission, token); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+        catch (Exception) { return ambiguous; }
+        if (verification == PlaybackScrobbleVerification.Found) return ScopedPlaybackScrobbleResult.Delivered();
+        if (verification != PlaybackScrobbleVerification.Absent) return ambiguous;
+        var settledAt = (row.AttemptStartedAt ?? row.UpdatedAt).AddMinutes(2);
+        if (settledAt > DateTimeOffset.UtcNow)
+            return ScopedPlaybackScrobbleResult.Retrying("verification-pending",
+                "Waiting for Last.fm history to settle before checking this listen again.", settledAt - DateTimeOffset.UtcNow);
+        return row.AutomaticResendCount == 0 ? null : ambiguous;
     }
 
     internal static PlaybackDeliveryCheckpointEntity New(PlaybackSignalPayload payload, string key,

@@ -46,11 +46,15 @@ public sealed class ScrobbleDeliveryMigrationTests
         Assert.Null(migrated.DestinationAccountId);
         Assert.Null(migrated.AttemptStartedAt);
         Assert.Equal(0, migrated.SendCount);
+        Assert.Equal(0, migrated.AutomaticResendCount);
         await migrator.MigrateAsync("20261015175251_RetainFavoriteDisplayMetadata");
         await db.Database.ExecuteSqlRawAsync("UPDATE playback_delivery_checkpoints SET ProviderCode = 'preserved';");
         Assert.Equal(1, await db.Database.SqlQueryRaw<int>("SELECT COUNT(*) AS Value FROM receipt_updates").SingleAsync());
         await migrator.MigrateAsync();
         Assert.Equal("preserved", (await db.PlaybackDeliveryCheckpoints.AsNoTracking().SingleAsync()).ProviderCode);
         Assert.False(db.Database.HasPendingModelChanges());
+        await db.Database.ExecuteSqlRawAsync("UPDATE playback_delivery_checkpoints SET AutomaticResendCount = 1;");
+        await Assert.ThrowsAsync<Microsoft.Data.Sqlite.SqliteException>(() => migrator.MigrateAsync("20261015203644_BindScrobbleDestinations"));
+        Assert.Equal(1, (await db.PlaybackDeliveryCheckpoints.AsNoTracking().SingleAsync()).AutomaticResendCount);
     }
 }

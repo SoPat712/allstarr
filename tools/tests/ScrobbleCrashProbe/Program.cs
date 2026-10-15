@@ -56,7 +56,7 @@ sealed class Tracks : IPlaybackTrackResolver
 sealed class Secrets(string provider) : IProviderAccountSecretAccessor
 {
     public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation, CancellationToken cancellationToken) =>
-        operation(System.Text.Encoding.UTF8.GetBytes((provider is "multi-scrobbler" or "koito" ? "{\"baseUrl\":\"http://127.0.0.1/1/\", " : "{") + "\"apiKey\":\"fixture-key\",\"sharedSecret\":\"fixture-secret\",\"sessionKey\":\"fixture-session\",\"token\":\"fixture-token\"}"));
+        operation(System.Text.Encoding.UTF8.GetBytes((provider is "multi-scrobbler" or "koito" ? "{\"baseUrl\":\"http://127.0.0.1/1/\", " : "{") + "\"username\":\"fixture-user\",\"apiKey\":\"fixture-key\",\"sharedSecret\":\"fixture-secret\",\"sessionKey\":\"fixture-session\",\"token\":\"fixture-token\"}"));
 }
 sealed class RedirectFixture(string endpoint) : DelegatingHandler(new HttpClientHandler { AllowAutoRedirect = false })
 {

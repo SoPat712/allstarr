@@ -13,6 +13,7 @@ public sealed class PlaybackDeliveryCheckpointEntity
     public string? SubmissionJson { get; set; }
     public string? SignalPayloadJson { get; set; }
     public DateTimeOffset? AttemptStartedAt { get; set; }
+    public int AutomaticResendCount { get; set; }
     public int SendCount { get; set; }
     public bool ReplaySafe { get; set; }
     public long Revision { get; set; }
@@ -76,7 +77,7 @@ public sealed class EfPlaybackDeliveryCheckpointStore(IDbContextFactory<Allstarr
                 checkpoint.RetryAfter = result.RetryAfter is { } delay ? now.Add(delay) : null;
                 checkpoint.RequiresReauthentication = result.RequiresReauthentication;
                 checkpoint.UpdatedAt = now;
-                checkpoint.AttemptStartedAt = null;
+                if (result.ProviderCode is not ("ambiguous" or "verification-pending")) checkpoint.AttemptStartedAt = null;
                 checkpoint.Revision++;
             }
             if (added) db.Add(checkpoint);
