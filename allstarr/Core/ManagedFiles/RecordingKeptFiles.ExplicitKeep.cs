@@ -79,7 +79,9 @@ public sealed partial class RecordingKeptFiles
         await CancelCleanupAsync(db, candidate.File.Id, clock.UtcNow, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        return ToResult(proof.RecordingId, candidate.File, candidate.MimeType);
+        var result = ToResult(proof.RecordingId, candidate.File, candidate.MimeType);
+        await EnsureLyricsAsync(result, proof.OwnerUserId, claim.CorrelationId, cancellationToken);
+        return result;
     }
 
     public async Task<KeptRecordingFile> PublishRequestedKeepAsync(DurableJobClaim claim,

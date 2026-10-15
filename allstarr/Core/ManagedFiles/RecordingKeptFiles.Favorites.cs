@@ -38,7 +38,9 @@ public sealed partial class RecordingKeptFiles
                 candidate.File.Id, new(Guid.CreateVersion7(), candidate.File.Id, null,
                     candidate.File.ScopeKey, HeartKey(proof.State.Id), clock.UtcNow), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return ToResult(recordingId.Value, candidate.File, candidate.MimeType);
+            var result = ToResult(recordingId.Value, candidate.File, candidate.MimeType);
+            await EnsureLyricsAsync(result, interest.OwnerUserId, proof.Event.CorrelationId, cancellationToken);
+            return result;
         }
         catch (UnauthorizedAccessException) { return null; }
     }

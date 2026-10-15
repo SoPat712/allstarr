@@ -197,6 +197,7 @@ public sealed partial class RecordingKeptFiles(
                 result = ToResult(recording.Id, serving, mime);
             }
             if (provisional) await CleanupPendingAsync(prepared, pendingKey);
+            await EnsureLyricsAsync(result, publication.InitiatingUserId, proof.CorrelationId, cancellationToken);
             return result;
         }
         catch
