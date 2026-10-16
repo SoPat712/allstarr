@@ -109,6 +109,9 @@ describe("source presentation", () => {
       .toBe("disabled");
     expect(sourceStatus({ id: "qobuz", name: "Qobuz", status: "degraded" }, [], []))
       .toBe("needs_config");
+    const unsigned = { ...account(), secret: { ...account().secret, configured: false } };
+    expect(sourceStatus(provider, [unsigned], [])).toBe("needs_config");
+    expect(sourceStatus({ ...provider, usesSignedSession: true }, [unsigned], [])).toBe("configured");
   });
 
   it("labels audiences without revealing credentials", () => {

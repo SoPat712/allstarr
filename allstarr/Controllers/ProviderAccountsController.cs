@@ -144,14 +144,15 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return BadRequest(new { error = validationError });
         }
 
-        if (normalized.Scope == ProviderAccountScope.Personal && UsesSignedSession(normalized.ProviderId))
+        // A signed extension has one connection; who may use it is its audience, not a second sign-in.
+        if (UsesSignedSession(normalized.ProviderId))
         {
             await using var existing = await _contextFactory.CreateDbContextAsync(cancellationToken);
-            var personal = await existing.ProviderAccounts.AsNoTracking()
-                .Where(item => item.ProviderId == normalized.ProviderId && item.OwnerUserId == normalized.OwnerUserId)
+            var connections = await existing.ProviderAccounts.AsNoTracking()
+                .Where(item => item.ProviderId == normalized.ProviderId)
                 .ToListAsync(cancellationToken);
-            if (personal.Any(item => !IsRemoved(item)))
-                return Conflict(new { error = "This person already has a personal connection for this extension." });
+            if (connections.Any(item => !IsRemoved(item)))
+                return Conflict(new { error = "This extension already has its connection. Change who can use it instead." });
         }
 
         var scopeValidationError = await ValidateAccountScopeAsync(normalized, cancellationToken);

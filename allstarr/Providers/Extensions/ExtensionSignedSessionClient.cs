@@ -209,7 +209,7 @@ internal sealed class ExtensionSignedSessionClient
             return new(ExtensionSessionStates.SignedIn, record.ExpiresAt, null, reasonCode)
             {
                 RenewsAutomatically = !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh) && TryExpiry(record, out _),
-                LastRenewalFailure = _lastRenewalFailure
+                LastRenewalFailure = _lastRenewalFailure == "verification_required" ? null : _lastRenewalFailure
             };
         if (_pendingAuthUrl != null)
             return new(ExtensionSessionStates.VerificationPending, null, _pendingAuthUrl, reasonCode);
@@ -252,6 +252,7 @@ internal sealed class ExtensionSignedSessionClient
             });
             _pendingAuthUrl = null;
             _lastRenewalFailure = null;
+            _restoreAttemptedFor = null;
             return SessionResult.Succeeded;
         }
         catch (OperationCanceledException) when (callerToken.IsCancellationRequested)

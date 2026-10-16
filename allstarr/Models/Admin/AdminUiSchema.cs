@@ -142,6 +142,9 @@ public sealed class AdminUiProvider
     [JsonPropertyName("connectionKind")]
     public string? ConnectionKind { get; set; }
 
+    [JsonPropertyName("usesSignedSession")]
+    public bool UsesSignedSession { get; set; }
+
     [JsonPropertyName("audience")]
     public string? Audience { get; set; }
 

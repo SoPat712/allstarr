@@ -126,7 +126,8 @@ export function sourceStatus(
     const checks = health.filter((item) => ids.has(item.providerAccountId) && item.canTest);
     if (checks.some((item) => item.health === "degraded")) return "degraded";
     if (checks.length && checks.every((item) => item.health === "healthy")) return "healthy";
-    return connected.every((item) => item.secret.configured && !item.secret.revoked)
+    // Signed extensions keep their sign-in outside the credential store; the sign-in panel shows its state.
+    return provider.usesSignedSession || connected.every((item) => item.secret.configured && !item.secret.revoked)
       ? "configured"
       : "needs_config";
   }

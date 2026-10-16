@@ -96,6 +96,7 @@ public class AdminUiController : ControllerBase
                     Notes = item.Notes,
                     AccountSettings = item.AccountSettings,
                     ConnectionKind = item.ConnectionKind,
+                    UsesSignedSession = item.UsesSignedSession,
                     Audience = item.Audience,
                     SupportedAudiences = item.SupportedAudiences,
                     SharingDescription = item.SharingDescription,
@@ -1249,6 +1250,7 @@ public class AdminUiController : ControllerBase
                     ConnectionKind = item.Origin == ProviderOrigin.Extension
                         ? "extension"
                         : "built_in",
+                    UsesSignedSession = item.UsesSignedSession,
                     ImplementationOrigin = item.Origin.ToString().ToLowerInvariant(),
                     RouteId = route.RouteId,
                     AccountSettings = accountSettings,
