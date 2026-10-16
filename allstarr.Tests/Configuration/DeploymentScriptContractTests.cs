@@ -95,40 +95,14 @@ public sealed class DeploymentScriptContractTests : IDisposable
     [InlineData("backup")]
     [InlineData("restore")]
     [InlineData("mode")]
+    [InlineData("init")]
+    [InlineData("upgrade")]
     public async Task RemovedCommands_DoNotInvokeDocker(string command)
     {
         Assert.Equal(2, (await RunAsync("allstarr.sh", [command])).Code);
         Assert.Empty(Commands);
-    }
-
-    [Fact]
-    public async Task Upgrade_RetainsGuidanceUntilTheSetupReplacementIsComplete()
-    {
-        var result = await RunAsync("allstarr.sh", ["upgrade"]);
-        Assert.Equal(1, result.Code);
-        Assert.Contains("stopped-folder backup", result.Error, StringComparison.Ordinal);
-        Assert.Contains("existing Compose commands for v2", result.Error, StringComparison.Ordinal);
-        Assert.Contains("Settings > Setup", result.Error, StringComparison.Ordinal);
-        Assert.Empty(Commands);
-    }
-
-    [Fact]
-    public async Task Init_PreservesExistingEnvironmentAndDoesNotSelectSourceMode()
-    {
-        const string contents = "BACKEND_TYPE=Subsonic\nSUBSONIC_URL=http://fixture:4533\n";
-        File.WriteAllText(Path.Combine(root, ".env"), contents);
-        Assert.Equal(0, (await RunAsync("allstarr.sh", ["init"])).Code);
-        Assert.Equal(contents, File.ReadAllText(Path.Combine(root, ".env")));
+        Assert.False(File.Exists(Path.Combine(root, ".env")));
         Assert.False(File.Exists(Path.Combine(root, ".allstarr-mode")));
-        Assert.Equal(0, (await RunAsync("allstarr.sh", ["up"])).Code);
-    }
-
-    [Fact]
-    public async Task Init_CreatesOnlyOptionalDeploymentDefaults()
-    {
-        Assert.Equal(0, (await RunAsync("allstarr.sh", ["init"])).Code);
-        Assert.Equal(File.ReadAllText(Path.Combine(root, ".env.example")), File.ReadAllText(Path.Combine(root, ".env")));
-        Assert.DoesNotContain(Commands, line => line.Contains("up -d", StringComparison.Ordinal));
     }
 
     [Theory]

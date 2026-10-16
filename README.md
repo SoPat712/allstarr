@@ -31,7 +31,7 @@ docker compose up -d
 
 The default stack is one container. It stores its database, encryption key ring, kept music and cache in `./data`. No `.env` file or host setup script is required to start it. Music clients use port 5274; the dashboard is at `http://localhost:5275` and binds to loopback by default.
 
-The backend-selection API is available, but browser setup is still being completed in this beta. For now, create optional deployment defaults with `./allstarr.sh init`, set `BACKEND_TYPE` and either `JELLYFIN_URL` or `SUBSONIC_URL` in `.env`, then run `docker compose up -d` again. Use an address reachable from inside the container, such as `http://host.docker.internal:8096` for a Jellyfin server on the Docker host. Sign in with that media server's administrator account, review Settings → Setup, and connect the services you use.
+Choose Jellyfin or Subsonic / OpenSubsonic in the dashboard and verify a media-server administrator. Use an address reachable from inside the container, such as `http://host.docker.internal:8096` for Jellyfin on the Docker host. Allstarr saves the connection in the data folder, discards the password and restarts. Sign in and follow the setup guide to review sources and household settings. Optional startup defaults are listed in `.env.example`.
 
 One deployment serves one household. Backend administrators manage deployment settings and Shared provider accounts; listeners manage their own playlists, Personal accounts, match choices, and listening preferences. Listener account connections are enabled by default and can be disabled by an administrator without removing existing accounts.
 
@@ -45,7 +45,7 @@ An existing version 2 installation can keep its Compose file and `.env` unchange
 
 For a normal update, save a backup, then run `./allstarr.sh update`. It pulls the configured application image and preserves enabled Apple services. An unchanged v2 deployment should use its own Compose commands instead.
 
-Settings → Maintenance creates and restores verified database-and-key-ring backups. For a complete offline backup, stop Allstarr and copy the whole data folder, along with any external media roots and optional Apple volumes. Database archives exclude music and optional provider sessions. Copied media recovery is still being completed in this beta; verify playback before retiring an original folder. See [storage operations](docs/operations/storage.md) for backup, restore and rollback instructions.
+Settings → Backups creates and restores verified database-and-key-ring backups. For a complete offline backup, stop Allstarr and copy the whole data folder, along with any external media roots and optional Apple volumes. Database archives exclude music and optional provider sessions. After a stopped folder copy, Allstarr verifies owned songs in a durable job before resuming file work. Review its status in Settings → Storage and verify playback before retiring the original folder. See [storage operations](docs/operations/storage.md) for backup, restore and rollback instructions.
 
 Source builds use the developer entry point:
 
@@ -62,7 +62,7 @@ Use `./tools/develop.sh update` for later source updates. It requires a clean tr
 - **Library** owns provider playlists, match review, cached audio, and kept audio.
 - **Integrations** owns Services, encrypted Accounts, extension packages, health, and provider Routing.
 - **Activity** explains completed and failed work with correlation details.
-- **Settings** owns deployment-level behavior, matching, playback, cache policy, maintenance, backup, and recovery.
+- **Settings** owns operator behavior, cache policy, maintenance, backup, and recovery. Routing, playback quality and matching policy live in Integrations.
 
 Intelligence is deferred from the first release and hidden from navigation. Its development workspace and existing deep links remain available for now; accounts, history, and opt-in background work are unchanged.
 

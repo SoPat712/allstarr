@@ -377,7 +377,7 @@ public class ConfigController : ControllerBase
 
             var requiresRestart = normalized.Any(item => RuntimeSettingCatalog.Require(item.DurableKey).RequiresRestart);
             if (requiresRestart && HttpContext.RequestServices.GetService<IHostApplicationLifetime>() is { } lifetime)
-                Response.OnCompleted(() => { lifetime.StopApplication(); return Task.CompletedTask; });
+                AdminProcessRestart.Schedule(HttpContext, lifetime);
             return Ok(new
             {
                 message = requiresRestart ? "Settings saved. Allstarr will restart." : "Runtime configuration updated.",

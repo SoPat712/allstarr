@@ -275,7 +275,7 @@
                 <small>{qualityDetails(file).join(" · ")}</small>
               </span>
               <span class="download-lifecycle" role="cell">
-                <Badge state={file.removable ? "healthy" : "suggested"}>{file.publicationState}</Badge>
+                <Badge state={file.removable ? "healthy" : "suggested"}>{file.publicationState === "Imported" ? "Imported original · read-only" : file.publicationState}</Badge>
                 <small>Last access {relativeTime(file.lastAccessedAt)}</small>
                 {#if file.expiresAt}<small>Expires {relativeTime(file.expiresAt)}</small>{/if}
                 {#if file.referenceCount != null}<small>{file.referenceCount} reference{file.referenceCount === 1 ? "" : "s"}</small>{/if}

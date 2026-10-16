@@ -14,6 +14,7 @@ using allstarr.Services.Admin;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.DependencyInjection;
 using Moq;
 
 namespace allstarr.Tests;
@@ -160,6 +161,7 @@ public sealed partial class BackendSetupServiceTests : IAsyncLifetime
         lifetime.Setup(item => item.StopApplication());
         var completion = new CompletionFeature();
         var context = new DefaultHttpContext();
+        context.RequestServices = new ServiceCollection().AddSingleton<IConfiguration>(configuration).BuildServiceProvider();
         context.Features.Set<IHttpResponseFeature>(completion);
         var controller = new BackendSetupController(Service(), storage, antiforgery.Object, lifetime.Object)
         { ControllerContext = new() { HttpContext = context } };
@@ -167,6 +169,7 @@ public sealed partial class BackendSetupServiceTests : IAsyncLifetime
         Assert.Contains("setup_csrf_required", JsonSerializer.Serialize(blocked.Value), StringComparison.Ordinal);
         verifier.VerifyNoOtherCalls();
         Assert.Empty(completion.Callbacks);
+        Assert.Null(configuration["Setup:RestartPending"]);
         antiforgery.Setup(item => item.IsRequestValidAsync(It.IsAny<HttpContext>())).ReturnsAsync(true);
         var request = Request();
         var saved = Assert.IsType<OkObjectResult>(await controller.Save(request, default));
@@ -174,6 +177,7 @@ public sealed partial class BackendSetupServiceTests : IAsyncLifetime
         Assert.DoesNotContain("private-password-fixture", response, StringComparison.Ordinal);
         Assert.DoesNotContain("private-token-fixture", response, StringComparison.Ordinal);
         Assert.Equal("", request.Password);
+        Assert.Equal("true", configuration["Setup:RestartPending"]);
         Assert.Equal("no-store", controller.Response.Headers.CacheControl);
         lifetime.Verify(item => item.StopApplication(), Times.Never);
         await Assert.Single(completion.Callbacks)();

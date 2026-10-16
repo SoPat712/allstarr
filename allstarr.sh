@@ -61,14 +61,6 @@ forget_profile() {
   mv "$temporary" "$PROFILE_FILE"
 }
 
-init() {
-  need docker
-  docker compose version >/dev/null
-  [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
-  echo "Optional deployment defaults are in .env. Set BACKEND_TYPE and JELLYFIN_URL or SUBSONIC_URL if backend selection is unavailable in the dashboard."
-  echo "Start with: docker compose up -d"
-}
-
 prepare_apple() {
   validate_deployment_files
   local input="${1:-}" arch="${2:-}" runtime="linux/amd64"
@@ -207,14 +199,12 @@ Usage: ./allstarr.sh COMMAND
   logs [service]                    Follow container logs
   up                                Start saved profiles without pulling an image
   down                              Stop saved profiles without deleting data
-  init                              Create optional .env defaults for backend setup
-  upgrade                           Show backup and in-place upgrade guidance
   prepare-apple [INPUT] [ARCH]       Verify and build Apple without starting it
   install-apple [INPUT] [ARCH]       Alias for enable apple
 
 Plain docker compose up -d starts the core service. Optional profiles are saved
 in .allstarr-profiles for this script. Source builds use ./tools/develop.sh.
-Use Settings > Maintenance for database backups and restore on restart.
+Use Settings > Backups for database backups and restore on restart.
 Stop Allstarr before copying its data folder. No command deletes data volumes.
 EOF
 }
@@ -223,12 +213,10 @@ command="${1:-help}"
 shift || true
 cd "$ROOT"
 case "$command" in
-  init) [[ $# -eq 0 ]] || die "source builds moved to ./tools/develop.sh"; init ;;
   prepare-apple) prepare_apple "$@" ;;
   install-apple) install_apple "$@" ;;
   up) up ;;
   update) update ;;
-  upgrade) die "save a stopped-folder backup, then use update for this layout or your existing Compose commands for v2; review legacy settings in Settings > Setup" ;;
   status) compose_args; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)

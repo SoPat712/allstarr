@@ -2,6 +2,8 @@ import { adminUrl } from "./admin-url";
 
 export type Session = {
   authenticated: boolean;
+  backendConfigured?: boolean;
+  restartPending?: boolean;
   backend: string;
   features?: {
     intelligence: boolean;
@@ -27,6 +29,8 @@ export type OnboardingState = {
   shouldRedirectToSetup: boolean;
   schemaVersion: string;
   completedSteps: string[];
+  skippedSteps?: string[];
+  steps?: Array<{ id: string; title: string; explanation: string; href: string | null; required: boolean; state: string }>;
   completionSource: string;
   completedAt?: string | null;
   reopenedAt?: string | null;
@@ -357,6 +361,9 @@ export type EnvMigrationPreview = {
     valuePreview?: string | null;
     warning?: string | null;
   }>;
+  media?: { files: number; identified: number; needsIdentification: number; notices: string[] };
+  backend?: { backend: string; endpoint: string; savesConnection: boolean; explanation: string };
+  providerAccounts?: Array<{ providerId: string; reason: string; enabledAfterImport: boolean }>;
   conflicts: string[];
   warnings: string[];
 };
@@ -1293,6 +1300,9 @@ export const auth = {
 export const onboarding = {
   status: () => json<OnboardingState>("/api/admin/onboarding/status"),
   complete: () => json<OnboardingState>("/api/admin/onboarding/complete", { method: "POST" }),
+  step: (stepId: string, action: string, expectedRevision: number) => json<OnboardingState>("/api/admin/onboarding/step", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepId, action, expectedRevision }),
+  }),
   reopen: () => json<OnboardingState>("/api/admin/onboarding/reopen", { method: "POST" }),
 };
 
@@ -1564,7 +1574,7 @@ export type StorageBackup = {
 export const settings = {
   config: () => json<Record<string, unknown>>("/api/admin/config"),
   save: (updates: Record<string, string>) =>
-    json<{ message: string; updatedKeys: string[] }>("/api/admin/config", {
+    json<{ message: string; updatedKeys: string[]; requiresRestart?: boolean }>("/api/admin/config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ updates }),
@@ -1601,6 +1611,7 @@ export const settings = {
     firstRun: boolean;
     lastAppliedAt?: string | null;
   }>("/api/admin/config/migration/status"),
+  previewMountedMigration: () => json<EnvMigrationPreview>("/api/admin/config/migration/preview-mounted", { method: "POST" }),
   previewMigration: (file: File) => {
     const body = new FormData();
     body.append("file", file);
@@ -1610,7 +1621,7 @@ export const settings = {
     });
   },
   applyMigration: (preview: EnvMigrationPreview) =>
-    json<{ success: boolean; alreadyApplied: boolean }>("/api/admin/config/migration/apply", {
+    json<{ success: boolean; alreadyApplied: boolean; requiresRestart?: boolean; mediaFilesQueued?: number; mediaJobId?: string; accountChecks?: Array<{ providerId: string; reason: string; enabled: boolean }> }>("/api/admin/config/migration/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -2126,3 +2137,19 @@ export const activityWork = {
   },
   tasks: (scope: "mine" | "everyone" = "mine") => json<{ items: ActivityTask[]; hasMore?: boolean }>(scope === "mine" ? "/api/admin/activity/tasks" : `/api/admin/activity/tasks?scope=${scope}`),
 };
+
+export type OidcAccess = { enabled: boolean; authority: string; clientId: string; publicUrl: string; displayName: string; hasClientSecret: boolean; needsReview: boolean; revision: string };
+export type BackendAccess = { supported: boolean; connectionSaved: boolean; configured: boolean; needsReview: boolean; revision: string };
+export type FileVerification = { available: boolean; pending: boolean; needsReview: boolean; jobId?: string; jobState?: string; verifiedAt?: string; files: number };
+export const setupAccess = {
+  initial: () => json<{ configured: boolean; storageReady: boolean; csrfToken: string }>("/api/admin/auth/setup"),
+  connect: (value: object, csrf: string) => json<{ requiresRestart: boolean }>("/api/admin/auth/setup", accessBody(value, csrf, "POST")),
+  oidc: () => json<{ settings: OidcAccess; csrfToken: string }>("/api/admin/access/oidc"),
+  backend: () => json<{ settings: BackendAccess; csrfToken: string }>("/api/admin/access/backend"),
+  save: (kind: "oidc" | "backend", value: object, csrf: string) => json<{ requiresRestart: boolean }>(`/api/admin/access/${kind}`, accessBody(value, csrf, "PUT")),
+  files: () => json<{ settings: FileVerification; csrfToken: string }>("/api/admin/storage/files"),
+  verify: (csrf: string) => json<{ message: string }>("/api/admin/storage/files/verify", accessBody({}, csrf, "POST")),
+};
+function accessBody(value: object, csrf: string, method: string) {
+  return { method, headers: { "Content-Type": "application/json", "X-Allstarr-CSRF": csrf }, body: JSON.stringify(value) };
+}

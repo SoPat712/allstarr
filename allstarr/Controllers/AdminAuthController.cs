@@ -208,6 +208,7 @@ public sealed class AdminAuthController : ControllerBase
             {
                 authenticated = false,
                 backendConfigured = _configuration["Setup:BackendConfigured"] != "false",
+                restartPending = _configuration["Setup:RestartPending"] == "true",
                 backend = _backendType.ToString(),
                 listenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
                 features = ReleaseFeatures()
@@ -542,6 +543,8 @@ public sealed class AdminAuthController : ControllerBase
     private object AuthenticatedSessionResponse(AdminAuthSession session) => new
     {
         authenticated = true,
+        backendConfigured = _configuration["Setup:BackendConfigured"] != "false",
+        restartPending = _configuration["Setup:RestartPending"] == "true",
         user = new
         {
             id = session.UserId,

@@ -213,7 +213,7 @@ public class AppleMusicController : ControllerBase
                 sizeBytes = file.Length,
                 stagedAt = DateTimeOffset.UtcNow,
                 architecture = "auto",
-                message = "Package uploaded. Run ./allstarr.sh install-apple on the Docker host to verify, build, and start the Apple gateway."
+                message = "Package uploaded. Run ./allstarr.sh enable apple on the Docker host to verify, build, and start the Apple gateway."
             });
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

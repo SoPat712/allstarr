@@ -106,7 +106,7 @@ public sealed class LegacyConfigurationController : ControllerBase
                 CreateMigrationActor(),
                 cancellationToken);
             if (result.RequiresRestart && HttpContext.RequestServices.GetService<IHostApplicationLifetime>() is { } lifetime)
-                Response.OnCompleted(() => { lifetime.StopApplication(); return Task.CompletedTask; });
+                AdminProcessRestart.Schedule(HttpContext, lifetime);
             return Ok(result);
         }
         catch (LegacyEnvMigrationException ex) when (ex.Code == "preview_owner_mismatch")

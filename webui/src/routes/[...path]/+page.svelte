@@ -54,9 +54,8 @@
   let authError = $state("");
   let avatarFailed = $state(false);
   let onboardingState = $state<OnboardingState | null>(null);
-  let onboardingOpen = $state(false);
   let onboardingError = $state("");
-  let OnboardingDialog = $state<Component<any>>();
+  let BackendSetupPanel = $state<Component<any>>();
   let sidebarSlim = $state(false);
   let mobileMenuOpen = $state(false);
   let mobileMenuTrigger = $state<HTMLButtonElement>();
@@ -89,7 +88,7 @@
     if (path === "/sources") return "/integrations/services";
     if (path === "/settings/accounts") return "/integrations/accounts";
     if (path === "/settings/extensions") return "/integrations/services";
-    if (path === "/settings/routing" || path === "/integrations/routing") return "/settings/playback";
+    if (path === "/settings/routing" || path === "/settings/playback") return "/integrations/routing";
     if (path === "/integrations/extensions") return "/integrations/services";
     return path;
   }
@@ -97,6 +96,7 @@
   const route = $derived(currentRoute(`/${page.params.path ?? ""}`));
   const forbiddenRoute = $derived(!administrator && (
     route.startsWith("/settings") ||
+    route === "/integrations/routing" ||
     route === "/library/cached" ||
     route === "/library/kept" ||
     route === "/intelligence"
@@ -154,6 +154,8 @@
                         initialPanel: routeQuery.get("provider") ?? "",
                         administrator,
                         onOpenSetup: reopenSetup,
+                        onboardingState,
+                        onSetupChanged: (value: OnboardingState) => { onboardingState = value; },
                       }
                     : route === "/activity"
                       ? { administrator }
@@ -166,7 +168,7 @@
     if (!current.user?.isAdministrator) return;
     try {
       onboardingState = await onboarding.status();
-      onboardingOpen = onboardingState.shouldRedirectToSetup || onboardingState.setupOpen;
+      if (onboardingState.shouldRedirectToSetup) window.location.hash = "#/settings/setup";
     } catch (cause) {
       onboardingError = cause instanceof Error ? cause.message : "Setup status is unavailable.";
     }
@@ -176,7 +178,7 @@
     if (!session?.user?.isAdministrator) return;
     try {
       onboardingState = await onboarding.reopen();
-      onboardingOpen = true;
+      window.location.hash = "#/settings/setup";
       onboardingError = "";
     } catch (cause) {
       onboardingError = cause instanceof Error ? cause.message : "Setup could not be reopened.";
@@ -253,10 +255,8 @@
   });
 
   $effect(() => {
-    if (onboardingOpen && !OnboardingDialog) {
-      void import("$lib/components/OnboardingDialog.svelte").then(({ default: dialog }) => {
-        OnboardingDialog = dialog;
-      });
+    if (session?.backendConfigured === false && !BackendSetupPanel) {
+      void import("$lib/components/BackendSetupPanel.svelte").then(({ default: panel }) => BackendSetupPanel = panel);
     }
   });
 
@@ -346,7 +346,6 @@
       await auth.logout();
       liveUpdates.close();
       onboardingState = null;
-      onboardingOpen = false;
       session = await auth.session();
       oidc = await adminOidc.status().catch(() => ({ enabled: false }));
     } catch (cause) {
@@ -420,6 +419,8 @@
       <button class="auth-submit mt-6 w-full" type="button" onclick={() => void bootstrap()}>Try again</button>
     </section>
   </main>
+{:else if session?.backendConfigured === false}
+  {#if BackendSetupPanel}<BackendSetupPanel onReady={bootstrap} />{/if}
 {:else if !session?.authenticated || oidc.linkPending}
   <main class="grid min-h-screen place-items-center p-6">
     <section class="panel w-full max-w-sm p-6 sm:p-8" aria-labelledby="login-title">
@@ -614,6 +615,13 @@
         </div>
       {/if}
 
+      {#if route === "/" && administrator && onboardingState && !onboardingState.completed}
+        <section class="panel p-5 m-4 space-y-2" aria-label="Setup progress">
+          <h2>Continue setting up Allstarr</h2><p>Your choices are saved. Review sources, imported songs and household settings when you are ready.</p>
+          <ul>{#each (onboardingState.steps ?? []).filter((step) => step.state === "pending").slice(0, 3) as step}<li>{step.title} · {step.required ? "Required" : "Optional"}</li>{/each}</ul>
+          <a class="button" href="#/settings/setup">Continue setup</a>
+        </section>
+      {/if}
       {#if forbiddenRoute}
         <section class="panel empty-state" aria-labelledby="administrator-required-title">
           <span class="empty-orbit" aria-hidden="true">✦</span>
@@ -714,15 +722,4 @@
     </Dialog.Portal>
   </Dialog.Root>
 
-  {#if onboardingState && OnboardingDialog}
-    <OnboardingDialog
-      bind:open={onboardingOpen}
-      state={onboardingState}
-      onComplete={onboarding.complete}
-      onChanged={(next: OnboardingState) => {
-        onboardingState = next;
-        onboardingOpen = next.shouldRedirectToSetup || next.setupOpen;
-      }}
-    />
-  {/if}
 {/if}
