@@ -19,7 +19,10 @@
 {#snippet summary()}
   <span class="route-summary">
     <strong>{local ? name(backend) : "External [A]"}</strong>
-    <small>{local ? "Local library" : `${routes.length} mapped ${routes.length === 1 ? "provider" : "providers"}`}</small>
+    <small>{local
+      ? track.targetStatus === "duplicate" ? "Duplicate · not added twice" : "Local library"
+      : track.targetStatus === "streamed" ? "Streams through Allstarr"
+      : `${routes.length} mapped ${routes.length === 1 ? "provider" : "providers"}`}</small>
   </span>
 {/snippet}
 

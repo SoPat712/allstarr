@@ -10,6 +10,23 @@ namespace allstarr.Tests;
 public sealed class ProtocolSupportMatrixTests
 {
     [Fact]
+    public void Controllers_KeepCatalogAndAudioClientsBehindProviderContracts()
+    {
+        var controllers = Path.Combine(FindRepositoryRoot(), "allstarr", "Controllers");
+        var sources = Directory.EnumerateFiles(controllers, "JellyfinController*.cs")
+            .Concat(Directory.EnumerateFiles(controllers, "SubsonicController*.cs"))
+            .Select(File.ReadAllText)
+            .ToArray();
+        Assert.NotEmpty(sources);
+        foreach (var concreteClient in new[]
+                 {
+                     "DeezerProvider", "DeezerMediaClient", "DeezerHttpClient",
+                     "QobuzProvider", "QobuzMediaClient", "AppleMusicClient", "SpotifyPathfinderPlaylistClient"
+                 })
+            Assert.All(sources, source => Assert.DoesNotContain(concreteClient, source, StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void SourceLock_MatchesPinnedJellyfinOpenApi()
     {
         using var sourceLock = ReadFixture("protocol-source-lock.json");

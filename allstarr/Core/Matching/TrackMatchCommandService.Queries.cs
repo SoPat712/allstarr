@@ -310,17 +310,36 @@ public sealed partial class TrackMatchCommandService
             .Select(item => item.ProviderTrackIdentityId!.Value)
             .Distinct()
             .ToArray();
-        var sourceIdentities = await db.ProviderTrackIdentities.AsNoTracking()
-            .Where(item => identityIds.Contains(item.Id) &&
+        var externalHashes = snapshots.Select(item => item.ExternalIdHash).Distinct().ToArray();
+        var sourceCandidates = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.ResourceKind == ProviderResourceKind.Track &&
+                           (identityIds.Contains(item.Id) || externalHashes.Contains(item.ExternalIdHash)) &&
                            (item.Verification == ProviderIdentityVerification.Verified ||
                             item.Verification == ProviderIdentityVerification.Pinned))
             .ToListAsync(cancellationToken);
+        var accountScopes = snapshots.Where(item => item.ProviderAccountId.HasValue)
+            .Select(item => (item.ProviderId.ToLowerInvariant(), item.ProviderAccountId, item.ExternalIdHash))
+            .ToHashSet();
+        var catalogScopes = snapshots.Select(item => (item.ProviderId.ToLowerInvariant(), item.ExternalIdHash))
+            .ToHashSet();
+        var sourceIdentities = sourceCandidates.Where(identity =>
+                identity.Scope == ProviderIdentityScope.Account && identity.ProviderAccountId.HasValue &&
+                accountScopes.Contains((identity.ProviderId.ToLowerInvariant(), identity.ProviderAccountId, identity.ExternalIdHash)) ||
+                identity.Scope == ProviderIdentityScope.Catalog && !identity.ProviderAccountId.HasValue &&
+                catalogScopes.Contains((identity.ProviderId.ToLowerInvariant(), identity.ExternalIdHash)))
+            .ToArray();
+        var decisions = await LatestDecisions(db.TrackMatches.AsNoTracking()
+                .Where(item => item.OwnerUserId == ownerUserId &&
+                               ownedSnapshotIds.Contains(item.ExternalSnapshotId)))
+            .ToArrayAsync(cancellationToken);
         var canonicalIds = sourceIdentities
             .Select(item => item.CanonicalRecordingId)
+            .Concat(decisions.Where(item => item.CanonicalRecordingId.HasValue)
+                .Select(item => item.CanonicalRecordingId!.Value))
             .Distinct()
             .ToArray();
         var identities = canonicalIds.Length == 0
-            ? sourceIdentities
+            ? sourceIdentities.ToList()
             : await db.ProviderTrackIdentities.AsNoTracking()
                 .Where(item => canonicalIds.Contains(item.CanonicalRecordingId) &&
                                item.ResourceKind == ProviderResourceKind.Track &&
@@ -329,10 +348,6 @@ public sealed partial class TrackMatchCommandService
                 .ToListAsync(cancellationToken);
         var overrides = await ManualTrackOverrides.LoadAsync(
             db, actor.UserId, snapshots, cancellationToken);
-        var decisions = await LatestDecisions(db.TrackMatches.AsNoTracking()
-                .Where(item => item.OwnerUserId == ownerUserId &&
-                                   ownedSnapshotIds.Contains(item.ExternalSnapshotId)))
-            .ToArrayAsync(cancellationToken);
         return new(snapshots, identities, overrides, decisions);
     }
 }

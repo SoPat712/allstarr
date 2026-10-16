@@ -47,6 +47,16 @@ const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
 });
 
 describe("playlist presentation", () => {
+  it("distinguishes streamed, local, duplicate, and unresolved outcomes in plain words", () => {
+    expect(playlistOutcomeLabel("streamed_through_allstarr")).toBe("Streams through Allstarr");
+    expect(playlistOutcomeLabel("included_native_backend_item", "Jellyfin playlist"))
+      .toBe("Will be included in Jellyfin playlist");
+    expect(playlistOutcomeLabel("skipped_duplicate", "Jellyfin playlist"))
+      .toBe("Duplicate: not added twice to Jellyfin playlist");
+    expect(playlistOutcomeLabel("skipped_unresolved", "Jellyfin playlist"))
+      .toBe("Not added to Jellyfin playlist: no playable match yet");
+  });
+
   it("uses provider colors and a neutral unresolved segment", () => {
     expect(providerColor("unresolved")).toBe("var(--color-ink-muted)");
     expect(providerColor("unmatched")).toBe("var(--color-ink-muted)");

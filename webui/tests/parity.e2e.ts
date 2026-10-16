@@ -930,6 +930,61 @@ test("core release does not expose the deferred Intelligence route", async ({ pa
   expect(intelligenceRequests).toEqual([]);
 });
 
+for (const width of [390, 1280]) {
+  for (const theme of ["light", "dark"] as const) {
+    test(`Playlist detail distinguishes streamed, local, duplicate and unresolved rows at ${width} in ${theme}`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+      await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+      await mockApi(page);
+      const rows = [
+        { title: "Streamed song", routeKind: "external", routeProviderId: "apple-musickit",
+          matchState: "accepted", targetStatus: "streamed", outcomeCode: "streamed_through_allstarr",
+          targetEligible: false, providerRoutes: [{ providerId: "apple-musickit", externalId: "12345", pinned: false }] },
+        { title: "Local song", routeKind: "local", matchState: "accepted", targetStatus: "included",
+          outcomeCode: "included_native_backend_item", targetEligible: true, providerRoutes: [] },
+        { title: "Duplicate song", routeKind: "local", matchState: "accepted", targetStatus: "duplicate",
+          outcomeCode: "skipped_duplicate", targetEligible: false, providerRoutes: [] },
+        { title: "Unresolved song", routeKind: "unresolved", matchState: "unresolved", targetStatus: "unresolved",
+          outcomeCode: "skipped_unresolved", targetEligible: false, providerRoutes: [] },
+      ].map((row, index) => ({ ...row, sourcePosition: index, position: index + 1,
+        externalSnapshotId: `snapshot-${index}`, artists: ["Artist"], durationMs: 180_000 }));
+      await page.route((url) => url.pathname === "/api/admin/playlist-links/playlist-link", (route) => route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: "playlist-link", snapshotId: "playlist-snapshot", snapshotVersion: 1,
+          name: "Test playlist", sourceProviderId: "spotify", targetProtocol: "jellyfin",
+          targetPlaylistId: "jellyfin-playlist", projectionMode: "resolved", retrievedAt: "2026-10-16",
+          trackCount: 4, localCount: 2, externalCount: 1, unresolvedCount: 1,
+          matchedCount: 3, reviewCount: 0, rejectedCount: 0, playableCount: 3,
+          durationMs: 720_000, unknownDurationCount: 0, routeCoverage: [], tracks: rows,
+          clientProjection: { protocolId: "allstarr-vpl-playlist-link", projectionMode: "resolved",
+            trackCount: 4, tracks: rows.map((row) => ({ ...row, itemId: `item-${row.sourcePosition}` })) },
+        }),
+      }));
+      await page.goto("#/library/playlists");
+      await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+      const details = page.getByRole("dialog", { name: "Test playlist" });
+      await expect(details.locator("tbody tr")).toHaveCount(4);
+      const streamed = details.getByRole("row").filter({ hasText: "Streamed song" });
+      await expect(streamed).toContainText("Streams through Allstarr");
+      await expect(streamed).not.toContainText(/unresolved|failed|no playable match/i);
+      await expect(details.getByRole("row").filter({ hasText: "Local song" })).toContainText("Local library");
+      await expect(details.getByRole("row").filter({ hasText: "Duplicate song" })).toContainText("Duplicate · not added twice");
+      await expect(details.getByRole("row").filter({ hasText: "Unresolved song" })).toContainText("Not playable");
+      const labels = ["Streams through Allstarr", "Will be included in Jellyfin playlist",
+        "Duplicate: not added twice to Jellyfin playlist", "Not added to Jellyfin playlist: no playable match yet"];
+      for (const [index, row] of rows.entries()) {
+        await details.getByRole("button", { name: `Technical details for ${row.title}`, exact: true }).click();
+        await expect(page.locator(".track-technical")).toContainText(labels[index]);
+        await page.keyboard.press("Escape");
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await testInfo.attach("playlist-row-outcomes", { body: await page.screenshot(), contentType: "image/png" });
+    });
+  }
+}
+
 for (const viewport of viewports) {
   test.describe(`${viewport.width}x${viewport.height}`, () => {
     test.use({ viewport, colorScheme: process.env.ALLSTARR_SCREENSHOT_THEME === "dark" ? "dark" : "light" });

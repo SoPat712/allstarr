@@ -200,6 +200,70 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("provider")]
+    [InlineData("account")]
+    [InlineData("hash")]
+    public async Task Preview_DoesNotStreamAnUnlinkedIdentityOutsideTheSourceScope(string mismatch)
+    {
+        await SeedSourceIdentityAsync(mismatch);
+        var context = Context(_userA, "principal-a");
+        var external = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-safe"));
+        var link = await _playlists.CreateLinkAsync(context, Link());
+        var source = await _playlists.CaptureSourceSnapshotAsync(context, link.Id,
+            new PlaylistSourceSnapshotInput(1, "revision", null, "Playlist", null, null, Hash("source"),
+                [new(0, external.Id, Hash("entry"))]));
+
+        var row = Assert.Single((await _playlists.ReadPreviewAsync(context, link.Id, source.Id)).Entries);
+
+        Assert.Equal(PlaylistPreviewEntryStatus.Unresolved, row.Status);
+        Assert.Equal("skipped_unresolved", row.OutcomeCode);
+        Assert.Equal(TrackRouteKind.Unresolved, row.ResolvedRoute!.Kind);
+    }
+
+    [Theory]
+    [InlineData("identity-only")]
+    [InlineData("accepted")]
+    [InlineData("unresolved")]
+    [InlineData("unlinked")]
+    public async Task Preview_DistinguishesStreamedLocalDuplicateAndUnresolvedRows(string externalDecision)
+    {
+        var context = Context(_userA, "principal-a");
+        var identity = await SeedSourceIdentityAsync("valid");
+        var streamed = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "track-safe") with
+        {
+            ProviderTrackIdentityId = externalDecision == "unlinked" ? null : identity.Id
+        });
+        if (externalDecision is "accepted" or "unresolved")
+            await _matches.RecordDecisionAsync(context, new MatchDecisionInput(
+                streamed.Id, null, identity.CanonicalRecordingId,
+                externalDecision == "accepted" ? TrackMatchState.Accepted : TrackMatchState.Unresolved,
+                externalDecision == "accepted" ? .95 : 0, .8, 1, streamed.SnapshotVersion, 1,
+                TrackMatchDecisionEngine.AlgorithmVersion, "policy-v1", "[]", "[]", "[]"));
+        var local = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "local"));
+        await _matches.RecordDecisionAsync(context, new MatchDecisionInput(
+            local.Id, _localTrack, null, TrackMatchState.Accepted, .95, .8, 1,
+            local.SnapshotVersion, 1, TrackMatchDecisionEngine.AlgorithmVersion,
+            "policy-v1", "[]", "[]", "[]"));
+        var unresolved = await _matches.CaptureSnapshotAsync(context, Snapshot(1, "missing"));
+        var link = await _playlists.CreateLinkAsync(context, Link());
+        var source = await _playlists.CaptureSourceSnapshotAsync(context, link.Id,
+            new PlaylistSourceSnapshotInput(1, "revision", null, "Mixed playlist", null, null, Hash("mixed"),
+                [new(0, streamed.Id, Hash("streamed")), new(1, local.Id, Hash("local")),
+                    new(2, local.Id, Hash("duplicate")), new(3, unresolved.Id, Hash("missing"))]));
+
+        var preview = await _playlists.ReadPreviewAsync(context, link.Id, source.Id);
+
+        Assert.Equal(["Streamed", "Included", "Duplicate", "Unresolved"],
+            preview.Entries.Select(item => item.Status.ToString()));
+        Assert.Equal(["streamed_through_allstarr", "included_native_backend_item", "skipped_duplicate", "skipped_unresolved"],
+            preview.Entries.Select(item => item.OutcomeCode));
+        Assert.Equal([false, true, false, false], preview.Entries.Select(item => item.TargetEligible));
+        Assert.Equal(TrackMatchState.Accepted, preview.Entries[0].State);
+        Assert.Equal(TrackRouteKind.External, preview.Entries[0].ResolvedRoute!.Kind);
+        Assert.Equal(preview.Entries[1].SourceEntryId, preview.Entries[2].DuplicateOfSourceEntryId);
+    }
+
+    [Theory]
     [InlineData("foreign-owner")]
     [InlineData("provider")]
     [InlineData("account")]

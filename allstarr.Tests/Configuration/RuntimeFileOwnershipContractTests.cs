@@ -4,6 +4,20 @@ namespace allstarr.Tests;
 
 public sealed class RuntimeFileOwnershipContractTests
 {
+    [Fact]
+    public void ProductionSources_DoNotContainLegacyTenantScope()
+    {
+        var productionRoot = Path.Combine(FindRepositoryRoot(), "allstarr");
+        var violations = Directory.EnumerateFiles(productionRoot, "*.cs", SearchOption.AllDirectories)
+            .Where(path => !Path.GetRelativePath(productionRoot, path).Split(Path.DirectorySeparatorChar)
+                .Any(segment => segment is "bin" or "obj"))
+            .Where(path => File.ReadAllText(path).Contains("TenantId", StringComparison.Ordinal))
+            .Select(path => Path.GetRelativePath(productionRoot, path))
+            .ToArray();
+
+        Assert.Empty(violations);
+    }
+
     private static readonly string[] WriterMarkers =
     [
         "File.WriteAll", "IOFile.WriteAll", "File.AppendAll", "IOFile.AppendAll",
