@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderAccount, ProviderDefinition, ProviderHealth } from "./api";
 import {
+  supportedAudiences,
+  sharingDescription,
   accountSettings,
   accountSubtitle,
   accountOwnershipLabel,
@@ -234,4 +236,16 @@ it("account cards distinguish the owner from the creator", () => {
   expect(accountOwnershipLabel({ ...account(), ownerUserId: "owner", ownerDisplayName: "Listener", createdByUserId: "owner", creatorDisplayName: "Listener" }))
     .toBe("Personal · Listener");
   expect(accountOwnershipLabel(account())).toBe("Personal · Unknown user");
+});
+
+
+describe("account audience choices", () => {
+  it("offers only audiences declared by the server", () => {
+    expect(supportedAudiences({ supportedAudiences: ["Personal"] })).toEqual(["Personal"]);
+    expect(supportedAudiences({})).toEqual(["Personal", "Shared"]);
+  });
+  it("explains household playback and scrobble fallback", () => {
+    expect(sharingDescription({ providerId: "lastfm" })).toContain("without their own account");
+    expect(sharingDescription({ sharingDescription: "Everyone can import playlists." })).toBe("Everyone can import playlists.");
+  });
 });

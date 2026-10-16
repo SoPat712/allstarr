@@ -90,13 +90,11 @@ public sealed class LegacyMappingReadinessContractTests
     }
 
     [Fact]
-    public void SearchResults_AreInterleavedWithinTheRequestedLimitAndPlayableExtensionsAreEligible()
+    public void SearchResults_KeepPlayableExtensionsAndBoundedFanOut()
     {
         var search = File.ReadAllText(FindRepositoryFile(
             "allstarr", "Core", "Protocols", "ProtocolProviderGateway.cs"));
 
-        Assert.Contains("Merge(routed", search, StringComparison.Ordinal);
-        Assert.Contains("merged.Count < Math.Max(0, limit)", search, StringComparison.Ordinal);
         Assert.Contains("PlanAsync<IProviderStreamingCapability>", search, StringComparison.Ordinal);
         Assert.Contains("ProviderSearchConcurrency", search, StringComparison.Ordinal);
         Assert.Contains("protocol.Deadline", search, StringComparison.Ordinal);

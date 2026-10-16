@@ -1,7 +1,10 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { ExternalLink } from "@lucide/svelte";
-  import { ApiError, extensions, type ExtensionPackage, type ExtensionSession } from "$lib/api";
+  import { ApiError, extensions, sources, type ProviderAccount, type ExtensionPackage, type ExtensionSession } from "$lib/api";
+  import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
+  import SelectField from "$lib/components/SelectField.svelte";
+  import { audienceLabel, sharingDescription } from "$lib/sources";
   import { AlertDialog } from "$lib/components/ui/alert-dialog";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
@@ -11,6 +14,12 @@
 
   let session = $state<ExtensionSession | null>(null);
   let loadFailed = $state(false);
+  let accounts = $state<ProviderAccount[]>([]);
+  let users = $state<{ id: string; displayName: string }[]>([]);
+  let accountId = $state("");
+  let accessOpen = $state(false);
+  let adding = $state(false);
+  const selectedAccount = $derived(accounts.find(account => account.id === accountId) ?? null);
   let busy = $state<"" | "start" | "grant" | "clear">("");
   let grant = $state("");
   let message = $state("");
@@ -33,11 +42,36 @@
 
   async function load(target: ExtensionPackage) {
     try {
-      session = await extensions.session(target);
+      session = await extensions.session(target, accountId || undefined);
+      accountId = session.accountId ?? accountId;
       loadFailed = false;
+      const available = await sources.accounts();
+      accounts = available.accounts.filter(account => account.providerId === target.extensionId);
+      users = available.audienceUsers ?? [];
     } catch {
       loadFailed = true;
     }
+  }
+
+  async function addConnection() {
+    if (adding || busy) return;
+    adding = true;
+    problem = "";
+    try {
+      const account = await sources.create({ providerId: item.extensionId,
+        displayName: `${item.displayName} ${accounts.length + 1}`, scope: "Personal", enabled: true });
+      accountId = account.id;
+      await load(item);
+      await onchanged();
+    } catch (cause) {
+      problem = cause instanceof Error ? cause.message : "The connection could not be added.";
+    } finally { adding = false; }
+  }
+
+  async function accessSaved(value: string) {
+    message = value;
+    await load(item);
+    await onchanged();
   }
 
   async function act(kind: "start" | "grant" | "clear", operation: () => Promise<ExtensionSession>, success: (next: ExtensionSession) => string) {
@@ -75,7 +109,7 @@
   }
 
   function start() {
-    return act("start", () => extensions.startSession(item), (next) =>
+    return act("start", () => extensions.startSession(item, accountId || undefined), (next) =>
       next.state === "signed_in" ? "Sign-in restored." : "Verification started. Open the verification page to continue.");
   }
 
@@ -87,16 +121,16 @@
       problem = sessionReasonText("grant_required");
       return;
     }
-    if (await act("grant", () => extensions.completeSession(item, value), () => "Signed in.")) grant = "";
+    if (await act("grant", () => extensions.completeSession(item, value, accountId || undefined), () => "Signed in.")) grant = "";
   }
 
   function cancel() {
     grant = "";
-    return act("clear", () => extensions.clearSession(item), () => "Sign-in cancelled.");
+    return act("clear", () => extensions.clearSession(item, accountId || undefined), () => "Sign-in cancelled.");
   }
 
   async function signOut() {
-    if (await act("clear", () => extensions.clearSession(item), () => "Signed out.")) confirmOpen = false;
+    if (await act("clear", () => extensions.clearSession(item, accountId || undefined), () => "Signed out.")) confirmOpen = false;
   }
 </script>
 
@@ -108,6 +142,18 @@
     </span>
     {#if summary}<Badge state={summary.badge}>{summary.label}</Badge>{/if}
   </header>
+  {#if session?.accountId}
+    <div class="extension-session-connection">
+      <label class="field"><span>Connection</span><SelectField label="Signed connection" bind:value={accountId}
+        options={accounts.map(account => ({ value: account.id, label: `${account.customLabel || account.displayName} · ${audienceLabel(account)}` }))}
+        onchange={() => void load(item)} /></label>
+      {#if selectedAccount}<p>{selectedAccount.scope === "Shared" ? sharingDescription(selectedAccount) : "Only the selected owner can use this sign-in."}</p>{/if}
+      <div class="extension-session-actions">
+        {#if selectedAccount?.canChangeAudience}<Button size="sm" variant="secondary" onclick={() => accessOpen = true}>Edit access</Button>{/if}
+        <Button size="sm" variant="outline" disabled={adding || Boolean(busy)} onclick={() => void addConnection()}>{adding ? "Adding…" : "Add Personal connection"}</Button>
+      </div>
+    </div>
+  {/if}
   {#if problem}<p class="notice-error" role="alert">{problem}</p>{:else if message}<p class="extension-session-message" role="status">{message}</p>{/if}
   {#if session?.lastRenewalFailure}<p class="notice-error" role="status">{renewalFailureText(session.lastRenewalFailure)}</p>{/if}
 
@@ -154,3 +200,6 @@
     <footer class="dialog-actions"><AlertDialog.Cancel class={buttonVariants({ variant: "secondary" })} disabled={Boolean(busy)}>Cancel</AlertDialog.Cancel><Button variant="destructive" disabled={Boolean(busy)} onclick={() => void signOut()}>{busy === "clear" ? "Signing out…" : "Sign out"}</Button></footer>
   </AlertDialog.Content></AlertDialog.Portal>
 </AlertDialog.Root>
+
+
+<AccountAccessDialog bind:open={accessOpen} account={selectedAccount} {users} onSaved={accessSaved} />

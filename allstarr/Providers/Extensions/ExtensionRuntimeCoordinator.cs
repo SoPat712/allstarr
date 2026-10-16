@@ -6,6 +6,7 @@ using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.DataProtection;
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace allstarr.Core.Extensions;
 
@@ -27,6 +28,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly ConcurrentDictionary<Guid, ExtensionSandbox> _sandboxes = new();
     private readonly object _runtimeMutationLock = new();
     private readonly SemaphoreSlim _runtimeGate = new(1, 1);
+    private readonly SemaphoreSlim _sessionAccountGate = new(1, 1);
+    private const string SessionSourceSetting = "__extensionSessionSource";
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -104,13 +107,22 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                     if (package.State != ExtensionPackageState.Active ||
                         !_sandboxes.TryGetValue(packageId, out var sandbox) || !sandbox.HasSignedSession)
                         return false;
-                    var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
-                    if (view == null) return false;
-                    var failed = view.LastRenewalFailure != null;
-                    await _controlPlane.WriteLogAsync(packageId, failed ? "warning" : "information",
-                        failed ? "session.renewal-failed" : "session.renewed",
-                        failed ? $"Automatic renewal failed ({view.LastRenewalFailure}); the existing sign-in was retained."
-                            : "Sign-in renewed automatically.", "extension-session", cancellationToken);
+                    await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+                    var accounts = await db.ProviderAccounts.AsNoTracking()
+                        .Where(item => item.ProviderId == package.ExtensionId && item.Enabled &&
+                            (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)))
+                        .Select(item => item.Id).ToListAsync(cancellationToken);
+                    foreach (var accountId in accounts)
+                    {
+                        using var scope = sandbox.OpenSignedSessionAccount(accountId);
+                        var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
+                        if (view == null) continue;
+                        var failed = view.LastRenewalFailure != null;
+                        await _controlPlane.WriteLogAsync(packageId, failed ? "warning" : "information",
+                            failed ? "session.renewal-failed" : "session.renewed",
+                            failed ? $"Automatic renewal failed ({view.LastRenewalFailure}); the existing sign-in was retained."
+                                : "Sign-in renewed automatically.", "extension-session", cancellationToken);
+                    }
                     return true;
                 }, cancellationToken);
             }
@@ -288,6 +300,11 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId));
+        if (manifest.SignedSession != null)
+        {
+            var account = await EnsureDefaultSessionAccountAsync(package, manifest.DisplayName, cancellationToken);
+            sandbox.BindSignedSessionAccounts(account.Id, SessionAccountIsCurrentAsync);
+        }
         if (manifest.Capabilities.SelectMany(item => item.Hooks).Any(hook =>
                 !(downloadBackedStreaming && hook is "getStreamLease" or "probeStream") &&
                 !sandbox.HasCallableHook(hook)))
@@ -332,17 +349,19 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             manifest.Description ?? $"{manifest.DisplayName} extension provider", ProviderOrigin.Extension, manifest.SdkVersion, "1.0",
             manifest.Capabilities.Select(item => new ProviderCapabilityDescriptor(item.Kind,
                 ProviderCapabilitySupportState.Supported,
-                item.AccountRequired
+                item.AccountRequired || manifest.SignedSession != null
                     ? ProviderAccountRequirement.Required
                     : item.AccountScopes.Count > 0
                         ? ProviderAccountRequirement.Optional
                         : ProviderAccountRequirement.None,
-                "1.0", item.Hooks, item.AccountScopes)),
+                "1.0", item.Hooks, item.AccountScopes.Count > 0 || manifest.SignedSession != null
+                    ? [ProviderAccountScope.Shared, ProviderAccountScope.Personal] : [])),
             new ProviderPermissionDescriptor(origins, cacheKeys.Count != 0, secretKeys),
             settings,
             branding,
             entryPoint: manifest.EntryPoint,
-            healthProbe: manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Health && item.Hooks.Count > 0));
+            healthProbe: manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Health && item.Hooks.Count > 0))
+        { UsesSignedSession = manifest.SignedSession != null };
         return new RuntimeBuild(
             new ProviderRegistration(descriptor, implementations),
             sandbox);
@@ -362,13 +381,19 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         "preparedContext@1"
     };
 
-    public async Task<ExtensionSessionView> SignedSessionStatusAsync(Guid packageId, CancellationToken cancellationToken = default) =>
-        await RequireSandbox(packageId).SignedSessionStatusAsync(cancellationToken);
+    public async Task<ExtensionSessionView> SignedSessionStatusAsync(Guid packageId,
+        CancellationToken cancellationToken = default, Guid? accountId = null)
+    {
+        var sandbox = RequireSandbox(packageId);
+        using var scope = sandbox.OpenSignedSessionAccount(await ResolveSessionAccountIdAsync(packageId, accountId, cancellationToken));
+        return await sandbox.SignedSessionStatusAsync(cancellationToken);
+    }
 
     public async Task<ExtensionSessionView> StartSignedSessionVerificationAsync(
-        Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
+        Guid packageId, long expectedRevision, CancellationToken cancellationToken = default, Guid? accountId = null)
     {
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
+        using var scope = sandbox.OpenSignedSessionAccount(await ResolveSessionAccountIdAsync(packageId, accountId, cancellationToken));
         var view = await sandbox.StartSignedSessionVerificationAsync(cancellationToken);
         await LogSessionAsync(packageId, view, view.State == ExtensionSessionStates.SignedIn
             ? "Sign-in restored without verification."
@@ -377,21 +402,109 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     }
 
     public async Task<ExtensionSessionView> CompleteSignedSessionGrantAsync(
-        Guid packageId, long expectedRevision, string grant, CancellationToken cancellationToken = default)
+        Guid packageId, long expectedRevision, string grant, CancellationToken cancellationToken = default, Guid? accountId = null)
     {
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
+        using var scope = sandbox.OpenSignedSessionAccount(await ResolveSessionAccountIdAsync(packageId, accountId, cancellationToken));
         var view = await sandbox.CompleteSignedSessionGrantAsync(grant, cancellationToken);
         await LogSessionAsync(packageId, view, "Sign-in completed.", "session.granted");
         return view;
     }
 
     public async Task<ExtensionSessionView> ClearSignedSessionAsync(
-        Guid packageId, long expectedRevision, CancellationToken cancellationToken = default)
+        Guid packageId, long expectedRevision, CancellationToken cancellationToken = default, Guid? accountId = null)
     {
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
+        using var scope = sandbox.OpenSignedSessionAccount(await ResolveSessionAccountIdAsync(packageId, accountId, cancellationToken));
         var view = await sandbox.ClearSignedSessionAsync(cancellationToken);
         await LogSessionAsync(packageId, view, "Sign-in cleared.", "session.cleared");
         return view;
+    }
+
+    private static bool IsSessionSource(ProviderAccountRecord account, string source)
+    {
+        try
+        {
+            using var settings = JsonDocument.Parse(account.SettingsJson);
+            return settings.RootElement.ValueKind == JsonValueKind.Object &&
+                settings.RootElement.TryGetProperty(SessionSourceSetting, out var value) &&
+                value.ValueKind == JsonValueKind.String && value.GetString() == source;
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static bool HasSessionSource(ProviderAccountRecord account)
+    {
+        try
+        {
+            using var settings = JsonDocument.Parse(account.SettingsJson);
+            return settings.RootElement.ValueKind != JsonValueKind.Object ||
+                settings.RootElement.TryGetProperty(SessionSourceSetting, out _);
+        }
+        catch (JsonException) { return true; }
+    }
+
+    private async Task<ProviderAccountRecord> EnsureDefaultSessionAccountAsync(
+        ExtensionPackageRecord package, string displayName, CancellationToken cancellationToken)
+    {
+        await _sessionAccountGate.WaitAsync(cancellationToken);
+        try
+        {
+            await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+            var source = package.RegistryId?.ToString("N") ?? "local";
+            var accounts = await db.ProviderAccounts.AsNoTracking()
+                .Where(item => item.ProviderId == package.ExtensionId).ToListAsync(cancellationToken);
+            var existing = accounts.FirstOrDefault(item => IsSessionSource(item, source));
+            if (existing != null) return existing;
+            var legacyAccount = accounts
+                .Where(item => !HasSessionSource(item))
+                .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault();
+            if (legacyAccount != null)
+            {
+                db.ProviderAccounts.Attach(legacyAccount);
+                var settings = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(legacyAccount.SettingsJson) ?? [];
+                settings[SessionSourceSetting] = JsonSerializer.SerializeToElement(source);
+                legacyAccount.SettingsJson = JsonSerializer.Serialize(settings);
+                legacyAccount.Revision++;
+                legacyAccount.UpdatedAt = DateTimeOffset.UtcNow;
+                db.Entry(legacyAccount).State = EntityState.Modified;
+                await db.SaveChangesAsync(cancellationToken);
+                return legacyAccount;
+            }
+            var now = DateTimeOffset.UtcNow;
+            var account = new ProviderAccountRecord
+            {
+                Id = Guid.CreateVersion7(), ProviderId = package.ExtensionId,
+                DisplayName = displayName, Enabled = true, Revision = 1,
+                CreatedAt = now, UpdatedAt = now,
+                SettingsJson = JsonSerializer.Serialize(new Dictionary<string, string> { [SessionSourceSetting] = source })
+            };
+            db.ProviderAccounts.Add(account);
+            await db.SaveChangesAsync(cancellationToken);
+            return account;
+        }
+        finally { _sessionAccountGate.Release(); }
+    }
+
+    private async Task<Guid> ResolveSessionAccountIdAsync(Guid packageId, Guid? accountId, CancellationToken cancellationToken)
+    {
+        var package = await GetPackageAsync(packageId, cancellationToken);
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        var accounts = await db.ProviderAccounts.AsNoTracking()
+            .Where(item => item.ProviderId == package.ExtensionId).ToListAsync(cancellationToken);
+        var account = accountId.HasValue ? accounts.SingleOrDefault(item => item.Id == accountId)
+            : accounts.FirstOrDefault(item => IsSessionSource(item, package.RegistryId?.ToString("N") ?? "local"));
+        if (account == null) throw new KeyNotFoundException("The extension account was not found.");
+        return account.Id;
+    }
+
+    private async Task<bool> SessionAccountIsCurrentAsync(ProviderAccountContext account, CancellationToken cancellationToken)
+    {
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        return await db.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Id == account.AccountId &&
+            item.ProviderId == account.ProviderId && item.Enabled && item.Revision == account.Revision &&
+            item.OwnerUserId == account.OwnerUserId && item.SecretReferenceId == account.SecretReferenceId &&
+            (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)), cancellationToken);
     }
 
     private Task<ExtensionSandbox> RequireCurrentSandboxAsync(

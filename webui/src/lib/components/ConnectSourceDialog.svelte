@@ -6,7 +6,7 @@
   import { sources, type ProviderAccount, type ProviderDefinition } from "$lib/api";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
-  import { accountSubtitle, accountSettings, secretFromForm, settingDefault } from "$lib/sources";
+  import { supportedAudiences, sharingDescription, accountSubtitle, accountSettings, secretFromForm, settingDefault } from "$lib/sources";
 
   let {
     open = $bindable(false),
@@ -57,6 +57,12 @@
         ownerUserId = currentUserId;
       }
     }
+  });
+
+  $effect(() => {
+    if (!open || account || !selected) return;
+    const allowed = supportedAudiences(selected).filter((value) => administrator || value === "Personal");
+    if (!allowed.includes(scope) && allowed[0]) scope = allowed[0];
   });
 
   async function create(event: SubmitEvent) {
@@ -147,10 +153,10 @@
             <label class="field">
               <span>Who can use it?</span>
               <SelectField name="scope" label="Who can use it?" bind:value={scope} options={[
-                { value: "Personal", label: "Personal" },
-                ...(administrator ? [{ value: "Shared", label: "Shared" }] : []),
+                ...supportedAudiences(selected).filter((value) => administrator || value === "Personal")
+                  .map((value) => ({ value, label: value })),
               ]} />
-              <small>{scope === "Shared" ? "Household users can use this provider connection. Administrators manage it." : administrator ? "Only the selected owner can use this provider connection." : "Only you can use this provider connection."}</small>
+              <small>{scope === "Shared" ? sharingDescription(selected) : administrator ? "Only the selected owner can use this provider connection." : "Only you can use this provider connection."}</small>
             </label>
             {#if scope === "Shared"}
               <label class="toggle-line"><Checkbox name="confirmShare" required /><span>I agree to share provider access with household users.<small>Other users may consume this account’s provider limits. Credentials stay hidden. Supported capabilities may include playlists and scrobbling.</small></span></label>

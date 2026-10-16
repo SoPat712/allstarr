@@ -5,6 +5,15 @@ namespace allstarr.Tests;
 
 public class FuzzyMatcherTests
 {
+    [Theory]
+    [InlineData("Daft Punk Get Lucky")]
+    [InlineData("Get Lucky Daft Punk")]
+    [InlineData("Get Lucky Daft Punk, Pharrell Williams, Nile Rodgers")]
+    public void StripDecorators_DoesNotTreatPartOfAnArtistNameAsAFeaturedCredit(string title)
+    {
+        Assert.Equal(title, FuzzyMatcher.StripDecorators(title));
+    }
+
     [Fact]
     public void Artist_aware_search_uses_the_primary_credit()
     {

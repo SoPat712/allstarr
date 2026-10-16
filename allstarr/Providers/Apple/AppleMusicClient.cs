@@ -68,9 +68,11 @@ public sealed class AppleMusicClient(HttpClient http, AppleWebTokenProvider toke
         if (context.IsExpired(DateTimeOffset.UtcNow)) return new(ProviderErrorKind.CapabilityUnavailable);
         if (!personal) return null;
         if (context.Actor.Kind == ProviderActorKind.PublicRead) return new(ProviderErrorKind.Forbidden);
-        if (context.Account is not { Scope: ProviderAccountScope.Personal, SecretReferenceId: not null } account)
+        if (context.Account is not { SecretReferenceId: not null } account)
             return new(ProviderErrorKind.AccountNeedsConfiguration);
-        return account.ProviderId != ProviderId || account.OwnerUserId != context.Actor.EffectiveUserId
+        return account.ProviderId != ProviderId ||
+            account.Scope == ProviderAccountScope.Personal && account.OwnerUserId != context.Actor.EffectiveUserId ||
+            account.Scope == ProviderAccountScope.Shared && !context.Policy.AllowSharedAccount
             ? new(ProviderErrorKind.Forbidden) : null;
     }
 

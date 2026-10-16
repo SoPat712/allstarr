@@ -9,6 +9,7 @@ using System.Text.RegularExpressions;
 using Jint;
 using Jint.Native;
 using allstarr.Core.Extensions;
+using allstarr.Core.Capabilities;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using allstarr.Models.Domain;
@@ -909,6 +910,24 @@ public class ExtensionSandbox
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;
 
+    private Func<ProviderAccountContext, CancellationToken, Task<bool>>? _signedAccountValidator;
+
+    public void BindSignedSessionAccounts(Guid defaultAccountId,
+        Func<ProviderAccountContext, CancellationToken, Task<bool>> validator)
+    {
+        _signedAccountValidator = validator;
+        _hostBridge.BindSessionAccounts(defaultAccountId, account =>
+            validator(account, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult());
+    }
+
+    public IDisposable OpenSignedSessionAccount(Guid accountId) => _hostBridge.OpenSessionAccount(accountId);
+    internal IDisposable OpenSignedSessionAccount(ProviderAccountContext account) =>
+        _hostBridge.OpenSessionAccount(account.AccountId, account);
+
+    internal async Task<bool> ValidateSignedSessionAccountAsync(ProviderAccountContext? account, CancellationToken token) =>
+        !HasSignedSession || account != null && account.Enabled && account.ProviderId == Id &&
+        (_signedAccountValidator == null || await _signedAccountValidator(account, token));
+
     public Task<ExtensionSessionView?> RefreshSignedSessionIfDueAsync(CancellationToken cancellationToken = default) =>
         _hostBridge.RefreshSessionIfDueAsync(cancellationToken);
     internal Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
@@ -1185,6 +1204,12 @@ public partial class ExtensionHostBridge
     private readonly string _storageFile;
     private readonly ExtensionRuntimePermissionSet _permissions;
     private readonly ExtensionSignedSessionClient? _signedSession;
+    private readonly Func<Guid, bool, ExtensionSignedSessionClient>? _accountSessionFactory;
+    private readonly Dictionary<Guid, ExtensionSignedSessionClient> _accountSessions = new();
+    private readonly AsyncLocal<Guid?> _sessionAccount = new();
+    private readonly AsyncLocal<ProviderAccountContext?> _sessionAccountContext = new();
+    private Func<ProviderAccountContext, bool>? _sessionAccountValidator;
+    private bool _sessionsRequireAccount;
     private readonly string _extensionId;
     private readonly Dictionary<string, ExtensionHttpFailureState> _httpFailureStates =
         new(StringComparer.Ordinal);
@@ -1218,6 +1243,11 @@ public partial class ExtensionHostBridge
                 sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory),
                 extensionId ?? signedSession.Namespace,
                 sessionStateDirectory == null ? null : _folderPath);
+            var sourceDirectory = sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory);
+            _accountSessionFactory = (accountId, adopt) => new ExtensionSignedSessionClient(
+                signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
+                Path.Combine(sourceDirectory, "accounts", accountId.ToString("N")),
+                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null);
         }
         LoadStorage();
     }
@@ -1229,19 +1259,66 @@ public partial class ExtensionHostBridge
     public object SessionStartVerification() => RequireSignedSession().StartVerification();
     public object SessionCompleteGrant(string? grant) => RequireSignedSession().CompleteGrant(grant);
     public object SessionClear() => RequireSignedSession().Clear();
-    internal Task<ExtensionSessionView> SessionViewAsync(CancellationToken cancellationToken) =>
-        RequireSignedSession().ViewAsync(cancellationToken);
-    internal Task<ExtensionSessionView> SessionBeginViewAsync(CancellationToken cancellationToken) =>
-        RequireSignedSession().StartVerificationViewAsync(cancellationToken);
-    internal Task<ExtensionSessionView> SessionCompleteViewAsync(string? grant, CancellationToken cancellationToken) =>
-        RequireSignedSession().CompleteGrantViewAsync(grant, cancellationToken);
-    internal Task<ExtensionSessionView> SessionClearViewAsync(CancellationToken cancellationToken) =>
-        RequireSignedSession().ClearViewAsync(cancellationToken);
+    internal async Task<ExtensionSessionView> SessionViewAsync(CancellationToken cancellationToken) =>
+        (await RequireSignedSession().ViewAsync(cancellationToken)) with { AccountId = _sessionAccount.Value };
+    internal async Task<ExtensionSessionView> SessionBeginViewAsync(CancellationToken cancellationToken) =>
+        (await RequireSignedSession().StartVerificationViewAsync(cancellationToken)) with { AccountId = _sessionAccount.Value };
+    internal async Task<ExtensionSessionView> SessionCompleteViewAsync(string? grant, CancellationToken cancellationToken) =>
+        (await RequireSignedSession().CompleteGrantViewAsync(grant, cancellationToken)) with { AccountId = _sessionAccount.Value };
+    internal async Task<ExtensionSessionView> SessionClearViewAsync(CancellationToken cancellationToken) =>
+        (await RequireSignedSession().ClearViewAsync(cancellationToken)) with { AccountId = _sessionAccount.Value };
     public object SessionSignedFetch(string method, string path, string? body, object? headers) =>
         RequireSignedSession().SignedFetch(method, path, body, headers);
 
-    private ExtensionSignedSessionClient RequireSignedSession() => _signedSession ??
-        throw new InvalidOperationException("This extension does not declare a signed session.");
+    internal void BindSessionAccounts(Guid defaultAccountId, Func<ProviderAccountContext, bool> validator)
+    {
+        if (_accountSessionFactory == null) throw new InvalidOperationException("This extension does not declare a signed session.");
+        lock (_accountSessions)
+        {
+            if (!_accountSessions.ContainsKey(defaultAccountId))
+                _accountSessions.Add(defaultAccountId, _accountSessionFactory(defaultAccountId, true));
+            _sessionAccountValidator = validator;
+            _sessionsRequireAccount = true;
+        }
+    }
+
+    internal IDisposable OpenSessionAccount(Guid accountId, ProviderAccountContext? context = null)
+    {
+        if (accountId == Guid.Empty) throw new ArgumentException("A provider account is required.", nameof(accountId));
+        var previous = _sessionAccount.Value;
+        var previousContext = _sessionAccountContext.Value;
+        _sessionAccount.Value = accountId;
+        _sessionAccountContext.Value = context;
+        return new SessionAccountScope(() =>
+        {
+            _sessionAccount.Value = previous;
+            _sessionAccountContext.Value = previousContext;
+        });
+    }
+
+    private sealed class SessionAccountScope(Action close) : IDisposable
+    {
+        private Action? _close = close;
+        public void Dispose() => Interlocked.Exchange(ref _close, null)?.Invoke();
+    }
+
+    private ExtensionSignedSessionClient RequireSignedSession()
+    {
+        if (_sessionAccount.Value is { } accountId && _accountSessionFactory != null)
+        {
+            if (_sessionAccountContext.Value is { } account &&
+                _sessionAccountValidator != null && !_sessionAccountValidator(account))
+                throw new UnauthorizedAccessException("The provider account authorization is no longer current.");
+            lock (_accountSessions)
+            {
+                if (!_accountSessions.TryGetValue(accountId, out var client))
+                    _accountSessions.Add(accountId, client = _accountSessionFactory(accountId, false));
+                return client;
+            }
+        }
+        if (_sessionsRequireAccount) throw new InvalidOperationException("A provider account is required for this session.");
+        return _signedSession ?? throw new InvalidOperationException("This extension does not declare a signed session.");
+    }
 
     public void Log(string level, string message)
     {

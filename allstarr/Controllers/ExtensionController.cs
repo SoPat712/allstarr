@@ -242,11 +242,11 @@ public sealed class ExtensionController(
     }
 
     [HttpGet("packages/{packageId:guid}/session")]
-    public async Task<IActionResult> SignedSessionStatus(Guid packageId, CancellationToken cancellationToken = default)
+    public async Task<IActionResult> SignedSessionStatus(Guid packageId, CancellationToken cancellationToken = default, [FromQuery] Guid? accountId = null)
     {
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
-        return await ControlPlaneAsync(async () => Ok(await _runtime.SignedSessionStatusAsync(packageId, cancellationToken)));
+        return await ControlPlaneAsync(async () => Ok(await _runtime.SignedSessionStatusAsync(packageId, cancellationToken, accountId)));
     }
 
     [HttpPost("packages/{packageId:guid}/session/start")]
@@ -256,7 +256,7 @@ public sealed class ExtensionController(
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         return await ControlPlaneAsync(async () => Ok(await _runtime.StartSignedSessionVerificationAsync(
-            packageId, request.ExpectedRevision, cancellationToken)));
+            packageId, request.ExpectedRevision, cancellationToken, request.AccountId)));
     }
 
     [HttpPost("packages/{packageId:guid}/session/grant")]
@@ -267,7 +267,7 @@ public sealed class ExtensionController(
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         if (string.IsNullOrWhiteSpace(request.Grant)) return BadRequest(new { error = "A session grant is required." });
         return await ControlPlaneAsync(async () => Ok(await _runtime.CompleteSignedSessionGrantAsync(
-            packageId, request.ExpectedRevision, request.Grant, cancellationToken)));
+            packageId, request.ExpectedRevision, request.Grant, cancellationToken, request.AccountId)));
     }
 
     [HttpDelete("packages/{packageId:guid}/session")]
@@ -277,7 +277,7 @@ public sealed class ExtensionController(
         if (RequireAdministrator() is { } error) return error;
         if (_runtime == null) return Conflict(new { error = "The extension runtime is unavailable." });
         return await ControlPlaneAsync(async () => Ok(await _runtime.ClearSignedSessionAsync(
-            packageId, request.ExpectedRevision, cancellationToken)));
+            packageId, request.ExpectedRevision, cancellationToken, request.AccountId)));
     }
 
     [HttpPost("packages/{packageId:guid}/disable")]
@@ -608,6 +608,7 @@ public sealed class RegistryStateRequest
 
 public class RevisionRequest
 {
+    public Guid? AccountId { get; set; }
     public long ExpectedRevision { get; set; }
 }
 

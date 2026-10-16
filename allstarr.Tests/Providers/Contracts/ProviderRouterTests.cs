@@ -33,6 +33,23 @@ public sealed class ProviderRouterTests
         if (!allowed) Assert.Equal("account-scope-denied", Assert.Single(plan.Decision.Candidates).ReasonCode);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OptionalPublicCatalogDoesNotBorrowAnotherListenersAccount(bool explicitAccount)
+    {
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new ProviderAccountAudienceDeniedException());
+        var router = Router([Metadata("apple-musickit", ProviderAccountRequirement.Optional,
+            [ProviderAccountScope.Personal, ProviderAccountScope.Shared])], accounts.Object);
+        var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(ProviderCapabilityKind.Metadata,
+            ["apple-musickit"], states: [new ProviderRouteProviderState("apple-musickit",
+                requestedAccountId: explicitAccount ? Guid.CreateVersion7() : null)]));
+        if (explicitAccount) Assert.Empty(plan.Candidates);
+        else Assert.Null(Assert.Single(plan.Candidates).Context.Account);
+    }
+
     [Fact]
     public async Task PerOperationScopeCannotExpandAProvidersDeclaredScopes()
     {

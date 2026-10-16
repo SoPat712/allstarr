@@ -4,7 +4,7 @@ public static partial class FuzzyMatcher
 {
     private const int StackallocLevenshteinLimit = 128;
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]?\s*(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]?\s*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex FeatDecoratorRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[][^\)\]]*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]

@@ -1701,7 +1701,7 @@
     "selected": "match",
     "confidence": 0.955,
     "decisionReasons": [
-      "album_artist_exact",
+      "album_artist_strong",
       "album_exact",
       "artist_strong",
       "duration_close",
@@ -1709,7 +1709,7 @@
       "title_exact"
     ],
     "selectedReasons": [
-      "album_artist_exact",
+      "album_artist_strong",
       "album_exact",
       "artist_strong",
       "duration_close",

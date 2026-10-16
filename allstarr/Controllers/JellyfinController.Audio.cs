@@ -186,6 +186,9 @@ public partial class JellyfinController
         if (ex is ProtocolProviderUnavailableException unavailable)
             return (StatusCodes.Status503ServiceUnavailable, unavailable.Message);
 
+        if (ex is ProtocolProviderAccountAccessException access)
+            return (StatusCodes.Status403Forbidden, access.Message);
+
         if (ex is UnauthorizedAccessException)
         {
             return (StatusCodes.Status403Forbidden, "External provider account is unavailable");

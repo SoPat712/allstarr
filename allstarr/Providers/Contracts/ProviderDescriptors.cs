@@ -369,4 +369,6 @@ public sealed record ProviderDescriptor
     public string? EntryPoint { get; }
 
     public bool HealthProbe { get; }
+
+    public bool UsesSignedSession { get; init; }
 }

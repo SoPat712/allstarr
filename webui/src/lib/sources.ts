@@ -251,3 +251,15 @@ export function secretFromForm(provider: ProviderDefinition, data: FormData) {
       field.type === "toggle" ? data.get(field.key) === "on" : String(data.get(field.key) ?? ""),
     ]));
 }
+
+
+export function supportedAudiences(source: { supportedAudiences?: ("Personal" | "Shared")[] }) {
+  return source.supportedAudiences ?? ["Personal", "Shared"];
+}
+
+export function sharingDescription(source: { providerId?: string; id?: string; sharingDescription?: string | null }) {
+  if (source.sharingDescription) return source.sharingDescription;
+  if (["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(source.providerId ?? source.id ?? ""))
+    return "Plays from listeners without their own account are sent here.";
+  return "Everyone in the household can use this account. Personal accounts take priority.";
+}

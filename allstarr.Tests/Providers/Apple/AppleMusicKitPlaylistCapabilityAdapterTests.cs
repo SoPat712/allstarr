@@ -70,7 +70,7 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         var registration = ProviderRegistrationValidator.Validate(AppleMusicKitPlaylistCapabilityAdapter.CreateRegistration(adapter));
         var capability = Assert.Single(registration.Descriptor.Capabilities);
         Assert.Equal(["getPlaylistTracks", "getUserPlaylists", "resolveArtwork", "searchPlaylists"], capability.Hooks);
-        Assert.Equal([ProviderAccountScope.Personal], capability.AllowedAccountScopes);
+        Assert.Equal([ProviderAccountScope.Shared, ProviderAccountScope.Personal], capability.AllowedAccountScopes);
         Assert.Same(adapter, Assert.Single(registration.Implementations));
         Assert.DoesNotContain(handler.Paths, path => path.Contains("stream", StringComparison.OrdinalIgnoreCase) || path.Contains("download", StringComparison.OrdinalIgnoreCase));
     }
@@ -102,8 +102,6 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapterTests
         var playlist = new ProviderExternalResourceId("apple-musickit", ProviderResourceKind.Playlist, "p.private");
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
             (await valid.GetPlaylistTracksAsync(Context(includeSecret: false), new(playlist, new()))).Error!.Kind);
-        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,
-            (await valid.GetPlaylistTracksAsync(Context(scope: ProviderAccountScope.Shared), new(playlist, new()))).Error!.Kind);
 
         var malformed = AppleProviderTestFactory.Playlist(new HttpClient(handler), new RawSecretAccessor("not-json"));
         Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration,

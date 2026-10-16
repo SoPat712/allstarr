@@ -471,13 +471,60 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Null(ExtensionInvocationSecretScope.Resolve("accountToken"));
     }
 
+    [Fact]
+    public async Task SharedExtensionAccountSuppliesSecretsToBothListeners()
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Metadata, "searchTracks") with
+        {
+            Permissions = [new(ExtensionPermissionKind.Secret, "accountToken", true)]
+        };
+        var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(),
+            new HashSet<string>(["accountToken"]), ExtensionInvocationSecretScope.Resolve);
+        var calls = 0;
+        var handler = new AppleProviderTestFactory.Handler(request =>
+        {
+            Assert.Equal("Bearer fixture-value", request.Headers.Authorization!.ToString());
+            calls++;
+            return new(System.Net.HttpStatusCode.OK) { Content = new StringContent("{}") };
+        });
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            """
+            registerExtension({searchTracks:function(){
+              http.get('https://api.example.test/tracks',{Authorization:'Bearer '+secrets.get('accountToken')});
+              return {items:[{id:'track',title:'Track',artists:[{name:'Artist'}]}]};}});
+            """, new HttpClientFactory(handler), NullLogger.Instance, permissions);
+        var accessor = new WaitingSecretAccessor();
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest, accessor);
+        var original = Context(includeAccount: true);
+        var account = new ProviderAccountContext(Guid.CreateVersion7(), manifest.Id, ProviderAccountScope.Shared, 1);
+        foreach (var listener in new[] { original.Actor.EffectiveUserId!.Value, Guid.CreateVersion7() })
+        {
+            var context = new ProviderExecutionContext(new(ProviderActorKind.User, listener, new("jellyfin", "backend", "fixture")), manifest.Id, account,
+                new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                    ProviderExplicitContentPolicy.Allow, true, true, true, [manifest.Id]),
+                "search", "fixture", original.Deadline, default);
+            var result = await adapter.SearchTracksAsync(context, new("query", new()));
+            Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+            Assert.Equal("Track", Assert.Single(result.RequireValue().Items).Title);
+            Assert.Null(accessor.Used.Last().OwnerUserId);
+        }
+        Assert.Equal(2, calls);
+        Assert.Equal(2, accessor.Used.Count);
+        Assert.Throws<UnauthorizedAccessException>(() => new ProviderExecutionContext(
+            new(ProviderActorKind.User, Guid.CreateVersion7(), new("jellyfin", "backend", "fixture")), manifest.Id, original.Account, original.Policy,
+            "search", "fixture", original.Deadline, default));
+    }
+
     private sealed class WaitingSecretAccessor : allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor
     {
         public bool InUse { get; private set; }
+        public List<ProviderAccountContext> Used { get; } = [];
         public async Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation,
             CancellationToken cancellationToken)
         {
             InUse = true;
+            Used.Add(account);
             try { return await operation(Encoding.UTF8.GetBytes("{\"accountToken\":\"fixture-value\"}")); }
             finally { InUse = false; }
         }

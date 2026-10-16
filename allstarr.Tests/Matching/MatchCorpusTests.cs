@@ -64,7 +64,7 @@ public sealed class MatchCorpusTests
     }
 
     private static string Describe(CorpusResult result) =>
-        $"{result.State}/{result.Selected ?? "none"}/{result.Confidence:0.0000}";
+        $"{result.State}/{result.Selected ?? "none"}/{result.Confidence:0.0000}; decision=[{string.Join(",", result.DecisionReasons)}]; selected=[{string.Join(",", result.SelectedReasons)}]";
 
     private static List<CorpusResult> Evaluate()
     {

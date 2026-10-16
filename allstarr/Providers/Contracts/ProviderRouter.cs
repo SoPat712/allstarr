@@ -149,6 +149,15 @@ public sealed class ProviderRouter(
                             request.Policy.AllowSharedAccount),
                         request.CancellationToken);
             }
+            catch (ProviderAccountAudienceDeniedException)
+            {
+                if (descriptor.AccountRequirement == ProviderAccountRequirement.Required || state.RequestedAccountId.HasValue)
+                {
+                    Reject("account-personal-to-another-listener");
+                    continue;
+                }
+                resolvedAccount = null;
+            }
             catch (UnauthorizedAccessException)
             {
                 Reject("account-not-authorized");

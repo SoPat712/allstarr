@@ -31,19 +31,30 @@ public sealed class DurableProviderRouteAccountResolver(
             backend?.PrincipalId ?? request.Actor.DurableJobId?.ToString("N") ?? "system",
             "Provider route actor",
             request.Actor.Kind == ProviderActorKind.Administrator);
-        var candidates = await resolver.ResolveCandidatesAsync(
-            new ProviderAccountResolutionRequest(
-                principal,
-                request.ProviderId,
-                CapabilityName(request.Capability),
-                request.RequestedAccountId,
-                request.AllowedScopes,
-                request.AllowSharedAccount,
-                request.AllowManagedDiagnosticAccount),
-            cancellationToken);
+        IReadOnlyList<ResolvedProviderAccount> candidates;
+        try
+        {
+            candidates = await resolver.ResolveCandidatesAsync(
+                new ProviderAccountResolutionRequest(
+                    principal,
+                    request.ProviderId,
+                    CapabilityName(request.Capability),
+                    request.RequestedAccountId,
+                    request.AllowedScopes,
+                    request.AllowSharedAccount,
+                    request.AllowManagedDiagnosticAccount),
+                cancellationToken);
+        }
+        catch (UnauthorizedAccessException) when (request.ProviderId == "apple-musickit" && request.RequestedAccountId.HasValue)
+        {
+            if (await resolver.HasOtherPersonalAccountAsync(userId.Value, request.ProviderId, cancellationToken, request.RequestedAccountId))
+                throw new ProviderAccountAudienceDeniedException();
+            throw;
+        }
+        var preferredScope = candidates.FirstOrDefault()?.Account.Scope;
         var resolved = request.RequestedAccountId.HasValue
             ? candidates.FirstOrDefault()
-            : candidates.FirstOrDefault(candidate =>
+            : candidates.Where(candidate => candidate.Account.Scope == preferredScope).FirstOrDefault(candidate =>
             {
                 var current = health.Get(request.ProviderId, candidate.Account.Id, request.Capability);
                 return current.AccountRevision.HasValue && current.AccountRevision != candidate.Account.Revision ||
@@ -52,6 +63,9 @@ public sealed class DurableProviderRouteAccountResolver(
             }) ?? candidates.FirstOrDefault();
         if (resolved == null)
         {
+            if (request.ProviderId == "apple-musickit" &&
+                await resolver.HasOtherPersonalAccountAsync(userId.Value, request.ProviderId, cancellationToken))
+                throw new ProviderAccountAudienceDeniedException();
             return null;
         }
 

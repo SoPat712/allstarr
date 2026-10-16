@@ -110,7 +110,7 @@ public sealed class ManagedTrackDownloadService(
                         allowTranscode: false),
                     ProviderExplicitContentPolicy.Allow,
                     allowFallback: true,
-                    allowSharedAccount: false,
+                    allowSharedAccount: true,
                     allowManagedDownloads: true),
                 command.RoutePurpose,
                 command.CorrelationId,
