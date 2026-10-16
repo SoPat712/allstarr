@@ -1,71 +1,109 @@
-# Deployment profiles
+# Deployment
 
-`allstarr.sh` is the supported install and update entry point. It wraps the single checked-in `docker-compose.yml`, validates the resulting Compose model, remembers explicitly enabled optional profiles, and does not delete volumes.
+## Install
 
-## First install
+Install Docker with Compose, obtain this repository, and run:
+
+```bash
+docker compose up -d
+```
+
+This starts one Allstarr container using the pinned application image. Its only persistent mount is `./data:/app/data`. No `.env` file, source build or optional service is required. Music clients use port 5274. The dashboard listens at `http://localhost:5275`, with the host port bound to loopback.
+
+The backend-selection API is ready, but the browser setup replacement is still being completed in this beta. The existing `init` command remains as a fallback:
 
 ```bash
 ./allstarr.sh init
-# edit .env if required
-./allstarr.sh up
+# Set BACKEND_TYPE and JELLYFIN_URL or SUBSONIC_URL in .env.
+docker compose up -d
 ```
 
-The default release mode uses the configured published image. Source mode builds the checked-out tree:
+`init` creates optional deployment defaults without replacing an existing `.env` or starting containers. Use a backend address reachable from the container; `localhost` inside the container refers to Allstarr itself. Sign in with a media-server administrator and review Settings → Setup. Product settings and encrypted accounts belong in the dashboard. See [configuration](configuration.md) for listener and trusted-network settings.
+
+## Upgrade from version 2
+
+Keep the existing Compose file, `.env`, mount paths and project name. Do not replace them with the new default layout during the upgrade. Version 3 honors legacy backend reachability and administrator network settings. When no explicit data mount exists, it uses `/app/cache/allstarr-v3` inside the existing persistent cache mount for SQLite and the key ring. It keeps `/health` and native proxy requests available while upgrade setup is pending.
+
+Before upgrading, record the previous image tag and immutable image ID. Retain that image locally or in your registry. Stop Allstarr and copy its configuration, cache, download and kept folders, plus any other persistent paths. Preserve old optional-service state separately if you will need it for rollback. Never run both versions against the same folders.
+
+When the image reference in your existing Compose file points to the release you intend to run:
 
 ```bash
-./allstarr.sh mode source
-./allstarr.sh up
+docker compose stop allstarr
+# Make and verify the stopped-folder backup before continuing.
+docker compose pull allstarr
+docker compose up -d --no-deps allstarr
 ```
 
-Switch back with `./allstarr.sh mode release`.
+These commands use the image already named in your Compose file. A pinned v2 tag stays pinned; `latest` advances only when a release is published. This beta does not mean that `latest` has already changed.
 
-## Default stack
+Sign in and review the legacy `.env` through Settings → Setup before applying its import. The source file stays unchanged. Existing saved settings and account revisions take precedence. Original kept and permanent-download audio stays in its existing mounts. Valkey cache and old matching state are not imported. New managed media stays within the existing media mounts so backend library paths continue to work. Inspect rejected or unsupported settings and test playback before removing anything from the old installation. The guided browser checklist is still being completed; do not treat a running container as a completed upgrade.
 
-The default stack runs one Allstarr container with SQLite. Its `/app/data` mount holds the database, encryption key ring, managed media, extensions, backups, and cache. `.env.example` selects the host folder `./data`; if `ALLSTARR_DATA_PATH` is unset, Compose uses the `allstarr-data` named volume. Use local disk and only one Allstarr process per data folder.
+Old Valkey and Spotify-lyrics services may remain in an unchanged v2 Compose file. The new runtime does not use them. Leave deployment tidy-up until the upgrade is verified; removing a service that is still named in `depends_on` requires a deliberate Compose edit.
 
-The optional Apple setup upload folder remains a separate bind mount. Apple gateway and wrapper session volumes belong to the optional Apple profile. There is no database sidecar, Redis, Valkey, AIO image, conversion container, or Compose overlay in the supported topology.
+## Update a new deployment
 
-## Optional profiles
-
-Spotify lyrics run inside Allstarr and require an enabled Spotify account with a saved session cookie. They do not enable a Compose profile. See [Spotify lyrics](spotify-lyrics.md) for setup and migration from the retired container.
-
-Apple download requires a legally obtained supported Apple Music Android package. Upload it through the Apple source setup, then run:
-
-```bash
-./allstarr.sh install-apple x86_64
-```
-
-Use `arm64-v8a` on an ARM64 Docker host. The script verifies the staged package and upstream wrapper inputs before enabling the native `apple` profile. Allstarr distributes its own thin integration layer, not the upstream provider implementation or Apple package.
-
-See [Spotify lyrics](spotify-lyrics.md) and [Apple download](apple-download-provider.md).
-
-## Update
+Create and download a backup in Settings → Maintenance, and retain the previous image and a stopped copy of the data folder. Then run:
 
 ```bash
 ./allstarr.sh update
 ```
 
-Release mode pulls the configured images and recreates the active profiles. Source mode requires a clean tracked tree, fast-forwards the checkout, rebuilds, and recreates the active profiles. `up` does not pull repository changes.
+The command validates deployment files, pulls the configured Allstarr image and recreates the saved profiles. A failed pull or Apple gateway build prevents startup. It does not change Git files or delete volumes. Changing to a different pinned release requires setting `ALLSTARR_IMAGE` in the optional `.env` first.
 
-Before updating, create and download a backup from Settings → Maintenance. Keep a separate copy of deployment configuration and managed media.
+`./allstarr.sh up` starts the saved profiles without pulling the application image. `status` lists their containers; `logs [service]` follows their logs. `down` stops the saved deployment without deleting its volumes.
 
-## Backup and restore
+## Optional Apple downloads
 
-Use Settings → Maintenance to create or download a verified backup, or upload one for restore on restart. The archive includes the database and encryption key ring. It excludes media, extension packages, cache, deployment configuration, and optional provider sessions. The former shell `backup`, `restore`, and `upgrade` commands direct users to Maintenance.
-
-To move an entire installation, stop Allstarr and copy the complete data folder along with deployment configuration and any explicit external paths or optional provider volumes. Start the new container with the same image version and mounts, and keep the original stopped. Follow [the storage runbook](storage.md) for recovery and verification.
-
-## Operations
+Apple's gateway and wrapper are behind the `apple` profile and publish no host ports. Upload a legally obtained supported Apple Music APK/APKM through Integrations → Services → Apple Music, then run:
 
 ```bash
-./allstarr.sh status
-./allstarr.sh logs allstarr
-./allstarr.sh disable apple
-./allstarr.sh down
+./allstarr.sh enable apple
 ```
 
-Disabling an optional profile removes its running containers on the next reconciliation but preserves its durable volumes and Allstarr configuration. Re-enable it explicitly when needed.
+Architecture is detected automatically; pass `x86_64` or `arm64-v8a` when needed. Uploads are stored in `data/apple-upload` with the default layout. The script resolves a custom bind-mounted data path from Compose and also recognizes the older `.apple-provider/incoming` staging folder. With a named volume or a separately managed layout, pass an explicit package path: `./allstarr.sh enable apple /path/to/package.apkm x86_64`.
 
-## Adding future optional integrations
+The command verifies the package and locked wrapper inputs, builds the local Apple images, saves the profile and starts it. Git, jq and unzip are required for preparation. `prepare-apple` still verifies and builds without starting; `install-apple` remains an alias for `enable apple` so existing dashboard instructions work.
 
-A future integration belongs in the single Compose file behind an explicit profile and an `allstarr.sh` command. Pin the upstream image or verified source, publish no unnecessary host ports, persist only owned state, and keep the Docker socket out of application containers. Do not vendor or redistribute upstream implementation code when Allstarr only needs an integration layer.
+Configure the gateway address as `http://apple-gateway:8000` in the Apple service settings, then complete sign-in and testing in the dashboard. See [Apple downloads](apple-download-provider.md).
+
+```bash
+./allstarr.sh disable apple
+```
+
+This stops and removes only the two Apple containers and forgets the saved profile. It preserves gateway data, wrapper sessions, application records and media. The script reads `.allstarr-profiles`; plain Compose does not read that file. For manual Compose operation, supply `--profile apple` explicitly when Apple should run. Neither path needs a Docker socket mounted in Allstarr.
+
+Spotify lyrics run inside Allstarr with a selected Spotify account and need no Compose profile.
+
+## Backup, restore and rollback
+
+Use Settings → Maintenance for verified database-and-key-ring archives. The archive excludes media, extension packages, cache, deployment configuration, and optional provider sessions. Stop Allstarr before you copy the complete data folder, and include external mounts and optional provider volumes separately. Follow [storage operations](storage.md) for exact restore steps and the current copied-media recovery limitation. The shell `backup` and `restore` commands are removed. `upgrade` retains its guidance-only behavior until the guided setup replacement is complete; it does not alter an installation.
+
+To roll back, stop the new container, restore the complete pre-upgrade folders to their original mounts, and select the previous image. For a new-layout installation, set `ALLSTARR_IMAGE` to its saved tag or digest in `.env`, then run `docker compose up -d --no-deps --pull never allstarr`. Keep the failed upgrade's folders separately for inspection. Do not run an older image against a database migrated by a newer version.
+
+For an unchanged v2 layout, use its untouched deployment configuration and original folders. If its image reference was a moving tag, a temporary Compose override can select the saved immutable image without editing the original file:
+
+```yaml
+# rollback.yml
+services:
+  allstarr:
+    image: ghcr.io/sopat712/allstarr@sha256:REPLACE_WITH_SAVED_DIGEST
+```
+
+```bash
+docker compose -f docker-compose.yml -f rollback.yml up -d --no-deps --pull never allstarr
+```
+
+Use the same Compose project name and all original mounts. Verify native playback, administrator access and accounts before resuming normal traffic. Never use `down -v` during recovery.
+
+## Source development
+
+Source mode lives under `tools/`:
+
+```bash
+./tools/develop.sh mode source
+./tools/develop.sh up
+./tools/develop.sh update
+```
+
+The developer script adds `tools/docker-compose.source.yml` to the base file. `up` builds the current checkout. `update` requires a clean tracked tree on a tracked branch, fast-forwards it and builds before recreation. It supports Git worktrees. It does not prune shared images or build caches. Set `./tools/develop.sh mode release` to return to published images. If an older installation has saved source mode, the normal script stops with instructions to use the developer script.

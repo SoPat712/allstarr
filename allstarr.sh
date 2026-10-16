@@ -1,35 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 ROOT="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
 PROFILE_FILE="$ROOT/.allstarr-profiles"
-MODE_FILE="$ROOT/.allstarr-mode"
 
 die() { echo "allstarr: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required"; }
 
 profiles() {
-  local values=(standard)
+  local value
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r value; do
       case "$value" in
-        apple) values+=("$value") ;;
+        apple) printf '%s\n' "$value" ;;
       esac
     done < "$PROFILE_FILE"
   fi
-  printf '%s\n' "${values[@]}" | awk '!seen[$0]++'
 }
 
-deployment_mode() {
-  local mode="release"
-  [[ -f "$MODE_FILE" ]] && read -r mode < "$MODE_FILE"
-  case "$mode" in release|source) printf '%s\n' "$mode" ;; *) die "invalid deployment mode in .allstarr-mode" ;; esac
-}
-
-set_mode() {
-  local mode="${1:-}"
-  case "$mode" in release|source) printf '%s\n' "$mode" > "$MODE_FILE" ;; *) die "mode must be release or source" ;; esac
-  echo "Deployment mode set to $mode. Run: ./allstarr.sh up"
+require_release() {
+  local mode=release
+  [[ ! -f "$ROOT/.allstarr-mode" ]] || read -r mode < "$ROOT/.allstarr-mode"
+  [[ "$mode" == release ]] || die "source mode moved to ./tools/develop.sh; use that script or run ./tools/develop.sh mode release"
 }
 
 compose_args() {
@@ -72,16 +65,13 @@ init() {
   need docker
   docker compose version >/dev/null
   [[ -f "$ROOT/.env" ]] || cp "$ROOT/.env.example" "$ROOT/.env"
-  install -d -m 755 "$ROOT/.apple-provider/incoming"
-  touch "$PROFILE_FILE"
-  [[ -f "$MODE_FILE" ]] || printf '%s\n' "${1:-release}" > "$MODE_FILE"
-  deployment_mode >/dev/null
-  echo "Allstarr is initialized. Edit .env, then run: ./allstarr.sh up"
+  echo "Optional deployment defaults are in .env. Set BACKEND_TYPE and JELLYFIN_URL or SUBSONIC_URL if backend selection is unavailable in the dashboard."
+  echo "Start with: docker compose up -d"
 }
 
 prepare_apple() {
+  validate_deployment_files
   local input="${1:-}" arch="${2:-}" runtime="linux/amd64"
-  [[ -f "$ROOT/.env" ]] || die "run ./allstarr.sh init before enabling providers"
   if [[ "$input" == "x86_64" || "$input" == "arm64-v8a" ]]; then
     arch="$input"
     input=""
@@ -94,8 +84,14 @@ prepare_apple() {
     esac
   fi
   if [[ -z "$input" ]]; then
-    local candidate
-    for candidate in "$ROOT"/.apple-provider/incoming/*.apk "$ROOT"/.apple-provider/incoming/*.apkm; do
+    need jq
+    local candidate data_path
+    compose_args
+    data_path="$(docker compose "${COMPOSE[@]}" config --format json |
+      jq -r '.services.allstarr.volumes[] | select(.target == "/app/data" and .type == "bind") | .source')"
+    [[ -n "$data_path" ]] || data_path="$ROOT/.no-bind-data"
+    for candidate in "$data_path"/apple-upload/*.apk "$data_path"/apple-upload/*.apkm \
+      "$ROOT"/.apple-provider/incoming/*.apk "$ROOT"/.apple-provider/incoming/*.apkm; do
       if [[ -f "$candidate" && ( -z "$input" || "$candidate" -nt "$input" ) ]]; then
         input="$candidate"
       fi
@@ -112,28 +108,32 @@ prepare_apple() {
   else
     bash "$ROOT/tools/apple-provider/prepare.sh" --apkm "$input" --arch "$arch"
   fi
-  if grep -q '^APPLE_WRAPPER_TARGET_ARCH=' "$ROOT/.env"; then
-    sed -i.bak "s|^APPLE_WRAPPER_TARGET_ARCH=.*|APPLE_WRAPPER_TARGET_ARCH=$arch|" "$ROOT/.env"
-    sed -i.bak "s|^APPLE_WRAPPER_RUNTIME_PLATFORM=.*|APPLE_WRAPPER_RUNTIME_PLATFORM=$runtime|" "$ROOT/.env"
-    rm -f "$ROOT/.env.bak"
-  else
-    printf '\nAPPLE_WRAPPER_TARGET_ARCH=%s\nAPPLE_WRAPPER_RUNTIME_PLATFORM=%s\n' "$arch" "$runtime" >> "$ROOT/.env"
+  local temporary
+  temporary="$(mktemp "$ROOT/.apple-env.XXXXXX")"
+  if [[ -f "$ROOT/.env" ]]; then
+    awk '!/^APPLE_WRAPPER_(TARGET_ARCH|RUNTIME_PLATFORM)=/' "$ROOT/.env" > "$temporary"
   fi
-  remember_profile apple
+  printf '\nAPPLE_WRAPPER_TARGET_ARCH=%s\nAPPLE_WRAPPER_RUNTIME_PLATFORM=%s\n' "$arch" "$runtime" >> "$temporary"
+  mv "$temporary" "$ROOT/.env"
   compose_args
-  docker compose "${COMPOSE[@]}" build apple-wrapper apple-gateway
-  echo "Apple provider source, verified native libraries, and local images are ready. Run: ./allstarr.sh up"
+  docker compose "${COMPOSE[@]}" --profile apple build apple-wrapper apple-gateway
+  remember_profile apple
+  echo "Apple source, verified native libraries, and local images are ready."
 }
 
 install_apple() {
   prepare_apple "$@"
-  up
+  if [[ -f "$ROOT/.allstarr-mode" ]] && grep -qx source "$ROOT/.allstarr-mode"; then
+    bash "$ROOT/tools/develop.sh" up
+  else
+    up
+  fi
 }
 
 validate_deployment_files() {
   local env_file="$ROOT/.env"
-  [[ -f "$env_file" ]] || die "missing .env; run ./allstarr.sh init first"
-  awk '
+  if [[ -f "$env_file" ]]; then
+    awk '
     /^[[:space:]]*($|#)/ { next }
     !/^[A-Za-z_][A-Za-z0-9_]*=/ {
       printf "Invalid .env line %d: expected KEY=value\n", NR > "/dev/stderr"
@@ -149,7 +149,8 @@ validate_deployment_files() {
       }
     }
     END { exit bad ? 1 : 0 }
-  ' "$env_file"
+    ' "$env_file"
+  fi
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r profile; do
       case "$profile" in
@@ -162,12 +163,10 @@ validate_deployment_files() {
 }
 
 up() {
+  require_release
   validate_deployment_files
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
-  if [[ "$(deployment_mode)" == source ]]; then
-    docker compose "${COMPOSE[@]}" build allstarr
-  fi
   if profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" build apple-gateway
   fi
@@ -176,53 +175,47 @@ up() {
 }
 
 update() {
+  require_release
   validate_deployment_files
   compose_args
   docker compose "${COMPOSE[@]}" config --quiet
-  if [[ "$(deployment_mode)" == release ]]; then
-    docker compose "${COMPOSE[@]}" pull allstarr
-  fi
-  if [[ "$(deployment_mode)" == source ]]; then
-    need git
-    [[ -d "$ROOT/.git" ]] || die "source mode requires a Git checkout"
-    git -c "safe.directory=$ROOT" diff --quiet &&
-      git -c "safe.directory=$ROOT" diff --cached --quiet ||
-      die "tracked source files have local changes; commit or stash them before updating"
-    git -c "safe.directory=$ROOT" pull --ff-only
-    docker image prune --force
-    docker builder prune --force --min-free-space 8GB
-    docker compose "${COMPOSE[@]}" build allstarr
-    if profiles | grep -qx apple; then
-      docker compose "${COMPOSE[@]}" build apple-gateway
-    fi
-  elif profiles | grep -qx apple; then
+  docker compose "${COMPOSE[@]}" pull allstarr
+  if profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" build apple-gateway
   fi
   start_stack
   docker compose "${COMPOSE[@]}" ps
 }
 
+disable_apple() {
+  validate_deployment_files
+  compose_args
+  docker compose "${COMPOSE[@]}" --profile apple stop apple-gateway apple-wrapper
+  docker compose "${COMPOSE[@]}" --profile apple rm -f apple-gateway apple-wrapper
+  forget_profile apple
+  echo "Apple disabled. Stored data, sessions, and accounts are preserved."
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./allstarr.sh COMMAND
 
-  init [release|source]             Create config; default to release images
-  mode [release|source]             Show or change the saved deployment mode
-  up                                Start the saved deployment profile
-  update                            Pull the saved release/source and safely recreate
-  status                            Show containers and the saved profile
-  logs [service]                    Follow redacted container logs
-  disable apple                     Remove Apple on next up
-  prepare-apple [INPUT] [ARCH]      Verify an APK/APKM or staged libs; enable Apple
-  install-apple [ARCH]              Build and start Apple from the WebUI-staged package
-  down                              Stop containers without deleting data
+  enable apple [INPUT] [ARCH]       Verify staged libraries, build and start Apple
+  disable apple                     Stop and remove Apple containers; preserve sessions
+  update                            Pull the configured image and recreate saved profiles
+  status                            Show containers and saved profiles
+  logs [service]                    Follow container logs
+  up                                Start saved profiles without pulling an image
+  down                              Stop saved profiles without deleting data
+  init                              Create optional .env defaults for backend setup
+  upgrade                           Show backup and in-place upgrade guidance
+  prepare-apple [INPUT] [ARCH]       Verify and build Apple without starting it
+  install-apple [INPUT] [ARCH]       Alias for enable apple
 
-The deployment mode is saved in .allstarr-mode. Release mode pulls reviewed
-images; source mode fast-forwards its tracked branch, then builds the local image.
-Optional profiles are saved in .allstarr-profiles. No command deletes volumes,
-SQLite data, managed music, provider sessions, or imported settings.
+Plain docker compose up -d starts the core service. Optional profiles are saved
+in .allstarr-profiles for this script. Source builds use ./tools/develop.sh.
 Use Settings > Maintenance for database backups and restore on restart.
-Stop Allstarr before copying its data folder to another host.
+Stop Allstarr before copying its data folder. No command deletes data volumes.
 EOF
 }
 
@@ -230,30 +223,25 @@ command="${1:-help}"
 shift || true
 cd "$ROOT"
 case "$command" in
-  init)
-    case "${1:-release}" in release|source) init "${1:-release}" ;; *) die "init mode must be release or source" ;; esac
-    ;;
-  mode)
-    if [[ $# -eq 0 ]]; then deployment_mode; else set_mode "$1"; fi
-    ;;
+  init) [[ $# -eq 0 ]] || die "source builds moved to ./tools/develop.sh"; init ;;
   prepare-apple) prepare_apple "$@" ;;
   install-apple) install_apple "$@" ;;
   up) up ;;
   update) update ;;
-  backup|restore|upgrade) die "use Settings > Maintenance for backups and restores; use update after saving a backup" ;;
-  status) compose_args; echo "Mode: $(deployment_mode)"; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
+  upgrade) die "save a stopped-folder backup, then use update for this layout or your existing Compose commands for v2; review legacy settings in Settings > Setup" ;;
+  status) compose_args; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
-    case "${1:-}" in
-      spotify|spotify-lyrics) die "Spotify lyrics runs inside Allstarr. Configure its account in Integrations > Accounts." ;;
-      apple) die "use prepare-apple for Apple so its libraries are verified first" ;;
-      *) die "use prepare-apple for the optional Apple profile" ;;
-    esac
-    echo "Profile enabled. Run: ./allstarr.sh up"
+    [[ "${1:-}" == apple ]] || die "only apple is an optional profile; Spotify lyrics runs inside Allstarr"
+    shift
+    install_apple "$@"
     ;;
   disable)
-    case "${1:-}" in spotify|spotify-lyrics|apple) forget_profile "$1" ;; *) die "choose spotify-lyrics or apple" ;; esac
-    echo "Profile disabled. Run ./allstarr.sh up to apply; stored data is preserved."
+    case "${1:-}" in
+      apple) disable_apple ;;
+      spotify|spotify-lyrics) forget_profile "$1" ;;
+      *) die "choose apple" ;;
+    esac
     ;;
   down) compose_args; docker compose "${COMPOSE[@]}" down ;;
   help|-h|--help) usage ;;

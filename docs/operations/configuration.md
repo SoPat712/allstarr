@@ -4,20 +4,18 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 
 ## Deployment-owned values
 
-`.env` exists for values required before storage and the administrator UI are available. `.env.example` is the checked-in source of truth.
+`.env` is optional. It holds values needed before storage opens: image and release profile, ports, bind address, trusted subnets and the local data path. `.env.example` lists the supported deployment defaults.
 
-| Group | Current values |
+| Group | Values |
 | --- | --- |
-| Backend and release selection | `BACKEND_TYPE`, `ALLSTARR_RELEASE_PROFILE` |
-| Image and local data mounts | `ALLSTARR_IMAGE`, `ALLSTARR_DATA_PATH`, `APPLE_UPLOAD_PATH` |
+| Image and local data | `ALLSTARR_IMAGE`, `ALLSTARR_RELEASE_PROFILE`, `ALLSTARR_DATA_PATH` |
 | Public listeners | `PROXY_BIND_ADDRESS`, `PROXY_PORT`, `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` |
-| Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS` |
-| Admin URL prefix | `ADMIN_BASE_PATH` (empty by default) |
-| Optional Spotify lyrics bootstrap | `SPOTIFY_API_SESSION_COOKIE` |
+| Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS`, `ADMIN_BASE_PATH` |
+| Legacy or temporary backend selection | `BACKEND_TYPE`, `JELLYFIN_URL`, `SUBSONIC_URL` |
 
-The Compose file translates these values into ASP.NET configuration. Changing one requires recreating the affected container. Allstarr does not hot-edit its own Compose deployment.
+The default Compose file passes these bootstrap values to Allstarr. It does not mount `.env` into the container or import product settings from it. Changing a deployment value requires recreating the container. Existing v2 deployments can keep their mounted `.env` for the explicit upgrade review.
 
-SQLite is the durable database. Compose mounts `ALLSTARR_DATA_PATH` (default `./data` in `.env.example`) at `/app/data`. Without that variable, Compose uses the `allstarr-data` named volume. No database sidecar is required.
+Compose uses `./data` at `/app/data` unless `ALLSTARR_DATA_PATH` selects another local path. SQLite, the key ring and managed media share that folder. No database sidecar is required. A fresh core starts with `docker compose up -d`; while browser backend selection is unfinished, use `./allstarr.sh init`, set the selected backend's address in `.env`, and recreate the core. See [deployment](deployment-profiles.md).
 
 For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
 
@@ -40,8 +38,6 @@ Provider credentials are encrypted and persisted as **Personal** or **Shared** a
 Routing selects the requesting user’s enabled, eligible Personal account first, then an eligible Shared account. Explicit account selection follows the same ownership checks; revoked credentials are unavailable. Accounts are independent of backend music libraries. Shared use can consume provider limits and includes the capabilities declared by that provider. See the [account workflow](../user-guide.md#integrations).
 
 Extensions are package implementations, not a second account system. Their install, update, permission, and removal lifecycle lives under **Integrations > Extensions**. Once active, their Services and Accounts use the same Integrations surfaces as built-in providers.
-
-AudioMuse-AI is a built-in Intelligence integration rather than an extension. It is composed only when `ALLSTARR_RELEASE_PROFILE=development`; its persisted configuration and data remain intact while the core profile is active.
 
 Shared accounts are eligible for household use only while enabled and authorized for the requested capability. They do not grant access to any backend library or another user's private playlist management.
 
@@ -107,8 +103,7 @@ The authorized user agent override is an exceptional, temporary operator-approve
 Use `allstarr.sh` rather than editing Compose fragments:
 
 ```bash
-./allstarr.sh install-apple x86_64
-./allstarr.sh up
+./allstarr.sh enable apple x86_64
 ```
 
 See [deployment profiles](deployment-profiles.md), [Spotify lyrics](spotify-lyrics.md), and [Apple download](apple-download-provider.md).
@@ -119,11 +114,7 @@ A legacy `.env` is imported explicitly after the new deployment is running. Star
 
 ## Music libraries
 
-Allstarr indexes every music library returned by the backend by default. Set
-`BACKEND_MUSIC_LIBRARY_IDS` to a comma-separated list of backend library identifiers
-before starting Allstarr to restrict indexing and local matching to a subset.
-An empty value selects all libraries. Existing `JELLYFIN_LIBRARY_ID` configuration
-remains a single-library selection when the new setting is absent.
+Allstarr indexes every music library returned by the backend by default. Select backend music libraries in Settings to restrict indexing and local matching to a subset. An empty selection includes all libraries. Legacy library selections can be reviewed during the explicit settings import.
 
 Indexed tracks retain their backend library identifier. Each listener's access is
 resolved from Jellyfin `UserViews` or Subsonic `getMusicFolders`, using their current
