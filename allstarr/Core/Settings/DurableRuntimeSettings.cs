@@ -93,7 +93,7 @@ public sealed class RuntimeSettingsChangeSignal : IRuntimeSettingsChangeSignal
 public sealed record RuntimeSettingDefinition(
     string Key, RuntimeSettingValueType ValueType, string BootstrapKey,
     int? Minimum = null, int? Maximum = null, IReadOnlySet<string>? Choices = null,
-    bool AllowEmpty = false, int MaximumLength = 500, string? DefaultValue = null);
+    bool AllowEmpty = false, int MaximumLength = 500, string? DefaultValue = null, bool RequiresRestart = false);
 
 public static class RuntimeSettingCatalog
 {
@@ -117,6 +117,7 @@ public static class RuntimeSettingCatalog
         void Text(string key, string[] choices, bool allowEmpty = false) =>
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
+        items.AddRange(OperatorSettingPolicy.Definitions);
         Text("Backend:Type", ["Jellyfin", "Subsonic"]);
         items.Add(new("Backend:Url", RuntimeSettingValueType.String, "Backend:Url", AllowEmpty: true, MaximumLength: 2048));
         items.Add(new("Backend:ServiceCredentialReference", RuntimeSettingValueType.String, "Backend:ServiceCredentialReference", AllowEmpty: true, MaximumLength: 40));
@@ -181,7 +182,17 @@ public static class RuntimeSettingCatalog
         // This is application state rather than deployment configuration. Keeping it in the
         // settings store makes first-run completion survive browsers and app restarts.
         Bool("WebUi:SetupCompleted");
-        return items.ToDictionary(item => item.Key, Comparer);
+        return items.Select(item => item.Key is "Cache:MediaMaximumMegabytes" or "Cache:MediaMaximumEntryMegabytes" or "Cache:MediaCleanupFileLimit"
+            ? item with
+            {
+                RequiresRestart = true,
+                DefaultValue = item.Key switch
+                {
+                    "Cache:MediaMaximumMegabytes" => "512",
+                    "Cache:MediaMaximumEntryMegabytes" => "16",
+                    _ => "10000"
+                }
+            } : item).ToDictionary(item => item.Key, Comparer);
     }
 }
 
@@ -334,6 +345,16 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
             item => Normalize(item.Value.Definition, item.Value.Write.RawValue), StringComparer.OrdinalIgnoreCase);
         if (ownerUserId.HasValue && definitions.Keys.Any(key => !ListeningPreferenceKeys.All.Contains(key)))
             throw new ArgumentException("Personal runtime settings contain an unsupported key.", nameof(writes));
+        if (definitions.Keys.Any(key => key.StartsWith("Cors:", StringComparison.Ordinal)))
+        {
+            var savedCors = await db.RuntimeSettings.AsNoTracking()
+                .Where(item => item.OwnerUserId == null && (item.Key == "Cors:AllowedOrigins" || item.Key == "Cors:AllowCredentials"))
+                .ToDictionaryAsync(item => item.Key, cancellationToken);
+            string Effective(string key) => normalizedWrites.TryGetValue(key, out var write) ? write.Display :
+                savedCors.TryGetValue(key, out var saved) ? ProjectStoredRecord(saved).NormalizedValue :
+                _configuration[key] ?? RuntimeSettingCatalog.Require(key).DefaultValue ?? "";
+            OperatorSettingPolicy.ValidateCors(Effective("Cors:AllowedOrigins"), Effective("Cors:AllowCredentials"));
+        }
         var keys = definitions.Keys.ToArray();
         var existing = await db.RuntimeSettings
             .Where(item => item.OwnerUserId == ownerUserId && keys.Contains(item.Key))
@@ -556,6 +577,8 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
             record.Revision, record.Source, record.CreatedAt, record.UpdatedAt);
     }
 
+    internal static void ValidateRawValue(string key, string raw) => Normalize(RuntimeSettingCatalog.Require(key), raw);
+
     private static (object Value, string Display, string Json) Normalize(RuntimeSettingDefinition definition, string raw)
     {
         raw ??= string.Empty;
@@ -573,6 +596,7 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
     private static (object Value, string Display, string Json) NormalizeString(RuntimeSettingDefinition definition, string raw)
     {
         var value = raw.Trim();
+        OperatorSettingPolicy.Validate(definition.Key, value);
         if (value.Length == 0 && definition.AllowEmpty)
             return (string.Empty, string.Empty, JsonSerializer.Serialize(string.Empty, JsonOptions));
         if (value.Length == 0 || value.Length > definition.MaximumLength ||

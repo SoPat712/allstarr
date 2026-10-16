@@ -82,6 +82,23 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         await context.SaveChangesAsync();
     }
     [Fact]
+    public async Task OperatorSettingApiPersistsValidatedPolicyAndReportsRestart()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(true));
+        var result = Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new()
+        { Updates = new() { ["CORS_ALLOWED_ORIGINS"] = "https://player.example.test", ["CORS_ALLOW_CREDENTIALS"] = "true" } }));
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.True(response.RootElement.GetProperty("requiresRestart").GetBoolean());
+        var rejected = Assert.IsType<BadRequestObjectResult>(await controller.UpdateConfig(new()
+        { Updates = new() { ["CORS_ALLOWED_ORIGINS"] = "*" } }));
+        Assert.Equal(400, rejected.StatusCode);
+        await using var db = await _factory.CreateDbContextAsync();
+        var origins = await db.RuntimeSettings.SingleAsync(item => item.Key == "Cors:AllowedOrigins");
+        Assert.Equal(1, origins.Revision);
+        Assert.Contains("player.example.test", origins.ValueJson, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task UpdateConfig_WithoutAdminSession_ReturnsForbidden()
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: false));
@@ -297,7 +314,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
 
-        var result = Assert.IsType<OkObjectResult>(await controller.GetProvidersStatus());
+        var result = Assert.IsType<OkObjectResult>(await Diagnostics(controller).GetProvidersStatus());
         var json = JsonSerializer.Serialize(result.Value);
         using var document = JsonDocument.Parse(json);
         var statuses = document.RootElement;
@@ -318,8 +335,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     public async Task ProviderHealthEndpoints_RequireAdministratorSessionAndAllowPublicCapabilityProbe()
     {
         var nonAdministrator = CreateController(CreateHttpContextWithSession(isAdmin: false));
-        AssertForbidden(await nonAdministrator.GetProvidersStatus());
-        AssertForbidden(await nonAdministrator.TestProvider(
+        AssertForbidden(await Diagnostics(nonAdministrator).GetProvidersStatus());
+        AssertForbidden(await Diagnostics(nonAdministrator).TestProvider(
             "deezer",
             ProviderCapabilities.Metadata,
             _providerAccountId));
@@ -327,11 +344,11 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var administrator = CreateController(
             CreateHttpContextWithSession(isAdmin: true),
             healthStore: CreateHealthStore());
-        var publicProbe = Assert.IsType<OkObjectResult>(await administrator.TestProvider(
+        var publicProbe = Assert.IsType<OkObjectResult>(await Diagnostics(administrator).TestProvider(
             "deezer",
             ProviderCapabilities.Metadata));
         Assert.Equal(StatusCodes.Status200OK, publicProbe.StatusCode);
-        Assert.IsType<BadRequestObjectResult>(await administrator.TestProvider(
+        Assert.IsType<BadRequestObjectResult>(await Diagnostics(administrator).TestProvider(
             "deezer",
             ProviderCapabilities.Download));
         var publicHealth = administrator.HttpContext.RequestServices.GetRequiredService<ProviderRuntimeHealth>();
@@ -344,7 +361,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     {
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
 
-        var result = await controller.TestProvider(
+        var result = await Diagnostics(controller).TestProvider(
             "deezer",
             "recommendation",
             _providerAccountId);
@@ -427,7 +444,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var controller = CreateController(CreateHttpContextWithSession(isAdmin: true), healthStore: healthStore,
             secretStore: secretStore, diagnosticRunner: runner);
 
-        var result = Assert.IsType<OkObjectResult>(await controller.TestProvider(
+        var result = Assert.IsType<OkObjectResult>(await Diagnostics(controller).TestProvider(
             "deezer",
             ProviderCapabilities.Streaming,
             _providerAccountId));
@@ -451,7 +468,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             CreateHttpContextWithSession(isAdmin: true),
             healthStore: restartedHealthStore,
             secretStore: secretStore);
-        var statusResult = Assert.IsType<OkObjectResult>(await restartedController.GetProvidersStatus());
+        var statusResult = Assert.IsType<OkObjectResult>(await Diagnostics(restartedController).GetProvidersStatus());
         using var statusDocument = JsonDocument.Parse(JsonSerializer.Serialize(statusResult.Value));
         var download = statusDocument.RootElement.EnumerateArray().Single(item =>
             item.GetProperty("providerAccountId").GetGuid() == _providerAccountId &&
@@ -498,7 +515,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
                 """{"id":3135556,"results":{"USER":{"USER_ID":5}}}""")),
             healthStore: healthStore, secretStore: secretStore, diagnosticRunner: runner);
 
-        var result = Assert.IsType<OkObjectResult>(await controller.TestProvider("deezer", null, _providerAccountId));
+        var result = Assert.IsType<OkObjectResult>(await Diagnostics(controller).TestProvider("deezer", null, _providerAccountId));
 
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         Assert.True(document.RootElement.GetProperty("healthy").GetBoolean());
@@ -535,6 +552,10 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         _ = CreateController(context, mounted: mounted);
         return new() { ControllerContext = new ControllerContext { HttpContext = context } };
     }
+
+    private static ProviderConnectionController Diagnostics(ConfigController controller) =>
+        new(Microsoft.Extensions.Logging.Abstractions.NullLogger<ProviderConnectionController>.Instance)
+        { ControllerContext = controller.ControllerContext };
 
     private ConfigController CreateController(
         HttpContext httpContext,

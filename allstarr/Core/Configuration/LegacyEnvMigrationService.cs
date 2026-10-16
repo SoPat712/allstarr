@@ -106,7 +106,7 @@ public sealed partial class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private const int MaximumPreviewCount = 64;
-    internal const string MigrationSchemaVersion = "legacy-env-import-v4";
+    internal const string MigrationSchemaVersion = "legacy-env-import-v5";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -193,7 +193,7 @@ public sealed partial class LegacyEnvMigrationService
         if (actor.ActorUserId.HasValue)
         {
             existingSettings = await _settings.GetManyAsync(
-                durableEntries.Select(item => item.DurableKey!),
+                durableEntries.Select(item => item.DurableKey!).Concat(["Cors:AllowedOrigins", "Cors:AllowCredentials"]),
                 cancellationToken);
             await using var db = await _factory.CreateDbContextAsync(cancellationToken);
             existingProviders = (await db.ProviderAccounts.AsNoTracking()
@@ -374,6 +374,18 @@ public sealed partial class LegacyEnvMigrationService
                 entry.ProviderId ?? PersonalProviderId(entry.Key),
                 existingRevision,
                 DuplicateScrobbleWarning(entry)));
+        }
+
+        string EffectiveCors(string key) => existingSettings.TryGetValue(key, out var saved) && saved.Origin == RuntimeSettingOrigin.Durable
+            ? saved.NormalizedValue : document.Entries.LastOrDefault(item => item.DurableKey == key && item.Value.Length > 0)?.Value
+                ?? _configuration?[key] ?? RuntimeSettingCatalog.Require(key).DefaultValue ?? "";
+        try { OperatorSettingPolicy.ValidateCors(EffectiveCors("Cors:AllowedOrigins"), EffectiveCors("Cors:AllowCredentials")); }
+        catch (ArgumentException error)
+        {
+            for (var index = 0; index < previewItems.Count; index++)
+                if (previewItems[index].DurableKey is "Cors:AllowedOrigins" or "Cors:AllowCredentials")
+                    previewItems[index] = previewItems[index] with { Action = "conflict_invalid_value", Reason = error.Message };
+            conflicts.Add(error.Message);
         }
 
         var revision = await ComputeRevisionAsync(document.SourceSha256, actor.ActorUserId, cancellationToken);
@@ -853,7 +865,7 @@ public sealed partial class LegacyEnvMigrationService
                     BackendIdentitiesCreated = 0,
                     BackendConnectionSaved = backendWrites.Writes.Any(item => item.Key == "Backend:Type"),
                     BackendServiceAccess = backendWrites.ServiceAccess,
-                    RequiresRestart = backendWrites.Writes.Count > 0,
+                    RequiresRestart = backendWrites.Writes.Count > 0 || settingWrites.Any(item => RuntimeSettingCatalog.Require(item.Key).RequiresRestart),
                     PlaylistLinksCreated = createdPlaylistLinks.Count,
                     SchedulesCreated = createdSchedules.Count,
                     AccountChecks = checkedAccounts.Values.Select(item => item.Check).ToArray(),
@@ -1371,44 +1383,19 @@ public sealed partial class LegacyEnvMigrationService
 
     private static bool IsValidRuntimeValue(string key, string raw, out string error)
     {
-        var definition = RuntimeSettingCatalog.Require(key);
-        var value = raw.Trim();
-        var valid = definition.ValueType switch
-        {
-            RuntimeSettingValueType.Boolean => bool.TryParse(value, out _),
-            RuntimeSettingValueType.Integer => int.TryParse(value, out var parsed) &&
-                                               parsed >= definition.Minimum && parsed <= definition.Maximum,
-            RuntimeSettingValueType.String => value.Length > 0 && value.Length <= definition.MaximumLength &&
-                                              (definition.Choices == null || definition.Choices.Contains(value)),
-            RuntimeSettingValueType.StringList => ValidateProviderList(value),
-            _ => false
-        };
-        error = valid
-            ? string.Empty
-            : $"The value is not valid for durable setting {definition.Key}.";
-        return valid;
-    }
-
-    private static bool ValidateProviderList(string raw)
-    {
-        string[] values;
         try
         {
-            values = raw.TrimStart().StartsWith('[')
-                ? JsonSerializer.Deserialize<string[]>(raw, JsonOptions) ?? []
-                : raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            DurableRuntimeSettingsService.ValidateRawValue(key, raw);
+            error = string.Empty;
+            return true;
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is ArgumentException or JsonException)
         {
+            error = $"The value is not valid for durable setting {key}.";
             return false;
         }
-
-        return values.Length <= 64 &&
-               values.Distinct(StringComparer.OrdinalIgnoreCase).Count() == values.Length &&
-               values.All(value => value.Length is > 0 and <= 100 &&
-                                   value.All(character => char.IsAsciiLetterOrDigit(character) ||
-                                                          character is '-' or '_' or '.'));
     }
+
 
     private static string Base64Url(byte[] value) =>
         Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');

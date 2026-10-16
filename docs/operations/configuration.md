@@ -14,10 +14,7 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 | Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS` |
 | Admin URL prefix | `ADMIN_BASE_PATH` (empty by default) |
 | WebUI SSO | `ADMIN_OIDC_ENABLED`, `ADMIN_OIDC_AUTHORITY`, `ADMIN_OIDC_CLIENT_ID`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_PUBLIC_URL`, `ADMIN_OIDC_DISPLAY_NAME` |
-| Extension install policy | `EXTENSIONS_ALLOW_REMOTE_INSTALL` |
-| Browser origin policy | `CORS_ALLOWED_ORIGINS`, `CORS_ALLOW_CREDENTIALS` |
 | Optional Spotify lyrics bootstrap | `SPOTIFY_API_SESSION_COOKIE` |
-| Canonical metadata upstream | `MUSICBRAINZ_SOURCE_ID`, `MUSICBRAINZ_BASE_URL`, `MUSICBRAINZ_RATE_LIMIT_MS`, exceptional `MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE` |
 
 The Compose file translates these values into ASP.NET configuration. Changing one requires recreating the affected container. Allstarr does not hot-edit its own Compose deployment.
 
@@ -71,7 +68,7 @@ In a version 2 layout, an explicit backend address/type remains available for na
 
 ## Background cross-provider links
 
-`Odesli__Enabled=true` enables optional cross-provider evidence after a match
+Enable **Public cross-provider links** in Settings to collect optional cross-provider evidence after a match
 has been saved. It defaults to false. A durable job queries public track links,
 verifies the exact source ID, and stores new catalog aliases through the recording
 identity owner. Existing conflicting or manual associations are left unchanged.
@@ -79,7 +76,7 @@ New links enqueue an owner-scoped rematch; lookups never run inside the original
 match decision, search, or playback request. Existing lyrics URL translation uses
 the same bounded client independently of this background-work toggle.
 
-`Odesli__RateLimitMs` defaults to 6000 and is clamped to 1000–60000 ms.
+The cross-provider request interval defaults to 6000 ms and accepts 1000–60000 ms.
 Successful responses use the existing Odesli cache duration; empty responses are
 cached for six hours. Rate limits and server failures honor `Retry-After`, bounded
 to one hour, across all requests. Jobs make at most three attempts; a later match
@@ -88,12 +85,11 @@ leaves previously accepted aliases intact.
 
 ## Canonical metadata upstream
 
-MusicBrainz recording enrichment is optional and disabled by default. Set
-`MusicBrainz__Enabled=true` to discover recordings with ISRCs but no MBID in
+MusicBrainz recording enrichment is optional and disabled by default. Enable MusicBrainz under Integrations → Services to discover recordings with ISRCs but no MBID in
 hourly background passes. Each lookup runs as a low-priority durable job, with
 three attempts; unresolved or exhausted work can be queued again the following
 week. It never runs inside a search, playback, library scan or match decision.
-`MusicBrainz__RateLimitMs` defaults to 1000 and is clamped to 1000–60000 ms.
+The MusicBrainz request interval defaults to 1000 ms and accepts 1000–60000 ms.
 Rate limits and temporary failures use cancellable requests and durable retries;
 `Retry-After` is bounded to one hour. Exact, unambiguous evidence can add ISRCs
 and merge recordings, retaining the earliest public ID and all old redirects.
@@ -101,15 +97,11 @@ Ambiguous results or conflicting MBIDs leave the existing identity unchanged.
 
 Allstarr's catalog client speaks the read-only MusicBrainz `/ws/2` contract. The public MusicBrainz service remains the bootstrap default. After the BrainzMash operator approves Allstarr's user agent, select the pool without changing matching or catalog ownership:
 
-```dotenv
-MUSICBRAINZ_SOURCE_ID=brainzmash
-MUSICBRAINZ_BASE_URL=https://api.brainzmash.cc/ws/2
-MUSICBRAINZ_RATE_LIMIT_MS=1000
-```
+In Integrations → Services → MusicBrainz, set the metadata source identifier to `brainzmash`, the service URL to `https://api.brainzmash.cc/ws/2`, and the request interval to `1000` ms, then save and restart.
 
 This is the MusicBrainz-compatible front door used by DroppedNeedle. Do not append `/ws/2` to `https://lidarrapi.brainzmash.cc`: that is the separate Lidarr/Aurral-shaped API with `/artist`, `/album`, and `/search/*` resources, and Allstarr deliberately does not implement that second dialect. Requests identify themselves with the version derived from `AppVersion.Version` and the Allstarr repository URL. Source IDs isolate cache entries and provenance, so changing the upstream cannot reuse another source's response. A 401 or 403 is an access/configuration failure, not a missing recording; do not retry it as catalog churn. Playback uses persisted routes and remains available when the metadata upstream is unavailable.
 
-`MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE` is an exceptional, temporary operator-approved compatibility setting. Leave it unset for normal operation so Allstarr derives its identity from `AppVersion.Version`. Never copy another application's identity without explicit permission from the upstream operator; remove the override as soon as Allstarr's own identity is admitted.
+The authorized user agent override is an exceptional, temporary operator-approved compatibility setting. Leave it blank for normal operation so Allstarr derives its identity from `AppVersion.Version`. Never copy another application's identity without explicit permission from the upstream operator; remove the override as soon as Allstarr's own identity is admitted.
 
 ## Optional services
 
@@ -157,3 +149,9 @@ Sidecar readiness uses cheap bounded requests, starts immediately, and refreshes
 An administrator's account Test first checks each capability's connection. For a streaming account whose checks pass, it then plays a short real sample: at most 64 KiB within 30 seconds (five minutes for extensions that download before streaming), and reports the observed playback support: byte ranges, provider seeking, or sequential playback. The sample needs a known track from saved provider metadata; until one exists the Test reports the connection result and asks for one (refresh playlist metadata first). Playlist and scrobbling tests check their own capabilities. Streaming lease creation alone does not count as successful playback.
 
 The health-table migration preserves users, accounts, encrypted credentials, settings and playlist data. Back up the database and matching encryption key ring before upgrading. A rollback requires the matching older database/key-ring pair and application image.
+
+## Service and retention settings
+
+Settings owns browser origins/methods/headers/credential policy, remote extension installation, request logging, activity and job-history retention, automatic backup retention, and the selected backend music libraries. These values are saved in SQLite. Library selection preserves opaque identifiers and never grants a listener additional backend permissions. Browser credentials require explicit origins; wildcard credential policies are refused in both import preview and apply.
+
+Integrations → Services → MusicBrainz owns the metadata source identifier, service URL, request interval and optional authorized user agent override. The public metadata service needs no username or password. Changes to these service and operator settings are marked as requiring a restart. Save commits first and requests restart after the response completes; a container restart policy brings Allstarr back. Source changes isolate cache/provenance by identifier. Existing product environment values are imported once through the reviewed legacy import and cannot override saved settings on later startups.
