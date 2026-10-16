@@ -385,7 +385,8 @@ public class AdminUiController : ControllerBase
         [FromQuery] int limit = 20,
         [FromQuery] DateTimeOffset? before = null,
         [FromQuery] Guid? beforeId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        [FromQuery] string scope = "mine")
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var sessionValue) ||
             sessionValue is not AdminAuthSession { AllstarrUserId: { } userId } session)
@@ -393,22 +394,26 @@ public class AdminUiController : ControllerBase
             return StatusCode(StatusCodes.Status403Forbidden, new { error = "A linked Allstarr user is required" });
         }
 
+        if (scope is not ("mine" or "everyone")) return BadRequest(new { error = "Unknown activity scope" });
+        if (scope == "everyone" && !session.IsAdministrator) return Forbid();
+        var everyone = session.IsAdministrator && scope == "everyone";
+
         limit = Math.Clamp(limit, 1, 100);
         var scanLimit = Math.Min(500, limit * 5);
         var contextFactory = HttpContext.RequestServices.GetRequiredService<IDbContextFactory<AllstarrDbContext>>();
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
-            .Where(item => session.IsAdministrator || item.OwnerUserId == userId)
+            .Where(item => session.IsAdministrator || item.OwnerUserId == userId || item.OwnerUserId == null)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
         var jobs = await context.Jobs.AsNoTracking()
-            .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
+            .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.UpdatedAt < before.Value ||
                 (item.UpdatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.UpdatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var playlistRuns = await context.PlaylistSyncRuns.AsNoTracking()
-            .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
+            .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || (item.CompletedAt ?? item.StartedAt) < before.Value ||
                 ((item.CompletedAt ?? item.StartedAt) == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CompletedAt ?? item.StartedAt).ThenByDescending(item => item.Id)
@@ -432,7 +437,7 @@ public class AdminUiController : ControllerBase
                 .ToListAsync(cancellationToken))
                 .ToDictionary(item => item.PlaylistLinkId);
         var matchActivity = await _trackMatches.GetActivityDataAsync(
-            new TrackMatchActor(userId, session.IsAdministrator),
+            new TrackMatchActor(userId, everyone),
             before,
             beforeId,
             scanLimit,
@@ -449,20 +454,20 @@ public class AdminUiController : ControllerBase
             .ToDictionary(group => group.Key, group => group.ToArray());
         var libraryTracks = matchActivity.LibraryTracks;
         var audits = await context.AuditEvents.AsNoTracking()
-            .Where(item => (session.IsAdministrator || item.ActorUserId == userId) &&
+            .Where(item => (everyone || item.ActorUserId == userId) &&
                 (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var extensionLogs = await context.ExtensionLogs.AsNoTracking()
-            .Where(item => session.IsAdministrator && (!before.HasValue || item.CreatedAt < before.Value ||
+            .Where(item => everyone && (!before.HasValue || item.CreatedAt < before.Value ||
                 (item.CreatedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.CreatedAt).ThenByDescending(item => item.Id)
             .Take(scanLimit)
             .ToListAsync(cancellationToken);
         var downloadArtifacts = await context.ProviderDownloadArtifacts.AsNoTracking()
-            .Where(item => (session.IsAdministrator || item.OwnerUserId == userId) &&
+            .Where(item => (everyone || item.OwnerUserId == userId) &&
                 (!before.HasValue || item.VerifiedAt < before.Value ||
                 (item.VerifiedAt == before.Value && beforeId.HasValue && item.Id.CompareTo(beforeId.Value) < 0)))
             .OrderByDescending(item => item.VerifiedAt).ThenByDescending(item => item.Id)
@@ -483,7 +488,8 @@ public class AdminUiController : ControllerBase
             item.CorrelationId,
             SeverityForState(item.State.ToString()),
             item.ProviderAccountId.HasValue && accounts.TryGetValue(item.ProviderAccountId.Value, out var providerAccount)
-                ? providerAccount.ProviderId : null)));
+                ? providerAccount.ProviderId : null,
+            ActorUserId: item.OwnerUserId?.ToString("N"))));
         activity.AddRange(playlistRuns.Select(item =>
         {
             playlistLinks.TryGetValue(item.PlaylistLinkId, out var link);
@@ -497,6 +503,7 @@ public class AdminUiController : ControllerBase
                 item.ConflictCode ?? $"Generation {item.Generation}",
                 item.CompletedAt ?? item.StartedAt,
                 Severity: SeverityForState(item.State.ToString()),
+                ActorUserId: item.OwnerUserId.ToString("N"),
                 PlaylistLinkId: item.PlaylistLinkId.ToString("N"),
                 PlaylistName: snapshot?.Name ?? "Playlist",
                 ArtworkUrl: snapshot?.ArtworkReferenceKey == null || link == null
@@ -575,6 +582,7 @@ public class AdminUiController : ControllerBase
             item.DurableJobId.ToString("N"),
             SeverityForState(item.State.ToString()),
             ProviderId: item.ProviderId,
+            ActorUserId: item.OwnerUserId?.ToString("N"),
             SourceProviderTrackId: item.ProviderArtifactId,
             BackendItemId: item.ManagedFileId?.ToString("N"),
             Action: item.State == Core.Downloads.ProviderDownloadArtifactState.Placed
@@ -597,7 +605,22 @@ public class AdminUiController : ControllerBase
             })));
 
         var ordered = activity.OrderByDescending(item => item.OccurredAt).ThenByDescending(item => item.Id).Take(limit + 1).ToArray();
-        var items = ordered.Take(limit).ToArray();
+        var actorIds = ordered.Select(item => Guid.TryParse(item.ActorUserId, out var id) ? id : (Guid?)null)
+            .OfType<Guid>().Distinct().ToArray();
+        var actors = await context.Users.AsNoTracking().Where(item => actorIds.Contains(item.Id))
+            .ToDictionaryAsync(item => item.Id, cancellationToken);
+        var items = ordered.Take(limit).Select(item =>
+        {
+            var actor = Guid.TryParse(item.ActorUserId, out var actorId) ? actors.GetValueOrDefault(actorId) : null;
+            var library = item.Label == "library.index" || item.Kind == "library";
+            return item with
+            {
+                ActorDisplayName = item.ActorUserId == null ? "Household" : ActivityPresentation.UserName(actor?.DisplayName),
+                Source = library ? ActivityPresentation.LibraryName(actor?.BackendType) : item.Kind == "job" && item.ProviderId == null
+                    ? ActivityPresentation.JobSource(item.Label, actor?.BackendType) : item.Source,
+                ProviderId = library ? "library" : item.ProviderId
+            };
+        }).ToArray();
         return Ok(new
         {
             items,
@@ -696,6 +719,7 @@ public class AdminUiController : ControllerBase
             SourceProviderTrackId: sourceIdentity?.ExternalId,
             TargetProviderTrackId: providerRoute?.ExternalId,
             BackendItemId: libraryTrack?.BackendItemId,
+            ActorUserId: match.OwnerUserId.ToString("N"),
             Action: "track-match.evaluate",
             TechnicalDetails: technicalDetails);
     }
@@ -1609,4 +1633,5 @@ public sealed record AdminUiActivityItem(
     string? ActorUserId = null,
     string? Action = null,
     long? DurationMilliseconds = null,
-    IReadOnlyDictionary<string, string>? TechnicalDetails = null);
+    IReadOnlyDictionary<string, string>? TechnicalDetails = null,
+    string? ActorDisplayName = null);

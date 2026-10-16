@@ -208,3 +208,16 @@ test("administrator navigation and household now-playing remain available", asyn
   await page.goto("/#/settings/playback");
   await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
 });
+
+test("listeners always use Mine even when this browser remembers Everyone", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("allstarr.activity.scope", "everyone"));
+  const requests = await mockApp(page, false);
+  await page.route("**/api/admin/jobs?*", route => json(route, { jobs: [], progress: [], hasMore: false }));
+  await page.goto("/#/activity");
+  await expect(page.getByLabel("Search", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Activity scope" })).toHaveCount(0);
+  await expect(page.getByText("Your background work", { exact: false })).toBeVisible();
+  expect(requests.some(request => request.includes("/updates/stream?scope=mine"))).toBe(true);
+  expect(requests.some(request => request.includes("/ui/activity?limit=50&scope=mine"))).toBe(true);
+  expect(requests.some(request => request.includes("scope=everyone"))).toBe(false);
+});

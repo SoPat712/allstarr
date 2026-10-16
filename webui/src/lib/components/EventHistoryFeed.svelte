@@ -35,10 +35,11 @@
   import SelectField from "$lib/components/SelectField.svelte";
   import { formatDuration } from "$lib/playlists";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
-  import { findProviderDefinition, providerDisplayName } from "$lib/sources";
+  import { findProviderDefinition } from "$lib/sources";
 
-  let { administrator = false }: { administrator?: boolean } = $props();
+  let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
 
+  let disposed = false;
   let items = $state<ActivityItem[]>([]);
   let providers = $state<ProviderDefinition[]>([]);
   let backend = $state("Local library");
@@ -90,7 +91,7 @@
   function providerName(providerId?: string | null) {
     if (!providerId) return "System";
     if (providerId === "library") return backend;
-    return findProviderDefinition(providers, providerId)?.name ?? humanize(providerDisplayName(providers, providerId));
+    return findProviderDefinition(providers, providerId)?.name ?? humanize(providerId);
   }
 
   async function load(mode: "initial" | "refresh" | "older" = "refresh") {
@@ -100,8 +101,9 @@
     error = "";
     try {
       const response = await eventLog.list(mode === "older"
-        ? { limit: 50, before: cursor, beforeId: cursorId }
-        : { limit: 50 });
+        ? { limit: 50, before: cursor, beforeId: cursorId, scope }
+        : { limit: 50, scope });
+      if (disposed) return;
       if (mode === "initial") items = response.items;
       else if (mode === "older") items = mergeActivity(items, response.items);
       else {
@@ -167,15 +169,20 @@
     return text.charAt(0) + text.slice(1).toLowerCase();
   }
 
+  function sourceName(item: ActivityItem) {
+    if (item.providerId === "library" && item.source !== "library") return item.source;
+    return item.providerId ? providerName(item.providerId) : humanize(item.source || "system");
+  }
+
   function groupSubtitle(entries: ActivityItem[]) {
     const first = entries[0];
     if (first.kind === "matching" && entries.length > 1) {
       const matched = entries.filter((item) => outcomeClass(item.state) === "accepted").length;
       const playlists = [...new Set(entries.map((item) => item.playlistName).filter(Boolean))];
-      return [playlists.join(", "), `${matched} matched`, entries.length - matched ? `${entries.length - matched} need review` : ""]
+      return [first.actorDisplayName || "Household", playlists.join(", "), `${matched} matched`, entries.length - matched ? `${entries.length - matched} need review` : ""]
         .filter(Boolean).join(" · ");
     }
-    return [first.providerId ? providerName(first.providerId) : "", first.detail].filter(Boolean).join(" · ");
+    return [first.actorDisplayName || "Household", sourceName(first), first.detail].filter(Boolean).join(" · ");
   }
 
   function groupBadge(entries: ActivityItem[], state: string) {
@@ -206,7 +213,7 @@
       ["Media server item ID", item.backendItemId],
       ["Route decision", item.routeDecisionId],
       ["Correlation ID", item.correlationId],
-      ["Actor", item.actorUserId],
+      ["Actor user ID", item.actorUserId],
       ...Object.entries(item.technicalDetails ?? {}),
     ];
     return fields.filter((entry, index) =>
@@ -223,6 +230,7 @@
     void load("initial");
     const unsubscribe = liveUpdates.subscribe(scheduleRefresh);
     return () => {
+      disposed = true;
       motionPreference.removeEventListener("change", syncMotion);
       unsubscribe();
       refreshScheduler.cancel();
@@ -301,6 +309,7 @@
                   <strong>{group.entries.length > 1 ? group.title : sentence(first.label)}</strong>
                   {#if first.kind === "matching" && group.entries.length === 1}
                     <span class="event-route">
+                      <small>{first.actorDisplayName || "Household"}</small>
                       <span>{first.sourceTitle || first.detail}</span>
                       <ArrowRight size={14} aria-hidden="true" />
                       <span class:unresolved={!first.targetProviderId}>{first.targetTitle || "No playable match"}</span>
@@ -336,6 +345,7 @@
                         <p>{item.detail}</p>
                       {/if}
                       <div class="event-child-meta">
+                        <span>{item.actorDisplayName || "Household"} · {sourceName(item)}</span>
                         <Badge state={outcomeClass(item.state)}>{sentence(item.state)}</Badge>
                         {#if item.durationMilliseconds}<span>Took {formatDuration(item.durationMilliseconds)}</span>{/if}
                         {#if item.playlistName}<span>{item.playlistName}</span>{/if}
@@ -391,5 +401,6 @@
 
 
 <style>
+  .event-technical > summary { min-height: var(--control-md); display: flex; align-items: center; }
   .event-log-chips .filter-chip { min-height: var(--control-md); }
 </style>

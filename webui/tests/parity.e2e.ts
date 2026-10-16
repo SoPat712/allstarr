@@ -6408,3 +6408,79 @@ test("Activity queue refreshes after reconnect and sends server-side filters", a
   await expect(page.getByText("No jobs match these filters", { exact: true })).toBeVisible();
   await expect(page.getByText("Live updates connected", { exact: true })).toBeVisible();
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
+  test(`Activity ownership scope at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockApi(page);
+    await page.addInitScript(() => {
+      let stream: FixtureStream;
+      class FixtureStream {
+        listeners = new Map<string, (event: MessageEvent<string>) => void>();
+        constructor() { stream = this; }
+        addEventListener(name: string, listener: (event: MessageEvent<string>) => void) { this.listeners.set(name, listener); }
+        close() {}
+      }
+      Object.defineProperty(window, "EventSource", { value: FixtureStream });
+      window.__emitAllstarrUpdate = () => stream.listeners.get("update")?.(new MessageEvent("update", {
+        data: JSON.stringify({ eventId: "failed-foreign", resource: "job", resourceId: "other-scan", requiresAdministrator: true }),
+      }));
+    });
+    const requests: Array<{ path: string; scope: string | null }> = [];
+    for (const path of ["/api/admin/jobs", "/api/admin/ui/activity", "/api/admin/activity/tasks"]) {
+      await page.route(`**${path}*`, route => {
+        const url = new URL(route.request().url());
+        const scope = url.searchParams.get("scope");
+        requests.push({ path, scope });
+        const everyone = scope === "everyone";
+        if (path.endsWith("/jobs")) return route.fulfill({ json: {
+          jobs: [{ id: "own-scan", type: "library.index", state: "Succeeded", ownerName: "Josh", source: "Jellyfin library", updatedAt: "2026-10-15T12:00:00Z" },
+            ...(everyone ? [{ id: "other-scan", type: "library.index", state: "Succeeded", ownerName: "Alex", source: "Jellyfin library", updatedAt: "2026-10-15T12:00:00Z" }] : [])],
+          progress: [], hasMore: false,
+        } });
+        if (path.endsWith("/tasks")) return route.fulfill({ json: { items: [{ id: "schedule", name: everyone ? "Alex's playlist" : "Josh's playlist", ownerName: everyone ? "Alex" : "Josh", kind: "playlist", cadence: "Daily", state: "Scheduled", enabled: true }] } });
+        return route.fulfill({ json: { items: [{ id: "own-event", kind: "library", label: "Library scan completed", source: "Jellyfin library", providerId: "library", state: "succeeded", detail: "Indexed music", actorUserId: "private-owner-id", actorDisplayName: "Josh", occurredAt: "2026-10-15T12:00:00Z" },
+          ...(everyone ? [{ id: "other-event", kind: "library", label: "Library scan completed", source: "Jellyfin library", providerId: "library", state: "succeeded", detail: "Indexed music", actorUserId: "private-other-id", actorDisplayName: "Alex", occurredAt: "2026-10-15T12:00:00Z" }] : [])], hasMore: false } });
+      });
+    }
+    await page.goto("#/activity");
+    const scope = page.getByRole("group", { name: "Activity scope" });
+    await expect(scope.getByRole("button", { name: "Mine", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-job-id="own-scan"]')).toBeVisible();
+    await expect(page.locator('[data-job-id="other-scan"]')).toHaveCount(0);
+    expect(requests.filter(r => r.path !== "/api/admin/activity/tasks").every(r => r.scope === "mine")).toBe(true);
+    await page.evaluate(() => window.__emitAllstarrUpdate?.());
+    await expect(page.getByRole("status").filter({ hasText: "Household work needs attention." })).toBeVisible();
+    await expect(page.locator('[data-job-id="other-scan"]')).toHaveCount(0);
+    await page.getByRole("button", { name: "Review household work", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(scope.getByRole("button", { name: "Everyone", exact: true })).toBeFocused();
+    await expect(scope.getByRole("button", { name: "Everyone", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-job-id="other-scan"]')).toContainText("Alex");
+    const other = page.locator(".event-log-group").filter({ hasText: "Alex" });
+    await expect(other).toBeVisible();
+    await expect(other.locator("summary").first()).toContainText("Jellyfin library");
+    await expect(page.getByText("Unknown Source", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("private-other-id", { exact: true })).not.toBeVisible();
+    await other.locator("summary").first().click();
+    await other.getByText("Technical details", { exact: true }).click();
+    await expect(other.getByText("private-other-id", { exact: true })).toBeVisible();
+    await expectContainedMobileGeometry(page);
+    if (process.env.ALLSTARR_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-ownership-${width}-${theme}.png`, fullPage: true });
+    await page.reload();
+    await expect(scope.getByRole("button", { name: "Everyone", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator('[data-job-id="other-scan"]')).toBeVisible();
+    await page.getByRole("tab", { name: "Tasks", exact: true }).click();
+    await expect(page.getByText("Alex's playlist", { exact: true })).toBeVisible();
+    await scope.getByRole("button", { name: "Mine", exact: true }).click();
+    await expect(page.getByText("Josh's playlist", { exact: true })).toBeVisible();
+    await expect(page.getByText("Alex's playlist", { exact: true })).toHaveCount(0);
+    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await expect(page.locator('[data-job-id="own-scan"]')).toBeVisible();
+    await expect(page.locator('[data-job-id="other-scan"]')).toHaveCount(0);
+    await expect(page.locator(".event-log-group").filter({ hasText: "Alex" })).toHaveCount(0);
+    await expectContainedMobileGeometry(page);
+  });
+}

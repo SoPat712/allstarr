@@ -88,6 +88,7 @@ export type PlaylistResponse = {
 };
 
 export type Job = {
+  source?: string;
   id: string;
   type: string;
   state: string;
@@ -148,6 +149,7 @@ export type ActivityItem = {
   backendItemId?: string | null;
   routeDecisionId?: string | null;
   actorUserId?: string | null;
+  actorDisplayName?: string | null;
   action?: string | null;
   durationMilliseconds?: number | null;
   technicalDetails?: Record<string, string> | null;
@@ -1833,8 +1835,8 @@ export const extensions = {
 };
 
 export const eventLog = {
-  list: (params: { limit?: number; before?: string; beforeId?: string } = {}) => {
-    const query = new URLSearchParams({ limit: String(params.limit ?? 50) });
+  list: (params: { limit?: number; before?: string; beforeId?: string; scope?: "mine" | "everyone" } = {}) => {
+    const query = new URLSearchParams({ limit: String(params.limit ?? 50), scope: params.scope ?? "mine" });
     if (params.before) query.set("before", params.before);
     if (params.beforeId) query.set("beforeId", params.beforeId);
     return json<ActivityResponse>(`/api/admin/ui/activity?${query}`);
@@ -2110,8 +2112,8 @@ export const appleDownload = {
 
 
 export const activityWork = {
-  jobs: (view: "queue" | "history", state = "", type = "", before = "", beforeId = "") => {
-    const query = new URLSearchParams({ view, limit: "50" });
+  jobs: (view: "queue" | "history", state = "", type = "", before = "", beforeId = "", scope: "mine" | "everyone" = "mine") => {
+    const query = new URLSearchParams({ view, limit: "50", scope });
     if (state) query.set("state", state);
     if (type) query.set("type", type);
     if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
@@ -2122,5 +2124,5 @@ export const activityWork = {
     if (before && beforeId) { query.set("before", before); query.set("beforeId", beforeId); }
     return json<JobDetail>(`/api/admin/jobs/${encodeURIComponent(id)}?${query}`);
   },
-  tasks: () => json<{ items: ActivityTask[]; hasMore?: boolean }>("/api/admin/activity/tasks"),
+  tasks: (scope: "mine" | "everyone" = "mine") => json<{ items: ActivityTask[]; hasMore?: boolean }>(scope === "mine" ? "/api/admin/activity/tasks" : `/api/admin/activity/tasks?scope=${scope}`),
 };

@@ -103,3 +103,49 @@ it("refreshes subscribers after reconnect and ignores malformed stream messages"
   liveUpdates.close();
   vi.unstubAllGlobals();
 });
+
+it("reconnects with a fresh cursor when administrators change scope", () => {
+  const opened: string[] = [];
+  const closed = vi.fn();
+  class Stream {
+    constructor(url: string) { opened.push(url); }
+    addEventListener() {}
+    close() { closed(); }
+  }
+  vi.stubGlobal("EventSource", Stream);
+  liveUpdates.connect(true, "mine");
+  liveUpdates.setScope("everyone");
+  expect(opened).toEqual(["/api/admin/updates/stream?scope=mine", "/api/admin/updates/stream?scope=everyone"]);
+  expect(closed).toHaveBeenCalledOnce();
+  liveUpdates.setScope("everyone");
+  expect(opened).toHaveLength(2);
+  liveUpdates.close();
+  liveUpdates.connect(false, "everyone");
+  liveUpdates.setScope("everyone");
+  expect(opened.at(-1)).toBe("/api/admin/updates/stream?scope=mine");
+  expect(opened).toHaveLength(3);
+  liveUpdates.close();
+  vi.unstubAllGlobals();
+});
+
+it("ignores queued messages from the previous household stream after switching to Mine", () => {
+  const streams: Array<Map<string, (event: { data: string; lastEventId?: string }) => void>> = [];
+  class Stream {
+    handlers = new Map<string, (event: { data: string; lastEventId?: string }) => void>();
+    constructor() { streams.push(this.handlers); }
+    addEventListener(name: string, callback: (event: { data: string }) => void) { this.handlers.set(name, callback); }
+    close() {}
+  }
+  vi.stubGlobal("EventSource", Stream);
+  const received = vi.fn();
+  const unsubscribe = liveUpdates.subscribe(received);
+  liveUpdates.connect(true, "everyone");
+  liveUpdates.setScope("mine");
+  streams[0].get("update")?.({ data: '{"resource":"job","resourceId":"other"}', lastEventId: "old-event" });
+  expect(received).not.toHaveBeenCalled();
+  streams[1].get("update")?.({ data: '{"resource":"job","resourceId":"own"}', lastEventId: "new-event" });
+  expect(received).toHaveBeenCalledOnce();
+  unsubscribe();
+  liveUpdates.close();
+  vi.unstubAllGlobals();
+});

@@ -13,7 +13,7 @@
   import RouteError from "$lib/components/RouteError.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
 
-  let { mode, administrator = false }: { mode: "queue" | "history"; administrator?: boolean } = $props();
+  let { mode, administrator = false, scope = "mine" }: { mode: "queue" | "history"; administrator?: boolean; scope?: "mine" | "everyone" } = $props();
   let items = $state<Job[]>([]);
   let progress = $state<JobProgress[]>([]);
   let mounted = $state(false);
@@ -51,7 +51,7 @@
     busy = true;
     error = "";
     try {
-      const next = await activityWork.jobs(mode, stateFilter, typeFilter, kind === "older" ? cursor : "", kind === "older" ? cursorId : "");
+      const next = await activityWork.jobs(mode, stateFilter, typeFilter, kind === "older" ? cursor : "", kind === "older" ? cursorId : "", scope);
       if (disposed || version !== request) return;
       if (kind === "replace" || mode === "queue" && kind === "refresh") items = next.jobs;
       else {
@@ -143,7 +143,7 @@
         {@const percent = progressPercent(info.completed, info.total)}
         <article class="activity-job" data-job-id={job.id}>
           <div class="activity-job-heading">
-            <div><h3>{jobName(job.type)}</h3><p>{administrator ? `${job.ownerName || "Household"} · ` : ""}{time(job.completedAt ?? job.createdAt ?? job.updatedAt)}</p></div>
+            <div><h3>{jobName(job.type)}</h3><p>{administrator ? `${job.ownerName || "Household"} · ` : ""}{job.source ? `${job.source} · ` : ""}{time(job.completedAt ?? job.createdAt ?? job.updatedAt)}</p></div>
             <Badge state={outcomeClass(job.state)}>{job.cancellationRequestedAt ? "Cancellation requested" : jobState(job.state)}</Badge>
           </div>
           {#if info.message}<p>{info.message}</p>{/if}

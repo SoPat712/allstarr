@@ -68,7 +68,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     public async Task ReadAsync_AdminSeesPersonalAndHouseholdJobsAndAuditsWithoutOutboxEvents()
     {
         var events = await Feed().ReadAsync(
-            new AdminUpdateScope(userId, true),
+            new AdminUpdateScope(userId, true, true),
             BeforeSeed(),
             100,
             CancellationToken.None);
@@ -87,11 +87,54 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ReadAsync_AdminDefaultOmitsOtherSuccessesButRetainsFailures()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var failed = Job(otherUserId, "failed-other", startedAt.AddSeconds(8));
+            failed.State = DurableJobState.Failed;
+            db.Jobs.Add(failed);
+            var audit = Audit(otherUserId, "failed-audit", "failed-other", startedAt.AddSeconds(9));
+            audit.Outcome = "failed";
+            db.AuditEvents.Add(audit);
+            await db.SaveChangesAsync();
+        }
+        var events = await Feed().ReadAsync(new(userId, true), BeforeSeed(), 100, default);
+        Assert.Contains(events, item => item.CorrelationId == "own");
+        Assert.DoesNotContain(events, item => item.CorrelationId is "other" or "household");
+        Assert.Contains(events, item => item.Resource == "job" && item.CorrelationId == "failed-other");
+        Assert.Equal(Assert.Single(events, item => item.Resource == "job" && item.CorrelationId == "failed-other").ResourceId,
+            Assert.Single(events, item => item.Action == "failed-audit").JobId);
+        Assert.All(events.Where(item => item.CorrelationId == "failed-other"), item => Assert.True(item.RequiresAdministrator));
+        Assert.All(events.Where(item => item.CorrelationId == "own"), item => Assert.False(item.RequiresAdministrator));
+        var listener = await Feed().ReadAsync(new(userId, false), BeforeSeed(), 100, default);
+        Assert.DoesNotContain(listener, item => item.CorrelationId == "failed-other");
+    }
+
+    [Theory]
+    [InlineData("retry_scheduled", true)]
+    [InlineData("failed", true)]
+    [InlineData("deferred", false)]
+    public async Task ReadAsync_AdminReceivesFailedRetriesButNotRoutineDeferrals(string outcome, bool expected)
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var job = Job(otherUserId, "retry-other", startedAt.AddSeconds(9));
+            job.State = DurableJobState.RetryScheduled;
+            job.LastAttemptOutcome = outcome;
+            db.Jobs.Add(job);
+            await db.SaveChangesAsync();
+        }
+        var events = await Feed().ReadAsync(new(userId, true), BeforeSeed(), 100, default);
+        Assert.Equal(expected, events.Any(item => item.Resource == "job" && item.CorrelationId == "retry-other"));
+    }
+
+    [Fact]
     public async Task ReadAsync_LastEventCursorDeduplicatesAndKeepsLaterEvents()
     {
         var feed = Feed();
         var first = await feed.ReadAsync(
-            new AdminUpdateScope(userId, true),
+            new AdminUpdateScope(userId, true, true),
             BeforeSeed(),
             2,
             CancellationToken.None);
@@ -99,7 +142,7 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         Assert.True(AdminUpdateCursor.TryParse(first[^1].EventId, out var cursor));
 
         var remaining = await feed.ReadAsync(
-            new AdminUpdateScope(userId, true),
+            new AdminUpdateScope(userId, true, true),
             cursor,
             100,
             CancellationToken.None);
@@ -204,6 +247,45 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         await stream.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.False(timeout.IsCancellationRequested);
         Assert.Equal(1, clock.ScheduledCount);
+    }
+
+    [Theory]
+    [InlineData("everyone", false, 403)]
+    [InlineData("invalid", true, 400)]
+    public async Task Stream_RejectsUnauthorizedOrUnknownScope(string scope, bool administrator, int status)
+    {
+        var http = new DefaultHttpContext();
+        http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = new AdminAuthSession
+        {
+            SessionId = "fixture",
+            UserId = "fixture",
+            UserName = "Owner",
+            JellyfinAccessToken = "fixture",
+            AllstarrUserId = userId,
+            IsAdministrator = administrator,
+            ExpiresAtUtc = DateTime.UtcNow.AddHours(1)
+        };
+        var controller = new AdminUpdatesController(Feed(), null!) { ControllerContext = new() { HttpContext = http } };
+        await controller.Stream(default, scope);
+        Assert.Equal(status, http.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ReadAsync_ListenerCannotOptIntoEveryoneAndHouseholdCorrelationsKeepTheirOwner()
+    {
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var other = await db.Jobs.SingleAsync(item => item.OwnerUserId == otherUserId);
+            other.CorrelationId = "own";
+            db.AuditEvents.Add(Audit(otherUserId, "colliding-audit", "own", startedAt.AddSeconds(10)));
+            await db.SaveChangesAsync();
+        }
+        var listener = await Feed().ReadAsync(new(userId, false, true), BeforeSeed(), 100, default);
+        Assert.DoesNotContain(listener, item => item.Action == "colliding-audit");
+        var all = await Feed().ReadAsync(new(userId, true, true), BeforeSeed(), 100, default);
+        var foreignAudit = Assert.Single(all, item => item.Action == "colliding-audit");
+        await using var context = await factory.CreateDbContextAsync();
+        Assert.Equal(otherUserId, (await context.Jobs.SingleAsync(item => item.Id == foreignAudit.JobId)).OwnerUserId);
     }
 
     private sealed class PollingClock : TimeProvider
