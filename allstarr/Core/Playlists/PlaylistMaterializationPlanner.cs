@@ -23,7 +23,8 @@ public enum PlaylistPreviewEntryStatus
     BelowAcceptanceThreshold,
     MissingLocalItem,
     WrongBackend,
-    StaleDecision
+    StaleDecision,
+    Streamed
 }
 
 public static class PlaylistMaterializationOutcomeCodes
@@ -35,6 +36,7 @@ public static class PlaylistMaterializationOutcomeCodes
     public const string SkippedDuplicate = "skipped_duplicate";
     public const string SkippedWrongBackendOrLibrary = "skipped_wrong_backend_or_library";
     public const string SkippedStaleRevision = "skipped_stale_revision";
+    public const string StreamedThroughAllstarr = "streamed_through_allstarr";
 }
 
 public sealed record PlaylistSourceIdentity(
@@ -337,10 +339,11 @@ public sealed class PlaylistMaterializationPlanner
             return Skip(entry, Map(decision.State), $"match_state_{decision.State.ToString().ToLowerInvariant()}", decision);
 
         var route = decision.Route ?? InferRoute(decision);
-        if (route.Kind == TrackRouteKind.External)
-            return Skip(entry, PlaylistPreviewEntryStatus.MissingLocalItem,
-                "accepted_match_has_external_only_route_for_backend", decision, route,
-                PlaylistMaterializationOutcomeCodes.SkippedExternalOnlyForBackend);
+        if (route.Kind == TrackRouteKind.External &&
+            !string.IsNullOrWhiteSpace(route.ProviderId) && !string.IsNullOrWhiteSpace(route.ExternalId))
+            return Skip(entry, PlaylistPreviewEntryStatus.Streamed,
+                "accepted_match_streams_through_allstarr", decision, route,
+                PlaylistMaterializationOutcomeCodes.StreamedThroughAllstarr);
         if (route.Kind != TrackRouteKind.Local)
         {
             var status = route.LibraryTrackId.HasValue || decision.LibraryTrackId.HasValue

@@ -66,6 +66,8 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
             [PlaylistPreviewEntryStatus.Included, PlaylistPreviewEntryStatus.Included, PlaylistPreviewEntryStatus.Duplicate, PlaylistPreviewEntryStatus.Included],
             plan.Entries.Select(entry => entry.Status));
         Assert.Equal(source.Entries[0].SourceEntryId, plan.Entries[2].DuplicateOfSourceEntryId);
+        Assert.Equal("skipped_duplicate", plan.Entries[2].OutcomeCode);
+        Assert.False(plan.Entries[2].TargetEligible);
         Assert.Equal([0, 1, 2], plan.Entries.Where(entry => entry.Status == PlaylistPreviewEntryStatus.Included).Select(entry => entry.TargetPosition));
     }
 
@@ -92,7 +94,7 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
         Assert.Equal([true, false, true, false], plan.Entries.Select(item => item.TargetEligible));
         Assert.Equal(
             [PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem,
-                PlaylistMaterializationOutcomeCodes.SkippedExternalOnlyForBackend,
+                "streamed_through_allstarr",
                 PlaylistMaterializationOutcomeCodes.IncludedNativeBackendItem,
                 PlaylistMaterializationOutcomeCodes.SkippedUnresolved],
             plan.Entries.Select(item => item.OutcomeCode));
@@ -100,7 +102,34 @@ public sealed class PlaylistMaterializationPlannerTests(ITestOutputHelper output
         Assert.Equal("Song A", plan.Entries[0].SourceMetadata!.Title);
         Assert.Equal(TrackRouteKind.External, plan.Entries[1].ResolvedRoute!.Kind);
         Assert.Equal("apple-track-b", plan.Entries[1].ResolvedRoute!.ExternalId);
+        Assert.Equal("Streamed", plan.Entries[1].Status.ToString());
         Assert.Equal([0, 1], plan.Entries.Where(item => item.TargetEligible).Select(item => item.TargetPosition));
+    }
+
+    [Theory]
+    [InlineData(PlaylistPlanMode.Virtual)]
+    [InlineData(PlaylistPlanMode.Reconcile)]
+    [InlineData(PlaylistPlanMode.Recreate)]
+    public void Accepted_external_routes_stream_without_native_membership(PlaylistPlanMode mode)
+    {
+        var source = Source(Entry(0, "accepted"), Entry(1, "pinned"), Entry(2, "unresolved"));
+        var route = new PlaylistResolvedRoute(TrackRouteKind.External,
+            ProviderId: "apple-musickit", ExternalId: "12345");
+        var decisions = new[]
+        {
+            Decision(source.Entries[0], TrackMatchReviewState.Accepted, confidence: .95, route: route),
+            Decision(source.Entries[1], TrackMatchReviewState.Pinned, route: route),
+            Decision(source.Entries[2], TrackMatchReviewState.Unresolved)
+        };
+
+        var plan = Planner().Plan(mode, source, decisions, Target(), Rules());
+
+        Assert.Equal(["Streamed", "Streamed", "Unresolved"], plan.Entries.Select(item => item.Status.ToString()));
+        Assert.Equal(["streamed_through_allstarr", "streamed_through_allstarr", "skipped_unresolved"],
+            plan.Entries.Select(item => item.OutcomeCode));
+        Assert.All(plan.Entries, item => Assert.False(item.TargetEligible));
+        Assert.All(plan.Entries, item => Assert.Null(item.TargetPosition));
+        Assert.Empty(plan.OrderedBackendItemIds);
     }
 
     [Fact]

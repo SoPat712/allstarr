@@ -523,7 +523,11 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                 classification.LibraryTrackId,
                 library?.BackendItemId,
                 library?.BackendInstanceId,
-                match?.Confidence ?? 0,
+                // Verified routes can establish acceptance without a scored match.
+                classification.State == TrackMatchState.Unresolved &&
+                classification.ReviewState == TrackMatchState.Accepted
+                    ? 1
+                    : match?.Confidence ?? 0,
                 match?.Threshold ?? 1,
                 match?.DecisionVersion ?? 0,
                 ReadStringArray(match?.ReasonsJson),

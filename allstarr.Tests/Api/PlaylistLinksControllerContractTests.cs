@@ -487,8 +487,14 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.False(entry.TryGetProperty("inclusionReason", out _));
     }
 
-    [Fact]
-    public void DetailsContract_SeparatesClientOrderFromSourceMetricsAndShowsEligibility()
+    [Theory]
+    [InlineData(PlaylistPreviewEntryStatus.WrongBackend, "skipped_wrong_backend_or_library", false)]
+    [InlineData(PlaylistPreviewEntryStatus.Streamed, "streamed_through_allstarr", false)]
+    [InlineData(PlaylistPreviewEntryStatus.Included, "included_native_backend_item", true)]
+    [InlineData(PlaylistPreviewEntryStatus.Duplicate, "skipped_duplicate", false)]
+    [InlineData(PlaylistPreviewEntryStatus.Unresolved, "skipped_unresolved", false)]
+    public void DetailsContract_SeparatesClientOrderFromSourceMetricsAndShowsEligibility(
+        PlaylistPreviewEntryStatus status, string outcomeCode, bool targetEligible)
     {
         var linkId = Guid.NewGuid();
         var snapshotId = Guid.NewGuid();
@@ -511,9 +517,9 @@ public sealed class PlaylistLinksControllerContractTests
             new Dictionary<int, PersistedPlaylistPreviewEntry>
             {
                 [0] = new(0, externalSnapshotId, TrackMatchState.Accepted, Guid.NewGuid(), null,
-                    TargetEligible: false,
-                    OutcomeCode: PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary,
-                    Status: PlaylistPreviewEntryStatus.WrongBackend)
+                    TargetEligible: targetEligible,
+                    OutcomeCode: outcomeCode,
+                    Status: status)
             };
         var method = typeof(PlaylistLinksController).GetMethod(
             "ToProjectionDto", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -525,9 +531,9 @@ public sealed class PlaylistLinksControllerContractTests
         Assert.Equal("target", clientProjection.GetProperty("projectionMode").GetString());
         Assert.Equal("native-a", clientProjection.GetProperty("tracks")[0].GetProperty("itemId").GetString());
         var track = json.RootElement.GetProperty("tracks")[0];
-        Assert.False(track.GetProperty("targetEligible").GetBoolean());
-        Assert.Equal(PlaylistMaterializationOutcomeCodes.SkippedWrongBackendOrLibrary,
-            track.GetProperty("outcomeCode").GetString());
+        Assert.Equal(targetEligible, track.GetProperty("targetEligible").GetBoolean());
+        Assert.Equal(outcomeCode, track.GetProperty("outcomeCode").GetString());
+        Assert.Equal(status.ToString().ToLowerInvariant(), track.GetProperty("targetStatus").GetString());
     }
 
     [Fact]

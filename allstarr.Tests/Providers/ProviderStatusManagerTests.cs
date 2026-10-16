@@ -17,6 +17,62 @@ namespace allstarr.Tests;
 
 public sealed class ProviderStatusManagerTests
 {
+    [Theory]
+    [InlineData("metadata")]
+    [InlineData("playlist")]
+    [InlineData("streaming")]
+    [InlineData("download")]
+    public async Task QobuzProbe_UsesPublicCatalogOrTheExactSelectedAccount(string capability)
+    {
+        var calls = 0;
+        var usesAccount = capability is "streaming" or "download";
+        using var handler = new AppleProviderTestFactory.Handler(request =>
+        {
+            calls++;
+            Assert.Equal("www.qobuz.com", request.RequestUri!.Host);
+            Assert.Equal(usesAccount ? "/api.json/0.2/favorite/getUserFavorites" : "/api.json/0.2/track/search",
+                request.RequestUri.AbsolutePath);
+            if (usesAccount)
+            {
+                Assert.Contains("user_id=selected-user", request.RequestUri.Query);
+                Assert.Equal("selected-token", request.Headers.GetValues("X-User-Auth-Token").Single());
+            }
+            else Assert.False(request.Headers.Contains("X-User-Auth-Token"));
+            return Json(HttpStatusCode.OK, "{\"tracks\":{\"items\":[]}}");
+        });
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(handler),
+            qobuzSettings: new QobuzSettings { UserAuthToken = "other-token", UserId = "other-user" });
+
+        var status = await manager.TestManagedProviderCapabilityAsync("qobuz", capability, Guid.NewGuid(),
+            new Dictionary<string, string> { ["userAuthToken"] = "selected-token", ["userId"] = "selected-user" });
+
+        Assert.True(manager.CanTestCapability("qobuz", capability));
+        Assert.Equal(ProviderHealthState.Healthy, status.Health);
+        Assert.NotNull(status.TestedAt);
+        Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, true)]
+    [InlineData(HttpStatusCode.NotFound, true)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, false)]
+    public async Task LrclibProbe_DistinguishesReachableCatalogFromUpstreamFailure(HttpStatusCode response, bool healthy)
+    {
+        var handler = new QueuedResponseHandler(Json(response, "{}"));
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(handler));
+
+        var status = await manager.TestAccountFreeProviderCapabilityAsync("lrclib", "lyrics");
+
+        Assert.True(manager.CanTestAccountFreeCapability("lrclib", "lyrics"));
+        Assert.Equal(healthy, status.Health == ProviderHealthState.Healthy);
+        Assert.NotNull(status.TestedAt);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("lrclib.net", request.Host);
+        Assert.Equal("/api/get", request.AbsolutePath);
+    }
+
     [Fact]
     public void LyricsPlusIsAccountFreeAndMusixmatchRequiresItsManagedToken()
     {
