@@ -70,6 +70,7 @@ builder.Services.AddSingleton<allstarr.Core.Configuration.OnboardingStateService
 builder.Services.AddSingleton<MountedLegacyEnvironment>();
 builder.Services.AddSingleton<IBackendConnectionVerifier, BackendConnectionVerifier>();
 builder.Services.AddSingleton<BackendSetupService>();
+builder.Services.AddSingleton<AdminOidcSettingsService>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);

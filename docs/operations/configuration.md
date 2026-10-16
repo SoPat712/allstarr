@@ -13,7 +13,6 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 | Public listeners | `PROXY_BIND_ADDRESS`, `PROXY_PORT`, `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` |
 | Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS` |
 | Admin URL prefix | `ADMIN_BASE_PATH` (empty by default) |
-| WebUI SSO | `ADMIN_OIDC_ENABLED`, `ADMIN_OIDC_AUTHORITY`, `ADMIN_OIDC_CLIENT_ID`, `ADMIN_OIDC_CLIENT_SECRET`, `ADMIN_OIDC_PUBLIC_URL`, `ADMIN_OIDC_DISPLAY_NAME` |
 | Optional Spotify lyrics bootstrap | `SPOTIFY_API_SESSION_COOKIE` |
 
 The Compose file translates these values into ASP.NET configuration. Changing one requires recreating the affected container. Allstarr does not hot-edit its own Compose deployment.
@@ -155,3 +154,9 @@ The health-table migration preserves users, accounts, encrypted credentials, set
 Settings owns browser origins/methods/headers/credential policy, remote extension installation, request logging, activity and job-history retention, automatic backup retention, and the selected backend music libraries. These values are saved in SQLite. Library selection preserves opaque identifiers and never grants a listener additional backend permissions. Browser credentials require explicit origins; wildcard credential policies are refused in both import preview and apply.
 
 Integrations → Services → MusicBrainz owns the metadata source identifier, service URL, request interval and optional authorized user agent override. The public metadata service needs no username or password. Changes to these service and operator settings are marked as requiring a restart. Save commits first and requests restart after the response completes; a container restart policy brings Allstarr back. Source changes isolate cache/provenance by identifier. Existing product environment values are imported once through the reviewed legacy import and cannot override saved settings on later startups.
+
+## Administrator access settings
+
+The authenticated `GET`/`PUT /api/admin/access/oidc` API owns single sign-on policy and its encrypted client secret. GET returns non-secret settings, an opaque revision and an antiforgery token; PUT requires both. Changing the identity service or client ID requires a new client secret. A save requests restart after the response completes. Missing, revoked or incorrectly scoped encryption references leave single sign-on disabled for review while media-server login remains available. Old SSO environment values are reported for explicit review, never automatically enabled.
+
+`GET`/`PUT /api/admin/access/backend` manages optional Jellyfin scanning access after the connection is saved. Enable verifies the same active media-server administrator outside the database writer, then rechecks user, connection and setting revisions before encrypting the token. Disable revokes only that exact backend-purpose reference. Passwords are never saved. Subsonic playlist grants remain personal and separate. These operations require an active administrator, antiforgery protection and a current revision; native proxying does not require scanning access.

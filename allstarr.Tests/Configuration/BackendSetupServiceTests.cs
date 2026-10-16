@@ -18,7 +18,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class BackendSetupServiceTests : IAsyncLifetime
+public sealed partial class BackendSetupServiceTests : IAsyncLifetime
 {
     private SqliteTestDatabase database = null!;
     private Factory factory = null!;

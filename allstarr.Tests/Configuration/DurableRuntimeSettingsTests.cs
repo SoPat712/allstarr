@@ -74,6 +74,27 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         Assert.Empty(await db.RuntimeSettings.ToListAsync());
     }
 
+    [Theory]
+    [InlineData("Admin:Oidc:Enabled", "true")]
+    [InlineData("Admin:Oidc:Authority", "https://identity.example.test")]
+    [InlineData("Admin:Oidc:ClientId", "household-fixture")]
+    [InlineData("Admin:Oidc:PublicUrl", "https://admin.example.test/allstarr")]
+    [InlineData("Admin:Oidc:DisplayName", "Household login")]
+    public async Task SingleSignOnPolicyPersistsWithoutStoringAPlaintextClientSecret(string key, string value)
+    {
+        var service = CreateService([]);
+        await service.ApplyBatchAsync([new(key, value)], "webui", _userId);
+        Assert.Equal(value, (await CreateService([]).GetAsync(key)).NormalizedValue);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("Admin:Oidc:ClientSecret", "private-fixture")], "webui", _userId));
+    }
+
+    [Fact]
+    public async Task MetadataDefaultsUseTheSamePublicContractAsTheCatalogClient()
+    {
+        Assert.Equal(new MusicBrainzSettings().BaseUrl, (await CreateService([]).GetAsync("MusicBrainz:BaseUrl")).Value);
+    }
+
     [Fact]
     public async Task BrowserCredentialsRequireExplicitOriginsIncludingAcrossRevisions()
     {

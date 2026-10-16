@@ -118,6 +118,11 @@ public static class RuntimeSettingCatalog
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
         items.AddRange(OperatorSettingPolicy.Definitions);
+        items.Add(new("Admin:Oidc:Enabled", RuntimeSettingValueType.Boolean, "Admin:Oidc:Enabled", DefaultValue: "false", RequiresRestart: true));
+        foreach (var field in new[] { "Authority", "ClientId", "PublicUrl", "DisplayName", "ClientSecretReference" })
+            items.Add(new("Admin:Oidc:" + field, RuntimeSettingValueType.String, "Admin:Oidc:" + field,
+                AllowEmpty: true, MaximumLength: field is "Authority" or "PublicUrl" ? 2048 : 500,
+                DefaultValue: field == "DisplayName" ? "Single sign-on" : "", RequiresRestart: true));
         Text("Backend:Type", ["Jellyfin", "Subsonic"]);
         items.Add(new("Backend:Url", RuntimeSettingValueType.String, "Backend:Url", AllowEmpty: true, MaximumLength: 2048));
         items.Add(new("Backend:ServiceCredentialReference", RuntimeSettingValueType.String, "Backend:ServiceCredentialReference", AllowEmpty: true, MaximumLength: 40));
@@ -602,7 +607,7 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (value.Length == 0 || value.Length > definition.MaximumLength ||
             definition.Choices is { Count: > 0 } && !definition.Choices.Contains(value))
             throw new ArgumentException($"Runtime setting '{definition.Key}' has an invalid string value.");
-        if (definition.Key == "Backend:ServiceCredentialReference" && (!Guid.TryParseExact(value, "D", out var reference) || reference == Guid.Empty))
+        if (definition.Key is "Backend:ServiceCredentialReference" or "Admin:Oidc:ClientSecretReference" && (!Guid.TryParseExact(value, "D", out var reference) || reference == Guid.Empty))
             throw new ArgumentException("The backend credential reference must identify an encrypted service credential.");
         if (definition.Key is "LyricsPlus:BaseUrl" or "Backend:Url" &&
             !allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _))

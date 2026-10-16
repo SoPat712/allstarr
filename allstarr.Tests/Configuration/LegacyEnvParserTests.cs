@@ -19,6 +19,20 @@ public sealed class LegacyEnvParserTests
         Assert.Equal(target, entry.DurableKey);
     }
 
+    [Theory]
+    [InlineData("MUSICBRAINZ_USERNAME", "retired-fixture")]
+    [InlineData("MUSICBRAINZ_PASSWORD", "private-fixture")]
+    [InlineData("JELLYFIN_CLIENT_USERNAME", "retired-fixture")]
+    [InlineData("DEBUG_REDACT_SENSITIVE_REQUEST_VALUES", "false")]
+    [InlineData("ADMIN_OIDC_CLIENT_SECRET", "private-fixture")]
+    public void RetiredCredentialsAndUnsafeLoggingAreExplicitlyLeftForReview(string key, string value)
+    {
+        var entry = Assert.Single(Parse(key + "=" + value).Entries);
+        Assert.Equal(LegacyEnvDisposition.IgnoredDeprecated, entry.Disposition);
+        Assert.Null(entry.DurableKey);
+        Assert.NotEmpty(entry.Reason);
+    }
+
     [Fact]
     public void Parse_ClassifiesEveryKeyAndKeepsSecretsOutOfPreviewMetadata()
     {

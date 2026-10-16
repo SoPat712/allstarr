@@ -39,21 +39,11 @@ Register a confidential web client with your identity provider. Enable authoriza
 https://media.example.org/allstarr/api/admin/auth/oidc/callback
 ```
 
-Configure Allstarr:
-
-```dotenv
-ADMIN_BASE_PATH=/allstarr
-ADMIN_OIDC_ENABLED=true
-ADMIN_OIDC_AUTHORITY=https://identity.example.org
-ADMIN_OIDC_CLIENT_ID=allstarr
-ADMIN_OIDC_CLIENT_SECRET=replace-with-your-client-secret
-ADMIN_OIDC_PUBLIC_URL=https://media.example.org/allstarr
-ADMIN_OIDC_DISPLAY_NAME=Home SSO
-```
+Keep `ADMIN_BASE_PATH=/allstarr` in deployment configuration when using that prefix. Single sign-on policy and the encrypted client secret are saved in the data folder through the authenticated administrator access API described in [configuration](configuration.md#administrator-access-settings). Use authority `https://identity.example.org`, client ID `allstarr`, public URL `https://media.example.org/allstarr`, and your own client secret. Set the display name to the name you want on the login screen, then enable and save. Saving requests a restart after the response completes.
 
 Use your provider's issuer/authority URL, which may include a realm or application path. Both authority and public URL require HTTPS. The public URL must end at the configured base path with no query or fragment. For a dedicated hostname with no prefix, leave `ADMIN_BASE_PATH` empty and use `https://allstarr.example.org` as the public URL.
 
-Keep the client secret in private deployment configuration, not Git or dashboard settings. The Compose deployment reads these keys from its mounted `.env`; direct deployments can use the corresponding `Admin__Oidc__...` configuration keys. Persist the existing data-protection keys and encryption key ring across restarts.
+Client secrets are encrypted for the exact identity service and client ID and are never returned by the configuration API. Persist the data-protection keys and encryption key ring across restarts. Changing identity service or client ID requires a new secret. Old environment-based SSO values are left for explicit review in the upgrade preview.
 
 ### Link a media-server account
 
@@ -71,6 +61,6 @@ SSO creates a normal 12-hour Allstarr session. Signing out ends the local sessio
 
 Use **Disconnect SSO** while signed in to remove your link and revoke its stored credential. Existing SSO-created Allstarr sessions stop working; a native-login session remains usable. If a native credential expires, start SSO again and authenticate the same media account to renew the link.
 
-Setting `ADMIN_OIDC_ENABLED=false` and recreating the container disables SSO and its existing sessions without changing music-client login. A verified database-and-key-ring backup preserves account links and encrypted credentials. Browser session protection keys are separate files, so sign in again after restoring onto a fresh installation. A stopped copy of the complete data folder includes those protection keys.
+Disabling single sign-on through administrator access settings and restarting disables SSO and its existing sessions without changing music-client login. A verified database-and-key-ring backup preserves account links and encrypted credentials. Browser session protection keys are separate files, so sign in again after restoring onto a fresh installation. A stopped copy of the complete data folder includes those protection keys.
 
 If callbacks fail, check the exact redirect URI, public URL, proxy path handling, and trusted forwarded-protocol configuration. Do not include authorization codes, cookies, passwords, or tokens in bug reports.
