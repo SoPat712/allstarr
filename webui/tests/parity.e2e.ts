@@ -6539,6 +6539,49 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
 }
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Media-server access confirms a restore whose reply is cut by the restart — ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    let restored = false;
+    await page.route("**/api/admin/access/backend", (route) => route.fulfill({ json: {
+      settings: { supported: true, connectionSaved: true, configured: restored, needsReview: !restored, revision: "fixture" }, csrfToken: "fixture",
+    } }));
+    await page.route("**/api/admin/config/migration/status", (route) => route.fulfill({ json: {
+      available: true, completed: true, firstRun: false, sourcePresent: true, serviceAccessAvailable: !restored,
+    } }));
+    await page.route("**/api/admin/config/migration/preview-service-access", (route) => route.fulfill({ json: {
+      previewToken: "access-only", revision: "fixture", canApply: true, items: [],
+      backend: { backend: "Jellyfin", endpoint: "https://media.example.test", savesConnection: false, serviceAccessAction: "verify_then_encrypt" },
+    } }));
+    await page.route("**/api/admin/config/migration/apply", (route) => { restored = true; return route.abort("connectionreset"); });
+    await page.route("**/health", (route) => route.fulfill({ json: { status: "Healthy" } }));
+    await page.goto("#/settings/access");
+    const restore = page.getByRole("region", { name: "Restore legacy media-server access" });
+    await restore.getByRole("button", { name: "Verify and restore access" }).click();
+    const access = page.getByRole("article", { name: "Media-server access" });
+    await expect(access.getByRole("status")).toContainText("Media-server access is restored.");
+    await expect(access.getByText("Connected", { exact: true })).toBeVisible();
+    await expect(restore).toBeHidden();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    await page.screenshot({ path: `test-results/service-access-restored-${width}-${theme}.png`, fullPage: true });
+    await access.getByRole("button", { name: "Change access" }).click();
+    const username = access.getByLabel("Jellyfin administrator username");
+    await expect(username).toBeVisible();
+    await expect(access.getByLabel("Jellyfin administrator password")).toBeVisible();
+    expect(await username.evaluate((input) => {
+      const style = getComputedStyle(input);
+      return style.borderTopStyle !== "none" && parseFloat(style.borderTopWidth) >= 1 &&
+        style.borderTopColor !== getComputedStyle(input.closest("article")!).backgroundColor;
+    })).toBe(true);
+    await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/service-access-change-${width}-${theme}.png`, fullPage: true });
+    await access.getByRole("button", { name: "Cancel" }).click();
+    await expect(access.getByRole("button", { name: "Change access" })).toBeVisible();
+  });
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
   test(`Playlist sync links missing media-server access to its fix — ${width} ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
