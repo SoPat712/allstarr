@@ -228,47 +228,72 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             if (current.Members.Select(member => member.BackendItemId).SequenceEqual(desired) && metadataMatches && request.Metadata.Artwork == null)
                 return Success(current, changed: false, []);
 
+            // Jellyfin resolves reorder and removal permissions from the caller's user, so a server
+            // key can only insert items; anything it cannot change is reported instead of retried.
+            var actsAsUser = (await _authentication.ResolveAsync(context, cancellationToken)).ActsAsUser;
+            var unsupported = new List<string>();
+            var changed = false;
             var staleOwned = request.SyncOwnedBackendItemIds.ToHashSet(StringComparer.Ordinal);
-            var staleEntries = current.Members
+            var staleMembers = current.Members
                 .Where(member => request.RemoveStaleSyncOwnedItems &&
                                  staleOwned.Contains(member.BackendItemId) &&
                                  !request.OrderedBackendItemIds.Contains(member.BackendItemId, StringComparer.Ordinal))
-                .Select(member => member.EntryId ?? member.BackendItemId)
                 .ToArray();
-            if (staleEntries.Length > 0)
+            var remaining = current.Members.Select(member => member.BackendItemId).ToList();
+            if (staleMembers.Length > 0 && !actsAsUser)
+            {
+                unsupported.Add("removal");
+            }
+            else if (staleMembers.Length > 0)
             {
                 var remove = await SendAsync(context, HttpMethod.Delete,
-                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items?EntryIds={Csv(staleEntries)}",
+                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items?EntryIds={Csv(staleMembers.Select(member => member.EntryId ?? member.BackendItemId))}",
                     null, cancellationToken);
                 if (!remove.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(remove, current.BackendPlaylistId);
+                foreach (var member in staleMembers) remaining.Remove(member.BackendItemId);
+                changed = true;
             }
 
-            var present = current.Members.Select(member => member.BackendItemId).ToHashSet(StringComparer.Ordinal);
-            var missing = desired.Where(id => !present.Contains(id)).ToArray();
-            if (missing.Length > 0)
+            foreach (var insert in PlanInserts(remaining, desired))
             {
                 var add = await SendAsync(context, HttpMethod.Post,
-                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items?Ids={Csv(missing)}&UserId={Escape(context.VerifiedPrincipalId)}",
+                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items?Ids={Csv(insert.Ids)}&position={insert.Position}&UserId={Escape(context.VerifiedPrincipalId)}",
                     JsonContent.Create(new { }), cancellationToken);
                 if (!add.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(add, current.BackendPlaylistId);
+                changed = true;
             }
 
             var afterMembership = await ReadAsync(context, current.BackendPlaylistId, cancellationToken);
             if (!afterMembership.IsSuccess)
                 return ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(afterMembership, current.BackendPlaylistId);
-            foreach (var movePlan in PlanMoves(afterMembership.Value!.Members, desired))
+            var desiredSet = desired.ToHashSet(StringComparer.Ordinal);
+            if (!actsAsUser)
             {
-                var move = await SendAsync(context, HttpMethod.Post,
-                    $"Playlists/{Escape(current.BackendPlaylistId)}/Items/{Escape(movePlan.EntryId)}/Move/{movePlan.TargetIndex}",
-                    JsonContent.Create(new { }), cancellationToken);
-                if (!move.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(move, current.BackendPlaylistId);
+                if (!afterMembership.Value!.Members.Select(member => member.BackendItemId)
+                        .Where(desiredSet.Contains).SequenceEqual(desired))
+                    unsupported.Add("order");
+            }
+            else
+            {
+                foreach (var movePlan in PlanMoves(afterMembership.Value!.Members, desired))
+                {
+                    var move = await SendAsync(context, HttpMethod.Post,
+                        $"Playlists/{Escape(current.BackendPlaylistId)}/Items/{Escape(movePlan.EntryId)}/Move/{movePlan.TargetIndex}",
+                        JsonContent.Create(new { }), cancellationToken);
+                    if (!move.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(move, current.BackendPlaylistId);
+                    changed = true;
+                }
             }
 
-            var metadata = await WriteMetadataAsync(context, current.BackendPlaylistId, request.Metadata, cancellationToken);
-            if (!metadata.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(metadata, current.BackendPlaylistId);
+            if (!metadataMatches || request.Metadata.Artwork != null)
+            {
+                var metadata = await WriteMetadataAsync(context, current.BackendPlaylistId, request.Metadata, cancellationToken);
+                if (!metadata.IsSuccess) return ConvertFailure<BackendPlaylistWriteReceipt>(metadata, current.BackendPlaylistId);
+                changed = true;
+            }
             var final = await ReadAsync(context, current.BackendPlaylistId, cancellationToken);
             return final.IsSuccess
-                ? Success(final.Value!, changed: true, [])
+                ? Success(final.Value!, changed, unsupported)
                 : ConvertFailure<BackendPlaylistWriteReceipt, BackendPlaylistSnapshot>(final, current.BackendPlaylistId);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -362,6 +387,40 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         return request.OrderedBackendItemIds.Concat(preserved).Distinct(StringComparer.Ordinal).ToArray();
     }
 
+    internal static IReadOnlyList<(IReadOnlyList<string> Ids, int Position)> PlanInserts(
+        IReadOnlyList<string> current,
+        IReadOnlyList<string> desired)
+    {
+        var working = current.ToList();
+        var present = working.ToHashSet(StringComparer.Ordinal);
+        var inserts = new List<(IReadOnlyList<string> Ids, int Position)>();
+        var pending = new List<string>();
+        string? previous = null;
+        foreach (var id in desired)
+        {
+            if (!present.Contains(id))
+            {
+                pending.Add(id);
+                continue;
+            }
+            Flush();
+            previous = id;
+        }
+        Flush();
+        return inserts;
+
+        void Flush()
+        {
+            if (pending.Count == 0) return;
+            var position = previous == null ? 0 : working.IndexOf(previous) + 1;
+            working.InsertRange(position, pending);
+            present.UnionWith(pending);
+            inserts.Add((pending.ToArray(), position));
+            previous = pending[^1];
+            pending.Clear();
+        }
+    }
+
     internal static IReadOnlyList<(string EntryId, int TargetIndex)> PlanMoves(
         IReadOnlyList<BackendPlaylistMember> current,
         IReadOnlyList<string> desired)
@@ -449,7 +508,10 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             var authorization = $"MediaBrowser Client=\"{settings.ClientName}\", Device=\"{settings.DeviceName}\", " +
                                 $"DeviceId=\"{settings.DeviceId}\", Version=\"{settings.ClientVersion}\", Token=\"{settings.ApiKey}\"";
             return ValueTask.FromResult(new BackendPlaylistAuthentication(
-                new Dictionary<string, string> { ["Authorization"] = authorization }, []));
+                new Dictionary<string, string> { ["Authorization"] = authorization }, [])
+            {
+                ActsAsUser = false
+            });
         }
     }
 }

@@ -130,6 +130,48 @@ public sealed class BackendPlaylistTargetTests
         Assert.Equal(mutations, backend.MutationCount);
     }
 
+    [Fact]
+    public async Task Jellyfin_service_key_inserts_new_items_in_order_without_user_only_calls()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", ["b", "manual"]) { RejectUserOperations = true };
+        var target = new JellyfinPlaylistTarget(
+            new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver(actsAsUser: false));
+
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile,
+            new BackendPlaylistMetadata("Mix", null),
+            ["a", "b", "c"],
+            "sync-1",
+            "p1"), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(["a", "b", "c", "manual"], result.Value!.Snapshot.Members.Select(member => member.BackendItemId));
+        Assert.Empty(result.Value.UnsupportedMetadataFields);
+        Assert.DoesNotContain(backend.Requests, item => item.Path.Contains("/Move/", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Jellyfin_service_key_reports_order_and_removal_it_cannot_change()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", ["b", "a", "stale"]) { RejectUserOperations = true };
+        var target = new JellyfinPlaylistTarget(
+            new HttpClient(backend), new Uri("https://jellyfin.test/"), new FakeAuthenticationResolver(actsAsUser: false));
+
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile,
+            new BackendPlaylistMetadata("Mix", null),
+            ["a", "b"],
+            "sync-1",
+            "p1",
+            syncOwnedBackendItemIds: ["a", "b", "stale"],
+            removeStaleSyncOwnedItems: true), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(["b", "a", "stale"], result.Value!.Snapshot.Members.Select(member => member.BackendItemId));
+        Assert.Equal(["order", "removal"], result.Value.UnsupportedMetadataFields.Order(StringComparer.Ordinal));
+        Assert.Equal(0, backend.MutationCount);
+    }
+
     [Theory]
     [InlineData(BackendPlaylistWriteMode.Reconcile, HttpStatusCode.Forbidden)]
     [InlineData(BackendPlaylistWriteMode.Recreate, HttpStatusCode.Forbidden)]
@@ -534,10 +576,14 @@ public sealed class BackendPlaylistTargetTests
 
     private sealed class FakeAuthenticationResolver(
         IReadOnlyDictionary<string, string>? headers = null,
-        IReadOnlyList<KeyValuePair<string, string>>? form = null) : IBackendPlaylistAuthenticationResolver
+        IReadOnlyList<KeyValuePair<string, string>>? form = null,
+        bool actsAsUser = true) : IBackendPlaylistAuthenticationResolver
     {
         public ValueTask<BackendPlaylistAuthentication> ResolveAsync(BackendPlaylistTargetContext context, CancellationToken cancellationToken) =>
-            ValueTask.FromResult(new BackendPlaylistAuthentication(headers ?? new Dictionary<string, string>(), form ?? []));
+            ValueTask.FromResult(new BackendPlaylistAuthentication(headers ?? new Dictionary<string, string>(), form ?? [])
+            {
+                ActsAsUser = actsAsUser
+            });
     }
 
     private sealed record RequestRecord(string Path, string? AuthToken, IReadOnlyDictionary<string, string[]> Parameters, string? Authorization = null);
@@ -555,6 +601,7 @@ public sealed class BackendPlaylistTargetTests
         public bool ListArtwork { get; set; }
         public bool FailNextMetadata { get; set; }
         public HttpStatusCode EditProbeStatus { get; set; } = HttpStatusCode.NoContent;
+        public bool RejectUserOperations { get; set; }
         private int _nextId = 2;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -605,6 +652,8 @@ public sealed class BackendPlaylistTargetTests
                 Playlists[id] = new(query["Name"].Single(), SplitCsv(query, "Ids"));
                 return Json(new { Id = id });
             }
+            if (RejectUserOperations && (request.Method == HttpMethod.Delete || path.Contains("/Move/", StringComparison.Ordinal)))
+                return new(HttpStatusCode.BadRequest);
             if (request.Method == HttpMethod.Delete && path.EndsWith("/Items", StringComparison.Ordinal))
             {
                 MutationCount++;
@@ -617,7 +666,11 @@ public sealed class BackendPlaylistTargetTests
             {
                 if (!query.ContainsKey("Ids")) return new(EditProbeStatus);
                 MutationCount++;
-                Playlists[path.Split('/')[1]].Members.AddRange(SplitCsv(query, "Ids"));
+                var members = Playlists[path.Split('/')[1]].Members;
+                var position = query.TryGetValue("position", out var positions)
+                    ? Math.Clamp(int.Parse(positions.Single()), 0, members.Count)
+                    : members.Count;
+                members.InsertRange(position, SplitCsv(query, "Ids"));
                 return new(HttpStatusCode.NoContent);
             }
             if (request.Method == HttpMethod.Post && path.Contains("/Move/", StringComparison.Ordinal))
