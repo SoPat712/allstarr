@@ -58,10 +58,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
             : context.ProviderAccounts.AsNoTracking().Where(account => session.AllstarrUserId.HasValue &&
                 (account.OwnerUserId == session.AllstarrUserId || account.OwnerUserId == null));
 
-        var accounts = await query
+        var accounts = (await query
             .OrderBy(item => item.ProviderId)
             .ThenBy(item => item.DisplayName)
-            .ToListAsync(cancellationToken);
+            .ToListAsync(cancellationToken))
+            .Where(item => !IsRemoved(item))
+            .ToList();
         var secretIds = accounts
             .Where(item => item.SecretReferenceId.HasValue)
             .Select(item => item.SecretReferenceId!.Value)
@@ -140,6 +142,16 @@ public sealed partial class ProviderAccountsController : ControllerBase
                 out var validationError))
         {
             return BadRequest(new { error = validationError });
+        }
+
+        if (normalized.Scope == ProviderAccountScope.Personal && UsesSignedSession(normalized.ProviderId))
+        {
+            await using var existing = await _contextFactory.CreateDbContextAsync(cancellationToken);
+            var personal = await existing.ProviderAccounts.AsNoTracking()
+                .Where(item => item.ProviderId == normalized.ProviderId && item.OwnerUserId == normalized.OwnerUserId)
+                .ToListAsync(cancellationToken);
+            if (personal.Any(item => !IsRemoved(item)))
+                return Conflict(new { error = "This person already has a personal connection for this extension." });
         }
 
         var scopeValidationError = await ValidateAccountScopeAsync(normalized, cancellationToken);
@@ -357,12 +369,10 @@ public sealed partial class ProviderAccountsController : ControllerBase
         account.Enabled = false;
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
-        if (UsesSignedSession(account.ProviderId))
-        {
-            var settings = System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)!.AsObject();
-            settings["__extensionSessionRemoved"] = true;
-            account.SettingsJson = settings.ToJsonString();
-        }
+        var removedSettings = System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?.AsObject() ?? [];
+        removedSettings[RemovedSetting] = true;
+        if (UsesSignedSession(account.ProviderId)) removedSettings["__extensionSessionRemoved"] = true;
+        account.SettingsJson = removedSettings.ToJsonString();
         if (account.SecretReferenceId.HasValue)
         {
             await _secretStore.RevokeAsync(
@@ -378,8 +388,41 @@ public sealed partial class ProviderAccountsController : ControllerBase
             "succeeded",
             new { accountId = account.Id, account.ProviderId });
         await context.SaveChangesAsync(cancellationToken);
+        await DeleteIfUnreferencedAsync(context, account, cancellationToken);
         await InvalidateAccountCacheAsync(account.Id);
         return NoContent();
+    }
+
+    private const string RemovedSetting = "__removed";
+
+    internal static bool IsRemoved(ProviderAccountRecord account)
+    {
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?[RemovedSetting]?.GetValue<bool>() == true;
+        }
+        catch (Exception exception) when (exception is System.Text.Json.JsonException or InvalidOperationException or FormatException)
+        {
+            return false;
+        }
+    }
+
+    // History, matches and scrobble deliveries keep pointing at a removed account, so only an unused one is deleted;
+    // the rest stay archived and hidden.
+    private static async Task DeleteIfUnreferencedAsync(AllstarrDbContext context, ProviderAccountRecord account,
+        CancellationToken cancellationToken)
+    {
+        if (await context.PlaybackDeliveryCheckpoints.AnyAsync(item => item.DestinationAccountId == account.Id, cancellationToken))
+            return;
+        try
+        {
+            context.ProviderAccounts.Remove(account);
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateException)
+        {
+            context.Entry(account).State = EntityState.Detached;
+        }
     }
 
     [HttpPatch("{accountId:guid}")]
