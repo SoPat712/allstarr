@@ -7,6 +7,7 @@ using allstarr.Core.Downloads;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
@@ -245,6 +246,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.Equal(ProviderOrigin.Extension, descriptor!.Origin);
         Assert.Equal(ProviderAccountRequirement.Required, descriptor.Capabilities.Single().AccountRequirement);
         Assert.Contains(ProviderAccountScope.Personal, descriptor.Capabilities.Single().AllowedAccountScopes);
+        Assert.Contains(ProviderAccountScope.Shared, descriptor.Capabilities.Single().AllowedAccountScopes);
         Assert.True(registry.TryGetCapability<IProviderMetadataCapability>(package.ExtensionId,
             ProviderCapabilityKind.Metadata, out _));
         var previous = package;
@@ -328,6 +330,93 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ExistingPersonalAccount_AdoptsOldSessionWithoutChangingItsAudience()
+    {
+        var package = await ReviewedPackage("5.0.0", "existing-signed", signedSession: true);
+        var existing = await AddAccountAsync(package.ExtensionId);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync(item => item.Id == existing.Id);
+            account.OwnerUserId = _reviewer;
+            await db.SaveChangesAsync();
+        }
+        var protection = new EphemeralDataProtectionProvider();
+        var handler = new SignedSessionHandler();
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(handler, false));
+        var runtime = Path.Combine(_root, "extensions", ".runtime", package.ExtensionId);
+        var source = Path.Combine(runtime, "sessions", "local");
+        var oldSandbox = new allstarr.Services.Common.ExtensionSandbox(package.PackagePath, package.ManifestJson,
+            await File.ReadAllTextAsync(Path.Combine(package.PackagePath, "index.js")), clients.Object, NullLogger.Instance,
+            new(new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>()),
+            runtime, protection.CreateProtector("allstarr.extensions.signed-session.v1"), source);
+        await oldSandbox.CompleteSignedSessionGrantAsync("grant-1");
+        var oldPath = Assert.Single(Directory.GetFiles(source, "signed-session-*.protected"));
+        var bytes = await File.ReadAllBytesAsync(oldPath);
+        var coordinator = Coordinator(handler, protection);
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        var view = await coordinator.SignedSessionStatusAsync(package.Id);
+        Assert.Equal(existing.Id, view.AccountId);
+        Assert.Equal(ExtensionSessionStates.SignedIn, view.State);
+        Assert.False(File.Exists(oldPath));
+        Assert.Equal(bytes, await File.ReadAllBytesAsync(Assert.Single(Directory.GetFiles(source,
+            "signed-session-*.protected", SearchOption.AllDirectories))));
+        await using var check = await _factory.CreateDbContextAsync();
+        var adopted = await check.ProviderAccounts.SingleAsync();
+        Assert.Equal(_reviewer, adopted.OwnerUserId);
+        using var settings = JsonDocument.Parse(adopted.SettingsJson);
+        Assert.Equal("lossless", settings.RootElement.GetProperty("quality").GetString());
+        Assert.Equal("local", settings.RootElement.GetProperty("__extensionSessionSource").GetString());
+    }
+
+    [Fact]
+    public async Task SignedSessionAccount_AudienceRoundTripKeepsProtectedStateAndOtherAccountsStaySeparate()
+    {
+        var package = await ReviewedPackage("5.0.0", "signed-account", signedSession: true);
+        var coordinator = Coordinator(new SignedSessionHandler());
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        var signedIn = await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+        var id = Assert.IsType<Guid>(signedIn.AccountId);
+        await using var db = await _factory.CreateDbContextAsync();
+        var account = await db.ProviderAccounts.SingleAsync(item => item.Id == id);
+        Assert.Null(account.OwnerUserId);
+        Assert.Null(account.SecretReferenceId);
+        Assert.Equal("local", JsonDocument.Parse(account.SettingsJson).RootElement.GetProperty("__extensionSessionSource").GetString());
+        var statePath = Assert.Single(Directory.GetFiles(Path.Combine(_root, "extensions", ".runtime", package.ExtensionId),
+            "signed-session-*.protected", SearchOption.AllDirectories));
+        var protectedState = await File.ReadAllBytesAsync(statePath);
+        account.OwnerUserId = _reviewer;
+        account.Revision++;
+        await db.SaveChangesAsync();
+        Assert.Equal(id, (await coordinator.SignedSessionStatusAsync(package.Id)).AccountId);
+        Assert.Equal(ExtensionSessionStates.SignedIn, (await coordinator.SignedSessionStatusAsync(package.Id)).State);
+        account.OwnerUserId = null;
+        account.Revision++;
+        await db.SaveChangesAsync();
+        Assert.Equal(protectedState, await File.ReadAllBytesAsync(statePath));
+        var separate = await AddAccountAsync(package.ExtensionId);
+        var second = await coordinator.SignedSessionStatusAsync(package.Id, accountId: separate.Id);
+        Assert.Equal(separate.Id, second.AccountId);
+        Assert.Equal(ExtensionSessionStates.SignedOut, second.State);
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => coordinator.SignedSessionStatusAsync(package.Id, accountId: Guid.NewGuid()));
+        var descriptorRegistry = new ProviderRegistry([]);
+        var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "other-downloads") };
+        var restored = new ExtensionRuntimeCoordinator(_factory, _service, descriptorRegistry, descriptorRegistry,
+            Mock.Of<IHttpClientFactory>(), Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
+            new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+        await restored.StartAsync(default);
+        Assert.Equal(id, (await restored.SignedSessionStatusAsync(package.Id)).AccountId);
+        Assert.True(descriptorRegistry.TryGet(package.ExtensionId, out var descriptor));
+        Assert.All(descriptor!.Capabilities, capability =>
+        {
+            Assert.Equal(ProviderAccountRequirement.Required, capability.AccountRequirement);
+            Assert.Contains(ProviderAccountScope.Shared, capability.AllowedAccountScopes);
+            Assert.Contains(ProviderAccountScope.Personal, capability.AllowedAccountScopes);
+        });
+    }
+
+    [Fact]
     public async Task SignedSessionActions_RequireTheCurrentActiveRevisionAndAreRecorded()
     {
         var package = await _service.StageAsync(Package("5.0.0", "signed", signedSession: true));
@@ -350,7 +439,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         package = await coordinator.ActivateAsync(package.Id, package.Revision);
 
         Assert.Equal(ExtensionSessionStates.SignedOut, (await coordinator.SignedSessionStatusAsync(package.Id)).State);
-        Assert.Single(Directory.GetFiles(Path.Combine(runtimeState, "sessions", "local"), "signed-session-*.protected"));
+        Assert.Single(Directory.GetFiles(Path.Combine(runtimeState, "sessions", "local"), "signed-session-*.protected", SearchOption.AllDirectories));
         Assert.Empty(Directory.GetFiles(runtimeState, "signed-session-*.protected"));
         await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() =>
             coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision - 1));
@@ -487,8 +576,9 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         await coordinator.UninstallAsync(second.Id, second.Revision);
         Assert.False(Directory.Exists(runtimeState));
         await using var db = await _factory.CreateDbContextAsync();
-        Assert.Equal(account.Id, (await db.ProviderAccounts.SingleAsync()).Id);
-        Assert.Equal(account.SettingsJson, (await db.ProviderAccounts.SingleAsync()).SettingsJson);
+        Assert.Equal(2, await db.ProviderAccounts.CountAsync());
+        Assert.Equal(account.SettingsJson, (await db.ProviderAccounts.SingleAsync(item => item.Id == account.Id)).SettingsJson);
+        Assert.True(await db.ProviderAccounts.AnyAsync(item => item.Id == signedIn.AccountId));
         Assert.Contains(await _service.ListLogsAsync(first.Id), item => item.EventCode == "session.granted");
         Assert.Contains(await _service.ListLogsAsync(first.Id), item => item.EventCode == "package.superseded");
     }
@@ -632,7 +722,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
             [new("network", "https://api.example.test/", true), new("secret", "accountToken", true)]);
     }
 
-    private ExtensionRuntimeCoordinator Coordinator(SignedSessionHandler handler)
+    private ExtensionRuntimeCoordinator Coordinator(SignedSessionHandler handler, IDataProtectionProvider? protection = null)
     {
         var registry = new ProviderRegistry([]);
         var clients = new Mock<IHttpClientFactory>();
@@ -641,7 +731,7 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
         return new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
-            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, protection);
     }
 
     private async Task<ProviderAccountRecord> AddAccountAsync(string provider)

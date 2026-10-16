@@ -300,7 +300,11 @@ public sealed partial class ProviderAccountsController : ControllerBase
             $"provider-account:{account.ProviderId}:{account.Id:N}",
             bytes, account.SecretReferenceId, cancellationToken);
         account.SecretReferenceId = secret.Id;
-        account.SettingsJson = PublicSettingsJson(account.ProviderId, bytes);
+        var settings = System.Text.Json.Nodes.JsonNode.Parse(PublicSettingsJson(account.ProviderId, bytes))!.AsObject();
+        var previousSettings = System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?.AsObject();
+        foreach (var key in new[] { "__extensionSessionSource", "__extensionSessionRemoved" })
+            if (previousSettings?[key] is { } value) settings[key] = value.DeepClone();
+        account.SettingsJson = settings.ToJsonString();
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
         AddAudit(
@@ -353,6 +357,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
         account.Enabled = false;
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
+        if (UsesSignedSession(account.ProviderId))
+        {
+            var settings = System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)!.AsObject();
+            settings["__extensionSessionRemoved"] = true;
+            account.SettingsJson = settings.ToJsonString();
+        }
         if (account.SecretReferenceId.HasValue)
         {
             await _secretStore.RevokeAsync(
@@ -389,8 +399,12 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return Conflict(new { error = "The provider account changed. Reload and try again." });
         if (request.Enabled)
         {
-            if (!account.SecretReferenceId.HasValue) return BadRequest(new { error = "Configure the credential before enabling this account." });
-            var revoked = await context.SecretReferences.AsNoTracking().AnyAsync(
+            var settings = System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?.AsObject();
+            if (settings?["__extensionSessionRemoved"]?.GetValue<bool>() == true)
+                return BadRequest(new { error = "This connection was removed. Add a new connection before signing in." });
+            if (!account.SecretReferenceId.HasValue && !UsesSignedSession(account.ProviderId))
+                return BadRequest(new { error = "Configure the credential before enabling this account." });
+            var revoked = account.SecretReferenceId.HasValue && await context.SecretReferences.AsNoTracking().AnyAsync(
                 item => item.Id == account.SecretReferenceId.Value && item.RevokedAt != null, cancellationToken);
             if (revoked) return BadRequest(new { error = "This credential was revoked. Replace it before enabling the account." });
         }
@@ -428,6 +442,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
             });
         if (request.ExpectedRevision.HasValue && request.ExpectedRevision.Value != account.Revision)
             return Conflict(new { error = "The provider account changed. Reload and try again." });
+
+        if (!SupportedAudiences(account.ProviderId).Contains(scope))
+            return BadRequest(new { error = $"This provider does not support {scope} access for all its account capabilities." });
 
         UserRecord? owner = null;
         if (scope == ProviderAccountScope.Personal)
@@ -544,6 +561,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
         NormalizedAccountRequest request,
         CancellationToken cancellationToken)
     {
+        if (!SupportedAudiences(request.ProviderId).Contains(request.Scope))
+            return $"This provider does not support {request.Scope} access for all its account capabilities.";
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         if (request.Scope == ProviderAccountScope.Shared)
         {
@@ -565,6 +584,15 @@ public sealed partial class ProviderAccountsController : ControllerBase
             ? null
             : "The selected account owner is unavailable";
     }
+
+    private bool UsesSignedSession(string providerId) =>
+        _providerRegistry != null && _providerRegistry.TryGet(providerId, out var provider) && provider!.UsesSignedSession;
+
+    private ProviderAccountScope[] SupportedAudiences(string providerId) =>
+        ProviderAccountAudiences.Supported(_providerRegistry, providerId);
+
+    private string SharingDescription(string providerId) =>
+        ProviderAccountAudiences.Description(_providerRegistry, providerId);
 
     private static bool CanManageAllAccounts(AdminAuthSession session) => session.IsAdministrator;
 
@@ -645,6 +673,8 @@ public sealed partial class ProviderAccountsController : ControllerBase
             account.Enabled,
             account.Revision,
             canChangeAudience,
+            supportedAudiences = SupportedAudiences(account.ProviderId).Select(scope => scope.ToString()),
+            sharingDescription = SharingDescription(account.ProviderId),
             canManage,
             configuration = configuration?.Values ?? new Dictionary<string, JsonElement>(),
             configuredFields = configuration?.ConfiguredFields ?? [],

@@ -44,12 +44,17 @@ public abstract class ExtensionCapabilityAdapterBase
             return Failure<T>(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure<T>(ProviderErrorKind.Canceled);
         if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);
-        if (requireAccount && context.Account == null) return Failure<T>(ProviderErrorKind.AccountNeedsConfiguration);
+        if ((requireAccount || _sandbox.HasSignedSession) && context.Account == null)
+            return Failure<T>(ProviderErrorKind.AccountNeedsConfiguration);
 
         try
         {
+            if (!await _sandbox.ValidateSignedSessionAccountAsync(context.Account, context.CancellationToken))
+                return Failure<T>(ProviderErrorKind.Forbidden);
             ProviderOutcome<T> Run()
             {
+                using var sessionScope = _sandbox.HasSignedSession && context.Account != null
+                    ? _sandbox.OpenSignedSessionAccount(context.Account) : null;
                 using var invocationScope = openInvocationScope?.Invoke();
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);

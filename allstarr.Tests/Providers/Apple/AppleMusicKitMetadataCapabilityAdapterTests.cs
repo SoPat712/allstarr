@@ -70,7 +70,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal([ProviderCapabilityKind.Metadata, ProviderCapabilityKind.Playlist],
             registration.Descriptor.Capabilities.Select(item => item.Capability));
         Assert.All(registration.Descriptor.Capabilities,
-            item => Assert.Equal([ProviderAccountScope.Personal], item.AllowedAccountScopes));
+            item => Assert.Equal([ProviderAccountScope.Shared, ProviderAccountScope.Personal], item.AllowedAccountScopes));
         Assert.Equal(2, registration.Implementations.Count);
         Assert.Same(metadata, registration.Implementations[0]);
         Assert.Same(playlist, registration.Implementations[1]);

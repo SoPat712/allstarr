@@ -274,6 +274,8 @@ export type ProviderDefinition = {
   runtimeCapabilities?: ProviderRuntimeCapability[];
   connectionKind?: string | null;
   audience?: string | null;
+  supportedAudiences?: ("Personal" | "Shared")[];
+  sharingDescription?: string | null;
   implementationOrigin?: string | null;
   routeId?: string | null;
   capabilityRoutes?: Array<{
@@ -468,6 +470,8 @@ export type ProviderAccount = {
   enabled: boolean;
   revision: number;
   canChangeAudience?: boolean;
+  supportedAudiences?: ("Personal" | "Shared")[];
+  sharingDescription?: string | null;
   configuration?: Record<string, unknown>;
   configuredFields?: string[];
   secret: {
@@ -1500,7 +1504,7 @@ export const sources = {
     scope: "Personal" | "Shared";
     ownerUserId?: string | null;
     enabled: boolean;
-    secret: Record<string, unknown>;
+    secret?: Record<string, unknown>;
   }) => json<ProviderAccount>("/api/admin/provider-accounts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1738,6 +1742,7 @@ export type ExtensionPackage = {
 export type ExtensionSessionState = "signed_out" | "verification_pending" | "signed_in" | "expired";
 
 export type ExtensionSession = {
+  accountId?: string | null;
   state: ExtensionSessionState;
   expiresAt?: string | null;
   verificationUrl?: string | null;
@@ -1832,20 +1837,23 @@ export const extensions = {
       ...revisionBody(item.revision),
       method: "DELETE",
     }),
-  session: (item: ExtensionPackage) =>
-    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session`),
-  startSession: (item: ExtensionPackage) =>
-    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session/start`, revisionBody(item.revision)),
-  completeSession: (item: ExtensionPackage, grant: string) =>
+  session: (item: ExtensionPackage, accountId?: string) =>
+    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ""}`),
+  startSession: (item: ExtensionPackage, accountId?: string) =>
+    json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session/start`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision: item.revision, accountId }),
+    }),
+  completeSession: (item: ExtensionPackage, grant: string, accountId?: string) =>
     json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session/grant`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ grant, expectedRevision: item.revision }),
+      body: JSON.stringify({ grant, expectedRevision: item.revision, accountId }),
     }),
-  clearSession: (item: ExtensionPackage) =>
+  clearSession: (item: ExtensionPackage, accountId?: string) =>
     json<ExtensionSession>(`/api/admin/extensions/packages/${item.id}/session`, {
-      ...revisionBody(item.revision),
-      method: "DELETE",
+      method: "DELETE", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ expectedRevision: item.revision, accountId }),
     }),
 };
 

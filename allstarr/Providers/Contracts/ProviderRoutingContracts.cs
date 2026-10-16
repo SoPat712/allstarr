@@ -16,6 +16,8 @@ public sealed record ProviderRouteAccountResolution(
     ProviderAccountContext Account,
     long CurrentRevision);
 
+public sealed class ProviderAccountAudienceDeniedException() : UnauthorizedAccessException("The provider account is personal to another listener.");
+
 public interface IProviderRouteAccountResolver
 {
     Task<ProviderRouteAccountResolution?> ResolveAsync(

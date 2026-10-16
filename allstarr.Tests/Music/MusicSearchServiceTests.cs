@@ -14,6 +14,37 @@ public sealed class MusicSearchServiceTests
         ProtocolKind.Subsonic, "backend", "principal", null, "search-test",
         DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
 
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "Daft Punk Get Lucky")]
+    [InlineData(ProtocolKind.Subsonic, "Daft Punk Get Lucky")]
+    [InlineData(ProtocolKind.Jellyfin, "Get Lucky")]
+    [InlineData(ProtocolKind.Subsonic, "Get Lucky")]
+    public async Task SearchPrefersTheOriginalBeforeAnUnrequestedUploadVariant(ProtocolKind protocol, string query)
+    {
+        var context = new ProtocolExecutionContext(protocol, "backend", "principal", null, "search-ranking",
+            _context.Deadline, CancellationToken.None);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.SearchAsync(context, query, 20, 0, 0, null))
+            .ReturnsAsync(new SearchResult
+            {
+                Songs =
+                [
+                    new Song { Id = "upload", ExternalProvider = "soundcloud",
+                        Title = "Daft Punk - Get Lucky #nightcore #bassboosted", Artist = "999333" },
+                    new Song { Id = "original", ExternalProvider = "deezer", Title = "Get Lucky", Artist = "Daft Punk" }
+                ]
+            });
+        var result = await new MusicSearchService(gateway.Object).SearchAsync(context,
+            new MusicSearchRequest(query, new(20), MusicSearchWindow.None, MusicSearchWindow.None,
+                MusicSearchWindow.None),
+            new FakeNative([new(MusicItemKind.Song, "native", "Get Lucky", "Daft Punk", "complete native row")]));
+
+        Assert.Equal(["native", "original", "upload"], result.Songs.Select(Id));
+        Assert.Equal("complete native row", result.Songs[0].Native!.Payload);
+        gateway.Verify(item => item.SearchAsync(context, query, 20, 0, 0, null), Times.Once);
+        gateway.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task MixProjectionReplacesNativeSongsInTheirOriginalPositions()
     {

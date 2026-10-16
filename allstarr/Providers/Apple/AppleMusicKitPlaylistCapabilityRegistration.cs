@@ -41,11 +41,11 @@ public static class AppleMusicKitPlaylistCapabilityRegistration
                 AppleMusicKitPlaylistCapabilityAdapter.MetadataDescriptor,
                 AppleMusicKitPlaylistCapabilityAdapter.PlaylistDescriptor,
                 new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
-                    "1", ["getStreamLease", "probeStream"], [ProviderAccountScope.Personal]),
+                    "1", ["getStreamLease", "probeStream"], [ProviderAccountScope.Shared, ProviderAccountScope.Personal]),
                 new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
-                    "1", ["download", "checkAvailability"], [ProviderAccountScope.Personal]),
+                    "1", ["download", "checkAvailability"], [ProviderAccountScope.Shared, ProviderAccountScope.Personal]),
                 new(ProviderCapabilityKind.Lyrics, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Required,
-                    "1", ["fetchLyrics"], [ProviderAccountScope.Personal])]),
+                    "1", ["fetchLyrics"], [ProviderAccountScope.Shared, ProviderAccountScope.Personal])]),
             [metadata, playlist, streaming, download, lyrics], ["apple-download", "applemusic"]);
 
 }

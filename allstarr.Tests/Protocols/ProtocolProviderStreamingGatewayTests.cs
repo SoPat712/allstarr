@@ -36,6 +36,28 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(message, error.Message);
     }
 
+    [Theory]
+    [InlineData("account-personal-to-another-listener")]
+    [InlineData("account-scope-denied")]
+    public async Task PrivateAppleAccountExplainsHouseholdAccess(string reason)
+    {
+        var router = new Mock<IProviderRouter>();
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<IProviderStreamingCapability>(
+                request, [], new(request.CorrelationId, request.Capability, null, null,
+                    [new("apple-musickit", null, ProviderRouteDecisionStatus.Rejected, reason, 0)])));
+        var gateway = new ProtocolProviderGateway(router.Object, MetadataRegistry(), new HttpClientFactory());
+        var error = await Assert.ThrowsAsync<ProtocolProviderAccountAccessException>(() => gateway.OpenStreamAsync(
+            Context(), "apple-download", "1881685399", ProviderAudioQuality.Any, null));
+        Assert.Equal("This song plays from another listener's Apple Music account. Ask an administrator to share it.", error.Message);
+        var jellyfin = allstarr.Controllers.JellyfinController.MapExternalStreamException(error);
+        var subsonic = allstarr.Filters.SubsonicExceptionFilter.Map(error);
+        Assert.Equal(403, jellyfin.statusCode);
+        Assert.Equal(error.Message, jellyfin.errorMessage);
+        Assert.Equal(403, subsonic.StatusCode);
+        Assert.Equal(error.Message, subsonic.Message);
+    }
+
     [Fact]
     public async Task OpenStream_ActorlessContextCannotOpenProviderStream()
     {

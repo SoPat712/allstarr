@@ -11,6 +11,31 @@ namespace allstarr.Tests;
 public sealed class AppleMusicClientTests
 {
     [Fact]
+    public async Task Shared_account_reads_use_the_selected_secret_for_each_listener()
+    {
+        var secrets = new SelectedSecrets();
+        using var http = new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            Assert.Equal("media-user-token=fixture-user", request.Headers.GetValues("Cookie").Single());
+            return Json("{\"data\":[]}");
+        }));
+        var client = AppleProviderTestFactory.Client(http, secrets);
+        var account = new ProviderAccountContext(Guid.NewGuid(), "apple-musickit", ProviderAccountScope.Shared,
+            1, secretReferenceId: Guid.NewGuid());
+        foreach (var listener in new[] { Guid.NewGuid(), Guid.NewGuid() })
+        {
+            var context = new ProviderExecutionContext(new(ProviderActorKind.User, listener, new("jellyfin", "backend", "fixture")), "apple-musickit", account,
+                new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                    ProviderExplicitContentPolicy.Allow, true, true, true, ["apple-musickit"]),
+                "account-read", "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
+            Assert.True((await new AppleMusicKitPlaylistCapabilityAdapter(client, http)
+                .GetUserPlaylistsAsync(context, new(new()))).IsSuccess);
+            Assert.Null(AppleMusicClient.Validate(context, personal: true));
+        }
+        Assert.Equal(2, secrets.Reads.Count);
+    }
+
+    [Fact]
     public async Task Public_catalog_and_playlist_never_resolve_or_send_personal_credentials()
     {
         var secrets = new SelectedSecrets();

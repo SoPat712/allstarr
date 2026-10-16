@@ -197,7 +197,11 @@ public sealed class ManagedTrackDownloadBindingTests
     {
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
         router.Setup(item => item.PlanAsync<IProviderDownloadCapability>(It.IsAny<ProviderRouteRequest>()))
-            .ReturnsAsync(plan);
+            .ReturnsAsync((ProviderRouteRequest request) =>
+            {
+                Assert.True(request.Policy.AllowSharedAccount);
+                return plan;
+            });
         var providers = new Mock<IProviderRegistry>(MockBehavior.Strict);
         providers.Setup(item => item.FindByCapability(ProviderCapabilityKind.Download, true))
             .Returns([Descriptor(fixture.ProviderId, plan.Candidates[0].Context.Account != null)]);

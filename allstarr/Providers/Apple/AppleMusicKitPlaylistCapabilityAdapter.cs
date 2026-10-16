@@ -183,12 +183,12 @@ public sealed class AppleMusicKitPlaylistCapabilityAdapter : IProviderPlaylistCa
     internal static ProviderCapabilityDescriptor MetadataDescriptor => new(ProviderCapabilityKind.Metadata,
         ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Optional, "1",
         ["searchTracks", "getTrack", "lookupByIsrc", "searchAlbums", "getAlbum", "searchArtists", "getArtist", "getArtistAlbums", "getArtistTracks"],
-        [ProviderAccountScope.Personal], supportsPublicRead: true);
+        [ProviderAccountScope.Shared, ProviderAccountScope.Personal], supportsPublicRead: true);
 
     internal static ProviderCapabilityDescriptor PlaylistDescriptor => new(ProviderCapabilityKind.Playlist,
         ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Optional, "1",
         ["getUserPlaylists", "searchPlaylists", "getPlaylistTracks", "resolveArtwork"],
-        [ProviderAccountScope.Personal], supportsPublicRead: true);
+        [ProviderAccountScope.Shared, ProviderAccountScope.Personal], supportsPublicRead: true);
 
     private Task<ProviderOutcome<T>> ExecuteAsync<T>(ProviderExecutionContext context,
         Func<AppleMusicCredential?, string, CancellationToken, Task<ProviderOutcome<T>>> operation, bool personal = true) =>

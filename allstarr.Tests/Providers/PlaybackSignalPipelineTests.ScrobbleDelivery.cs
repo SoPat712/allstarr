@@ -12,6 +12,49 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaybackSignalPipelineTests
 {
+    [Theory]
+    [InlineData("lastfm")]
+    [InlineData("listenbrainz")]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    public async Task SharedScrobbleDestinationServesBothListenersAndPersonalWins(string provider)
+    {
+        var personal = await AddScrobbleAccountAsync(provider);
+        var other = Guid.CreateVersion7();
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(User(other, "jellyfin", "backend", "other-principal", "Other", clock.UtcNow));
+            await db.SaveChangesAsync();
+        }
+        var secrets = new ScrobbleSecrets();
+        var accessor = new ScopedRecommendationAccountAccessor(factory, secrets);
+        var ownerScope = new IntelligenceScope(user, "jellyfin", "backend");
+        var otherScope = new IntelligenceScope(other, "jellyfin", "backend");
+        Assert.Null(await accessor.FindAccountAsync(otherScope, provider, default));
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            (await db.ProviderAccounts.SingleAsync()).OwnerUserId = null;
+            await db.SaveChangesAsync();
+        }
+        using var http = new HttpClient(new ScrobbleHttp(HttpStatusCode.OK));
+        IBoundPlaybackScrobbleTarget target = provider == "lastfm"
+            ? new LastFmScopedPlaybackScrobbleTarget(http, accessor)
+            : new ListenBrainzScopedPlaybackScrobbleTarget(http, accessor, provider);
+        var shared = (await target.FindDestinationAsync(ownerScope, default))!;
+        foreach (var scope in new[] { ownerScope, otherScope })
+        {
+            Assert.Equal(personal.Id, (await target.FindDestinationAsync(scope, default))!.AccountId);
+            Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, (await target.DeliverBoundAsync(scope, shared,
+                PlaybackTransition.Stop, new("Track", "Artist", null, 120000), 0, clock.UtcNow, "listen", default)).Outcome);
+        }
+        var own = await AddScrobbleAccountAsync(provider);
+        Assert.Equal(own.Id, (await accessor.FindAccountAsync(ownerScope, provider, default))!.AccountId);
+        Assert.Equal(personal.Id, (await accessor.FindAccountAsync(otherScope, provider, default))!.AccountId);
+        Assert.Equal(ScopedPlaybackScrobbleOutcome.Delivered, (await target.DeliverBoundAsync(ownerScope, shared,
+            PlaybackTransition.Stop, new("Track", "Artist", null, 120000), 0, clock.UtcNow, "frozen", default)).Outcome);
+        Assert.Equal(personal.Id, secrets.Used.Last().AccountId);
+    }
+
     [Fact]
     public async Task ScrobbleRetry_DoesNotSelectReplacementAccount()
     {
@@ -406,7 +449,7 @@ public sealed partial class PlaybackSignalPipelineTests
         public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation, CancellationToken cancellationToken)
         {
             Used.Add(account);
-            return operation(System.Text.Encoding.UTF8.GetBytes("{\"apiKey\":\"fixture-key\",\"sharedSecret\":\"fixture-secret\",\"sessionKey\":\"fixture-session\",\"token\":\"fixture-token\"}"));
+            return operation(System.Text.Encoding.UTF8.GetBytes("{\"apiKey\":\"fixture-key\",\"sharedSecret\":\"fixture-secret\",\"sessionKey\":\"fixture-session\",\"token\":\"fixture-token\",\"baseUrl\":\"https://listen.example.test\"}"));
         }
     }
 

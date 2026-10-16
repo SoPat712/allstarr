@@ -23,6 +23,7 @@ public sealed record ExtensionSessionView(
     string? VerificationUrl,
     string? ReasonCode)
 {
+    public Guid? AccountId { get; init; }
     public bool RenewsAutomatically { get; init; }
     public string? LastRenewalFailure { get; init; }
 }

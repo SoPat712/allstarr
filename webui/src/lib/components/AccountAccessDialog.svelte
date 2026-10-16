@@ -3,7 +3,7 @@
   import { Button, buttonVariants } from "$lib/components/ui/button";
   import { X } from "@lucide/svelte";
   import { sources, type ProviderAccount } from "$lib/api";
-  import { audienceLabel } from "$lib/sources";
+  import { audienceLabel, supportedAudiences, sharingDescription } from "$lib/sources";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
 
@@ -36,13 +36,14 @@
     const revision = account ? `${account.id}:${account.revision}` : "";
     if (!open || !account || preparedRevision === revision) return;
     preparedRevision = revision;
-    scope = account.scope;
+    scope = supportedAudiences(account).includes(account.scope)
+      ? account.scope : supportedAudiences(account)[0] ?? account.scope;
     ownerUserId = account.ownerUserId ?? users[0]?.id ?? "";
     error = "";
   });
 
   function submit() {
-    if (!account || saving) return;
+    if (!account || saving || !supportedAudiences(account).includes(scope)) return;
     if (expansion) {
       confirmOpen = true;
       return;
@@ -51,7 +52,7 @@
   }
 
   async function save() {
-    if (!account || saving) return;
+    if (!account || saving || !supportedAudiences(account).includes(scope)) return;
     saving = true;
     error = "";
     try {
@@ -84,14 +85,18 @@
         <form onsubmit={(event) => { event.preventDefault(); submit(); }}>
           <fieldset class="audience-options">
             <legend>Who can use this source connection?</legend>
+            {#if supportedAudiences(account).includes("Personal")}
             <label class:active={scope === "Personal"}>
-              <input bind:group={scope} type="radio" value="Personal" />
+              <input bind:group={scope} type="radio" aria-label="Personal" value="Personal" />
               <span><strong>Personal</strong><small>Only the selected Allstarr user can use this account.</small></span>
             </label>
+            {/if}
+            {#if supportedAudiences(account).includes("Shared")}
             <label class:active={scope === "Shared"}>
-              <input bind:group={scope} type="radio" value="Shared" />
-              <span><strong>Shared</strong><small>Household users may use eligible provider capabilities. Administrators manage this account.</small></span>
+              <input bind:group={scope} type="radio" aria-label="Shared" value="Shared" />
+              <span><strong>Shared</strong><small>{sharingDescription(account)}</small></span>
             </label>
+            {/if}
           </fieldset>
           {#if scope === "Personal"}
             <label class="field"><span>Allstarr user</span><SelectField bind:value={ownerUserId} label="Allstarr user" options={users.map((user) => ({ value: user.id, label: user.displayName }))} required /></label>

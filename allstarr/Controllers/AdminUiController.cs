@@ -97,6 +97,8 @@ public class AdminUiController : ControllerBase
                     AccountSettings = item.AccountSettings,
                     ConnectionKind = item.ConnectionKind,
                     Audience = item.Audience,
+                    SupportedAudiences = item.SupportedAudiences,
+                    SharingDescription = item.SharingDescription,
                     ImplementationOrigin = item.ImplementationOrigin,
                     RouteId = item.RouteId,
                     CapabilityRoutes = item.CapabilityRoutes
@@ -1256,6 +1258,9 @@ public class AdminUiController : ControllerBase
         }
         foreach (var provider in providers)
         {
+            provider.SupportedAudiences = allstarr.Core.Identity.ProviderAccountAudiences.Supported(_providerRegistry, provider.Id)
+                .Select(scope => scope.ToString()).ToList();
+            provider.SharingDescription = allstarr.Core.Identity.ProviderAccountAudiences.Description(_providerRegistry, provider.Id);
             var statuses = runtimeStatuses
                 .Where(status => status.Provider.Equals(provider.Id, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -1344,7 +1349,7 @@ public class AdminUiController : ControllerBase
                 ProviderCapabilityKind.Metadata,
                 "metadata",
                 "Metadata search order",
-                "Used only for discovery (titles, artists, albums, ISRCs). Playback uses Streaming and Download order below.",
+                "Orders sources among similarly relevant search results. Title, artist, and requested versions determine relevance. Playback uses Streaming and Download order below.",
                 "MULTI_PROVIDER_ENABLED_SEARCH",
                 pinnedProvider: null,
                 policy: policy),

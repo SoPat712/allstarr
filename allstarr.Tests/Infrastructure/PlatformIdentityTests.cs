@@ -236,7 +236,7 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
     [InlineData("deezer", ProviderRouteHealthState.Unauthorized, false)]
     [InlineData("fixture-extension", ProviderRouteHealthState.Degraded, false)]
     [InlineData("fixture-extension", ProviderRouteHealthState.Healthy, true)]
-    public async Task Routing_FallsBackFromUnusablePersonalAccountButHonorsExplicitSelection(
+    public async Task Routing_PreservesPersonalPriorityAndHonorsExplicitSelection(
         string provider, ProviderRouteHealthState personalHealth, bool circuitOpen)
     {
         var identities = Resolver(Options());
@@ -250,7 +250,7 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
             new ProviderBackendPrincipal("jellyfin", "fixture", "listener"));
         var request = new ProviderRouteAccountRequest(actor, provider, ProviderCapabilityKind.Streaming,
             null, [ProviderAccountScope.Personal, ProviderAccountScope.Shared]);
-        Assert.Equal(shared.Id, (await routes.ResolveAsync(request))!.Account.AccountId);
+        Assert.Equal(personal.Id, (await routes.ResolveAsync(request))!.Account.AccountId);
         Assert.Equal(personal.Id, (await routes.ResolveAsync(request with { RequestedAccountId = personal.Id }))!.Account.AccountId);
     }
 

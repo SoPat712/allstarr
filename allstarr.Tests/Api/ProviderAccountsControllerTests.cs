@@ -555,6 +555,136 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.Equal(_userId, saved.CreatedByUserId);
     }
 
+    [Theory]
+    [InlineData("apple-musickit")]
+    [InlineData("spotify")]
+    [InlineData("deezer")]
+    [InlineData("qobuz")]
+    [InlineData("musixmatch")]
+    [InlineData("lastfm")]
+    [InlineData("listenbrainz")]
+    [InlineData("multi-scrobbler")]
+    [InlineData("koito")]
+    [InlineData("spotiflac-apple-music")]
+    public async Task AudienceRoundTripKeepsSelectedCredentialsUsable(string provider)
+    {
+        var account = await CreateUserAccount(_userId, provider, "Connection");
+        var admin = Controller(Session(_userId, administrator: true));
+        var resolver = new ProviderAccountResolver(_factory);
+        var secrets = new EncryptedProviderAccountSecretAccessor(_secretStore);
+        var owner = new AllstarrPrincipal(_userId, "Jellyfin", "fixture", "a", "A", false);
+        var listener = new AllstarrPrincipal(_otherUserId, "Jellyfin", "fixture", "b", "B", false);
+        foreach (var scope in new[] { "Personal", "Shared", "Personal" })
+        {
+            Assert.IsType<OkObjectResult>(await admin.UpdateAudience(account.Id,
+                new() { Scope = scope, OwnerUserId = scope == "Personal" ? _userId : null }));
+            foreach (var actor in new[] { owner, listener })
+            {
+                var resolved = await resolver.ResolveAsync(new(actor, provider, "streaming"));
+                if (scope == "Personal" && actor.UserId != _userId) { Assert.Null(resolved); continue; }
+                Assert.NotNull(resolved);
+                var selected = resolved.Account;
+                var value = await secrets.UseAsync(new(selected.Id, provider, selected.Scope, selected.Revision,
+                    selected.Enabled, selected.OwnerUserId, "selected-account", selected.SecretReferenceId),
+                    bytes => Task.FromResult(System.Text.Encoding.UTF8.GetString(bytes.Span)), default);
+                Assert.Contains("secretReferenceFixture", value, StringComparison.Ordinal);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task RouteResolutionDistinguishesPrivateAccountFromMissingSignIn()
+    {
+        var health = new Mock<allstarr.Core.Routing.IProviderRouteHealthSource>();
+        health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
+            .Returns(new allstarr.Core.Routing.ProviderRouteHealthSnapshot(allstarr.Core.Routing.ProviderRouteHealthState.Unknown, false));
+        var resolver = new allstarr.Core.Routing.DurableProviderRouteAccountResolver(new(_factory), health.Object);
+        var actor = new ProviderActorContext(ProviderActorKind.User, _otherUserId, new("jellyfin", "fixture", "b"));
+        var request = new allstarr.Core.Routing.ProviderRouteAccountRequest(actor, "apple-musickit", ProviderCapabilityKind.Streaming, null);
+        Assert.Null(await resolver.ResolveAsync(request));
+        var account = await CreateUserAccount(_userId, "apple-musickit", "Connection");
+        await Assert.ThrowsAsync<allstarr.Core.Routing.ProviderAccountAudienceDeniedException>(() => resolver.ResolveAsync(request));
+        await Assert.ThrowsAsync<allstarr.Core.Routing.ProviderAccountAudienceDeniedException>(() =>
+            resolver.ResolveAsync(request with { RequestedAccountId = account.Id }));
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            resolver.ResolveAsync(request with { RequestedAccountId = Guid.CreateVersion7() }));
+        Assert.IsType<OkObjectResult>(await Controller(Session(_userId, administrator: true))
+            .UpdateAudience(account.Id, new() { Scope = "Shared" }));
+        Assert.Equal(account.Id, (await resolver.ResolveAsync(request))!.Account.AccountId);
+    }
+
+    [Fact]
+    public async Task PersonalRouteAccountTakesPriorityOverHealthySharedAccount()
+    {
+        var shared = await CreateUserAccount(_userId, "spotify", "Shared connection");
+        await Controller(Session(_userId, administrator: true)).UpdateAudience(shared.Id, new() { Scope = "Shared" });
+        var personal = await CreateUserAccount(_userId, "spotify", "Personal connection");
+        var health = new Mock<allstarr.Core.Routing.IProviderRouteHealthSource>();
+        health.Setup(item => item.Get("spotify", It.IsAny<Guid?>(), ProviderCapabilityKind.Playlist))
+            .Returns((string _, Guid? id, ProviderCapabilityKind _) => new allstarr.Core.Routing.ProviderRouteHealthSnapshot(
+                id == personal.Id ? allstarr.Core.Routing.ProviderRouteHealthState.Degraded : allstarr.Core.Routing.ProviderRouteHealthState.Healthy, false));
+        var resolver = new allstarr.Core.Routing.DurableProviderRouteAccountResolver(new(_factory), health.Object);
+        var actor = new ProviderActorContext(ProviderActorKind.User, _userId, new("jellyfin", "fixture", "a"));
+        Assert.Equal(personal.Id, (await resolver.ResolveAsync(new(actor, "spotify", ProviderCapabilityKind.Playlist, null)))!.Account.AccountId);
+    }
+
+    [Fact]
+    public async Task UnsupportedAudienceIsRejectedBeforeChangingCredentials()
+    {
+        var account = await CreateUserAccount(_userId, "limited", "Connection");
+        var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(
+            "limited", "Limited", "Limited", ProviderOrigin.BuiltIn, "1", "1",
+            [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming,
+                ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.Required, "1",
+                [], [ProviderAccountScope.Personal])], new ProviderPermissionDescriptor()))]);
+        var controller = Controller(Session(_userId, administrator: true), providerRegistry: registry);
+        var result = Assert.IsType<BadRequestObjectResult>(await controller.UpdateAudience(account.Id, new() { Scope = "Shared" }));
+        Assert.Contains("does not support Shared access", JsonSerializer.Serialize(result.Value), StringComparison.Ordinal);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(_userId, (await db.ProviderAccounts.SingleAsync()).OwnerUserId);
+        using var listed = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
+        Assert.Equal("Personal", Assert.Single(Assert.Single(listed.RootElement.GetProperty("accounts").EnumerateArray())
+            .GetProperty("supportedAudiences").EnumerateArray()).GetString());
+    }
+
+    [Fact]
+    public async Task SignedConnectionCanBeReenabledWithoutAStoredCredential()
+    {
+        var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(
+            "signed-audio", "Signed Audio", "Signed Audio", ProviderOrigin.Extension, "1", "1",
+            [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata,
+                ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.Required, "1",
+                [], [ProviderAccountScope.Personal, ProviderAccountScope.Shared])], new ProviderPermissionDescriptor(),
+            entryPoint: "index.js") { UsesSignedSession = true })]);
+        var controller = Controller(Session(_userId, administrator: true), providerRegistry: registry);
+        Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
+            { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
+        await using var db = await _factory.CreateDbContextAsync();
+        var id = (await db.ProviderAccounts.SingleAsync()).Id;
+        Assert.IsType<OkObjectResult>(await controller.SetEnabled(id, new() { Enabled = false }));
+        Assert.IsType<OkObjectResult>(await controller.SetEnabled(id, new() { Enabled = true }));
+        Assert.Null((await db.ProviderAccounts.AsNoTracking().SingleAsync()).SecretReferenceId);
+        Assert.IsType<NoContentResult>(await controller.Revoke(id));
+        Assert.IsType<BadRequestObjectResult>(await controller.SetEnabled(id, new() { Enabled = true }));
+    }
+
+    [Fact]
+    public async Task ReplacingCredentialsPreservesTheSignedConnectionBinding()
+    {
+        var account = await CreateUserAccount(_userId, "spotiflac-apple-music", "Connection");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ProviderAccounts.SingleAsync()).SettingsJson = """{"__extensionSessionSource":"local"}""";
+            await db.SaveChangesAsync();
+        }
+        using var secret = JsonDocument.Parse("""{"token":"replacement"}""");
+        Assert.IsType<OkObjectResult>(await Controller(Session(_userId)).ReplaceSecret(account.Id,
+            new() { Secret = secret.RootElement.Clone() }));
+        await using var verify = await _factory.CreateDbContextAsync();
+        using var settings = JsonDocument.Parse((await verify.ProviderAccounts.SingleAsync()).SettingsJson);
+        Assert.Equal("local", settings.RootElement.GetProperty("__extensionSessionSource").GetString());
+    }
+
     [Fact]
     public async Task UpdatingAudienceRebindsEncryptedSecretToNewOwner()
     {
@@ -772,7 +902,7 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         string name)
     {
         var controller = Controller(Session(userId));
-        using var secret = JsonDocument.Parse("""{"secretReferenceFixture":"encrypted"}""");
+        using var secret = JsonDocument.Parse("""{"secretReferenceFixture":"encrypted","baseUrl":"https://listen.example.test"}""");
         var result = Assert.IsType<CreatedAtActionResult>(await controller.Create(
             new ProviderAccountsController.CreateProviderAccountRequest
             {

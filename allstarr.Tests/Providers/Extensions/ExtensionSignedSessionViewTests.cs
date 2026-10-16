@@ -1,4 +1,6 @@
 using allstarr.Core.Extensions;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -201,6 +203,85 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
         Assert.Single(Directory.GetFiles(sessions, "signed-session-*.protected"));
         Assert.Equal(ExtensionSessionStates.SignedOut, (await Sandbox(handler, runtime: runtime,
             sessionState: Path.Combine(runtime, "state", "sessions", "other")).SignedSessionStatusAsync()).State);
+    }
+
+    [Fact]
+    public async Task AccountSessions_KeepSeparateProtectedSignInsAcrossAudienceChanges()
+    {
+        var handler = new SessionHandler();
+        var sandbox = Sandbox(handler);
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        sandbox.BindSignedSessionAccounts(first, (_, _) => Task.FromResult(true));
+        using (sandbox.OpenSignedSessionAccount(first))
+            Assert.Equal(ExtensionSessionStates.SignedIn, (await sandbox.CompleteSignedSessionGrantAsync("grant-1")).State);
+        using (sandbox.OpenSignedSessionAccount(second))
+            Assert.Equal(ExtensionSessionStates.SignedOut, (await sandbox.SignedSessionStatusAsync()).State);
+        using (sandbox.OpenSignedSessionAccount(first))
+        {
+            Assert.Equal(ExtensionSessionStates.SignedIn, (await sandbox.SignedSessionStatusAsync()).State);
+            Assert.Equal(first, (await sandbox.SignedSessionStatusAsync()).AccountId);
+        }
+        await Assert.ThrowsAsync<InvalidOperationException>(() => sandbox.SignedSessionStatusAsync());
+    }
+
+    [Fact]
+    public async Task SignedAccount_SharedListenersUseTheSelectedSessionAndPersonalOwnershipIsEnforced()
+    {
+        var sandbox = Sandbox(new SessionHandler(), script: """
+            registerExtension({searchTracks:function(){return {items:[{id:'track',title:session.status().authenticated ? 'Signed in' : 'Signed out',artists:[{name:'Artist'}]}]};}});
+            """);
+        var id = Guid.NewGuid();
+        var accountCurrent = true;
+        sandbox.BindSignedSessionAccounts(id, (_, _) => Task.FromResult(accountCurrent));
+        using (sandbox.OpenSignedSessionAccount(id))
+            await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, ExtensionSdkV1.ParseManifest(Manifest));
+        var first = Guid.NewGuid();
+        var second = Guid.NewGuid();
+        var shared = new ProviderAccountContext(id, "signed-demo", ProviderAccountScope.Shared, 1);
+        ProviderExecutionContext Context(Guid user, ProviderAccountContext? account) => new(
+            new(ProviderActorKind.User, user, new("jellyfin", "backend", "fixture")), "signed-demo", account,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, true, true, true, ["signed-demo"]),
+            "search", "fixture", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        foreach (var listener in new[] { first, second })
+        {
+            var result = await adapter.SearchTracksAsync(Context(listener, shared), new("query", new()));
+            Assert.True(result.IsSuccess);
+            Assert.Equal("Signed in", Assert.Single(result.RequireValue().Items).Title);
+        }
+        var personal = new ProviderAccountContext(id, "signed-demo", ProviderAccountScope.Personal, 2, ownerUserId: first);
+        Assert.Throws<UnauthorizedAccessException>(() => Context(second, personal));
+        var ownerResult = await adapter.SearchTracksAsync(Context(first, personal), new("query", new()));
+        Assert.Equal("Signed in", Assert.Single(ownerResult.RequireValue().Items).Title);
+        var missing = await adapter.SearchTracksAsync(Context(first, null), new("query", new()));
+        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, missing.Error!.Kind);
+        var separate = new ProviderAccountContext(Guid.NewGuid(), "signed-demo", ProviderAccountScope.Personal, 1, ownerUserId: second);
+        var isolated = await adapter.SearchTracksAsync(Context(second, separate), new("query", new()));
+        Assert.Equal("Signed out", Assert.Single(isolated.RequireValue().Items).Title);
+        accountCurrent = false;
+        var stale = await adapter.SearchTracksAsync(Context(first, shared), new("query", new()));
+        Assert.Equal(ProviderErrorKind.Forbidden, stale.Error!.Kind);
+    }
+
+    [Fact]
+    public async Task DefaultAccount_AdoptsTheUnboundSessionOnlyOnce()
+    {
+        var handler = new SessionHandler();
+        var runtime = Path.Combine(_root, Guid.NewGuid().ToString("N"));
+        var sessions = Path.Combine(runtime, "state", "sessions", "local");
+        var old = Sandbox(handler, runtime: runtime, sessionState: sessions);
+        await old.CompleteSignedSessionGrantAsync("grant-1");
+        var first = Guid.NewGuid();
+        var current = Sandbox(handler, runtime: runtime, sessionState: sessions);
+        current.BindSignedSessionAccounts(first, (_, _) => Task.FromResult(true));
+        using (current.OpenSignedSessionAccount(first))
+            Assert.Equal(ExtensionSessionStates.SignedIn, (await current.SignedSessionStatusAsync()).State);
+        Assert.Empty(Directory.GetFiles(sessions, "signed-session-*.protected"));
+        using (current.OpenSignedSessionAccount(Guid.NewGuid()))
+            Assert.Equal(ExtensionSessionStates.SignedOut, (await current.SignedSessionStatusAsync()).State);
+        Assert.Equal(2, Directory.GetFiles(sessions, "signed-session-*.protected", SearchOption.AllDirectories).Length);
     }
 
     [Fact]

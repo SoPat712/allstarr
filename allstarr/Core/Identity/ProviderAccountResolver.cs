@@ -16,6 +16,16 @@ public sealed record ResolvedProviderAccount(ProviderAccountRecord Account, stri
 
 public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext> contextFactory)
 {
+    public async Task<bool> HasOtherPersonalAccountAsync(Guid userId, string providerId,
+        CancellationToken cancellationToken = default, Guid? accountId = null)
+    {
+        await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
+        return await context.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Enabled &&
+            (!accountId.HasValue || item.Id == accountId) &&
+            item.ProviderId == providerId && item.OwnerUserId != null && item.OwnerUserId != userId,
+            cancellationToken);
+    }
+
     public async Task<ResolvedProviderAccount?> ResolveAsync(
         ProviderAccountResolutionRequest request,
         CancellationToken cancellationToken = default) =>

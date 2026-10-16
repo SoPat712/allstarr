@@ -17,6 +17,31 @@ public sealed class AppleDownloadCapabilityAdapterTests : IDisposable
     private readonly string root = Path.Combine(Path.GetTempPath(), "allstarr-apple-capability", Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task SharedStreamingAccountWorksForBothListeners()
+    {
+        var gateway = new GatewayHandler(Encoding.UTF8.GetBytes("progressive audio"), "audio/flac");
+        var settings = new AppleDownloadSettings { BaseUrl = "https://gateway.test/" };
+        using var http = new HttpClient(gateway);
+        var discovery = new AppleDownloadEndpointDiscovery(new StaticClientFactory(http), Options.Create(settings));
+        var adapter = new AppleDownloadStreamingCapabilityAdapter(http, settings, discovery, AppleProviderTestFactory.Client());
+        var owner = Context(Guid.CreateVersion7());
+        var account = new ProviderAccountContext(Guid.CreateVersion7(), "apple-musickit", ProviderAccountScope.Shared,
+            1, secretReferenceId: Guid.CreateVersion7());
+        foreach (var listener in new[] { owner.Actor.EffectiveUserId!.Value, Guid.CreateVersion7() })
+        {
+            var context = new ProviderExecutionContext(new(ProviderActorKind.User, listener, owner.Actor.BackendPrincipal),
+                "apple-musickit", account, new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                    ProviderExplicitContentPolicy.Allow, true, true, true, ["apple-musickit"]),
+                "stream", "fixture", owner.Deadline, default);
+            var result = await adapter.GetStreamLeaseAsync(context, new(new("apple-musickit", ProviderResourceKind.Track, "101")));
+            Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        }
+        Assert.Throws<UnauthorizedAccessException>(() => new ProviderExecutionContext(
+            new(ProviderActorKind.User, Guid.CreateVersion7(), owner.Actor.BackendPrincipal), "apple-musickit", owner.Account,
+            owner.Policy, "stream", "fixture", owner.Deadline, default));
+    }
+
+    [Fact]
     public async Task Download_UsesDiscoveredGatewayAndResolvesHostOwnedArtifact()
     {
         var audio = Encoding.UTF8.GetBytes("fake flac audio bytes");

@@ -141,6 +141,9 @@ public interface IProtocolProviderGateway
         int? durationSeconds = null);
 }
 
+public sealed class ProtocolProviderAccountAccessException()
+    : UnauthorizedAccessException("This song plays from another listener's Apple Music account. Ask an administrator to share it.");
+
 public sealed class ProtocolProviderUnavailableException(ProviderError error)
     : HttpRequestException(error.SafeMessage, null, HttpStatusCode.ServiceUnavailable);
 
@@ -407,9 +410,12 @@ public sealed partial class ProtocolProviderGateway(
             playableOrder, protocol.CancellationToken);
         return new SearchResult
         {
-            Songs = Merge(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider, playableOrder),
-            Albums = Merge(routed.Albums, albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider),
-            Artists = Merge(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id), item => item.ExternalProvider)
+            Songs = MergeSearch(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
+                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
+            Albums = MergeSearch(routed.Albums, albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
+                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
+            Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
+                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Name), providerOrder)
         };
     }
 
@@ -1539,6 +1545,9 @@ public sealed partial class ProtocolProviderGateway(
 
     private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection)
     {
+        if (rejection.ProviderId == "apple-musickit" &&
+            rejection.ReasonCode is "account-personal-to-another-listener" or "account-scope-denied")
+            throw new ProtocolProviderAccountAccessException();
         if (rejection.ReasonCode == ProviderError.AppleDownloadGatewayUpdateRequired().Code)
         {
             logger?.LogWarning("Apple download gateway needs an update ({Provider})", rejection.ProviderId);
@@ -1779,6 +1788,19 @@ public sealed partial class ProtocolProviderGateway(
         CoverUrl = item.Artwork?.PublicUri?.ToString(),
         CreatedDate = item.CreatedDate
     };
+
+    private static List<T> MergeSearch<T>(
+        IEnumerable<T> routed,
+        int limit,
+        Func<T, string> key,
+        Func<T, string?> provider,
+        Func<T, double> score,
+        IReadOnlyList<string> providerOrder) =>
+        routed.DistinctBy(key, StringComparer.Ordinal)
+            .OrderByDescending(score)
+            .ThenBy(item => ProviderPriority(providerOrder, provider(item)))
+            .Take(Math.Max(0, limit))
+            .ToList();
 
     private List<T> Merge<T>(
         IEnumerable<T> routed,

@@ -145,6 +145,12 @@ public sealed class AdminUiProvider
     [JsonPropertyName("audience")]
     public string? Audience { get; set; }
 
+    [JsonPropertyName("supportedAudiences")]
+    public List<string> SupportedAudiences { get; set; } = ["Personal", "Shared"];
+
+    [JsonPropertyName("sharingDescription")]
+    public string? SharingDescription { get; set; }
+
     [JsonPropertyName("implementationOrigin")]
     public string? ImplementationOrigin { get; set; }
 

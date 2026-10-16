@@ -13,6 +13,28 @@ namespace allstarr.Tests;
 public sealed partial class SpotifyPlaylistCapabilityAdapterTests
 {
     [Fact]
+    public async Task SharedPlaylistReadUsesTheSelectedAccountForBothListeners()
+    {
+        var secrets = new FakeSecretAccessor("fixture-cookie");
+        var adapter = new SpotifyPlaylistCapabilityAdapter(new HttpClient(new SpotifyFakeHandler()), secrets);
+        var original = Context();
+        var account = new ProviderAccountContext(Guid.NewGuid(), "spotify", ProviderAccountScope.Shared, 1,
+            secretReferenceId: Guid.NewGuid());
+        foreach (var listener in new[] { original.Actor.EffectiveUserId!.Value, Guid.NewGuid() })
+        {
+            var context = new ProviderExecutionContext(new(ProviderActorKind.User, listener, new("jellyfin", "backend", "fixture")), "spotify", account,
+                original.Policy, "playlist-read", "fixture", original.Deadline, default);
+            var result = await adapter.GetUserPlaylistsAsync(context, new(new ProviderPageRequest()));
+            Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        }
+        Assert.All(secrets.AccountIds, id => Assert.Equal(account.AccountId, id));
+        Assert.NotEmpty(secrets.AccountIds);
+        Assert.Throws<UnauthorizedAccessException>(() => new ProviderExecutionContext(
+            new(ProviderActorKind.User, Guid.NewGuid(), new("jellyfin", "backend", "fixture")), "spotify", original.Account, original.Policy,
+            "playlist-read", "fixture", original.Deadline, default));
+    }
+
+    [Fact]
     public async Task LargePublicProfilesHaveBoundedTransportAndAnHonestPartialResult()
     {
         var handler = new SpotifyFakeHandler { TokenIsAnonymous = true, ProfileCount = 1001, GenerateProfilePlaylists = true };

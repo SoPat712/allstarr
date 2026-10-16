@@ -42,6 +42,8 @@ public sealed class SubsonicExceptionFilter(
         Exception exception,
         bool requestAborted = false) => exception switch
         {
+            ProtocolProviderAccountAccessException access =>
+                (50, access.Message, StatusCodes.Status403Forbidden),
             ProtocolProviderUnavailableException unavailable =>
                 (0, unavailable.Message, StatusCodes.Status503ServiceUnavailable),
             FileNotFoundException or KeyNotFoundException or

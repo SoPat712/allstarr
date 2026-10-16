@@ -6742,3 +6742,143 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: `test-results/playlist-detail-${width}-${theme}.png` });
   });
 }
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Household account audiences at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[]; audienceUsers: object[] };
+    let account: Record<string, unknown> & { supportedAudiences: string[]; sharingDescription: string } = { ...fixture.accounts[0], supportedAudiences: ["Personal", "Shared"], sharingDescription: "Everyone in the household can play songs from this account." };
+    const writes: Record<string, unknown>[] = [];
+    await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { ...fixture, accounts: [account] } }));
+    await page.route("**/api/admin/provider-accounts/account/audience", route => {
+      const input = route.request().postDataJSON();
+      writes.push(input);
+      account = { ...account, ...input, revision: Number(account.revision ?? 1) + 1 };
+      return route.fulfill({ json: account });
+    });
+    await page.goto("#/integrations/accounts");
+    await expect(page.getByRole("button", { name: "Actions for Lumen account", exact: true })).toBeVisible();
+    for (const providerId of ["apple-musickit", "spotify", "deezer", "qobuz", "musixmatch", "lastfm", "listenbrainz", "multi-scrobbler", "koito", "spotiflac-apple-music"]) {
+      const scrobbling = ["lastfm", "listenbrainz", "multi-scrobbler", "koito"].includes(providerId);
+      account = { ...account, providerId, scope: "Personal", ownerUserId: "user",
+        sharingDescription: scrobbling ? "Plays from listeners without their own account are sent here."
+          : "Everyone in the household can play songs from this account." };
+      await page.reload();
+      await page.getByRole("button", { name: "Actions for Lumen account", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Edit access", exact: true }).click();
+      const dialog = page.locator(".access-dialog");
+      await expect(dialog.getByRole("radio", { name: /^Personal/ })).toBeVisible();
+      await expect(dialog.getByRole("radio", { name: /^Shared/ })).toBeVisible();
+      await expect(dialog).toContainText(account.sharingDescription);
+      if (providerId === "apple-musickit" || providerId === "lastfm") {
+        await dialog.getByRole("radio", { name: "Shared", exact: true }).focus();
+        await page.screenshot({ path: `test-results/household-${providerId}-${width}-${theme}.png`, fullPage: true });
+      }
+      await dialog.getByRole("radio", { name: /^Shared/ }).check();
+      await dialog.getByRole("button", { name: "Save access", exact: true }).click();
+      await page.getByRole("button", { name: "Share with household", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      expect(writes.at(-1)).toMatchObject({ scope: "Shared", ownerUserId: null });
+    }
+    account = { ...account, supportedAudiences: ["Personal"] };
+    await page.reload();
+    await page.getByRole("button", { name: "Actions for Lumen account", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Edit access", exact: true }).click();
+    await expect(page.locator(".access-dialog").getByRole("radio", { name: /^Shared/ })).toHaveCount(0);
+    await expect(page.locator(".access-dialog").getByRole("radio", { name: /^Personal/ })).toBeVisible();
+    await page.screenshot({ path: `test-results/account-audience-${width}-${theme}.png`, fullPage: true });
+  });
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Signed connections keep their audience and selected sign-in at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    const mock = await mockSignedSessionExtension(page, { state: "signed_in", accountId: "account" });
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema,
+      providers: [...schema.providers, { id: "signed-audio", name: "Signed Audio", categories: ["streaming"], accountSettings: [] }],
+    } }));
+    const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[]; audienceUsers: object[] };
+    let accounts: Record<string, unknown>[] = [{ ...fixture.accounts[0], providerId: "signed-audio", displayName: "Signed Audio",
+      scope: "Shared", ownerUserId: null, supportedAudiences: ["Personal", "Shared"] }];
+    const audienceWrites: Record<string, unknown>[] = [];
+    await page.route("**/api/admin/provider-accounts", route => {
+      if (route.request().method() === "POST") {
+        const input = route.request().postDataJSON();
+        accounts.push({ ...accounts[0], ...input, id: "personal-connection", scope: "Personal", ownerUserId: "user" });
+        return route.fulfill({ json: accounts.at(-1) });
+      }
+      return route.fulfill({ json: { ...fixture, accounts } });
+    });
+    await page.route("**/api/admin/provider-accounts/account/audience", route => {
+      const input = route.request().postDataJSON();
+      audienceWrites.push(input);
+      accounts[0] = { ...accounts[0], ...input, revision: Number(accounts[0].revision ?? 1) + 1 };
+      return route.fulfill({ json: accounts[0] });
+    });
+    await page.route("**/api/admin/extensions/packages/signed/session?**", route => route.fulfill({ json: {
+      state: new URL(route.request().url()).searchParams.get("accountId") === "account" ? "signed_in" : "signed_out",
+      accountId: new URL(route.request().url()).searchParams.get("accountId"),
+    } }));
+    await page.goto("#/integrations/services/signed-audio");
+    const panel = page.locator(".extension-session");
+    await expect(panel.getByRole("button", { name: "Signed connection", exact: true })).toContainText("Shared");
+    await panel.getByRole("button", { name: "Edit access", exact: true }).click();
+    const dialog = page.locator(".access-dialog");
+    await dialog.getByRole("radio", { name: "Personal", exact: true }).check();
+    await dialog.getByRole("button", { name: "Save access", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    expect(audienceWrites.at(-1)).toMatchObject({ scope: "Personal", ownerUserId: "user" });
+    await expect(panel.getByRole("button", { name: "Signed connection", exact: true })).toContainText("Personal");
+    await expect(panel.getByRole("button", { name: "Sign out", exact: true })).toBeVisible();
+    await panel.getByRole("button", { name: "Edit access", exact: true }).click();
+    await dialog.getByRole("radio", { name: "Shared", exact: true }).check();
+    await dialog.getByRole("button", { name: "Save access", exact: true }).click();
+    await page.getByRole("button", { name: "Share with household", exact: true }).click();
+    await expect(dialog).toBeHidden();
+    await panel.getByRole("button", { name: "Add Personal connection", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "Signed connection", exact: true })).toContainText("Personal");
+    mock.respond("start", { ...mock.pending, accountId: "personal-connection" });
+    await panel.getByRole("button", { name: "Start verification", exact: true }).click();
+    await expect.poll(() => mock.writes.at(-1)?.body.accountId).toBe("personal-connection");
+    await panel.getByRole("link", { name: "Open verification page", exact: true }).focus();
+    await page.screenshot({ path: `test-results/signed-audience-${width}-${theme}.png`, fullPage: true });
+  });
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Metadata search priority stays editable at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    const description = "Orders sources among similarly relevant search results. Title, artist, and requested versions determine relevance. Playback uses Streaming and Download order below.";
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema,
+      providers: [...schema.providers, { id: "deezer", name: "Deezer" }, { id: "soundcloud", name: "SoundCloud" }],
+      priorityGroups: [{ id: "metadata", label: "Metadata search order", description,
+        envKey: "MULTI_PROVIDER_METADATA_ORDER", providers: ["deezer", "soundcloud"] }],
+    } }));
+    let order = "deezer,soundcloud";
+    const writes: Record<string, string>[] = [];
+    await page.route("**/api/admin/config", route => {
+      if (route.request().method() === "POST") {
+        const updates = route.request().postDataJSON().updates;
+        writes.push(updates);
+        order = updates.MULTI_PROVIDER_METADATA_ORDER;
+        return route.fulfill({ json: { message: "Saved", updatedKeys: Object.keys(updates) } });
+      }
+      return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), providers: { metadataOrder: order } } });
+    });
+    await page.goto("#/integrations/routing");
+    const group = page.locator(".routing-group");
+    await expect(group).toContainText(description);
+    await expect(group.getByRole("listitem").first()).toContainText("Deezer");
+    await group.getByRole("button", { name: "Move SoundCloud up", exact: true }).click();
+    await group.getByRole("button", { name: "Save Metadata search order", exact: true }).click();
+    await expect.poll(() => writes.at(-1)?.MULTI_PROVIDER_METADATA_ORDER).toBe("soundcloud,deezer");
+    await expect(group.getByRole("listitem").first()).toContainText("SoundCloud");
+    await page.screenshot({ path: `test-results/search-order-${width}-${theme}.png`, fullPage: true });
+  });
+}
