@@ -124,9 +124,12 @@ public sealed partial class ProtocolRouteFixtureTests
                     if (path.Contains("search3", StringComparison.Ordinal))
                         return format == "json"
                             ? Json(200, "{\"subsonic-response\":{\"status\":\"ok\",\"searchResult3\":{}}}")
-                            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(
+                            : new HttpResponseMessage(HttpStatusCode.OK)
+                            {
+                                Content = new StringContent(
                                 "<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\"><searchResult3 /></subsonic-response>",
-                                Encoding.UTF8, "application/xml") };
+                                Encoding.UTF8, "application/xml")
+                            };
                     throw new InvalidOperationException("Unexpected search fixture route: " + path);
                 }, services =>
                 {
@@ -179,8 +182,13 @@ public sealed partial class ProtocolRouteFixtureTests
 
     private static UserRecord SearchIdentityUser(Guid user, string backend, string principal) => new()
     {
-        Id = user, BackendType = backend, BackendInstanceId = "primary", BackendPrincipalId = principal,
-        DisplayName = "Listener", Enabled = true, CreatedAt = DateTimeOffset.UtcNow
+        Id = user,
+        BackendType = backend,
+        BackendInstanceId = "primary",
+        BackendPrincipalId = principal,
+        DisplayName = "Listener",
+        Enabled = true,
+        CreatedAt = DateTimeOffset.UtcNow
     };
 
     private static Mock<IProviderMetadataCapability> SearchIdentityMetadata(string provider, string externalId, string isrc)

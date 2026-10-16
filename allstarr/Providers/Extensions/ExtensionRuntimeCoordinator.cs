@@ -474,9 +474,13 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             var now = DateTimeOffset.UtcNow;
             var account = new ProviderAccountRecord
             {
-                Id = Guid.CreateVersion7(), ProviderId = package.ExtensionId,
-                DisplayName = displayName, Enabled = true, Revision = 1,
-                CreatedAt = now, UpdatedAt = now,
+                Id = Guid.CreateVersion7(),
+                ProviderId = package.ExtensionId,
+                DisplayName = displayName,
+                Enabled = true,
+                Revision = 1,
+                CreatedAt = now,
+                UpdatedAt = now,
                 SettingsJson = JsonSerializer.Serialize(new Dictionary<string, string> { [SessionSourceSetting] = source })
             };
             db.ProviderAccounts.Add(account);
