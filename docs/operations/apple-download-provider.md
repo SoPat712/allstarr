@@ -14,11 +14,10 @@ Obtain Apple Music for Android legally from a source you are permitted to use. A
 redistribute that package. Open **Integrations > Services > Apple Music**, choose **Sign in to Apple Music** in step 2, then open **Advanced setup** if the package or gateway is missing. Upload the APK/APKM and run:
 
 ```bash
-./allstarr.sh install-apple x86_64
+./allstarr.sh enable apple x86_64
 ```
 
-Use `--apkm` for an APKM bundle. For ARM64 use `--arch arm64-v8a`, then set
-`APPLE_WRAPPER_TARGET_ARCH=arm64-v8a` and `APPLE_WRAPPER_RUNTIME_PLATFORM=linux/arm64`.
+For ARM64, use `./allstarr.sh enable apple arm64-v8a`. The command sets both wrapper architecture values. To supply a package directly, use `./allstarr.sh enable apple /path/to/package.apkm x86_64`. The lower-level preparation script accepts `--apkm` and `--arch`; the host controller uses positional arguments.
 
 An old installation's archived libraries can be reused only when they pass the official hash lock:
 
@@ -91,10 +90,10 @@ an unexpected host.
 
 Open **Integrations > Services > Apple Music**. Step 1 connects the Personal account using its Media User Token and storefront. Step 2 signs the gateway into the same Apple account, including 2FA when requested. Step 3 tests the saved account and playback. The sign-in dialog checks setup before showing a form; existing installations go straight to sign-in, and missing package or gateway steps appear under Advanced setup. Successful sign-in closes the dialog and displays a notification. When reported by the gateway, the signed-in identifier is masked. The gateway verifies account identity during media preparation; the dashboard cannot infer a token’s account from its masked identifier.
 
-The Compose profile configures its private gateway URL. This URL is read-only under Advanced server settings when deployment manages it; otherwise it is optional, with blank selecting the bundled gateway. Sign-in credentials are forwarded only to wrapper-v2 and are not stored in the database.
+Set the private gateway URL to `http://apple-gateway:8000` in the Apple service settings for the bundled profile. A blank address does not configure an endpoint. This URL is read-only when an existing deployment manages it. Sign-in credentials are forwarded only to wrapper-v2 and are not stored in the database.
 
 The legacy `APPLE_MUSIC_AIO_URL` name is recognized only by the migration review so an operator can identify the
-old endpoint. New deployments use `APPLE_DOWNLOAD_URL`.
+old endpoint. New deployments save the gateway address in the dashboard.
 
 Apply deployment changes through the saved profile:
 
@@ -103,7 +102,7 @@ Apply deployment changes through the saved profile:
 ./allstarr.sh status
 ```
 
-`up` rebuilds the gateway from the local files whenever the Apple profile is enabled, in both release and source modes. A failed build stops startup.
+`up` rebuilds the gateway from the local files whenever the Apple profile is enabled, when using the normal controller. The developer script does the same for source builds. A failed build stops startup.
 
 For later application and gateway updates, use `./allstarr.sh update`. It preserves the Apple profile and its
 session volumes. Run `prepare-apple` again only when the verified wrapper inputs need to change; use
@@ -117,8 +116,7 @@ Optional media uses the selected Personal Apple Music account through a protecte
 
 ## Disable or replace the gateway
 
-Run `./allstarr.sh disable apple` followed by `./allstarr.sh up`. This removes the optional containers from the
-active profile. It does not delete SQLite records, Allstarr-managed media, the wrapper session volume, gateway
+Run `./allstarr.sh disable apple`. This stops and removes the two optional containers and forgets the saved profile. It does not delete SQLite records, Allstarr-managed media, the wrapper session volume, gateway
 state, or a user's Personal Apple Music account.
 
 To replace the gateway, validate the replacement independently, change the URL in the dashboard, and repeat the

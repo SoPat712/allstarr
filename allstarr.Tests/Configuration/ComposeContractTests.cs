@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace allstarr.Tests;
@@ -19,8 +20,8 @@ public sealed class ComposeContractTests
         Assert.DoesNotContain("Secrets__KeyRingPath", compose, StringComparison.Ordinal);
         Assert.Contains("${ADMIN_PORT:-5275}:5275", compose, StringComparison.Ordinal);
         Assert.Contains("/health/ready", compose, StringComparison.Ordinal);
-        Assert.Contains("${ALLSTARR_DATA_PATH:-allstarr-data}:/app/data", compose, StringComparison.Ordinal);
-        Assert.Contains("./.env:/app/.env:ro", compose, StringComparison.Ordinal);
+        Assert.Contains("${ALLSTARR_DATA_PATH:-./data}:/app/data", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("./.env:/app/.env", compose, StringComparison.Ordinal);
         Assert.Contains("ghcr.io/sopat712/allstarr:3.1.0-beta.1", compose, StringComparison.Ordinal);
         Assert.DoesNotContain("spotify-lyrics:", compose, StringComparison.Ordinal);
         Assert.Matches("(?s)apple-gateway:.*?profiles:\\s*- apple", compose);
@@ -49,7 +50,7 @@ public sealed class ComposeContractTests
         Assert.False(string.IsNullOrWhiteSpace(version));
         Assert.Contains($"ALLSTARR_IMAGE=ghcr.io/sopat712/allstarr:{version}", environment, StringComparison.Ordinal);
         Assert.Contains("ADMIN_BIND_ANY_IP=false", environment, StringComparison.Ordinal);
-        Assert.Contains("EXTENSIONS_ALLOW_REMOTE_INSTALL=false", environment, StringComparison.Ordinal);
+
         Assert.DoesNotContain("PROVIDER_METADATA_FANOUT_CONCURRENCY", environment, StringComparison.Ordinal);
         Assert.DoesNotContain("EVENT_LOG_MAXIMUM_ROWS", environment, StringComparison.Ordinal);
         Assert.DoesNotContain("ENABLE_EXTERNAL_PLAYLISTS", environment, StringComparison.Ordinal);
@@ -64,30 +65,16 @@ public sealed class ComposeContractTests
             "ADMIN_BASE_PATH",
             "ADMIN_BIND_ADDRESS",
             "ADMIN_BIND_ANY_IP",
-            "ADMIN_OIDC_AUTHORITY",
-            "ADMIN_OIDC_CLIENT_ID",
-            "ADMIN_OIDC_CLIENT_SECRET",
-            "ADMIN_OIDC_DISPLAY_NAME",
-            "ADMIN_OIDC_ENABLED",
-            "ADMIN_OIDC_PUBLIC_URL",
             "ADMIN_PORT",
             "ADMIN_TRUSTED_SUBNETS",
             "ALLSTARR_DATA_PATH",
             "ALLSTARR_IMAGE",
             "ALLSTARR_RELEASE_PROFILE",
-            "APPLE_UPLOAD_PATH",
-            "BACKEND_MUSIC_LIBRARY_IDS",
             "BACKEND_TYPE",
-            "CORS_ALLOWED_ORIGINS",
-            "CORS_ALLOW_CREDENTIALS",
-            "EXTENSIONS_ALLOW_REMOTE_INSTALL",
-            "MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE",
-            "MUSICBRAINZ_BASE_URL",
-            "MUSICBRAINZ_RATE_LIMIT_MS",
-            "MUSICBRAINZ_SOURCE_ID",
+            "JELLYFIN_URL",
             "PROXY_BIND_ADDRESS",
             "PROXY_PORT",
-            "SPOTIFY_API_SESSION_COOKIE"
+            "SUBSONIC_URL"
         ], keys);
     }
 
@@ -149,95 +136,100 @@ public sealed class ComposeContractTests
     }
 
     [Theory]
-    [InlineData("release", false, false, false)]
-    [InlineData("source", false, false, false)]
-    [InlineData("release", true, false, false)]
-    [InlineData("source", true, false, false)]
-    [InlineData("release", true, true, false)]
-    [InlineData("release", false, false, true)]
-    [InlineData("source", true, false, true)]
-    public async Task Up_BuildsEnabledGatewayBeforeStarting(string mode, bool apple, bool failBuild, bool retiredSpotify)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Compose_RendersOnePersistentCoreWithoutEnvironmentFile(bool apple, bool source)
     {
-        var root = Path.Combine(Path.GetTempPath(), $"allstarr-compose-{Guid.NewGuid():N}");
+        var root = Path.Combine(Path.GetTempPath(), $"allstarr-model-{Guid.NewGuid():N}");
         Directory.CreateDirectory(root);
         try
         {
-            File.Copy(Path.Combine(_repositoryRoot, "allstarr.sh"), Path.Combine(root, "allstarr.sh"));
-            await File.WriteAllTextAsync(Path.Combine(root, ".env"), "FIXTURE=true\n");
-            await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-mode"), mode + "\n");
-            await File.WriteAllTextAsync(Path.Combine(root, ".allstarr-profiles"),
-                (apple ? "apple\n" : "") + (retiredSpotify ? "spotify\nspotify-lyrics\n" : ""));
-            var docker = Path.Combine(root, "docker");
-            await File.WriteAllTextAsync(docker, "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$FIXTURE_COMMANDS\"\n" +
-                (failBuild ? "[[ \"$*\" != *'build apple-gateway'* ]]\n" : "exit 0\n"));
-            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(docker,
-                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-            var start = new ProcessStartInfo("bash")
+            File.Copy(Path.Combine(_repositoryRoot, "docker-compose.yml"), Path.Combine(root, "docker-compose.yml"));
+            var start = new ProcessStartInfo("docker")
             {
                 WorkingDirectory = root,
                 UseShellExecute = false,
-                RedirectStandardError = true,
-                RedirectStandardOutput = true
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
             };
-            start.ArgumentList.Add(Path.Combine(root, "allstarr.sh"));
-            start.ArgumentList.Add("up");
-            start.Environment["PATH"] = root + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
-            start.Environment["FIXTURE_COMMANDS"] = Path.Combine(root, "commands");
-            using var process = Process.Start(start)!;
-            await process.WaitForExitAsync();
-            var commands = await File.ReadAllLinesAsync(Path.Combine(root, "commands"));
-            Assert.Equal(!failBuild, process.ExitCode == 0);
-            Assert.DoesNotContain(commands, command => command.Contains("spotify", StringComparison.Ordinal));
-            Assert.Equal(mode == "source", commands.Any(command => command.EndsWith("build allstarr", StringComparison.Ordinal)));
-            Assert.Equal(apple, commands.Any(command => command.EndsWith("build apple-gateway", StringComparison.Ordinal)));
-            var startIndex = Array.FindIndex(commands, command => command.Contains("up -d", StringComparison.Ordinal));
-            if (failBuild) Assert.Equal(-1, startIndex);
-            else
+            foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("ALLSTARR_", StringComparison.Ordinal) ||
+                         key.StartsWith("COMPOSE_", StringComparison.Ordinal) || key.StartsWith("ADMIN_", StringComparison.Ordinal) ||
+                         key.StartsWith("PROXY_", StringComparison.Ordinal)).ToArray()) start.Environment.Remove(key);
+            start.ArgumentList.Add("compose");
+            if (source)
             {
-                Assert.True(startIndex >= 0);
-                if (apple) Assert.True(Array.FindIndex(commands, command => command.EndsWith("build apple-gateway", StringComparison.Ordinal)) < startIndex);
+                File.Copy(Path.Combine(_repositoryRoot, "tools", "docker-compose.source.yml"), Path.Combine(root, "source.yml"));
+                foreach (var argument in new[] { "-f", "docker-compose.yml", "-f", "source.yml" }) start.ArgumentList.Add(argument);
             }
+            if (apple) { start.ArgumentList.Add("--profile"); start.ArgumentList.Add("apple"); }
+            start.ArgumentList.Add("config");
+            start.ArgumentList.Add("--format");
+            start.ArgumentList.Add("json");
+            using var process = Process.Start(start)!;
+            var output = process.StandardOutput.ReadToEndAsync();
+            var error = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            Assert.True(process.ExitCode == 0, await error);
+            using var model = JsonDocument.Parse(await output);
+            var services = model.RootElement.GetProperty("services");
+            Assert.Equal(apple ? 3 : 1, services.EnumerateObject().Count());
+            var core = services.GetProperty("allstarr");
+            Assert.Equal(source, core.TryGetProperty("build", out var build));
+            if (source)
+            {
+                Assert.Equal(root, build.GetProperty("context").GetString());
+                Assert.Equal("allstarr:development", core.GetProperty("image").GetString());
+            }
+            Assert.False(core.TryGetProperty("depends_on", out _));
+            Assert.False(core.TryGetProperty("profiles", out _));
+            var mount = Assert.Single(core.GetProperty("volumes").EnumerateArray());
+            Assert.Equal("bind", mount.GetProperty("type").GetString());
+            Assert.Equal(Path.Combine(root, "data"), mount.GetProperty("source").GetString());
+            Assert.Equal("/app/data", mount.GetProperty("target").GetString());
+            var ports = core.GetProperty("ports").EnumerateArray().ToArray();
+            Assert.Equal(2, ports.Length);
+            Assert.Contains(ports, port => port.GetProperty("target").GetInt32() == 8080 && port.GetProperty("published").GetString() == "5274");
+            Assert.Contains(ports, port => port.GetProperty("target").GetInt32() == 5275 && port.GetProperty("host_ip").GetString() == "127.0.0.1");
+            if (apple)
+            {
+                foreach (var name in new[] { "apple-gateway", "apple-wrapper" })
+                {
+                    var sidecar = services.GetProperty(name);
+                    Assert.Equal("apple", Assert.Single(sidecar.GetProperty("profiles").EnumerateArray()).GetString());
+                    Assert.False(sidecar.TryGetProperty("ports", out _));
+                }
+            }
+            Assert.False(File.Exists(Path.Combine(root, ".env")));
         }
         finally { Directory.Delete(root, recursive: true); }
     }
 
     [Fact]
-    public void Controller_UsesOneComposeFileAndFailsClosed()
+    public async Task LegacyCompose_RendersWithoutChangingItsSourceFiles()
     {
-        var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
-
-        Assert.Contains("validate_deployment_files", controller, StringComparison.Ordinal);
-        Assert.Contains("Invalid .env line", controller, StringComparison.Ordinal);
-        Assert.Contains("Duplicate .env key", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("--profile spotify-lyrics", controller, StringComparison.Ordinal);
-        Assert.Contains("--profile apple", controller, StringComparison.Ordinal);
-        Assert.Contains("git -c \"safe.directory=$ROOT\" diff --quiet", controller, StringComparison.Ordinal);
-        Assert.Contains("git -c \"safe.directory=$ROOT\" diff --cached --quiet", controller, StringComparison.Ordinal);
-        Assert.Contains("git -c \"safe.directory=$ROOT\" pull --ff-only", controller, StringComparison.Ordinal);
-        Assert.Contains("docker builder prune --force --min-free-space 8GB", controller, StringComparison.Ordinal);
-        Assert.Contains("tracked source files have local changes", controller, StringComparison.Ordinal);
-        Assert.Contains("prepare-apple) prepare_apple \"$@\" ;;", controller, StringComparison.Ordinal);
-        Assert.Contains("up -d --remove-orphans --wait --wait-timeout 180", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("docker-compose.dev.yml", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("docker-compose.aio.yml", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("docker-compose.apple.yml", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("docker-compose.spotify-lyrics.yml", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void Controller_DelegatesBackupAndRestoreToMaintenance()
-    {
-        var controller = File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr.sh"));
-
-        Assert.Contains("backup|restore|upgrade) die", controller, StringComparison.Ordinal);
-        Assert.Contains("use Settings > Maintenance for backups and restores", controller, StringComparison.Ordinal);
-        Assert.Contains("Stop Allstarr before copying its data folder", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("postgres", controller, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("openssl rand", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("volume-data.tar.gz", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("find $RESTORE_PATHS", controller, StringComparison.Ordinal);
-        Assert.DoesNotContain("down -v", controller, StringComparison.Ordinal);
+        var fixture = Path.Combine(_repositoryRoot, "allstarr.Tests", "Fixtures", "LegacyV2");
+        var composePath = Path.Combine(fixture, "docker-compose.yml");
+        var environmentPath = Path.Combine(fixture, "example.env");
+        var compose = File.ReadAllBytes(composePath);
+        var environment = File.ReadAllBytes(environmentPath);
+        var start = new ProcessStartInfo("docker")
+        {
+            WorkingDirectory = fixture,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        foreach (var argument in new[] { "compose", "-f", composePath, "--env-file", environmentPath, "config", "--services" }) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        Assert.True(process.ExitCode == 0, await error);
+        Assert.Equal(new[] { "allstarr", "spotify-lyrics", "valkey" }, (await output).Split('\n', StringSplitOptions.RemoveEmptyEntries).Order(StringComparer.Ordinal));
+        Assert.Equal(compose, File.ReadAllBytes(composePath));
+        Assert.Equal(environment, File.ReadAllBytes(environmentPath));
     }
 
     [Fact]
@@ -253,6 +245,8 @@ public sealed class ComposeContractTests
         Assert.DoesNotContain("postgres", dockerfile, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ca-certificates curl", dockerfile, StringComparison.Ordinal);
         Assert.Contains("/app/data/backups", dockerfile, StringComparison.Ordinal);
+        using var settings = JsonDocument.Parse(File.ReadAllText(Path.Combine(_repositoryRoot, "allstarr", "appsettings.json")));
+        Assert.Equal("/app/data/apple-upload", settings.RootElement.GetProperty("AppleDownload").GetProperty("SetupUploadDirectory").GetString());
     }
 
     [Fact]

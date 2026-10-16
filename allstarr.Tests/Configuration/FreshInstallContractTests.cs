@@ -70,8 +70,8 @@ public sealed class FreshInstallContractTests
         Assert.DoesNotContain("VALKEY_MAX_MEMORY", example, StringComparison.Ordinal);
         Assert.DoesNotContain("REDIS_ENABLED", example, StringComparison.Ordinal);
         Assert.Contains("BACKEND_TYPE=Jellyfin", example, StringComparison.Ordinal);
-        Assert.DoesNotContain("SUBSONIC_URL=", example, StringComparison.Ordinal);
-        Assert.DoesNotContain("JELLYFIN_URL=", example, StringComparison.Ordinal);
+        Assert.Contains("SUBSONIC_URL=", example, StringComparison.Ordinal);
+        Assert.Contains("JELLYFIN_URL=", example, StringComparison.Ordinal);
         Assert.DoesNotContain("JELLYFIN_API_KEY=", example, StringComparison.Ordinal);
         Assert.Contains("ALLSTARR_DATA_PATH=./data", example, StringComparison.Ordinal);
         Assert.DoesNotContain("REDIS_DATA_PATH", example, StringComparison.Ordinal);

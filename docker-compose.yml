@@ -15,12 +15,14 @@ services:
       Admin__Containerized: 'true'
       Admin__ContainerGateway: auto
       Storage__DataDirectory: "/app/data"
-      AppleDownload__SetupUploadDirectory: "/app/apple-upload"
-      AppleDownload__BaseUrl: "${APPLE_DOWNLOAD_BASE_URL:-http://apple-gateway:8000}"
+      Backend__Type: "${BACKEND_TYPE:-Jellyfin}"
+      Jellyfin__Url: "${JELLYFIN_URL:-}"
+      Subsonic__Url: "${SUBSONIC_URL:-}"
+      Admin__BindAnyIp: "${ADMIN_BIND_ANY_IP:-false}"
+      Admin__TrustedSubnets: "${ADMIN_TRUSTED_SUBNETS:-}"
+      Admin__BasePath: "${ADMIN_BASE_PATH:-}"
     volumes:
-    - "${ALLSTARR_DATA_PATH:-allstarr-data}:/app/data"
-    - "${APPLE_UPLOAD_PATH:-./.apple-provider/incoming}:/app/apple-upload"
-    - "./.env:/app/.env:ro"
+    - "${ALLSTARR_DATA_PATH:-./data}:/app/data"
     tmpfs:
     - "/tmp:size=128m,mode=1777"
     healthcheck:
@@ -39,7 +41,6 @@ services:
     - allstarr
     security_opt:
     - no-new-privileges:true
-    build: "."
   apple-gateway:
     build:
       context: "./sidecars/apple-gateway"
@@ -108,7 +109,6 @@ services:
     profiles:
     - apple
 volumes:
-  allstarr-data:
   apple-gateway-data:
   apple-wrapper-session:
 networks:

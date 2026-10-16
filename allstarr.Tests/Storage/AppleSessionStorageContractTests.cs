@@ -9,7 +9,7 @@ public sealed class AppleSessionStorageContractTests
     {
         var compose = File.ReadAllText(FindRepositoryFile("docker-compose.yml"));
         Assert.Contains($"{volumeName}:{mountPath}", compose, StringComparison.Ordinal);
-        Assert.Contains("allstarr-data}:/app/data", compose, StringComparison.Ordinal);
+        Assert.Contains("${ALLSTARR_DATA_PATH:-./data}:/app/data", compose, StringComparison.Ordinal);
         var documentation = File.ReadAllText(FindRepositoryFile("docs", "operations", "storage.md"));
         Assert.Contains("Apple gateway and wrapper sessions remain in their own profile volumes", documentation, StringComparison.Ordinal);
     }

@@ -4,7 +4,7 @@ The runtime stores durable state in SQLite at `{Storage:DataDirectory}/{Storage:
 
 ## One local data folder
 
-Compose mounts `ALLSTARR_DATA_PATH` at `/app/data`; `.env.example` sets `./data`. With no override, Compose uses the `allstarr-data` named volume. Direct runs can set `Storage__DataDirectory` to another local folder. First startup creates the database and key ring without a setup script or database service.
+Compose mounts `./data` at `/app/data` by default, with or without `.env`. Set `ALLSTARR_DATA_PATH` to use another local folder. An unchanged v2 Compose layout uses its existing persistent cache mount at `/app/cache/allstarr-v3` when no data mount exists. Direct runs can set `Storage__DataDirectory` to another local folder. First startup creates the database and key ring without a setup script or database service.
 
 | Path within the data folder | Contents |
 | --- | --- |
@@ -14,13 +14,30 @@ Compose mounts `ALLSTARR_DATA_PATH` at `/app/data`; `.env.example` sets `./data`
 | `.allstarr-storage` | Owned marker used to recognize a copied data folder |
 | `downloads/`, `kept/` | Managed and retained music |
 | `extensions/` | Installed extension packages |
+| `apple-upload/` | Optional staged Apple APK/APKM packages |
 | `cache/` | Media cache and temporary download/import workspaces |
 | `backups/` | Verified database-and-key-ring archives |
 | `restore-pending/`, `pre-restore-*/` | Staged and previous restore data |
 
 Explicit library, extension, cache, workspace, and key-ring path overrides remain supported. Include those external paths separately when moving an installation. Optional Apple gateway and wrapper sessions remain in their own profile volumes.
 
-To move to another host, stop Allstarr, copy the entire data folder including any sidecars, and preserve its private permissions. Also copy deployment configuration, optional provider volumes, and external path overrides. Mount the copy into a new container using the same image version. Keep the original container stopped so only one process uses each database, then verify accounts, playlists, settings, and playback. Never copy the active database piecemeal.
+## Offline folder backup and restore
+
+Stop Allstarr before copying its complete data folder. With the default layout:
+
+```bash
+docker compose stop allstarr
+cp -a ./data ../allstarr-data-backup
+docker compose up -d --no-deps allstarr
+```
+
+Use a new backup destination each time. Verify that the copy includes the database, key ring, private files, media and any SQLite sidecars. Preserve private permissions. Copy deployment configuration, external media roots and optional Apple gateway and wrapper volumes separately. In a v2 layout, preserve the whole cache, download and kept mounts, including the new `cache/allstarr-v3` directory. A database-and-key-ring archive alone does not include those media files.
+
+To restore a complete folder copy, stop Allstarr, preserve the current data folder separately, and put the verified copy back at the configured host path. Use the same image version and container mount paths. Start only one installation and check readiness, saved accounts, playlists, settings and playback. Do not merge selected database files into a live folder. Never copy or replace the active database piecemeal.
+
+Copied-media identity recovery is still being completed in this beta. Copying files can change their filesystem identities, and managed or imported audio can remain unavailable even when its bytes are unchanged. A folder copy is a complete backup, but seamless playback after a move is not yet a qualified feature. Keep the original stopped installation until recovery and playback have been verified. Do not manually edit ownership records to bypass their checks.
+
+For rollback to an earlier image, restore the matching pre-upgrade folder backup before starting that image. Keep the upgraded folder separately. An older image must not open a newer migrated database. For a v2 rollback, retain its untouched Compose file, `.env` and original media roots. See [deployment and rollback](deployment-profiles.md) for image selection without replacing the original Compose file.
 
 ## Database readiness and recovery
 
@@ -44,7 +61,7 @@ Before opening storage after restart, Allstarr preserves the current database, S
 
 If application is interrupted, the staged files remain available for retry on the next restart. A failed application leaves durable storage unavailable with `restore_application_failed`; fix disk or permission problems and restart again. Keep the configured database and key-ring paths unchanged during recovery. An external key-ring override must be writable for restore; a read-only secret mount cannot be replaced by Allstarr. Restore paths must not use symbolic links. Do not manually remove pending files or replace individual live files after a failed application: the database and key ring must remain a matching pair.
 
-The former command-line storage tools and portable state transfer are unavailable.
+The shell `backup` and `restore` commands are removed. Use the Maintenance workflow for verified database archives or a stopped-folder copy for a complete offline backup. `upgrade` remains a guidance-only command while the guided setup replacement is unfinished.
 
 The encryption key ring defaults to `{Storage:DataDirectory}/keyring.json`; `Secrets__KeyRingPath` overrides that location for existing secret mounts. On first startup, an empty database gets a randomly generated key ring with private file permissions. Normal startup never overwrites an existing key ring. If encrypted secrets exist but the key ring is missing, restore the original key ring: Allstarr leaves saved credentials unavailable and continues native proxy access. It does not generate a replacement key that would make those credentials unreadable.
 
@@ -52,7 +69,7 @@ Audio, artwork, extension packages, and the encryption key ring remain files. Or
 
 ## Event log and job retention
 
-A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempt events are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under `Operations:EventLog` (for example `Operations__EventLog__RetentionDays` in the container environment):
+A background cleanup keeps the event log and finished playback jobs from growing the database with listening time. Each playback progress report is its own durable job; finished (succeeded or cancelled) playback jobs and their attempt events are removed once they are older than the event-log retention period. Events that another durable record references, such as a legacy import, are kept. Set these under the event-log policy in Settings:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |

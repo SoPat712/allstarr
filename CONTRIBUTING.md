@@ -4,15 +4,16 @@ Contributions are welcome. Allstarr sits in the middle of authentication, person
 
 ## Development Setup
 
-Clone the repository and install the .NET SDK version pinned by the project. Standard Compose is the easiest way to run the full durable stack:
+Clone the repository and install the .NET SDK version pinned by the project. Use the developer script to build the full durable stack from source:
 
 ```bash
 git clone https://github.com/SoPat712/allstarr.git
 cd allstarr
-./allstarr.sh init source
+./tools/develop.sh mode source
+./tools/develop.sh up
 ```
 
-Review `.env`, then start the single checked-in Compose stack with `./allstarr.sh up`.
+Deployment overrides in `.env` are optional. While browser backend selection is unfinished, set `BACKEND_TYPE` and `JELLYFIN_URL` or `SUBSONIC_URL` there before starting. The developer script combines the standard Compose file with its source-build overlay. See [deployment](docs/operations/deployment-profiles.md).
 
 For a direct application run, set `Storage__DataDirectory` to a disposable local folder. Follow [docs/operations/storage.md](docs/operations/storage.md).
 
