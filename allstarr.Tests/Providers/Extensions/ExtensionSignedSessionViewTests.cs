@@ -314,9 +314,72 @@ public sealed class ExtensionSignedSessionViewTests : IDisposable
         Assert.DoesNotContain("secret-1", JsonSerializer.Serialize(renewed), StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task BackgroundRenewal_ReportsWhenTheServiceWillNotExtendTheSignIn()
+    {
+        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O");
+        var handler = new SessionHandler
+        {
+            ExpiresAt = expiresAt,
+            RefreshBody = JsonSerializer.Serialize(new { expires_at = expiresAt })
+        };
+        var sandbox = Sandbox(handler, refresh: true);
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+
+        var renewed = await sandbox.RefreshSignedSessionIfDueAsync();
+
+        Assert.NotNull(renewed);
+        Assert.Equal(ExtensionSessionStates.SignedIn, renewed.State);
+        Assert.Equal("renewal_capped", renewed.LastRenewalFailure);
+        Assert.Equal("session.renewal-capped", ExtensionRuntimeCoordinator.RenewalLog(renewed).Code);
+    }
+
+    [Fact]
+    public async Task BackgroundRenewal_AsksOnceWhetherAnExpiredSignInMayResume()
+    {
+        var handler = new SessionHandler { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O") };
+        var sandbox = Sandbox(handler, refresh: true);
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+
+        var expired = await sandbox.RefreshSignedSessionIfDueAsync();
+
+        Assert.NotNull(expired);
+        Assert.Equal(ExtensionSessionStates.Expired, expired.State);
+        Assert.Equal("verification_required", expired.LastRenewalFailure);
+        Assert.Null(expired.VerificationUrl);
+        Assert.Equal("session.verification-required", ExtensionRuntimeCoordinator.RenewalLog(expired).Code);
+        Assert.Equal(2, handler.Calls);
+        Assert.Null(await sandbox.RefreshSignedSessionIfDueAsync());
+        Assert.Equal(2, handler.Calls);
+        Assert.Equal(0, handler.RefreshCalls);
+    }
+
+    [Fact]
+    public async Task BackgroundRenewal_RestoresAnExpiredSignInWhenTheServiceIssuesANewSession()
+    {
+        var renewedUntil = DateTimeOffset.UtcNow.AddHours(6).ToString("O");
+        var handler = new SessionHandler
+        {
+            ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1).ToString("O"),
+            BootstrapBody = JsonSerializer.Serialize(new { session_id = "session-2", session_secret = "secret-2", expires_at = renewedUntil })
+        };
+        var sandbox = Sandbox(handler, refresh: true);
+        await sandbox.CompleteSignedSessionGrantAsync("grant-1");
+
+        var restored = await sandbox.RefreshSignedSessionIfDueAsync();
+
+        Assert.NotNull(restored);
+        Assert.True(restored.Restored);
+        Assert.Equal(ExtensionSessionStates.SignedIn, restored.State);
+        Assert.Equal(renewedUntil, restored.ExpiresAt);
+        Assert.Null(restored.LastRenewalFailure);
+        Assert.Equal("session.restored", ExtensionRuntimeCoordinator.RenewalLog(restored).Code);
+        Assert.DoesNotContain("secret-2", JsonSerializer.Serialize(restored), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData(61, true, true)]
-    [InlineData(-1, true, true)]
+    [InlineData(-1, true, false)]
     [InlineData(30, false, true)]
     [InlineData(30, true, false)]
     public async Task BackgroundRenewal_SkipsWithoutStartingVerification(int minutes, bool signedIn, bool refresh)

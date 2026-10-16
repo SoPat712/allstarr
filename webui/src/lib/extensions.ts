@@ -48,8 +48,16 @@ const sessionReasons: Record<string, string> = {
   unexpected_response: "The sign-in service returned an unexpected response. Try again, or check for an extension update.",
 };
 
-export function renewalFailureText(reasonCode?: string | null) {
+export function renewalFailureText(reasonCode?: string | null, expiresAt?: string | null) {
   if (!reasonCode) return "";
+  if (reasonCode === "renewal_capped") {
+    const limit = expiresAt
+      ? `past ${new Date(expiresAt).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`
+      : "any further";
+    return `This service limits how long a sign-in lasts, so it can't be renewed ${limit}. Sign in again before then to avoid an interruption.`;
+  }
+  if (reasonCode === "verification_required")
+    return "The sign-in reached the service's time limit and needs verifying again. Use Reconnect to sign in.";
   const reasons: Record<string, string> = {
     provider_unavailable: "The sign-in service is unavailable.",
     renewal_rejected: "The sign-in service refused renewal.",

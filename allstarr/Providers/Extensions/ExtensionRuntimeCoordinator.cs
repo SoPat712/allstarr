@@ -117,11 +117,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                         using var scope = sandbox.OpenSignedSessionAccount(accountId);
                         var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
                         if (view == null) continue;
-                        var failed = view.LastRenewalFailure != null;
-                        await _controlPlane.WriteLogAsync(packageId, failed ? "warning" : "information",
-                            failed ? "session.renewal-failed" : "session.renewed",
-                            failed ? $"Automatic renewal failed ({view.LastRenewalFailure}); the existing sign-in was retained."
-                                : "Sign-in renewed automatically.", "extension-session", cancellationToken);
+                        var (level, code, text) = RenewalLog(view);
+                        await _controlPlane.WriteLogAsync(packageId, level, code, text, "extension-session", cancellationToken);
                     }
                     return true;
                 }, cancellationToken);
@@ -420,6 +417,18 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         await LogSessionAsync(packageId, view, "Sign-in cleared.", "session.cleared");
         return view;
     }
+
+    internal static (string Level, string Code, string Message) RenewalLog(ExtensionSessionView view) => view switch
+    {
+        { Restored: true } => ("information", "session.restored", "Sign-in expired and was restored automatically."),
+        { LastRenewalFailure: "renewal_capped" } => ("warning", "session.renewal-capped",
+            $"The service will not extend this sign-in past {view.ExpiresAt}. Sign in again before then to avoid an interruption."),
+        { LastRenewalFailure: "verification_required" } => ("warning", "session.verification-required",
+            "The sign-in expired and the service requires verification. Open the extension's sign-in to verify again."),
+        { LastRenewalFailure: { } failure } => ("warning", "session.renewal-failed",
+            $"Automatic renewal failed ({failure}); the existing sign-in was retained."),
+        _ => ("information", "session.renewed", $"Sign-in renewed automatically until {view.ExpiresAt}.")
+    };
 
     private static bool IsSessionSource(ProviderAccountRecord account, string source)
     {
