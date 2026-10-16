@@ -8,6 +8,26 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchesControllerContractTests
 {
+    [Theory]
+    [InlineData("apple-download", "")]
+    [InlineData("apple-download", "apple-musickit")]
+    [InlineData("deezer", "deezer")]
+    public void Provider_search_keeps_results_from_the_selected_playable_provider(string resultProvider, string selected)
+    {
+        Assert.True(TrackMatchesController.IsSelectedPlayableProvider(
+            resultProvider, ["apple-musickit", "deezer"], selected));
+    }
+
+    [Theory]
+    [InlineData("qobuz", "")]
+    [InlineData("deezer", "apple-musickit")]
+    [InlineData("", "")]
+    public void Provider_search_drops_results_outside_the_selected_playable_provider(string resultProvider, string selected)
+    {
+        Assert.False(TrackMatchesController.IsSelectedPlayableProvider(
+            resultProvider, ["apple-musickit", "deezer"], selected));
+    }
+
     [Fact]
     public void Candidate_projection_keeps_all_credible_playable_results()
     {

@@ -169,6 +169,56 @@ public sealed class TrackMatchPlayableSearchTests
     }
 
     [Fact]
+    public async Task AppleCatalogResultsMatchTheRegisteredAppleProviderOrder()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["apple-musickit", "deezer"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 60))
+            .ReturnsAsync(
+            [
+                new Song
+                {
+                    ExternalProvider = "apple-download",
+                    ExternalId = "apple-track",
+                    Title = "Window Song",
+                    Artist = "The Artist",
+                    Duration = 240
+                },
+                new Song
+                {
+                    ExternalProvider = "deezer",
+                    ExternalId = "deezer-track",
+                    Title = "Window Song",
+                    Artist = "The Artist",
+                    Duration = 240
+                }
+            ]);
+        var service = new TrackMatchPlayableSearch(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.MatchAsync(
+            Context(user),
+            new ExternalTrackMatchSnapshot(
+                "source", "spotify", "source-track", "Window Song",
+                "The Artist", null, null, 240_000, null, null, null),
+            new TrackMatchScope(
+                user, "main", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
+            [],
+            null,
+            CancellationToken.None);
+
+        Assert.Equal("apple-track", result.SelectedExternal!.ExternalId);
+        Assert.Contains(result.RoutableExternalCandidates, item => item.ExternalId == "apple-track");
+        Assert.True(service.CanUseProvider("apple-download"));
+    }
+
+    [Fact]
     public async Task Concise_search_query_keeps_full_title_scoring()
     {
         var user = Guid.CreateVersion7();

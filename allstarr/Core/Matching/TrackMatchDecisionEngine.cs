@@ -276,7 +276,7 @@ public sealed class TrackMatchDecisionEngine
         var normalized = provider.Trim().ToLowerInvariant()
             .Replace("-", string.Empty, StringComparison.Ordinal)
             .Replace("_", string.Empty, StringComparison.Ordinal);
-        return normalized == "applemusic" ? "appledownload" : normalized;
+        return normalized is "applemusic" or "applemusickit" ? "appledownload" : normalized;
     }
 
     public bool CanSkipProviderComparison(TrackMatchDecision decision) =>
