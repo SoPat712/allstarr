@@ -703,7 +703,7 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task SignedConnectionAllowsOnePersonalConnectionPerPerson()
+    public async Task SignedExtensionHasOneConnection()
     {
         var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(
             "signed-audio", "Signed Audio", "Signed Audio", ProviderOrigin.Extension, "1", "1",
@@ -714,6 +714,7 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         var controller = Controller(Session(_userId, administrator: true), providerRegistry: registry);
         Assert.IsType<CreatedAtActionResult>(await controller.Create(new() { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
         Assert.IsType<ConflictObjectResult>(await controller.Create(new() { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
+        Assert.IsType<ConflictObjectResult>(await controller.Create(new() { ProviderId = "signed-audio", Scope = "Shared", Enabled = true }));
         await using var db = await _factory.CreateDbContextAsync();
         var id = (await db.ProviderAccounts.SingleAsync()).Id;
         Assert.IsType<NoContentResult>(await controller.Revoke(id));
