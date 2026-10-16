@@ -9,11 +9,25 @@ namespace allstarr.Core.Configuration;
 public interface IBackendConnectionVerifier
 {
     Task<AdminOidcBackendUser?> VerifyAsync(BackendType backend, string endpoint, string username, string password, CancellationToken token);
+    Task<bool> VerifyServiceAsync(string endpoint, string principalId, string credential, CancellationToken token);
 }
 
 public sealed class BackendConnectionVerifier(IHttpClientFactory clients) : IBackendConnectionVerifier
 {
     public const string HttpClientName = "backend-setup";
+
+    public async Task<bool> VerifyServiceAsync(string endpoint, string principalId, string credential, CancellationToken token)
+    {
+        using var client = clients.CreateClient(HttpClientName);
+        client.Timeout = TimeSpan.FromSeconds(15);
+        client.MaxResponseContentBufferSize = 1024 * 1024;
+        using var request = new HttpRequestMessage(HttpMethod.Get, endpoint + "/Users/" + Uri.EscapeDataString(principalId));
+        request.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(credential));
+        using var response = await client.SendAsync(request, token);
+        if (!response.IsSuccessStatusCode) return false;
+        using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(token));
+        return AdminBackendIdentity.TryReadJellyfin(document.RootElement, principalId, credential, out var user) && user.IsAdministrator;
+    }
 
     public async Task<AdminOidcBackendUser?> VerifyAsync(BackendType backend, string endpoint, string username, string password, CancellationToken token)
     {

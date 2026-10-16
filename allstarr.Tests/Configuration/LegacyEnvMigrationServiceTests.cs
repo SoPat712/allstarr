@@ -399,7 +399,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Assert.StartsWith("provider-account:", reference.Purpose, StringComparison.Ordinal));
             var receipt = Assert.Single(await db.LegacyEnvImports.ToListAsync());
             Assert.Equal(result.SourceFingerprint, receipt.SourceSha256);
-            Assert.Equal("legacy-env-import-v3", receipt.SchemaVersion);
+            Assert.Equal("legacy-env-import-v4", receipt.SchemaVersion);
             using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
             var settingProvenance = Assert.Single(
                 provenance.RootElement.GetProperty("settings").EnumerateArray());
@@ -724,7 +724,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Id = Guid.CreateVersion7(),
                 ActorUserId = _userId,
                 SourceSha256 = result.SourceFingerprint,
-                SchemaVersion = "legacy-env-import-v3",
+                SchemaVersion = "legacy-env-import-v4",
                 AuditEventId = auditId,
                 ResultJson = JsonSerializer.Serialize(result),
                 AppliedAt = DateTimeOffset.UtcNow
@@ -741,7 +741,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Id = Guid.CreateVersion7(),
             ActorUserId = unknownUserId,
             SourceSha256 = new string('b', 64),
-            SchemaVersion = "legacy-env-import-v3",
+            SchemaVersion = "legacy-env-import-v4",
             AuditEventId = crossedAuditId,
             ResultJson = JsonSerializer.Serialize(result),
             AppliedAt = DateTimeOffset.UtcNow
