@@ -29,6 +29,17 @@ public class ExternalTrackPlaybackPolicyTests
         Assert.True(ExternalTrackPlaybackPolicy.CanUseForPlayback(provider));
     }
 
+    [Theory]
+    [InlineData("apple-musickit")]
+    [InlineData("applemusic")]
+    [InlineData("Apple_Download")]
+    public void AppleCatalogAndPlaybackNamesAreOneProvider(string provider)
+    {
+        Assert.Equal(
+            ExternalTrackPlaybackPolicy.Normalize("apple-download"),
+            ExternalTrackPlaybackPolicy.Normalize(provider));
+    }
+
     [Fact]
     public void LocalSongsRemainPlayableRegardlessOfExternalProviderMetadata()
     {

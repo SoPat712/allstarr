@@ -462,7 +462,7 @@ public sealed class TrackMatchesController(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (provider.Length > 0 &&
-            !playableProviders.Contains(provider, StringComparer.OrdinalIgnoreCase))
+            !playableProviders.Any(item => SameProvider(item, provider)))
             return BadRequest(new { error = "The selected provider is not an installed playback provider" });
         if (playableProviders.Length == 0)
             return Ok(new { tracks = Array.Empty<object>(), providers = playableProviders });
@@ -478,10 +478,7 @@ public sealed class TrackMatchesController(
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
         var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, limit, provider))
-            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
-                           playableProviders.Contains(song.ExternalProvider, StringComparer.OrdinalIgnoreCase) &&
-                           (provider.Length == 0 ||
-                            provider.Equals(song.ExternalProvider, StringComparison.OrdinalIgnoreCase)))
+            .Where(song => IsSelectedPlayableProvider(song.ExternalProvider, playableProviders, provider))
             .Take(limit)
             .ToArray();
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
@@ -1176,6 +1173,17 @@ public sealed class TrackMatchesController(
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : null;
+
+    internal static bool IsSelectedPlayableProvider(
+        string? resultProvider,
+        IReadOnlyCollection<string> playableProviders,
+        string selectedProvider) =>
+        !string.IsNullOrWhiteSpace(resultProvider) &&
+        playableProviders.Any(item => SameProvider(item, resultProvider)) &&
+        (selectedProvider.Length == 0 || SameProvider(selectedProvider, resultProvider));
+
+    private static bool SameProvider(string left, string right) =>
+        ExternalTrackPlaybackPolicy.Normalize(left) == ExternalTrackPlaybackPolicy.Normalize(right);
 
     private async Task<IReadOnlyList<string>> ProviderOrderAsync(
         Guid userId,

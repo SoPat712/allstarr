@@ -38,6 +38,6 @@ public static class ExternalTrackPlaybackPolicy
             .ToLowerInvariant()
             .Replace("-", string.Empty, StringComparison.Ordinal)
             .Replace("_", string.Empty, StringComparison.Ordinal);
-        return normalized == "applemusic" ? "appledownload" : normalized;
+        return normalized is "applemusic" or "applemusickit" ? "appledownload" : normalized;
     }
 }
