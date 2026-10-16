@@ -49,7 +49,6 @@ public static class RuntimeEnvConfiguration
             ["JELLYFIN_URL"] = ["Jellyfin:Url"],
             ["JELLYFIN_API_KEY"] = ["Jellyfin:ApiKey"],
             ["JELLYFIN_USER_ID"] = ["Jellyfin:UserId"],
-            ["JELLYFIN_CLIENT_USERNAME"] = ["Jellyfin:ClientUsername"],
             ["JELLYFIN_LIBRARY_ID"] = ["Jellyfin:LibraryId"],
 
             ["LIBRARY_DOWNLOAD_PATH"] = ["Library:DownloadPath"],
@@ -104,8 +103,6 @@ public static class RuntimeEnvConfiguration
             ["APPLE_DOWNLOAD_QUALITY"] = ["AppleDownload:Quality"],
 
             ["MUSICBRAINZ_ENABLED"] = ["MusicBrainz:Enabled"],
-            ["MUSICBRAINZ_USERNAME"] = ["MusicBrainz:Username"],
-            ["MUSICBRAINZ_PASSWORD"] = ["MusicBrainz:Password"],
             ["MUSICBRAINZ_SOURCE_ID"] = ["MusicBrainz:SourceId"],
             ["MUSICBRAINZ_BASE_URL"] = ["MusicBrainz:BaseUrl"],
             ["MUSICBRAINZ_RATE_LIMIT_MS"] = ["MusicBrainz:RateLimitMs"],

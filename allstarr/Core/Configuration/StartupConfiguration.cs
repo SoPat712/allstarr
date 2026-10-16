@@ -34,6 +34,7 @@ public static class StartupConfiguration
                     foreach (var backend in new[] { "Jellyfin", "Subsonic" })
                         configuration[backend + ":" + item.Key[8..]] = item.NormalizedValue;
             }
+            await allstarr.Services.Admin.AdminOidcSettingsService.LoadForStartupAsync(scope, configuration, token);
             if (saved.ContainsKey("Backend:Type"))
             {
                 if (!saved.TryGetValue("Backend:Url", out var endpoint) ||

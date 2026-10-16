@@ -221,6 +221,10 @@ public class AdminAuthenticationMiddlewareTests
     [InlineData("/api/admin/scrobbling/lastfm/authenticate", "GET")]
     [InlineData("/api/admin/scrobbling/lastfm/authenticate-extra", "POST")]
     [InlineData("/api/admin/provider-accounts/019f48f2-5f28-7b11-b42d-0d9b76b73b40/secret", "GET")]
+    [InlineData("/api/admin/access/oidc", "GET")]
+    [InlineData("/api/admin/access/oidc", "PUT")]
+    [InlineData("/api/admin/access/backend", "GET")]
+    [InlineData("/api/admin/access/backend", "PUT")]
     public async Task InvokeAsync_NonAdminUser_RemainsBlockedFromAdminAndInvalidAccountRoutes(
         string path,
         string method)

@@ -24,7 +24,7 @@ public sealed class BackendSetupException(string code, string message) : Excepti
     public string Code { get; } = code;
 }
 
-public sealed class BackendSetupService(IDbContextFactory<AllstarrDbContext> factory, IConfiguration configuration,
+public sealed partial class BackendSetupService(IDbContextFactory<AllstarrDbContext> factory, IConfiguration configuration,
     DurableStorageState storage, DurableRuntimeSettingsService settings, EncryptedSecretStore secrets,
     IBackendConnectionVerifier verifier, IPlatformClock clock)
 {

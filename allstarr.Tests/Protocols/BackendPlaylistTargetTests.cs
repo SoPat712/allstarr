@@ -1,4 +1,5 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
 using allstarr.Core.Playlists.Targets;
@@ -547,7 +548,7 @@ public sealed class BackendPlaylistTargetTests
             Playlists[id] = new PlaylistState(name, members.ToList());
 
         public Dictionary<string, PlaylistState> Playlists { get; } = [];
-        public List<RequestRecord> Requests { get; } = [];
+        public ConcurrentQueue<RequestRecord> Requests { get; } = new();
         public HttpStatusCode? ForcedStatus { get; set; }
         public int MutationCount { get; private set; }
         public bool ArtworkWritten { get; private set; }
@@ -561,7 +562,7 @@ public sealed class BackendPlaylistTargetTests
             cancellationToken.ThrowIfCancellationRequested();
             var path = request.RequestUri!.AbsolutePath.Trim('/');
             var query = ParseQuery(request.RequestUri.Query);
-            Requests.Add(new(path, request.Headers.TryGetValues("X-Emby-Token", out var values) ? values.Single() : null, query, request.Headers.Authorization?.ToString()));
+            Requests.Enqueue(new(path, request.Headers.TryGetValues("X-Emby-Token", out var values) ? values.Single() : null, query, request.Headers.Authorization?.ToString()));
             if (ForcedStatus != null) return new(ForcedStatus.Value);
 
             if (request.Method == HttpMethod.Get && path.StartsWith("Users/user-1/Items", StringComparison.Ordinal))
@@ -667,7 +668,7 @@ public sealed class BackendPlaylistTargetTests
             Playlists[id] = new PlaylistState(name, members.ToList());
 
         public Dictionary<string, PlaylistState> Playlists { get; } = [];
-        public List<RequestRecord> Requests { get; } = [];
+        public ConcurrentQueue<RequestRecord> Requests { get; } = new();
         public int MutationCount { get; private set; }
         public int? ProtocolFailureCode { get; set; }
         public string PlaylistOwner { get; set; } = "user-1";
@@ -683,7 +684,7 @@ public sealed class BackendPlaylistTargetTests
             if (ForcedStatus != null) return new(ForcedStatus.Value);
             var parameters = ParseQuery(await request.Content!.ReadAsStringAsync(cancellationToken));
             var endpoint = Path.GetFileNameWithoutExtension(request.RequestUri!.AbsolutePath);
-            Requests.Add(new(endpoint, null, parameters));
+            Requests.Enqueue(new(endpoint, null, parameters));
             if (ProtocolFailureCode != null) return Json(new { status = "failed", error = new { code = ProtocolFailureCode, message = "denied" } });
             if (endpoint == "getPlaylists")
                 return Json(new { status = "ok", playlists = new { playlist = Playlists.Select(pair => Summary(pair.Key, pair.Value)).ToArray() } });

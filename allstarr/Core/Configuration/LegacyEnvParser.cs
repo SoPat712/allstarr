@@ -343,6 +343,17 @@ public static class LegacyEnvParser
 
     private static LegacyEnvEntry Classify(string key, string value, int line)
     {
+        if (key.Equals("DEBUG_REDACT_SENSITIVE_REQUEST_VALUES", StringComparison.OrdinalIgnoreCase))
+            return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "always_redacted",
+                "Sensitive request values are always redacted. The old switch cannot disable protection.", false);
+        if (key.StartsWith("ADMIN_OIDC_", StringComparison.OrdinalIgnoreCase))
+            return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "review_single_sign_on",
+                "Review single sign-on in Settings. Client secrets are encrypted for the selected identity service; old environment values never enable it automatically.", true);
+        if (key.Equals("MUSICBRAINZ_USERNAME", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("MUSICBRAINZ_PASSWORD", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("JELLYFIN_CLIENT_USERNAME", StringComparison.OrdinalIgnoreCase))
+            return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "retired_credential",
+                "This legacy login field is unused. Public metadata needs no login; media-server scanning access is verified and encrypted separately.", true);
         if (key.Equals("EXTENSION_REPOSITORIES", StringComparison.OrdinalIgnoreCase))
         {
             try
