@@ -9,7 +9,9 @@ namespace allstarr.Core.Routing;
 
 public sealed class DurableProviderRouteAccountResolver(
     ProviderAccountResolver resolver,
-    IProviderRouteHealthSource health) : IProviderRouteAccountResolver
+    IProviderRouteHealthSource health,
+    IProviderRegistry? registry = null,
+    IProviderCheckSessions? sessions = null) : IProviderRouteAccountResolver
 {
     public async Task<ProviderRouteAccountResolution?> ResolveAsync(
         ProviderRouteAccountRequest request,
@@ -50,6 +52,14 @@ public sealed class DurableProviderRouteAccountResolver(
             if (await resolver.HasOtherPersonalAccountAsync(userId.Value, request.ProviderId, cancellationToken, request.RequestedAccountId))
                 throw new ProviderAccountAudienceDeniedException();
             throw;
+        }
+        if (registry?.TryGet(request.ProviderId, out var descriptor) == true && descriptor!.UsesSignedSession)
+        {
+            var signedIn = new List<ResolvedProviderAccount>();
+            foreach (var candidate in candidates)
+                if (sessions != null && await sessions.IsSignedInAsync(request.ProviderId, candidate.Account.Id, cancellationToken))
+                    signedIn.Add(candidate);
+            candidates = signedIn;
         }
         var preferredScope = candidates.FirstOrDefault()?.Account.Scope;
         var resolved = request.RequestedAccountId.HasValue
