@@ -10,7 +10,9 @@ import {
   playlistOutcomeLabel,
   providerColor,
   runBounded,
+  mediaServerName,
   scheduleCadence,
+  scheduleZoneLabel,
 } from "./playlists";
 
 const playlist = (values: Partial<PlaylistLink>): PlaylistLink => ({
@@ -60,7 +62,7 @@ describe("playlist presentation", () => {
   it("uses provider colors and a neutral unresolved segment", () => {
     expect(providerColor("unresolved")).toBe("var(--color-ink-muted)");
     expect(providerColor("unmatched")).toBe("var(--color-ink-muted)");
-    expect(providerColor("jellyfin")).toBe("#8b65fb");
+    expect(providerColor("jellyfin")).toBe("var(--color-signal)");
     expect(providerColor("apple-download")).toBe("#fa243c");
     expect(providerColor("deezer")).toBe("#ff0092");
   });
@@ -112,8 +114,25 @@ describe("playlist presentation", () => {
 
   it("describes common sync schedules and preserves custom cron expressions", () => {
     expect(scheduleCadence("0 * * * *")).toBe("Every hour");
-    expect(scheduleCadence("0 3 * * *")).toBe("Every day at 03:00");
-    expect(scheduleCadence("15 4 * * 2")).toBe("Cron 15 4 * * 2");
+    expect(scheduleCadence("0 3 * * *")).toBe("Every day at 3:00 AM");
+    expect(scheduleCadence("0 8 * * 1")).toBe("Every Monday at 8:00 AM");
+    expect(scheduleCadence("15 4 * * 2")).toBe("Every Tuesday at 4:15 AM");
+    expect(scheduleCadence("30 18 * * 1,3,5")).toBe("Every Monday, Wednesday and Friday at 6:30 PM");
+    expect(scheduleCadence("0 7 * * 1-5")).toBe("Weekdays at 7:00 AM");
+    expect(scheduleCadence("0 9 * * 0,6")).toBe("Weekends at 9:00 AM");
+    expect(scheduleCadence("0 9 * * 7")).toBe("Every Sunday at 9:00 AM");
+    expect(scheduleCadence("0 */6 * * *")).toBe("Every 6 hours");
+    expect(scheduleCadence("0 4 1 * *")).toBe("Custom schedule (0 4 1 * *)");
+    expect(scheduleCadence("not a cron")).toBe("Custom schedule (not a cron)");
+  });
+
+  it("names media servers and only labels schedule zones that differ from the viewer's", () => {
+    expect(mediaServerName("jellyfin")).toBe("Jellyfin");
+    expect(mediaServerName("Navidrome")).toBe("Navidrome");
+    expect(mediaServerName("spotify")).toBeNull();
+    expect(scheduleZoneLabel(Intl.DateTimeFormat().resolvedOptions().timeZone)).toBe("");
+    expect(scheduleZoneLabel(null)).toBe("");
+    expect(scheduleZoneLabel("Not/AZone")).toBe("Not/AZone");
   });
 
   it("keeps fixed hybrid import consequences and eligibility reasons explicit", () => {

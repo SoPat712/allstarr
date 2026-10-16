@@ -1291,6 +1291,7 @@
   .source-dialog.playlist-detail-dialog {
     --dialog-width: 72rem;
     --dialog-max-height: 58rem;
+    --detail-gutter: var(--space-6);
 
     display: flex;
     flex-direction: column;
@@ -1300,12 +1301,12 @@
   .playlist-detail-dialog > .playlist-hero {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: flex-start;
+    align-items: center;
     min-height: 0;
-    gap: 0.85rem;
+    gap: var(--space-4);
     justify-content: normal;
     border-bottom: 1px solid var(--color-edge);
-    padding: 0.9rem 1rem;
+    padding: var(--space-5) var(--detail-gutter);
   }
 
 
@@ -1617,17 +1618,17 @@
   }
 
   .playlist-detail-dialog > .playlist-hero,
-  .playlist-detail-dialog > .playlist-view-switcher,
-  .playlist-detail-dialog > .playlist-detail-coverage,
-  .playlist-detail-dialog > .playlist-meta-strip,
+  .playlist-detail-dialog > .playlist-overview,
+  .playlist-detail-dialog > .degraded-banner,
+  .playlist-detail-dialog > .field-error,
   .playlist-detail-dialog > .track-toolbar {
     flex: none;
   }
 
   .hero-art {
-    width: 3.5rem;
-    height: 3.5rem;
-    border-radius: 0.75rem;
+    width: 4.5rem;
+    height: 4.5rem;
+    border-radius: var(--radius-md);
   }
 
   .playlist-hero-copy {
@@ -1635,28 +1636,43 @@
     flex: 1;
   }
 
-  .playlist-hero-copy h2 {
+  .playlist-hero-copy [data-dialog-title] {
     overflow: hidden;
-    font-size: 1.35rem;
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 1.25;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .playlist-hero-copy > p:not(.eyebrow) {
-    margin: 0.35rem 0 0;
+  .playlist-hero-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 var(--space-2);
+    margin: var(--space-1) 0 0;
     color: var(--color-ink-muted);
-    font-size: var(--text-xs);
+    font-size: var(--text-sm);
   }
 
-  .hero-route {
-    margin-top: 0.4rem;
+  .playlist-hero-copy > .hero-route {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-2) 0 0;
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+  }
+
+  .hero-route > svg {
+    flex: none;
     color: var(--color-ink-muted);
-    font-size: 0.75rem;
   }
 
   .hero-route .provider-mark {
-    width: 1.35rem;
-    height: 1.35rem;
+    width: 1.25rem;
+    height: 1.25rem;
   }
 
   .playlist-actions-trigger {
@@ -1667,97 +1683,167 @@
     padding-inline: 0.8rem;
   }
 
-  .playlist-detail-coverage {
-    padding: 0;
-  }
-
-  .playlist-view-switcher {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
+  .playlist-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(15rem, 21rem);
+    align-items: start;
+    gap: var(--space-4) var(--space-8, 2rem);
     border-bottom: 1px solid var(--color-edge);
-    padding: 0.7rem 1rem;
+    padding: var(--space-5) var(--detail-gutter);
   }
 
-  .playlist-view-switcher > span {
+  .playlist-composition {
     display: grid;
     min-width: 0;
-    flex: 1;
-    gap: 0.15rem;
+    gap: var(--space-3);
   }
 
-  .playlist-view-switcher > span strong {
-    font-size: var(--text-xs);
-  }
-
-  .playlist-view-switcher > span small {
-    color: var(--color-ink-muted);
-    font-size: var(--text-xs);
-  }
-
-  .playlist-view-switcher nav {
-    width: min(100%, 20rem);
-    flex-shrink: 0;
-  }
-
-  .playlist-detail-coverage .coverage-bar {
-    width: 100%;
-    height: 0.5rem;
-    margin: 0;
-    border-radius: 0;
-  }
-
-  .playlist-meta-strip {
+  .composition-heading {
     display: flex;
-    min-height: 2.75rem;
-    align-items: center;
-    gap: 0.75rem;
-    overflow-x: auto;
-    border-bottom: 1px solid var(--color-edge);
-    padding: 0.45rem 1rem;
-    white-space: nowrap;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2) var(--space-4);
   }
 
-  .playlist-meta-strip > span,
-  .playlist-meta-strip > .meta-filter-button {
-    flex: none;
-    border-right: 1px solid var(--color-edge);
-    color: var(--color-ink-muted);
-    padding-right: 0.75rem;
-    font-size: var(--text-xs);
-  }
-
-  .playlist-meta-strip strong,
-  .meta-filter-button strong {
+  .composition-heading h3 {
+    margin: 0;
     color: var(--color-ink);
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  .composition-heading span {
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+  }
+
+  .playlist-composition .coverage-bar {
+    gap: 3px;
+    height: 0.875rem;
+    margin: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-ink) 8%, transparent);
+  }
+
+  .playlist-composition .coverage-bar > span {
+    min-width: 0.375rem;
+  }
+
+  .composition-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-5);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+  }
+
+  .composition-legend li {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .composition-legend strong {
+    color: var(--color-ink);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .legend-swatch {
+    width: 0.625rem;
+    height: 0.625rem;
+    flex: none;
+    border-radius: 999px;
+    background: var(--route-color);
+  }
+
+  .review-filter-button {
+    min-height: 2rem;
+    border: 1px solid color-mix(in srgb, var(--color-warning) 45%, var(--color-edge));
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--color-warning) 10%, transparent);
+    color: var(--color-ink);
+    cursor: pointer;
+    padding: 0 var(--space-3);
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 600;
+  }
+
+  .review-filter-button:is(:hover, .active) {
+    background: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  }
+
+  .composition-note {
+    max-width: 62ch;
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+  }
+
+  .playlist-facts {
+    display: grid;
+    gap: var(--space-3);
+    margin: 0;
+  }
+
+  .playlist-facts > div {
+    display: grid;
+    grid-template-columns: 7.5rem minmax(0, 1fr);
+    align-items: baseline;
+    gap: var(--space-3);
+  }
+
+  .playlist-facts dt {
+    color: var(--color-ink-muted);
     font-size: var(--text-xs);
   }
 
-  .meta-filter-button {
-    border-block: 0;
-    border-left: 0;
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
+  .playlist-facts dd {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-2);
+    margin: 0;
+    font-size: var(--text-sm);
   }
 
-  .meta-filter-button:not(:disabled):is(:hover, :focus-visible, .active) strong {
-    color: var(--color-signal-text);
+  .playlist-facts dd > strong {
+    color: var(--color-ink);
+    font-weight: 600;
   }
 
-  .meta-filter-button:disabled {
-    cursor: default;
+  .playlist-facts .fact-detail {
+    flex-basis: 100%;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+
+  .playlist-fact-run {
+    align-items: center !important;
+  }
+
+  .playlist-fact-run .operation-trigger {
+    margin-left: calc(-1 * var(--space-2));
   }
 
   .schedule-edit-button {
     flex: none;
+    order: 1;
     border: 0;
     background: transparent;
     color: var(--color-signal-text);
     cursor: pointer;
+    padding: 0;
     font-size: var(--text-xs);
-    font-weight: 750;
+    font-weight: 600;
   }
 
   .schedule-editor {
@@ -2218,6 +2304,12 @@
     font-size: 0.75rem;
   }
 
+  /* Long menus scroll inside the space left on short screens instead of running off them. */
+  [data-dropdown-menu-content].bits-menu {
+    max-height: var(--bits-dropdown-menu-content-available-height, none);
+    overflow-y: auto;
+  }
+
   .bits-menu[data-state="open"],
   .select-content[data-state="open"] {
     transform-origin: top;
@@ -2305,15 +2397,6 @@
 @media (max-width: 650px) {
   .playlist-list {
     max-height: none;
-  }
-
-  .playlist-view-switcher {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .playlist-view-switcher nav {
-    width: 100%;
   }
 
   .playlist-filters,
@@ -9570,4 +9653,90 @@
 
 @layer components {
   .service-account-actions > [data-slot=button], .service-check > [data-slot=button] { min-height: var(--control-md); }
+}
+
+@layer components {
+  .playlist-detail-dialog > .track-toolbar {
+    padding: var(--space-4) var(--detail-gutter);
+  }
+
+  .playlist-detail-dialog > .degraded-banner,
+  .playlist-detail-dialog > .field-error {
+    margin: var(--space-4) var(--detail-gutter) 0;
+  }
+
+  .playlist-detail-dialog .track-data-table :is(th, td):first-child {
+    padding-left: var(--detail-gutter);
+  }
+
+  .playlist-detail-dialog .track-data-table :is(th, td):last-child {
+    padding-right: var(--detail-gutter);
+  }
+}
+
+@media (max-width: 760px) {
+  /* On phones the whole sheet scrolls, so the song list is never squeezed under the overview. */
+  .source-dialog.playlist-detail-dialog {
+    --detail-gutter: var(--space-4);
+
+    overflow-y: auto;
+  }
+
+  .playlist-detail-dialog .track-table,
+  .playlist-detail-dialog .track-scroll {
+    flex: none;
+    overflow-y: visible;
+  }
+
+  .playlist-detail-dialog .track-scroll {
+    overflow-x: auto;
+  }
+
+  .playlist-detail-dialog > .playlist-hero {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .playlist-detail-dialog .hero-art {
+    width: 3.5rem;
+    height: 3.5rem;
+    grid-row: span 2;
+  }
+
+  .playlist-detail-dialog .playlist-hero-actions {
+    display: contents;
+  }
+
+  .playlist-detail-dialog .playlist-dialog-close {
+    grid-row: 1;
+    grid-column: 3;
+  }
+
+  .playlist-detail-dialog .playlist-actions-trigger {
+    grid-row: 2;
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+
+  .playlist-hero-copy [data-dialog-title] {
+    font-size: 1.25rem;
+    white-space: normal;
+  }
+
+  .playlist-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .playlist-facts > div {
+    grid-template-columns: 7rem minmax(0, 1fr);
+  }
+}
+
+@layer components {
+  .playlist-facts .schedule-edit-button,
+  .playlist-fact-run .operation-trigger,
+  .playlist-fact-run .operation-trigger span {
+    font-size: var(--text-sm);
+  }
 }
