@@ -43,5 +43,6 @@ docker compose "${COMPOSE[@]}" build allstarr
 if [[ -f "$ROOT/.allstarr-profiles" ]] && grep -qx apple "$ROOT/.allstarr-profiles"; then
   docker compose "${COMPOSE[@]}" build apple-gateway
 fi
+printf '%s\n' "$mode" > "$MODE_FILE"
 docker compose "${COMPOSE[@]}" up -d --remove-orphans --wait --wait-timeout 180
 docker compose "${COMPOSE[@]}" ps

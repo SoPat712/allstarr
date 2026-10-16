@@ -113,7 +113,7 @@ public sealed class StartupConfigurationTests
             Encoding.UTF8.GetBytes("encrypted-backend-fixture"));
         var store = new DurableRuntimeSettingsService(factory, settings, new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
         await store.ApplyBatchAsync([new("Backend:Type", "Jellyfin"), new("Backend:Url", "http://backend-fixture:8096"),
-            new("Backend:ServiceCredentialReference", credential.Id.ToString("D")), new("Backend:ServiceUserId", "service-fixture")], "setup-fixture");
+            new("Backend:ServiceCredentialReference", credential.Id.ToString("D")), new("Backend:ServiceUserId", "service-fixture"), new("Backend:ServiceCredentialKind", "api-key")], "setup-fixture");
         await StartupConfiguration.PrepareAsync(settings, Mock.Of<IHostEnvironment>());
         Assert.Equal("encrypted-backend-fixture", settings["Jellyfin:ApiKey"]);
         Assert.Equal("service-fixture", settings["Jellyfin:UserId"]);
@@ -129,6 +129,54 @@ public sealed class StartupConfigurationTests
         Assert.Equal("", restarted["Jellyfin:ApiKey"]);
         Assert.Equal("true", restarted["Setup:ServiceCredentialNeedsReview"]);
         Assert.Equal("true", restarted["Setup:BackendConfigured"]);
+    }
+
+    [Theory]
+    [InlineData(true, false, false, "user-token")]
+    [InlineData(true, false, true, "user-token")]
+    [InlineData(false, false, false, "api-key")]
+    [InlineData(false, true, false, "api-key")]
+    public async Task Prepare_ClassifiesUnknownServiceAccessOnceAndReloadsTheRecordedKind(bool userToken, bool unavailable, bool emptyKind, string expected)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var configuration = Configuration(database);
+        var factory = new Factory(database.Options);
+        var options = new SecretStoreOptions { KeyRingPath = Path.Combine(database.StorageOptions.DataDirectory, "keyring.json") };
+        var ring = new FileSecretKeyRingProvider(options);
+        await ring.CreateIfMissingAsync(false);
+        var secrets = new EncryptedSecretStore(factory, ring, options, new SystemPlatformClock());
+        var credential = await secrets.StoreAsync(null, StartupConfiguration.ServicePurpose("Jellyfin", "http://backend-fixture:8096"),
+            Encoding.UTF8.GetBytes("private-service-fixture"));
+        var store = new DurableRuntimeSettingsService(factory, configuration, new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
+        await store.ApplyBatchAsync([new("Backend:Type", "Jellyfin"), new("Backend:Url", "http://backend-fixture:8096"),
+            new("Backend:ServiceCredentialReference", credential.Id.ToString("D")), new("Backend:ServiceUserId", "service-fixture")], "fixture");
+        if (emptyKind) await store.ApplyBatchAsync([new("Backend:ServiceCredentialKind", "")], "fixture");
+        configuration["Backend:ServiceCredentialKind"] = "user-token";
+        var verifier = new Mock<IBackendConnectionVerifier>(MockBehavior.Strict);
+        var probe = verifier.Setup(item => item.VerifyUserTokenAsync("http://backend-fixture:8096", "service-fixture", "private-service-fixture", It.IsAny<CancellationToken>()));
+        if (unavailable) probe.ThrowsAsync(new HttpRequestException("Unavailable"));
+        else probe.ReturnsAsync(userToken);
+        for (var restart = 0; restart < 2; restart++)
+        {
+            var restarted = Configuration(database);
+            await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>(), serviceVerifier: verifier.Object);
+            Assert.Equal(unavailable ? null : expected, restarted["Backend:ServiceCredentialKind"]);
+            Assert.Equal(expected, restarted["Jellyfin:ServiceCredentialKind"]);
+        }
+        verifier.Verify(item => item.VerifyUserTokenAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            unavailable ? Times.Exactly(2) : Times.Once());
+        await using var db = new AllstarrDbContext(database.Options);
+        var kind = await db.RuntimeSettings.SingleOrDefaultAsync(item => item.Key == "Backend:ServiceCredentialKind");
+        if (unavailable)
+        {
+            // An outage keeps server-key limits for that start only and is checked again on the next one.
+            Assert.True(kind == null || kind.ValueJson == "\"\"");
+            return;
+        }
+        Assert.NotNull(kind);
+        Assert.Equal(emptyKind ? 2 : 1, kind.Revision);
+        Assert.Equal("\"" + expected + "\"", kind.ValueJson);
+        Assert.DoesNotContain("private-service-fixture", string.Join(' ', await db.RuntimeSettings.Select(item => item.ValueJson).ToListAsync()), StringComparison.Ordinal);
     }
 
     [Fact]

@@ -74,7 +74,8 @@
   {#if backend && (!backend.supported || !backend.connectionSaved)}<p>{!backend.supported ? "Subsonic access is granted separately by each listener." : "Preview and import the mounted settings to save the current media-server connection first."}</p>
   {:else if backend && connected && !editing && !saved}
     {#if restored}<p class="access-restored" role="status">Media-server access is restored. Playlist sync and library scans are running again.</p>{/if}
-    <p>Playlist sync and library scans use a verified administrator access token, stored encrypted. Each listener's library permissions remain authoritative.</p>
+    <p>Playlist sync and library scans use encrypted service access. Each listener's library permissions remain authoritative.</p>
+    {#if backend.credentialKind === "api-key"}<p>Save administrator credentials to enable full playlist order and removal sync.</p>{/if}
     <Button variant="secondary" onclick={() => { editing = true; restored = false; }}>Change access</Button>
   {:else if snapshot && !saved}
     <form class="access-form" onsubmit={(event) => { event.preventDefault(); void save(); }}>

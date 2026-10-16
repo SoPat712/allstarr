@@ -6546,7 +6546,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     let applied = 0;
     let fullPreviews = 0;
     await page.route("**/api/admin/access/backend", (route) => route.fulfill({ json: {
-      settings: { supported: true, connectionSaved: true, configured: restored, needsReview: !restored, revision: "fixture" }, csrfToken: "fixture",
+      settings: { supported: true, connectionSaved: true, configured: restored, needsReview: !restored, credentialKind: restored ? "api-key" : "", revision: "fixture" }, csrfToken: "fixture",
     } }));
     await page.route("**/api/admin/config/migration/status", (route) => route.fulfill({ json: {
       available: true, completed: true, firstRun: false, sourcePresent: true, serviceAccessAvailable: !restored,
@@ -6600,7 +6600,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await mockApi(page);
     let restored = false;
     await page.route("**/api/admin/access/backend", (route) => route.fulfill({ json: {
-      settings: { supported: true, connectionSaved: true, configured: restored, needsReview: !restored, revision: "fixture" }, csrfToken: "fixture",
+      settings: { supported: true, connectionSaved: true, configured: restored, needsReview: !restored, credentialKind: restored ? "api-key" : "", revision: "fixture" }, csrfToken: "fixture",
     } }));
     await page.route("**/api/admin/config/migration/status", (route) => route.fulfill({ json: {
       available: true, completed: true, firstRun: false, sourcePresent: true, serviceAccessAvailable: !restored,
@@ -6617,6 +6617,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     const access = page.getByRole("article", { name: "Media-server access" });
     await expect(access.getByRole("status")).toContainText("Media-server access is restored.");
     await expect(access.getByText("Connected", { exact: true })).toBeVisible();
+    await expect(access.getByText("Save administrator credentials to enable full playlist order and removal sync.")).toBeVisible();
     await expect(restore).toBeHidden();
     await expect(page.getByRole("alert")).toHaveCount(0);
     await page.screenshot({ path: `test-results/service-access-restored-${width}-${theme}.png`, fullPage: true });
@@ -6663,3 +6664,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+test("Media-server administrator access keeps the connected card concise", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/access/backend", (route) => route.fulfill({ json: {
+    settings: { supported: true, connectionSaved: true, configured: true, needsReview: false, credentialKind: "user-token", revision: "fixture" }, csrfToken: "fixture",
+  } }));
+  await page.goto("#/settings/access");
+  const access = page.getByRole("article", { name: "Media-server access" });
+  await expect(access.getByText("Connected", { exact: true })).toBeVisible();
+  await expect(access.getByText("Save administrator credentials to enable full playlist order and removal sync.")).toHaveCount(0);
+  await access.getByRole("button", { name: "Change access" }).click();
+  await expect(access.getByLabel("Jellyfin administrator username")).toBeVisible();
+  await expect(access.getByLabel("Jellyfin administrator password")).toBeVisible();
+});

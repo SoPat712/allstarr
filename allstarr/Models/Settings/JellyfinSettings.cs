@@ -4,6 +4,7 @@ public sealed class JellyfinSettings : MediaBackendSettings
 {
     public string? Url { get; set; }
     public string? ApiKey { get; set; }
+    public string? ServiceCredentialKind { get; set; }
     public string? UserId { get; set; }
     public string? LibraryId { get; set; }
     public string ClientName { get; set; } = "Allstarr";

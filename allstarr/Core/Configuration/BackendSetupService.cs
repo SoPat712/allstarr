@@ -62,6 +62,7 @@ public sealed partial class BackendSetupService(IDbContextFactory<AllstarrDbCont
                     StartupConfiguration.ServicePurpose(backend.ToString(), endpoint), bytes, cancellationToken: token);
                 writes.Add(new("Backend:ServiceCredentialReference", credential.Id.ToString("D")));
                 writes.Add(new("Backend:ServiceUserId", verified.UserId));
+                writes.Add(new("Backend:ServiceCredentialKind", "user-token"));
             }
             finally { CryptographicOperations.ZeroMemory(bytes); }
         }

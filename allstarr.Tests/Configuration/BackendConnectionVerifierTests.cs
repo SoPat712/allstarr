@@ -115,6 +115,38 @@ public sealed class BackendConnectionVerifierTests
         Assert.DoesNotContain("private-service-key", request.Address, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, false, false, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    public async Task UserToken_RequiresTheCurrentActiveAdministrator(bool administrator, bool disabled, bool wrongUser, bool expected)
+    {
+        var handler = new Handler(_ => Json(new
+        {
+            Id = wrongUser ? "other-fixture" : "admin-fixture",
+            Name = "Administrator",
+            Policy = new { IsAdministrator = administrator, IsDisabled = disabled }
+        }));
+        var result = await new BackendConnectionVerifier(new Clients(handler)).VerifyUserTokenAsync(
+            "http://backend.test", "admin-fixture", "private-user-token", default);
+        Assert.Equal(expected, result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("http://backend.test/Users/Me", request.Address);
+        Assert.Equal("MediaBrowser Token=\"private-user-token\"", request.Authorization);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized)]
+    [InlineData(HttpStatusCode.Forbidden)]
+    public async Task UserToken_RejectsServerKeysWithoutACurrentUser(HttpStatusCode status)
+    {
+        var handler = new Handler(_ => new(status));
+        Assert.False(await new BackendConnectionVerifier(new Clients(handler)).VerifyUserTokenAsync(
+            "http://backend.test", "admin-fixture", "private-server-key", default));
+        Assert.Equal("http://backend.test/Users/Me", Assert.Single(handler.Requests).Address);
+    }
+
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)
     { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
     private sealed record Request(string Method, string Address, string Body, string Authorization);

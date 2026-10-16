@@ -45,6 +45,8 @@ The command validates deployment files, pulls the configured Allstarr image and 
 
 `./allstarr.sh up` starts the saved profiles without pulling the application image. `status` lists their containers; `logs [service]` follows their logs. `down` stops the saved deployment without deleting its volumes.
 
+When updating an earlier installation that used the project’s `allstarr-data` volume, `up` and `update` retain that volume automatically if `ALLSTARR_DATA_PATH` is unset and `./data` is missing or empty. The script appends `ALLSTARR_DATA_PATH=allstarr-data` to `.env`, preserving existing settings and permissions, and reports the retained volume. Keep the same Compose project name, including any `COMPOSE_PROJECT_NAME` setting. No files are copied or moved. If both locations contain data, startup stops until you explicitly choose `ALLSTARR_DATA_PATH=./data` or `ALLSTARR_DATA_PATH=allstarr-data`. Checking an existing volume alongside populated `./data` requires the configured Allstarr image to be available locally; a failed check also stops startup and asks for an explicit path. Plain `docker compose up` does not perform this check.
+
 ## Optional Apple downloads
 
 The current deployment files put Apple's gateway and wrapper behind the `apple` profile and publish no host ports. An untouched v2 Compose file does not contain these services. Finish and verify its core upgrade first; adding Apple is a separate opt-in deployment change using the current host helper and profile definitions. Preserve the original cache, kept and download container paths when preparing that change. Upload a legally obtained supported Apple Music APK/APKM through Integrations → Services → Apple Music, then run:

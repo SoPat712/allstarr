@@ -67,8 +67,9 @@ public sealed partial class BackendSetupServiceTests : IAsyncLifetime
         Assert.Equal("true", configuration["Setup:BackendRestartRequired"]);
         await using var db = new AllstarrDbContext(database.Options);
         var rows = await db.RuntimeSettings.ToListAsync();
-        Assert.Equal(scans ? 5 : 3, rows.Count);
+        Assert.Equal(scans ? 6 : 3, rows.Count);
         Assert.All(rows, row => Assert.Equal(1, row.Revision));
+        if (scans) Assert.Equal("\"user-token\"", rows.Single(row => row.Key == "Backend:ServiceCredentialKind").ValueJson);
         var serialized = JsonSerializer.Serialize(rows);
         Assert.DoesNotContain("private-password-fixture", serialized, StringComparison.Ordinal);
         Assert.DoesNotContain("private-token-fixture", serialized, StringComparison.Ordinal);
@@ -81,6 +82,8 @@ public sealed partial class BackendSetupServiceTests : IAsyncLifetime
         await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>());
         Assert.Equal("http://backend-fixture:8096", restarted["Jellyfin:Url"]);
         Assert.Equal(scans ? "private-token-fixture" : "", restarted["Jellyfin:ApiKey"]);
+        Assert.Equal(scans ? "user-token" : null, restarted["Jellyfin:ServiceCredentialKind"]);
+        if (scans) Assert.Equal("principal-fixture", restarted["Jellyfin:UserId"]);
         verifier.Verify(item => item.VerifyAsync(It.IsAny<BackendType>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 

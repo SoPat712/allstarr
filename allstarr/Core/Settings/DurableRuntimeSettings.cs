@@ -126,6 +126,7 @@ public static class RuntimeSettingCatalog
         Text("Backend:Type", ["Jellyfin", "Subsonic"]);
         items.Add(new("Backend:Url", RuntimeSettingValueType.String, "Backend:Url", AllowEmpty: true, MaximumLength: 2048));
         items.Add(new("Backend:ServiceCredentialReference", RuntimeSettingValueType.String, "Backend:ServiceCredentialReference", AllowEmpty: true, MaximumLength: 40));
+        Text("Backend:ServiceCredentialKind", ["user-token", "api-key"], allowEmpty: true);
         items.Add(new("Backend:ServiceUserId", RuntimeSettingValueType.String, "Backend:ServiceUserId", AllowEmpty: true, MaximumLength: 200));
         items.Add(new("Identity:BackendInstanceId", RuntimeSettingValueType.String, "Identity:BackendInstanceId", DefaultValue: "primary", MaximumLength: 200));
         Int("Cache:SearchResultsMinutes", 1, 1440); Int("Cache:PlaylistImagesHours", 1, 8760);
