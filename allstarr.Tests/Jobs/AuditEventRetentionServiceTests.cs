@@ -112,8 +112,10 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
     }
 
-    [Fact]
-    public async Task PruneNowAsync_ExpiresJobHistorySoonerThanOtherEvents()
+    [Theory]
+    [InlineData("job-attempt")]
+    [InlineData("managed-storage")]
+    public async Task PruneNowAsync_ExpiresJobHistorySoonerThanOtherEvents(string category)
     {
         var now = DateTimeOffset.UtcNow;
         await using (var scope = provider.CreateAsyncScope())
@@ -121,8 +123,8 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
             database.AuditEvents.AddRange(
                 Event(now.AddDays(-8), "admin-old"),
-                Event(now.AddDays(-8), "job-old", "job-attempt"),
-                Event(now.AddDays(-6), "job-recent", "job-attempt"));
+                Event(now.AddDays(-8), "job-old", category),
+                Event(now.AddDays(-6), "job-recent", category));
             await database.SaveChangesAsync();
         }
 
@@ -134,8 +136,10 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         Assert.Equal(["admin-old", "job-recent"], remaining);
     }
 
-    [Fact]
-    public async Task PruneNowAsync_TrimsJobHistoryBeforeOtherEventsWhenOverTheRowLimit()
+    [Theory]
+    [InlineData("job-attempt")]
+    [InlineData("managed-storage")]
+    public async Task PruneNowAsync_TrimsJobHistoryBeforeOtherEventsWhenOverTheRowLimit(string category)
     {
         var now = DateTimeOffset.UtcNow;
         await using (var scope = provider.CreateAsyncScope())
@@ -144,7 +148,7 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
             database.AuditEvents.AddRange(Enumerable.Range(0, 1000)
                 .Select(index => Event(now.AddDays(-2).AddSeconds(index), $"admin-{index:D4}")));
             database.AuditEvents.AddRange(Enumerable.Range(0, 10)
-                .Select(index => Event(now.AddSeconds(index), $"job-{index:D2}", "job-attempt")));
+                .Select(index => Event(now.AddSeconds(index), $"job-{index:D2}", category)));
             await database.SaveChangesAsync();
         }
 
@@ -153,7 +157,7 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
         await using var verification = provider.CreateAsyncScope();
         var context = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
         Assert.Equal(1000, await context.AuditEvents.CountAsync(item => item.Category == "test"));
-        Assert.Empty(await context.AuditEvents.Where(item => item.Category == "job-attempt").ToListAsync());
+        Assert.Empty(await context.AuditEvents.Where(item => item.Category == category).ToListAsync());
     }
 
     private AuditEventRetentionService Worker(int retentionDays, int maximumRows)

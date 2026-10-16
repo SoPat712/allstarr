@@ -34,6 +34,7 @@ public sealed class DurableJobWorker : BackgroundService
     private readonly IServiceProvider _services;
     private readonly IReadOnlyDictionary<string, IDurableJobHandler> _handlers;
     private readonly ILogger<DurableJobWorker> _logger;
+    private readonly allstarr.Core.ManagedFiles.ManagedStorageRecovery? _storageRecovery;
     private readonly string _workerId =
         $"{Environment.MachineName}:{Environment.ProcessId}:{Guid.NewGuid():N}";
 
@@ -43,13 +44,15 @@ public sealed class DurableJobWorker : BackgroundService
         DurableStorageState storageState,
         IServiceProvider services,
         IEnumerable<IDurableJobHandler> handlers,
-        ILogger<DurableJobWorker> logger)
+        ILogger<DurableJobWorker> logger,
+        allstarr.Core.ManagedFiles.ManagedStorageRecovery? storageRecovery = null)
     {
         _queue = queue;
         _options = options;
         _storageState = storageState;
         _services = services;
         _logger = logger;
+        _storageRecovery = storageRecovery;
         _handlers = handlers.ToDictionary(
             handler => handler.JobType.Trim().ToLowerInvariant(),
             StringComparer.OrdinalIgnoreCase);
@@ -81,6 +84,8 @@ public sealed class DurableJobWorker : BackgroundService
 
                 await MonitorCurrentExecutionsAsync(active, stoppingToken);
                 var eligibleTypes = GetEligibleTypes(active);
+                if (_storageRecovery != null && await _storageRecovery.IsPendingAsync(stoppingToken))
+                    eligibleTypes = eligibleTypes.Where(type => type == allstarr.Core.ManagedFiles.ManagedStorageRecovery.JobType).ToArray();
                 if (eligibleTypes.Length == 0)
                 {
                     await WaitForProgressAsync(active, stoppingToken);

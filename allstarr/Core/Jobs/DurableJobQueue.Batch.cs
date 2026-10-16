@@ -34,7 +34,7 @@ public sealed partial class DurableJobQueue
             }
             var attempts = request.MaxAttempts ?? _options.DefaultMaxAttempts;
             var deferrals = request.MaxDeferrals ?? _options.DefaultMaxDeferrals;
-            prepared.Add(new(saved, CreateUserScopeKey(saved.OwnerUserId), type, request.IdempotencyKey.Trim(),
+            prepared.Add(new(saved, CreateSavedScopeKey(saved), type, request.IdempotencyKey.Trim(),
                 payloadJson, CreateRequestFingerprint(payloadJson, request.Priority, attempts, deferrals, request.AvailableAt),
                 request.Priority, attempts, deferrals, request.AvailableAt));
         }

@@ -359,17 +359,19 @@ public sealed partial class LegacyEnvMigrationServiceTests
         await migration.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
     }
 
-    private MediaImportFixture MediaFixture()
+    private MediaImportFixture MediaFixture(string? sourceRoot = null, IManagedFileOperations? operations = null)
     {
-        var root = Path.Combine(_root, "legacy");
+        var root = sourceRoot ?? Path.Combine(_root, "legacy");
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["Legacy:AllowedRoots"] = root,
             ["Legacy:KeptPath"] = Path.Combine(root, "kept"),
             ["Legacy:DownloadPath"] = Path.Combine(root, "downloads")
         }).Build();
-        var services = new ServiceCollection().AddDbContext<AllstarrDbContext>(options => options.UseSqlite(_database.ConnectionString))
-            .AddManagedFilePlacement().BuildServiceProvider();
+        var registrations = new ServiceCollection().AddDbContext<AllstarrDbContext>(options => options.UseSqlite(_database.ConnectionString))
+            .AddManagedFilePlacement();
+        if (operations != null) registrations.AddSingleton(operations);
+        var services = registrations.BuildServiceProvider();
         var clock = new SystemPlatformClock();
         var options = new DurableJobOptions();
         var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), clock);

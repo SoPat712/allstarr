@@ -193,6 +193,10 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(adoptionObjects.Order(StringComparer.Ordinal),
             after.Where(row => adoptionObjects.Contains(row.Name)).Select(row => row.Name).Order(StringComparer.Ordinal));
 
+        const string storageIdentity = "managed_storage_identity";
+        Assert.DoesNotContain(before, row => row.Name == storageIdentity);
+        Assert.Single(after, row => row.Type == "table" && row.Name == storageIdentity);
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -204,7 +208,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name))
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();

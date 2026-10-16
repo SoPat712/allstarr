@@ -18,7 +18,7 @@ public sealed record DurableJobPolicySnapshot(
     long? ProviderAccountRevision = null);
 
 public sealed record DurableJobSavedContext(
-    Guid OwnerUserId,
+    Guid? OwnerUserId,
     Guid? ProviderAccountId,
     string? ProviderCapability,
     string CorrelationId,
@@ -61,6 +61,12 @@ public sealed class DurableJobContextAuthorizer
         CancellationToken cancellationToken = default,
         string? jobType = null)
     {
+        if (jobType == ManagedStorageRecovery.JobType)
+        {
+            if (ownerUserId != null || providerAccountId != null || capability != null)
+                throw new ArgumentException("Storage verification cannot carry user or provider authority.");
+            return new(null, null, null, RedactCorrelationId(correlationId), JsonSerializer.Serialize(StorageSnapshot()));
+        }
         if (!ownerUserId.HasValue || ownerUserId == Guid.Empty)
         {
             throw new ArgumentException(
@@ -119,7 +125,7 @@ public sealed class DurableJobContextAuthorizer
         DurableJobClaim claim,
         CancellationToken cancellationToken = default)
     {
-        if (!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty)
+        if ((!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty) && claim.Type != ManagedStorageRecovery.JobType)
         {
             return DurableJobContextAuthorization.Deny(
                 "job_context_missing",
@@ -143,6 +149,15 @@ public sealed class DurableJobContextAuthorizer
                 "The durable job policy snapshot is missing or unsupported.");
         }
 
+        if (claim.Type == ManagedStorageRecovery.JobType || savedSnapshot.AuthorizationRule == "managed_storage_verification")
+            return claim.Type == ManagedStorageRecovery.JobType && savedSnapshot == StorageSnapshot() &&
+                claim.OwnerUserId == null && claim.ProviderAccountId == null && claim.ProviderCapability == null
+                ? DurableJobContextAuthorization.Allow()
+                : DurableJobContextAuthorization.Deny("job_policy_snapshot_mismatch", "The storage maintenance policy does not match this exact job.");
+
+        if (claim.OwnerUserId is not { } recordedOwner || recordedOwner == Guid.Empty)
+            return DurableJobContextAuthorization.Deny("job_context_missing", "The durable job does not contain an initiating user.");
+
         if (claim.Type == RecordingKeptFiles.KeptCleanupJobType ||
             savedSnapshot.AuthorizationRule == "household_kept_cleanup")
         {
@@ -160,7 +175,7 @@ public sealed class DurableJobContextAuthorizer
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         var userIsActive = await context.Users.AsNoTracking().AnyAsync(
-            item => item.Id == claim.OwnerUserId.Value &&
+            item => item.Id == recordedOwner &&
                     item.Enabled,
             cancellationToken);
         if (!userIsActive)
@@ -198,7 +213,7 @@ public sealed class DurableJobContextAuthorizer
             !await IsExactAccountAuthorizedAsync(
                 context,
                 account,
-                claim.OwnerUserId.Value,
+                recordedOwner,
                 claim.ProviderCapability,
                 cancellationToken))
         {
@@ -217,6 +232,9 @@ public sealed class DurableJobContextAuthorizer
 
     private static DurableJobPolicySnapshot CleanupSnapshot() =>
         new(SnapshotVersion, "household_kept_cleanup", null, null, null);
+
+    private static DurableJobPolicySnapshot StorageSnapshot() =>
+        new(SnapshotVersion, "managed_storage_verification", null, null, null);
 
     private DurableJobPolicySnapshot BuildSnapshot(
         ProviderAccountRecord? account,

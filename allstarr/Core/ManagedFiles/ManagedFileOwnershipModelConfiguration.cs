@@ -8,6 +8,16 @@ public static class ManagedFileOwnershipModelConfiguration
     // Called once from AllstarrDbContext.OnModelCreating.
     public static void ConfigureManagedFileOwnership(this ModelBuilder modelBuilder)
     {
+        modelBuilder.Entity<ManagedStorageIdentityRecord>(entity =>
+        {
+            entity.ToTable("managed_storage_identity", table => table.HasCheckConstraint("CK_managed_storage_singleton", "\"Id\" = 1 AND \"Revision\" > 0"));
+            entity.HasKey(item => item.Id);
+            entity.Property(item => item.Id).ValueGeneratedNever();
+            entity.Property(item => item.MarkerDeviceId).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.MarkerFileId).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.Revision).IsConcurrencyToken();
+        });
+
         modelBuilder.Entity<ManagedFileOwnershipEntity>(entity =>
         {
             entity.ToTable("managed_files", table =>
