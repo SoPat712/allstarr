@@ -137,6 +137,11 @@
     semantic_version_mismatch_review: "Different version needs review",
   };
 
+  function confidenceLevel(value?: number | null) {
+    const score = value ?? 0;
+    return score >= 0.9 ? "high" : score >= 0.75 ? "medium" : "low";
+  }
+
   function evidenceLabel(value: string) {
     return evidenceLabels[value] ?? value.replace(/([a-z])([A-Z])/g, "$1 $2").replaceAll("_", " ");
   }
@@ -233,54 +238,222 @@
     <Dialog.Overlay class="dialog-overlay match-dialog-overlay" />
     <Dialog.Content class="match-dialog" preventScroll={false}>
       {#if match}
-        <header>
-          <div>
+        <header class="match-header">
+          <span class="media-art mapping-art match-source-art">
+            {#if match.sourceArtworkUrl}<img src={adminUrl(match.sourceArtworkUrl)} alt="" />{:else}<ProviderMark id={match.providerId} definition={provider(match.providerId)} />{/if}
+          </span>
+          <div class="match-header-copy">
             <Dialog.Title>{match.title || "Unknown track"}</Dialog.Title>
             <Dialog.Description>{match.artist || "Unknown artist"} · {providerName(match.providerId)}</Dialog.Description>
+            <p class="match-source-facts">
+              {#if match.album}<span>{match.album}</span>{/if}
+              <span>{formatDuration(match.durationMilliseconds)}</span>
+              {#if match.isrc}<span>ISRC {match.isrc}</span>{/if}
+            </p>
           </div>
           <Dialog.Close class="icon-button" aria-label="Close match dialog"><X size={18} aria-hidden="true" /></Dialog.Close>
         </header>
 
-        {#if !showLyrics}
-        <section class="mapping-source">
-          <span class="media-art mapping-art">
-            {#if match.sourceArtworkUrl}<img src={adminUrl(match.sourceArtworkUrl)} alt="" />{:else}<ProviderMark id={match.providerId} definition={provider(match.providerId)} />{/if}
-          </span>
-          <div>
-            <small>Source track</small>
-            <strong>{match.title || "Unknown track"}</strong>
-            <span>{match.artist || "Unknown artist"}{match.album ? ` · ${match.album}` : ""}</span>
-            <span>{formatDuration(match.durationMilliseconds)}{match.isrc ? ` · ISRC ${match.isrc}` : ""}</span>
-          </div>
-        </section>
-        {/if}
-
-        <div class="lyrics-review">
-          <Button variant="outline" disabled={!match.canonicalRecordingId} aria-expanded={showLyrics}
-            onclick={() => showLyrics = !showLyrics}>{showLyrics ? "Back to match" : "Wrong lyrics?"}</Button>
-          {#if !match.canonicalRecordingId}<p class="field-help">Play or match this song, then reload its details to choose lyrics.</p>{/if}
         {#if showLyrics && match.canonicalRecordingId}
-          <RecordingLyricsPicker recordingId={match.canonicalRecordingId} {providers} allowHousehold={allowedAuthorityScopes(match).includes("household")} />
-        {/if}
-        </div>
-
-        {#if !showLyrics}
+          <div class="match-section lyrics-review">
+            <RecordingLyricsPicker recordingId={match.canonicalRecordingId} {providers} allowHousehold={allowedAuthorityScopes(match).includes("household")} />
+          </div>
+        {:else}
         {#if allowedAuthorityScopes(match).includes("household")}
-          <fieldset class="authority-scope-picker" disabled={saving}>
+          <fieldset class="match-section authority-scope-picker" disabled={saving}>
             <legend>Save decision for</legend>
-            <label class:active={authorityScope === "personal"}>
-              <input bind:group={authorityScope} type="radio" value="personal" disabled={!canEditAuthorityScope(match, "personal")} />
-              <span><strong>Only me</strong><small>Overrides the household decision for your account.</small></span>
-            </label>
-            <label class:active={authorityScope === "household"}>
-              <input bind:group={authorityScope} type="radio" value="household" disabled={!canEditAuthorityScope(match, "household")} />
-              <span><strong>Household</strong><small>Applies when a listener has no personal decision.</small></span>
-            </label>
+            <div class="authority-scope-options">
+              <label class:active={authorityScope === "personal"}>
+                <input bind:group={authorityScope} type="radio" value="personal" disabled={!canEditAuthorityScope(match, "personal")} />
+                <span><strong>Only me</strong><small>Overrides the household decision for your account.</small></span>
+              </label>
+              <label class:active={authorityScope === "household"}>
+                <input bind:group={authorityScope} type="radio" value="household" disabled={!canEditAuthorityScope(match, "household")} />
+                <span><strong>Household</strong><small>Applies when a listener has no personal decision.</small></span>
+              </label>
+            </div>
           </fieldset>
         {/if}
 
-        <details class="match-technical">
-          <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Database and identity details</strong></span></summary>
+        <section class="match-section automatic-candidates" aria-labelledby="suggested-matches-heading">
+          <div class="match-section-heading">
+            <h3 id="suggested-matches-heading">Suggested matches</h3>
+            <span class="match-count">{eligibleCandidates.length}</span>
+          </div>
+          {#if eligibleCandidates.length}
+            <div class="candidate-list">
+              {#each eligibleCandidates as candidate}
+                {@const resolution = candidateResolution(candidate, match.providerId, playbackProviders)}
+                <article class="candidate-card">
+                  <div class="match-row">
+                    <MediaArtwork class="mapping-art" url={candidateArtwork(candidate)} fallback="♫" />
+                    <div class="candidate-copy">
+                      <strong>{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
+                      <small>{candidate.artist || "Unknown artist"}{candidate.album ? ` · ${candidate.album}` : ""}</small>
+                      <small>{formatDuration(candidate.durationMilliseconds)}{candidate.candidateIsrc ? ` · ISRC ${candidate.candidateIsrc}` : ""}</small>
+                      <span class="candidate-provider">
+                        <ProviderMark
+                          id={candidateProvider(candidate) || backend.toLowerCase()}
+                          definition={provider(candidateProvider(candidate))}
+                        />
+                        {providerName(candidateProvider(candidate))}
+                        {#if routingPreference(candidate.components)}
+                          <span>· {routingPreference(candidate.components)}</span>
+                        {/if}
+                      </span>
+                    </div>
+                    <span class="candidate-confidence match-confidence" style={`--confidence:${Math.round((candidate.confidence ?? 0) * 100)}%`} data-level={confidenceLevel(candidate.confidence)}>
+                      <strong>{percent(candidate.confidence)}</strong>
+                      <span class="confidence-meter" aria-hidden="true"><span></span></span>
+                      <small>confidence</small>
+                    </span>
+                    {#if resolution?.targetType === "local"}
+                      <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
+                    {:else if resolution}
+                      <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseProvider({
+                        id: resolution.externalId,
+                        externalId: resolution.externalId,
+                        externalProvider: resolution.externalProvider,
+                        title: candidate.title || candidate.backendItemId || "Provider track",
+                      })}>Choose candidate</Button>
+                    {/if}
+                  </div>
+                  <div class="candidate-detail">
+                    <div class="score-components">
+                      {#each scoreComponents(candidate) as [name, value]}
+                        {#if name !== "priorityWindow"}
+                          <span><small>{name.replaceAll("_", " ")}</small><strong>{percent(value)}</strong></span>
+                        {/if}
+                      {/each}
+                      {#if match.sourceArtworkUrl && candidate.backendItemId}
+                        <ArtworkSimilarity source={match.sourceArtworkUrl} candidate={candidateArtwork(candidate)} />
+                      {/if}
+                    </div>
+                    {#if candidate.reasons?.length || candidate.warnings?.length}
+                      <div class="candidate-reasons">
+                        {#each candidate.reasons ?? [] as reason}<span>{evidenceLabel(reason)}</span>{/each}
+                        {#each candidate.warnings ?? [] as warning}<span class="warning">{evidenceLabel(warning)}</span>{/each}
+                      </div>
+                    {/if}
+                    <details class="candidate-evidence">
+                      <summary>Full scoring evidence</summary>
+                      <dl>
+                        <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
+                        <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
+                        {#if routingPreference(candidate.components)}<div><dt>Routing preference</dt><dd>{routingPreference(candidate.components)}</dd></div>{/if}
+                        {#each candidateFacts(candidate) as [label, value]}
+                          <div><dt>{label}</dt><dd>{value}</dd></div>
+                        {/each}
+                        {#each scoreComponents(candidate) as [name, value]}
+                          <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
+                        {/each}
+                        {#each candidate.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}
+                        {#each candidate.warnings ?? [] as warning}<div><dt>Warning</dt><dd>{evidenceLabel(warning)}</dd></div>{/each}
+                      </dl>
+                    </details>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {:else}
+            <p class="match-empty">No suggestions were kept for this song. Search below to pick one yourself.</p>
+          {/if}
+        </section>
+
+        <section class="match-section match-search" aria-labelledby="find-match-heading">
+          <div class="match-section-heading">
+            <h3 id="find-match-heading">Find a different match</h3>
+          </div>
+          <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
+            <label class="field grow">
+              <span class="sr-only">Search local library and playable providers</span>
+              <input bind:value={targetQuery} required minlength="2" placeholder="Artist and title" />
+            </label>
+            <Button type="submit" disabled={loading}>
+              {loading ? "Searching…" : "Search"}
+            </Button>
+          </form>
+
+          {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
+          {#if searched && !loading}
+            <div class="provider-result-summary" aria-label="Providers with results">
+              {#each resultProviders as resultProvider}
+                <button
+                  type="button"
+                  aria-pressed={providerFilter === resultProvider.providerId}
+                  onclick={() => {
+                    providerFilter =
+                      providerFilter === resultProvider.providerId ? "" : resultProvider.providerId;
+                  }}
+                >
+                  <ProviderMark
+                    id={resultProvider.providerId === "local" ? backend.toLowerCase() : resultProvider.providerId}
+                    definition={provider(resultProvider.providerId)}
+                  />
+                  <span>{providerName(resultProvider.providerId)}</span>
+                  <strong>{resultProvider.count}</strong>
+                </button>
+              {/each}
+            </div>
+          {/if}
+          <div class="target-results">
+            {#each visibleResults as target}
+              <button
+                type="button"
+                class="match-row"
+                disabled={saving || !selectedScopeEditable}
+                onclick={() =>
+                  target.externalProvider
+                    ? void chooseProvider(target)
+                    : void chooseLocal(target.id, "Selected from indexed library search")}
+              >
+                <MediaArtwork class="mapping-art" url={target.artworkUrl} />
+                <span class="target-copy">
+                  <strong>{target.title}</strong>
+                  <small>{target.artist || "Unknown artist"} · {target.album || "Unknown album"}</small>
+                  <span class="candidate-provider">
+                    <ProviderMark
+                      id={target.externalProvider || backend.toLowerCase()}
+                      definition={provider(target.externalProvider || "")}
+                    />
+                    {providerName(target.externalProvider)}
+                    {#if routingPreference(target.components)}
+                      <span>· {routingPreference(target.components)}</span>
+                    {/if}
+                  </span>
+                </span>
+                <span class="target-meta"><strong>{formatDuration(target.durationMilliseconds)}</strong></span>
+                <span class="target-score match-confidence" style={`--confidence:${Math.round((target.confidence ?? 0) * 100)}%`} data-level={confidenceLevel(target.confidence)}>
+                  <strong>{percent(target.confidence)}</strong>
+                  <span class="confidence-meter" aria-hidden="true"><span></span></span>
+                  <small>score rank #{results.indexOf(target) + 1}</small>
+                </span>
+              </button>
+              <details class="target-evidence">
+                <summary>Evidence for {target.title}</summary>
+                <dl>
+                  <div><dt>Score rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
+                  <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>
+                  <div><dt>Raw confidence</dt><dd>{percent(target.confidence)}</dd></div>
+                  {#if target.isrc}<div><dt>ISRC</dt><dd>{target.isrc}</dd></div>{/if}
+                  {#if routingPreference(target.components)}<div><dt>Routing preference</dt><dd>{routingPreference(target.components)}</dd></div>{/if}
+                  {#each scoreComponents({ components: target.components }) as [name, value]}
+                    <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
+                  {/each}
+                  {#each target.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}
+                  {#each target.warnings ?? [] as warning}<div><dt>Warning</dt><dd>{evidenceLabel(warning)}</dd></div>{/each}
+                </dl>
+              </details>
+            {:else}
+              {#if searched && !loading}
+                <div class="compact-empty"><strong>No matching candidates found</strong><p>Try a more exact artist and title.</p></div>
+              {/if}
+            {/each}
+          </div>
+        </section>
+
+        <details class="match-section match-technical">
+          <summary>Database and identity details</summary>
           <dl>
             <div><dt>Source snapshot</dt><dd>{match.externalSnapshotId}</dd></div>
             <div><dt>Source provider</dt><dd>{match.providerId}</dd></div>
@@ -292,198 +465,22 @@
             {/each}
           </dl>
         </details>
-
-        <section class="automatic-candidates">
-          <div class="dialog-section-heading">
-            <div><strong>Automatic candidates</strong><small>Same scores used by automatic matching</small></div>
-            <span>{eligibleCandidates.length}</span>
-          </div>
-          {#if eligibleCandidates.length}
-            <div class="candidate-list">
-              {#each eligibleCandidates as candidate}
-                {@const resolution = candidateResolution(candidate, match.providerId, playbackProviders)}
-                <article class="candidate-card">
-                  <MediaArtwork
-                    class="mapping-art"
-                    url={candidateArtwork(candidate)}
-                    fallback="♫"
-                  />
-                  <div class="candidate-copy">
-                    <strong>{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
-                    <small>{candidate.artist || "Unknown artist"}{candidate.album ? ` · ${candidate.album}` : ""}</small>
-                    <small>{formatDuration(candidate.durationMilliseconds)}{candidate.candidateIsrc ? ` · ISRC ${candidate.candidateIsrc}` : ""}</small>
-                    <span class="candidate-provider">
-                      <ProviderMark
-                        id={candidateProvider(candidate) || backend.toLowerCase()}
-                        definition={provider(candidateProvider(candidate))}
-                      />
-                      {providerName(candidateProvider(candidate))}
-                      {#if routingPreference(candidate.components)}
-                        <span>· {routingPreference(candidate.components)}</span>
-                      {/if}
-                    </span>
-                  </div>
-                  <span
-                    class="candidate-confidence"
-                  >
-                    <strong>{percent(candidate.confidence)}</strong>
-                    <small>confidence</small>
-                  </span>
-                  <div class="score-components">
-                    {#each scoreComponents(candidate) as [name, value]}
-                      {#if name !== "priorityWindow"}
-                        <span>
-                          <small>{name.replaceAll("_", " ")}</small>
-                          <strong>{percent(value)}</strong>
-                        </span>
-                      {/if}
-                    {/each}
-                    {#if match.sourceArtworkUrl && candidate.backendItemId}
-                      <ArtworkSimilarity
-                        source={match.sourceArtworkUrl}
-                        candidate={candidateArtwork(candidate)}
-                      />
-                    {/if}
-                  </div>
-                  <div class="candidate-reasons">
-                    {#each [...(candidate.reasons ?? []), ...(candidate.warnings ?? [])] as reason}
-                      <span>{evidenceLabel(reason)}</span>
-                    {/each}
-                  </div>
-                  <details class="candidate-evidence">
-                    <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Full scoring evidence</strong></span></summary>
-                    <dl>
-                      <div><dt>Candidate ID</dt><dd>{candidate.libraryTrackId || candidate.backendItemId || candidateExternalId(candidate) || "—"}</dd></div>
-                      <div><dt>Raw confidence</dt><dd>{percent(candidate.confidence)}</dd></div>
-                      {#if routingPreference(candidate.components)}<div><dt>Routing preference</dt><dd>{routingPreference(candidate.components)}</dd></div>{/if}
-                      {#each candidateFacts(candidate) as [label, value]}
-                        <div><dt>{label}</dt><dd>{value}</dd></div>
-                      {/each}
-                      {#each scoreComponents(candidate) as [name, value]}
-                        <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
-                      {/each}
-                      {#each candidate.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}
-                      {#each candidate.warnings ?? [] as warning}<div><dt>Warning</dt><dd>{evidenceLabel(warning)}</dd></div>{/each}
-                    </dl>
-                  </details>
-                  {#if resolution?.targetType === "local"}
-                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseLocal(resolution.libraryTrackId, "Selected from automatic candidate evidence")}>Choose candidate</Button>
-                  {:else if resolution}
-                    <Button class="candidate-action" variant="secondary" size="sm" disabled={saving || !selectedScopeEditable} onclick={() => void chooseProvider({
-                      id: resolution.externalId,
-                      externalId: resolution.externalId,
-                      externalProvider: resolution.externalProvider,
-                      title: candidate.title || candidate.backendItemId || "Provider track",
-                    })}>Choose candidate</Button>
-                  {/if}
-                </article>
-              {/each}
-            </div>
-          {:else}
-            <p class="dialog-empty">No retained automatic candidates. Search the indexed library or every playable provider.</p>
-          {/if}
-        </section>
-
-        <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
-          <label class="grow">
-            <span>Search local library and playable providers</span>
-            <input bind:value={targetQuery} required minlength="2" />
-          </label>
-          <Button type="submit" disabled={loading}>
-            {loading ? "Searching…" : "Search"}
-          </Button>
-        </form>
-
-        {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
-        {#if searched && !loading}
-          <div class="provider-result-summary" aria-label="Providers with results">
-            {#each resultProviders as resultProvider}
-              <button
-                type="button"
-                aria-pressed={providerFilter === resultProvider.providerId}
-                onclick={() => {
-                  providerFilter =
-                    providerFilter === resultProvider.providerId ? "" : resultProvider.providerId;
-                }}
-              >
-                <ProviderMark
-                  id={resultProvider.providerId === "local" ? backend.toLowerCase() : resultProvider.providerId}
-                  definition={provider(resultProvider.providerId)}
-                />
-                <span>{providerName(resultProvider.providerId)}</span>
-                <strong>{resultProvider.count}</strong>
-              </button>
-            {/each}
-          </div>
-        {/if}
-        <div class="target-results">
-          {#each visibleResults as target}
-            <button
-              type="button"
-              disabled={saving || !selectedScopeEditable}
-              onclick={() =>
-                target.externalProvider
-                  ? void chooseProvider(target)
-                  : void chooseLocal(target.id, "Selected from indexed library search")}
-            >
-              <MediaArtwork class="mapping-art" url={target.artworkUrl} />
-              <span class="target-copy">
-                <span class="candidate-provider">
-                  <ProviderMark
-                    id={target.externalProvider || backend.toLowerCase()}
-                    definition={provider(target.externalProvider || "")}
-                  />
-                  {providerName(target.externalProvider)}
-                  {#if routingPreference(target.components)}
-                    <span>· {routingPreference(target.components)}</span>
-                  {/if}
-                </span>
-                <strong>{target.title}</strong>
-                <small>{target.artist || "Unknown artist"}</small>
-                <small>{target.album || "Unknown album"}</small>
-              </span>
-              <span class="target-meta">
-                <strong>{formatDuration(target.durationMilliseconds)}</strong>
-                <small>{target.externalId || target.backendItemId || target.id}</small>
-              </span>
-              <span class="target-score">
-                <strong>{percent(target.confidence)}</strong>
-                <small>confidence</small>
-                <small>score rank #{results.indexOf(target) + 1}</small>
-              </span>
-            </button>
-            <details class="target-evidence">
-              <summary class="disclosure-summary compact"><span class="disclosure-label"><strong>Evidence for {target.title}</strong></span></summary>
-              <dl>
-                <div><dt>Score rank</dt><dd>#{results.indexOf(target) + 1}</dd></div>
-                <div><dt>Candidate ID</dt><dd>{target.externalId || target.backendItemId || target.id}</dd></div>
-                <div><dt>Raw confidence</dt><dd>{percent(target.confidence)}</dd></div>
-                {#if target.isrc}<div><dt>ISRC</dt><dd>{target.isrc}</dd></div>{/if}
-                {#if routingPreference(target.components)}<div><dt>Routing preference</dt><dd>{routingPreference(target.components)}</dd></div>{/if}
-                {#each scoreComponents({ components: target.components }) as [name, value]}
-                  <div><dt>{evidenceLabel(name)}</dt><dd>{percent(value)}</dd></div>
-                {/each}
-                {#each target.reasons ?? [] as reason}<div><dt>Reason</dt><dd>{evidenceLabel(reason)}</dd></div>{/each}
-                {#each target.warnings ?? [] as warning}<div><dt>Warning</dt><dd>{evidenceLabel(warning)}</dd></div>{/each}
-              </dl>
-            </details>
-          {:else}
-            {#if searched && !loading}
-              <div class="compact-empty"><strong>No matching candidates found</strong><p>Try a more exact artist and title.</p></div>
-            {/if}
-          {/each}
-        </div>
-
         {/if}
 
-        <footer class="dialog-actions">
+        <footer class="dialog-actions match-actions">
+          <span class="match-lyrics-action">
+            <Button variant="outline" disabled={!match.canonicalRecordingId} aria-expanded={showLyrics}
+              aria-describedby={match.canonicalRecordingId ? undefined : "match-lyrics-help"}
+              onclick={() => showLyrics = !showLyrics}>{showLyrics ? "Back to match" : "Wrong lyrics?"}</Button>
+            {#if !match.canonicalRecordingId}<small id="match-lyrics-help">Play or match this song, then reload its details to choose lyrics.</small>{/if}
+          </span>
           {#if showLyrics}
             <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Done</Dialog.Close>
           {:else}
-          {#if showReject}
-            <Button variant="destructive" disabled={!selectedScopeEditable} onclick={() => onReject?.(match!, authorityScope)}>Reject candidate</Button>
-          {/if}
-          <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
+            {#if showReject}
+              <Button variant="destructive" disabled={!selectedScopeEditable} onclick={() => onReject?.(match!, authorityScope)}>Reject candidate</Button>
+            {/if}
+            <Dialog.Close class={buttonVariants({ variant: "secondary" })}>Cancel</Dialog.Close>
           {/if}
         </footer>
       {/if}
@@ -491,35 +488,3 @@
   </Dialog.Portal>
 </Dialog.Root>
 
-<style>
-  .lyrics-review { padding: var(--surface-gutter); display: grid; gap: var(--space-3); min-width: 0; }
-  .lyrics-review > :global(button) { justify-self: start; }
-  .authority-scope-picker {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-2);
-    margin: 0;
-    border: 0;
-    padding: 0;
-  }
-  .authority-scope-picker legend { margin-bottom: var(--space-2); font-size: var(--text-xs); font-weight: 750; }
-  .authority-scope-picker label {
-    display: grid;
-    min-width: 0;
-    min-height: var(--control-md);
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: start;
-    gap: var(--space-2);
-    border: 1px solid var(--color-edge);
-    border-radius: var(--radius-md);
-    padding: var(--space-2) var(--space-3);
-    cursor: pointer;
-  }
-  .authority-scope-picker label.active { border-color: var(--color-signal); background: var(--color-signal-muted); }
-  .authority-scope-picker input { margin-top: .2rem; accent-color: var(--color-signal); }
-  .authority-scope-picker strong, .authority-scope-picker small { display: block; overflow-wrap: anywhere; }
-  .authority-scope-picker small { margin-top: .1rem; color: var(--color-ink-muted); line-height: 1.35; }
-  @media (max-width: 520px) {
-    .authority-scope-picker { grid-template-columns: minmax(0, 1fr); }
-  }
-</style>

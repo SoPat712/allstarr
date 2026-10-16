@@ -6882,3 +6882,19 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: `test-results/search-order-${width}-${theme}.png`, fullPage: true });
   });
 }
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Match review dialog is readable and keeps its decision controls in reach — ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await page.goto("#/library/playlists");
+    await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+    await page.getByRole("button", { name: "Open mapping details for Test song" }).click();
+    const dialog = page.getByRole("dialog", { name: "Test song" });
+    await expect(dialog).toBeVisible();
+    await page.screenshot({ path: `test-results/match-dialog-${width}-${theme}.png` });
+    await dialog.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+    await page.screenshot({ path: `test-results/match-dialog-${width}-${theme}-end.png` });
+  });
+}
