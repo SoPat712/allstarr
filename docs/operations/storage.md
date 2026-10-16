@@ -11,6 +11,7 @@ Compose mounts `ALLSTARR_DATA_PATH` at `/app/data`; `.env.example` sets `./data`
 | `allstarr.db`, `allstarr.db-wal`, `allstarr.db-shm` | Database and live SQLite sidecars |
 | `keyring.json` | Keys for encrypted saved credentials |
 | `data-protection/` | Browser session protection keys |
+| `.allstarr-storage` | Owned marker used to recognize a copied data folder |
 | `downloads/`, `kept/` | Managed and retained music |
 | `extensions/` | Installed extension packages |
 | `cache/` | Media cache and temporary download/import workspaces |
@@ -31,7 +32,7 @@ Startup enables WAL, applies the checked-in baseline, and runs an integrity chec
 | `Storage__DatabaseFileName` | `allstarr.db` | File name within the data directory |
 | `Storage__AutoMigrate` | `true` | Apply the baseline before readiness |
 | `Storage__CommandTimeoutSeconds` | `30` | Command execution timeout |
-| `Storage__BackupRetentionCount` | `10` | Number of recent backup archives to retain (1–1000) |
+| `Storage:BackupRetentionCount` | `10` | Saved in Settings; number of recent backup archives to retain (1–1000) |
 
 Development installations use a fresh SQLite baseline; PostgreSQL data is not imported. Preserve existing PostgreSQL data separately before replacing an installation. Do not remove media roots or the encryption key ring.
 
@@ -87,4 +88,14 @@ A database that has retained superseded download artifacts cannot be migrated ba
 
 A version 2 upgrade can retain its original kept and permanent-download files in place. New managed files use an `Allstarr` subfolder within each existing persistent media mount, so a backend library already watching the kept mount continues to see newly kept songs. The original directories and files are not renamed. Import previews exclude exact files already owned by the new managed-file store rather than excluding a folder by name. SQLite records the exact root, path, filesystem identity, size and checksum, together with the administrator's import receipt. These originals have permanent protected references. Playback, lyrics and downloads read them; cleanup, Remove and Release Keep do not delete or retarget them. Existing lyrics sidecars are preserved, and Allstarr does not create sidecars beside an imported original.
 
-A verified database-and-key-ring backup includes the ownership proof but excludes the audio. Stop Allstarr before copying its data folder and all retained original media roots, then restore the same container paths on the new host. A changed inode or missing mount makes that original unavailable until its files are restored or explicitly reviewed again. Keep the stopped version 2 folders until the upgrade is verified. Going back to version 2 uses its untouched environment and original folders; rolling back a version 3 database uses the matching older backup and image. A populated original-media schema refuses a downgrade that would discard its protections.
+A verified database-and-key-ring backup includes the ownership proof but excludes the audio. Stop Allstarr before copying its data folder and all retained original media roots, then restore the same container paths on the new host. After a stopped copy, Allstarr recognizes the new data folder and queues verification of already owned files. It checks changed filesystem identities against their saved contents before rebinding ownership. Missing mounts, changed bytes and symbolic links stay unavailable for review. Keep the stopped version 2 folders until the upgrade is verified. Going back to version 2 uses its untouched environment and original folders; rolling back a version 3 database uses the matching older backup and image. A populated original-media schema refuses a downgrade that would discard its protections.
+
+## Verifying a copied folder
+
+Keep the container paths unchanged when moving data, especially the original `/app/kept` and `/app/downloads` mounts in an upgraded installation. Copy the complete stopped folder, including `.allstarr-storage`, SQLite sidecars and the key ring. Do not edit the marker or copy individual live database files. The same image recognizes the copy and records **Verify saved files** as durable work in Activity. Health and native proxying remain available; other queued work resumes after verification. Already verified files become readable as the work proceeds. Playback retains its normal opened-file identity checks and does not rehash the entire song on each request.
+
+Verification reads only paths already owned by the database. It never adopts arbitrary neighboring files or changes audio, lyrics, references, account revisions, credential versions or the immutable original import provenance. Hashing runs outside database writers. Each identity update checks the current job, storage generation and exact saved file revision in one transaction. Interrupted work resumes and skips identities already verified. An interrupted legacy import retains files already adopted; unverified originals whose identity changed need a new preview.
+
+If a file needs review, restore its original bytes and path, then request another check through `POST /api/admin/storage/files/verify`. The authenticated status API at `GET /api/admin/storage/files` returns progress and an antiforgery token; verification requires that token and an active administrator. Repeated requests reuse pending work. Missing or unsafe files remain protected and unavailable while other verified files stay usable. Per-file verification details use the shorter job-history retention policy so large moves do not crowd out administrator events.
+
+The populated copy-recovery schema cannot be downgraded in place. Use the matching older image and a backup from before the upgrade. Database-and-key-ring ZIPs still exclude audio; preserve the original media roots or use a complete stopped-folder copy when relocating music as well.

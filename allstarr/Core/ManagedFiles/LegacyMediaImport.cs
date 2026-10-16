@@ -57,17 +57,18 @@ public sealed class LegacyMediaImport(IDbContextFactory<AllstarrDbContext> facto
         var db = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
         var files = scope.ServiceProvider.GetRequiredService<FilePlacementService>();
         await RequireCurrentAsync(db, claim, importId, token);
-        files.ValidateLegacySnapshot(snapshot);
         var prior = await (from adoption in db.Set<LegacyMediaAdoptionRecord>().AsNoTracking()
                            join file in db.ManagedFiles.AsNoTracking() on adoption.ManagedFileId equals file.Id
                            where file.CanonicalPath == snapshot.Path
-                           select new { file.FileSystemDeviceId, file.FileSystemFileId, file.Length }).SingleOrDefaultAsync(token);
+                           select file).SingleOrDefaultAsync(token);
         if (prior != null)
         {
-            if (prior.FileSystemDeviceId != snapshot.DeviceId || prior.FileSystemFileId != snapshot.FileId || prior.Length != snapshot.Length)
+            if (prior.RootId != snapshot.RootId || prior.TargetRootPath != snapshot.RootPath || prior.Length != snapshot.Length)
                 throw new IOException("The legacy path has a different adoption record.");
+            files.VerifyOwnedFileIdentity(EfManagedFileOwnershipStore.Map(prior)!, token);
             return;
         }
+        files.ValidateLegacySnapshot(snapshot);
         var prepared = await files.PrepareLegacyAdoptionAsync(snapshot, clock.UtcNow, token);
         Guid? recordingId = null;
         if (snapshot.ProviderId != null && snapshot.ExternalId != null)

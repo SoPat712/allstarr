@@ -1344,6 +1344,22 @@ namespace allstarr.Core.Storage.Migrations
                     b.ToTable("legacy_media_adoptions", (string)null);
                 });
 
+            modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedStorageIdentityRecord", b =>
+                {
+                    b.Property<int>("Id").HasColumnType("INTEGER");
+                    b.Property<Guid>("Generation").HasColumnType("TEXT");
+                    b.Property<string>("MarkerDeviceId").IsRequired().HasMaxLength(64).HasColumnType("TEXT");
+                    b.Property<string>("MarkerFileId").IsRequired().HasMaxLength(64).HasColumnType("TEXT");
+                    b.Property<long>("Revision").IsConcurrencyToken().HasColumnType("INTEGER");
+                    b.Property<long>("UpdatedAt").HasColumnType("INTEGER");
+                    b.Property<Guid?>("VerificationJobId").HasColumnType("TEXT");
+                    b.HasKey("Id");
+                    b.ToTable("managed_storage_identity", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_managed_storage_singleton", "\"Id\" = 1 AND \"Revision\" > 0");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.ManagedFiles.ManagedFileOwnershipEntity", b =>
                 {
                     b.Property<Guid>("Id")

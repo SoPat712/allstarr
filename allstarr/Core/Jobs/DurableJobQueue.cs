@@ -113,8 +113,7 @@ public sealed partial class DurableJobQueue
             request.Capability,
             request.CorrelationId,
             cancellationToken, request.Type.Trim().ToLowerInvariant());
-        var scopeKey = CreateUserScopeKey(
-            savedContext.OwnerUserId);
+        var scopeKey = CreateSavedScopeKey(savedContext);
         var type = request.Type.Trim().ToLowerInvariant();
         var idempotencyKey = request.IdempotencyKey.Trim();
         var now = _clock.UtcNow;
@@ -638,4 +637,7 @@ public sealed partial class DurableJobQueue
 
     internal static string CreateUserScopeKey(Guid ownerUserId) =>
         $"user:{ownerUserId:N}";
+
+    private static string CreateSavedScopeKey(DurableJobSavedContext context) =>
+        context.OwnerUserId is { } user ? CreateUserScopeKey(user) : "system:managed-storage";
 }

@@ -23,6 +23,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Providers/Extensions/ExtensionSignedSessionClient.cs"] = "protected extension session",
             ["Shelved/Intelligence/ListeningHistoryImportPersistence.cs"] = "bounded listening-history upload",
             ["Core/ManagedFiles/FilePlacementService.cs"] = "managed audio and artwork",
+            ["Core/ManagedFiles/FilePlacementService.Recovery.cs"] = "owned data-folder identity marker",
             ["Core/ManagedFiles/PhysicalManagedFileOperations.cs"] = "managed audio and artwork",
             ["Core/Operations/PlatformReadinessService.cs"] = "temporary readiness probe",
             ["Core/Storage/DurableBackupService.cs"] = "backup archive",

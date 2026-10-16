@@ -28,6 +28,7 @@ public sealed class AuditEventRetentionService(
         configuration.GetValue("Operations:EventLog:MaximumRows", 250000), 1000, 5000000);
     // Job attempt history is high-volume; it expires sooner and is trimmed first so it
     // cannot crowd administrator and security events out of the shared row limit.
+    // Per-file storage verification follows the same short-lived detail policy.
     private readonly TimeSpan jobHistoryRetention = TimeSpan.FromDays(Math.Clamp(
         configuration.GetValue("Operations:EventLog:JobHistoryRetentionDays", 7), 1, 3650));
 
@@ -89,7 +90,7 @@ public sealed class AuditEventRetentionService(
                 {
                     var take = Math.Min(batchSize, overflow);
                     var candidates = await Deletable(database)
-                        .OrderBy(item => item.Category == JobHistoryCategory ? 0 : 1)
+                        .OrderBy(item => item.Category == JobHistoryCategory || item.Category == "managed-storage" ? 0 : 1)
                         .ThenBy(item => item.CreatedAt)
                         .ThenBy(item => item.Id)
                         .Take(take)
@@ -147,7 +148,7 @@ public sealed class AuditEventRetentionService(
             await using var scope = scopeFactory.CreateAsyncScope();
             var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
             var candidates = await Deletable(database)
-                .Where(item => item.Category == JobHistoryCategory && item.CreatedAt < cutoff)
+                .Where(item => (item.Category == JobHistoryCategory || item.Category == "managed-storage") && item.CreatedAt < cutoff)
                 .OrderBy(item => item.CreatedAt)
                 .ThenBy(item => item.Id)
                 .Take(batchSize)
