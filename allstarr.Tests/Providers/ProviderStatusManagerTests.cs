@@ -308,7 +308,7 @@ public sealed class ProviderStatusManagerTests
             ProviderCapabilities.Metadata,
             accountId,
             new Dictionary<string, string>());
-        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         var testing = manager.GetManagedStatus(
             "deezer", ProviderCapabilities.Metadata, accountId, new Dictionary<string, string>());

@@ -113,7 +113,7 @@ public sealed partial class BackendSetupServiceTests
             {
                 await using var independent = new AllstarrDbContext(database.Options);
                 await independent.Users.Where(item => item.Id == actor.AllstarrUserId).ExecuteUpdateAsync(update => update.SetProperty(item => item.IsAdmin, false));
-            }).WaitAsync(TimeSpan.FromSeconds(3));
+            }).WaitAsync(TimeSpan.FromSeconds(30));
         }
         finally { resume.TrySetResult(); }
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => saving);

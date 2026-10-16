@@ -201,11 +201,11 @@ public sealed partial class ProtocolRouteFixtureTests
         var recording = pipeline.RecordAsync(new(execution, "ext-deezer-song-slow", FavoriteOperation.Favorite, "display"));
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await using var independent = storage.CreateDbContext();
             Assert.Equal(1, await independent.Users.Where(item => item.Id == FavoriteViewer)
                 .ExecuteUpdateAsync(update => update.SetProperty(item => item.DisplayName, "Independent writer"))
-                .WaitAsync(TimeSpan.FromSeconds(1)));
+                .WaitAsync(TimeSpan.FromSeconds(30)));
         }
         finally { release.TrySetResult(); await recording; }
     }

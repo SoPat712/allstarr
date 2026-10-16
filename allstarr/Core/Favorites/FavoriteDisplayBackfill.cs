@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
@@ -55,8 +54,10 @@ public sealed class FavoriteDisplayBackfillQueue(
 }
 
 public sealed class FavoriteDisplayBackfillJobHandler(
-    IDbContextFactory<AllstarrDbContext> factory, FavoriteActionPipeline pipeline, IPlatformClock clock) : IDurableJobHandler, IDisposable
+    IDbContextFactory<AllstarrDbContext> factory, FavoriteActionPipeline pipeline, IPlatformClock clock,
+    TimeProvider? timeProvider = null) : IDurableJobHandler, IDisposable
 {
+    private readonly TimeProvider lookupClock = timeProvider ?? TimeProvider.System;
     private readonly SemaphoreSlim lookupGate = new(1, 1);
     private long lastLookup;
     private bool hasLookup;
@@ -79,8 +80,8 @@ public sealed class FavoriteDisplayBackfillJobHandler(
         {
             if (hasLookup)
             {
-                var remaining = TimeSpan.FromSeconds(1) - Stopwatch.GetElapsedTime(lastLookup);
-                if (remaining > TimeSpan.Zero) await Task.Delay(remaining, cancellationToken);
+                var remaining = TimeSpan.FromSeconds(1) - lookupClock.GetElapsedTime(lastLookup);
+                if (remaining > TimeSpan.Zero) await Task.Delay(remaining, lookupClock, cancellationToken);
             }
             await using var read = await factory.CreateDbContextAsync(cancellationToken);
             state = await FavoriteDisplayBackfillQueue.Missing(read).AsNoTracking().SingleOrDefaultAsync(item =>
@@ -103,7 +104,7 @@ public sealed class FavoriteDisplayBackfillJobHandler(
             catch (UnauthorizedAccessException) { return DurableJobCompletion.Cancelled(); }
             finally
             {
-                lastLookup = Stopwatch.GetTimestamp();
+                lastLookup = lookupClock.GetTimestamp();
                 hasLookup = true;
             }
         }

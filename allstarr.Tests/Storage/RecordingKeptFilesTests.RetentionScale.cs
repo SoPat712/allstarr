@@ -51,7 +51,7 @@ public sealed partial class RecordingKeptFilesTests
             var elapsed = Stopwatch.StartNew();
             barrier.Resume.TrySetResult();
 
-            await favorite.WaitAsync(TimeSpan.FromSeconds(3), stop.Token);
+            await favorite.WaitAsync(TimeSpan.FromSeconds(30), stop.Token);
 
             Assert.InRange(elapsed.Elapsed.TotalSeconds, 0, 3);
             await acceptance.WaitAsync(TimeSpan.FromSeconds(30), stop.Token);

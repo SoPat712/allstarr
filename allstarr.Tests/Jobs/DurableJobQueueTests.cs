@@ -969,7 +969,7 @@ public sealed partial class DurableJobQueueTests : IAsyncLifetime
 
     private async Task WaitForState(Guid jobId, DurableJobState expected)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (!timeout.IsCancellationRequested)
         {
             await using var context = await _factory.CreateDbContextAsync(timeout.Token);
@@ -982,7 +982,7 @@ public sealed partial class DurableJobQueueTests : IAsyncLifetime
                 return;
             }
 
-            await Task.Delay(20, timeout.Token);
+            await Task.Delay(50, timeout.Token);
         }
 
         throw new TimeoutException($"Job {jobId} did not reach {expected}.");

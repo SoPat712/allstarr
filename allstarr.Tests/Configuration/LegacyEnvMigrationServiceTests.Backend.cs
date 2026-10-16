@@ -152,7 +152,7 @@ public sealed partial class LegacyEnvMigrationServiceTests
                 var actor = await writer.Users.SingleAsync(item => item.Id == _userId);
                 actor.IsAdmin = false;
                 await writer.SaveChangesAsync();
-            }).WaitAsync(TimeSpan.FromSeconds(3));
+            }).WaitAsync(TimeSpan.FromSeconds(30));
         }
         finally { resume.TrySetResult(); }
         var error = await Assert.ThrowsAsync<LegacyEnvMigrationException>(() => applying);

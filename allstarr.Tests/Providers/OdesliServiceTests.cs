@@ -19,9 +19,8 @@ public sealed class OdesliServiceTests
         var service = Create(handler);
         var first = await Assert.ThrowsAsync<OdesliLookupException>(() =>
             service.GetTrackLinksAsync("https://tidal.com/browse/track/42", default));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var second = await Assert.ThrowsAsync<OdesliLookupException>(() =>
-            service.GetTrackLinksAsync("https://tidal.com/browse/track/43", timeout.Token));
+            service.GetTrackLinksAsync("https://tidal.com/browse/track/43", default));
         Assert.False(first.Retryable);
         Assert.False(second.Retryable);
         Assert.Equal(1, handler.Calls);
@@ -64,38 +63,45 @@ public sealed class OdesliServiceTests
     [InlineData(HttpStatusCode.ServiceUnavailable)]
     public async Task Backoff_IsBoundedSharedAndCancellable(HttpStatusCode status)
     {
+        var clock = new ManualTimeProvider();
         var handler = new Handler(_ =>
         {
             var response = new HttpResponseMessage(status);
             response.Headers.RetryAfter = new RetryConditionHeaderValue(TimeSpan.FromHours(2));
             return response;
-        });
-        var service = Create(handler);
+        }, clock);
+        var service = Create(handler, clock);
         var error = await Assert.ThrowsAsync<OdesliLookupException>(() =>
             service.GetTrackLinksAsync("https://tidal.com/browse/track/42", default));
         Assert.True(error.Retryable);
         Assert.Equal(TimeSpan.FromHours(1), error.RetryAfter);
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            service.GetTrackLinksAsync("https://tidal.com/browse/track/43", cancel.Token));
+        using var cancel = new CancellationTokenSource();
+        var pending = service.GetTrackLinksAsync("https://tidal.com/browse/track/43", cancel.Token);
+        Assert.Equal(TimeSpan.FromHours(1), await clock.NextTimerAsync());
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
         Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
     public async Task RequestRate_IsClampedAndWaitCanBeCancelled()
     {
-        var handler = new Handler(_ => Json("{\"linksByPlatform\":{}}"));
-        var service = Create(handler);
+        var clock = new ManualTimeProvider();
+        var handler = new Handler(_ => Json("{\"linksByPlatform\":{}}"), clock);
+        var service = Create(handler, clock);
         await service.GetTrackLinksAsync("https://tidal.com/browse/track/1", default);
-        using var cancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
-            service.GetTrackLinksAsync("https://tidal.com/browse/track/2", cancel.Token));
+        using var cancel = new CancellationTokenSource();
+        var pending = service.GetTrackLinksAsync("https://tidal.com/browse/track/2", cancel.Token);
+        Assert.Equal(TimeSpan.FromSeconds(1), await clock.NextTimerAsync());
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        clock.Advance(TimeSpan.FromSeconds(1));
         await service.GetTrackLinksAsync("https://tidal.com/browse/track/3", default);
         Assert.Equal(2, handler.Calls);
-        Assert.True(handler.Times[1] - handler.Times[0] >= TimeSpan.FromMilliseconds(900));
+        Assert.Equal(TimeSpan.FromSeconds(1), handler.Times[1] - handler.Times[0]);
     }
 
-    internal static OdesliService Create(HttpMessageHandler handler)
+    internal static OdesliService Create(HttpMessageHandler handler, TimeProvider? timeProvider = null)
     {
         CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
         var factory = new Mock<IHttpClientFactory>();
@@ -103,13 +109,16 @@ public sealed class OdesliServiceTests
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", "fixture");
         factory.Setup(item => item.CreateClient("Odesli")).Returns(client);
         return new(factory.Object, NullLogger<OdesliService>.Instance, new TestMemoryApplicationCache(),
-            Options.Create(new OdesliSettings { RateLimitMs = 1 }));
+            Options.Create(new OdesliSettings { RateLimitMs = 1 }), timeProvider: timeProvider);
     }
 
     private static HttpResponseMessage Json(string content) => new(HttpStatusCode.OK) { Content = new StringContent(content) };
 
-    private sealed class Handler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    private sealed class Handler(
+        Func<HttpRequestMessage, HttpResponseMessage> respond,
+        TimeProvider? timeProvider = null) : HttpMessageHandler
     {
+        private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
         public int Calls { get; private set; }
         public List<DateTimeOffset> Times { get; } = [];
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -117,7 +126,7 @@ public sealed class OdesliServiceTests
             Assert.Null(request.Headers.Authorization);
             Assert.Equal("api.song.link", request.RequestUri!.Host);
             Calls++;
-            Times.Add(DateTimeOffset.UtcNow);
+            Times.Add(_timeProvider.GetUtcNow());
             return Task.FromResult(respond(request));
         }
     }

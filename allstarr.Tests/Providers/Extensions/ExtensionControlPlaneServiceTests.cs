@@ -267,7 +267,9 @@ public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
                     ProviderCapabilityKind.Metadata, out activeCapability));
                 previous = (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id);
                 uninstall = Task.Run(() => coordinator.UninstallAsync(previous.Id, previous.Revision));
-                await Task.WhenAny(uninstall, Task.Delay(TimeSpan.FromMilliseconds(200)));
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                while ((await _service.ListPackagesAsync(cancellationToken: timeout.Token)).Single(item => item.Id == previous.Id).State != ExtensionPackageState.Uninstalled)
+                    await Task.Delay(50, timeout.Token);
                 Assert.False(uninstall.IsCompleted);
                 Assert.Equal(ExtensionPackageState.Uninstalled,
                     (await _service.ListPackagesAsync()).Single(item => item.Id == previous.Id).State);

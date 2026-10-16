@@ -106,13 +106,24 @@ public sealed class ProgressiveCachingStreamTests
     public async Task ReadBeyondAvailable_TimesOutWithIOException()
     {
         await using var file = FixtureFile([1, 2, 3]);
+        var clock = new ManualTimeProvider();
+        var entered = Signal();
         await using var reader = new ProgressiveCachingStream(
             file,
-            () => new(0, null, false, false, NeverCompletingTask(), NeverCompletingTask()),
+            () =>
+            {
+                entered.TrySetResult();
+                return new(0, null, false, false, NeverCompletingTask(), NeverCompletingTask());
+            },
             static () => { },
-            TimeSpan.FromMilliseconds(10));
+            TimeSpan.FromMilliseconds(10),
+            timeProvider: clock);
 
-        await Assert.ThrowsAsync<IOException>(() => reader.ReadAsync(new byte[1].AsMemory()).AsTask());
+        var pending = reader.ReadAsync(new byte[1].AsMemory()).AsTask();
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.Equal(TimeSpan.FromMilliseconds(10), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromMilliseconds(10));
+        await Assert.ThrowsAsync<IOException>(() => pending.WaitAsync(TimeSpan.FromSeconds(30)));
     }
 
     [Fact]
@@ -211,24 +222,28 @@ public sealed class ProgressiveCachingStreamTests
     public async Task SeekAheadWait_SpuriousNotificationsDoNotResetTheStallTimeout()
     {
         await using var file = FixtureFile(new byte[100]);
-        using var canceled = new CancellationTokenSource();
+        var clock = new ManualTimeProvider();
+        var changed = Signal();
         var available = 1;
         await using var reader = new ProgressiveCachingStream(file,
             () => new(available, 100, false, false,
-                Task.Delay(10, canceled.Token), Task.CompletedTask), () => { }, TimeSpan.FromMilliseconds(80));
+                changed.Task, Task.CompletedTask), () => { }, TimeSpan.FromMilliseconds(80),
+            timeProvider: clock);
         reader.Position = 80;
-        var pending = reader.ReadAsync(new byte[1], canceled.Token).AsTask();
-        try
+        var pending = reader.ReadAsync(new byte[1]).AsTask();
+
+        Assert.Equal(TimeSpan.FromMilliseconds(80), await clock.NextTimerAsync());
+        for (var remaining = 60; remaining > 0; remaining -= 20)
         {
-            await Assert.ThrowsAsync<IOException>(() => pending.WaitAsync(TimeSpan.FromMilliseconds(350)));
+            clock.Advance(TimeSpan.FromMilliseconds(20));
+            var previous = changed;
+            changed = Signal();
+            previous.TrySetResult();
+            Assert.Equal(TimeSpan.FromMilliseconds(remaining), await clock.NextTimerAsync());
         }
-        finally
-        {
-            canceled.Cancel();
-            try { await pending; }
-            catch (OperationCanceledException) { }
-            catch (IOException) { }
-        }
+
+        clock.Advance(TimeSpan.FromMilliseconds(20));
+        await Assert.ThrowsAsync<IOException>(() => pending.WaitAsync(TimeSpan.FromSeconds(30)));
     }
 
     [Fact]
@@ -236,15 +251,24 @@ public sealed class ProgressiveCachingStreamTests
     {
         var payload = Enumerable.Range(0, 8).Select(index => (byte)index).ToArray();
         await using var file = FixtureFile(payload);
+        var clock = new ManualTimeProvider();
         var snapshots = 0;
         await using var reader = new ProgressiveCachingStream(file,
             () => new(++snapshots >= 3 ? payload.Length : snapshots, payload.Length, false, false,
-                NeverCompletingTask(), Task.CompletedTask), () => { }, TimeSpan.FromMilliseconds(10));
+                NeverCompletingTask(), Task.CompletedTask), () => { }, TimeSpan.FromMilliseconds(10),
+            timeProvider: clock);
         reader.Position = 7;
         snapshots = 0;
 
         var buffer = new byte[1];
-        Assert.Equal(1, await reader.ReadAsync(buffer).AsTask().WaitAsync(TimeSpan.FromSeconds(5)));
+        var pending = reader.ReadAsync(buffer).AsTask();
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            Assert.Equal(TimeSpan.FromMilliseconds(10), await clock.NextTimerAsync());
+            clock.Advance(TimeSpan.FromMilliseconds(10));
+        }
+
+        Assert.Equal(1, await pending.WaitAsync(TimeSpan.FromSeconds(30)));
         Assert.Equal(payload[7], buffer[0]);
         Assert.Equal(3, snapshots);
     }
@@ -255,7 +279,7 @@ public sealed class ProgressiveCachingStreamTests
         const int bytesPerSecond = 1024;
         var payload = Enumerable.Range(0, 17 * bytesPerSecond).Select(index => (byte)(index % 251)).ToArray();
         await using var file = FixtureFile(payload);
-        var clock = new ProgressiveClock();
+        var clock = new ManualTimeProvider();
         var available = bytesPerSecond;
         var publishing = false;
         ProgressiveCacheReadState State()
@@ -280,14 +304,6 @@ public sealed class ProgressiveCachingStreamTests
         Assert.Equal(TimeSpan.FromSeconds(15), clock.GetElapsedTime(0));
     }
 
-    private sealed class ProgressiveClock : TimeProvider
-    {
-        private long ticks;
-        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
-        public override long GetTimestamp() => ticks;
-        public void Advance(TimeSpan elapsed) => ticks += elapsed.Ticks;
-    }
-
     private static TaskCompletionSource Signal() =>
         new(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -295,22 +311,26 @@ public sealed class ProgressiveCachingStreamTests
     public async Task LongerInitialWaitAppliesOnlyWhileNoBytesHaveArrived()
     {
         await using var file = FixtureFile(new byte[100]);
+        var clock = new ManualTimeProvider();
         var available = 0;
         var changed = Signal();
         await using var reader = new ProgressiveCachingStream(file,
             () => new(Volatile.Read(ref available), 100, false, false, changed.Task, Task.CompletedTask),
-            () => { }, TimeSpan.FromMilliseconds(50), initialWaitTimeout: TimeSpan.FromSeconds(2));
+            () => { }, TimeSpan.FromMilliseconds(50), initialWaitTimeout: TimeSpan.FromSeconds(2), timeProvider: clock);
         var first = reader.ReadAsync(new byte[1]).AsTask();
-        await Task.Delay(150);
+        Assert.Equal(TimeSpan.FromSeconds(2), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromMilliseconds(150));
         Assert.False(first.IsCompleted);
         Volatile.Write(ref available, 1);
         var previous = changed;
         changed = Signal();
         previous.TrySetResult();
-        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(1)));
+        Assert.Equal(1, await first.WaitAsync(TimeSpan.FromSeconds(30)));
         reader.Position = 80;
-        await Assert.ThrowsAsync<IOException>(() => reader.ReadAsync(new byte[1]).AsTask()
-            .WaitAsync(TimeSpan.FromMilliseconds(500)));
+        var pending = reader.ReadAsync(new byte[1]).AsTask();
+        Assert.Equal(TimeSpan.FromMilliseconds(50), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromMilliseconds(50));
+        await Assert.ThrowsAsync<IOException>(() => pending.WaitAsync(TimeSpan.FromSeconds(30)));
     }
 
     private static Task NeverCompletingTask() =>

@@ -54,6 +54,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
     private readonly IApplicationCache _cache;
     private readonly ApplicationCacheRequestCoalescer _coalescer;
     private readonly ILogger<MusicBrainzService> _logger;
+    private readonly TimeProvider _timeProvider;
     private readonly string _sourceId;
     private readonly string _sourceRevision;
     private readonly string _userAgent;
@@ -66,7 +67,8 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         IOptions<CacheSettings> cacheSettings,
         IApplicationCache cache,
         ApplicationCacheRequestCoalescer coalescer,
-        ILogger<MusicBrainzService> logger)
+        ILogger<MusicBrainzService> logger,
+        TimeProvider? timeProvider = null)
     {
         _settings = settings.Value;
         _sourceId = NormalizeSourceId(_settings.SourceId);
@@ -83,6 +85,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         _cache = cache;
         _coalescer = coalescer;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public string ConfiguredSourceId => _sourceId;
@@ -396,10 +399,11 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         await _rateLimitSemaphore.WaitAsync(cancellationToken);
         try
         {
+            var now = _timeProvider.GetUtcNow();
             var delay = TimeSpan.FromMilliseconds(Math.Clamp(_settings.RateLimitMs, 1000, 60_000)) -
-                        (DateTimeOffset.UtcNow - _lastRequestAt);
-            if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
-            _lastRequestAt = DateTimeOffset.UtcNow;
+                        (now - _lastRequestAt);
+            if (delay > TimeSpan.Zero) await Task.Delay(delay, _timeProvider, cancellationToken);
+            _lastRequestAt = _timeProvider.GetUtcNow();
         }
         finally
         {
@@ -516,13 +520,13 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         return normalized;
     }
 
-    private static TimeSpan? RetryAfter(HttpResponseMessage response)
+    private TimeSpan? RetryAfter(HttpResponseMessage response)
     {
         var retry = response.Headers.RetryAfter;
         if (retry?.Delta is { } delta) return delta > TimeSpan.FromHours(1) ? TimeSpan.FromHours(1) : delta;
         if (retry?.Date is { } date)
         {
-            var delay = date - DateTimeOffset.UtcNow;
+            var delay = date - _timeProvider.GetUtcNow();
             return delay <= TimeSpan.Zero ? TimeSpan.Zero :
                 delay > TimeSpan.FromHours(1) ? TimeSpan.FromHours(1) : delay;
         }

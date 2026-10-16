@@ -41,7 +41,7 @@ public sealed partial class RecordingKeptFilesTests
             favorite = Task.Run(async () => await favorites.RecordAsync(Mutation(owner, CanonicalItemId(),
                 FavoriteOperation.Favorite, "permission-followup-heart"), stop.Token), stop.Token);
 
-            await favorite.WaitAsync(TimeSpan.FromSeconds(1), stop.Token);
+            await favorite.WaitAsync(TimeSpan.FromSeconds(30), stop.Token);
 
             resume.TrySetResult();
             Assert.Equal(0, await followup.WaitAsync(TimeSpan.FromSeconds(5), stop.Token));

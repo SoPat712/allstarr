@@ -405,7 +405,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         ], "webui", _userId);
         Assert.False(accounts.ListenersCanConnectOwnAccounts);
         await service.StartAsync(CancellationToken.None);
-        for (var attempt = 0; attempt < 50 && cache.SearchResultsMinutes != 15; attempt++) await Task.Delay(10);
+        using var projectionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (cache.SearchResultsMinutes != 15) await Task.Delay(50, projectionTimeout.Token);
         var migrated = await service.GetAsync(AudioQualityPolicy.SettingKey);
         Assert.Equal(RuntimeSettingOrigin.Durable, migrated.Origin);
         Assert.Equal("HiResLossless", migrated.Value);

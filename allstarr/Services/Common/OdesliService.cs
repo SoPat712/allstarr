@@ -23,11 +23,13 @@ public class OdesliService(
     ILogger<OdesliService> logger,
     IApplicationCache cache,
     IOptions<OdesliSettings>? settings = null,
-    ApplicationCacheRequestCoalescer? coalescer = null)
+    ApplicationCacheRequestCoalescer? coalescer = null,
+    TimeProvider? timeProvider = null)
 {
     private readonly HttpClient _httpClient = PublicClient(httpClientFactory);
     private readonly SemaphoreSlim _requests = new(1, 1);
     private readonly ApplicationCacheRequestCoalescer _coalescer = coalescer ?? new(new ApplicationCacheActivityMetrics());
+    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
     private DateTimeOffset _nextRequestAt;
     private long _optionalUnavailableUntilUtcTicks;
 
@@ -71,7 +73,7 @@ public class OdesliService(
 
     private void ThrowIfOptionalUnavailable()
     {
-        if (Interlocked.Read(ref _optionalUnavailableUntilUtcTicks) > DateTimeOffset.UtcNow.UtcTicks)
+        if (Interlocked.Read(ref _optionalUnavailableUntilUtcTicks) > _timeProvider.GetUtcNow().UtcTicks)
             throw new OdesliLookupException(false);
     }
 
@@ -91,24 +93,25 @@ public class OdesliService(
             try
             {
                 ThrowIfOptionalUnavailable();
-                var delay = _nextRequestAt - DateTimeOffset.UtcNow;
-                if (delay > TimeSpan.Zero) await Task.Delay(delay, cancellationToken);
-                _nextRequestAt = DateTimeOffset.UtcNow.AddMilliseconds(Math.Clamp(settings?.Value.RateLimitMs ?? 6000, 1000, 60000));
+                var now = _timeProvider.GetUtcNow();
+                var delay = _nextRequestAt - now;
+                if (delay > TimeSpan.Zero) await Task.Delay(delay, _timeProvider, cancellationToken);
+                _nextRequestAt = _timeProvider.GetUtcNow().AddMilliseconds(Math.Clamp(settings?.Value.RateLimitMs ?? 6000, 1000, 60000));
                 using var request = new HttpRequestMessage(HttpMethod.Get,
                     "https://api.song.link/v1-alpha.1/links?url=" + Uri.EscapeDataString(canonicalUrl) + "&userCountry=US");
                 using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
                 {
                     var retry = response.Headers.RetryAfter?.Delta ??
-                        (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow) ?? TimeSpan.FromMinutes(1);
+                        (response.Headers.RetryAfter?.Date - _timeProvider.GetUtcNow()) ?? TimeSpan.FromMinutes(1);
                     retry = TimeSpan.FromSeconds(Math.Clamp(retry.TotalSeconds, 1, 3600));
-                    _nextRequestAt = DateTimeOffset.UtcNow.Add(retry);
+                    _nextRequestAt = _timeProvider.GetUtcNow().Add(retry);
                     throw new OdesliLookupException(true, retry);
                 }
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.Gone)
                 {
                     Interlocked.Exchange(ref _optionalUnavailableUntilUtcTicks,
-                        DateTimeOffset.UtcNow.AddHours(1).UtcTicks);
+                        _timeProvider.GetUtcNow().AddHours(1).UtcTicks);
                     throw new OdesliLookupException(false);
                 }
                 var links = new Dictionary<string, string>(StringComparer.Ordinal);

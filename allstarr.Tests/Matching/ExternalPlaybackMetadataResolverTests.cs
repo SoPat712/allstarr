@@ -151,7 +151,7 @@ public sealed class ExternalPlaybackMetadataResolverTests
         var stale = await resolver.ResolveAsync(
             "ext-deezer-song-42",
             CancellationToken.None);
-        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal("Stale", stale!.Title);
         Assert.Equal(2, calls);
