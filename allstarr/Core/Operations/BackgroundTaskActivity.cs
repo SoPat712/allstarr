@@ -14,8 +14,8 @@ public sealed class BackgroundTaskActivity(IDbContextFactory<AllstarrDbContext> 
 {
     private readonly ConcurrentDictionary<string, BackgroundTaskSnapshot> tasks = new(StringComparer.Ordinal);
 
-    public void Register(string id, string name, TimeSpan interval, bool immediate = true) =>
-        tasks.TryAdd(id, new(id, name, interval.TotalSeconds, "Waiting", null, time.GetUtcNow() + (immediate ? TimeSpan.Zero : interval)));
+    public void Register(string id, string name, TimeSpan interval, bool immediate = true, TimeSpan? initialDelay = null) =>
+        tasks.TryAdd(id, new(id, name, interval.TotalSeconds, "Waiting", null, time.GetUtcNow() + (initialDelay ?? (immediate ? TimeSpan.Zero : interval))));
 
     public void Started(string id) => tasks.AddOrUpdate(id,
         _ => throw new InvalidOperationException("Register the background task first."),

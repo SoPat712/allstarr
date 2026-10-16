@@ -417,6 +417,10 @@ builder.Services.AddBuiltInLyricsCapabilities();
 
 builder.Services.AddSingleton<ExtensionManager>();
 builder.Services.AddSingleton<ProviderStatusManager>();
+builder.Services.AddSingleton<ProviderCheckHistory>();
+builder.Services.AddSingleton<IProviderCheckSessions, ProviderCheckSessions>();
+builder.Services.AddSingleton<IProviderCheckRunner, ProviderAccountCheckRunner>();
+builder.Services.AddHostedService<ProviderCheckService>();
 builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadataResolver>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();
 builder.Services.AddSingleton<allstarr.Core.Music.MusicSearchService>();

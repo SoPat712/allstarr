@@ -1,4 +1,5 @@
 using allstarr.Core.Providers.AppleMusicKit;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -18,10 +19,14 @@ namespace allstarr.Services.Common;
 
 /// <summary>
 /// Current status for built-in providers. Reads are side-effect free. Explicit
-/// probes and normal activity share volatile account, revision and capability observations.
+/// probes and normal activity share account, revision and capability observations.
+/// Recorded checks remain visible after volatile routing samples expire.
 /// </summary>
 public class ProviderStatusManager
 {
+    private readonly ConcurrentDictionary<ProviderRuntimeStatusKey,
+        (long? Revision, ProviderRuntimeStatus Status)> _recordedChecks = new();
+
     private readonly record struct ProbeOutcome(
         bool Success,
         string? ReasonCode = null,
@@ -266,6 +271,10 @@ public class ProviderStatusManager
         return GetStatusCore(key, BuildBaselineStatus(key));
     }
 
+    public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status) =>
+        _recordedChecks.AddOrUpdate(key, (revision, status), (_, previous) =>
+            previous.Revision > revision || previous.Status.TestedAt > status.TestedAt ? previous : (revision, status));
+
     public bool CanTestCapability(string provider, string capability) =>
         HasProbe(Normalize(provider), Normalize(capability));
 
@@ -297,6 +306,15 @@ public class ProviderStatusManager
             _services?.GetService<AppleWebTokenProvider>() is { FailureCode: not null } tokens)
             return baseline with { Health = ProviderHealthState.Degraded, ReasonCode = tokens.FailureCode, TestedAt = tokens.ObservedAt };
         var observation = _health.Get(key, accountRevision);
+        if (_recordedChecks.TryGetValue(key, out var recorded) && recorded.Revision == accountRevision &&
+            (observation == null || observation.Health != ProviderHealthState.Testing && recorded.Status.TestedAt > observation.ObservedAt))
+            return baseline with
+            {
+                Health = recorded.Status.Health,
+                TestedAt = recorded.Status.TestedAt,
+                LatencyMilliseconds = recorded.Status.LatencyMilliseconds,
+                ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode : recorded.Status.ReasonCode
+            };
         if (observation == null) return baseline;
         var open = _health.IsCircuitOpen(observation);
         return baseline with
@@ -408,6 +426,7 @@ public class ProviderStatusManager
             };
 
             _health.Record(key, accountRevision, probe.Success, latencyMilliseconds, result.ReasonCode);
+            if (_recordedChecks.ContainsKey(key)) RestoreCheckResult(key, accountRevision, result);
             _logger.LogInformation(
                 "Provider capability probe result: {Provider}/{Capability} => {Health} ({ReasonCode})",
                 key.Provider,
@@ -431,6 +450,7 @@ public class ProviderStatusManager
                 ReasonCode = ex is OperationCanceledException ? "timeout" : "unreachable"
             };
             _health.Record(key, accountRevision, false, result.LatencyMilliseconds, result.ReasonCode);
+            if (_recordedChecks.ContainsKey(key)) RestoreCheckResult(key, accountRevision, result);
 
             // Keep provider response bodies, URLs, and credentials out of status logs.
             _logger.LogWarning(

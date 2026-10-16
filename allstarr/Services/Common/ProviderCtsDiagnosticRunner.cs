@@ -30,7 +30,8 @@ public sealed class ProviderCtsDiagnosticRunner(
         ProviderAudioQuality quality,
         string correlationId,
         string? trackId = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool householdCheck = false)
     {
         var result = await MeasureCoreAsync(
             actor, providerId, providerAccountId, quality, correlationId, trackId, cancellationToken);
@@ -40,10 +41,10 @@ public sealed class ProviderCtsDiagnosticRunner(
             db.AuditEvents.Add(new AuditEventRecord
             {
                 Id = Guid.CreateVersion7(),
-                ActorUserId = actor.EffectiveUserId,
+                ActorUserId = householdCheck ? null : actor.EffectiveUserId,
                 Category = "provider-cts",
-                Action = "cold-connect.measure",
-                Outcome = result.Succeeded ? "succeeded" : "failed",
+                Action = householdCheck ? "scheduled.measure" : "cold-connect.measure",
+                Outcome = householdCheck ? "recorded" : result.Succeeded ? "succeeded" : "failed",
                 CorrelationId = correlationId,
                 DetailsJson = JsonSerializer.Serialize(result),
                 CreatedAt = result.MeasuredAt
