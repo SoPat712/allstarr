@@ -39,6 +39,36 @@ internal sealed class SqliteTestDatabase : IAsyncDisposable
         return new SqliteTestDatabase(path, useTemplate);
     }
 
+    public static async Task<SqliteTestDatabase> CreateConfiguredBackendAsync(string backend)
+    {
+        var database = await CreateAsync();
+        await using var db = new AllstarrDbContext(database.Options);
+        foreach (var (key, value) in new Dictionary<string, string>
+        {
+            ["Backend:Type"] = backend,
+            ["Backend:Url"] = backend == "Subsonic" ? "http://localhost:4533" : "http://localhost:8096"
+        })
+            db.RuntimeSettings.Add(new allstarr.Core.Settings.RuntimeSettingRecord
+            {
+                Id = Guid.CreateVersion7(),
+                Key = key,
+                ValueType = allstarr.Core.Settings.RuntimeSettingValueType.String,
+                ValueJson = System.Text.Json.JsonSerializer.Serialize(value),
+                Source = "host-fixture",
+                CreatedAt = DateTimeOffset.UtcNow,
+                UpdatedAt = DateTimeOffset.UtcNow,
+                Revision = 1
+            });
+        await db.SaveChangesAsync();
+        return database;
+    }
+
+    public void ClearHostPool()
+    {
+        using var connection = new SqliteConnection(StorageOptions.ConnectionString);
+        SqliteConnection.ClearPool(connection);
+    }
+
     private static string Connection(string path) => new SqliteConnectionStringBuilder
     {
         DataSource = path,

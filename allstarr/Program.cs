@@ -49,22 +49,27 @@ using System.IO;
 using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
-RuntimeEnvConfiguration.AddDotEnvOverrides(builder.Configuration, builder.Environment);
+RuntimeEnvConfiguration.AddBootstrapOverrides(builder.Configuration, builder.Environment);
 ContainerStorageLayout.Configure(builder.Configuration,
     Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true",
     OperatingSystem.IsLinux() && File.Exists("/proc/self/mountinfo")
         ? ContainerStorageLayout.PersistentMounts(File.ReadAllText("/proc/self/mountinfo")) : []);
 builder.Logging.ClearProviders();
 builder.Logging.AddProvider(new RedactingConsoleLoggerProvider(builder.Configuration));
+var preparedStorage = await StartupConfiguration.PrepareAsync(builder.Configuration, builder.Environment);
 builder.Services.AddDurableStorage(
     builder.Configuration,
-    builder.Environment);
+    builder.Environment,
+    preparedStorage,
+    initializeOnStart: false);
 builder.Services.AddDurableRuntimeSettings();
 builder.Services.AddEncryptedSecretStore(builder.Configuration);
 builder.Services.AddSingleton<ILegacyAccountVerifier, LegacyAccountVerifier>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.LegacyEnvMigrationService>();
 builder.Services.AddSingleton<allstarr.Core.Configuration.OnboardingStateService>();
 builder.Services.AddSingleton<MountedLegacyEnvironment>();
+builder.Services.AddSingleton<IBackendConnectionVerifier, BackendConnectionVerifier>();
+builder.Services.AddSingleton<BackendSetupService>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);
@@ -177,7 +182,7 @@ static string? GetConfiguredValue(IConfiguration configuration, params string[] 
     return null;
 }
 
-// Require deployment-owned backend identity; enum zero would silently select Subsonic.
+// Select one protocol after restoring and loading the saved media-server connection.
 var backendSelection = RuntimeEnvConfiguration.ResolveBackendSelection(
     builder.Configuration,
     builder.Environment);
@@ -276,6 +281,13 @@ builder.Services.ConfigureAll<HttpClientFactoryOptions>(options =>
 
     options.SuppressHandlerScope = true;
 });
+
+builder.Services.AddHttpClient(BackendConnectionVerifier.HttpClientName, client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(15);
+    client.MaxResponseContentBufferSize = 1024 * 1024;
+}).RemoveAllLoggers().ConfigurePrimaryHttpMessageHandler(() =>
+    new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
 
 // Preserve pooled connections across scoped Jellyfin proxy instances.
 builder.Services.AddHttpClient(JellyfinProxyService.HttpClientName)

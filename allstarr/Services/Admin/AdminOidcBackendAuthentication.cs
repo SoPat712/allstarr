@@ -52,19 +52,26 @@ public sealed class AdminOidcBackendAuthentication(
                 ? user : null;
         }
 
-        if (!root.TryGetProperty("Id", out var id) || id.GetString() != credential.UserId ||
-            !root.TryGetProperty("Name", out var name) || string.IsNullOrEmpty(name.GetString()) ||
-            !root.TryGetProperty("Policy", out var policy) ||
-            !policy.TryGetProperty("IsDisabled", out var disabled) || disabled.ValueKind != JsonValueKind.False)
-            return null;
-        return new(credential.UserId, name.GetString()!,
-            policy.TryGetProperty("IsAdministrator", out var admin) && admin.ValueKind == JsonValueKind.True,
-            credential.Credential);
+        return AdminBackendIdentity.TryReadJellyfin(root, credential.UserId, credential.Credential, out var jellyfinUser)
+            ? jellyfinUser : null;
     }
 }
 
 internal static class AdminBackendIdentity
 {
+    public static bool TryReadJellyfin(JsonElement root, string expectedUserId, string accessToken, out AdminOidcBackendUser identity)
+    {
+        identity = null!;
+        if (!root.TryGetProperty("Id", out var id) || id.GetString() != expectedUserId ||
+            !root.TryGetProperty("Name", out var name) || string.IsNullOrEmpty(name.GetString()) ||
+            !root.TryGetProperty("Policy", out var policy) ||
+            !policy.TryGetProperty("IsDisabled", out var disabled) || disabled.ValueKind != JsonValueKind.False)
+            return false;
+        identity = new(expectedUserId, name.GetString()!,
+            policy.TryGetProperty("IsAdministrator", out var admin) && admin.ValueKind == JsonValueKind.True, accessToken);
+        return true;
+    }
+
     public static bool TryReadSubsonic(JsonElement root, string username, out AdminOidcBackendUser identity,
         bool allowMissingUserName = false)
     {

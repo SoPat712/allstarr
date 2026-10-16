@@ -32,6 +32,44 @@ namespace allstarr.Tests;
 public sealed class HostCompositionTests
 {
     [Fact]
+    public async Task FreshPersistentHost_ServesHealthAndGuidedSetupBeforeABackendIsChosen()
+    {
+        using var factory = new AllstarrFactory("Jellyfin", pendingBackend: true);
+        Assert.Equal(DurableStorageReadiness.Ready, factory.Services.GetRequiredService<DurableStorageState>().GetSnapshot().Readiness);
+        Assert.False(factory.Services.GetRequiredService<BackendSetupService>().IsConfigured);
+        var health = await factory.CreateClient().GetAsync("/health");
+        Assert.Equal(System.Net.HttpStatusCode.OK, health.StatusCode);
+        var context = await factory.Server.SendAsync(context =>
+        {
+            context.Request.Path = "/api/admin/auth/setup";
+            context.Request.Method = "GET";
+            context.Request.Scheme = "http";
+            context.Request.Host = new HostString("localhost", 5275);
+            context.Connection.LocalPort = 5275;
+            context.Connection.RemoteIpAddress = System.Net.IPAddress.Loopback;
+        });
+        Assert.Equal(200, context.Response.StatusCode);
+        using var document = await System.Text.Json.JsonDocument.ParseAsync(context.Response.Body);
+        Assert.False(document.RootElement.GetProperty("configured").GetBoolean());
+        Assert.True(document.RootElement.GetProperty("storageReady").GetBoolean());
+        Assert.False(string.IsNullOrEmpty(document.RootElement.GetProperty("csrfToken").GetString()));
+    }
+
+    [Fact]
+    public void BackendSetupTransport_DoesNotFollowRedirectsOrShareCookies()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        var handler = factory.Services.GetRequiredService<IHttpMessageHandlerFactory>().CreateHandler(BackendConnectionVerifier.HttpClientName);
+        while (handler is DelegatingHandler outer) handler = outer.InnerHandler!;
+        var transport = Assert.IsType<HttpClientHandler>(handler);
+        Assert.False(transport.AllowAutoRedirect);
+        Assert.False(transport.UseCookies);
+        using var client = factory.Services.GetRequiredService<IHttpClientFactory>().CreateClient(BackendConnectionVerifier.HttpClientName);
+        Assert.Equal(TimeSpan.FromSeconds(15), client.Timeout);
+        Assert.Equal(1024 * 1024, client.MaxResponseContentBufferSize);
+    }
+
+    [Fact]
     public void RetiredSquidWtfProviderIsNotComposed()
     {
         using var factory = new AllstarrFactory("Jellyfin");
@@ -564,18 +602,19 @@ public sealed class HostCompositionTests
         private readonly bool _allowConnections;
         private readonly string _releaseProfile;
         private readonly EffectiveProviderPolicySnapshot? _effectivePolicy;
-        private readonly string _extensionDirectory = Path.Combine(
-            Path.GetTempPath(),
-            "allstarr-tests",
-            Guid.NewGuid().ToString("N"),
-            "extensions");
+        private readonly SqliteTestDatabase _database;
+        private readonly string _extensionDirectory;
 
         public AllstarrFactory(
             string backend,
             bool allowConnections = true,
             string releaseProfile = "core",
-            EffectiveProviderPolicySnapshot? effectivePolicy = null)
+            EffectiveProviderPolicySnapshot? effectivePolicy = null,
+            bool pendingBackend = false)
         {
+            _database = Task.Run(() => pendingBackend ? SqliteTestDatabase.CreateAsync() :
+                SqliteTestDatabase.CreateConfiguredBackendAsync(backend)).GetAwaiter().GetResult();
+            _extensionDirectory = Path.Combine(_database.StorageOptions.DataDirectory, "extensions");
             _backend = backend;
             _allowConnections = allowConnections;
             _releaseProfile = releaseProfile;
@@ -626,10 +665,10 @@ public sealed class HostCompositionTests
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
-            var root = Directory.GetParent(_extensionDirectory)?.FullName;
-            if (disposing && root != null && Directory.Exists(root))
+            if (disposing && Directory.Exists(_database.StorageOptions.DataDirectory))
             {
-                Directory.Delete(root, recursive: true);
+                _database.ClearHostPool();
+                _database.DisposeAsync().GetAwaiter().GetResult();
             }
         }
     }

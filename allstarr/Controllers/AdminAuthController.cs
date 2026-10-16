@@ -19,6 +19,7 @@ namespace allstarr.Controllers;
 [ServiceFilter(typeof(AdminPortFilter))]
 public sealed class AdminAuthController : ControllerBase
 {
+    private readonly IConfiguration _configuration;
     private readonly JellyfinSettings _jellyfinSettings;
     private readonly SubsonicSettings _subsonicSettings;
     private readonly BackendType _backendType;
@@ -51,6 +52,7 @@ public sealed class AdminAuthController : ControllerBase
         IAntiforgery? antiforgery = null,
         EncryptedSecretStore? secrets = null)
     {
+        _configuration = configuration;
         _jellyfinSettings = jellyfinSettings.Value;
         _subsonicSettings = subsonicSettings.Value;
         _backendType = Enum.TryParse<BackendType>(
@@ -205,6 +207,7 @@ public sealed class AdminAuthController : ControllerBase
             return Ok(new
             {
                 authenticated = false,
+                backendConfigured = _configuration["Setup:BackendConfigured"] != "false",
                 backend = _backendType.ToString(),
                 listenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
                 features = ReleaseFeatures()
