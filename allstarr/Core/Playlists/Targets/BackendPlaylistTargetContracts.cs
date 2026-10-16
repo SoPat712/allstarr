@@ -105,6 +105,9 @@ public sealed record BackendPlaylistAuthentication(
 {
     public static BackendPlaylistAuthentication None { get; } = new(
         new Dictionary<string, string>(), []);
+
+    // A server credential without a user can add and read items, but cannot reorder or remove them.
+    public bool ActsAsUser { get; init; } = true;
 }
 
 public sealed record BackendPlaylistSnapshot(
