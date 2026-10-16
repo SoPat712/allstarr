@@ -186,7 +186,7 @@ const responses: Record<string, unknown> = {
     authenticated: true, backend: "Jellyfin",
     features: { intelligence: true },
     user: {
-      id: "user", name: "Tester", isAdministrator: true,
+      id: "user", allstarrUserId: "user", name: "Tester", isAdministrator: true,
       avatarUrl: "/api/admin/auth/me/avatar?user=user",
     },
   },
@@ -6841,6 +6841,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await expect(dialog).toBeHidden();
     await panel.getByRole("button", { name: "Add Personal connection", exact: true }).click();
     await expect(panel.getByRole("button", { name: "Signed connection", exact: true })).toContainText("Personal");
+    await expect(panel.getByRole("button", { name: "Add Personal connection", exact: true })).toHaveCount(0);
     mock.respond("start", { ...mock.pending, accountId: "personal-connection" });
     await panel.getByRole("button", { name: "Start verification", exact: true }).click();
     await expect.poll(() => mock.writes.at(-1)?.body.accountId).toBe("personal-connection");

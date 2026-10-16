@@ -454,14 +454,48 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
                 Secret = replacement.RootElement.Clone()
             }));
 
+        Guid? secretId;
+        await using (var before = await _factory.CreateDbContextAsync())
+            secretId = (await before.ProviderAccounts.SingleAsync(item => item.Id == accountId)).SecretReferenceId;
+
         var revoked = await controller.Revoke(accountId);
 
         Assert.IsType<NoContentResult>(revoked);
         await using var context = await _factory.CreateDbContextAsync();
-        var account = await context.ProviderAccounts.SingleAsync(item => item.Id == accountId);
-        Assert.False(account.Enabled);
-        var reference = await context.SecretReferences.SingleAsync(item => item.Id == account.SecretReferenceId);
+        Assert.False(await context.ProviderAccounts.AnyAsync(item => item.Id == accountId));
+        var reference = await context.SecretReferences.SingleAsync(item => item.Id == secretId);
         Assert.NotNull(reference.RevokedAt);
+        using var afterJson = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
+        Assert.Empty(afterJson.RootElement.GetProperty("accounts").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task RemovingAnAccountWithScrobbleHistoryArchivesItAndHidesIt()
+    {
+        var account = await CreateUserAccount(_userId, "lastfm", "Personal");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.PlaybackDeliveryCheckpoints.Add(new allstarr.Core.Playback.PlaybackDeliveryCheckpointEntity
+            {
+                Id = Guid.NewGuid(),
+                OwnerUserId = _userId,
+                DestinationAccountId = account.Id,
+                SignalKey = "signal",
+                TargetId = "lastfm",
+                UpdatedAt = DateTimeOffset.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var controller = Controller(Session(_userId, administrator: true));
+
+        Assert.IsType<NoContentResult>(await controller.Revoke(account.Id));
+
+        await using var context = await _factory.CreateDbContextAsync();
+        var archived = await context.ProviderAccounts.SingleAsync(item => item.Id == account.Id);
+        Assert.False(archived.Enabled);
+        Assert.True(ProviderAccountsController.IsRemoved(archived));
+        using var list = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
+        Assert.Empty(list.RootElement.GetProperty("accounts").EnumerateArray());
     }
 
     [Fact]
@@ -665,7 +699,25 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.IsType<OkObjectResult>(await controller.SetEnabled(id, new() { Enabled = true }));
         Assert.Null((await db.ProviderAccounts.AsNoTracking().SingleAsync()).SecretReferenceId);
         Assert.IsType<NoContentResult>(await controller.Revoke(id));
-        Assert.IsType<BadRequestObjectResult>(await controller.SetEnabled(id, new() { Enabled = true }));
+        Assert.IsType<NotFoundResult>(await controller.SetEnabled(id, new() { Enabled = true }));
+    }
+
+    [Fact]
+    public async Task SignedConnectionAllowsOnePersonalConnectionPerPerson()
+    {
+        var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(
+            "signed-audio", "Signed Audio", "Signed Audio", ProviderOrigin.Extension, "1", "1",
+            [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata,
+                ProviderCapabilitySupportState.ConfiguredOnly, ProviderAccountRequirement.Required, "1",
+                [], [ProviderAccountScope.Personal, ProviderAccountScope.Shared])], new ProviderPermissionDescriptor(),
+            entryPoint: "index.js") { UsesSignedSession = true })]);
+        var controller = Controller(Session(_userId, administrator: true), providerRegistry: registry);
+        Assert.IsType<CreatedAtActionResult>(await controller.Create(new() { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
+        Assert.IsType<ConflictObjectResult>(await controller.Create(new() { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
+        await using var db = await _factory.CreateDbContextAsync();
+        var id = (await db.ProviderAccounts.SingleAsync()).Id;
+        Assert.IsType<NoContentResult>(await controller.Revoke(id));
+        Assert.IsType<CreatedAtActionResult>(await controller.Create(new() { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
     }
 
     [Fact]

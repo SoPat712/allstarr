@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick, untrack } from "svelte";
   import { ExternalLink } from "@lucide/svelte";
-  import { ApiError, extensions, sources, type ProviderAccount, type ExtensionPackage, type ExtensionSession } from "$lib/api";
+  import { ApiError, auth, extensions, sources, type ProviderAccount, type ExtensionPackage, type ExtensionSession } from "$lib/api";
   import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
   import SelectField from "$lib/components/SelectField.svelte";
   import { audienceLabel, sharingDescription } from "$lib/sources";
@@ -19,6 +19,9 @@
   let accountId = $state("");
   let accessOpen = $state(false);
   let adding = $state(false);
+  let myUserId = $state<string | null>(null);
+  const hasPersonalConnection = $derived(Boolean(myUserId) &&
+    accounts.some(account => account.scope === "Personal" && account.ownerUserId === myUserId));
   const selectedAccount = $derived(accounts.find(account => account.id === accountId) ?? null);
   let busy = $state<"" | "start" | "grant" | "clear">("");
   let grant = $state("");
@@ -42,12 +45,15 @@
 
   async function load(target: ExtensionPackage) {
     try {
-      session = await extensions.session(target, accountId || undefined);
-      accountId = session.accountId ?? accountId;
-      loadFailed = false;
       const available = await sources.accounts();
       accounts = available.accounts.filter(account => account.providerId === target.extensionId);
       users = available.audienceUsers ?? [];
+      // A removed connection disappears from the list, so fall back to the extension's main sign-in.
+      if (accountId && !accounts.some(account => account.id === accountId)) accountId = "";
+      session = await extensions.session(target, accountId || undefined);
+      accountId = session.accountId ?? accountId;
+      loadFailed = false;
+      myUserId ??= (await auth.session()).user?.allstarrUserId ?? "";
     } catch {
       loadFailed = true;
     }
@@ -59,7 +65,7 @@
     problem = "";
     try {
       const account = await sources.create({ providerId: item.extensionId,
-        displayName: `${item.displayName} ${accounts.length + 1}`, scope: "Personal", enabled: true });
+        displayName: `${item.displayName} (personal)`, scope: "Personal", enabled: true });
       accountId = account.id;
       await load(item);
       await onchanged();
@@ -151,7 +157,7 @@
         {#if selectedAccount?.canChangeAudience}<Button size="sm" variant="secondary" onclick={() => accessOpen = true}>Edit access</Button>{/if}
       </div>
       {#if selectedAccount}<p>{selectedAccount.scope === "Shared" ? sharingDescription(selectedAccount) : `Only ${selectedAccount.ownerDisplayName ?? "its owner"} can use this sign-in.`}</p>{/if}
-      <Button class="extension-connection-add" size="sm" variant="outline" disabled={adding || Boolean(busy)} onclick={() => void addConnection()}>{adding ? "Adding…" : "Add Personal connection"}</Button>
+      {#if !hasPersonalConnection}<Button class="extension-connection-add" size="sm" variant="outline" disabled={adding || Boolean(busy)} onclick={() => void addConnection()}>{adding ? "Adding…" : "Add Personal connection"}</Button>{/if}
     </div>
   {/if}
   {#if problem}<p class="notice-error" role="alert">{problem}</p>{:else if message}<p class="extension-session-message" role="status">{message}</p>{/if}
