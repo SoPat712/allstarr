@@ -4872,6 +4872,41 @@
     gap: 0.4rem;
   }
 
+  .extension-session-connection {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-2);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: var(--color-panel-raised);
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .extension-connection-row {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  .extension-connection-row > .field {
+    min-width: min(100%, 14rem);
+    flex: 1;
+    font-size: var(--text-xs);
+  }
+
+  .extension-session-connection > p {
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+  }
+
+  .extension-session-connection > .extension-connection-add {
+    justify-self: start;
+  }
+
   .extension-skeleton {
     min-height: 18rem;
   }

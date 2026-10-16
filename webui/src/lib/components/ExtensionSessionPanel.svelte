@@ -144,14 +144,14 @@
   </header>
   {#if session?.accountId}
     <div class="extension-session-connection">
-      <label class="field"><span>Connection</span><SelectField label="Signed connection" bind:value={accountId}
-        options={accounts.map(account => ({ value: account.id, label: `${account.customLabel || account.displayName} · ${audienceLabel(account)}` }))}
-        onchange={() => void load(item)} /></label>
-      {#if selectedAccount}<p>{selectedAccount.scope === "Shared" ? sharingDescription(selectedAccount) : "Only the selected owner can use this sign-in."}</p>{/if}
-      <div class="extension-session-actions">
+      <div class="extension-connection-row">
+        <label class="field"><span>Connection</span><SelectField label="Signed connection" bind:value={accountId}
+          options={accounts.map(account => ({ value: account.id, label: `${account.customLabel || account.displayName} · ${audienceLabel(account)}` }))}
+          onchange={() => void load(item)} /></label>
         {#if selectedAccount?.canChangeAudience}<Button size="sm" variant="secondary" onclick={() => accessOpen = true}>Edit access</Button>{/if}
-        <Button size="sm" variant="outline" disabled={adding || Boolean(busy)} onclick={() => void addConnection()}>{adding ? "Adding…" : "Add Personal connection"}</Button>
       </div>
+      {#if selectedAccount}<p>{selectedAccount.scope === "Shared" ? sharingDescription(selectedAccount) : `Only ${selectedAccount.ownerDisplayName ?? "its owner"} can use this sign-in.`}</p>{/if}
+      <Button class="extension-connection-add" size="sm" variant="outline" disabled={adding || Boolean(busy)} onclick={() => void addConnection()}>{adding ? "Adding…" : "Add Personal connection"}</Button>
     </div>
   {/if}
   {#if problem}<p class="notice-error" role="alert">{problem}</p>{:else if message}<p class="extension-session-message" role="status">{message}</p>{/if}
