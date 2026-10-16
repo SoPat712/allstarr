@@ -19,6 +19,8 @@ Compose uses `./data` at `/app/data` unless `ALLSTARR_DATA_PATH` selects another
 
 For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
 
+Saved Jellyfin connections require encrypted service access for playlist sync and library scans. If it is missing or unreadable, Home and Settings link to **Settings → Access → Media-server access**. When a legacy `JELLYFIN_API_KEY` is still mounted or present in the process environment, this page and the import review offer **Verify and restore access** separately from a settings import. Confirmation verifies administrator permissions before encryption and restart; the plain key is never a fallback for a saved connection. Rematching preserves existing local matches while the library index or access is unavailable and retries later.
+
 ## Protected files
 
 First startup creates `keyring.json` with private permissions when the database has no saved secrets. Keep it with the database: losing the key ring prevents decryption of saved provider credentials. `Secrets__KeyRingPath` remains available as an explicit override; it must be writable to apply a restore. Use the verified backup and restore controls in Settings → Backups. See [storage operations](storage.md) for data-folder contents and offline copies.

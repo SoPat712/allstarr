@@ -362,7 +362,7 @@ export type EnvMigrationPreview = {
     warning?: string | null;
   }>;
   media?: { files: number; identified: number; needsIdentification: number; notices: string[] };
-  backend?: { backend: string; endpoint: string; savesConnection: boolean; explanation: string };
+  backend?: { backend: string; endpoint: string; savesConnection: boolean; serviceAccessAction?: string; explanation: string };
   providerAccounts?: Array<{ providerId: string; reason: string; enabledAfterImport: boolean }>;
   conflicts: string[];
   warnings: string[];
@@ -566,6 +566,7 @@ export type PlaylistLink = {
   revision: number;
   lastRunAt?: string | null;
   lastRunState?: string | null;
+  lastRunCode?: string | null;
   trackCount: number;
   matchedCount: number;
   unmatchedCount: number;
@@ -680,6 +681,7 @@ export type PlaylistSchedule = {
 };
 
 export type PlaylistDetails = {
+  lastRunCode?: string | null;
   id: string;
   snapshotId: string;
   snapshotVersion: number;
@@ -1608,9 +1610,11 @@ export const settings = {
     available: boolean;
     completed: boolean;
     sourcePresent: boolean;
+    serviceAccessAvailable?: boolean;
     firstRun: boolean;
     lastAppliedAt?: string | null;
   }>("/api/admin/config/migration/status"),
+  previewServiceAccess: () => json<EnvMigrationPreview>("/api/admin/config/migration/preview-service-access", { method: "POST" }),
   previewMountedMigration: () => json<EnvMigrationPreview>("/api/admin/config/migration/preview-mounted", { method: "POST" }),
   previewMigration: (file: File) => {
     const body = new FormData();
@@ -1621,7 +1625,7 @@ export const settings = {
     });
   },
   applyMigration: (preview: EnvMigrationPreview) =>
-    json<{ success: boolean; alreadyApplied: boolean; requiresRestart?: boolean; mediaFilesQueued?: number; mediaJobId?: string; accountChecks?: Array<{ providerId: string; reason: string; enabled: boolean }> }>("/api/admin/config/migration/apply", {
+    json<{ success: boolean; alreadyApplied: boolean; backendServiceAccess?: string; requiresRestart?: boolean; mediaFilesQueued?: number; mediaJobId?: string; accountChecks?: Array<{ providerId: string; reason: string; enabled: boolean }> }>("/api/admin/config/migration/apply", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

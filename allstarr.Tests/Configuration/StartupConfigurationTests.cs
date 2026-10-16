@@ -14,6 +14,21 @@ namespace allstarr.Tests;
 public sealed class StartupConfigurationTests
 {
     [Fact]
+    public async Task Prepare_SavedConnectionWithoutServiceAccessRequiresReviewAndIgnoresPlainKey()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var configuration = Configuration(database);
+        var store = new DurableRuntimeSettingsService(new Factory(database.Options), configuration,
+            new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
+        await store.ApplyBatchAsync([new("Backend:Type", "Jellyfin"),
+            new("Backend:Url", "http://backend-fixture:8096")], "fixture");
+        configuration["Jellyfin:ApiKey"] = "unconfirmed-fixture";
+        await StartupConfiguration.PrepareAsync(configuration, Mock.Of<IHostEnvironment>());
+        Assert.Equal("", configuration["Jellyfin:ApiKey"]);
+        Assert.Equal("true", configuration["Setup:ServiceCredentialNeedsReview"]);
+    }
+
+    [Fact]
     public async Task Prepare_LoadsSavedHouseholdValuesBeforeCompositionAndNeverPersonalOverrides()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();

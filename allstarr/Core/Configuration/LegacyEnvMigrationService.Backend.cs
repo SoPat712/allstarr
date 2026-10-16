@@ -11,6 +11,9 @@ public sealed record LegacyBackendPreview(string Backend, string Endpoint, bool 
 
 public sealed partial class LegacyEnvMigrationService
 {
+    public Task<LegacyEnvMigrationPreview> PreviewServiceAccessAsync(ReadOnlyMemory<byte> source,
+        LegacyEnvMigrationActor actor, CancellationToken token = default) => PreviewAsync(source, actor, token, serviceAccessOnly: true);
+
     private sealed record BackendSnapshot(string Type, string Endpoint, string PrincipalId, string InstanceId,
         bool SavesConnection, bool ExistingServiceAccess);
 
@@ -22,10 +25,11 @@ public sealed partial class LegacyEnvMigrationService
         await using var db = await _factory.CreateDbContextAsync(token);
         var user = await db.Users.AsNoTracking().SingleOrDefaultAsync(item => item.Id == actor && item.Enabled && item.IsAdmin, token);
         if (user == null || !user.BackendType.Equals(_backendSelection.EffectiveValue, StringComparison.OrdinalIgnoreCase)) return null;
-        var keys = await db.RuntimeSettings.AsNoTracking().Where(item => item.OwnerUserId == null &&
-            (item.Key == "Backend:Type" || item.Key == "Backend:ServiceCredentialReference")).Select(item => item.Key).ToListAsync(token);
+        var rows = await db.RuntimeSettings.AsNoTracking().Where(item => item.OwnerUserId == null &&
+            (item.Key == "Backend:Type" || item.Key == "Backend:ServiceCredentialReference")).ToListAsync(token);
         return new(_backendSelection.EffectiveValue, endpoint!.AbsoluteUri.TrimEnd('/'), user.BackendPrincipalId,
-            user.BackendInstanceId, !keys.Contains("Backend:Type"), keys.Contains("Backend:ServiceCredentialReference"));
+            user.BackendInstanceId, !rows.Any(item => item.Key == "Backend:Type"), rows.Any(item => item.Key == "Backend:ServiceCredentialReference" &&
+                Guid.TryParse(DurableRuntimeSettingsService.ProjectStoredRecord(item).NormalizedValue, out _)));
     }
 
     private static string BackendKey(PreviewState state) =>
@@ -70,7 +74,8 @@ public sealed partial class LegacyEnvMigrationService
             ["Identity:BackendInstanceId"] = backend.InstanceId
         })
             if (!existing.ContainsKey(key)) writes.Add(new(key, value));
-        if (existing.ContainsKey("Backend:ServiceCredentialReference")) return (writes, "kept_existing");
+        existing.TryGetValue("Backend:ServiceCredentialReference", out var serviceReference);
+        if (Guid.TryParse(serviceReference?.NormalizedValue, out _)) return (writes, "kept_existing");
         if (backend.Type != "Jellyfin" || string.IsNullOrWhiteSpace(BackendKey(state))) return (writes, "not_provided");
         if (!verified) return (writes, "needs_review");
         var bytes = Encoding.UTF8.GetBytes(BackendKey(state));
@@ -78,8 +83,9 @@ public sealed partial class LegacyEnvMigrationService
         {
             var credential = await _secrets.StoreWithinTransactionAsync(db, null,
                 StartupConfiguration.ServicePurpose(backend.Type, backend.Endpoint), bytes, cancellationToken: token);
-            writes.Add(new("Backend:ServiceCredentialReference", credential.Id.ToString("D")));
-            if (!existing.ContainsKey("Backend:ServiceUserId")) writes.Add(new("Backend:ServiceUserId", backend.PrincipalId));
+            writes.Add(new("Backend:ServiceCredentialReference", credential.Id.ToString("D"), serviceReference?.Revision));
+            existing.TryGetValue("Backend:ServiceUserId", out var serviceUser);
+            if (string.IsNullOrWhiteSpace(serviceUser?.NormalizedValue)) writes.Add(new("Backend:ServiceUserId", backend.PrincipalId, serviceUser?.Revision));
         }
         finally { CryptographicOperations.ZeroMemory(bytes); }
         return (writes, "verified");

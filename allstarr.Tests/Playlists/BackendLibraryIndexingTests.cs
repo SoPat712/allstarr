@@ -16,6 +16,18 @@ public sealed class BackendLibraryIndexingTests
 
     public static TheoryData<ProtocolKind> BothProtocols => new() { ProtocolKind.Jellyfin, ProtocolKind.Subsonic };
 
+    [Fact]
+    public async Task JellyfinScanner_MissingAccessPointsToTheSharedFixWithoutContactingBackend()
+    {
+        var handler = new RecordingHandler("{}");
+        var scanner = new JellyfinLibraryCatalogScanner(new HttpClient(handler),
+            new JellyfinSettings { Url = "https://jellyfin.test", ApiKey = "" }, new RecordingIndex(), new Clock());
+        var error = await Assert.ThrowsAsync<allstarr.Core.Configuration.BackendAccessMissingException>(() =>
+            scanner.ScanAsync(Context(ProtocolKind.Jellyfin), new(null), default));
+        Assert.Contains("Settings → Access → Media-server access", error.Message, StringComparison.Ordinal);
+        Assert.Empty(handler.Requests);
+    }
+
     [Theory]
     [MemberData(nameof(BothProtocols))]
     public async Task Scanner_NoExplicitTargetIndexesEveryDiscoveredLibrary(ProtocolKind protocol)

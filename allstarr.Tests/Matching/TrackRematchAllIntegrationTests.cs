@@ -6,8 +6,10 @@ using allstarr.Core.Identity;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
+using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
@@ -276,6 +278,184 @@ public sealed class TrackRematchAllIntegrationTests
         Assert.Equal(1, rollout.ApprovedCount);
     }
 
+    [Theory]
+    [InlineData("access", true, false)]
+    [InlineData("stale", true, false)]
+    [InlineData("not-configured", true, false)]
+    [InlineData("failing", true, false)]
+    [InlineData("access", false, false)]
+    [InlineData("stale", false, false)]
+    [InlineData("not-configured", false, false)]
+    [InlineData("failing", false, false)]
+    [InlineData("service-access", true, false)]
+    [InlineData("service-access", false, false)]
+    [InlineData("stale", true, true)]
+    [InlineData("stale", false, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task Full_rematch_preserves_local_selection_until_library_is_available(string unavailable, bool force, bool newerSnapshot)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var now = new DateTimeOffset(2026, 8, 26, 12, 0, 0, TimeSpan.Zero);
+        var clock = new Clock(now);
+        var userId = Guid.CreateVersion7();
+        var snapshotId = Guid.CreateVersion7();
+        var access = new TestBackendLibraryAccess(factory, "music");
+        var queue = Queue(factory, clock);
+        var original = await SeedUnavailableLibraryAsync(factory, queue, access, userId, snapshotId, unavailable, now);
+        if (newerSnapshot) snapshotId = await AddNewerSnapshotAsync(factory, snapshotId, now);
+        var rematches = new TrackRematchAllService(factory, queue, clock);
+        Guid jobId;
+        if (force)
+            jobId = (await rematches.QueueForceAsync(new(userId, true),
+                await rematches.PreviewAsync(new(userId, true), userId))).JobId;
+        else
+        {
+            Assert.Equal(1, await rematches.QueueAlgorithmUpgradesAsync());
+            await using var queued = await factory.CreateDbContextAsync();
+            jobId = (await queued.Jobs.SingleAsync(item => item.Type == TrackRematchJobHandler.Type)).Id;
+        }
+        DurableJobClaim claim;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var job = await db.Jobs.SingleAsync(item => item.Id == jobId);
+            claim = new(job.Id, 1, job.Type, JsonDocument.Parse(job.PayloadJson).RootElement.Clone(),
+                userId, null, null, JsonSerializer.SerializeToElement(new { }), job.CorrelationId);
+        }
+        var configuration = new ConfigurationManager
+        {
+            ["Jellyfin:Url"] = "https://jellyfin.test",
+            ["Jellyfin:ApiKey"] = unavailable == "service-access" ? "" : "fixture"
+        };
+        var commands = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(factory), clock, access, configuration: configuration);
+        var handler = new TrackRematchAllJobHandler(factory, rematches, commands, clock);
+
+        var completion = await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Retry, completion.Kind);
+        await using var verification = await factory.CreateDbContextAsync();
+        Assert.Equal(original, JsonSerializer.Serialize(Assert.Single(await verification.TrackMatches.AsNoTracking().ToListAsync())));
+        var audit = Assert.Single(await verification.AuditEvents.Where(item => item.Category == "track-rematch").ToListAsync());
+        Assert.Equal("retry_local_library_unavailable", audit.Outcome);
+        Assert.Single((await rematches.ReadWorkAsync(
+            claim.Payload.Deserialize<TrackRematchAllJobPayload>()!, default)).Pending);
+
+        access.Permissions[userId] = new(true, ["music"]);
+        configuration["Jellyfin:ApiKey"] = "restored-fixture";
+        clock.UtcNow = now.AddMinutes(1);
+        await using (var refreshed = await factory.CreateDbContextAsync())
+        {
+            var track = await refreshed.LibraryTracks.SingleAsync();
+            track.IndexedAt = clock.UtcNow;
+            await refreshed.SaveChangesAsync();
+        }
+        var resumed = await handler.ExecuteAsync(new(claim with { AttemptNumber = 2 }, EmptyServices.Instance), default);
+        Assert.Equal(DurableJobCompletionKind.Succeeded, resumed.Kind);
+        await using var recovered = await factory.CreateDbContextAsync();
+        var latest = await recovered.TrackMatches.OrderByDescending(item => item.DecidedAt)
+            .ThenByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(newerSnapshot ? 1 : 2, latest.DecisionVersion);
+        Assert.Null(latest.LibraryTrackId);
+    }
+
+    [Theory]
+    [InlineData("access", true, false)]
+    [InlineData("stale", true, false)]
+    [InlineData("not-configured", true, false)]
+    [InlineData("failing", true, false)]
+    [InlineData("access", false, false)]
+    [InlineData("stale", false, false)]
+    [InlineData("not-configured", false, false)]
+    [InlineData("failing", false, false)]
+    [InlineData("service-access", true, false)]
+    [InlineData("service-access", false, false)]
+    [InlineData("stale", true, true)]
+    [InlineData("stale", false, true)]
+    [Trait("Category", "Sqlite")]
+    public async Task Snapshot_rematch_preserves_local_selection_until_library_is_available(string unavailable, bool withExecution, bool newerSnapshot)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new DbFactory(database.Options);
+        var now = new DateTimeOffset(2026, 8, 26, 12, 0, 0, TimeSpan.Zero);
+        var clock = new Clock(now);
+        var userId = Guid.CreateVersion7();
+        var snapshotId = Guid.CreateVersion7();
+        var access = new TestBackendLibraryAccess(factory, "music");
+        var original = await SeedUnavailableLibraryAsync(factory, Queue(factory, clock), access,
+            userId, snapshotId, unavailable, now);
+        if (newerSnapshot) snapshotId = await AddNewerSnapshotAsync(factory, snapshotId, now);
+        var configuration = new ConfigurationManager
+        {
+            ["Jellyfin:Url"] = "https://jellyfin.test",
+            ["Jellyfin:ApiKey"] = unavailable == "service-access" ? "" : "fixture"
+        };
+        var commands = new TrackMatchCommandService(factory, new TrackMatchDecisionEngine(),
+            new ProviderAccountResolver(factory), clock, access, configuration: configuration);
+        var execution = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "backend", userId.ToString("N"),
+            new AllstarrPrincipal(userId, "jellyfin", "backend", userId.ToString("N"), "Owner", true),
+            "snapshot-rematch", now.AddMinutes(2), default);
+
+        var result = withExecution
+            ? await commands.RematchSnapshotAsync(execution, snapshotId, "snapshot-rematch", "manual-rematch-v3")
+            : await commands.RematchSnapshotAsync(new TrackMatchActor(userId, true), snapshotId, "snapshot-rematch");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("LocalLibraryUnavailable", result.Failure.ToString());
+        await using var verification = await factory.CreateDbContextAsync();
+        Assert.Equal(original, JsonSerializer.Serialize(Assert.Single(await verification.TrackMatches.AsNoTracking().ToListAsync())));
+        Assert.Equal("retry_local_library_unavailable", (await verification.AuditEvents.SingleAsync(item =>
+            item.Category == "track-rematch")).Outcome);
+    }
+
+    private static async Task<Guid> AddNewerSnapshotAsync(DbFactory factory, Guid originalId, DateTimeOffset now)
+    {
+        await using var db = await factory.CreateDbContextAsync();
+        var previous = await db.ExternalMetadataSnapshots.SingleAsync(item => item.Id == originalId);
+        var newer = Snapshot(Guid.CreateVersion7(), previous.ProviderAccountId!.Value,
+            previous.OwnerUserId, "Missing", previous.ExternalIdHash, now);
+        newer.SnapshotVersion = 2;
+        db.ExternalMetadataSnapshots.Add(newer);
+        await db.SaveChangesAsync();
+        return newer.Id;
+    }
+
+    private static DurableJobQueue Queue(DbFactory factory, Clock clock)
+    {
+        var options = new DurableJobOptions();
+        return new(factory, options, new JobPayloadPolicy(options), clock, new DurableJobContextAuthorizer(factory));
+    }
+
+    private static async Task<string> SeedUnavailableLibraryAsync(DbFactory factory, DurableJobQueue queue,
+        TestBackendLibraryAccess access, Guid userId, Guid snapshotId, string unavailable, DateTimeOffset now)
+    {
+        var accountId = Guid.CreateVersion7();
+        var localId = Guid.CreateVersion7();
+        var original = Decision(snapshotId, userId, localId, null, TrackMatchState.Accepted, now);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            db.Users.Add(User(userId, "Owner", now));
+            db.ProviderAccounts.Add(Account(accountId, userId, now));
+            db.ExternalMetadataSnapshots.Add(Snapshot(snapshotId, accountId, userId, "Missing", Hash(300), now));
+            db.LibraryTracks.Add(Local(localId, userId, "Other", unavailable == "stale" ? now.AddMinutes(-61) : now));
+            db.TrackMatches.Add(original);
+            await db.SaveChangesAsync();
+        }
+        if (unavailable == "access") access.Permissions[userId] = BackendLibraryAccess.Unavailable;
+        if (unavailable is "not-configured" or "failing")
+        {
+            var receipt = await queue.EnqueueAsync(new DurableJobEnqueueRequest<LibraryIndexJobPayload>(
+                "library.index", "index-test", new(null, "backend", userId.ToString("N")), userId));
+            await using var db = await factory.CreateDbContextAsync();
+            var job = await db.Jobs.SingleAsync(item => item.Id == receipt.JobId);
+            job.State = unavailable == "not-configured" ? DurableJobState.Failed : DurableJobState.Pending;
+            job.LastErrorCode = unavailable == "not-configured" ? "library_index_not_configured" : "library_index_backend_unavailable";
+            job.LastAttemptCompletedAt = now;
+            await db.SaveChangesAsync();
+        }
+        return JsonSerializer.Serialize(original);
+    }
+
     private static LibraryTrackRecord Local(
         Guid id,
         Guid userId,
@@ -402,7 +582,7 @@ public sealed class TrackRematchAllIntegrationTests
 
     private sealed class Clock(DateTimeOffset now) : IPlatformClock
     {
-        public DateTimeOffset UtcNow => now;
+        public DateTimeOffset UtcNow { get; set; } = now;
     }
 
     private sealed class EmptyServices : IServiceProvider

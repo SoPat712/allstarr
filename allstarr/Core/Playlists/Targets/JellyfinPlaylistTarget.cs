@@ -1,3 +1,4 @@
+using allstarr.Core.Configuration;
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -348,7 +349,9 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             return new(HttpStatusCode.ServiceUnavailable, null, "backend-not-configured");
         }
         using var request = new HttpRequestMessage(method, new Uri(_baseUri, path)) { Content = content };
-        var authentication = await _authentication.ResolveAsync(context, cancellationToken);
+        BackendPlaylistAuthentication authentication;
+        try { authentication = await _authentication.ResolveAsync(context, cancellationToken); }
+        catch (BackendAccessMissingException) { return new(HttpStatusCode.ServiceUnavailable, null, BackendAccessMissingException.Code); }
         foreach (var header in authentication.Headers) request.Headers.TryAddWithoutValidation(header.Key, header.Value);
         try
         {
@@ -505,6 +508,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
     {
         public ValueTask<BackendPlaylistAuthentication> ResolveAsync(BackendPlaylistTargetContext context, CancellationToken cancellationToken)
         {
+            if (string.IsNullOrWhiteSpace(settings.ApiKey)) throw new BackendAccessMissingException();
             var authorization = $"MediaBrowser Client=\"{settings.ClientName}\", Device=\"{settings.DeviceName}\", " +
                                 $"DeviceId=\"{settings.DeviceId}\", Version=\"{settings.ClientVersion}\", Token=\"{settings.ApiKey}\"";
             return ValueTask.FromResult(new BackendPlaylistAuthentication(

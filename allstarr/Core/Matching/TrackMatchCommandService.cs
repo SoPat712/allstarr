@@ -87,7 +87,8 @@ public enum TrackMatchCommandFailure
     Invalid,
     NotFound,
     Forbidden,
-    Conflict
+    Conflict,
+    LocalLibraryUnavailable
 }
 
 public sealed record TrackMatchCommandResult(
@@ -274,7 +275,8 @@ public sealed partial class TrackMatchCommandService(
     TrackMatchPlayableSearch? playableSearch = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
     IProtocolProviderGateway? providerGateway = null,
-    RecordingOdesliEnrichmentQueue? crossLinks = null, IProviderRegistry? registry = null) : ITrackMatchRepository
+    RecordingOdesliEnrichmentQueue? crossLinks = null, IProviderRegistry? registry = null,
+    IConfiguration? configuration = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
     private readonly ConcurrentDictionary<

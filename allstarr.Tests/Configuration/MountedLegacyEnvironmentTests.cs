@@ -14,6 +14,30 @@ public sealed class MountedLegacyEnvironmentTests : IDisposable
     public MountedLegacyEnvironmentTests() => Directory.CreateDirectory(Path.Combine(root, "app"));
 
     [Fact]
+    public async Task ServiceAccessReview_ReadsMountedKeyWithoutChangingTheFile()
+    {
+        const string value = "JELLYFIN_API_KEY=mounted-fixture\nCACHE_LYRICS_DAYS=30";
+        await File.WriteAllTextAsync(PathToFile, value);
+        var source = new MountedLegacyEnvironment(Mock.Of<IHostEnvironment>(environment =>
+            environment.EnvironmentName == "Development" && environment.ContentRootPath == Path.Combine(root, "app")), () => null);
+        Assert.True(await source.HasServiceAccessAsync());
+        Assert.Equal(value, System.Text.Encoding.UTF8.GetString(await source.ReadServiceAccessAsync()));
+        Assert.Equal(value, await File.ReadAllTextAsync(PathToFile));
+    }
+
+    [Fact]
+    public async Task ServiceAccessReview_ProcessKeyPreservesItsValueWithoutImportingOtherEnvironment()
+    {
+        const string key = "process+fixture/with=punctuation";
+        var source = new MountedLegacyEnvironment(Mock.Of<IHostEnvironment>(), () => key);
+        Assert.True(await source.HasServiceAccessAsync());
+        var document = LegacyEnvParser.Parse(await source.ReadServiceAccessAsync());
+        var entry = Assert.Single(document.Entries);
+        Assert.Equal("JELLYFIN_API_KEY", entry.Key);
+        Assert.Equal(key, entry.Value);
+    }
+
+    [Fact]
     public async Task Read_IsBoundedAndPreservesTheMountedInput()
     {
         const string value = "CACHE_LYRICS_DAYS=30\nDEEZER_ARL=private-fixture";

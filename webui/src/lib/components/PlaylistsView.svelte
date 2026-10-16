@@ -545,7 +545,7 @@
                 <span>{playlist.matchedCount} confirmed</span>
                 <span>{playlist.metrics.review} to review</span>
                 <span>{playlist.unmatchedCount} unresolved</span>
-                <span>{playlist.lastRunAt
+                <span>{playlist.lastRunCode === "backend_access_missing" ? "Media-server access needed" : playlist.lastRunAt
                   ? playlist.mode === "virtual"
                     ? "Updated in Allstarr"
                     : `${playlist.materializedCount} in ${providerName(playlist.targetProtocol)}`
@@ -649,6 +649,9 @@
           </div>
         </header>
 
+        {#if details.lastRunCode === "backend_access_missing"}
+          <div class="degraded-banner" role="status"><span aria-hidden="true">!</span><p>Restore media-server access to resume playlist sync and library scans.</p><Button variant="secondary" href="#/settings/access">Open media-server access</Button></div>
+        {/if}
         {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
         <div class="playlist-view-switcher">

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ServiceAccessRestore from "$lib/components/ServiceAccessRestore.svelte";
   import { waitForRestart } from "$lib/restart";
   import { humanize } from "$lib/sources";
   import { toast } from "$lib/toasts";
@@ -98,6 +99,7 @@
   onMount(() => void loadStatus());
 </script>
 
+<ServiceAccessRestore />
 <article class="settings-card maintenance-card env-migration-card">
   <header>
     <div><strong>Import from Allstarr v2</strong><small>Bring settings, accounts, playlists and schedules over from an old <code>.env</code> file. Secrets are never shown.</small></div>

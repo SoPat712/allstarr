@@ -1379,6 +1379,7 @@ public sealed class PlaylistLinksController(
         revision = value.Revision,
         lastRunAt = projection?.CompletedAt,
         lastRunState = projection?.SyncState?.ToString().ToLowerInvariant(),
+        lastRunCode = projection?.SyncFailureCode,
         materializationVerification = projection?.VerificationCode == null ? null : new
         {
             code = projection.VerificationCode,
@@ -1432,6 +1433,7 @@ public sealed class PlaylistLinksController(
         lastRematchedAt = value.LastMatchedAt,
         completedAt = value.CompletedAt,
         syncState = value.SyncState?.ToString().ToLowerInvariant(),
+        lastRunCode = value.SyncFailureCode,
         trackCount = value.TotalCount,
         localCount = value.LocalCount,
         externalCount = value.ExternalCount,

@@ -68,7 +68,9 @@ public sealed class TrackRematchJobHandler(
                 $"track_rematch_{result.Failure.ToString().ToLowerInvariant()}",
                 result.Error ?? "The song could not be rematched.");
         return DurableJobCompletion.Retry(
-            "track_rematch_conflict",
+            result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable
+                ? "track_rematch_local_library_unavailable"
+                : "track_rematch_conflict",
             result.Error ?? "The song rematch will be retried.",
             TimeSpan.FromSeconds(2));
     }

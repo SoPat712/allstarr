@@ -277,6 +277,7 @@ public sealed class PlaylistRematchJobHandler(
         var started = Stopwatch.GetTimestamp();
         var completed = 0;
         var failures = 0;
+        var localLibraryFailures = 0;
         foreach (var chunk in preview.Targets.Chunk(50))
         {
             var eligible = await EligibleTargetsAsync(
@@ -310,9 +311,13 @@ public sealed class PlaylistRematchJobHandler(
                 audits.Add(Audit(
                     context,
                     target.ExternalSnapshotId,
-                    result.Succeeded ? "rematched" : $"skipped_{result.Failure.ToString().ToLowerInvariant()}",
+                    result.Succeeded ? "rematched"
+                        : result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable
+                            ? "retry_local_library_unavailable"
+                            : $"skipped_{result.Failure.ToString().ToLowerInvariant()}",
                     result.Succeeded ? result.DecisionVersion : null));
                 if (!result.Succeeded) failures++;
+                if (result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable) localLibraryFailures++;
                 completed++;
             }
             await SaveAuditsAsync(audits, cancellationToken);
@@ -324,6 +329,11 @@ public sealed class PlaylistRematchJobHandler(
                 ThroughputPerSecond: completed / Math.Max(Stopwatch.GetElapsedTime(started).TotalSeconds, .001)),
                 cancellationToken);
         }
+        if (localLibraryFailures > 0)
+            return DurableJobCompletion.Retry(
+                "playlist_rematch_local_library_unavailable",
+                $"{localLibraryFailures} local matches were kept while the library is unavailable and will be retried.",
+                TimeSpan.FromMinutes(1));
         var current = await rematches.PreviewAsync(
             context.Claim.OwnerUserId.Value, cancellationToken, payload.PlaylistLinkId);
         if (!current.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))

@@ -6481,3 +6481,87 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expectContainedMobileGeometry(page);
   });
 }
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Media-server access warning and confirmed restore — ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    let restored = false;
+    let applied = 0;
+    let fullPreviews = 0;
+    await page.route("**/api/admin/access/backend", (route) => route.fulfill({ json: {
+      settings: { supported: true, connectionSaved: true, configured: restored, needsReview: !restored, revision: "fixture" }, csrfToken: "fixture",
+    } }));
+    await page.route("**/api/admin/config/migration/status", (route) => route.fulfill({ json: {
+      available: true, completed: true, firstRun: false, sourcePresent: true, serviceAccessAvailable: !restored,
+    } }));
+    await page.route("**/api/admin/config/migration/preview-mounted", (route) => { fullPreviews++; return route.fulfill({ json: {} }); });
+    await page.route("**/api/admin/config/migration/preview-service-access", (route) => route.fulfill({ json: {
+      previewToken: "access-only", revision: "fixture", canApply: true, items: [],
+      backend: { backend: "Jellyfin", endpoint: "https://media.example.test", savesConnection: false, serviceAccessAction: "verify_then_encrypt" },
+    } }));
+    await page.route("**/api/admin/config/migration/apply", async (route) => {
+      expect(route.request().postDataJSON()).toEqual({ previewToken: "access-only", revision: "fixture", confirmed: true });
+      applied++; restored = true;
+      return route.fulfill({ json: { success: true, alreadyApplied: false, backendServiceAccess: "verified", requiresRestart: true } });
+    });
+    await page.route("**/health", (route) => route.fulfill({ json: { status: "Healthy" } }));
+    await page.goto("#/");
+    const warning = page.getByRole("status").filter({ hasText: "Media-server access needs attention." });
+    await expect(warning).toHaveCount(1);
+    await expect(warning).toContainText("playlist sync and library scans");
+    await expect.poll(() => warning.evaluate((element) => {
+      const parent = element.getBoundingClientRect();
+      return [...element.children].every((child) => {
+        const rect = child.getBoundingClientRect();
+        return rect.left >= parent.left && rect.right <= parent.right;
+      });
+    })).toBe(true);
+    const link = warning.getByRole("link", { name: "Open media-server access" });
+    await link.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/#\/settings\/access$/);
+    const restore = page.getByRole("region", { name: "Restore legacy media-server access" });
+    await expect(restore).toBeVisible();
+    expect(applied).toBe(0);
+    await expect(restore).toContainText("verify its administrator permissions, encrypt it");
+    await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/service-access-${width}-${theme}.png`, fullPage: true });
+    const button = restore.getByRole("button", { name: "Verify and restore access" });
+    await button.focus();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => applied).toBe(1);
+    await expect(warning).toHaveCount(0);
+    expect(fullPreviews).toBe(0);
+    await expect(restore).toBeHidden();
+  });
+}
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Playlist sync links missing media-server access to its fix — ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    const list = structuredClone(responses["/api/admin/playlist-links"]) as { playlistLinks: Array<Record<string, unknown>> };
+    list.playlistLinks[0].lastRunCode = "backend_access_missing";
+    await page.route("**/api/admin/playlist-links", (route) => route.fulfill({ json: list }));
+    await page.route("**/api/admin/playlist-links/playlist-link?*", (route) => route.fulfill({ json: {
+      id: "playlist-link", snapshotId: "snapshot", snapshotVersion: 1, latestSourceSnapshotVersion: 1,
+      name: "Test playlist", sourceProviderId: "lumen-audio", projectionMode: "resolved", targetProtocol: "jellyfin",
+      trackCount: 0, matchedCount: 0, unresolvedCount: 0, localCount: 0, externalCount: 0, reviewCount: 0,
+      rejectedCount: 0, playableCount: 0, unknownDurationCount: 0, routeCoverage: [], tracks: [],
+      syncState: "failed", lastRunCode: "backend_access_missing", retrievedAt: "2026-01-01",
+    } }));
+    await page.goto("#/library/playlists");
+    await expect(page.getByText("Media-server access needed", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: /Test playlist/ }).first().click();
+    const warning = page.getByRole("status").filter({ hasText: "Restore media-server access to resume playlist sync and library scans." });
+    await expect(warning).toHaveCount(1);
+    const link = warning.getByRole("link", { name: "Open media-server access" });
+    await expect(link).toHaveAttribute("href", "#/settings/access");
+    await link.focus();
+    await expect(link).toBeFocused();
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}

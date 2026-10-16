@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, type Component } from "svelte";
   import { page } from "$app/state";
+  import BackendAccessWarning from "$lib/components/BackendAccessWarning.svelte";
   import { auth, onboarding, type OnboardingState, type Session } from "$lib/api";
   import { adminUrl } from "$lib/admin-url";
   import { adminOidc, type OidcStatus } from "$lib/admin-oidc";
@@ -604,6 +605,8 @@
           <p><strong>Media server connection needs attention.</strong> {onboardingError || "The identity saved during setup is no longer available. Sign in again or review the media server connection."}</p>
         </div>
       {/if}
+
+      {#if administrator && (route === "/" || route.startsWith("/settings"))}<BackendAccessWarning />{/if}
 
       {#if authError}
         <div class="degraded-banner" role="alert">

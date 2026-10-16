@@ -1719,7 +1719,7 @@ public sealed class PlaylistMaterializationJobHandler(
                     ThroughputPerSecond: completed / Math.Max(
                         Stopwatch.GetElapsedTime(started).TotalSeconds, .001)), cancellationToken);
             return retry
-                ? DurableJobCompletion.Retry(result.ErrorCode ?? "playlist_materialization_failed", "Playlist materialization did not complete.")
+                ? DurableJobCompletion.Retry(result.ErrorCode ?? "playlist_materialization_failed", result.ErrorCode == allstarr.Core.Configuration.BackendAccessMissingException.Code ? allstarr.Core.Configuration.BackendAccessMissingException.MessageText : "Playlist materialization did not complete.")
                 : DurableJobCompletion.Success();
         }
         catch (PlaylistSourceUnavailableException exception)

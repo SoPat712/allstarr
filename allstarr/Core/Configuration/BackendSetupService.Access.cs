@@ -101,7 +101,8 @@ public sealed partial class BackendSetupService
     private BackendServiceAccessSnapshot AccessSnapshot(Dictionary<string, RuntimeSettingRecord> rows) => new(
         configuration["Backend:Type"] == "Jellyfin", rows.ContainsKey("Backend:Type") && rows.ContainsKey("Backend:Url") && rows.ContainsKey("Identity:BackendInstanceId"),
         rows.TryGetValue("Backend:ServiceCredentialReference", out var reference) && Guid.TryParse(DurableRuntimeSettingsService.ProjectStoredRecord(reference).NormalizedValue, out _),
-        configuration["Setup:ServiceCredentialNeedsReview"] == "true",
+        configuration["Backend:Type"] == "Jellyfin" && (configuration["Setup:ServiceCredentialNeedsReview"] == "true" ||
+            string.IsNullOrWhiteSpace(configuration["Jellyfin:ApiKey"])),
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join(';', rows.Values.OrderBy(item => item.Key, StringComparer.Ordinal)
             .Select(item => item.Key + ":" + item.Id.ToString("N") + ":" + item.Revision))))));
 

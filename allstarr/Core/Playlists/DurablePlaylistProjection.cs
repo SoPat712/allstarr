@@ -78,6 +78,7 @@ public sealed record DurablePlaylistProjection(
     string? VerificationCode = null,
     DateTimeOffset? VerifiedAt = null)
 {
+    public string? SyncFailureCode { get; init; }
     public string? Description { get; init; }
     public DateTimeOffset? LastMatchedAt { get; init; }
     public Guid? RunId { get; init; }
@@ -744,6 +745,7 @@ public sealed class DurablePlaylistProjectionReader(
             run?.VerificationCode,
             run?.VerifiedAt)
         {
+            SyncFailureCode = run?.ConflictCode,
             Description = snapshot.Description,
             LastMatchedAt = publishedMatches.Count == 0
                 ? null
