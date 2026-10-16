@@ -34,9 +34,9 @@ public class JellyfinProxyServiceTests
         using var cancellation = new CancellationTokenSource();
         var pending = metadata ? _service.GetItemAsync("native-song", cancellationToken: cancellation.Token)
             : _service.GetJsonAsync("Audio/native-song/Lyrics", cancellationToken: cancellation.Token);
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
         cancellation.Cancel();
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(30)));
     }
 
     private readonly JellyfinProxyService _service;

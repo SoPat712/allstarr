@@ -93,11 +93,11 @@ public sealed partial class RecordingKeptFilesTests
             NullLogger<KeptLyricsSidecarService>.Instance)).PublishAsync(Request());
         try
         {
-            await entered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
             await using var independent = new AllstarrDbContext(database.Options);
             Assert.Equal(1, await independent.Users.Where(item => item.Id == other)
                 .ExecuteUpdateAsync(update => update.SetProperty(item => item.DisplayName, "Independent listener"))
-                .WaitAsync(TimeSpan.FromSeconds(1)));
+                .WaitAsync(TimeSpan.FromSeconds(30)));
         }
         finally { release.TrySetResult(); await publication; }
         Assert.Contains("After commit", await File.ReadAllTextAsync(Path.ChangeExtension((await publication).Path, ".lrc")),

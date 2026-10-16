@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text.Json;
 using allstarr.Core.Favorites;
 using allstarr.Core.Jobs;
@@ -106,7 +105,7 @@ public sealed partial class FavoriteActionPipelineTests
         {
             await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
             await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "independent") with
-            { ItemId = "ext-fixture-song-independent" }).WaitAsync(TimeSpan.FromSeconds(1));
+            { ItemId = "ext-fixture-song-independent" }).WaitAsync(TimeSpan.FromSeconds(30));
             if (change is "unheart" or "reheart")
             {
                 await _pipeline.RecordAsync(request with { Operation = FavoriteOperation.Unfavorite, SourceRevision = "off" });
@@ -167,24 +166,33 @@ public sealed partial class FavoriteActionPipelineTests
     {
         foreach (var id in new[] { "first", "second" })
             await _pipeline.RecordAsync(Request(FavoriteOperation.Favorite, "legacy") with { ItemId = $"ext-fixture-song-{id}" });
+        var clock = new ManualTimeProvider();
         var starts = new List<long>();
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "fixture", It.IsAny<string>()))
             .Returns((ProtocolExecutionContext _, string _, string id) =>
             {
-                starts.Add(Stopwatch.GetTimestamp());
+                starts.Add(clock.GetTimestamp());
                 return Task.FromResult<Song?>(new() { Id = $"ext-fixture-song-{id}", Title = "Recovered title", Artist = "Artist" });
             });
         Assert.Equal(2, await new FavoriteDisplayBackfillQueue(_factory, _jobs, _clock).EnqueuePendingAsync());
         var first = await ClaimDisplayAsync();
         var second = await ClaimDisplayAsync();
-        var handler = new FavoriteDisplayBackfillJobHandler(_factory, new(_factory, _jobs, _clock, metadata: gateway.Object), _clock);
+        using var handler = new FavoriteDisplayBackfillJobHandler(_factory, new(_factory, _jobs, _clock, metadata: gateway.Object), _clock,
+            timeProvider: clock);
 
-        await Task.WhenAll(handler.ExecuteAsync(new(first, new EmptyServices()), default),
+        var pending = Task.WhenAll(handler.ExecuteAsync(new(first, new EmptyServices()), default),
             handler.ExecuteAsync(new(second, new EmptyServices()), default));
+        Assert.Equal(TimeSpan.FromSeconds(1), await clock.NextTimerAsync());
+        Assert.Single(starts);
+        clock.Advance(TimeSpan.FromMilliseconds(999));
+        Assert.Single(starts);
+        Assert.False(pending.IsCompleted);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await pending.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal(2, starts.Count);
-        Assert.True(Stopwatch.GetElapsedTime(starts[0], starts[1]) >= TimeSpan.FromMilliseconds(950));
+        Assert.Equal(TimeSpan.FromSeconds(1), clock.GetElapsedTime(starts[0], starts[1]));
     }
 
     private async Task<DurableJobClaim> ClaimDisplayAsync() => Assert.IsType<DurableJobClaim>(

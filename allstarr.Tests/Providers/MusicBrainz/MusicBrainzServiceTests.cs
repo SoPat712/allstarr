@@ -49,6 +49,7 @@ public sealed class MusicBrainzServiceTests
     public async Task ResolveRecording_EscapesLuceneAndSelectsIdentityEvidenceInsteadOfFirstResult()
     {
         const string selectedId = "31e68c1d-31f9-432c-a3a4-13aef4a53833";
+        var clock = new ManualTimeProvider();
         var handler = new QueueHandler(
             _ => Json("""
                 {"recordings":[
@@ -60,11 +61,15 @@ public sealed class MusicBrainzServiceTests
             {
                 Assert.EndsWith($"/recording/{selectedId}", request.RequestUri!.AbsolutePath, StringComparison.Ordinal);
                 return Json($$$"""{"id":"{{{selectedId}}}","title":"AC/DC: Live?","length":181000,"artist-credit":[{"name":"Artist","joinphrase":" & ","artist":{"name":"Artist","aliases":[{"name":"Artist alias","primary":true}]}},{"name":"Guest"}],"aliases":[{"name":"Alternate title","locale":"en"}],"releases":[{"id":"51e68c1d-31f9-432c-a3a4-13aef4a53833","title":"Live release","artist-credit":[{"name":"Artist & Guest"}]}],"genres":[{"name":"Rock","count":4}]}""");
-            });
-        var service = Create(new RecordingFactory(handler));
+            })
+        { Clock = clock };
+        var service = Create(new RecordingFactory(handler), timeProvider: clock);
 
-        var match = await service.ResolveRecordingAsync(
+        var matchTask = service.ResolveRecordingAsync(
             null, null, "AC/DC: Live?", "Artist (US)", 180000);
+        Assert.Equal(TimeSpan.FromSeconds(1), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var match = await matchTask;
 
         Assert.NotNull(match);
         Assert.Equal(selectedId, match.Recording.Id);
@@ -73,7 +78,7 @@ public sealed class MusicBrainzServiceTests
         Assert.Equal(" & ", match.Recording.ArtistCredit![0].JoinPhrase);
         Assert.Equal("Artist alias", Assert.Single(match.Recording.ArtistCredit[0].Artist!.Aliases!).Name);
         Assert.Equal("Live release", Assert.Single(match.Recording.Releases!).Title);
-        Assert.True(handler.RequestTimes[1] - handler.RequestTimes[0] >= TimeSpan.FromMilliseconds(900));
+        Assert.Equal(TimeSpan.FromSeconds(1), handler.RequestTimes[1] - handler.RequestTimes[0]);
         var query = Uri.UnescapeDataString(handler.RequestUris[0].Query);
         Assert.Contains("recording:\"AC\\/DC\\: Live\\?\"", query, StringComparison.Ordinal);
         Assert.Contains("artist:\"Artist \\(US\\)\"", query, StringComparison.Ordinal);
@@ -259,16 +264,21 @@ public sealed class MusicBrainzServiceTests
     [Fact]
     public async Task IdenticalLookupsAreCoalescedAndCancellationIsPropagated()
     {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var handler = new QueueHandler(async (_, cancellationToken) =>
         {
-            await Task.Delay(50, cancellationToken);
+            entered.TrySetResult();
+            await release.Task.WaitAsync(cancellationToken);
             return Json("""{"recordings":[]}""");
         });
         var service = Create(new RecordingFactory(handler));
 
-        await Task.WhenAll(
-            service.LookupByIsrcAsync("USABC1234567"),
-            service.LookupByIsrcAsync("USABC1234567"));
+        var first = service.LookupByIsrcAsync("USABC1234567");
+        var second = service.LookupByIsrcAsync("USABC1234567");
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        release.TrySetResult();
+        await Task.WhenAll(first, second);
         Assert.Null(await service.LookupByIsrcAsync("USABC1234567"));
         Assert.Equal(1, handler.Calls);
 
@@ -345,7 +355,8 @@ public sealed class MusicBrainzServiceTests
 
     private static MusicBrainzService Create(
         RecordingFactory factory,
-        MusicBrainzSettings? settings = null) => new(
+        MusicBrainzSettings? settings = null,
+        TimeProvider? timeProvider = null) => new(
         factory,
         Options.Create(settings ?? new MusicBrainzSettings
         {
@@ -356,7 +367,8 @@ public sealed class MusicBrainzServiceTests
         Options.Create(new CacheSettings()),
         new TestMemoryApplicationCache(),
         new ApplicationCacheRequestCoalescer(new ApplicationCacheActivityMetrics()),
-        NullLogger<MusicBrainzService>.Instance);
+        NullLogger<MusicBrainzService>.Instance,
+        timeProvider);
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
     {
@@ -382,6 +394,7 @@ public sealed class MusicBrainzServiceTests
         public List<AuthenticationHeaderValue?> Authorizations { get; } = [];
         public List<string> UserAgents { get; } = [];
         public List<DateTimeOffset> RequestTimes { get; } = [];
+        public TimeProvider Clock { get; init; } = TimeProvider.System;
 
         public QueueHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] responses) : this(
             responses.Select<Func<HttpRequestMessage, HttpResponseMessage>, Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>>>(
@@ -399,7 +412,7 @@ public sealed class MusicBrainzServiceTests
             RequestUris.Add(request.RequestUri!);
             Authorizations.Add(request.Headers.Authorization);
             UserAgents.Add(request.Headers.UserAgent.ToString());
-            RequestTimes.Add(DateTimeOffset.UtcNow);
+            RequestTimes.Add(Clock.GetUtcNow());
             return await _responses.Dequeue()(request, cancellationToken);
         }
     }

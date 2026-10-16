@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Tests;
 
+[Collection("Performance")]
 public sealed class RecommendationSourceAdapterTests
 {
     [Fact]

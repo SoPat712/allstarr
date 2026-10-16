@@ -115,7 +115,7 @@ public sealed partial class BackendSetupServiceTests : IAsyncLifetime
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         try
         {
-            await Task.Run(() => settings.ApplyBatchAsync([new("Cache:LyricsDays", "31")], "concurrent-fixture")).WaitAsync(TimeSpan.FromSeconds(3));
+            await Task.Run(() => settings.ApplyBatchAsync([new("Cache:LyricsDays", "31")], "concurrent-fixture")).WaitAsync(TimeSpan.FromSeconds(30));
             await settings.ApplyBatchAsync([new("Backend:Type", "Subsonic"), new("Backend:Url", "http://winner-fixture:4533")], "winner-fixture");
         }
         finally { resume.TrySetResult(); }

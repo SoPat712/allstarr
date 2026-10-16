@@ -6,6 +6,7 @@ using System.Diagnostics;
 
 namespace allstarr.Tests;
 
+[Collection("Performance")]
 public sealed class ListeningHistoryAnalyticsSqliteTests
 {
     [Fact]

@@ -367,7 +367,7 @@ public sealed class LyricsPlusCapabilityAdapterTests
         var handler = new Handler((_, _) => Response(HttpStatusCode.OK, Timed));
         var result = await Adapter(handler, cache.Object).FetchLyricsAsync(
                 Context(deadline: DateTimeOffset.UtcNow.AddSeconds(1)), Request())
-            .WaitAsync(TimeSpan.FromSeconds(3));
+            .WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(ProviderErrorKind.Canceled, result.Error?.Kind);
         Assert.Empty(handler.Requests);
     }

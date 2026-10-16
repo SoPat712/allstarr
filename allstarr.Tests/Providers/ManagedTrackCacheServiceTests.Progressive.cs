@@ -23,7 +23,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Null(fixture.PublishedPath);
         Assert.Equal(8, new FileInfo(Assert.Single(Directory.GetFiles(fixture.Root, "*.partial", SearchOption.AllDirectories))).Length);
         fixture.Source.Release.TrySetResult();
@@ -39,7 +39,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         using var cached = (await fixture.OpenAsync())!.Response;
         var execution = ExecuteAsync(cached, $"bytes={start}-{end}");
         if (start >= 8) Assert.False(execution.IsCompleted);
@@ -56,11 +56,11 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: false);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         using var cached = (await fixture.OpenAsync())!.Response;
         var firstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var execution = ExecuteAsync(cached, "bytes=10-", firstWrite);
-        await firstWrite.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await firstWrite.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.False(execution.IsCompleted);
         fixture.Source.Release.TrySetResult();
         var (context, bytes) = await execution;
@@ -76,7 +76,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Null(await fixture.Service.TryOpenAsync(fixture.Track,
             new(Guid.NewGuid(), ProviderAudioQuality.Any), CancellationToken.None, 4));
         Assert.Null(await fixture.Service.TryOpenAsync(fixture.Track, fixture.Scope, CancellationToken.None, 5));
@@ -94,7 +94,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true, shortBody: shortBody, fail: !shortBody);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Source.Release.TrySetResult();
         var exception = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.Response.Content.CopyToAsync(Stream.Null));
         Assert.IsType<IOException>(exception.InnerException);
@@ -110,7 +110,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Response.Dispose();
         using var cached = (await fixture.OpenAsync())!.Response;
         var reader = await cached.Content.ReadAsStreamAsync();
@@ -128,7 +128,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         await fixture.Service.DisposeAsync();
         Assert.True(fixture.Source.Closed);
         Assert.Null(fixture.PublishedPath);
@@ -140,7 +140,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Response.Dispose();
         await fixture.Source.ClosedSignal.Task.WaitAsync(TimeSpan.FromSeconds(15));
         await fixture.Service.DisposeAsync();
@@ -154,7 +154,7 @@ public sealed partial class ManagedTrackCacheServiceTests
         using var lifetime = new CacheLifetime();
         await using var fixture = new ProgressiveFixture(knownLength: true, lifetime: lifetime);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         lifetime.Stopping.Cancel();
         var failure = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.Response.Content.CopyToAsync(Stream.Null));
         Assert.IsType<IOException>(failure.InnerException);
@@ -181,7 +181,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         var capability = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
         capability.SetupGet(item => item.ProviderId).Returns("deezer");
         capability.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
@@ -239,7 +239,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         using var cached = (await fixture.OpenAsync())!.Response;
         var (context, bytes) = await ExecuteAsync(cached, "bytes=16-");
         Assert.Equal(416, context.Response.StatusCode);
@@ -252,7 +252,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true, registrationFails: true);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Source.Release.TrySetResult();
         Assert.Equal(fixture.Bytes, await fixture.Response.Content.ReadAsByteArrayAsync());
         await fixture.Service.DisposeAsync();
@@ -265,7 +265,7 @@ public sealed partial class ManagedTrackCacheServiceTests
     {
         await using var fixture = new ProgressiveFixture(knownLength: true, declaredLength: 12);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Source.Release.TrySetResult();
         var failure = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.Response.Content.CopyToAsync(Stream.Null));
         Assert.IsType<IOException>(failure.InnerException);
@@ -281,7 +281,7 @@ public sealed partial class ManagedTrackCacheServiceTests
         fixture.Response.StatusCode = HttpStatusCode.PartialContent;
         fixture.Response.Content.Headers.ContentRange = new System.Net.Http.Headers.ContentRangeHeaderValue(0, 15, 16);
         await fixture.StartAsync();
-        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         using var cached = (await fixture.OpenAsync())!.Response;
         var reader = await cached.Content.ReadAsStreamAsync();
         Assert.True(reader.CanSeek);

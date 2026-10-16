@@ -275,7 +275,7 @@ public sealed partial class LegacyEnvMigrationServiceTests
                         await independent.ManagedFiles.Where(item => item.Id == fileId).ExecuteUpdateAsync(update => update.SetProperty(item => item.Revision, item => item.Revision + 1));
                     }
                     else await settings.ApplyBatchAsync([new("Cache:LyricsDays", "15", 1)], "copy-writer", _userId);
-                }).WaitAsync(TimeSpan.FromSeconds(3));
+                }).WaitAsync(TimeSpan.FromSeconds(30));
             }
             finally { operations.Resume.TrySetResult(); }
             if (changeFileRevision)

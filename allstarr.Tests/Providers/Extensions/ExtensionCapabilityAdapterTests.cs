@@ -134,6 +134,7 @@ public sealed class ExtensionCapabilityAdapterTests
             {
                 Assert.Equal(new byte[] { 0, 1, 2, 3 }, File.ReadAllBytes(scope.ResolveTemporaryPath("output")));
                 Assert.Equal(4, handler.Peak);
+                if (scenario == "ordered") Assert.Equal(new[] { 3, 2, 1, 0 }, handler.CompletionOrder);
                 Assert.Equal(4, response.RootElement.GetProperty("progress").GetArrayLength());
                 Assert.Equal("[4,0,4,4]", response.RootElement.GetProperty("progress")[3].GetRawText());
                 if (scenario == "retry-redirect") Assert.All(handler.OriginAttempts.Values, count => Assert.Equal(2, count));
@@ -155,7 +156,12 @@ public sealed class ExtensionCapabilityAdapterTests
 
     private sealed class SegmentHandler(string scenario) : HttpMessageHandler
     {
+        private readonly object sync = new();
+        private readonly TaskCompletionSource allEntered = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource[] completed = Enumerable.Range(0, 4)
+            .Select(_ => new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
         private int active;
+        public List<int> CompletionOrder { get; } = [];
         public System.Collections.Concurrent.ConcurrentDictionary<int, int> OriginAttempts { get; } = new();
         public int Peak { get; private set; }
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -163,14 +169,26 @@ public sealed class ExtensionCapabilityAdapterTests
             var redirected = request.RequestUri!.Host == "cdn.example.test";
             if (redirected) Assert.False(request.Headers.Contains("X-Test"));
             else Assert.Equal("segment", Assert.Single(request.Headers.GetValues("X-Test")));
-            var count = Interlocked.Increment(ref active);
-            Peak = Math.Max(Peak, count);
+            lock (sync)
+            {
+                Peak = Math.Max(Peak, ++active);
+                if (active == 4) allEntered.TrySetResult();
+            }
             try
             {
                 var index = int.Parse(request.RequestUri!.AbsolutePath.Trim('/'));
-                await Task.Delay(20 * (4 - index), cancellationToken);
+                await allEntered.Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
+                if (scenario == "ordered" && index < 3)
+                    await completed[index + 1].Task.WaitAsync(TimeSpan.FromSeconds(30), cancellationToken);
                 var response = new HttpResponseMessage(scenario == "limited" ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK)
-                { RequestMessage = request, Content = new ByteArrayContent([(byte)index]) };
+                {
+                    RequestMessage = request,
+                    Content = new SegmentContent(index, () =>
+                    {
+                        lock (sync) CompletionOrder.Add(index);
+                        completed[index].TrySetResult();
+                    })
+                };
                 if (scenario == "retry-redirect")
                 {
                     if (!redirected)
@@ -192,16 +210,27 @@ public sealed class ExtensionCapabilityAdapterTests
                 }
                 return response;
             }
-            finally { Interlocked.Decrement(ref active); }
+            finally { lock (sync) active--; }
         }
     }
 
-    private sealed class SlowBudgetHandler : HttpMessageHandler
+    private sealed class SegmentContent(int index, Action completed) : ByteArrayContent([(byte)index])
     {
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        private int disposed;
+        protected override void Dispose(bool disposing)
         {
-            await Task.Delay(100, cancellationToken);
-            return new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new StringContent("ok") };
+            base.Dispose(disposing);
+            if (disposing && Interlocked.Exchange(ref disposed, 1) == 0) completed();
+        }
+    }
+
+    private sealed class BudgetHandler(ManualTimeProvider clock) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            clock.Advance(TimeSpan.FromSeconds(1));
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new StringContent("ok") });
         }
     }
 
@@ -311,13 +340,32 @@ public sealed class ExtensionCapabilityAdapterTests
             function work() { var before = utils.getResolutionRemainingMs(); http.get('https://media.example.test/audio', {}); return {before:before,after:utils.getResolutionRemainingMs()}; }
             registerExtension({download:work,searchTracks:work});
             """;
-        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script, new HttpClientFactory(new SlowBudgetHandler()), NullLogger.Instance,
+        var clock = new ManualTimeProvider();
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script, new HttpClientFactory(new BudgetHandler(clock)), NullLogger.Instance,
             new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]), new HashSet<string>(), new HashSet<string>()),
-            hookTimeout: TimeSpan.FromMilliseconds(30), downloadTimeout: TimeSpan.FromSeconds(2));
+            hookTimeout: TimeSpan.FromSeconds(1), downloadTimeout: TimeSpan.FromSeconds(2), timeProvider: clock);
         using var result = JsonDocument.Parse(sandbox.InvokeJson("download", "{}")!);
-        Assert.True(result.RootElement.GetProperty("before").GetInt64() > result.RootElement.GetProperty("after").GetInt64());
+        Assert.Equal(2000, result.RootElement.GetProperty("before").GetInt64());
+        Assert.Equal(1000, result.RootElement.GetProperty("after").GetInt64());
         Assert.Throws<TimeoutException>(() => sandbox.InvokeJson("searchTracks", "{}"));
         Assert.NotNull(sandbox.InvokeJson("download", "{}"));
+    }
+
+    [Fact]
+    public async Task InvocationBudget_SleepUsesInvocationClock()
+    {
+        var clock = new ManualTimeProvider();
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            "registerExtension({searchTracks:function(){utils.sleep(2000);return utils.getResolutionRemainingMs();}});",
+            new HttpClientFactory(), NullLogger.Instance, hookTimeout: TimeSpan.FromSeconds(10), timeProvider: clock);
+        var pending = Task.Run(() => sandbox.InvokeJson("searchTracks", "{}"));
+        Assert.Equal(TimeSpan.FromSeconds(10), await clock.NextTimerAsync());
+        Assert.Equal(TimeSpan.FromSeconds(2), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromMilliseconds(1999));
+        Assert.False(pending.IsCompleted);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.Equal("8000", await pending.WaitAsync(TimeSpan.FromSeconds(30)));
     }
 
     [Theory]
@@ -326,32 +374,55 @@ public sealed class ExtensionCapabilityAdapterTests
     public async Task InvocationBudget_ExpiryIsATransientFailure(string work)
     {
         var manifest = Manifest(ProviderCapabilityKind.Metadata, "searchTracks");
+        var clock = new ManualTimeProvider();
         var sandbox = new ExtensionSandbox(Path.GetTempPath(),
             """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
             "registerExtension({searchTracks:function(){" + work + "return {items:[]};}});",
-            new HttpClientFactory(), NullLogger.Instance, hookTimeout: TimeSpan.FromMilliseconds(5));
+            new HttpClientFactory(), NullLogger.Instance, hookTimeout: TimeSpan.FromSeconds(1), timeProvider: clock);
+        var invocation = Task.Run(() => Assert.Throws<TimeoutException>(() => sandbox.InvokeJson("searchTracks", "{}")));
+        Assert.Equal(TimeSpan.FromSeconds(1), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromSeconds(1));
         Assert.Equal("Extension hook exceeded its time budget.",
-            Assert.Throws<TimeoutException>(() => sandbox.InvokeJson("searchTracks", "{}")).Message);
+            (await invocation.WaitAsync(TimeSpan.FromSeconds(30))).Message);
         var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
 
-        var outcome = await adapter.SearchTracksAsync(Context(), new("query", new ProviderPageRequest(10)));
+        var pending = adapter.SearchTracksAsync(Context(), new("query", new ProviderPageRequest(10)));
+        await clock.NextTimerAsync();
+        clock.Advance(TimeSpan.FromSeconds(1));
+        var outcome = await pending.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal(ProviderErrorKind.TransientFailure, outcome.Error!.Kind);
     }
 
-    [Fact]
-    public async Task InvocationBudget_CallerCancellationRemainsCanceled()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task InvocationBudget_CallerCancellationRemainsCanceled(bool sleep)
     {
         var manifest = Manifest(ProviderCapabilityKind.Metadata, "searchTracks");
+        var handler = new WaitingMetadataHandler(false, new WaitingSecretAccessor());
+        var clock = new ManualTimeProvider();
         var sandbox = new ExtensionSandbox(Path.GetTempPath(),
             """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
-            "registerExtension({searchTracks:function(){utils.sleep(1000);return {items:[]};}});",
-            new HttpClientFactory(), NullLogger.Instance, hookTimeout: TimeSpan.FromSeconds(3));
+            sleep
+                ? "registerExtension({searchTracks:function(){utils.sleep(1000);return {items:[]};}});"
+                : "registerExtension({searchTracks:function(){http.get('https://api.example.test/tracks',{});return {items:[]};}});",
+            new HttpClientFactory(handler), NullLogger.Instance,
+            new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>()),
+            hookTimeout: TimeSpan.FromMinutes(1), timeProvider: clock);
         var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
-        using var caller = new CancellationTokenSource(TimeSpan.FromMilliseconds(30));
+        using var caller = new CancellationTokenSource();
 
-        var outcome = await adapter.SearchTracksAsync(Context(cancellationToken: caller.Token),
+        var pending = adapter.SearchTracksAsync(Context(cancellationToken: caller.Token),
             new("query", new ProviderPageRequest(10)));
+        if (sleep)
+        {
+            Assert.Equal(TimeSpan.FromMinutes(1), await clock.NextTimerAsync());
+            Assert.Equal(TimeSpan.FromSeconds(1), await clock.NextTimerAsync());
+        }
+        else await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        caller.Cancel();
+        var outcome = await pending.WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal(ProviderErrorKind.Canceled, outcome.Error!.Kind);
     }
@@ -374,7 +445,7 @@ public sealed class ExtensionCapabilityAdapterTests
             ");return {items:[{id:'track',title:'Track',artists:[{name:'Artist'}]}]};}});";
         var sandbox = new ExtensionSandbox(Path.GetTempPath(),
             """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""", script,
-            new HttpClientFactory(handler), NullLogger.Instance, permissions);
+            new HttpClientFactory(handler), NullLogger.Instance, permissions, hookTimeout: TimeSpan.FromMinutes(1));
         var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest, accessor);
         var returned = new TaskCompletionSource<Task<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>>>(
             TaskCreationOptions.RunContinuationsAsynchronously);
@@ -382,8 +453,8 @@ public sealed class ExtensionCapabilityAdapterTests
             new("query", new ProviderPageRequest(10)))));
         try
         {
-            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
-            var pending = await returned.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            var pending = await returned.Task.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.False(pending.IsCompleted);
             Assert.Equal(accountRequired, accessor.InUse);
         }

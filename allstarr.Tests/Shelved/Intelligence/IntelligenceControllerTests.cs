@@ -16,6 +16,7 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 
 namespace allstarr.Tests;
 
+[Collection("Performance")]
 public sealed class IntelligenceControllerTests : IAsyncLifetime
 {
     private readonly Guid _user = Guid.CreateVersion7();

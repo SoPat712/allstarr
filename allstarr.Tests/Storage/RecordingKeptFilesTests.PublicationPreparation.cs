@@ -33,7 +33,7 @@ public sealed partial class RecordingKeptFilesTests
             favorite = Task.Run(() => favorites.RecordAsync(Mutation(owner, CanonicalItemId(),
                 FavoriteOperation.Favorite, "sync-publication-heart"), stop.Token), stop.Token);
 
-            await favorite.WaitAsync(TimeSpan.FromSeconds(3), stop.Token);
+            await favorite.WaitAsync(TimeSpan.FromSeconds(30), stop.Token);
 
             barrier.Resume.TrySetResult();
             await publish.WaitAsync(TimeSpan.FromSeconds(30), stop.Token);

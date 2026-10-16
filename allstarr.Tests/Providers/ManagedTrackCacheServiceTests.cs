@@ -208,7 +208,7 @@ public sealed partial class ManagedTrackCacheServiceTests
                 var first = new byte[1];
                 Assert.Equal(1, await stream.ReadAsync(first));
                 Assert.Equal(0, first[0]);
-                await source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(2));
+                await source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
             }
             await service.DisposeAsync();
             Assert.True(source.Closed);

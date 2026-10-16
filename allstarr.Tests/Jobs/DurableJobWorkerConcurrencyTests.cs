@@ -380,13 +380,13 @@ public sealed partial class DurableJobWorkerConcurrencyTests : IAsyncLifetime
 
     private async Task WaitForStateAsync(Guid jobId, DurableJobState expected)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (true)
         {
             var state = await ReadStateAsync(jobId);
             if (state == expected)
                 return;
-            await Task.Delay(20, timeout.Token);
+            await Task.Delay(50, timeout.Token);
         }
     }
 

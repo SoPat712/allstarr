@@ -287,7 +287,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var search = gateway.SearchAsync(Context(), "Track Artist", songs, albums, artists);
         try
         {
-            var result = await search.WaitAsync(TimeSpan.FromSeconds(2));
+            var result = await search.WaitAsync(TimeSpan.FromSeconds(30));
             Assert.Equal(songs > 0 ? 1 : 0, result.Songs.Count);
             Assert.Equal(albums > 0 ? 1 : 0, result.Albums.Count);
             Assert.Equal(artists > 0 ? 1 : 0, result.Artists.Count);
@@ -894,7 +894,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var second = gateway.OpenStreamAsync(
             context, "spotiflac-ytmusic-spotiflac", "private-track-id",
             ProviderAudioQuality.DataSaver, null);
-        await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        await bothStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
         release.SetResult();
 
         Assert.All(await Task.WhenAll(first, second), Assert.Null);

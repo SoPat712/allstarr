@@ -38,7 +38,7 @@ public sealed partial class RecordingKeptFilesTests
             favorite = Task.Run(async () => await favorites.RecordAsync(Mutation(owner, CanonicalItemId(),
                 FavoriteOperation.Favorite, "projection-preparation-heart"), stop.Token), stop.Token);
 
-            await favorite.WaitAsync(TimeSpan.FromSeconds(1), stop.Token);
+            await favorite.WaitAsync(TimeSpan.FromSeconds(30), stop.Token);
 
             barrier.Resume.TrySetResult();
             await acceptance.WaitAsync(TimeSpan.FromSeconds(15), stop.Token);

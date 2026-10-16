@@ -646,6 +646,7 @@ public class ExtensionSandbox
     private readonly ExtensionHostBridge _hostBridge;
     private readonly TimeSpan _hookTimeout;
     private readonly TimeSpan _downloadTimeout;
+    private readonly TimeProvider _timeProvider;
 
     public ExtensionSandbox(
         string folderPath,
@@ -658,11 +659,13 @@ public class ExtensionSandbox
         IDataProtector? sessionProtector = null,
         string? sessionStateDirectory = null,
         TimeSpan? hookTimeout = null,
-        TimeSpan? downloadTimeout = null)
+        TimeSpan? downloadTimeout = null,
+        TimeProvider? timeProvider = null)
     {
         _logger = logger;
         _hookTimeout = hookTimeout ?? TimeSpan.FromSeconds(12);
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromMinutes(5);
+        _timeProvider = timeProvider ?? TimeProvider.System;
 
         using var doc = JsonDocument.Parse(manifestJson);
         var root = doc.RootElement;
@@ -874,7 +877,7 @@ public class ExtensionSandbox
         lock (_engineLock)
         {
             var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
-            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken);
+            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider);
             try
             {
                 var function = _extensionObj.Get(hook);
@@ -1549,7 +1552,9 @@ public partial class ExtensionHostBridge
     public void Sleep(int milliseconds)
     {
         if (milliseconds is < 0 or > 30_000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
-        Task.Delay(milliseconds, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
+        (ExtensionInvocationBudget.Current is { } budget
+            ? budget.DelayAsync(milliseconds)
+            : Task.Delay(milliseconds)).GetAwaiter().GetResult();
     }
 
     public string Sha256(string value) =>

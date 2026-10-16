@@ -236,8 +236,8 @@ public class JellyfinSessionManagerTests
         Assert.True(await manager.EnsureSessionAsync(Key("dev-123"), "Feishin", "Desktop", "1.0", CreateHeaders()));
 
         var firstPass = manager.RunKeepAlivePassAsync();
-        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(2));
-        await manager.RunKeepAlivePassAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await refreshStarted.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        await manager.RunKeepAlivePassAsync().WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(2, requests);
 
         releaseRefresh.SetResult();

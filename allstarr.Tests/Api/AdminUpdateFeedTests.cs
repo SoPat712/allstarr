@@ -191,15 +191,18 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
             contextFactory: factory, identityOptions: new() { BackendInstanceId = "fixture" });
         var session = await sessions.CreateSessionAsync(userId.ToString("N"), "Owner", false, "never-stream-session-token", null,
             allstarrUserId: userId);
-        var controller = new AdminUpdatesController(Feed(), sessions);
+        var clock = new PollingClock();
+        var controller = new AdminUpdatesController(Feed(), sessions, clock);
         var httpContext = new DefaultHttpContext();
         httpContext.Response.Body = new MemoryStream();
         httpContext.Request.Headers["Last-Event-ID"] = BeforeSeed().ToString();
         httpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = session;
         controller.ControllerContext = new ControllerContext { HttpContext = httpContext };
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(3));
-
-        await controller.Stream(cancellation.Token);
+        using var cancellation = new CancellationTokenSource();
+        var streaming = controller.Stream(cancellation.Token);
+        await clock.PollScheduled.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        cancellation.Cancel();
+        await streaming.WaitAsync(TimeSpan.FromSeconds(30));
 
         httpContext.Response.Body.Position = 0;
         var body = await new StreamReader(httpContext.Response.Body, Encoding.UTF8).ReadToEndAsync();
@@ -239,12 +242,12 @@ public sealed class AdminUpdateFeedTests : IAsyncLifetime
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var stream = controller.Stream(timeout.Token);
-        using var poll = await clock.PollScheduled.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        using var poll = await clock.PollScheduled.Task.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(TimeSpan.FromSeconds(1), poll.DueTime);
         Assert.False(stream.IsCompleted);
         await sessions.RemoveSessionAsync(session.SessionId);
         poll.Fire();
-        await stream.WaitAsync(TimeSpan.FromSeconds(3));
+        await stream.WaitAsync(TimeSpan.FromSeconds(30));
         Assert.False(timeout.IsCancellationRequested);
         Assert.Equal(1, clock.ScheduledCount);
     }

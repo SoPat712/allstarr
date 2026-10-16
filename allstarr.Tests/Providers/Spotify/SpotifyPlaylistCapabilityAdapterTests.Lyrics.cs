@@ -359,7 +359,7 @@ public sealed partial class SpotifyPlaylistCapabilityAdapterTests
         var context = LyricsContext(Guid.NewGuid(), cancellationToken: canceled.Token,
             deadline: DateTimeOffset.UtcNow.AddSeconds(deadline ? 1 : 60));
         var result = await new SpotifyLyricsCapabilityAdapter(owner).FetchLyricsAsync(context, LyricsRequest())
-            .WaitAsync(TimeSpan.FromSeconds(3));
+            .WaitAsync(TimeSpan.FromSeconds(30));
         Assert.Equal(ProviderErrorKind.Canceled, result.Error?.Kind);
         Assert.Empty(secrets.AccountIds);
         Assert.Equal(0, handler.LyricsRequests);
