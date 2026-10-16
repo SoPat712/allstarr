@@ -10,21 +10,21 @@ namespace allstarr.Core.Playlists.Targets;
 public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
 {
     private readonly HttpClient _client;
-    private readonly Uri _baseUri;
+    private readonly Uri? _baseUri;
     private readonly IBackendPlaylistAuthenticationResolver _authentication;
 
     public JellyfinPlaylistTarget(IHttpClientFactory clients, IOptions<JellyfinSettings> settings)
         : this(
             clients.CreateClient(JellyfinProxyService.HttpClientName),
-            new Uri(settings.Value.Url ?? throw new InvalidOperationException("Jellyfin backend URL is not configured.")),
+            Uri.TryCreate(settings.Value.Url, UriKind.Absolute, out var endpoint) ? endpoint : null,
             new JellyfinConfiguredAuthentication(settings.Value))
     {
     }
 
-    public JellyfinPlaylistTarget(HttpClient client, Uri baseUri, IBackendPlaylistAuthenticationResolver? authentication = null)
+    public JellyfinPlaylistTarget(HttpClient client, Uri? baseUri, IBackendPlaylistAuthenticationResolver? authentication = null)
     {
         _client = client;
-        _baseUri = new Uri(baseUri.ToString().TrimEnd('/') + "/");
+        _baseUri = baseUri == null ? null : new Uri(baseUri.ToString().TrimEnd('/') + "/");
         _authentication = authentication ?? new NoAuthenticationResolver();
     }
 
@@ -317,6 +317,11 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
         HttpContent? content,
         CancellationToken cancellationToken)
     {
+        if (_baseUri == null)
+        {
+            content?.Dispose();
+            return new(HttpStatusCode.ServiceUnavailable, null, "backend-not-configured");
+        }
         using var request = new HttpRequestMessage(method, new Uri(_baseUri, path)) { Content = content };
         var authentication = await _authentication.ResolveAsync(context, cancellationToken);
         foreach (var header in authentication.Headers) request.Headers.TryAddWithoutValidation(header.Key, header.Value);

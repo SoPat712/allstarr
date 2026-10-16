@@ -59,7 +59,11 @@ A persisted-query failure reports a provider contract change. Check the compatib
 
 ## Backend setup
 
-`BACKEND_TYPE` selects Jellyfin or Subsonic/OpenSubsonic before startup. Backend URL, credentials, instance identity, library selection, and user mapping are completed through onboarding and durable configuration. An imported legacy file must not switch the active backend.
+A fresh persistent installation starts with health and guided backend setup available before a server has been selected. `GET /api/admin/auth/setup` returns the shared first setup step and an antiforgery token. `POST` to that endpoint verifies an active media-server administrator before saving the backend type and base address in SQLite. The response completes before Allstarr restarts to compose the selected Jellyfin or Subsonic/OpenSubsonic surface. A configured installation refuses anonymous replacement of that connection.
+
+The optional library-scanning choice saves the verified Jellyfin service token through the encrypted secret store, bound to the exact backend address and credential purpose. Subsonic playlist credentials remain listener-specific consent. Passwords are used for verification, and the setup response contains no credentials. A later startup applies a staged restore before reading the saved connection, so the restored database selects the protocol. Saved household settings take precedence over deployment defaults; personal overrides remain scoped to their user.
+
+In a version 2 layout, an explicit backend address/type remains available for native proxying while the upgrade is pending. The import must not switch the active backend. Product environment values are accepted through the explicit import boundary rather than reread as live settings.
 
 `Identity:BackendInstanceId` defaults to `primary` and identifies the selected backend instance. Users are created on verified sign-in and are distinct by backend type, instance, and backend principal. Their administrator role is read from the backend. Old multi-user modes and provider account management modes are recognized only as unsupported legacy input; they do not change ownership. Indexing includes all music libraries unless the administrator selects a subset, and each request still checks the listener's backend library permissions.
 

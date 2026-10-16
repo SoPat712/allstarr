@@ -117,6 +117,11 @@ public static class RuntimeSettingCatalog
         void Text(string key, string[] choices, bool allowEmpty = false) =>
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
+        Text("Backend:Type", ["Jellyfin", "Subsonic"]);
+        items.Add(new("Backend:Url", RuntimeSettingValueType.String, "Backend:Url", AllowEmpty: true, MaximumLength: 2048));
+        items.Add(new("Backend:ServiceCredentialReference", RuntimeSettingValueType.String, "Backend:ServiceCredentialReference", AllowEmpty: true, MaximumLength: 40));
+        items.Add(new("Backend:ServiceUserId", RuntimeSettingValueType.String, "Backend:ServiceUserId", AllowEmpty: true, MaximumLength: 200));
+        items.Add(new("Identity:BackendInstanceId", RuntimeSettingValueType.String, "Identity:BackendInstanceId", DefaultValue: "primary", MaximumLength: 200));
         Int("Cache:SearchResultsMinutes", 1, 1440); Int("Cache:PlaylistImagesHours", 1, 8760);
         Int("Cache:LyricsDays", 1, 3650); Int("Cache:GenreDays", 1, 3650); Int("Cache:MetadataDays", 1, 3650);
         Int("Cache:OdesliLookupDays", 1, 3650); Int("Cache:ProxyImagesDays", 1, 3650);
@@ -517,6 +522,9 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
 
     public long PublishExternalCommit() => _signal.Publish();
 
+    internal static EffectiveRuntimeSetting ProjectStoredRecord(RuntimeSettingRecord record) =>
+        FromRecord(record, RuntimeSettingCatalog.Require(record.Key));
+
     internal static void ValidateStoredRecord(RuntimeSettingRecord record)
     {
         var definition = RuntimeSettingCatalog.Require(record.Key);
@@ -570,9 +578,11 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (value.Length == 0 || value.Length > definition.MaximumLength ||
             definition.Choices is { Count: > 0 } && !definition.Choices.Contains(value))
             throw new ArgumentException($"Runtime setting '{definition.Key}' has an invalid string value.");
-        if (definition.Key == "LyricsPlus:BaseUrl" &&
+        if (definition.Key == "Backend:ServiceCredentialReference" && (!Guid.TryParseExact(value, "D", out var reference) || reference == Guid.Empty))
+            throw new ArgumentException("The backend credential reference must identify an encrypted service credential.");
+        if (definition.Key is "LyricsPlus:BaseUrl" or "Backend:Url" &&
             !allstarr.Services.Common.OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _))
-            throw new ArgumentException("The LyricsPlus URL must be an HTTP or HTTPS service URL without credentials, query or fragment.");
+            throw new ArgumentException($"The {(definition.Key == "Backend:Url" ? "media-server" : "LyricsPlus")} URL must be an HTTP or HTTPS service URL without credentials, query or fragment.");
         if (definition.Key == "Library:PlaylistsDirectory" &&
             (value is "." or ".." || value.Contains('/') || value.Contains('\\') || value.Contains('\0')))
             throw new ArgumentException("Library:PlaylistsDirectory must be a single safe directory name.");

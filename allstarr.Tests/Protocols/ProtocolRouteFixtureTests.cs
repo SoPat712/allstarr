@@ -4809,10 +4809,8 @@ public sealed partial class ProtocolRouteFixtureTests
         private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
         private readonly Action<IServiceCollection>? _configureServices;
         private readonly IReadOnlyDictionary<string, string?>? _configuration;
-        private readonly string _stateRoot = Path.Combine(
-            Path.GetTempPath(),
-            "allstarr-tests",
-            Guid.NewGuid().ToString("N"));
+        private readonly SqliteTestDatabase _database;
+        private readonly string _stateRoot;
 
         public ProtocolFactory(
             string backend,
@@ -4820,6 +4818,8 @@ public sealed partial class ProtocolRouteFixtureTests
             Action<IServiceCollection>? configureServices = null,
             IReadOnlyDictionary<string, string?>? configuration = null)
         {
+            _database = Task.Run(() => SqliteTestDatabase.CreateConfiguredBackendAsync(backend)).GetAwaiter().GetResult();
+            _stateRoot = _database.StorageOptions.DataDirectory;
             _backend = backend;
             _responder = responder;
             _configureServices = configureServices;
@@ -4847,6 +4847,9 @@ public sealed partial class ProtocolRouteFixtureTests
             builder.ConfigureServices(services =>
             {
                 services.RemoveAll<IHostedService>();
+                // Relay fixtures keep their unlinked storage state; linked cases supply explicit principals.
+                services.RemoveAll<DurableStorageState>();
+                services.AddSingleton(new DurableStorageState(_database.StorageOptions));
                 services.RemoveAll<IHttpClientFactory>();
                 services.RemoveAll<IApplicationCache>();
                 services.AddSingleton<IApplicationCache, TestMemoryApplicationCache>();
@@ -4859,9 +4862,10 @@ public sealed partial class ProtocolRouteFixtureTests
         protected override void Dispose(bool disposing)
         {
             base.Dispose(disposing);
-            if (disposing && Directory.Exists(_stateRoot))
+            if (disposing && Directory.Exists(_database.StorageOptions.DataDirectory))
             {
-                Directory.Delete(_stateRoot, recursive: true);
+                _database.ClearHostPool();
+                _database.DisposeAsync().GetAwaiter().GetResult();
             }
         }
     }

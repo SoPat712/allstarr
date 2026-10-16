@@ -9,7 +9,7 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
 {
     public const string HttpClientName = "SubsonicBackend";
     private readonly HttpClient _client;
-    private readonly Uri _baseUri;
+    private readonly Uri? _baseUri;
     private readonly IBackendPlaylistAuthenticationResolver _authentication;
 
     public SubsonicPlaylistTarget(
@@ -18,15 +18,15 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         IBackendPlaylistAuthenticationResolver authentication)
         : this(
             clients.CreateClient(HttpClientName),
-            new Uri(settings.Value.Url ?? throw new InvalidOperationException("Subsonic backend URL is not configured.")),
+            Uri.TryCreate(settings.Value.Url, UriKind.Absolute, out var endpoint) ? endpoint : null,
             authentication)
     {
     }
 
-    public SubsonicPlaylistTarget(HttpClient client, Uri baseUri, IBackendPlaylistAuthenticationResolver? authentication = null)
+    public SubsonicPlaylistTarget(HttpClient client, Uri? baseUri, IBackendPlaylistAuthenticationResolver? authentication = null)
     {
         _client = client;
-        _baseUri = new Uri(baseUri.ToString().TrimEnd('/') + "/");
+        _baseUri = baseUri == null ? null : new Uri(baseUri.ToString().TrimEnd('/') + "/");
         _authentication = authentication ?? new NoAuthenticationResolver();
     }
 
@@ -357,6 +357,7 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         IReadOnlyList<KeyValuePair<string, string>> operationParameters,
         CancellationToken cancellationToken)
     {
+        if (_baseUri == null) return new(HttpStatusCode.ServiceUnavailable, null, "backend-not-configured");
         var authentication = endpoint is "getPlaylists" or "getPlaylist" or "getSong" or "getCoverArt"
             ? await _authentication.ResolveReadAsync(context, cancellationToken)
             : await _authentication.ResolveAsync(context, cancellationToken);

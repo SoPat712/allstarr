@@ -162,6 +162,37 @@ public static class RuntimeEnvConfiguration
             : "/app/.env";
     }
 
+    public static void AddBootstrapOverrides(ConfigurationManager configuration, IHostEnvironment environment) =>
+        AddBootstrapOverrides(configuration, ResolveEnvFilePath(environment));
+
+    public static void AddBootstrapOverrides(ConfigurationManager configuration, string envFilePath)
+    {
+        foreach (var source in configuration.Sources.OfType<Microsoft.Extensions.Configuration.EnvironmentVariables.EnvironmentVariablesConfigurationSource>().ToArray())
+            configuration.Sources.Remove(source);
+        var values = LoadDotEnvOverrides(envFilePath).Where(item => IsBootstrapKey(item.Key))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry variable in Environment.GetEnvironmentVariables())
+            foreach (var mapping in MapEnvVarToConfiguration(Convert.ToString(variable.Key) ?? "", Convert.ToString(variable.Value)))
+                if (IsBootstrapKey(mapping.Key)) values[mapping.Key] = mapping.Value;
+        configuration.AddInMemoryCollection(values);
+        var backend = values.GetValueOrDefault("Backend:Type") ?? configuration["Backend:Type"] ?? "Jellyfin";
+        var endpoint = values.GetValueOrDefault(backend + ":Url");
+        configuration["Setup:LegacyBackendConfigured"] =
+            OutboundRequestGuard.TryCreateConfiguredServiceUri(endpoint ?? "", out _, out _) ? "true" : "false";
+    }
+
+    private static bool IsBootstrapKey(string key) => BootstrapKeys.Contains(key) ||
+        key.StartsWith("ForwardedHeaders:", StringComparison.OrdinalIgnoreCase) ||
+        key.StartsWith("Release:", StringComparison.OrdinalIgnoreCase);
+
+    private static readonly HashSet<string> BootstrapKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Backend:Type", "Jellyfin:Url", "Subsonic:Url",
+        "Storage:DataDirectory", "Storage:DatabaseFileName", "Storage:AutoMigrate", "Secrets:KeyRingPath",
+        "Admin:BindAnyIp", "Admin:TrustedSubnets", "Admin:BasePath", "Admin:Containerized", "Admin:ContainerGateway",
+        "Library:DownloadPath", "Library:KeptPath"
+    };
+
     public static void AddDotEnvOverrides(
         ConfigurationManager configuration,
         IHostEnvironment environment)
@@ -205,6 +236,8 @@ public static class RuntimeEnvConfiguration
         IConfiguration configuration,
         IHostEnvironment environment)
     {
+        if (configuration["Setup:BackendSource"] == "pending")
+            return new(BackendType.Jellyfin, "Jellyfin", "guided-setup-pending", false, false, null);
         var rawValue = configuration["Backend:Type"]?.Trim();
         if (string.IsNullOrWhiteSpace(rawValue) ||
             !Enum.TryParse<BackendType>(rawValue, ignoreCase: true, out var backendType) ||
@@ -214,6 +247,8 @@ public static class RuntimeEnvConfiguration
                 "Backend:Type must explicitly select Jellyfin or Subsonic.");
         }
 
+        if (configuration["Setup:BackendSource"] == "database")
+            return new(backendType, backendType.ToString(), "durable-settings", false, false, null);
         var processValue = FirstNonEmptyEnvironmentValue("Backend__Type", "BACKEND_TYPE");
         var envFilePath = ResolveEnvFilePath(environment);
         var dotEnvValue = ReadDotEnvValue(envFilePath, "Backend__Type", "BACKEND_TYPE");
@@ -226,7 +261,7 @@ public static class RuntimeEnvConfiguration
                 : "application-default";
         var explicitDeploymentValue = hasProcessValue || hasDotEnvValue;
 
-        if (environment.IsProduction() && !explicitDeploymentValue)
+        if (environment.IsProduction() && !explicitDeploymentValue && configuration["Setup:BackendSource"] != "legacy-environment")
         {
             throw new InvalidOperationException(
                 "Production requires an explicit Backend__Type or BACKEND_TYPE deployment value; " +

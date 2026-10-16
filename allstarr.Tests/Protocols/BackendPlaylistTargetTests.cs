@@ -10,6 +10,23 @@ namespace allstarr.Tests;
 
 public sealed class BackendPlaylistTargetTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnconfiguredTargets_ReturnRecoverableFailureWithoutContactingABackend(bool subsonic)
+    {
+        var backend = new SubsonicFakeBackend("p1", "Fixture", []);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(backend, false));
+        IBackendPlaylistTarget target = subsonic
+            ? new SubsonicPlaylistTarget(clients.Object, Options.Create(new SubsonicSettings { Url = "" }), new FakeAuthenticationResolver())
+            : new JellyfinPlaylistTarget(clients.Object, Options.Create(new JellyfinSettings { Url = "" }));
+        var result = await target.ListAsync(Context(), null, 20, default);
+        Assert.Equal(BackendPlaylistTargetStatus.BackendFailure, result.Status);
+        Assert.Equal("backend-not-configured", result.ErrorCode);
+        Assert.Empty(backend.Requests);
+    }
+
     [Fact]
     public void Jellyfin_move_plan_is_minimal_and_handles_10000_items()
     {

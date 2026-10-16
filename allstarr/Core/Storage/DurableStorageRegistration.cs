@@ -8,7 +8,9 @@ public static class DurableStorageRegistration
     public static IServiceCollection AddDurableStorage(
         this IServiceCollection services,
         IConfiguration configuration,
-        IHostEnvironment environment)
+        IHostEnvironment environment,
+        DurableStorageState? preparedState = null,
+        bool initializeOnStart = true)
     {
         var options = configuration.GetSection(StorageOptions.SectionName)
             .Get<StorageOptions>() ?? new StorageOptions();
@@ -29,7 +31,8 @@ public static class DurableStorageRegistration
         }
         services.AddSingleton(Options.Create(options));
         services.AddSingleton(options);
-        services.AddSingleton<DurableStorageState>();
+        if (preparedState == null) services.AddSingleton<DurableStorageState>();
+        else services.AddSingleton(preparedState);
         services.AddSingleton<SqlitePragmaInterceptor>();
         services.AddSingleton<DurableBackupService>();
         services.AddDbContextFactory<AllstarrDbContext>((provider, builder) =>
@@ -37,7 +40,7 @@ public static class DurableStorageRegistration
                     sqlite.CommandTimeout(options.CommandTimeoutSeconds))
                 .AddInterceptors(provider.GetRequiredService<SqlitePragmaInterceptor>()));
         services.AddSingleton<DurableStorageInitializer>();
-        services.AddHostedService(provider => provider.GetRequiredService<DurableStorageInitializer>());
+        if (initializeOnStart) services.AddHostedService(provider => provider.GetRequiredService<DurableStorageInitializer>());
         return services;
     }
 }
