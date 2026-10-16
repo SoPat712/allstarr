@@ -350,6 +350,55 @@ public sealed class TrackMatchPlayableSearchTests
     }
 
     [Fact]
+    public async Task CachedLowerPriorityRouteIsNotReusedBeforeAnUntriedHigherProvider()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
+            .Returns(["apple-musickit", "deezer"]);
+        gateway.Setup(item => item.GetSongAsync(
+                It.IsAny<ProtocolExecutionContext>(), "deezer", "cached-track"))
+            .ReturnsAsync(new Song
+            {
+                ExternalProvider = "deezer",
+                ExternalId = "cached-track",
+                Title = "Window Song",
+                Artist = "The Artist",
+                Duration = 240
+            });
+        var service = new TrackMatchPlayableSearch(
+            gateway.Object,
+            new TrackMatchDecisionEngine(),
+            NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var result = await service.ReuseAsync(
+            Context(user),
+            new ExternalTrackMatchSnapshot(
+                "source", "spotify", "source-track", "Window Song",
+                "The Artist", null, null, 240_000, null, null, null),
+            new TrackMatchScope(
+                user, "main", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal) { "music" }),
+            [
+                new ProviderTrackIdentityRecord
+                {
+                    CanonicalRecordingId = Guid.CreateVersion7(),
+                    ProviderId = "deezer",
+                    ResourceKind = ProviderResourceKind.Track,
+                    ExternalId = "cached-track",
+                    Verification = ProviderIdentityVerification.Verified
+                }
+            ],
+            [],
+            null,
+            CancellationToken.None);
+
+        Assert.Null(result);
+        gateway.Verify(item => item.GetSongAsync(
+            It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
     public async Task CachedRouteUsesCurrentScoringAndLocalPriority()
     {
         var user = Guid.CreateVersion7();

@@ -80,8 +80,14 @@ public sealed class TrackMatchPlayableSearch(
             .OrderBy(identity => order[ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)])
             .ThenByDescending(identity => identity.Verification == ProviderIdentityVerification.Pinned)
             .ToArray();
+        var cachedProviders = cachedRoutes
+            .Select(identity => ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId))
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var cached in cachedRoutes)
         {
+            // A provider ranked above this route has never been tried, so search instead of settling for it.
+            var rank = order[ExternalTrackPlaybackPolicy.Normalize(cached.ProviderId)];
+            if (order.Any(provider => provider.Value < rank && !cachedProviders.Contains(provider.Key))) break;
             Song? song;
             try
             {
