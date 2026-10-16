@@ -93,6 +93,28 @@ public sealed class BackendConnectionVerifierTests
         Assert.Single(handler.Requests);
     }
 
+    [Theory]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, false, false, false)]
+    [InlineData(true, true, false, false)]
+    [InlineData(true, false, true, false)]
+    public async Task ServiceAccess_RequiresTheExactActiveAdministrator(bool administrator, bool disabled, bool wrongUser, bool expected)
+    {
+        var handler = new Handler(_ => Json(new
+        {
+            Id = wrongUser ? "other-fixture" : "admin-fixture",
+            Name = "Administrator",
+            Policy = new { IsAdministrator = administrator, IsDisabled = disabled }
+        }));
+        var result = await new BackendConnectionVerifier(new Clients(handler)).VerifyServiceAsync(
+            "http://backend.test", "admin-fixture", "private-service-key", default);
+        Assert.Equal(expected, result);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal("http://backend.test/Users/admin-fixture", request.Address);
+        Assert.Contains("private-service-key", request.Authorization, StringComparison.Ordinal);
+        Assert.DoesNotContain("private-service-key", request.Address, StringComparison.Ordinal);
+    }
+
     private static HttpResponseMessage Json(object value) => new(HttpStatusCode.OK)
     { Content = new StringContent(JsonSerializer.Serialize(value), Encoding.UTF8, "application/json") };
     private sealed record Request(string Method, string Address, string Body, string Authorization);

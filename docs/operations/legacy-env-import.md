@@ -22,11 +22,11 @@ The parser classifies recognized input rather than copying arbitrary keys.
 
 | Class | Result |
 | --- | --- |
-| Deployment bootstrap | Report for manual review; never change the running image, backend, listener, database, key ring, CORS, or mount policy. |
+| Deployment bootstrap | Report listeners, image, storage, key ring and mount policy for review. Save the already verified active backend connection once; never switch servers from imported input. |
 | Durable non-secret setting | Validate and add only when the target setting is absent. |
 | Shared provider credential | Store encrypted after confirmation; test the connection before enabling. Failed or unchecked connections stay disabled with recovery instructions. |
 | User account | Attach only to the signed-in administrator; enable only after a successful connection check. |
-| Backend identity | Create only for the signed-in administrator when the legacy Jellyfin principal and backend instance are explicit. |
+| Backend identity | Use the verified signed-in administrator and its existing backend instance. Imported user IDs never grant authority. |
 | Spotify playlist | Restore a durable link and schedule for the verified administrator and existing target. Use source order and preserve manual target entries. Missing prerequisites remain review items. |
 | Extension registry | Import reviewed HTTPS addresses disabled, without fetching or installing packages. Enable a registry explicitly in Integrations. |
 | Obsolete or unknown | Report and leave behind. |
@@ -74,3 +74,11 @@ Importing settings records the import step; it does not finish the entire setup 
 The administration API exposes the shared checklist at `GET /api/admin/onboarding/status` and accepts `stepId`, `action` (`review`, `skip`, or `reset`) and `expectedRevision` at `POST /api/admin/onboarding/step`. The verified media-server identity is required and cannot be skipped.
 
 When the old environment is still mounted, migration status reports its availability without returning its contents. `POST /api/admin/config/migration/preview-mounted` reads that file with the same 1 MiB limit and creates the same session-bound preview as an upload. Symbolic links, missing files and oversized inputs are rejected. Reading or previewing never edits the file or applies its values. Confirmation through the existing apply endpoint is still required.
+
+## Saving the active backend
+
+The connection preview identifies the active server and whether it is already saved. Apply stores its type, address and verified instance identity only when absent. A legacy Jellyfin service key is checked against the importing administrator outside the database writer, then encrypted for that exact backend address and credential purpose. Failed or unavailable checks leave service access inactive for review; native proxying can still use the saved connection. Existing encrypted access and its versions are preserved.
+
+New connection or service-access values take effect after Allstarr restarts once the successful response has completed. A replay returns the existing receipt without checking credentials again or requesting another restart. Afterward, changing or removing old environment values does not replace the saved connection or imported household settings.
+
+The current import receipt format adds this connection snapshot. An older receipt remains intact; explicitly previewing the same source again can add missing connection settings under the new format while preserving settings and accounts already imported. No original input, receipt, audio, account revision or encrypted version is rewritten.

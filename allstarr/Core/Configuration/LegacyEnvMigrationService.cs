@@ -63,6 +63,7 @@ public sealed record LegacyEnvMigrationPreview(
     public int PlaylistLinkCount { get; init; }
     public int ScheduleCount { get; init; }
     public LegacyMediaPreview? Media { get; init; }
+    public LegacyBackendPreview? Backend { get; init; }
 }
 
 public sealed record LegacyEnvMigrationApplyResult(
@@ -84,6 +85,9 @@ public sealed record LegacyEnvMigrationApplyResult(
     public IReadOnlyList<LegacyAccountCheck> AccountChecks { get; init; } = [];
     public Guid? MediaJobId { get; init; }
     public int MediaFilesQueued { get; init; }
+    public bool BackendConnectionSaved { get; init; }
+    public string BackendServiceAccess { get; init; } = "not_provided";
+    public bool RequiresRestart { get; init; }
 }
 
 public sealed record LegacyEnvMigrationStatus(
@@ -102,7 +106,7 @@ public sealed partial class LegacyEnvMigrationService
 {
     private static readonly TimeSpan PreviewLifetime = TimeSpan.FromMinutes(15);
     private const int MaximumPreviewCount = 64;
-    internal const string MigrationSchemaVersion = "legacy-env-import-v3";
+    internal const string MigrationSchemaVersion = "legacy-env-import-v4";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -115,6 +119,7 @@ public sealed partial class LegacyEnvMigrationService
     private readonly IConfiguration? _configuration;
     private readonly LegacyMediaInventory? _mediaInventory;
     private readonly LegacyMediaImport? _mediaImport;
+    private readonly IBackendConnectionVerifier? _backendVerifier;
     private readonly ConcurrentDictionary<string, PreviewState> _previews = new(StringComparer.Ordinal);
     private static readonly SemaphoreSlim ApplyGate = new(1, 1);
 
@@ -128,8 +133,9 @@ public sealed partial class LegacyEnvMigrationService
         ILegacyAccountVerifier? accountVerifier = null,
         IConfiguration? configuration = null,
         LegacyMediaInventory? mediaInventory = null,
-        LegacyMediaImport? mediaImport = null) =>
-        (_factory, _settings, _secrets, _clock, _backendSelection, _registry, _accountVerifier, _configuration, _mediaInventory, _mediaImport) = (
+        LegacyMediaImport? mediaImport = null,
+        IBackendConnectionVerifier? backendVerifier = null) =>
+        (_factory, _settings, _secrets, _clock, _backendSelection, _registry, _accountVerifier, _configuration, _mediaInventory, _mediaImport, _backendVerifier) = (
             factory,
             settings,
             secrets,
@@ -140,7 +146,7 @@ public sealed partial class LegacyEnvMigrationService
                 "test-default",
                 false,
                 false,
-                null), registry, accountVerifier, configuration, mediaInventory, mediaImport);
+                null), registry, accountVerifier, configuration, mediaInventory, mediaImport, backendVerifier);
 
     public async Task<LegacyEnvMigrationStatus> GetStatusAsync(
         CancellationToken cancellationToken = default)
@@ -249,6 +255,7 @@ public sealed partial class LegacyEnvMigrationService
                     item.ProviderId == "spotify" && item.Action == "create_disabled_if_missing"),
                 existingPlaylistTargets)
         };
+        var backend = await BuildBackendSnapshotAsync(actor.ActorUserId, cancellationToken);
         var previewItems = new List<LegacyEnvPreviewItem>(document.Entries.Count);
         foreach (var entry in document.Entries)
         {
@@ -342,6 +349,19 @@ public sealed partial class LegacyEnvMigrationService
                 conflicts.Add($"{entry.Key} has an invalid value and must be corrected before apply.");
             }
 
+            if (backend != null && action != "conflict_invalid_value" &&
+                (entry.Key.Equals("BACKEND_TYPE", StringComparison.OrdinalIgnoreCase) ||
+                 entry.Key.Equals("Backend__Type", StringComparison.OrdinalIgnoreCase) ||
+                 entry.Key.Equals(backend.Type.ToUpperInvariant() + "_URL", StringComparison.OrdinalIgnoreCase)))
+            {
+                action = backend.SavesConnection ? "save_verified_connection" : "keep_verified_connection";
+                reason = "The active verified connection is saved once. This input never switches the selected media server.";
+            }
+            if (backend != null && entry.Key.Equals("JELLYFIN_API_KEY", StringComparison.OrdinalIgnoreCase))
+            {
+                action = backend.ExistingServiceAccess ? "keep_existing_service_access" : "verify_backend_access";
+                reason = "Verify administrator access before encryption. Existing encrypted access is preserved.";
+            }
             previewItems.Add(new(
                 entry.Key,
                 entry.LineNumber,
@@ -373,7 +393,8 @@ public sealed partial class LegacyEnvMigrationService
             canApply,
             previewItems,
             accountPreviews,
-            media);
+            media,
+            backend);
         StorePreview(tokenHash, state);
 
         return new(
@@ -396,6 +417,7 @@ public sealed partial class LegacyEnvMigrationService
             conflicts,
             DuplicateAssignmentWarnings(document))
         {
+            Backend = BackendPreview(backend, document),
             Media = new(media.Files.Count, media.Files.Count(item => item.ProviderId != null),
                 media.Files.Count(item => item.ProviderId == null), media.Notices),
             BackendIdentityCount = 0,
@@ -473,7 +495,7 @@ public sealed partial class LegacyEnvMigrationService
             }
             if (state.Result != null)
             {
-                return state.Result with { AlreadyApplied = true };
+                return state.Result with { AlreadyApplied = true, RequiresRestart = false };
             }
 
             await ApplyGate.WaitAsync(cancellationToken);
@@ -487,13 +509,14 @@ public sealed partial class LegacyEnvMigrationService
                         cancellationToken);
                     if (replay != null)
                     {
-                        state.Result = replay with { AlreadyApplied = true };
+                        state.Result = replay with { AlreadyApplied = true, RequiresRestart = false };
                         state.ClearPlaintext();
                         return state.Result;
                     }
                 }
 
                 var checkedAccounts = await CheckAccountsAsync(state, cancellationToken);
+                var checkedBackend = await CheckBackendServiceAsync(state, cancellationToken);
                 var currentRevision = await ComputeRevisionAsync(
                     state.Document.SourceSha256,
                     state.ActorUserId,
@@ -516,7 +539,7 @@ public sealed partial class LegacyEnvMigrationService
                     cancellationToken);
                 if (prior != null)
                 {
-                    state.Result = prior with { AlreadyApplied = true };
+                    state.Result = prior with { AlreadyApplied = true, RequiresRestart = false };
                     state.ClearPlaintext();
                     return state.Result;
                 }
@@ -524,6 +547,7 @@ public sealed partial class LegacyEnvMigrationService
                 if (!await db.Users.AnyAsync(item => item.Id == state.ActorUserId && item.Enabled && item.IsAdmin, cancellationToken))
                     throw new LegacyEnvMigrationException("user_unavailable", "An active administrator is required.");
 
+                var backendWrites = await StageBackendAsync(db, state, checkedBackend, cancellationToken);
                 var settingWrites = state.Items
                     .Where(item => item.Action == "import_if_absent" && item.DurableKey != null)
                     .Select(item =>
@@ -531,6 +555,7 @@ public sealed partial class LegacyEnvMigrationService
                         var sourceEntry = state.Document.Entries.Single(entry => entry.Key == item.Key);
                         return new RuntimeSettingWrite(item.DurableKey!, sourceEntry.Value, ExpectedRevision: null);
                     })
+                    .Concat(backendWrites.Writes)
                     .ToArray();
                 IReadOnlyList<StagedRuntimeSetting> stagedSettings = [];
                 if (settingWrites.Length > 0)
@@ -826,6 +851,9 @@ public sealed partial class LegacyEnvMigrationService
                     appliedAt)
                 {
                     BackendIdentitiesCreated = 0,
+                    BackendConnectionSaved = backendWrites.Writes.Any(item => item.Key == "Backend:Type"),
+                    BackendServiceAccess = backendWrites.ServiceAccess,
+                    RequiresRestart = backendWrites.Writes.Count > 0,
                     PlaylistLinksCreated = createdPlaylistLinks.Count,
                     SchedulesCreated = createdSchedules.Count,
                     AccountChecks = checkedAccounts.Values.Select(item => item.Check).ToArray(),
@@ -896,7 +924,7 @@ public sealed partial class LegacyEnvMigrationService
                     cancellationToken);
                 if (replay != null)
                 {
-                    state.Result = replay with { AlreadyApplied = true };
+                    state.Result = replay with { AlreadyApplied = true, RequiresRestart = false };
                     state.ClearPlaintext();
                     return state.Result;
                 }
@@ -1241,7 +1269,7 @@ public sealed partial class LegacyEnvMigrationService
                 throw new JsonException();
             }
 
-            return result with { AlreadyApplied = true };
+            return result with { AlreadyApplied = true, RequiresRestart = false };
         }
         catch (JsonException ex)
         {
@@ -1417,10 +1445,12 @@ public sealed partial class LegacyEnvMigrationService
         bool canApply,
         IReadOnlyList<LegacyEnvPreviewItem> items,
         IReadOnlyList<LegacyProviderAccountPreview> providerAccounts,
-        LegacyMediaPlan media)
+        LegacyMediaPlan media,
+        BackendSnapshot? backend)
     {
         public LegacyEnvDocument Document { get; private set; } = document;
         public LegacyMediaPlan Media { get; } = media;
+        public BackendSnapshot? Backend { get; } = backend;
         public string SessionId { get; } = sessionId;
         public Guid? ActorUserId { get; } = actorUserId;
         public string CorrelationId { get; } = correlationId;

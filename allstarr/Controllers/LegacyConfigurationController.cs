@@ -99,12 +99,15 @@ public sealed class LegacyConfigurationController : ControllerBase
         try
         {
             var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
-            return Ok(await service.ApplyAsync(
+            var result = await service.ApplyAsync(
                 request.PreviewToken ?? string.Empty,
                 request.Revision ?? string.Empty,
                 request.Confirmed,
                 CreateMigrationActor(),
-                cancellationToken));
+                cancellationToken);
+            if (result.RequiresRestart && HttpContext.RequestServices.GetService<IHostApplicationLifetime>() is { } lifetime)
+                Response.OnCompleted(() => { lifetime.StopApplication(); return Task.CompletedTask; });
+            return Ok(result);
         }
         catch (LegacyEnvMigrationException ex) when (ex.Code == "preview_owner_mismatch")
         {
