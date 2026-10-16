@@ -1141,6 +1141,61 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DownloadStreaming_PreparesSoundCloudTransfersAndPreservesUpstreamFailure(bool upstreamFailure)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-prepared-stream", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Extensions", "Registry", "soundcloud.json"));
+            const string script = """
+                registerExtension({
+                  getTrack:function(id){return {id:id,name:'Song',artists:'Artist'};},
+                  checkAvailability:function(){return {available:true,prepared_context:{ready:true}};},
+                  download:function(id,quality,path,progress,options){
+                    if (!options.preparedContext.ready) throw new Error('preparation missing');
+                    return file.download('https://api-v2.soundcloud.com/media',path,{});
+                  }
+                });
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var calls = 0;
+            var handler = new AppleProviderTestFactory.Handler(request =>
+            {
+                calls++;
+                return new HttpResponseMessage(upstreamFailure ? HttpStatusCode.BadGateway : HttpStatusCode.OK)
+                { Content = new ByteArrayContent([1, 2, 3, 4]), RequestMessage = request };
+            });
+            var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api-v2.soundcloud.com/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var artifacts = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, artifacts, options);
+            var result = await adapter.GetStreamLeaseAsync(Context(manifest.Id),
+                new(new(manifest.Id, ProviderResourceKind.Track, "track")));
+            Assert.Equal(1, calls);
+            if (upstreamFailure)
+            {
+                Assert.False(result.IsSuccess);
+                Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
+            }
+            else
+            {
+                Assert.True(result.IsSuccess, result.Error?.Kind.ToString());
+                var lease = result.RequireValue();
+                using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+                using var response = await lease.ProtectedResponseFactory!(request, default);
+                Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+            }
+            Assert.Empty(Directory.GetDirectories(options.RootPath));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
     [InlineData(null, false, 200, null, 4, new byte[] { 1, 2, 3, 4 })]
     [InlineData("bytes=1-2", false, 206, "bytes 1-2/4", 2, new byte[] { 2, 3 })]
     [InlineData("bytes=-2", false, 206, "bytes 2-3/4", 2, new byte[] { 3, 4 })]

@@ -14,7 +14,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ExtensionControlPlaneServiceTests : IAsyncLifetime
+public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
 {
     private readonly string _root = Path.Combine(Path.GetTempPath(), "allstarr-extension-control", Guid.NewGuid().ToString("N"));
     private readonly Guid _reviewer = Guid.CreateVersion7();

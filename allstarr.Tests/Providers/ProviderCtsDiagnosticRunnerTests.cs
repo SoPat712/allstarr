@@ -446,6 +446,83 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         streaming.VerifyAll();
     }
 
+    [Theory]
+    [InlineData(ProviderAccountScope.Shared)]
+    [InlineData(ProviderAccountScope.Personal)]
+    public async Task Measure_AutomaticSelectionPreservesTheResolvedAccountForSearchAndStreaming(
+        ProviderAccountScope scope)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var administratorId = Guid.CreateVersion7();
+        Guid? ownerId = scope == ProviderAccountScope.Personal ? Guid.CreateVersion7() : null;
+        var account = new ProviderAccountContext(
+            Guid.CreateVersion7(), "fixture", scope, revision: 4, ownerUserId: ownerId);
+        var actor = new ProviderActorContext(
+            ProviderActorKind.Administrator,
+            administratorId,
+            new ProviderBackendPrincipal("jellyfin", "fixture", "diagnostic-admin"));
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(
+                It.Is<ProviderRouteAccountRequest>(request =>
+                    request.RequestedAccountId == account.AccountId &&
+                    request.Capability == ProviderCapabilityKind.Streaming &&
+                    request.AllowManagedDiagnosticAccount),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderRouteAccountResolution(account, account.Revision));
+        ProviderExecutionContext? searchExecution = null;
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Callback<ProviderExecutionContext, ProviderMetadataSearchRequest>((context, _) => searchExecution = context)
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture",
+                [new ProviderTrackMetadata(new("fixture", ProviderResourceKind.Track, "searched-track"),
+                    "Song", [new("Artist")])])));
+        var lease = new ProviderStreamLease(
+            "lease", new Uri("https://media.example.test/searched"), DateTimeOffset.UtcNow.AddMinutes(1),
+            false, false, new ProviderMediaFormat("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry,
+            (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3, 4])
+            }));
+        ProviderExecutionContext? streamExecution = null;
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "searched-track")))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => streamExecution = context)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var providers = AccountFreeRegistry("fixture", streaming.Object, metadata.Object);
+        providers.Setup(item => item.GetRequired("fixture"))
+            .Returns(Descriptor("fixture", ProviderAccountRequirement.Required));
+        var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
+        observer.Setup(item => item.Observe(It.IsAny<ProviderExecutionContext>(),
+            ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(
+            providers.Object, accounts.Object, selector, observer.Object);
+
+        var result = await runner.MeasureAsync(
+            actor, "fixture", account.AccountId, ProviderAudioQuality.Lossless, "automatic-account");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("search", result.SelectionMode);
+        Assert.Equal(account.AccountId, result.ProviderAccountId);
+        Assert.NotNull(searchExecution);
+        Assert.Same(searchExecution, streamExecution);
+        Assert.Same(account, searchExecution.Account);
+        Assert.Equal(4, searchExecution.Account!.Revision);
+        Assert.Equal(administratorId, searchExecution.Actor.UserId);
+        Assert.Equal(ownerId, searchExecution.Actor.ActingForUserId);
+        Assert.Equal(ownerId ?? administratorId, searchExecution.Actor.EffectiveUserId);
+        Assert.True(searchExecution.Policy.AllowManagedDownloads);
+        metadata.VerifyAll();
+        streaming.VerifyAll();
+        accounts.VerifyAll();
+        providers.VerifyAll();
+        observer.VerifyAll();
+    }
+
     [Fact]
     public async Task Measure_ExplainsWhenTheProviderHasNoSongToTest()
     {

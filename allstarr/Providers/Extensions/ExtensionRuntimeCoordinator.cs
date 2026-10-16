@@ -49,7 +49,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         _registry = registry;
         _readRegistry = readRegistry;
         _clients = clients;
-        _secrets = secrets;
+        _secrets = new ExtensionAccountValues(factory, secrets);
         _downloadArtifacts = downloadArtifacts;
         _downloadOptions = downloadOptions;
         _logger = logger;
@@ -518,6 +518,35 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             item.ProviderId == account.ProviderId && item.Enabled && item.Revision == account.Revision &&
             item.OwnerUserId == account.OwnerUserId && item.SecretReferenceId == account.SecretReferenceId &&
             (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)), cancellationToken);
+    }
+
+    private sealed class ExtensionAccountValues(
+        IDbContextFactory<AllstarrDbContext> factory,
+        IProviderAccountSecretAccessor secrets) : IProviderAccountSecretAccessor
+    {
+        public async Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation,
+            CancellationToken cancellationToken)
+        {
+            await using var db = await factory.CreateDbContextAsync(cancellationToken);
+            var row = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == account.AccountId && item.ProviderId == account.ProviderId && item.Enabled &&
+                item.Revision == account.Revision && item.OwnerUserId == account.OwnerUserId &&
+                item.SecretReferenceId == account.SecretReferenceId, cancellationToken)
+                ?? throw new UnauthorizedAccessException("The extension account is no longer current.");
+            // Keys starting with "__" are Allstarr's own bookkeeping, not extension settings.
+            var values = (JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(row.SettingsJson) ?? [])
+                .Where(item => !item.Key.StartsWith("__", StringComparison.Ordinal))
+                .ToDictionary(item => item.Key, item => item.Value);
+            if (account.SecretReferenceId == null)
+                return await operation(JsonSerializer.SerializeToUtf8Bytes(values));
+            return await secrets.UseAsync(account, async secret =>
+            {
+                using var document = JsonDocument.Parse(secret);
+                foreach (var property in document.RootElement.EnumerateObject())
+                    values[property.Name] = property.Value.Clone();
+                return await operation(JsonSerializer.SerializeToUtf8Bytes(values));
+            }, cancellationToken);
+        }
     }
 
     private Task<ExtensionSandbox> RequireCurrentSandboxAsync(

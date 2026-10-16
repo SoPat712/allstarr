@@ -236,6 +236,13 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStrea
         if (!context.Policy.AllowManagedDownloads)
             return Failure<ProviderStreamLease>(ProviderErrorKind.Forbidden);
 
+        var availability = await download.CheckAvailabilityAsync(context,
+            new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality));
+        if (!availability.IsSuccess)
+            return ProviderOutcome<ProviderStreamLease>.Failure(availability.Error!);
+        if (availability.RequireValue().State != ProviderDownloadAvailabilityState.Available)
+            return Failure<ProviderStreamLease>(ProviderErrorKind.NotFound);
+
         var jobId = Guid.CreateVersion7();
         var idempotencyKey = $"stream-{jobId:N}";
         var workspace = artifacts.CreateTransientWorkspace(new(
