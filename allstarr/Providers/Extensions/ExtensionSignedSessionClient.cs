@@ -25,6 +25,7 @@ public sealed record ExtensionSessionView(
 {
     public Guid? AccountId { get; init; }
     public bool RenewsAutomatically { get; init; }
+    public bool Restored { get; init; }
     public string? LastRenewalFailure { get; init; }
 }
 
@@ -40,6 +41,7 @@ internal sealed class ExtensionSignedSessionClient
 {
     private const int MaximumResponseBytes = 4 * 1024 * 1024;
     private static readonly TimeSpan RefreshSkew = TimeSpan.FromHours(1);
+    private string? _restoreAttemptedFor;
     private static readonly TimeSpan AdministratorRequestLimit = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ScriptRequestLimit = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(35);
@@ -106,11 +108,30 @@ internal sealed class ExtensionSignedSessionClient
         {
             if (string.IsNullOrWhiteSpace(_config.Endpoints.Refresh)) return null;
             var record = Load();
+            if (ExpiredSignIn(record)) return await TryRestoreAsync(record, limit, cancellationToken);
             if (!RefreshDue(record)) return null;
             record = await TryRefreshAsync(record, limit);
             cancellationToken.ThrowIfCancellationRequested();
             return ViewOf(record, null);
         }, cancellationToken);
+
+    private bool ExpiredSignIn(SessionRecord record) =>
+        !string.IsNullOrWhiteSpace(record.SessionId) && !string.IsNullOrWhiteSpace(record.SessionSecret) &&
+        _pendingAuthUrl == null && TryExpiry(record, out var expiry) && expiry <= DateTimeOffset.UtcNow;
+
+    // Services can cap a sign-in's total lifetime; once it lapses, ask once whether this install may resume
+    // without verification, as the mobile client does, instead of waiting for playback to fail.
+    private async Task<ExtensionSessionView?> TryRestoreAsync(SessionRecord record, CancellationToken limit,
+        CancellationToken cancellationToken)
+    {
+        if (_restoreAttemptedFor == record.ExpiresAt) return null;
+        _restoreAttemptedFor = record.ExpiresAt;
+        var result = await BeginVerificationAsync(limit, cancellationToken, allowChallenge: false);
+        cancellationToken.ThrowIfCancellationRequested();
+        var current = Load();
+        _lastRenewalFailure = HasUsableSession(current) ? null : result.ReasonCode ?? "verification_required";
+        return ViewOf(current, null) with { Restored = HasUsableSession(current) };
+    }
 
     // Adapted from SpotiFLAC-Mobile (MIT), signed_session/ss_protocol.rs refresh_due.
     private bool RefreshDue(SessionRecord record) =>
@@ -286,7 +307,7 @@ internal sealed class ExtensionSignedSessionClient
     }
 
     private async Task<SessionResult> BeginVerificationAsync(CancellationToken cancellationToken,
-        CancellationToken callerToken = default)
+        CancellationToken callerToken = default, bool allowChallenge = true)
     {
         try
         {
@@ -308,6 +329,8 @@ internal sealed class ExtensionSignedSessionClient
                 _pendingAuthUrl = null;
                 return SessionResult.Authenticated;
             }
+            if (!allowChallenge)
+                return SessionResult.Failed("verification_required", "the service requires signing in again");
             var authUrl = boot?.AuthUrl ?? boot?.ChallengeUrl;
             if (string.IsNullOrWhiteSpace(authUrl) && !string.IsNullOrWhiteSpace(boot?.ChallengeId))
                 authUrl = BuildChallengeUrl(boot.ChallengeId);
@@ -460,7 +483,8 @@ internal sealed class ExtensionSignedSessionClient
                 return record;
             }
             Save(next);
-            _lastRenewalFailure = null;
+            // A renewal that cannot move the expiry means the service has reached its sign-in lifetime.
+            _lastRenewalFailure = TryExpiry(record, out var previous) && expiry <= previous ? "renewal_capped" : null;
             return next;
         }
         catch (Exception exception)

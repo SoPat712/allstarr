@@ -66,6 +66,9 @@ describe("extension sign-in", () => {
     expect(summary.detail).toContain("2099");
     expect(renewalFailureText("provider_unavailable")).toContain("Your sign-in was kept");
     expect(renewalFailureText("token=private")).not.toContain("private");
+    expect(renewalFailureText("renewal_capped", "2026-10-17T16:11:00Z")).toContain("Sign in again before then");
+    expect(renewalFailureText("renewal_capped")).toContain("renewed any further");
+    expect(renewalFailureText("verification_required")).toContain("Reconnect");
     expect(renewalFailureText(null)).toBe("");
   });
   it("names every session state in words, not only color", () => {

@@ -155,7 +155,7 @@
     </div>
   {/if}
   {#if problem}<p class="notice-error" role="alert">{problem}</p>{:else if message}<p class="extension-session-message" role="status">{message}</p>{/if}
-  {#if session?.lastRenewalFailure}<p class="notice-error" role="status">{renewalFailureText(session.lastRenewalFailure)}</p>{/if}
+  {#if session?.lastRenewalFailure}<p class="notice-error" role="status">{renewalFailureText(session.lastRenewalFailure, session.expiresAt)}</p>{/if}
 
   {#if loadFailed && !session}
     <div class="extension-session-actions"><Button size="sm" variant="secondary" onclick={() => void load(item)}>Check again</Button></div>
