@@ -25,6 +25,7 @@ using Xunit.Abstractions;
 
 namespace allstarr.Tests;
 
+[Collection(nameof(PlaylistTimingCollection))]
 public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper output) : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
