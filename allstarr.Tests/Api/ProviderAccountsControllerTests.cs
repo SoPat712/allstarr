@@ -658,7 +658,7 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
             entryPoint: "index.js") { UsesSignedSession = true })]);
         var controller = Controller(Session(_userId, administrator: true), providerRegistry: registry);
         Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
-            { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
+        { ProviderId = "signed-audio", Scope = "Personal", Enabled = true }));
         await using var db = await _factory.CreateDbContextAsync();
         var id = (await db.ProviderAccounts.SingleAsync()).Id;
         Assert.IsType<OkObjectResult>(await controller.SetEnabled(id, new() { Enabled = false }));

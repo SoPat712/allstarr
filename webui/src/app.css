@@ -1830,7 +1830,17 @@
   }
 
   .playlist-fact-run .operation-trigger {
+    min-width: 0;
+    max-width: 100%;
+    flex: 0 1 auto;
     margin-left: calc(-1 * var(--space-2));
+  }
+
+  .playlist-fact-run .operation-trigger > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .schedule-edit-button {
@@ -9321,6 +9331,17 @@
 
   .playlist-facts > div {
     grid-template-columns: 7rem minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 400px) {
+  .playlist-facts > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+  }
+
+  .playlist-fact-run .operation-trigger {
+    margin-left: 0;
   }
 }
 
