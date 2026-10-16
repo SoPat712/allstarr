@@ -6,6 +6,19 @@ namespace allstarr.Tests;
 
 public sealed class LegacyEnvParserTests
 {
+    [Theory]
+    [InlineData("CORS__ALLOWED_ORIGINS", "https://player.example.test", "Cors:AllowedOrigins")]
+    [InlineData("CORS_ALLOW_CREDENTIALS", "false", "Cors:AllowCredentials")]
+    [InlineData("BACKEND_MUSIC_LIBRARY_IDS", "Library-A", "Backend:MusicLibraryIds")]
+    [InlineData("DEBUG_LOG_ALL_REQUESTS", "true", "Debug:LogAllRequests")]
+    [InlineData("MUSICBRAINZ_BASE_URL", "https://musicbrainz.org", "MusicBrainz:BaseUrl")]
+    public void OperatorValuesAreImportedOnceInsteadOfRemainingInTheEnvironment(string key, string value, string target)
+    {
+        var entry = Assert.Single(Parse(key + "=" + value).Entries);
+        Assert.Equal(LegacyEnvDisposition.DurableSetting, entry.Disposition);
+        Assert.Equal(target, entry.DurableKey);
+    }
+
     [Fact]
     public void Parse_ClassifiesEveryKeyAndKeepsSecretsOutOfPreviewMetadata()
     {
@@ -140,8 +153,9 @@ public sealed class LegacyEnvParserTests
             UNKNOWN_SETTING=value
             """);
 
-        foreach (var key in new[] { "POSTGRES_DB", "ADMIN__ENABLE_ENV_EXPORT", "CORS__ALLOWED_ORIGINS" })
+        foreach (var key in new[] { "POSTGRES_DB", "ADMIN__ENABLE_ENV_EXPORT" })
             AssertEntry(document, key, LegacyEnvDisposition.DeploymentChecklist, "retain_in_deployment", false);
+        AssertEntry(document, "CORS__ALLOWED_ORIGINS", LegacyEnvDisposition.DurableSetting, "import_if_absent", false);
         AssertEntry(document, "SPOTIFY_API_SESSION_COOKIES", LegacyEnvDisposition.PerUserManual, "per_user_manual", true);
         foreach (var key in new[] { "SPOTIFY_IMPORT_PLAYLIST_IDS", "VALKEY_MAX_MEMORY", "REDIS_DATA_PATH" })
             AssertEntry(document, key, LegacyEnvDisposition.IgnoredDeprecated, "deprecated_manual_review", false);

@@ -1,4 +1,5 @@
 using allstarr.Core.Health;
+using allstarr.Core.Configuration;
 using System.Text.Json;
 using allstarr.Filters;
 using allstarr.Core.Identity;
@@ -1088,8 +1089,11 @@ public class AdminUiController : ControllerBase
             ConfigSchema =
             [
                 Field("MUSICBRAINZ_ENABLED", "Enabled", "toggle", "musicBrainz.enabled"),
-                Field("MUSICBRAINZ_USERNAME", "Username", "text", "musicBrainz.username", ownership: "deployment", readOnly: true),
-                Field("MUSICBRAINZ_PASSWORD", "Password", "password", "musicBrainz.password", sensitive: true, ownership: "deployment", readOnly: true)
+                Field("MUSICBRAINZ_SOURCE_ID", "Metadata source identifier", "text", "musicBrainz.sourceId", requiresRestart: true),
+                Field("MUSICBRAINZ_BASE_URL", "Metadata service URL", "url", "musicBrainz.baseUrl", requiresRestart: true),
+                Field("MUSICBRAINZ_RATE_LIMIT_MS", "Request interval (ms)", "number", "musicBrainz.rateLimitMs", requiresRestart: true, min: 1000, max: 60000),
+                Field("MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE", "Authorized user agent override", "text", "musicBrainz.authorizedUserAgentOverride", requiresRestart: true,
+                    helpText: "Leave blank for the standard application identity. Use an override only with the metadata service operator's permission.")
             ]
         },
         new()
@@ -1429,6 +1433,14 @@ public class AdminUiController : ControllerBase
 
     private static List<AdminUiConfigSection> BuildConfigSections() =>
     [
+        Section("operator", "Service and retention settings", OperatorSettingPolicy.Definitions
+            .Where(item => !item.Key.StartsWith("MusicBrainz:", StringComparison.Ordinal) && item.Key != "Debug:LogAllRequests")
+            .Select(item => Field(
+                LegacyEnvParser.DurableAliasKeys.First(key => LegacyEnvParser.TryGetDurableAlias(key, out var target) && target == item.Key),
+                OperatorSettingLabel(item.Key),
+                item.ValueType == RuntimeSettingValueType.Boolean ? "toggle" : item.ValueType == RuntimeSettingValueType.Integer ? "number" : "text",
+                "operatorSettings." + item.Key, requiresRestart: true, min: item.Minimum, max: item.Maximum,
+                helpText: "Saved in the data folder. Allstarr restarts after saving this setting.")).ToList()),
         Section("general", "General",
         [
             Field(
@@ -1481,15 +1493,15 @@ public class AdminUiController : ControllerBase
             Field("CACHE_PROXY_IMAGES_DAYS", "Proxy images days", "number", "cache.proxyImagesDays", min: 1),
             Field("CACHE_TRANSCODE_MINUTES", "Transcode cache minutes", "number", "cache.transcodeCacheMinutes", min: 1),
             DeploymentField("CACHE_MEDIA_DIRECTORY", "Media cache directory", "text", "cache.mediaDirectory"),
-            DeploymentField("CACHE_MEDIA_MAXIMUM_MEGABYTES", "Media cache total MiB", "number", "cache.mediaMaximumMegabytes"),
-            DeploymentField("CACHE_MEDIA_MAXIMUM_ENTRY_MEGABYTES", "Media cache entry MiB", "number", "cache.mediaMaximumEntryMegabytes"),
-            DeploymentField("CACHE_MEDIA_CLEANUP_FILE_LIMIT", "Cleanup scan file limit", "number", "cache.mediaCleanupFileLimit")
+            Field("CACHE_MEDIA_MAXIMUM_MEGABYTES", "Media cache total MiB", "number", "cache.mediaMaximumMegabytes"),
+            Field("CACHE_MEDIA_MAXIMUM_ENTRY_MEGABYTES", "Media cache entry MiB", "number", "cache.mediaMaximumEntryMegabytes"),
+            Field("CACHE_MEDIA_CLEANUP_FILE_LIMIT", "Cleanup scan file limit", "number", "cache.mediaCleanupFileLimit")
         ]),
         Section("network", "Network and security",
         [
             DeploymentField("ADMIN_BIND_ANY_IP", "Bind admin on all interfaces", "toggle", "admin.bindAnyIp"),
             DeploymentField("ADMIN_TRUSTED_SUBNETS", "Trusted admin subnets", "text", "admin.trustedSubnets"),
-            DeploymentField("DEBUG_LOG_ALL_REQUESTS", "Request usage logging", "toggle", "debug.logAllRequests")
+            Field("DEBUG_LOG_ALL_REQUESTS", "Request usage logging", "toggle", "debug.logAllRequests", requiresRestart: true)
         ]),
         Section("spotify-import", "Imported playlist matching",
         [
@@ -1497,6 +1509,25 @@ public class AdminUiController : ControllerBase
             Field("SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS", "Matching interval hours", "number", "spotifyImport.matchingIntervalHours", min: 0)
         ])
     ];
+
+    private static string OperatorSettingLabel(string key) => key switch
+    {
+        "Backend:MusicLibraryIds" => "Music library identifiers (blank selects all permitted libraries)",
+        "Extensions:AllowRemoteInstall" => "Allow remote extension installation",
+        "Odesli:Enabled" => "Enable public cross-provider links",
+        "Odesli:RateLimitMs" => "Cross-provider request interval (ms)",
+        "Cors:AllowedOrigins" => "Browser origins (comma separated)",
+        "Cors:AllowedMethods" => "Browser HTTP methods (blank uses defaults)",
+        "Cors:AllowedHeaders" => "Browser request headers (blank uses defaults)",
+        "Cors:AllowCredentials" => "Allow browser credentials for explicit origins",
+        "Storage:BackupRetentionCount" => "Automatic backup copies to retain",
+        "Operations:EventLog:RetentionDays" => "Activity retention days",
+        "Operations:EventLog:MaximumRows" => "Maximum activity rows",
+        "Operations:EventLog:CleanupIntervalMinutes" => "Activity cleanup interval (minutes)",
+        "Operations:EventLog:CleanupBatchSize" => "Activity cleanup batch size",
+        "Operations:EventLog:JobHistoryRetentionDays" => "Job history retention days",
+        _ => key
+    };
 
     private static AdminUiConfigSection Section(string id, string label, List<AdminUiConfigField> fields) =>
         new() { Id = id, Label = label, Fields = fields };
@@ -1524,7 +1555,7 @@ public class AdminUiController : ControllerBase
             Options = options ?? [],
             Placeholder = placeholder,
             Sensitive = sensitive,
-            RequiresRestart = requiresRestart,
+            RequiresRestart = requiresRestart || (LegacyEnvParser.TryGetDurableAlias(key, out var target) && RuntimeSettingCatalog.Require(target).RequiresRestart),
             Ownership = ownership,
             ReadOnly = readOnly,
             HelpText = helpText,

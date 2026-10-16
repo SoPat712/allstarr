@@ -38,6 +38,67 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    [Theory]
+    [InlineData("MusicBrainz:BaseUrl", "https://musicbrainz.org")]
+    [InlineData("MusicBrainz:SourceId", "household-metadata")]
+    [InlineData("MusicBrainz:RateLimitMs", "1500")]
+    [InlineData("Odesli:Enabled", "true")]
+    [InlineData("Odesli:RateLimitMs", "7000")]
+    [InlineData("Extensions:AllowRemoteInstall", "true")]
+    [InlineData("Debug:LogAllRequests", "true")]
+    [InlineData("Operations:EventLog:RetentionDays", "40")]
+    [InlineData("Operations:EventLog:MaximumRows", "300000")]
+    [InlineData("Operations:EventLog:CleanupIntervalMinutes", "400")]
+    [InlineData("Operations:EventLog:CleanupBatchSize", "2000")]
+    [InlineData("Operations:EventLog:JobHistoryRetentionDays", "5")]
+    [InlineData("Storage:BackupRetentionCount", "12")]
+    [InlineData("Backend:MusicLibraryIds", "Library-A,Library-B")]
+    public async Task OperatorSettingsSurviveRestartWithoutEnvironment(string key, string raw)
+    {
+        await CreateService([]).ApplyBatchAsync([new(key, raw)], "webui", _userId);
+        var saved = await CreateService([]).GetAsync(key);
+        Assert.Equal(raw, saved.NormalizedValue);
+        Assert.True(RuntimeSettingCatalog.Require(key).RequiresRestart);
+    }
+
+    [Theory]
+    [InlineData("MusicBrainz:BaseUrl", "https://user:password@example.test")]
+    [InlineData("MusicBrainz:BaseUrl", "https://example.test/?token=secret")]
+    [InlineData("MusicBrainz:SourceId", "invalid source")]
+    [InlineData("MusicBrainz:RateLimitMs", "999")]
+    [InlineData("Backend:MusicLibraryIds", "A, A")]
+    public async Task OperatorSettingsRejectInvalidValuesWithoutWriting(string key, string raw)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => CreateService([]).ApplyBatchAsync([new(key, raw)], "webui", _userId));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.RuntimeSettings.ToListAsync());
+    }
+
+    [Fact]
+    public async Task BrowserCredentialsRequireExplicitOriginsIncludingAcrossRevisions()
+    {
+        var service = CreateService([]);
+        await service.ApplyBatchAsync([new("Cors:AllowedOrigins", "*")], "webui", _userId);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("Cors:AllowCredentials", "true")], "webui", _userId));
+        await service.ApplyBatchAsync([
+            new("Cors:AllowedOrigins", "https://player.example.test", 1),
+            new("Cors:AllowCredentials", "true")], "webui", _userId);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new("Cors:AllowedOrigins", "*", 2)], "webui", _userId));
+        Assert.Equal("https://player.example.test", (await service.GetAsync("Cors:AllowedOrigins")).Value);
+    }
+
+    [Theory]
+    [InlineData("Cors:AllowedOrigins", "https://example.test/path")]
+    [InlineData("Cors:AllowedOrigins", "https://user:password@example.test")]
+    [InlineData("Cors:AllowedHeaders", "Authorization\r\nInjected: value")]
+    [InlineData("Cors:AllowedMethods", "GET POST")]
+    public async Task BrowserSettingsRejectMalformedValues(string key, string value)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => CreateService([]).ApplyBatchAsync([new(key, value)], "webui", _userId));
+    }
+
     [Fact]
     public async Task RetiredSpotifySidecarCannotBeConfigured()
     {

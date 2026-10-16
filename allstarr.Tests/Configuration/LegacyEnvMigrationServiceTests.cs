@@ -51,6 +51,28 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task OperatorSettingsPreviewAndApplyShareValidationAndPersistOnce()
+    {
+        var service = CreateService();
+        var invalid = await service.PreviewAsync(Source("CORS_ALLOWED_ORIGINS=*\nCORS_ALLOW_CREDENTIALS=true"), Actor());
+        Assert.False(invalid.CanApply);
+        var malformed = await service.PreviewAsync(Source("MUSICBRAINZ_BASE_URL=https://metadata.example.test/?token=private"), Actor());
+        Assert.False(malformed.CanApply);
+        var preview = await service.PreviewAsync(Source("CORS_ALLOWED_ORIGINS=https://player.example.test\nCORS_ALLOW_CREDENTIALS=true\nBACKEND_MUSIC_LIBRARY_IDS=Library-A\nMUSICBRAINZ_BASE_URL=https://metadata.example.test"), Actor());
+        Assert.True(preview.CanApply);
+        await using (var untouched = await _factory.CreateDbContextAsync()) Assert.Empty(await untouched.RuntimeSettings.ToListAsync());
+        var applied = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+        Assert.True(applied.RequiresRestart);
+        Assert.Equal(4, applied.SettingsImported);
+        var replay = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+        Assert.True(replay.AlreadyApplied);
+        Assert.False(replay.RequiresRestart);
+        var settings = new DurableRuntimeSettingsService(_factory, new ConfigurationBuilder().Build(), new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
+        Assert.Equal("Library-A", (await settings.GetAsync("Backend:MusicLibraryIds")).Value);
+        Assert.Equal("https://player.example.test", (await settings.GetAsync("Cors:AllowedOrigins")).Value);
+    }
+
+    [Fact]
     public async Task Preview_IsReadOnlyBoundedAndRedactsSensitiveValues()
     {
         var service = CreateService();
@@ -399,7 +421,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Assert.StartsWith("provider-account:", reference.Purpose, StringComparison.Ordinal));
             var receipt = Assert.Single(await db.LegacyEnvImports.ToListAsync());
             Assert.Equal(result.SourceFingerprint, receipt.SourceSha256);
-            Assert.Equal("legacy-env-import-v4", receipt.SchemaVersion);
+            Assert.Equal(LegacyEnvMigrationService.MigrationSchemaVersion, receipt.SchemaVersion);
             using var provenance = JsonDocument.Parse(receipt.ProvenanceJson);
             var settingProvenance = Assert.Single(
                 provenance.RootElement.GetProperty("settings").EnumerateArray());
@@ -724,7 +746,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
                 Id = Guid.CreateVersion7(),
                 ActorUserId = _userId,
                 SourceSha256 = result.SourceFingerprint,
-                SchemaVersion = "legacy-env-import-v4",
+                SchemaVersion = LegacyEnvMigrationService.MigrationSchemaVersion,
                 AuditEventId = auditId,
                 ResultJson = JsonSerializer.Serialize(result),
                 AppliedAt = DateTimeOffset.UtcNow
@@ -741,7 +763,7 @@ public sealed partial class LegacyEnvMigrationServiceTests : IAsyncLifetime
             Id = Guid.CreateVersion7(),
             ActorUserId = unknownUserId,
             SourceSha256 = new string('b', 64),
-            SchemaVersion = "legacy-env-import-v4",
+            SchemaVersion = LegacyEnvMigrationService.MigrationSchemaVersion,
             AuditEventId = crossedAuditId,
             ResultJson = JsonSerializer.Serialize(result),
             AppliedAt = DateTimeOffset.UtcNow

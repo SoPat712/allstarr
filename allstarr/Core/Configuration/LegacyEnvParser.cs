@@ -59,6 +59,30 @@ public static class LegacyEnvParser
     private static readonly IReadOnlyDictionary<string, string> DurableAliases =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["BACKEND_MUSIC_LIBRARY_IDS"] = "Backend:MusicLibraryIds",
+            ["JELLYFIN_LIBRARY_ID"] = "Backend:MusicLibraryIds",
+            ["MUSICBRAINZ_SOURCE_ID"] = "MusicBrainz:SourceId",
+            ["MUSICBRAINZ_BASE_URL"] = "MusicBrainz:BaseUrl",
+            ["MUSICBRAINZ_RATE_LIMIT_MS"] = "MusicBrainz:RateLimitMs",
+            ["MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE"] = "MusicBrainz:AuthorizedUserAgentOverride",
+            ["ODESLI_ENABLED"] = "Odesli:Enabled",
+            ["ODESLI_RATE_LIMIT_MS"] = "Odesli:RateLimitMs",
+            ["EXTENSIONS_ALLOW_REMOTE_INSTALL"] = "Extensions:AllowRemoteInstall",
+            ["DEBUG_LOG_ALL_REQUESTS"] = "Debug:LogAllRequests",
+            ["STORAGE_BACKUP_RETENTION_COUNT"] = "Storage:BackupRetentionCount",
+            ["EVENT_LOG_RETENTION_DAYS"] = "Operations:EventLog:RetentionDays",
+            ["EVENT_LOG_MAXIMUM_ROWS"] = "Operations:EventLog:MaximumRows",
+            ["EVENT_LOG_CLEANUP_INTERVAL_MINUTES"] = "Operations:EventLog:CleanupIntervalMinutes",
+            ["EVENT_LOG_CLEANUP_BATCH_SIZE"] = "Operations:EventLog:CleanupBatchSize",
+            ["EVENT_LOG_JOB_HISTORY_RETENTION_DAYS"] = "Operations:EventLog:JobHistoryRetentionDays",
+            ["CORS_ALLOWED_ORIGINS"] = "Cors:AllowedOrigins",
+            ["CORS__ALLOWED_ORIGINS"] = "Cors:AllowedOrigins",
+            ["CORS_ALLOWED_METHODS"] = "Cors:AllowedMethods",
+            ["CORS__ALLOWED_METHODS"] = "Cors:AllowedMethods",
+            ["CORS_ALLOWED_HEADERS"] = "Cors:AllowedHeaders",
+            ["CORS__ALLOWED_HEADERS"] = "Cors:AllowedHeaders",
+            ["CORS_ALLOW_CREDENTIALS"] = "Cors:AllowCredentials",
+            ["CORS__ALLOW_CREDENTIALS"] = "Cors:AllowCredentials",
             ["LISTENERS_CAN_CONNECT_OWN_ACCOUNTS"] = "ProviderAccounts:ListenersCanConnectOwnAccounts",
             ["EXPLICIT_FILTER"] = "Library:ExplicitFilter",
             ["DOWNLOAD_MODE"] = "Library:DownloadMode",
@@ -187,6 +211,8 @@ public static class LegacyEnvParser
 
     public static bool TryGetDurableAlias(string legacyKey, out string durableKey) =>
         DurableAliases.TryGetValue(legacyKey, out durableKey!);
+
+    internal static IEnumerable<string> DurableAliasKeys => DurableAliases.Keys;
 
     public static IReadOnlyCollection<string> DurableAliasTargets { get; } =
         DurableAliases.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -380,7 +406,7 @@ public static class LegacyEnvParser
                 "Personal credentials require an explicitly selected Allstarr user and are never imported globally.", true);
         }
 
-        if (DeploymentKeys.Contains(key))
+        if (DeploymentKeys.Contains(key) && !DurableAliases.ContainsKey(key))
         {
             if (key.Equals("BACKEND_TYPE", StringComparison.OrdinalIgnoreCase) ||
                 key.Equals("Backend__Type", StringComparison.OrdinalIgnoreCase))
