@@ -64,13 +64,20 @@ public sealed partial class JobsControllerTests
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, administrator);
         using var json = Json(await controller.List());
         var tasks = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
-        Assert.Equal(administrator ? 2 : 1, tasks.Count(x => x.GetProperty("kind").GetString() == "playlist"));
+        Assert.Equal(1, tasks.Count(x => x.GetProperty("kind").GetString() == "playlist"));
         foreach (var task in tasks.Where(x => x.GetProperty("kind").GetString() == "playlist"))
         {
             Assert.True(task.GetProperty("nextRunAt").GetDateTimeOffset() > DateTimeOffset.UtcNow);
             Assert.Equal(JsonValueKind.String, task.GetProperty("runPlaylistLinkId").ValueKind);
         }
-        Assert.Equal(administrator ? 1 : 0, tasks.Count(x => x.GetProperty("kind").GetString() == "maintenance"));
+        Assert.Equal(0, tasks.Count(x => x.GetProperty("kind").GetString() == "maintenance"));
+        if (administrator)
+        {
+            using var household = Json(await controller.List(scope: "everyone"));
+            Assert.Equal(3, household.RootElement.GetProperty("items").GetArrayLength());
+        }
+        else Assert.IsType<ForbidResult>(await controller.List(scope: "everyone"));
+        Assert.IsType<BadRequestObjectResult>(await controller.List(scope: "invalid"));
         Assert.DoesNotContain("fixture-task-private", json.RootElement.ToString());
     }
 

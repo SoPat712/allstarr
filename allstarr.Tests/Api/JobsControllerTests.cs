@@ -76,12 +76,12 @@ public sealed partial class JobsControllerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task AdministratorList_ReturnsJobsAcrossOwners()
+    public async Task AdministratorList_DefaultsToOwnJobs()
     {
         var result = Assert.IsType<OkObjectResult>(await Controller(Session(_userId, true)).List());
 
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
-        Assert.Equal(2, json.RootElement.GetProperty("jobs").GetArrayLength());
+        Assert.Equal(_ownJobId, Assert.Single(json.RootElement.GetProperty("jobs").EnumerateArray()).GetProperty("Id").GetGuid());
     }
 
     [Fact]

@@ -74,6 +74,7 @@ export function filterActivity(items: ActivityItem[], filters: ActivityFilters) 
     if (filters.provider && item.providerId !== filters.provider) return false;
     if (filters.problemsOnly && !isProblem(item)) return false;
     return !query || [
+      item.actorDisplayName,
       item.label,
       item.detail,
       item.source,
@@ -98,7 +99,7 @@ export function groupActivity(items: ActivityItem[]) {
   for (const item of items) {
     const correlated = Boolean(item.correlationId && item.action);
     const operationKey = correlated
-      ? `${item.correlationId}|${item.action}`
+      ? `${item.actorUserId ?? "household"}|${item.correlationId}|${item.action}`
       : item.id;
     const group = correlated ? operations.get(operationKey) : undefined;
     if (group) {

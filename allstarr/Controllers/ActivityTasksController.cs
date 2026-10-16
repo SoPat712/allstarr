@@ -15,17 +15,20 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
     BackgroundTaskActivity? backgroundTasks = null) : ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> List(CancellationToken cancellationToken = default)
+    public async Task<IActionResult> List(CancellationToken cancellationToken = default, [FromQuery] string scope = "mine")
     {
         if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession session)
             return Unauthorized(new { error = "Authentication required" });
         if (session.AllstarrUserId == null) return Forbid();
+        if (scope is not ("mine" or "everyone")) return BadRequest(new { error = "Unknown activity scope" });
+        if (scope == "everyone" && !session.IsAdministrator) return Forbid();
+        var everyone = session.IsAdministrator && scope == "everyone";
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var scheduled = await (from schedule in db.JobSchedules.AsNoTracking()
                                join link in db.PlaylistLinks.AsNoTracking() on schedule.Id equals link.ScheduleId
                                where schedule.JobType == DurableScheduleEngine.PlaylistSyncJobType &&
                                    link.OwnerUserId == schedule.OwnerUserId &&
-                                   (session.IsAdministrator || schedule.OwnerUserId == session.AllstarrUserId)
+                                   (everyone || schedule.OwnerUserId == session.AllstarrUserId)
                                orderby schedule.NextRunAt, schedule.Id
                                select new { Schedule = schedule, Link = link }).Take(501).ToArrayAsync(cancellationToken);
         var hasMore = scheduled.Length > 500;
@@ -52,7 +55,7 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                 id = schedule.Id.ToString("D"),
                 kind = "playlist",
                 name = "Sync " + (SafeOperationalText.Sanitize(titles.GetValueOrDefault(link.Id), 200) ?? "playlist"),
-                ownerName = SafeOperationalText.Sanitize(names.GetValueOrDefault(schedule.OwnerUserId), 200),
+                ownerName = ActivityPresentation.UserName(names.GetValueOrDefault(schedule.OwnerUserId)),
                 enabled,
                 state = !enabled ? "Paused" : run != null && run.CompletedAt == null ? "Running" : "Scheduled",
                 cadence = $"{schedule.CronExpression} · {schedule.TimeZoneId}",
@@ -62,7 +65,7 @@ public sealed class ActivityTasksController(IDbContextFactory<AllstarrDbContext>
                 detail = "Uses this playlist's saved update rules."
             });
         }
-        if (session.IsAdministrator)
+        if (everyone)
         {
             if (backgroundTasks != null)
                 foreach (var task in await backgroundTasks.ReadAsync(cancellationToken))

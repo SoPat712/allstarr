@@ -16,15 +16,19 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] string? state = null, [FromQuery] string? type = null,
         [FromQuery] int limit = 100, CancellationToken cancellationToken = default,
-        [FromQuery] string? view = null, [FromQuery] DateTimeOffset? before = null, [FromQuery] Guid? beforeId = null)
+        [FromQuery] string? view = null, [FromQuery] DateTimeOffset? before = null, [FromQuery] Guid? beforeId = null,
+        [FromQuery] string scope = "mine")
     {
         if (!TryGetSession(out var session)) return Unauthorized(new { error = "Authentication required" });
-        if (!session.IsAdministrator && !session.AllstarrUserId.HasValue) return Forbid();
+        if (!session.AllstarrUserId.HasValue) return Forbid();
+        if (scope is not ("mine" or "everyone")) return BadRequest(new { error = "Unknown activity scope" });
+        if (scope == "everyone" && !session.IsAdministrator) return Forbid();
+        var everyone = session.IsAdministrator && scope == "everyone";
         if (view is not (null or "queue" or "history")) return BadRequest(new { error = "Unknown job view" });
         if (before.HasValue != beforeId.HasValue) return BadRequest(new { error = "A complete page cursor is required" });
         limit = Math.Clamp(limit, 1, 500);
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        var query = db.Jobs.AsNoTracking().Where(x => session.IsAdministrator || x.OwnerUserId == session.AllstarrUserId);
+        var query = db.Jobs.AsNoTracking().Where(x => everyone || x.OwnerUserId == session.AllstarrUserId);
         if (view == "queue") query = query.Where(x => x.State == DurableJobState.Pending || x.State == DurableJobState.Running || x.State == DurableJobState.RetryScheduled);
         if (view == "history") query = query.Where(x => x.State == DurableJobState.Succeeded || x.State == DurableJobState.Failed || x.State == DurableJobState.Cancelled);
         if (!string.IsNullOrWhiteSpace(state))
@@ -49,22 +53,23 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
         var hasMore = rows.Count > limit;
         rows = rows.Take(limit).ToList();
         var owners = rows.Select(x => x.OwnerUserId).Distinct().ToArray();
-        var names = await db.Users.AsNoTracking().Where(x => owners.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.DisplayName, cancellationToken);
+        var names = await db.Users.AsNoTracking().Where(x => owners.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => new { x.DisplayName, x.BackendType }, cancellationToken);
         var ids = rows.Select(x => x.Id.ToString("D")).ToArray();
         var correlations = rows.Select(x => x.CorrelationId).Distinct().ToArray();
         var progressRows = await db.AuditEvents.AsNoTracking().Where(x => x.Category == "job-progress" &&
-                (session.IsAdministrator || x.ActorUserId == session.AllstarrUserId) &&
+                (everyone || x.ActorUserId == session.AllstarrUserId) &&
                 (x.SubjectType == "job" && ids.Contains(x.SubjectId) || x.SubjectId == null && correlations.Contains(x.CorrelationId)))
             .OrderByDescending(x => x.CreatedAt).ThenByDescending(x => x.Id).Take(Math.Min(2500, limit * 25)).ToArrayAsync(cancellationToken);
         var legacyCounts = await db.Jobs.AsNoTracking().Where(x => correlations.Contains(x.CorrelationId) &&
-                (session.IsAdministrator || x.OwnerUserId == session.AllstarrUserId))
+                (everyone || x.OwnerUserId == session.AllstarrUserId))
             .GroupBy(x => new { x.OwnerUserId, x.CorrelationId })
             .Select(group => new { group.Key.OwnerUserId, group.Key.CorrelationId, Count = group.Count() })
             .ToArrayAsync(cancellationToken);
         var last = rows.LastOrDefault();
         return Ok(new
         {
-            jobs = rows.Select(x => Present(x, x.OwnerUserId is { } owner ? names.GetValueOrDefault(owner) : "Household")),
+            jobs = rows.Select(x => Present(x, x.OwnerUserId is { } owner ? ActivityPresentation.UserName(names.GetValueOrDefault(owner)?.DisplayName) : "Household",
+                x.OwnerUserId is { } user ? names.GetValueOrDefault(user)?.BackendType : null)),
             progress = progressRows.Select(x => (Event: x, Job: rows.SingleOrDefault(job => job.OwnerUserId == x.ActorUserId &&
                 (x.SubjectId != null ? x.SubjectType == "job" && x.SubjectId == job.Id.ToString("D") :
                     job.CorrelationId == x.CorrelationId && legacyCounts.Any(count => count.OwnerUserId == x.ActorUserId && count.CorrelationId == x.CorrelationId && count.Count == 1)))))
@@ -129,12 +134,13 @@ public sealed class JobsController(IDbContextFactory<AllstarrDbContext> contextF
             : Conflict(new { error = "Job is missing or already terminal" });
     }
 
-    private static object Present(DurableJobRecord job, string? ownerName) => new
+    private static object Present(DurableJobRecord job, string? ownerName, string? backend = null) => new
     {
         job.Id,
         job.CorrelationId,
         job.OwnerUserId,
-        ownerName = SafeOperationalText.Sanitize(ownerName, 200),
+        ownerName,
+        source = ActivityPresentation.JobSource(job.Type, backend),
         job.Type,
         state = job.State == DurableJobState.RetryScheduled && job.LastAttemptOutcome == "deferred" ? "Deferred" : job.State.ToString(),
         canCancel = job.CancellationRequestedAt == null && job.State is DurableJobState.Pending or DurableJobState.Running or DurableJobState.RetryScheduled,

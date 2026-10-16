@@ -281,7 +281,7 @@
       }
       if (session.authenticated) {
         await loadOnboarding(session);
-        liveUpdates.connect();
+        liveUpdates.connect(session.user?.isAdministrator ?? false);
       }
     } catch (cause) {
       bootstrapFailed = true;
@@ -330,7 +330,7 @@
       password = "";
       managePlaylists = false;
       await loadOnboarding(session);
-      liveUpdates.connect();
+      liveUpdates.connect(session.user?.isAdministrator ?? false);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : "Sign in failed.";
     } finally {

@@ -15,11 +15,22 @@ public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessio
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [HttpGet("stream")]
-    public async Task Stream(CancellationToken cancellationToken)
+    public async Task Stream(CancellationToken cancellationToken, [FromQuery] string scope = "mine")
     {
         if (!HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
             value is not AdminAuthSession { AllstarrUserId: not null } session ||
             (!session.IsAdministrator && !session.AllstarrUserId.HasValue))
+        {
+            Response.StatusCode = StatusCodes.Status403Forbidden;
+            return;
+        }
+
+        if (scope is not ("mine" or "everyone"))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+        if (scope == "everyone" && !session.IsAdministrator)
         {
             Response.StatusCode = StatusCodes.Status403Forbidden;
             return;
@@ -67,7 +78,7 @@ public sealed class AdminUpdatesController(AdminUpdateFeed feed, AdminAuthSessio
             {
                 if (await sessions.GetValidSessionAsync(session.SessionId, token) == null) break;
                 var updates = await feed.ReadAsync(
-                    new AdminUpdateScope(session.AllstarrUserId, session.IsAdministrator),
+                    new AdminUpdateScope(session.AllstarrUserId, session.IsAdministrator, scope == "everyone"),
                     cursor,
                     100,
                     token);

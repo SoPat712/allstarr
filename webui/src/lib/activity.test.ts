@@ -125,3 +125,10 @@ describe("background work presentation", () => {
     expect(progressPercent(NaN, 10)).toBeNull();
   });
 });
+
+it("keeps different household owners separate even with colliding correlations", () => {
+  const first = { ...item("one", "Song A"), actorUserId: "first", actorDisplayName: "Josh" };
+  const second = { ...item("two", "Song A"), actorUserId: "second", actorDisplayName: "Alex" };
+  expect(groupActivity([first, second])).toHaveLength(2);
+  expect(filterActivity([first, second], { query: "Alex", category: "", provider: "", problemsOnly: false })).toEqual([second]);
+});

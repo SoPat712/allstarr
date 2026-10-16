@@ -8,7 +8,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import RouteError from "$lib/components/RouteError.svelte";
 
-  let { administrator = false }: { administrator?: boolean } = $props();
+  let { administrator = false, scope = "mine" }: { administrator?: boolean; scope?: "mine" | "everyone" } = $props();
   let items = $state<ActivityTask[]>([]);
   let loading = $state(true);
   let busy = $state(false);
@@ -27,7 +27,7 @@
     busy = true;
     error = "";
     try {
-      const next = await activityWork.tasks();
+      const next = await activityWork.tasks(scope);
       if (disposed) return;
       for (const item of next.items) if (items.find((old) => old.id === item.id)?.lastRunAt !== item.lastRunAt) queued.delete(item.id);
       queued = new Set(queued);
@@ -57,7 +57,7 @@
 </script>
 
 <section class="panel activity-tasks" aria-label="Background tasks" aria-busy={busy}>
-  <header class="tasks-heading"><div><h2>Tasks</h2><p>{administrator ? "Playlist schedules and automatic household maintenance." : "Your recurring playlist updates."}</p></div><Button variant="secondary" disabled={busy} onclick={() => void load()}>Refresh tasks</Button></header>
+  <header class="tasks-heading"><div><h2>Tasks</h2><p>{scope === "everyone" ? "Playlist schedules and automatic household maintenance." : "Your recurring playlist updates."}</p></div><Button variant="secondary" disabled={busy} onclick={() => void load()}>Refresh tasks</Button></header>
   {#if loading}<Skeleton class="skeleton-panel" aria-label="Loading tasks" aria-busy="true" />
   {:else if error && !items.length}<RouteError eyebrow="Tasks unavailable" title="Scheduled tasks are unavailable." message={error} onRetry={load} />
   {:else}

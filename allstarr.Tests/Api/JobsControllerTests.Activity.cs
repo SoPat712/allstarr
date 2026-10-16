@@ -22,7 +22,7 @@ public sealed partial class JobsControllerTests
         Assert.Empty(queue.RootElement.GetProperty("jobs").EnumerateArray());
         using var history = Json(await listener.List(view: "history"));
         Assert.Equal(_ownJobId, Assert.Single(history.RootElement.GetProperty("jobs").EnumerateArray()).GetProperty("Id").GetGuid());
-        using var household = Json(await Controller(Session(_userId, true)).List(view: "queue"));
+        using var household = Json(await Controller(Session(_userId, true)).List(view: "queue", scope: "everyone"));
         Assert.Equal(_otherJobId, Assert.Single(household.RootElement.GetProperty("jobs").EnumerateArray()).GetProperty("Id").GetGuid());
     }
 
@@ -61,11 +61,11 @@ public sealed partial class JobsControllerTests
             await db.SaveChangesAsync();
         }
         var controller = Controller(Session(_userId, true));
-        using var first = Json(await controller.List(view: "history", limit: 1));
+        using var first = Json(await controller.List(view: "history", limit: 1, scope: "everyone"));
         Assert.True(first.RootElement.GetProperty("hasMore").GetBoolean());
         var time = first.RootElement.GetProperty("nextCursor").GetDateTimeOffset();
         var id = first.RootElement.GetProperty("nextCursorId").GetGuid();
-        using var second = Json(await controller.List(view: "history", limit: 1, before: time, beforeId: id));
+        using var second = Json(await controller.List(view: "history", limit: 1, before: time, beforeId: id, scope: "everyone"));
         var next = Assert.Single(second.RootElement.GetProperty("jobs").EnumerateArray()).GetProperty("Id").GetGuid();
         Assert.NotEqual(id, next);
         Assert.False(second.RootElement.GetProperty("hasMore").GetBoolean());
@@ -128,6 +128,24 @@ public sealed partial class JobsControllerTests
         using var second = Json(await controller.Get(_ownJobId, limit: 1,
             before: first.RootElement.GetProperty("nextCursor").GetDateTimeOffset(), beforeId: first.RootElement.GetProperty("nextCursorId").GetGuid()));
         Assert.Equal(2, Assert.Single(second.RootElement.GetProperty("attempts").EnumerateArray()).GetProperty("AttemptNumber").GetInt32());
+    }
+
+    [Theory]
+    [InlineData(false, "everyone")]
+    [InlineData(true, "everyone")]
+    [InlineData(true, "invalid")]
+    public async Task ActivityScope_IsExplicitAndRequiresAdministrator(bool administrator, string scope)
+    {
+        var result = await Controller(Session(_userId, administrator)).List(scope: scope);
+        if (scope == "invalid") Assert.IsType<BadRequestObjectResult>(result);
+        else if (!administrator) Assert.IsType<ForbidResult>(result);
+        else
+        {
+            using var json = Json(result);
+            Assert.Equal(2, json.RootElement.GetProperty("jobs").GetArrayLength());
+            Assert.All(json.RootElement.GetProperty("jobs").EnumerateArray(), row =>
+                Assert.False(Guid.TryParse(row.GetProperty("ownerName").GetString(), out _)));
+        }
     }
 
     private static JsonDocument Json(IActionResult value) =>

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Services.Admin;
 
-public readonly record struct AdminUpdateScope(Guid? UserId, bool IsAdministrator);
+public readonly record struct AdminUpdateScope(Guid? UserId, bool IsAdministrator, bool Everyone = false);
 
 public readonly record struct AdminUpdateCursor(
     DateTimeOffset OccurredAt,
@@ -53,7 +53,8 @@ public sealed record AdminUpdateEvent(
     DateTimeOffset OccurredAt,
     string? CorrelationId,
     Guid? JobId,
-    object Data);
+    object Data,
+    bool RequiresAdministrator = false);
 
 public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> contextFactory)
 {
@@ -71,14 +72,16 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
         CancellationToken cancellationToken)
     {
         limit = Math.Clamp(limit, 1, 250);
-        if (!scope.IsAdministrator && (scope.UserId == null || scope.UserId == Guid.Empty)) return [];
+        if (scope.UserId == null || scope.UserId == Guid.Empty) return [];
+        var everyone = scope.IsAdministrator && scope.Everyone;
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await context.Database.BeginTransactionAsync(
             IsolationLevel.RepeatableRead,
             cancellationToken);
 
         var jobs = await context.Jobs.AsNoTracking()
-            .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+            .Where(item => (everyone || item.OwnerUserId == scope.UserId || scope.IsAdministrator &&
+                    (item.State == DurableJobState.Failed || item.State == DurableJobState.RetryScheduled && (item.LastAttemptOutcome == "failed" || item.LastAttemptOutcome == "retry_scheduled"))) &&
                 (item.UpdatedAt > cursor.OccurredAt ||
                  item.UpdatedAt == cursor.OccurredAt &&
                  (JobSource > cursor.Source ||
@@ -90,6 +93,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             .Select(item => new
             {
                 item.Id,
+                item.OwnerUserId,
                 item.UpdatedAt,
                 item.Revision,
                 item.CorrelationId,
@@ -102,7 +106,8 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             .ToListAsync(cancellationToken);
 
         var audits = await context.AuditEvents.AsNoTracking()
-            .Where(item => (scope.IsAdministrator || item.ActorUserId == scope.UserId) &&
+            .Where(item => (everyone || item.ActorUserId == scope.UserId || scope.IsAdministrator &&
+                    (item.Outcome == "failed" || item.Outcome == "error" || item.Outcome == "unhealthy")) &&
                 (item.CreatedAt > cursor.OccurredAt ||
                  item.CreatedAt == cursor.OccurredAt &&
                  (AuditSource > cursor.Source ||
@@ -114,6 +119,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             {
                 item.Id,
                 item.CreatedAt,
+                item.ActorUserId,
                 item.Category,
                 item.Action,
                 item.Outcome,
@@ -123,20 +129,19 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
 
         var auditCorrelations = audits.Select(item => item.CorrelationId).Distinct().ToArray();
         var auditJobs = auditCorrelations.Length == 0
-            ? new Dictionary<string, Guid>(StringComparer.Ordinal)
+            ? new Dictionary<(Guid? Owner, string Correlation), Guid>()
             : (await context.Jobs.AsNoTracking()
                 .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
                     auditCorrelations.Contains(item.CorrelationId))
-                .Select(item => new { item.CorrelationId, item.Id })
+                .Select(item => new { item.OwnerUserId, item.CorrelationId, item.Id })
                 .ToListAsync(cancellationToken))
-                .GroupBy(item => item.CorrelationId, StringComparer.Ordinal)
+                .GroupBy(item => (item.OwnerUserId, item.CorrelationId))
                 .ToDictionary(
                     group => group.Key,
-                    group => group.MinBy(item => item.Id)!.Id,
-                    StringComparer.Ordinal);
+                    group => group.MinBy(item => item.Id)!.Id);
 
         var matches = await context.TrackMatches.AsNoTracking()
-            .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+            .Where(item => (everyone || item.OwnerUserId == scope.UserId) &&
                 (item.DecidedAt > cursor.OccurredAt ||
                  item.DecidedAt == cursor.OccurredAt &&
                  (TrackMatchSource > cursor.Source ||
@@ -159,7 +164,7 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             .ToListAsync(cancellationToken);
 
         var snapshots = await context.PlaylistSourceSnapshots.AsNoTracking()
-            .Where(item => (scope.IsAdministrator || item.OwnerUserId == scope.UserId) &&
+            .Where(item => (everyone || item.OwnerUserId == scope.UserId) &&
                 (item.RetrievedAt > cursor.OccurredAt ||
                  item.RetrievedAt == cursor.OccurredAt &&
                  (PlaylistSnapshotSource > cursor.Source ||
@@ -189,8 +194,9 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                 "audit",
                 item.Action,
                 item.CorrelationId,
-                auditJobs.GetValueOrDefault(item.CorrelationId),
-                new { item.Category, item.Outcome }))
+                auditJobs.TryGetValue((item.ActorUserId, item.CorrelationId), out var linkedJob) ? linkedJob : null,
+                new { item.Category, item.Outcome },
+                scope.IsAdministrator && !everyone && item.ActorUserId != scope.UserId))
             .Concat(jobs.Select(item => Event(
                 JobSource,
                 item.Id,
@@ -207,7 +213,8 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
                     errorCode = item.LastErrorCode,
                     item.AttemptCount,
                     item.DeferralCount
-                })))
+                },
+                scope.IsAdministrator && !everyone && item.OwnerUserId != scope.UserId)))
             .Concat(matches.Select(item => Event(
                 TrackMatchSource,
                 item.Id,
@@ -251,7 +258,8 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
         string action,
         string? correlationId,
         Guid? jobId,
-        object data)
+        object data,
+        bool requiresAdministrator = false)
     {
         var cursor = new AdminUpdateCursor(occurredAt, source, resourceId, revision);
         return new AdminUpdateEvent(
@@ -263,7 +271,8 @@ public sealed class AdminUpdateFeed(IDbContextFactory<AllstarrDbContext> context
             occurredAt,
             string.IsNullOrWhiteSpace(correlationId) ? null : correlationId,
             jobId,
-            data);
+            data,
+            requiresAdministrator);
     }
 
     private static int SourceOf(string resource) => resource switch

@@ -177,10 +177,37 @@ public sealed class AdminUiActivityTests
             Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity()).Value));
         var items = json.RootElement.GetProperty("items").EnumerateArray().ToArray();
         var actual = items.Select(item => item.GetProperty("Id").GetString()).ToArray();
-        Assert.Equal(administrator ? 8 : 4, actual.Length);
+        Assert.Equal(4, actual.Length);
         Assert.All(expected, id => Assert.Contains(id, actual));
-        if (administrator) Assert.All(foreign, id => Assert.Contains(id, actual));
-        else Assert.All(foreign, id => Assert.DoesNotContain(id, actual));
+        Assert.All(foreign, id => Assert.DoesNotContain(id, actual));
+        Assert.All(items, item => Assert.Equal("Owner", item.GetProperty("ActorDisplayName").GetString()));
+        if (administrator)
+        {
+            using var household = JsonDocument.Parse(JsonSerializer.Serialize(
+                Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity(scope: "everyone")).Value));
+            var all = household.RootElement.GetProperty("items").EnumerateArray().ToArray();
+            Assert.Equal(8, all.Length);
+            Assert.All(all, item => Assert.Contains(item.GetProperty("ActorDisplayName").GetString(), new[] { "Owner", "Other" }));
+            Assert.All(foreign, id => Assert.Contains(all, item => item.GetProperty("Id").GetString() == id));
+        }
+        else Assert.IsType<ForbidResult>(await controller.GetDashboardActivity(scope: "everyone"));
+        Assert.IsType<BadRequestObjectResult>(await controller.GetDashboardActivity(scope: "invalid"));
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var scan = await db.Jobs.FirstAsync(x => x.OwnerUserId == owner);
+            scan.Type = "library.index";
+            db.AuditEvents.Add(new() { Id = Guid.CreateVersion7(), ActorUserId = owner, Category = "library-index", Action = "scan.completed", Outcome = "succeeded", CreatedAt = now.AddMinutes(2) });
+            await db.SaveChangesAsync();
+        }
+        using (var scanJson = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await controller.GetDashboardActivity()).Value)))
+        {
+            var scans = scanJson.RootElement.GetProperty("items").EnumerateArray()
+                .Where(item => item.GetProperty("Label").GetString() is "library.index" or "Scan Completed").ToArray();
+            Assert.Equal(2, scans.Length);
+            Assert.All(scans, item => Assert.Equal("Jellyfin library", item.GetProperty("Source").GetString()));
+            Assert.All(scans, item => Assert.Equal("library", item.GetProperty("ProviderId").GetString()));
+        }
         var page = await matches.GetActivityDataAsync(new(owner, false), limit: 1);
         Assert.Equal(owner, Assert.Single(page.Decisions).OwnerUserId);
         Assert.Equal(owner, Assert.Single(page.Snapshots).OwnerUserId);
