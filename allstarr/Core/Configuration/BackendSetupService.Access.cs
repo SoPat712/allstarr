@@ -16,12 +16,12 @@ public sealed class BackendServiceAccessRequest
     public string ExpectedRevision { get; set; } = "";
 }
 
-public sealed record BackendServiceAccessSnapshot(bool Supported, bool ConnectionSaved, bool Configured, bool NeedsReview, string Revision);
+public sealed record BackendServiceAccessSnapshot(bool Supported, bool ConnectionSaved, bool Configured, bool NeedsReview, string Revision, string CredentialKind);
 
 public sealed partial class BackendSetupService
 {
     private static readonly string[] AccessKeys = ["Backend:Type", "Backend:Url", "Identity:BackendInstanceId",
-        "Backend:ServiceCredentialReference", "Backend:ServiceUserId"];
+        "Backend:ServiceCredentialReference", "Backend:ServiceUserId", "Backend:ServiceCredentialKind"];
 
     public async Task<BackendServiceAccessSnapshot> GetServiceAccessAsync(AdminAuthSession actor, CancellationToken token)
     {
@@ -82,7 +82,8 @@ public sealed partial class BackendSetupService
         }
         RuntimeSettingWrite Write(string key, string value) => new(key, value, current.TryGetValue(key, out var row) ? row.Revision : null);
         await settings.StageBatchAsync(db, [Write("Backend:ServiceCredentialReference", reference?.ToString("D") ?? ""),
-            Write("Backend:ServiceUserId", verified?.UserId ?? "")], "backend-access", actor.AllstarrUserId, token);
+            Write("Backend:ServiceUserId", verified?.UserId ?? ""),
+            Write("Backend:ServiceCredentialKind", reference.HasValue ? "user-token" : "")], "backend-access", actor.AllstarrUserId, token);
         db.AuditEvents.Add(new AuditEventRecord
         {
             Id = Guid.CreateVersion7(),
@@ -104,7 +105,8 @@ public sealed partial class BackendSetupService
         configuration["Backend:Type"] == "Jellyfin" && (configuration["Setup:ServiceCredentialNeedsReview"] == "true" ||
             string.IsNullOrWhiteSpace(configuration["Jellyfin:ApiKey"])),
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Join(';', rows.Values.OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => item.Key + ":" + item.Id.ToString("N") + ":" + item.Revision))))));
+            .Select(item => item.Key + ":" + item.Id.ToString("N") + ":" + item.Revision))))),
+        rows.TryGetValue("Backend:ServiceCredentialKind", out var kind) ? DurableRuntimeSettingsService.ProjectStoredRecord(kind).NormalizedValue : "");
 
     private static Task<Dictionary<string, RuntimeSettingRecord>> ReadAccessAsync(AllstarrDbContext db, CancellationToken token) =>
         db.RuntimeSettings.AsNoTracking().Where(item => item.OwnerUserId == null && AccessKeys.Contains(item.Key)).ToDictionaryAsync(item => item.Key, token);

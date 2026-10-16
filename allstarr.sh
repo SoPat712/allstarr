@@ -34,7 +34,46 @@ compose_args() {
   done < <(profiles)
 }
 
+preserve_existing_data() {
+  [[ -z "${ALLSTARR_DATA_PATH+x}" ]] || return 0
+  if [[ -f "$ROOT/.env" ]] && grep -q '^ALLSTARR_DATA_PATH=' "$ROOT/.env"; then
+    return 0
+  fi
+
+  local project volume volumes entries="" image status
+  project="$(docker compose "${COMPOSE[@]}" config | awk '/^name: / { gsub(/"/, "", $2); print $2 }')"
+  [[ "$project" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || die "could not resolve the Compose project name; set ALLSTARR_DATA_PATH explicitly"
+  volume="${project}_allstarr-data"
+  volumes="$(docker volume ls --filter "name=^${volume}$" --format '{{.Name}}')" || die "could not list data volumes; set ALLSTARR_DATA_PATH explicitly before starting"
+  [[ "$volumes" == "$volume" ]] || return 0
+  docker volume inspect "$volume" >/dev/null 2>&1 || die "could not inspect $volume; set ALLSTARR_DATA_PATH explicitly before starting"
+
+  if [[ -d "$ROOT/data" ]]; then
+    entries="$(find "$ROOT/data/." -mindepth 1 -maxdepth 1 -print -quit)" || die "could not inspect ./data; set ALLSTARR_DATA_PATH explicitly"
+  elif [[ -e "$ROOT/data" ]]; then
+    die "./data is not a directory; set ALLSTARR_DATA_PATH explicitly"
+  fi
+  if [[ -n "$entries" ]]; then
+    image="$(docker compose "${COMPOSE[@]}" config --images allstarr)"
+    [[ -n "$image" && "$image" != *$'\n'* ]] || die "could not resolve the Allstarr image to inspect $volume; set ALLSTARR_DATA_PATH explicitly"
+    status=0
+    docker run --rm --pull never --network none --read-only \
+      --mount "type=volume,src=$volume,dst=/existing,readonly,volume-nocopy" \
+      --entrypoint /bin/sh "$image" -c \
+      'entries="$(find /existing -mindepth 1 -maxdepth 1 -print -quit)" || exit 2; if [ -n "$entries" ]; then exit 1; fi' || status=$?
+    case "$status" in
+      0) return 0 ;;
+      1) die "both ./data and $volume contain data; set ALLSTARR_DATA_PATH explicitly before starting" ;;
+      *) die "could not inspect $volume with the local Allstarr image; set ALLSTARR_DATA_PATH explicitly before starting" ;;
+    esac
+  fi
+
+  printf '\nALLSTARR_DATA_PATH=allstarr-data\n' >> "$ROOT/.env"
+  echo "Retaining existing Allstarr data volume $volume."
+}
+
 start_stack() {
+  preserve_existing_data
   docker compose "${COMPOSE[@]}" up -d --remove-orphans --wait --wait-timeout 180
 }
 

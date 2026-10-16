@@ -260,6 +260,64 @@ public sealed class BackendPlaylistTargetTests
         });
     }
 
+    [Theory]
+    [InlineData(null)]
+    [InlineData("api-key")]
+    public async Task Jellyfin_configured_server_key_retains_user_operation_limits(string? kind)
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", ["b", "a", "stale"]) { RejectUserOperations = true };
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient("JellyfinBackend")).Returns(new HttpClient(backend));
+        var target = new JellyfinPlaylistTarget(clients.Object, Options.Create(new JellyfinSettings
+        {
+            Url = "https://jellyfin.test/",
+            ApiKey = "fixture-server-key",
+            ServiceCredentialKind = kind,
+            UserId = "user-1"
+        }));
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile, new BackendPlaylistMetadata("Mix"), ["a", "b"], "sync-1", "p1",
+            syncOwnedBackendItemIds: ["a", "b", "stale"], removeStaleSyncOwnedItems: true), default);
+        Assert.True(result.IsSuccess);
+        Assert.Contains("removal", result.Value!.UnsupportedMetadataFields);
+        Assert.Contains("order", result.Value.UnsupportedMetadataFields);
+        Assert.Equal(["b", "a", "stale"], result.Value.Snapshot.Members.Select(member => member.BackendItemId));
+    }
+
+    [Fact]
+    public async Task Jellyfin_configured_administrator_token_reconciles_order_and_removal()
+    {
+        var backend = new JellyfinFakeBackend("p1", "Mix", ["b", "a", "stale"]);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient("JellyfinBackend")).Returns(new HttpClient(backend));
+        var target = new JellyfinPlaylistTarget(clients.Object, Options.Create(new JellyfinSettings
+        {
+            Url = "https://jellyfin.test/",
+            ApiKey = "fixture-administrator-token",
+            ServiceCredentialKind = "user-token",
+            UserId = "user-1"
+        }));
+
+        var result = await target.WriteAsync(Context(), new BackendPlaylistWriteRequest(
+            BackendPlaylistWriteMode.Reconcile,
+            new BackendPlaylistMetadata("Mix", null),
+            ["a", "b"],
+            "sync-1",
+            "p1",
+            syncOwnedBackendItemIds: ["a", "b", "stale"],
+            removeStaleSyncOwnedItems: true), default);
+
+        Assert.True(result.IsSuccess);
+        Assert.Empty(result.Value!.UnsupportedMetadataFields);
+        Assert.Equal(["a", "b"], result.Value.Snapshot.Members.Select(member => member.BackendItemId));
+        Assert.All(backend.Requests, request =>
+        {
+            Assert.StartsWith("MediaBrowser ", request.Authorization, StringComparison.Ordinal);
+            Assert.Contains("Token=\"fixture-administrator-token\"", request.Authorization, StringComparison.Ordinal);
+            Assert.Null(request.AuthToken);
+        });
+    }
+
     [Fact]
     public async Task Jellyfin_playlist_list_uses_standard_primary_image_tag()
     {

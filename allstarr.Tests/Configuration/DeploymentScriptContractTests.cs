@@ -17,6 +17,23 @@ public sealed class DeploymentScriptContractTests : IDisposable
             #!/usr/bin/env bash
             printf '%s\n' "$*" >> "$FIXTURE_COMMANDS"
             if [[ "$*" == *'config --format json'* ]]; then cat "$FIXTURE_MODEL"; fi
+            if [[ "$*" == *' config' ]]; then
+              if [[ "${FIXTURE_QUOTED_PROJECT:-false}" == true ]]; then
+                printf 'name: "%s"\n' "${COMPOSE_PROJECT_NAME:-allstarr}"
+              else
+                printf 'name: %s\n' "${COMPOSE_PROJECT_NAME:-${FIXTURE_PROJECT:-allstarr}}"
+              fi
+            fi
+            if [[ "$*" == *'config --images allstarr' ]]; then echo fixture/allstarr:current; fi
+            if [[ "$*" == 'volume ls '* ]]; then
+              if [[ "${FIXTURE_VOLUME_LIST_FAIL:-false}" == true ]]; then exit 1; fi
+              if [[ "${FIXTURE_VOLUME_EXISTS:-false}" == true ]]; then printf '%s_allstarr-data\n' "${COMPOSE_PROJECT_NAME:-${FIXTURE_PROJECT:-allstarr}}"; fi
+            fi
+            if [[ "$*" == 'volume inspect '* && "${FIXTURE_VOLUME_EXISTS:-false}" != true ]]; then exit 1; fi
+            if [[ "$*" == 'run '* ]]; then
+              if [[ "${FIXTURE_VOLUME_CHECK_FAIL:-false}" == true ]]; then exit 125; fi
+              if [[ "${FIXTURE_VOLUME_POPULATED:-false}" == true ]]; then exit 1; fi
+            fi
             if [[ -n "${FIXTURE_FAIL:-}" && "$*" == *"$FIXTURE_FAIL"* ]]; then exit 17; fi
             """);
         WriteExecutable("git", """
@@ -54,6 +71,122 @@ public sealed class DeploymentScriptContractTests : IDisposable
         Assert.True(start >= 0);
         Assert.Contains("--remove-orphans --wait --wait-timeout 180", Commands[start], StringComparison.Ordinal);
         if (apple) Assert.True(Array.FindIndex(Commands, line => line.EndsWith("build apple-gateway", StringComparison.Ordinal)) < start);
+    }
+
+    [Theory]
+    [InlineData("up", false, false)]
+    [InlineData("update", true, true)]
+    public async Task Release_PreservesExistingVolumeBeforeRecreation(string command, bool existingEnvironment, bool emptyData)
+    {
+        var environmentPath = Path.Combine(root, ".env");
+        const string original = "# Local settings\nUNRELATED=preserved";
+        var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead;
+        if (existingEnvironment)
+        {
+            File.WriteAllText(environmentPath, original);
+            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(environmentPath, mode);
+        }
+        if (emptyData) Directory.CreateDirectory(Path.Combine(root, "data"));
+
+        var result = await RunAsync("allstarr.sh", [command], new() { ["FIXTURE_VOLUME_EXISTS"] = "true" });
+
+        Assert.Equal(0, result.Code);
+        Assert.Equal((existingEnvironment ? original : "") + "\nALLSTARR_DATA_PATH=allstarr-data\n", File.ReadAllText(environmentPath));
+        if (!OperatingSystem.IsWindows()) Assert.Equal(existingEnvironment ? mode : UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(environmentPath));
+        Assert.Contains("Retaining existing Allstarr data volume allstarr_allstarr-data.", result.Output, StringComparison.Ordinal);
+        Assert.Contains("volume inspect allstarr_allstarr-data", Commands);
+        Assert.DoesNotContain(Commands, line => line.StartsWith("run ", StringComparison.Ordinal));
+        Assert.True(Array.FindIndex(Commands, line => line.StartsWith("volume inspect ", StringComparison.Ordinal)) < Array.FindIndex(Commands, line => line.Contains("up -d", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData(false, "custom-project")]
+    [InlineData(true, "custom-project")]
+    [InlineData(true, "123")]
+    public async Task Release_ResolvesExistingVolumeFromComposeProject(bool environmentProject, string project)
+    {
+        if (!environmentProject) File.WriteAllText(Path.Combine(root, ".env"), "COMPOSE_PROJECT_NAME=" + project + "\n");
+        var options = new Dictionary<string, string> { ["FIXTURE_VOLUME_EXISTS"] = "true" };
+        options[environmentProject ? "COMPOSE_PROJECT_NAME" : "FIXTURE_PROJECT"] = project;
+        options["FIXTURE_QUOTED_PROJECT"] = (project == "123").ToString().ToLowerInvariant();
+
+        Assert.Equal(0, (await RunAsync("allstarr.sh", ["up"], options)).Code);
+
+        Assert.Contains($"volume inspect {project}_allstarr-data", Commands);
+        Assert.Contains("ALLSTARR_DATA_PATH=allstarr-data\n", File.ReadAllText(Path.Combine(root, ".env")), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Release_PopulatedLocalDataWithoutPopulatedVolumeStaysUnchanged(bool volumeExists)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "data"));
+        File.WriteAllText(Path.Combine(root, "data", ".saved"), "preserved");
+
+        Assert.Equal(0, (await RunAsync("allstarr.sh", ["up"], new() { ["FIXTURE_VOLUME_EXISTS"] = volumeExists.ToString().ToLowerInvariant() })).Code);
+
+        Assert.False(File.Exists(Path.Combine(root, ".env")));
+        Assert.Equal("preserved", File.ReadAllText(Path.Combine(root, "data", ".saved")));
+        Assert.Equal(volumeExists, Commands.Any(line => line.StartsWith("run ", StringComparison.Ordinal)));
+        if (volumeExists)
+        {
+            var check = Assert.Single(Commands, line => line.StartsWith("run ", StringComparison.Ordinal));
+            Assert.Contains("--pull never --network none --read-only", check, StringComparison.Ordinal);
+            Assert.Contains("type=volume,src=allstarr_allstarr-data,dst=/existing,readonly,volume-nocopy", check, StringComparison.Ordinal);
+            Assert.Contains("--entrypoint /bin/sh fixture/allstarr:current", check, StringComparison.Ordinal);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Release_ConflictingDataOrFailedVolumeCheckPreventsRecreation(bool checkFails)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "data"));
+        File.WriteAllText(Path.Combine(root, "data", "saved"), "preserved");
+        var result = await RunAsync("allstarr.sh", ["update"], new()
+        {
+            ["FIXTURE_VOLUME_EXISTS"] = "true",
+            ["FIXTURE_VOLUME_POPULATED"] = "true",
+            ["FIXTURE_VOLUME_CHECK_FAIL"] = checkFails.ToString().ToLowerInvariant()
+        });
+
+        Assert.NotEqual(0, result.Code);
+        Assert.Contains("ALLSTARR_DATA_PATH", result.Error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(root, ".env")));
+        Assert.DoesNotContain(Commands, line => line.Contains("up -d", StringComparison.Ordinal));
+        Assert.Equal("preserved", File.ReadAllText(Path.Combine(root, "data", "saved")));
+    }
+
+    [Theory]
+    [InlineData("FIXTURE_VOLUME_LIST_FAIL", "true")]
+    [InlineData("FIXTURE_FAIL", "volume inspect")]
+    public async Task Release_FailedVolumeInspectionPreventsRecreation(string key, string value)
+    {
+        var result = await RunAsync("allstarr.sh", ["up"], new() { ["FIXTURE_VOLUME_EXISTS"] = "true", [key] = value });
+
+        Assert.NotEqual(0, result.Code);
+        Assert.Contains("ALLSTARR_DATA_PATH", result.Error, StringComparison.Ordinal);
+        Assert.False(File.Exists(Path.Combine(root, ".env")));
+        Assert.DoesNotContain(Commands, line => line.Contains("up -d", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData(false, "./chosen")]
+    [InlineData(true, "allstarr-data")]
+    [InlineData(true, "")]
+    public async Task Release_ExplicitDataPathSkipsVolumeSelection(bool environmentSetting, string value)
+    {
+        var contents = environmentSetting ? "UNRELATED=preserved\n" : $"ALLSTARR_DATA_PATH={value}\n";
+        File.WriteAllText(Path.Combine(root, ".env"), contents);
+        var options = new Dictionary<string, string> { ["FIXTURE_VOLUME_EXISTS"] = "true", ["FIXTURE_VOLUME_POPULATED"] = "true" };
+        if (environmentSetting) options["ALLSTARR_DATA_PATH"] = value;
+
+        Assert.Equal(0, (await RunAsync("allstarr.sh", ["up"], options)).Code);
+
+        Assert.Equal(contents, File.ReadAllText(Path.Combine(root, ".env")));
+        Assert.DoesNotContain(Commands, line => line.StartsWith("volume inspect ", StringComparison.Ordinal) || line.StartsWith("run ", StringComparison.Ordinal));
     }
 
     [Theory]
@@ -207,9 +340,24 @@ public sealed class DeploymentScriptContractTests : IDisposable
         Assert.DoesNotContain(Commands, line => line.Contains("prune", StringComparison.Ordinal) || line.EndsWith("pull allstarr", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public async Task Developer_DefaultSourceModeSurvivesAppleEnable()
+    {
+        Assert.Equal(0, (await RunAsync("tools/develop.sh", ["up"])).Code);
+        var package = Path.Combine(root, "fixture.apk");
+        File.WriteAllText(package, "synthetic-package");
+
+        Assert.Equal(0, (await RunAsync("allstarr.sh", ["enable", "apple", package, "x86_64"])).Code);
+
+        var starts = Commands.Where(line => line.Contains("up -d", StringComparison.Ordinal)).ToArray();
+        Assert.Equal(2, starts.Length);
+        Assert.All(starts, line => Assert.Contains("tools/docker-compose.source.yml", line, StringComparison.Ordinal));
+        Assert.Equal("source\n", File.ReadAllText(Path.Combine(root, ".allstarr-mode")));
+    }
+
     private string[] Commands => File.Exists(Path.Combine(root, "commands")) ? File.ReadAllLines(Path.Combine(root, "commands")) : [];
 
-    private async Task<(int Code, string Error)> RunAsync(string script, string[] arguments, Dictionary<string, string>? environment = null)
+    private async Task<(int Code, string Error, string Output)> RunAsync(string script, string[] arguments, Dictionary<string, string>? environment = null)
     {
         var start = new ProcessStartInfo("bash") { WorkingDirectory = root, UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
         start.ArgumentList.Add(Path.Combine(root, script));
@@ -217,13 +365,14 @@ public sealed class DeploymentScriptContractTests : IDisposable
         start.Environment["PATH"] = root + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH");
         start.Environment["FIXTURE_COMMANDS"] = Path.Combine(root, "commands");
         start.Environment["FIXTURE_MODEL"] = Path.Combine(root, "model.json");
+        start.Environment.Remove("ALLSTARR_DATA_PATH");
+        start.Environment.Remove("COMPOSE_PROJECT_NAME");
         foreach (var pair in environment ?? []) start.Environment[pair.Key] = pair.Value;
         using var process = Process.Start(start)!;
         var output = process.StandardOutput.ReadToEndAsync();
         var error = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
-        await output;
-        return (process.ExitCode, await error);
+        return (process.ExitCode, await error, await output);
     }
 
     private void WriteExecutable(string name, string contents)

@@ -9,6 +9,7 @@ namespace allstarr.Core.Configuration;
 public interface IBackendConnectionVerifier
 {
     Task<AdminOidcBackendUser?> VerifyAsync(BackendType backend, string endpoint, string username, string password, CancellationToken token);
+    Task<bool> VerifyUserTokenAsync(string endpoint, string principalId, string credential, CancellationToken token);
     Task<bool> VerifyServiceAsync(string endpoint, string principalId, string credential, CancellationToken token);
 }
 
@@ -22,6 +23,20 @@ public sealed class BackendConnectionVerifier(IHttpClientFactory clients) : IBac
         client.Timeout = TimeSpan.FromSeconds(15);
         client.MaxResponseContentBufferSize = 1024 * 1024;
         using var request = new HttpRequestMessage(HttpMethod.Get, endpoint + "/Users/" + Uri.EscapeDataString(principalId));
+        request.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(credential));
+        using var response = await client.SendAsync(request, token);
+        if (!response.IsSuccessStatusCode) return false;
+        using var document = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(token));
+        return AdminBackendIdentity.TryReadJellyfin(document.RootElement, principalId, credential, out var user) && user.IsAdministrator;
+    }
+
+    public async Task<bool> VerifyUserTokenAsync(string endpoint, string principalId, string credential, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(principalId)) return false;
+        using var client = clients.CreateClient(HttpClientName);
+        client.Timeout = TimeSpan.FromSeconds(15);
+        client.MaxResponseContentBufferSize = 1024 * 1024;
+        using var request = new HttpRequestMessage(HttpMethod.Get, endpoint + "/Users/Me");
         request.Headers.TryAddWithoutValidation("Authorization", AuthHeaderHelper.CreateAuthHeader(credential));
         using var response = await client.SendAsync(request, token);
         if (!response.IsSuccessStatusCode) return false;

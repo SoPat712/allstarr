@@ -2143,7 +2143,7 @@ export const activityWork = {
 };
 
 export type OidcAccess = { enabled: boolean; authority: string; clientId: string; publicUrl: string; displayName: string; hasClientSecret: boolean; needsReview: boolean; revision: string };
-export type BackendAccess = { supported: boolean; connectionSaved: boolean; configured: boolean; needsReview: boolean; revision: string };
+export type BackendAccess = { credentialKind?: string; supported: boolean; connectionSaved: boolean; configured: boolean; needsReview: boolean; revision: string };
 export type FileVerification = { available: boolean; pending: boolean; needsReview: boolean; jobId?: string; jobState?: string; verifiedAt?: string; files: number };
 export const setupAccess = {
   initial: () => json<{ configured: boolean; storageReady: boolean; csrfToken: string }>("/api/admin/auth/setup"),

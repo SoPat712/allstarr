@@ -34,6 +34,7 @@ public sealed partial class LegacyEnvMigrationServiceTests
         Assert.True(result.RequiresRestart);
         await using var db = await _factory.CreateDbContextAsync();
         Assert.Single(await db.SecretReferences.ToArrayAsync());
+        Assert.Equal("\"api-key\"", (await db.RuntimeSettings.SingleAsync(item => item.Key == "Backend:ServiceCredentialKind")).ValueJson);
         Assert.Empty(await db.ProviderAccounts.ToArrayAsync());
         Assert.False(await db.RuntimeSettings.AnyAsync(item => item.Key == "Cache:LyricsDays"));
         Assert.All(await db.RuntimeSettings.Where(item => item.Key == "Backend:Type" || item.Key == "Backend:Url").ToArrayAsync(), item => Assert.Equal(1, item.Revision));
@@ -106,6 +107,7 @@ public sealed partial class LegacyEnvMigrationServiceTests
         await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>());
         Assert.Equal("http://backend-fixture:8096", restarted["Jellyfin:Url"]);
         Assert.Equal("private-backend-key", restarted["Jellyfin:ApiKey"]);
+        Assert.Equal("api-key", restarted["Jellyfin:ServiceCredentialKind"]);
         Assert.Equal("30", restarted["Cache:LyricsDays"]);
     }
 

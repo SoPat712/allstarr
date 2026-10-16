@@ -109,6 +109,7 @@ services:
     profiles:
     - apple
 volumes:
+  allstarr-data:
   apple-gateway-data:
   apple-wrapper-session:
 networks:

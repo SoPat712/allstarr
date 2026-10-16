@@ -514,7 +514,7 @@ public sealed class JellyfinPlaylistTarget : IBackendPlaylistTarget
             return ValueTask.FromResult(new BackendPlaylistAuthentication(
                 new Dictionary<string, string> { ["Authorization"] = authorization }, [])
             {
-                ActsAsUser = false
+                ActsAsUser = settings.ServiceCredentialKind == "user-token"
             });
         }
     }

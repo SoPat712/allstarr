@@ -84,6 +84,8 @@ public sealed partial class LegacyEnvMigrationService
             var credential = await _secrets.StoreWithinTransactionAsync(db, null,
                 StartupConfiguration.ServicePurpose(backend.Type, backend.Endpoint), bytes, cancellationToken: token);
             writes.Add(new("Backend:ServiceCredentialReference", credential.Id.ToString("D"), serviceReference?.Revision));
+            existing.TryGetValue("Backend:ServiceCredentialKind", out var kind);
+            writes.Add(new("Backend:ServiceCredentialKind", "api-key", kind?.Revision));
             existing.TryGetValue("Backend:ServiceUserId", out var serviceUser);
             if (string.IsNullOrWhiteSpace(serviceUser?.NormalizedValue)) writes.Add(new("Backend:ServiceUserId", backend.PrincipalId, serviceUser?.Revision));
         }

@@ -207,6 +207,34 @@ public sealed class ComposeContractTests
     }
 
     [Fact]
+    public async Task Compose_PreservesExplicitNamedDataVolume()
+    {
+        var start = new ProcessStartInfo("docker")
+        {
+            WorkingDirectory = _repositoryRoot,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.Environment["ALLSTARR_DATA_PATH"] = "allstarr-data";
+        foreach (var argument in new[] { "compose", "-f", "docker-compose.yml", "--env-file", ".env.example", "config", "--format", "json" })
+            start.ArgumentList.Add(argument);
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        Assert.True(process.ExitCode == 0, await error);
+        using var document = JsonDocument.Parse(await output);
+        var mount = Assert.Single(document.RootElement.GetProperty("services").GetProperty("allstarr")
+            .GetProperty("volumes").EnumerateArray());
+        Assert.Equal("volume", mount.GetProperty("type").GetString());
+        Assert.Equal("allstarr-data", mount.GetProperty("source").GetString());
+        Assert.Equal("allstarr_allstarr-data", document.RootElement.GetProperty("volumes")
+            .GetProperty("allstarr-data").GetProperty("name").GetString());
+    }
+
+    [Fact]
     public async Task LegacyCompose_RendersWithoutChangingItsSourceFiles()
     {
         var fixture = Path.Combine(_repositoryRoot, "allstarr.Tests", "Fixtures", "LegacyV2");

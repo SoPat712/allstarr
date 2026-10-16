@@ -69,6 +69,12 @@ public sealed partial class BackendSetupServiceTests
             await Service().SaveServiceAccessAsync(actor, await AccessRequestAsync(actor), default);
             await using var db = new AllstarrDbContext(database.Options);
             var reference = Assert.Single(await db.SecretReferences.ToListAsync());
+            Assert.Equal("\"user-token\"", (await db.RuntimeSettings.SingleAsync(item => item.Key == "Backend:ServiceCredentialKind")).ValueJson);
+            Assert.Equal("\"principal-fixture\"", (await db.RuntimeSettings.SingleAsync(item => item.Key == "Backend:ServiceUserId")).ValueJson);
+            var restarted = new Microsoft.Extensions.Configuration.ConfigurationManager { ["Storage:DataDirectory"] = database.StorageOptions.DataDirectory };
+            await StartupConfiguration.PrepareAsync(restarted, Mock.Of<IHostEnvironment>());
+            Assert.Equal("user-token", restarted["Jellyfin:ServiceCredentialKind"]);
+            Assert.Equal("user-token", (await Service().GetServiceAccessAsync(actor, default)).CredentialKind);
             Assert.Equal(revision, reference.ActiveVersion);
             Assert.Equal(revision, await db.SecretVersions.CountAsync());
             using var lease = await secrets.OpenAsync(reference.Id, new SecretAccessContext(null,
@@ -83,6 +89,7 @@ public sealed partial class BackendSetupServiceTests
         Assert.False((await Service().GetServiceAccessAsync(actor, default)).Configured);
         await using var final = new AllstarrDbContext(database.Options);
         Assert.NotNull((await final.SecretReferences.SingleAsync()).RevokedAt);
+        Assert.Equal("\"\"", (await final.RuntimeSettings.SingleAsync(item => item.Key == "Backend:ServiceCredentialKind")).ValueJson);
         Assert.Equal(1, (await final.RuntimeSettings.SingleAsync(item => item.Key == "Backend:Url")).Revision);
         Assert.Equal(2, await final.SecretVersions.CountAsync());
         verifier.Verify(item => item.VerifyAsync(It.IsAny<BackendType>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
