@@ -36,7 +36,7 @@ public sealed class AdminAccessController(AdminOidcSettingsService oidc, Backend
             if (!await antiforgery.IsRequestValidAsync(HttpContext))
                 return BadRequest(new { error = "Reload access settings before saving.", code = "access_csrf_required" });
             await backend.SaveServiceAccessAsync(actor, request, token);
-            Response.OnCompleted(() => { lifetime.StopApplication(); return Task.CompletedTask; });
+            AdminProcessRestart.Schedule(HttpContext, lifetime);
             return Ok(new { saved = true, requiresRestart = true, message = "Media-server scanning access saved. Allstarr will restart." });
         }
         catch (UnauthorizedAccessException error) { return StatusCode(403, new { error = error.Message }); }
@@ -71,7 +71,7 @@ public sealed class AdminAccessController(AdminOidcSettingsService oidc, Backend
             if (!await antiforgery.IsRequestValidAsync(HttpContext))
                 return BadRequest(new { error = "Reload access settings before saving.", code = "access_csrf_required" });
             await oidc.SaveAsync(actor, request, token);
-            Response.OnCompleted(() => { lifetime.StopApplication(); return Task.CompletedTask; });
+            AdminProcessRestart.Schedule(HttpContext, lifetime);
             return Ok(new { saved = true, requiresRestart = true, message = "Single sign-on saved. Allstarr will restart; media-server login remains available." });
         }
         catch (UnauthorizedAccessException error) { return StatusCode(403, new { error = error.Message }); }

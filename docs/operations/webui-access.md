@@ -39,7 +39,7 @@ Register a confidential web client with your identity provider. Enable authoriza
 https://media.example.org/allstarr/api/admin/auth/oidc/callback
 ```
 
-Keep `ADMIN_BASE_PATH=/allstarr` in deployment configuration when using that prefix. Single sign-on policy and the encrypted client secret are saved in the data folder through the authenticated administrator access API described in [configuration](configuration.md#administrator-access-settings). Use authority `https://identity.example.org`, client ID `allstarr`, public URL `https://media.example.org/allstarr`, and your own client secret. Set the display name to the name you want on the login screen, then enable and save. Saving requests a restart after the response completes.
+Keep `ADMIN_BASE_PATH=/allstarr` in deployment configuration when using that prefix. Single sign-on policy and the encrypted client secret are saved in the data folder under **Settings → Network → Single sign-on**, backed by the authenticated administrator access API described in [configuration](configuration.md#administrator-access-settings). Use authority `https://identity.example.org`, client ID `allstarr`, public URL `https://media.example.org/allstarr`, and your own client secret. Set the display name to the name you want on the login screen, then enable and save. Saving requests a restart after the response completes.
 
 Use your provider's issuer/authority URL, which may include a realm or application path. Both authority and public URL require HTTPS. The public URL must end at the configured base path with no query or fragment. For a dedicated hostname with no prefix, leave `ADMIN_BASE_PATH` empty and use `https://allstarr.example.org` as the public URL.
 

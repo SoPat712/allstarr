@@ -15,17 +15,17 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 
 The default Compose file passes these bootstrap values to Allstarr. It does not mount `.env` into the container or import product settings from it. Changing a deployment value requires recreating the container. Existing v2 deployments can keep their mounted `.env` for the explicit upgrade review.
 
-Compose uses `./data` at `/app/data` unless `ALLSTARR_DATA_PATH` selects another local path. SQLite, the key ring and managed media share that folder. No database sidecar is required. A fresh core starts with `docker compose up -d`; while browser backend selection is unfinished, use `./allstarr.sh init`, set the selected backend's address in `.env`, and recreate the core. See [deployment](deployment-profiles.md).
+Compose uses `./data` at `/app/data` unless `ALLSTARR_DATA_PATH` selects another local path. SQLite, the key ring and managed media share that folder. No database sidecar is required. A fresh core starts with `docker compose up -d`; choose and verify the backend in the dashboard. Its saved connection takes precedence over legacy startup defaults. See [deployment](deployment-profiles.md).
 
 For a dashboard mounted under a reverse-proxy path or optional OIDC login, see [WebUI proxy and SSO setup](webui-access.md). Neither setting changes music-client authentication on port 5274.
 
 ## Protected files
 
-First startup creates `keyring.json` with private permissions when the database has no saved secrets. Keep it with the database: losing the key ring prevents decryption of saved provider credentials. `Secrets__KeyRingPath` remains available as an explicit override; it must be writable to apply a restore. Use the verified backup and restore controls in Settings → Maintenance. See [storage operations](storage.md) for data-folder contents and offline copies.
+First startup creates `keyring.json` with private permissions when the database has no saved secrets. Keep it with the database: losing the key ring prevents decryption of saved provider credentials. `Secrets__KeyRingPath` remains available as an explicit override; it must be writable to apply a restore. Use the verified backup and restore controls in Settings → Backups. See [storage operations](storage.md) for data-folder contents and offline copies.
 
 ## Durable settings
 
-Non-secret product behavior belongs in household SQLite settings and is edited through the dashboard surface that owns it. General playback, cache, matching, playlist, and diagnostics policy lives under **Settings**. Provider priority lives under **Integrations > Routing**. Each user's explicit-content filter and external/explicit title labels can override the household defaults under **Preferences**; clearing an override restores the current household value.
+Non-secret product behavior belongs in household SQLite settings and is edited through the dashboard surface that owns it. Operator, cache and diagnostics policy lives under **Settings**. Source order, playback quality and matching preference live under **Integrations > Routing**. Playlist behavior stays with each playlist. Each user's explicit-content filter and external/explicit title labels can override the household defaults under **Preferences**; clearing an override restores the current household value.
 
 `DurableRuntimeSettingsService` owns validation, typing, revisions, optimistic concurrency, and live option updates after a successful commit. Controllers must not add a second environment or JSON owner for these settings.
 
@@ -63,7 +63,7 @@ In a version 2 layout, an explicit backend address/type remains available for na
 
 ## Background cross-provider links
 
-Enable **Public cross-provider links** in Settings to collect optional cross-provider evidence after a match
+Enable **Public cross-provider links** in Integrations → Services to collect optional cross-provider evidence after a match
 has been saved. It defaults to false. A durable job queries public track links,
 verifies the exact source ID, and stores new catalog aliases through the recording
 identity owner. Existing conflicting or manual associations are left unchanged.
@@ -147,6 +147,8 @@ Settings owns browser origins/methods/headers/credential policy, remote extensio
 Integrations → Services → MusicBrainz owns the metadata source identifier, service URL, request interval and optional authorized user agent override. The public metadata service needs no username or password. Changes to these service and operator settings are marked as requiring a restart. Save commits first and requests restart after the response completes; a container restart policy brings Allstarr back. Source changes isolate cache/provenance by identifier. Existing product environment values are imported once through the reviewed legacy import and cannot override saved settings on later startups.
 
 ## Administrator access settings
+
+Use **Settings → Network → Single sign-on** for OIDC and **Settings → General → Background library access** for unattended Jellyfin scans. Saves restart Allstarr after confirmation; the dashboard waits for it to return.
 
 The authenticated `GET`/`PUT /api/admin/access/oidc` API owns single sign-on policy and its encrypted client secret. GET returns non-secret settings, an opaque revision and an antiforgery token; PUT requires both. Changing the identity service or client ID requires a new client secret. A save requests restart after the response completes. Missing, revoked or incorrectly scoped encryption references leave single sign-on disabled for review while media-server login remains available. Old SSO environment values are reported for explicit review, never automatically enabled.
 

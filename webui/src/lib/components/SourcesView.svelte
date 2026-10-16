@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
   import { diagnosticFailureMessage, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
@@ -771,6 +772,10 @@
     {/if}
 
   </div>
+
+  {#if administrator && mode === "services" && !pageId && schema}
+    <ServicePolicyCard fields={(schema.configSections ?? []).flatMap((section) => section.fields).filter((field) => /^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL)/.test(field.key))} {config} />
+  {/if}
 
   <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />

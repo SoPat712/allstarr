@@ -1,7 +1,9 @@
 import { existsSync } from "node:fs";
 import { defineConfig } from "@playwright/test";
 
-const preview = "npm run preview -- --host 127.0.0.1 --port 4173";
+const port = Number(process.env.ALLSTARR_TEST_PORT ?? 4173);
+if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Invalid browser test port.");
+const preview = `npm run preview -- --host 127.0.0.1 --port ${port}`;
 const webServerCommand = process.env.PLAYWRIGHT_SKIP_BUILD === "1" || existsSync("build/index.html")
   ? preview
   : `npm run build && ${preview}`;
@@ -20,12 +22,12 @@ export default defineConfig({
   },
   reporter,
   use: {
-    baseURL: "http://127.0.0.1:4173/",
+    baseURL: `http://127.0.0.1:${port}/`,
     trace: "retain-on-failure",
   },
   webServer: {
     command: webServerCommand,
-    url: "http://127.0.0.1:4173/",
+    url: `http://127.0.0.1:${port}/`,
     reuseExistingServer: !process.env.CI,
   },
 });

@@ -178,6 +178,9 @@ const schema = {
 };
 
 const responses: Record<string, unknown> = {
+  "/api/admin/access/backend": { settings: { supported: false, connectionSaved: false, configured: false, needsReview: false, revision: "r1" }, csrfToken: "fixture" },
+  "/api/admin/access/oidc": { settings: { enabled: false, authority: "", clientId: "", publicUrl: "", displayName: "Single sign-on", hasClientSecret: false, needsReview: false, revision: "r1" }, csrfToken: "fixture" },
+  "/api/admin/storage/files": { settings: { available: true, pending: false, needsReview: false, files: 0 }, csrfToken: "fixture" },
   "/api/admin/scrobbling/deliveries": { items: [] },
   "/api/admin/auth/me": {
     authenticated: true, backend: "Jellyfin",
@@ -192,6 +195,7 @@ const responses: Record<string, unknown> = {
     schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
     completionSource: "setup-guide", completedAt: "2026-01-01", revision: 2,
     recoveryNotices: [],
+    steps: [{ id: "legacy-environment", title: "Review previous settings", explanation: "Preview your previous settings.", required: false, state: "pending", href: "#/settings/setup" }],
     migration: { available: true, completed: false, firstRun: true },
   },
   "/api/admin/onboarding/complete": {
@@ -199,6 +203,7 @@ const responses: Record<string, unknown> = {
     schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
     completionSource: "setup-guide", completedAt: "2026-01-01", revision: 2,
     recoveryNotices: [],
+    steps: [{ id: "legacy-environment", title: "Review previous settings", explanation: "Preview your previous settings.", required: false, state: "pending", href: "#/settings/setup" }],
     migration: { available: true, completed: false, firstRun: true },
   },
   "/api/admin/onboarding/reopen": {
@@ -206,6 +211,7 @@ const responses: Record<string, unknown> = {
     schemaVersion: "onboarding-v1", completedSteps: ["backend-identity"],
     completionSource: "administrator", reopenedAt: "2026-01-01", revision: 3,
     recoveryNotices: [],
+    steps: [{ id: "legacy-environment", title: "Review previous settings", explanation: "Preview your previous settings.", required: false, state: "pending", href: "#/settings/setup" }],
     migration: { available: true, completed: false, firstRun: true },
   },
   "/api/admin/ui/schema": schema,
@@ -895,7 +901,7 @@ const routes = [
   ["#/integrations/services", "Sources"],
   ["#/integrations/accounts", "Sources"],
   ["#/integrations/extensions", "Sources"],
-  ["#/integrations/routing", "Settings"],
+  ["#/integrations/routing", "Sources"],
   ["#/settings/general", "Settings"],
 ] as const;
 
@@ -1057,7 +1063,7 @@ for (const viewport of viewports) {
       await expect(sourceDialog.getByLabel("Access token")).toHaveValue("");
       await sourceDialog.getByRole("button", { name: "Cancel" }).click();
       await page.goto("#/settings/routing");
-      await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Routing", level: 2 })).toBeVisible();
       await expect(page.getByText(/always tried first/)).toBeVisible();
       await expect(page.getByRole("button", { name: "Save playback and matching" })).toBeDisabled();
       await expect(page.getByRole("button", { name: "Move Jellyfin up" })).toHaveCount(0);
@@ -2194,7 +2200,7 @@ test("Legacy integration links open their canonical tabs", async ({ page }) => {
     ["#/sources", "Sources"],
     ["#/settings/accounts", "Sources"],
     ["#/settings/extensions", "Sources"],
-    ["#/settings/routing", "Settings"],
+    ["#/settings/routing", "Sources"],
   ] as const) {
     await page.goto(route);
     await expect(page.getByRole("heading", { name: tab, level: 1 })).toBeVisible();
@@ -4400,7 +4406,7 @@ test("Maintenance previews, retries, and applies a legacy import on mobile", asy
   await card.getByRole("button", { name: "Preview import" }).click();
   await expect(card.getByText("Imported accounts remain disabled until reviewed.")).toBeVisible();
   await card.getByText("Review 1 parsed settings").click();
-  await expect(card.getByText("CACHE_LYRICS_DAYS")).toBeVisible();
+  await expect(card.getByText("CACHE_LYRICS_DAYS", { exact: true }).last()).toBeVisible();
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await card.getByRole("button", { name: "Discard and retry" }).click();
@@ -4485,7 +4491,7 @@ test("Durable onboarding controls first setup and targeted recovery", async ({ p
   await expect(page.locator("[role=progressbar]")).toHaveCount(0);
   releaseStatus();
   await navigation;
-  const setup = page.getByRole("dialog", { name: "Set up Allstarr" });
+  const setup = page.getByRole("region", { name: "Set up Allstarr" });
   await expect(setup).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(setup).toBeVisible();
@@ -4559,25 +4565,16 @@ test("Administrators can reopen durable setup from Maintenance", async ({ page }
   await mockApi(page);
   await page.goto("#/settings/setup");
   await page.getByRole("button", { name: "Open setup guide" }).click();
-  const setup = page.getByRole("dialog", { name: "Set up Allstarr" });
+  const setup = page.getByRole("region", { name: "Set up Allstarr" });
   await expect(setup).toBeVisible();
+  await setup.getByRole("button", { name: "Finish setup" }).scrollIntoViewIfNeeded();
   await expect(setup.getByRole("button", { name: "Finish setup" })).toBeInViewport();
-  const dialogBox = await setup.boundingBox();
-  const checklistBox = await setup.locator(".setup-checklist").boundingBox();
-  expect(dialogBox).not.toBeNull();
-  expect(checklistBox).not.toBeNull();
-  expect((checklistBox?.x ?? 0) - (dialogBox?.x ?? 0)).toBeGreaterThanOrEqual(16);
-  const actionBoxes = await setup.locator(":scope > .dialog-actions button").evaluateAll((buttons) =>
-    buttons.map((button) => {
-      const rect = button.getBoundingClientRect();
-      return { width: rect.width, y: rect.y };
-    }),
-  );
-  expect(actionBoxes).toHaveLength(2);
-  expect(Math.abs(actionBoxes[0].width - actionBoxes[1].width)).toBeLessThanOrEqual(1);
-  expect(Math.abs(actionBoxes[0].y - actionBoxes[1].y)).toBeGreaterThanOrEqual(44);
+  await expect(setup.getByRole("link", { name: "Return to Home" })).toBeVisible();
   await page.keyboard.press("Escape");
+  await expect(setup).toBeVisible();
+  await setup.getByRole("link", { name: "Return to Home" }).click();
   await expect(setup).toBeHidden();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test("Playlist details use a responsive dialog and track rows open mapping review", async ({ page }) => {

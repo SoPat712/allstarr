@@ -5054,51 +5054,6 @@
     color: var(--color-ink-muted);
   }
 
-  .onboarding-dialog {
-    --dialog-width: 38rem;
-
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    overflow: hidden;
-  }
-
-  .setup-checklist {
-    display: grid;
-    min-height: 0;
-    overflow: auto;
-    margin: var(--space-4);
-    border: 1px solid var(--color-edge);
-    border-radius: var(--radius-md);
-  }
-
-  .onboarding-dialog > .notice-error {
-    margin: 0 var(--space-4) var(--space-4);
-  }
-
-  .setup-checklist section {
-    display: grid;
-    grid-template-columns: 5.5rem minmax(0, 1fr);
-    align-items: start;
-    gap: 0.75rem;
-    border-bottom: 1px solid var(--color-edge);
-    padding: 0.8rem;
-  }
-
-  .setup-checklist section:last-child {
-    border-bottom: 0;
-  }
-
-  .setup-checklist section > div {
-    display: grid;
-    gap: 0.2rem;
-  }
-
-  .setup-checklist p {
-    margin: 0;
-    color: var(--color-ink-muted);
-    font-size: var(--text-xs);
-    line-height: 1.5;
-  }
 
 }
 

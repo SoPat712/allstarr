@@ -10,15 +10,7 @@ docker compose up -d
 
 This starts one Allstarr container using the pinned application image. Its only persistent mount is `./data:/app/data`. No `.env` file, source build or optional service is required. Music clients use port 5274. The dashboard listens at `http://localhost:5275`, with the host port bound to loopback.
 
-The backend-selection API is ready, but the browser setup replacement is still being completed in this beta. The existing `init` command remains as a fallback:
-
-```bash
-./allstarr.sh init
-# Set BACKEND_TYPE and JELLYFIN_URL or SUBSONIC_URL in .env.
-docker compose up -d
-```
-
-`init` creates optional deployment defaults without replacing an existing `.env` or starting containers. Use a backend address reachable from the container; `localhost` inside the container refers to Allstarr itself. Sign in with a media-server administrator and review Settings → Setup. Product settings and encrypted accounts belong in the dashboard. See [configuration](configuration.md) for listener and trusted-network settings.
+Open the dashboard, choose Jellyfin or Subsonic / OpenSubsonic, and verify a media-server administrator. Use an address reachable from the container; `localhost` inside the container refers to Allstarr itself. The connection is saved in SQLite and the password is discarded. Allstarr restarts after its response, then the dashboard offers sign-in and the shared setup guide. Reviewed and skipped steps persist across browsers. Reopen it under Settings → Setup without resetting choices. Product settings and encrypted accounts belong in the dashboard. See [configuration](configuration.md) for listener and trusted-network settings.
 
 ## Upgrade from version 2
 
@@ -37,13 +29,13 @@ docker compose up -d --no-deps allstarr
 
 These commands use the image already named in your Compose file. A pinned v2 tag stays pinned; `latest` advances only when a release is published. This beta does not mean that `latest` has already changed.
 
-Sign in and review the legacy `.env` through Settings → Setup before applying its import. The source file stays unchanged. Existing saved settings and account revisions take precedence. Original kept and permanent-download audio stays in its existing mounts. Valkey cache and old matching state are not imported. New managed media stays within the existing media mounts so backend library paths continue to work. Inspect rejected or unsupported settings and test playback before removing anything from the old installation. The guided browser checklist is still being completed; do not treat a running container as a completed upgrade.
+Sign in and review the legacy `.env` through Settings → Setup before applying its import. The source file stays unchanged. Existing saved settings and account revisions take precedence. Original kept and permanent-download audio stays in its existing mounts. Valkey cache and old matching state are not imported. New managed media stays within the existing media mounts so backend library paths continue to work. Inspect rejected or unsupported settings and test playback before removing anything from the old installation. The guided checklist explains source changes, original-file adoption, playlists, routing, lyrics and optional Apple downloads. Finish for now skips remaining optional steps; it does not erase their configuration. Verify the import jobs and ordinary playback before declaring the upgrade complete.
 
 Old Valkey and Spotify-lyrics services may remain in an unchanged v2 Compose file. The new runtime does not use them. Leave deployment tidy-up until the upgrade is verified; removing a service that is still named in `depends_on` requires a deliberate Compose edit.
 
 ## Update a new deployment
 
-Create and download a backup in Settings → Maintenance, and retain the previous image and a stopped copy of the data folder. Then run:
+Create and download a backup in Settings → Backups, and retain the previous image and a stopped copy of the data folder. Then run:
 
 ```bash
 ./allstarr.sh update
@@ -55,7 +47,7 @@ The command validates deployment files, pulls the configured Allstarr image and 
 
 ## Optional Apple downloads
 
-Apple's gateway and wrapper are behind the `apple` profile and publish no host ports. Upload a legally obtained supported Apple Music APK/APKM through Integrations → Services → Apple Music, then run:
+The current deployment files put Apple's gateway and wrapper behind the `apple` profile and publish no host ports. An untouched v2 Compose file does not contain these services. Finish and verify its core upgrade first; adding Apple is a separate opt-in deployment change using the current host helper and profile definitions. Preserve the original cache, kept and download container paths when preparing that change. Upload a legally obtained supported Apple Music APK/APKM through Integrations → Services → Apple Music, then run:
 
 ```bash
 ./allstarr.sh enable apple
@@ -63,7 +55,7 @@ Apple's gateway and wrapper are behind the `apple` profile and publish no host p
 
 Architecture is detected automatically; pass `x86_64` or `arm64-v8a` when needed. Uploads are stored in `data/apple-upload` with the default layout. The script resolves a custom bind-mounted data path from Compose and also recognizes the older `.apple-provider/incoming` staging folder. With a named volume or a separately managed layout, pass an explicit package path: `./allstarr.sh enable apple /path/to/package.apkm x86_64`.
 
-The command verifies the package and locked wrapper inputs, builds the local Apple images, saves the profile and starts it. Git, jq and unzip are required for preparation. `prepare-apple` still verifies and builds without starting; `install-apple` remains an alias for `enable apple` so existing dashboard instructions work.
+The command verifies the package and locked wrapper inputs, builds the local Apple images, saves the profile and starts it. Git, jq and unzip are required for preparation. `prepare-apple` verifies and builds without starting; `install-apple` remains a compatibility alias for `enable apple`. The dashboard displays the single `enable apple` host step.
 
 Configure the gateway address as `http://apple-gateway:8000` in the Apple service settings, then complete sign-in and testing in the dashboard. See [Apple downloads](apple-download-provider.md).
 
@@ -77,7 +69,7 @@ Spotify lyrics run inside Allstarr with a selected Spotify account and need no C
 
 ## Backup, restore and rollback
 
-Use Settings → Maintenance for verified database-and-key-ring archives. The archive excludes media, extension packages, cache, deployment configuration, and optional provider sessions. Stop Allstarr before you copy the complete data folder, and include external mounts and optional provider volumes separately. Follow [storage operations](storage.md) for exact restore steps and the current copied-media recovery limitation. The shell `backup` and `restore` commands are removed. `upgrade` retains its guidance-only behavior until the guided setup replacement is complete; it does not alter an installation.
+Use Settings → Backups for verified database-and-key-ring archives. The archive excludes media, extension packages, cache, deployment configuration, and optional provider sessions. Stop Allstarr before you copy the complete data folder, and include external mounts and optional provider volumes separately. Follow [storage operations](storage.md) for exact restore steps and copied-file verification. The shell `init`, `upgrade`, `backup` and `restore` commands are removed: use guided setup, the normal image update, verified database archives and complete stopped-folder copies.
 
 To roll back, stop the new container, restore the complete pre-upgrade folders to their original mounts, and select the previous image. For a new-layout installation, set `ALLSTARR_IMAGE` to its saved tag or digest in `.env`, then run `docker compose up -d --no-deps --pull never allstarr`. Keep the failed upgrade's folders separately for inspection. Do not run an older image against a database migrated by a newer version.
 

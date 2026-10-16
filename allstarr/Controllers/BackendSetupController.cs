@@ -36,7 +36,7 @@ public sealed class BackendSetupController(BackendSetupService setup, DurableSto
         try
         {
             await setup.SaveAsync(request, token);
-            Response.OnCompleted(() => { lifetime.StopApplication(); return Task.CompletedTask; });
+            AdminProcessRestart.Schedule(HttpContext, lifetime);
             return Ok(new { saved = true, requiresRestart = true, message = "The media server is saved. Allstarr will restart; sign in when it returns." });
         }
         catch (BackendSetupException error)

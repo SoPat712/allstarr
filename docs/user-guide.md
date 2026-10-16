@@ -10,14 +10,20 @@ The dashboard controls how Allstarr connects sources, matches music, projects pl
 ## First setup
 
 1. Start the stack and open the dashboard.
-2. Sign in with a user from the selected Jellyfin or Subsonic backend.
-3. Complete onboarding: confirm the backend connection, choose a music library, and verify the user mapping.
+2. On a fresh install, choose Jellyfin or Subsonic / OpenSubsonic, enter its address and verify a media-server administrator. The password is discarded. The connection is saved in the data folder and Allstarr restarts.
+3. Sign in with your media-server account and review the inline setup guide. It saves reviewed and skipped steps across browsers. Finish for now skips remaining optional steps; reopen it from **Settings → Setup** without resetting choices.
 4. Open **Integrations → Services** to see built-in and installed capabilities.
 5. Open **Integrations → Accounts** to connect personal or explicitly shared provider accounts.
 6. Open **Integrations → Routing** to choose the fallback order for each capability.
 7. Test ordinary local playback in a music client before adding provider playlists or external playback.
 
 Administrators see deployment and shared-account controls. Listeners can open Home, Playlists, Mappings, Services, their Accounts, Activity, and Listening preferences. Settings, Extensions, Routing, Cached, and Kept require administrator access, including when opened through a direct link.
+
+For an existing installation, **Settings → Setup → Review previous settings** can preview the mounted v2 environment or an uploaded copy. Nothing is imported until you confirm the preview. Existing saved settings win. Accounts are checked before enablement; unavailable accounts need attention in Sources. Original kept and download files are verified in place by a durable job. Valkey-only favorites and manual fixes are not imported. SquidWTF has no automatic replacement.
+
+**Settings → General → Background library access** connects or disables unattended Jellyfin scans. **Settings → Network → Single sign-on** manages an encrypted OpenID Connect client; blank secrets preserve the current secret only for the same issuer and client. Saving these connections restarts Allstarr after the response. The dashboard waits for the new process and offers a retry if it takes longer than a minute.
+
+After copying a stopped installation's complete folder, **Settings → Storage → Saved-file verification** shows verification progress and lets you retry repaired files. Follow its household job in Activity → Everyone → Queue. Changed, missing or linked originals stay unavailable; verification never replaces their contents.
 
 ## Dashboard map
 
@@ -88,7 +94,7 @@ Each viewer's external tracks use accounts available to that viewer. If no eligi
 
 ### Activity
 
-Activity has three views. Listeners see their own work; administrators see work across the household.
+Activity has three views. Everyone starts with their own work. Administrators can choose **Everyone** to inspect household work, including system storage verification; the selected scope is remembered in this browser.
 
 - **Queue** shows waiting, running, retrying and deferred jobs. Known progress and the next attempt time appear with each job. **Cancel job** requests a stop at the worker's next safe point and preserves completed work.
 - **History** shows finished jobs, retained attempt history, safe failure messages and the operational event feed. Filter jobs by type and state, load earlier jobs or attempts, and use the event feed's existing source, category and search filters. Attempt details expire sooner than the latest job outcome.
@@ -220,7 +226,7 @@ Scrobbling saves the destination account and revision with accepted playback, th
 - Keep the dashboard on a trusted network or behind an authenticated proxy.
 - Use a separate provider account when a service allows it, and grant the smallest audience required.
 - Preview imports, legacy configuration, playlist changes, and destructive maintenance actions.
-- Create and download a verified database-and-key-ring backup in Settings → Maintenance before an update.
+- Create and download a verified database-and-key-ring backup in Settings → Backups before an update.
 - Back up deployment configuration, retained media, extension packages, and optional provider sessions separately; see [storage operations](operations/storage.md).
 
 For exact procedures, see [configuration](operations/configuration.md), [storage and recovery](operations/storage.md), and [client compatibility](operations/client-compatibility.md).

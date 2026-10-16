@@ -95,7 +95,7 @@
                 <Button type="submit" disabled={!packageFile || Boolean(action)}>Upload package</Button>
               </form>
             {:else if !gatewayReady}
-              <section class="apple-host-action"><strong>{upload?.fileName || "Apple Music package"} is staged</strong><p>Run this on the Docker host to verify the package, build the gateway, and start it.</p><code>./allstarr.sh install-apple</code></section>
+              <section class="apple-host-action"><strong>{upload?.fileName || "Apple Music package"} is staged</strong><p>Run this on the Docker host to verify the package, build the gateway, and start it.</p><code>./allstarr.sh enable apple</code></section>
             {:else}<p>The gateway is already installed. API contract: {status?.api_version || "Not discovered"}.</p>{/if}
           </details>
         {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { waitForRestart } from "$lib/restart";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
@@ -12,9 +13,11 @@
     type ConfigSection,
     type UiSchema,
   } from "$lib/api";
-  import EnvMigrationCard from "$lib/components/EnvMigrationCard.svelte";
+  import SetupGuide from "$lib/components/SetupGuide.svelte";
+  import AccessSettingsCard from "$lib/components/AccessSettingsCard.svelte";
+  import StorageVerificationCard from "$lib/components/StorageVerificationCard.svelte";
+  import type { OnboardingState } from "$lib/api";
   import FilePicker from "$lib/components/FilePicker.svelte";
-  import RoutingView from "$lib/components/RoutingView.svelte";
   import RouteError from "$lib/components/RouteError.svelte";
   import CacheDiagnosticsCard from "$lib/components/CacheDiagnosticsCard.svelte";
   import SegmentedNav from "$lib/components/SegmentedNav.svelte";
@@ -23,25 +26,28 @@
   import { fieldValue } from "$lib/settings";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
   import { onThemeModeChange, readThemeMode, saveThemeMode, themeOptions, type ThemeMode } from "$lib/theme";
-  import { Activity, Archive, AudioLines, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
+  import { Activity, Archive, HardDrive, Lock, Network, Palette, Rocket, SlidersHorizontal } from "@lucide/svelte";
 
   let {
     section = "general",
     initialPanel = "",
     administrator,
     onOpenSetup,
+    onboardingState = null,
+    onSetupChanged = () => {},
   }: {
     section?: string;
     initialPanel?: string;
     administrator: boolean;
     onOpenSetup: () => void | Promise<void>;
+    onboardingState?: OnboardingState | null;
+    onSetupChanged?: (state: OnboardingState) => void;
   } = $props();
 
   const pages = [
     { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Where songs are saved and how long cached data is kept." },
-    { id: "playback", label: "Playback", group: "Server", icon: AudioLines, title: "Playback", description: "Audio quality, matching, and the order Allstarr tries sources when your media server doesn't have a song." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
     { id: "backups", label: "Backups", group: "Maintenance", icon: Archive, title: "Backups", description: "Save and restore Allstarr's database, accounts and encryption keys." },
     { id: "diagnostics", label: "Diagnostics", group: "Maintenance", icon: Activity, title: "Diagnostics", description: "Run checks when playback or playlists aren't working." },
@@ -89,11 +95,14 @@
       .map((item) => ({
         ...item,
         fields: item.fields.filter((field) =>
-          !contextualTrackCacheKeys.has(field.key) && !integrationRoutingKeys.has(field.key) && !shellPreferenceKeys.has(field.key.toUpperCase())),
+          !/^(ODESLI_|EXTENSIONS_ALLOW_REMOTE_INSTALL)/.test(field.key) && !contextualTrackCacheKeys.has(field.key) && !integrationRoutingKeys.has(field.key) && !shellPreferenceKeys.has(field.key.toUpperCase())),
       }))
       .filter((item) => item.fields.length);
   });
-  const pageSections = $derived(configSections.filter((item) => (sectionPages[item.id] ?? "general") === active));
+  const pageSections = $derived(configSections.map((item) => ({ ...item,
+    fields: item.fields.filter((field) => item.id !== "operator" ||
+      ((field.valuePath ?? "").includes("Cors:") ? "network" : /BackupRetention|EventLog/.test(field.valuePath ?? "") ? "storage" : "general") === active),
+  })).filter((item) => item.fields.length && (item.id === "operator" || (sectionPages[item.id] ?? "general") === active)));
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
   );
@@ -176,7 +185,8 @@
         field.type === "toggle" ? String(data.get(field.key) === "on") : String(data.get(field.key) ?? ""),
       ]));
     try {
-      await settings.save(updates);
+      const result = await settings.save(updates);
+      if (result.requiresRestart) { toast.info("Settings saved. Waiting for restart…"); await waitForRestart(); window.location.reload(); return; }
       markSaved(item.id);
       toast.success(`${item.label} settings saved.`);
       await refresh();
@@ -302,6 +312,9 @@
           </div>
         </section>
       {:else if ["general", "storage", "network"].includes(active)}
+        {#if administrator && active === "general"}<AccessSettingsCard kind="backend" />{/if}
+        {#if administrator && active === "network"}<AccessSettingsCard kind="oidc" />{/if}
+        {#if administrator && active === "storage"}<StorageVerificationCard />{/if}
         {#each pageSections as item (item.id)}
           {@const editable = item.fields.filter((field) => !deploymentOwned(field))}
           <form class="settings-card settings-disclosure" aria-label={`${item.label} settings`} oninput={() => markDirty(item.id)} onsubmit={(event) => void saveSection(event, item)}>
@@ -368,8 +381,6 @@
             onPurge={(target) => { purgeTarget = target; purgeOpen = true; }}
           />
         {/if}
-      {:else if active === "playback"}
-        <RoutingView embedded />
       {:else if active === "backups"}
         <article class="settings-card maintenance-card">
           <header>
@@ -426,7 +437,7 @@
               <Button variant="secondary" onclick={() => void onOpenSetup()}>Open setup guide</Button>
             </div>
           </section>
-          <EnvMigrationCard />
+          {#if onboardingState}<SetupGuide state={onboardingState} onChanged={onSetupChanged} />{/if}
         {/if}
       {/if}
     </div>

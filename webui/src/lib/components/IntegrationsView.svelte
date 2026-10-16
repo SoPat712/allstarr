@@ -1,4 +1,5 @@
 <script lang="ts">
+  import RoutingView from "$lib/components/RoutingView.svelte";
   import SourcesView from "$lib/components/SourcesView.svelte";
 
   let {
@@ -26,6 +27,10 @@
 </script>
 
 <section class="settings-workspace integrations-workspace">
+  {#if section === "routing" && administrator}
+    <nav class="route-tabs flex flex-wrap gap-2" aria-label="Integration sections"><a class="button secondary" href="#/integrations/services">Services</a><a class="button secondary" href="#/integrations/accounts">Accounts</a><a class="button" href="#/integrations/routing" aria-current="page">Routing</a></nav>
+    <RoutingView />
+  {:else}
   <SourcesView
     mode={section === "accounts" ? "accounts" : "services"}
     {administrator}
@@ -37,4 +42,6 @@
     {from}
     {focusAccount}
   />
+  {#if administrator}<a class="button secondary m-4" href="#/integrations/routing">Routing and quality</a>{/if}
+  {/if}
 </section>

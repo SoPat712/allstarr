@@ -206,7 +206,7 @@ test("administrator navigation and household now-playing remain available", asyn
   await page.goto("/#/integrations/services");
   await expect(page.getByRole("button", { name: "Add a source" })).toBeVisible();
   await page.goto("/#/settings/playback");
-  await expect(page.getByRole("heading", { name: "Playback", level: 2 })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Routing", level: 2 })).toBeVisible();
 });
 
 test("listeners always use Mine even when this browser remembers Everyone", async ({ page }) => {
