@@ -8,7 +8,7 @@
   import { Skeleton } from "$lib/components/ui/skeleton";
   import { Badge } from "$lib/components/ui/badge";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { ArrowRight, ChevronDown, MoreHorizontal, X } from "@lucide/svelte";
+  import { ArrowRight, ChevronDown, MoreHorizontal, Server, X } from "@lucide/svelte";
   import AddPlaylistDialog from "$lib/components/AddPlaylistDialog.svelte";
   import CoverageBar from "$lib/components/CoverageBar.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
@@ -37,10 +37,14 @@
     filterPlaylists,
     filterTracks,
     formatDuration,
+    listeningTime,
+    mediaServerName,
     isReviewTrack,
     playlistOutcomeLabel,
     runBounded,
+    providerColor,
     scheduleCadence,
+    scheduleZoneLabel,
     type PlaylistSort,
     type TrackRouteFilter,
     type TrackSort,
@@ -120,7 +124,13 @@
     visiblePlaylists.slice((currentPage - 1) * 20, currentPage * 20),
   );
   const projectedTracks = $derived.by((): PlaylistTrack[] => {
-    if (!details?.clientProjection) return [];
+    if (!details) return [];
+    // Playlists written into the media server have no separate listener projection; show their source rows.
+    if (!details.clientProjection)
+      return details.tracks.map((track) => ({
+        ...track,
+        routeKind: track.routeKind === "unresolved" ? "unmatched" : track.routeKind,
+      }));
     const sourceTracks = new Map(details.tracks.map((track) => [track.sourcePosition, track]));
     return details.clientProjection.tracks.map((track) => {
       const source = sourceTracks.get(track.sourcePosition);
@@ -144,6 +154,27 @@
         providerRoutes: source?.providerRoutes ?? [],
       };
     });
+  });
+  const targetName = $derived(details ? providerName(details.targetProtocol) : "");
+  const compositionLegend = $derived.by(() => {
+    if (!details) return [];
+    const routes = details.routeCoverage
+      .filter((route) => route.providerId !== "unresolved" && route.count > 0)
+      .map((route) => ({ id: route.providerId, name: providerName(route.providerId), count: route.count }));
+    return details.unresolvedCount
+      ? [...routes, { id: "unresolved", name: "Not found", count: details.unresolvedCount }]
+      : routes;
+  });
+  const sourceChanges = $derived.by(() => {
+    const changes = details?.reconciliation;
+    if (!changes) return "";
+    return [
+      [changes.addedPositions.length, "added"],
+      [changes.removedPositions.length, "removed"],
+      [changes.movedPositions.length, "moved"],
+      [changes.duplicatedPositions.length, "duplicated"],
+      [changes.changedPositions.length, "changed"],
+    ].filter(([count]) => count).map(([count, label]) => `${count} ${label}`).join(", ") || "No changes";
   });
   const visibleTracks = $derived(
     filterTracks(projectedTracks, trackQuery, routeFilter, trackSort),
@@ -198,7 +229,7 @@
   const provider = (providerId: string) => findProviderDefinition(providers, providerId);
 
   function providerName(providerId?: string | null) {
-    return humanize(providerDisplayName(providers, providerId, "Unresolved"));
+    return mediaServerName(providerId) ?? humanize(providerDisplayName(providers, providerId, "Unresolved"));
   }
 
   function editSchedule() {
@@ -604,22 +635,19 @@
         <header class="playlist-hero">
           <MediaArtwork class="hero-art" url={details.artworkUrl} fallback="♫" loading="eager" />
           <div class="playlist-hero-copy">
-            <p class="eyebrow">{providerName(details.sourceProviderId)} playlist</p>
             <Dialog.Title>{details.name}</Dialog.Title>
-            <p>
-              {details.clientProjection?.trackCount ?? 0} {(details.clientProjection?.trackCount ?? 0) === 1 ? "song" : "songs"} shown · {details.trackCount} {details.trackCount === 1 ? "song" : "songs"} in the source
-              · {formatDuration(details.durationMs)}
-              {#if details.unknownDurationCount} · {details.unknownDurationCount} unknown duration{/if}
-              {#if details.hasNewerSourceGeneration}
-                · New source refresh waiting
-              {/if}
+            <p class="playlist-hero-summary">
+              {details.trackCount} {details.trackCount === 1 ? "song" : "songs"}, {listeningTime(details.durationMs)}
+              {#if details.unknownDurationCount}<span>({details.unknownDurationCount} without a length)</span>{/if}
             </p>
-            <div class="hero-route">
+            <p class="hero-route">
               <ProviderMark id={details.sourceProviderId} definition={provider(details.sourceProviderId)} />
               <span>{providerName(details.sourceProviderId)}</span>
-              <ArrowRight size={18} aria-hidden="true" />
-              <span>Allstarr · via {providerName(details.targetProtocol)}</span>
-            </div>
+              <ArrowRight size={16} aria-hidden="true" />
+              <Server size={16} aria-hidden="true" />
+              <span>{targetName}</span>
+              {#if details.hasNewerSourceGeneration}<Badge tone="accent">Source update waiting</Badge>{/if}
+            </p>
           </div>
           <div class="playlist-hero-actions">
             <DropdownMenu.Root>
@@ -654,69 +682,57 @@
         {/if}
         {#if exportError}<p class="field-error" role="alert">{exportError}</p>{/if}
 
-        <div class="playlist-view-switcher">
-          <span><strong>Playlist view · Mapped for listeners</strong><small>Every source song stays in order and uses its native backend match when available.</small></span>
-        </div>
+        <section class="playlist-overview" aria-label="Playlist summary">
+          <div class="playlist-composition">
+            <div class="composition-heading">
+              <h3>Where songs play from</h3>
+              <span>{Math.max(0, details.trackCount - details.unresolvedCount)} of {details.trackCount} play</span>
+            </div>
+            <CoverageBar
+              routes={details.routeCoverage}
+              total={details.trackCount}
+              unresolved={details.unresolvedCount}
+              {providerName}
+            />
+            <ul class="composition-legend">
+              {#each compositionLegend as item (item.id)}
+                <li class:attention={item.id === "unresolved"}>
+                  <span class="legend-swatch" style={`--route-color:${providerColor(item.id)}`} aria-hidden="true"></span>
+                  {item.name}<strong>{item.count}</strong>
+                </li>
+              {/each}
+              {#if details.reviewCount > 0}
+                <li>
+                  <button
+                    type="button"
+                    class="review-filter-button"
+                    class:active={routeFilter === "review"}
+                    aria-label={`Show ${details.reviewCount} ${details.reviewCount === 1 ? "track" : "tracks"} needing review`}
+                    onclick={() => routeFilter = "review"}
+                  >{details.reviewCount} to review</button>
+                </li>
+              {/if}
+            </ul>
+            <p class="composition-note">Songs keep their original order. Each one plays from {targetName} when it's in your library and streams through Allstarr when it isn't.</p>
+          </div>
 
-        <div class="playlist-detail-coverage">
-          <CoverageBar
-            routes={details.routeCoverage}
-            total={details.trackCount}
-            unresolved={details.unresolvedCount}
-            {providerName}
-          />
-        </div>
-
-        {#if details.reconciliation && (
-          details.reconciliation.addedPositions.length ||
-          details.reconciliation.removedPositions.length ||
-          details.reconciliation.movedPositions.length ||
-          details.reconciliation.duplicatedPositions.length ||
-          details.reconciliation.changedPositions.length
-        )}
-          <p class="inline-status">
-            Changes since the previous source refresh:
-            {details.reconciliation.addedPositions.length} added,
-            {details.reconciliation.removedPositions.length} removed,
-            {details.reconciliation.movedPositions.length} moved,
-            {details.reconciliation.duplicatedPositions.length} duplicated,
-            {details.reconciliation.changedPositions.length} changed.
-          </p>
-        {/if}
-
-        <div class="playlist-meta-strip" aria-label="Playlist status">
-          <span><strong>{details.matchedCount}</strong> confirmed</span>
-          <button
-            type="button"
-            class="meta-filter-button"
-            class:attention={details.reviewCount > 0}
-            class:active={routeFilter === "review"}
-            disabled={details.reviewCount === 0}
-            aria-label={`Show ${details.reviewCount} ${details.reviewCount === 1 ? "track" : "tracks"} needing review`}
-            onclick={() => routeFilter = "review"}
-          ><strong>{details.reviewCount}</strong> to review</button>
-          <span><strong>{details.localCount}</strong> local</span>
-          <span><strong>{details.externalCount}</strong> external</span>
-          <span class:attention={details.unresolvedCount > 0}><strong>{details.unresolvedCount}</strong> unresolved</span>
-          <span>Refreshed <strong>{relativeTime(details.retrievedAt, "Not yet")}</strong></span>
-          <span>Rematched <strong>{relativeTime(details.lastRematchedAt, "Not yet")}</strong></span>
-          <span>
-            {#if selected.importMode === "oneTime"}
-              <strong>Imported once</strong>
-              · source changes are ignored
-            {:else if details.schedule?.enabled}
-              <strong>{scheduleCadence(details.schedule.cronExpression)}</strong>
-              · next {relativeTime(details.schedule.nextRunAt, "Not yet")}
-              · {details.schedule.timeZoneId}
-            {:else if details.schedule}
-              <strong>Automatic updates paused</strong>
-              · {scheduleCadence(details.schedule.cronExpression)}
-              · {details.schedule.timeZoneId}
-            {:else}
-              <strong>No automatic updates</strong>
-            {/if}
-          </span>
-          {#if selected.importMode === "linked"}<Popover.Root bind:open={scheduleEditorOpen}>
+          <dl class="playlist-facts">
+            <div>
+              <dt>Updates</dt>
+              <dd>
+                {#if selected.importMode === "oneTime"}
+                  <strong>Imported once</strong>
+                  <span class="fact-detail">Later changes to the original are ignored</span>
+                {:else if details.schedule?.enabled}
+                  <strong>{scheduleCadence(details.schedule.cronExpression)}{scheduleZoneLabel(details.schedule.timeZoneId) ? ` ${scheduleZoneLabel(details.schedule.timeZoneId)}` : ""}</strong>
+                  <span class="fact-detail">Next {relativeTime(details.schedule.nextRunAt, "not scheduled yet")}</span>
+                {:else if details.schedule}
+                  <strong>Automatic updates paused</strong>
+                  <span class="fact-detail">{scheduleCadence(details.schedule.cronExpression)} when resumed</span>
+                {:else}
+                  <strong>No automatic updates</strong>
+                {/if}
+                {#if selected.importMode === "linked"}<Popover.Root bind:open={scheduleEditorOpen}>
             <Popover.Trigger class="schedule-edit-button" onclick={editSchedule}>
               {details.schedule ? "Edit schedule" : "Set schedule"}
             </Popover.Trigger>
@@ -743,22 +759,39 @@
               </Popover.Content>
             </Popover.Portal>
           </Popover.Root>{/if}
-          <OperationConsole
-            playlistName={details.name}
-            requestedJobId={operationJobId}
-            onTerminal={refresh}
-          />
-        </div>
-
-
+              </dd>
+            </div>
+            <div>
+              <dt>Original checked</dt>
+              <dd>
+                <strong>{relativeTime(details.retrievedAt, "Not yet")}</strong>
+                {#if sourceChanges}<span class="fact-detail">{sourceChanges}</span>{/if}
+              </dd>
+            </div>
+            <div>
+              <dt>Songs rematched</dt>
+              <dd><strong>{relativeTime(details.lastRematchedAt, "Not yet")}</strong></dd>
+            </div>
+            <div class="playlist-fact-run">
+              <dt>Latest run</dt>
+              <dd>
+                <OperationConsole
+                  playlistName={details.name}
+                  requestedJobId={operationJobId}
+                  onTerminal={refresh}
+                />
+              </dd>
+            </div>
+          </dl>
+        </section>
 
         {#if detailError}
           <div class="compact-empty playlist-projection-empty" role="alert">
-            <strong>Mapped playlist details could not be loaded</strong>
+            <strong>Songs could not be loaded</strong>
             <p>{detailError}</p>
             <Button variant="secondary" onclick={() => void loadDetails(selectedId)}>Try again</Button>
           </div>
-        {:else if details.clientProjection}
+        {:else if projectedTracks.length || details.clientProjection}
         <div class="track-toolbar">
           <SearchField bind:value={trackQuery} label="Filter tracks" placeholder="Filter tracks" hiddenLabel />
           <SelectField bind:value={routeFilter} label="Track route" options={[
@@ -913,8 +946,8 @@
         </div>
         {:else}
           <div class="compact-empty playlist-projection-empty">
-            <strong>{detailLoading ? "Loading mapped playlist details…" : "Mapped playlist details are unavailable"}</strong>
-            {#if !detailLoading}<p>Refresh the original playlist or check that this media server is still connected.</p>{/if}
+            <strong>{detailLoading ? "Loading songs…" : "No songs yet"}</strong>
+            {#if !detailLoading}<p>Update the playlist to fetch its songs from {providerName(details.sourceProviderId)}.</p>{/if}
           </div>
         {/if}
       {:else}

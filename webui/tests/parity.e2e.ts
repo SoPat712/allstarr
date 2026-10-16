@@ -1029,13 +1029,17 @@ for (const viewport of viewports) {
       await expect(details).not.toContainText(/hybrid|materialized|write-back|projection mode/i);
       await expect(details.getByRole("tab", { name: /Original|Native/ })).toHaveCount(0);
       await expect(details.getByText("Test song", { exact: true })).toBeVisible();
-      await expect(details).toHaveCSS("overflow", "hidden");
-      await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
+      // Phones scroll the whole sheet; wider screens keep the header fixed and scroll only the songs.
+      if (viewport.width <= 760) await expect(details).toHaveCSS("overflow-y", "auto");
+      else {
+        await expect(details).toHaveCSS("overflow", "hidden");
+        await expect(details.locator(".track-scroll")).toHaveCSS("overflow", "auto");
+      }
       await expect.poll(() => details.locator(".track-scroll").evaluate((scroll) =>
         scroll.clientHeight - scroll.querySelector("table")!.scrollHeight)).toBeLessThan(48);
       const headerContentClearsSwitcher = () => details.evaluate((dialog) => {
         const header = dialog.querySelector(".playlist-hero");
-        const switcher = dialog.querySelector(".playlist-view-switcher");
+        const switcher = dialog.querySelector(".playlist-overview");
         if (!header || !switcher) return false;
         const switcherTop = switcher.getBoundingClientRect().top;
         return Array.from(header.children).every((child) => child.getBoundingClientRect().bottom <= switcherTop + 1);
@@ -3856,8 +3860,8 @@ test("Contextual dialog tabs scroll inside their panels at narrow widths", async
   await page.goto("#/library/playlists");
   await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
   const playlist = page.getByRole("dialog", { name: "Test playlist" });
-  await expect(playlist.locator(".playlist-view-switcher")).toContainText("Mapped for listeners");
-  await expect(playlist.locator(".playlist-view-switcher .contextual-tabs")).toHaveCount(0);
+  await expect(playlist.locator(".playlist-overview")).toContainText("Where songs play from");
+  await expect(playlist.locator(".playlist-overview .contextual-tabs")).toHaveCount(0);
   expect(await playlist.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   if (process.env.ALLSTARR_SCREENSHOT_DIR)
     await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/${screenshotTheme ?? "system"}-mobile-320-playlist-tabs.png` });
@@ -4733,22 +4737,22 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   await page.keyboard.press("Escape");
   const density = await dialog.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
-    const strip = element.querySelector(".playlist-meta-strip")!;
+    const overview = element.querySelector<HTMLElement>(".playlist-overview")!;
+    const overviewBounds = overview.getBoundingClientRect();
     const trackScroll = element.querySelector(".track-scroll")!.getBoundingClientRect();
     const table = element.querySelector(".track-data-table")!.getBoundingClientRect();
-    const centers = [...strip.children].map((child) => {
-      const childBounds = child.getBoundingClientRect();
-      return childBounds.top + childBounds.height / 2;
-    });
+    const facts = [...overview.querySelectorAll(".playlist-facts > div, .composition-legend > li")]
+      .map((child) => child.getBoundingClientRect());
     return {
       dialogHeight: bounds.height,
       blankTrackTail: trackScroll.height - table.height,
-      metadataCenterSpread: Math.max(...centers) - Math.min(...centers),
+      overviewFits: overview.scrollWidth <= overview.clientWidth &&
+        facts.every((fact) => fact.left >= overviewBounds.left - 1 && fact.right <= overviewBounds.right + 1),
     };
   });
   expect(density.dialogHeight).toBeLessThan(700);
   expect(density.blankTrackTail).toBeLessThan(48);
-  expect(density.metadataCenterSpread).toBeLessThanOrEqual(1);
+  expect(density.overviewFits).toBe(true);
   await dialog.getByRole("button", { name: "Technical details for Test song" }).click();
   await expect(page).toHaveURL(/#\/library\/playlists$/);
   const trackDetails = page.locator(".track-details-menu");
@@ -6678,3 +6682,63 @@ test("Media-server administrator access keeps the connected card concise", async
   await expect(access.getByLabel("Jellyfin administrator username")).toBeVisible();
   await expect(access.getByLabel("Jellyfin administrator password")).toBeVisible();
 });
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`Playlist written into the media server shows its songs and readable status — ${width} ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript((value) => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    const track = (position: number, title: string, routeKind: "local" | "external", routeProviderId: string) => ({
+      sourcePosition: position - 1, position, externalSnapshotId: `snapshot-${position}`, title,
+      artists: ["Artist"], album: "Album", durationMs: 200_000, routeKind, routeProviderId,
+      backendItemId: routeKind === "local" ? `item-${position}` : null, matchState: "accepted",
+      targetEligible: routeKind === "local",
+      outcomeCode: routeKind === "local" ? "included_native_backend_item" : "streamed_through_allstarr",
+      targetStatus: routeKind === "local" ? "included" : "streamed",
+      providerRoutes: routeKind === "local" ? [] : [{ providerId: routeProviderId, externalId: `ext-${position}`, pinned: false }],
+    });
+    await page.route((url) => url.pathname === "/api/admin/playlist-links/playlist-link", (route) => route.fulfill({ json: {
+      id: "playlist-link", snapshotId: "snapshot", snapshotVersion: 2, latestSourceSnapshotVersion: 2,
+      hasNewerSourceGeneration: false, name: "Test playlist", sourceProviderId: "lumen-audio",
+      projectionMode: "resolved", targetProtocol: "jellyfin", targetPlaylistId: "jellyfin-playlist",
+      artworkUrl: "/missing-playlist-art", retrievedAt: new Date(Date.now() - 15 * 3_600_000).toISOString(),
+      lastRematchedAt: new Date(Date.now() - 18 * 60_000).toISOString(), completedAt: "2026-01-01",
+      trackCount: 3, localCount: 2, externalCount: 1, unresolvedCount: 0, durationMs: 8_092_000,
+      matchedCount: 3, reviewCount: 0, rejectedCount: 0, playableCount: 3, unknownDurationCount: 0,
+      routeCoverage: [{ providerId: "jellyfin", count: 2 }, { providerId: "lumen-audio", count: 1 }],
+      schedule: { cronExpression: "0 8 * * 1", timeZoneId: "America/New_York", enabled: true,
+        nextRunAt: new Date(Date.now() + 3 * 86_400_000).toISOString() },
+      reconciliation: { addedPositions: [0, 1, 2], removedPositions: [], movedPositions: [], duplicatedPositions: [], changedPositions: [] },
+      clientProjection: null,
+      tracks: [track(1, "First local song", "local", "jellyfin"), track(2, "Second local song", "local", "jellyfin"),
+        track(3, "Streamed song", "external", "lumen-audio")],
+    } }));
+    await page.goto("#/library/playlists");
+    await page.getByRole("button", { name: "Open Test playlist playlist details" }).click();
+    const dialog = page.getByRole("dialog", { name: "Test playlist" });
+    const table = dialog.getByRole("table", { name: "Test playlist tracks" });
+    await expect(table.getByText("First local song", { exact: true })).toBeVisible();
+    await expect(table.getByText("Streamed song", { exact: true })).toBeVisible();
+    await expect(dialog.getByText(/Mapped playlist details are unavailable|No songs yet/)).toHaveCount(0);
+    await expect(dialog).not.toContainText("Unresolved");
+    await expect(dialog.locator(".hero-route")).toContainText("Jellyfin");
+    await expect(dialog.locator(".playlist-hero-summary")).toContainText("3 songs, 2 hr 15 min");
+    const overview = dialog.locator(".playlist-overview");
+    await expect(overview.locator(".composition-legend")).toContainText("Jellyfin2");
+    await expect(overview).toContainText("3 of 3 play");
+    await expect(overview).toContainText(/Every Monday at 8:00\sAM/);
+    await expect(overview).not.toContainText("Cron");
+    await expect(overview).toContainText("3 added");
+    await expect(overview.getByRole("button", { name: "Edit schedule" })).toBeVisible();
+    expect(await dialog.evaluate((element) => [element, ...element.querySelectorAll(".playlist-overview, .playlist-hero")]
+      .every((part) => part.scrollWidth <= part.clientWidth + 1))).toBe(true);
+    const gutters = await dialog.evaluate((element) => {
+      const dialogLeft = element.getBoundingClientRect().left;
+      return [".hero-art", ".composition-heading", ".track-toolbar > :first-child"]
+        .map((selector) => Math.round(element.querySelector(selector)!.getBoundingClientRect().left - dialogLeft));
+    });
+    expect(new Set(gutters).size).toBe(1);
+    expect(gutters[0]).toBeGreaterThanOrEqual(16);
+    await page.screenshot({ path: `test-results/playlist-detail-${width}-${theme}.png` });
+  });
+}

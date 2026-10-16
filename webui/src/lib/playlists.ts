@@ -123,13 +123,83 @@ export function filterTracks(
     });
 }
 
+const weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function cronNumber(value: string, max: number) {
+  return /^\d+$/.test(value) && Number(value) <= max ? Number(value) : null;
+}
+
+function cronWeekdays(value: string) {
+  const days = new Set<number>();
+  for (const part of value.split(",")) {
+    const range = /^(\d)(?:-(\d))?$/.exec(part);
+    if (!range) return null;
+    const start = Number(range[1]), end = Number(range[2] ?? range[1]);
+    if (start > 7 || end > 7 || end < start) return null;
+    for (let day = start; day <= end; day++) days.add(day % 7);
+  }
+  return [...days].sort((left, right) => left - right);
+}
+
+function timeOfDay(hour: number, minute: number) {
+  return new Date(Date.UTC(2000, 0, 1, hour, minute)).toLocaleTimeString(undefined, {
+    hour: "numeric", minute: "2-digit", timeZone: "UTC",
+  });
+}
+
 export function scheduleCadence(cronExpression: string) {
-  const known: Record<string, string> = {
-    "0 * * * *": "Every hour",
-    "0 3 * * *": "Every day at 03:00",
-    "0 3 * * 1": "Every Monday at 03:00",
-  };
-  return known[cronExpression] ?? `Cron ${cronExpression}`;
+  const custom = `Custom schedule (${cronExpression})`;
+  const parts = cronExpression.trim().split(/\s+/);
+  if (parts.length !== 5) return custom;
+  const [minuteText, hourText, dayOfMonth, month, dayOfWeek] = parts;
+  const minute = cronNumber(minuteText, 59);
+  if (minute === null || dayOfMonth !== "*" || month !== "*") return custom;
+  if (hourText === "*" && dayOfWeek === "*")
+    return minute === 0 ? "Every hour" : `Every hour at ${String(minute).padStart(2, "0")} minutes past`;
+  const interval = /^\*\/(\d+)$/.exec(hourText);
+  if (interval && dayOfWeek === "*" && minute === 0) return `Every ${interval[1]} hours`;
+  const hour = cronNumber(hourText, 23);
+  if (hour === null) return custom;
+  const at = timeOfDay(hour, minute);
+  if (dayOfWeek === "*") return `Every day at ${at}`;
+  const days = cronWeekdays(dayOfWeek);
+  if (!days?.length) return custom;
+  if (days.join() === "1,2,3,4,5") return `Weekdays at ${at}`;
+  if (days.join() === "0,6") return `Weekends at ${at}`;
+  const names = days.map((day) => weekdayNames[day]);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+  return `Every ${list} at ${at}`;
+}
+
+// The zone only needs naming when it differs from the viewer's own.
+export function scheduleZoneLabel(timeZone?: string | null) {
+  if (!timeZone) return "";
+  try {
+    if (timeZone === Intl.DateTimeFormat().resolvedOptions().timeZone) return "";
+    return new Intl.DateTimeFormat(undefined, { timeZone, timeZoneName: "short" })
+      .formatToParts(new Date()).find((part) => part.type === "timeZoneName")?.value ?? timeZone;
+  } catch {
+    return timeZone;
+  }
+}
+
+const mediaServerNames: Record<string, string> = {
+  jellyfin: "Jellyfin",
+  subsonic: "Subsonic",
+  opensubsonic: "OpenSubsonic",
+  navidrome: "Navidrome",
+};
+
+export function mediaServerName(protocol?: string | null) {
+  return protocol ? mediaServerNames[protocol.toLowerCase()] ?? null : null;
+}
+
+export function listeningTime(milliseconds?: number | null) {
+  if (milliseconds == null) return "length unknown";
+  const minutes = Math.round(milliseconds / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60), rest = minutes % 60;
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
 }
 
 export function formatDuration(milliseconds?: number | null) {
@@ -147,7 +217,10 @@ export function providerColor(providerId: string) {
   const colors: Record<string, string> = {
     unresolved: "var(--color-ink-muted)",
     unmatched: "var(--color-ink-muted)",
-    jellyfin: "#8b65fb",
+    jellyfin: "var(--color-signal)",
+    subsonic: "var(--color-signal)",
+    opensubsonic: "var(--color-signal)",
+    navidrome: "var(--color-signal)",
     spotify: "#1ed760",
     applemusic: "#fa243c",
     "apple-music": "#fa243c",
