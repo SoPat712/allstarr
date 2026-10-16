@@ -6,6 +6,59 @@ namespace allstarr.Tests;
 
 public sealed class DurableProviderRouteSelectorTests
 {
+    [Theory]
+    [InlineData("apple-download")]
+    [InlineData("applemusic")]
+    [InlineData("apple-musickit")]
+    public void Select_RecognizesAppleCatalogAliasesInStreamingPriority(string provider)
+    {
+        var canonical = Guid.CreateVersion7();
+        var source = Identity(canonical, "spotify", "source");
+        var apple = Identity(canonical, provider, "apple-track");
+        var deezer = Identity(canonical, "deezer", "deezer-track");
+
+        var routes = DurableProviderRouteSelector.Select(
+            source, [deezer, apple], ["apple-musickit", "deezer"]);
+
+        Assert.Equal(["apple-track", "deezer-track"], routes.Select(item => item.ExternalId));
+        var manual = new ManualTrackOverrideRecord
+        {
+            Decision = ManualOverrideDecision.Pin,
+            TargetProviderId = provider,
+            TargetExternalId = "manual-apple"
+        };
+        routes = DurableProviderRouteSelector.Select(
+            source, [deezer, apple], ["apple-musickit", "deezer"], manual);
+        Assert.True(routes[0].IsManual);
+        Assert.Equal("manual-apple", routes[0].ExternalId);
+    }
+
+    [Fact]
+    public void Select_DeduplicatesAliasesWithoutDuplicatingAManualRoute()
+    {
+        var canonical = Guid.CreateVersion7();
+        var source = Identity(canonical, "spotify", "source");
+        var manual = new ManualTrackOverrideRecord
+        {
+            Decision = ManualOverrideDecision.Pin,
+            TargetProviderId = "applemusic",
+            TargetExternalId = "apple-track"
+        };
+        var identities = new[]
+        {
+            Identity(canonical, "apple-download", "apple-track"),
+            Identity(canonical, "apple-musickit", "apple-track"),
+            Identity(canonical, "deezer", "deezer-track")
+        };
+        var order = new[] { "apple-musickit", "apple-download", "deezer" };
+
+        var automatic = DurableProviderRouteSelector.Select(source, identities, order);
+        Assert.Equal(["apple-track", "deezer-track"], automatic.Select(item => item.ExternalId));
+        var routes = DurableProviderRouteSelector.Select(source, identities, order, manual);
+        Assert.Equal(["apple-track", "deezer-track"], routes.Select(item => item.ExternalId));
+        Assert.True(routes[0].IsManual);
+    }
+
     [Fact]
     public void Select_UsesConfiguredPlayableVerifiedCanonicalRoutes()
     {

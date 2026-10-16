@@ -588,24 +588,22 @@ public sealed partial class ProtocolProviderGateway(
                         candidate.Context,
                         new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit))),
                     protocol.CancellationToken);
-                return (candidate.Context, Outcome: outcome);
+                return outcome;
             }
             finally
             {
                 searchGate.Release();
             }
         });
-        var trackLookups = (await Task.WhenAll(tasks))
-            .Where(item => item.Outcome?.IsSuccess == true)
-            .SelectMany(item => item.Outcome!.RequireValue().Items.Select(track =>
-                (Song: Map(track), Lookup: new TrackIdentityLookup(item.Context, track.Id))))
-            .Where(item => effectivePolicy?.Includes(item.Song) != false)
-            .Where(item => providerOrder.Contains(
-                NormalizeProvider(item.Song.ExternalProvider), StringComparer.Ordinal)).ToArray();
-        var routed = await CollapseVerifiedSearchTracksAsync(
-            trackLookups.Select(item => item.Song).ToArray(), trackLookups, providerOrder, protocol.CancellationToken);
+        var songs = (await Task.WhenAll(tasks))
+            .Where(outcome => outcome?.IsSuccess == true)
+            .SelectMany(outcome => outcome!.RequireValue().Items.Select(Map))
+            .Where(song => effectivePolicy?.Includes(song) != false)
+            .Where(song => providerOrder.Contains(
+                NormalizeProvider(song.ExternalProvider), StringComparer.Ordinal));
+        // Matching needs every provider route so equivalent recordings remain available as fallbacks.
         return Merge(
-            routed,
+            songs,
             limit,
             item => Key(item.ExternalProvider, item.ExternalId, item.Id),
             item => item.ExternalProvider,

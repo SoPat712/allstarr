@@ -399,11 +399,8 @@ public sealed partial class TrackMatchCommandService
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        var providerId = song.ExternalProvider!.Trim().ToLowerInvariant() switch
-        {
-            "applemusic" => "apple-download",
-            var value => value
-        };
+        var providerId = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(
+            song.ExternalProvider!);
         var externalId = song.ExternalId!.Trim();
         var externalHash = Hash(externalId);
         var identity = await db.ProviderTrackIdentities.SingleOrDefaultAsync(item =>

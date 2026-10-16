@@ -1174,7 +1174,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         var routes = await db.ProviderTrackIdentities
             .Where(item =>
                 item.CanonicalRecordingId == decision.CanonicalRecordingId &&
-                (item.ProviderId == "apple-download" || item.ProviderId == "deezer"))
+                (item.ProviderId == "apple-musickit" || item.ProviderId == "deezer"))
             .OrderBy(item => item.ProviderId)
             .ToListAsync();
         Assert.Equal(differentVersion ? 0 : 2, routes.Count);
@@ -1187,7 +1187,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(differentVersion ? 0 : 1, projection.ExternalCount);
         Assert.Equal(differentVersion ? 0 : 1, projection.ReviewCount);
         Assert.Equal(differentVersion ? 1 : 0, projection.MissingCount);
-        Assert.Equal(differentVersion ? [] : new[] { "apple-download", "deezer" },
+        Assert.Equal(differentVersion ? [] : new[] { "apple-musickit", "deezer" },
             Assert.Single(projection.Entries).ProviderRoutes.Select(item => item.ProviderId));
     }
 
@@ -1348,7 +1348,7 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
             item.ExternalIdHash == sourceHash));
         Assert.Equal(1, await verify.ProviderTrackIdentities.CountAsync(item =>
             item.Scope == ProviderIdentityScope.Catalog &&
-            item.ProviderId == "apple-download" &&
+            item.ProviderId == "apple-musickit" &&
             item.ExternalIdHash == Hash("apple-concurrent")));
     }
 

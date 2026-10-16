@@ -375,9 +375,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion", 3, null, null)]
     [InlineData(ProviderIdentityVerification.Pinned, "manual", 3, null, null)]
     [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 2, "deezer", null, "CleanOnly")]
-    public async Task MetadataSearch_CollapsesOnlyVerifiedRoutes(
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 3, "apple-download", null, null, true)]
+    public async Task Search_CollapsesVerifiedRoutesOnlyForMetadata(
         ProviderIdentityVerification verification, string method,
-        int expectedCount, string? preferredProvider, string? streamingOrder, string? explicitFilter = null)
+        int expectedCount, string? preferredProvider, string? streamingOrder, string? explicitFilter = null,
+        bool playableSearch = false)
     {
         var providerIds = new[] { "apple-musickit", "deezer", "qobuz" };
         var metadata = providerIds.Select(providerId =>
@@ -449,18 +451,24 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     System.Collections.Immutable.ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
                 { UserId = context.RequireActor().EffectiveUserId, Preferences = new(explicitFilter) }
             };
-        var songs = (await gateway.SearchAsync(context, "Shared title", 10, 0, 0)).Songs;
+        var songs = playableSearch
+            ? await gateway.SearchPlayableSongsAsync(context, "Shared title", 10)
+            : (await gateway.SearchAsync(context, "Shared title", 10, 0, 0)).Songs;
 
         Assert.Equal(expectedCount, songs.Count);
         Assert.Contains(songs, song => song.ExternalProvider == "qobuz");
         if (preferredProvider != null)
         {
             var known = Assert.Single(songs, song => song.ExternalProvider == preferredProvider);
-            Assert.Equal("ext-deezer-first-seen", known.Id);
+            if (!playableSearch) Assert.Equal("ext-deezer-first-seen", known.Id);
         }
         identities.Verify(item => item.CreateRecordingAsync(It.IsAny<ProviderActorContext>(),
             It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
-        identities.VerifyAll();
+        if (playableSearch)
+            identities.Verify(item => item.ResolveManyAsync(
+                It.IsAny<IReadOnlyList<TrackIdentityLookup>>(), It.IsAny<CancellationToken>()), Times.Never);
+        else
+            identities.VerifyAll();
     }
 
     [Fact]
