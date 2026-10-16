@@ -20,9 +20,9 @@
   <form class="settings-card p-5 m-4 space-y-4" aria-label="Service policy" onsubmit={(event) => void save(event)}>
     <h3>Service and extension policy</h3><p>Control optional link lookups and installing remote extension packages. Changes restart Allstarr.</p>
     {#each fields as field}
-      <label class="block">{field.label}
-        {#if field.type === "toggle"}<select class="w-full mt-1" name={field.key} value={String(fieldValue(config, field) ?? false)} disabled={busy}><option value="false">Off</option><option value="true">On</option></select>
-        {:else}<input class="w-full mt-1" name={field.key} value={String(fieldValue(config, field) ?? "")} type="number" min={field.min ?? undefined} max={field.max ?? undefined} disabled={busy} />{/if}
+      <label class="field"><span>{field.label}</span>
+        {#if field.type === "toggle"}<select name={field.key} value={String(fieldValue(config, field) ?? false)} disabled={busy}><option value="false">Off</option><option value="true">On</option></select>
+        {:else}<input name={field.key} value={String(fieldValue(config, field) ?? "")} type="number" min={field.min ?? undefined} max={field.max ?? undefined} disabled={busy} />{/if}
       </label>
     {/each}
     {#if saved}<p role="status">Service policy saved.</p>{/if}

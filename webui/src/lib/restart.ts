@@ -19,3 +19,23 @@ export async function waitForRestart(signal?: AbortSignal): Promise<void> {
   }
   throw new Error("Settings are saved. Allstarr has not returned yet. Check its status and reload when it is ready.");
 }
+
+// Allstarr restarts as soon as access is saved, so a dropped connection here usually means the save landed.
+// The reload that follows shows the real state either way.
+export function savedBeforeRestart(cause: unknown): boolean {
+  return cause instanceof TypeError;
+}
+
+const restoredKey = "allstarr.access-restored";
+
+export function markAccessRestored(): void {
+  try { sessionStorage.setItem(restoredKey, "1"); } catch { /* The confirmation is optional. */ }
+}
+
+export function consumeAccessRestored(): boolean {
+  try {
+    const restored = sessionStorage.getItem(restoredKey) === "1";
+    sessionStorage.removeItem(restoredKey);
+    return restored;
+  } catch { return false; }
+}

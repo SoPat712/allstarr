@@ -42,10 +42,10 @@
     {#if error}<p role="alert" class="notice-error mt-4">{error}</p>{/if}
     {#if !saved}
       <form class="mt-6 space-y-4" onsubmit={(event) => { event.preventDefault(); void save(); }}>
-        <label class="block">Media server type<select class="w-full mt-1" bind:value={backend} disabled={busy}><option>Jellyfin</option><option>Subsonic</option></select></label>
-        <label class="block">Media server address<input class="w-full mt-1" type="url" placeholder="http://media-server:8096" required bind:value={url} disabled={busy} /></label>
-        <label class="block">Administrator username<input class="w-full mt-1" autocomplete="username" required bind:value={username} disabled={busy} /></label>
-        <label class="block">Administrator password<input class="w-full mt-1" type="password" autocomplete="current-password" required bind:value={password} disabled={busy} /></label>
+        <label class="field"><span>Media server type</span><select bind:value={backend} disabled={busy}><option>Jellyfin</option><option>Subsonic</option></select></label>
+        <label class="field"><span>Media server address</span><input type="url" placeholder="http://media-server:8096" required bind:value={url} disabled={busy} /></label>
+        <label class="field"><span>Administrator username</span><input autocomplete="username" required bind:value={username} disabled={busy} /></label>
+        <label class="field"><span>Administrator password</span><input type="password" autocomplete="current-password" required bind:value={password} disabled={busy} /></label>
         {#if backend === "Jellyfin"}<label class="flex items-start gap-3"><Checkbox bind:checked={scans} disabled={busy} /><span>Allow background library scans. Only the verified access token is kept encrypted; your password is discarded.</span></label>{/if}
         <Button type="submit" disabled={busy || !status?.storageReady} class="w-full">{busy ? "Verifying…" : "Verify and save"}</Button>
       </form>
