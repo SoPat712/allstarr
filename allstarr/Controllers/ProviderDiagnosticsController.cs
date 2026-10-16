@@ -25,7 +25,8 @@ public sealed class ProviderDiagnosticsController(
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var auditRows = await db.AuditEvents.AsNoTracking()
             .Where(item => item.Category == "provider-cts" &&
-                           item.ActorUserId == session.AllstarrUserId)
+                           (item.ActorUserId == session.AllstarrUserId ||
+                            item.ActorUserId == null && item.Action == "scheduled.measure"))
             .OrderByDescending(item => item.CreatedAt)
             .Take(500)
             .ToArrayAsync(cancellationToken);
@@ -128,7 +129,8 @@ public sealed class ProviderDiagnosticsController(
                     value.ThroughputKbps,
                     value.ContentType,
                     value.CacheState,
-                    value.Quality);
+                    value.Quality,
+                    value.SeekRung);
         }
         catch (JsonException)
         {
@@ -156,7 +158,8 @@ public sealed class ProviderDiagnosticsController(
         double? ThroughputKbps,
         string? ContentType,
         string? CacheState,
-        string? Quality);
+        string? Quality,
+        string? SeekRung);
 
     private sealed class CtsAuditPayload
     {
@@ -177,6 +180,7 @@ public sealed class ProviderDiagnosticsController(
         public int Bars { get; set; }
         public string? Quality { get; set; }
         public string? Error { get; set; }
+        public string? SeekRung { get; set; }
     }
 
     private bool TryGetAdministrator(out AdminAuthSession session, out IActionResult? error)
