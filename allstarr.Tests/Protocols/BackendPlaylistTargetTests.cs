@@ -28,6 +28,22 @@ public sealed class BackendPlaylistTargetTests
         Assert.Empty(backend.Requests);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task JellyfinMissingServiceAccess_FailsWithoutSendingAnEmptyToken(string key)
+    {
+        var backend = new JellyfinFakeBackend("p1", "Fixture", []);
+        var clients = new Mock<IHttpClientFactory>();
+        clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(backend, false));
+        var target = new JellyfinPlaylistTarget(clients.Object,
+            Options.Create(new JellyfinSettings { Url = "https://jellyfin.test", ApiKey = key }));
+        var result = await target.ListAsync(Context(), null, 20, default);
+        Assert.Equal("backend_access_missing", result.ErrorCode);
+        Assert.Equal(BackendPlaylistTargetStatus.BackendFailure, result.Status);
+        Assert.Empty(backend.Requests);
+    }
+
     [Fact]
     public void Jellyfin_move_plan_is_minimal_and_handles_10000_items()
     {

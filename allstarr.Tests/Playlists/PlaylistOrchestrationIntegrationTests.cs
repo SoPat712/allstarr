@@ -100,6 +100,22 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         await db.SaveChangesAsync();
     }
 
+    [Fact]
+    public async Task MissingServiceAccessPersistsTheRepairCodeInPlaylistSyncProjection()
+    {
+        _source.Snapshot = Snapshot("missing-service-access", Entry(0, "one", "source-1", "One"));
+        _target.WriteStatus = BackendPlaylistTargetStatus.BackendFailure;
+        _target.ErrorCode = "backend_access_missing";
+        var result = await _service.RunAsync(Context(), new(_link, 1200));
+        Assert.Equal(PlaylistSyncState.Failed, result.State);
+        Assert.Equal("backend_access_missing", result.ErrorCode);
+        var projection = await new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music"))
+            .ReadByLinkIdAsync(_user, _link);
+        Assert.NotNull(projection);
+        Assert.Equal("backend_access_missing", projection.SyncFailureCode);
+        Assert.Equal(PlaylistSyncState.Failed, projection.SyncState);
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
@@ -853,6 +869,44 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.Equal(finalLatest.Id, (await final.PlaylistSourceEntries.SingleAsync(item =>
             item.PlaylistSourceSnapshotId == refresh.SnapshotId && item.SourcePosition == 0))
             .PublishedTrackMatchId);
+    }
+
+    [Fact]
+    public async Task Playlist_rematch_retries_unavailable_local_library_and_keeps_published_selection()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("retry-local-library", Entry(0, "entry-local", "source-1", "One"));
+        var refresh = await _service.RefreshAsync(Context(), _link);
+        await _service.RunAsync(Context(), new(_link, 1, refresh.SnapshotId));
+        Guid originalId;
+        await using (var setup = await _factory.CreateDbContextAsync())
+        {
+            var original = await setup.TrackMatches.SingleAsync();
+            originalId = original.Id;
+            original.MatcherVersion = "retired";
+            foreach (var track in await setup.LibraryTracks.ToListAsync())
+                track.IndexedAt = _now.AddMinutes(-61);
+            await setup.SaveChangesAsync();
+        }
+        var access = new TestBackendLibraryAccess(_factory, "music");
+        var rematches = new PlaylistRematchService(_factory,
+            new DurablePlaylistProjectionReader(_factory, access), new TrackMatchDecisionEngine(), access);
+        var preview = await rematches.PreviewAsync(_user, playlistLinkId: _link);
+        var claim = new DurableJobClaim(Guid.CreateVersion7(), 1, TrackRematchJobHandler.Type,
+            JsonSerializer.SerializeToElement(new PlaylistRematchJobPayload(preview.ConfirmationId,
+                preview.ScopeFingerprint, preview.Targets, _link)), _user, null, null,
+            JsonSerializer.SerializeToElement(new { }), "retry-local-library");
+        var handler = new PlaylistRematchJobHandler(_factory, rematches, _trackMatches, _service, new Clock(_now));
+
+        var result = await handler.ExecuteAsync(new(claim, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Retry, result.Kind);
+        Assert.Equal("playlist_rematch_local_library_unavailable", result.ErrorCode);
+        await using var verification = await _factory.CreateDbContextAsync();
+        Assert.Equal(originalId, (await verification.TrackMatches.SingleAsync()).Id);
+        Assert.Equal(originalId, (await verification.PlaylistSourceEntries.SingleAsync()).PublishedTrackMatchId);
+        Assert.Equal("retry_local_library_unavailable", (await verification.AuditEvents.SingleAsync(item =>
+            item.Category == "playlist-rematch")).Outcome);
     }
 
     [Fact]

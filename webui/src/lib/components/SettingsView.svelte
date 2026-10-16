@@ -46,6 +46,7 @@
 
   const pages = [
     { id: "appearance", label: "Appearance", group: "This browser", icon: Palette, title: "Appearance", description: "How Allstarr looks in this browser. Other devices keep their own choice." },
+    { id: "access", label: "Access", group: "Server", icon: Lock, title: "Access", description: "Manage media-server access for playlist sync and library scans." },
     { id: "general", label: "General", group: "Server", icon: SlidersHorizontal, title: "General", description: "Server-wide behavior for every listener." },
     { id: "storage", label: "Storage", group: "Server", icon: HardDrive, title: "Storage", description: "Where songs are saved and how long cached data is kept." },
     { id: "network", label: "Network", group: "Server", icon: Network, title: "Network and security", description: "How the admin interface is exposed. These are usually set by your deployment." },
@@ -311,8 +312,9 @@
             <SelectField bind:value={themeMode} label="Color theme" options={themeOptions} onchange={(value) => saveThemeMode(value as ThemeMode)} />
           </div>
         </section>
+      {:else if active === "access"}
+        <AccessSettingsCard kind="backend" />
       {:else if ["general", "storage", "network"].includes(active)}
-        {#if administrator && active === "general"}<AccessSettingsCard kind="backend" />{/if}
         {#if administrator && active === "network"}<AccessSettingsCard kind="oidc" />{/if}
         {#if administrator && active === "storage"}<StorageVerificationCard />{/if}
         {#each pageSections as item (item.id)}

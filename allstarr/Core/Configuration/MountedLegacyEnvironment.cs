@@ -3,7 +3,7 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Configuration;
 
-public sealed class MountedLegacyEnvironment(IHostEnvironment environment)
+public sealed class MountedLegacyEnvironment(IHostEnvironment environment, Func<string?>? serviceKeySource = null)
 {
     public bool IsAvailable
     {
@@ -37,6 +37,27 @@ public sealed class MountedLegacyEnvironment(IHostEnvironment environment)
             return bytes.AsSpan(0, count).ToArray();
         }
         finally { CryptographicOperations.ZeroMemory(bytes); }
+    }
+
+    public async Task<byte[]> ReadServiceAccessAsync(CancellationToken token = default)
+    {
+        var key = serviceKeySource != null ? serviceKeySource() : Environment.GetEnvironmentVariable("JELLYFIN_API_KEY");
+        if (!string.IsNullOrWhiteSpace(key))
+            return System.Text.Encoding.UTF8.GetBytes("JELLYFIN_API_KEY=" + "\"" + key.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal)
+                    .Replace("\n", "\\n", StringComparison.Ordinal).Replace("\r", "\\r", StringComparison.Ordinal) + "\"");
+        return await ReadAsync(token);
+    }
+
+    public async Task<bool> HasServiceAccessAsync(CancellationToken token = default)
+    {
+        byte[]? bytes = null;
+        try
+        {
+            bytes = await ReadServiceAccessAsync(token);
+            return LegacyEnvParser.Parse(bytes).Entries.Any(item => item.Key.Equals("JELLYFIN_API_KEY", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Value));
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or LegacyEnvMigrationException or LegacyEnvParseException) { return false; }
+        finally { if (bytes != null) CryptographicOperations.ZeroMemory(bytes); }
     }
 
     private FileInfo Inspect()

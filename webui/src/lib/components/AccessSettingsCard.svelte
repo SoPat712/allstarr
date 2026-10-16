@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ServiceAccessRestore from "$lib/components/ServiceAccessRestore.svelte";
   import { onMount } from "svelte";
   import { setupAccess, type OidcAccess, type BackendAccess } from "$lib/api";
   import { waitForRestart } from "$lib/restart";
@@ -44,21 +45,22 @@
   }
   onMount(() => { void load(); return () => abort.abort(); });
 </script>
-<article class="settings-card p-5 space-y-4" aria-label={kind === "oidc" ? "Single sign-on" : "Background library access"}>
-  <header><h3>{kind === "oidc" ? "Single sign-on" : "Background library access"}</h3></header>
-  <p>{kind === "oidc" ? "Connect an OpenID Connect identity provider. Media-server login remains available. Secrets are encrypted and never displayed." : "Allow unattended Jellyfin library scans with your verified administrator access token. Your password is used only for verification and is discarded. Each listener's library permissions remain authoritative."}</p>
-  {#if snapshot?.needsReview}<p class="notice-error">The saved connection needs attention. Enter fresh credentials or turn it off.</p>{/if}
+{#if kind === "backend"}<ServiceAccessRestore />{/if}
+<article class="settings-card p-5 space-y-4" aria-label={kind === "oidc" ? "Single sign-on" : "Media-server access"}>
+  <header><h3>{kind === "oidc" ? "Single sign-on" : "Media-server access"}</h3></header>
+  <p>{kind === "oidc" ? "Connect an OpenID Connect identity provider. Media-server login remains available. Secrets are encrypted and never displayed." : "Allow unattended Jellyfin playlist sync and library scans with your verified administrator access token. Your password is used only for verification and is discarded. Each listener's library permissions remain authoritative."}</p>
+  {#if kind === "oidc" && snapshot?.needsReview}<p class="notice-error">The saved connection needs attention. Enter fresh credentials or turn it off.</p>{/if}
   {#if backend && (!backend.supported || !backend.connectionSaved)}<p>{!backend.supported ? "Subsonic access is granted separately by each listener." : "Preview and import the mounted settings to save the current media-server connection first."}</p>
   {:else if snapshot && !saved}
     <form class="space-y-4" onsubmit={(event) => { event.preventDefault(); void save(); }}>
-      <label class="flex items-center gap-3"><Checkbox bind:checked={enabled} disabled={busy} /><span>{kind === "oidc" ? "Enable single sign-on" : "Allow background scans"}</span></label>
+      <label class="flex items-center gap-3"><Checkbox class="access-checkbox" style="min-height: 44px; min-width: 44px" bind:checked={enabled} disabled={busy} /><span>{kind === "oidc" ? "Enable single sign-on" : "Allow playlist sync and library scans"}</span></label>
       {#if kind === "oidc"}
         <label class="block">Issuer address<input class="w-full mt-1" type="url" bind:value={authority} disabled={busy} required={enabled} /></label>
         <label class="block">Client ID<input class="w-full mt-1" bind:value={clientId} disabled={busy} required={enabled} /></label>
         <label class="block">Public Allstarr address<input class="w-full mt-1" type="url" bind:value={publicUrl} disabled={busy} required={enabled} /></label>
         <label class="block">Sign-in button name<input class="w-full mt-1" bind:value={displayName} disabled={busy} /></label>
         <label class="block">Client secret<input class="w-full mt-1" type="password" aria-label="Client secret" autocomplete="new-password" bind:value={secret} disabled={busy || removeSecret} /><small>{oidc?.hasClientSecret ? "A secret is saved. Leave blank to keep it for the same issuer and client." : "No secret is saved."}</small></label>
-        <label class="flex items-center gap-3"><Checkbox bind:checked={removeSecret} disabled={busy} /><span>Remove saved client secret</span></label>
+        <label class="flex items-center gap-3"><Checkbox class="access-checkbox" style="min-height: 44px; min-width: 44px" bind:checked={removeSecret} disabled={busy} /><span>Remove saved client secret</span></label>
       {:else if enabled}
         <label class="block">Administrator username<input class="w-full mt-1" autocomplete="username" bind:value={username} required disabled={busy} /></label>
         <label class="block">Administrator password<input class="w-full mt-1" type="password" autocomplete="current-password" bind:value={password} required disabled={busy} /></label>
@@ -70,3 +72,13 @@
   {#if error}<p role="alert" class="notice-error">{error}</p>{/if}
   {#if !busy && (error || saved)}<Button variant="secondary" onclick={() => void (saved ? save() : load())}>{saved ? "Check restart again" : "Reload access settings"}</Button>{/if}
 </article>
+
+<style>
+  :global(.access-checkbox) { border-color: transparent; background: transparent; }
+  :global(.access-checkbox [data-slot="checkbox-indicator"]) {
+    width: 20px; height: 20px; border: 2px solid var(--md-sys-color-on-surface-variant); border-radius: 3px;
+  }
+  :global(.access-checkbox[data-checked] [data-slot="checkbox-indicator"]) {
+    border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary);
+  }
+</style>

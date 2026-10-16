@@ -491,7 +491,9 @@ public sealed class TrackRematchAllJobHandler(
                         item,
                         permanent
                             ? $"skipped_{result.Failure.ToString().ToLowerInvariant()}"
-                            : "retry_conflict",
+                            : result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable
+                                ? "retry_local_library_unavailable"
+                                : "retry_conflict",
                         null));
                 if (result.Succeeded || permanent) completed++;
                 else transientFailures++;

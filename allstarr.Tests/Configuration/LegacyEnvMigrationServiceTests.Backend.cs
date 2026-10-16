@@ -12,6 +12,58 @@ namespace allstarr.Tests;
 
 public sealed partial class LegacyEnvMigrationServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Backend_ServiceAccessOnlyReviewRestoresSavedConnectionWithoutImportingOtherSettings(bool emptyReference)
+    {
+        var configuration = BackendConfiguration();
+        var settings = new DurableRuntimeSettingsService(_factory, configuration, new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
+        await settings.ApplyBatchAsync([new("Backend:Type", "Jellyfin"), new("Backend:Url", "http://backend-fixture:8096"),
+            new("Identity:BackendInstanceId", "primary")], "fixture");
+        if (emptyReference) await settings.ApplyBatchAsync([new("Backend:ServiceCredentialReference", ""), new("Backend:ServiceUserId", "")], "fixture");
+        var verifier = new Mock<IBackendConnectionVerifier>();
+        verifier.Setup(item => item.VerifyServiceAsync("http://backend-fixture:8096", "jellyfin-user-id", "restore-fixture", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+        var service = BackendImporter(configuration, verifier.Object);
+        var preview = await service.PreviewServiceAccessAsync(Source("JELLYFIN_API_KEY=restore-fixture\nCACHE_LYRICS_DAYS=99\nSPOTIFY_API_KEY=unused"), Actor());
+        Assert.Equal("verify_then_encrypt", preview.Backend!.ServiceAccessAction);
+        Assert.DoesNotContain("restore-fixture", System.Text.Json.JsonSerializer.Serialize(preview), StringComparison.Ordinal);
+        await using (var before = await _factory.CreateDbContextAsync()) Assert.Empty(await before.SecretReferences.ToArrayAsync());
+        var result = await service.ApplyAsync(preview.PreviewToken, preview.Revision, true, Actor());
+        Assert.Equal("verified", result.BackendServiceAccess);
+        Assert.True(result.RequiresRestart);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.SecretReferences.ToArrayAsync());
+        Assert.Empty(await db.ProviderAccounts.ToArrayAsync());
+        Assert.False(await db.RuntimeSettings.AnyAsync(item => item.Key == "Cache:LyricsDays"));
+        Assert.All(await db.RuntimeSettings.Where(item => item.Key == "Backend:Type" || item.Key == "Backend:Url").ToArrayAsync(), item => Assert.Equal(1, item.Revision));
+        verifier.Verify(item => item.VerifyServiceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Backend_ServiceAccessReviewCanRetryAfterFailedVerificationWithoutImportingSettings()
+    {
+        var configuration = BackendConfiguration();
+        var settings = new DurableRuntimeSettingsService(_factory, configuration, new SystemPlatformClock(), new RuntimeSettingsChangeSignal());
+        await settings.ApplyBatchAsync([new("Backend:Type", "Jellyfin"), new("Backend:Url", "http://backend-fixture:8096"),
+            new("Identity:BackendInstanceId", "primary")], "fixture");
+        var accepted = false;
+        var verifier = new Mock<IBackendConnectionVerifier>();
+        verifier.Setup(item => item.VerifyServiceAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => accepted);
+        var service = BackendImporter(configuration, verifier.Object);
+        var source = Source("JELLYFIN_API_KEY=retry-fixture\nCACHE_LYRICS_DAYS=99");
+        var first = await service.PreviewServiceAccessAsync(source, Actor());
+        Assert.Equal("needs_review", (await service.ApplyAsync(first.PreviewToken, first.Revision, true, Actor())).BackendServiceAccess);
+        await using (var before = await _factory.CreateDbContextAsync()) Assert.Empty(await before.SecretReferences.ToArrayAsync());
+        accepted = true;
+        var retry = await service.PreviewServiceAccessAsync(source, Actor());
+        Assert.Equal("verified", (await service.ApplyAsync(retry.PreviewToken, retry.Revision, true, Actor())).BackendServiceAccess);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.SecretReferences.ToArrayAsync());
+        Assert.False(await db.RuntimeSettings.AnyAsync(item => item.Key == "Cache:LyricsDays"));
+    }
+
     [Fact]
     public async Task Backend_ExplicitApplySavesTheActiveConnectionAndEncryptedServiceAccessOnce()
     {

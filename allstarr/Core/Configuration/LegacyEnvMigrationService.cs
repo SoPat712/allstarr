@@ -95,7 +95,10 @@ public sealed record LegacyEnvMigrationStatus(
     bool Completed,
     bool SourcePresent,
     bool FirstRun,
-    DateTimeOffset? LastAppliedAt);
+    DateTimeOffset? LastAppliedAt)
+{
+    public bool ServiceAccessAvailable { get; init; }
+}
 
 public sealed class LegacyEnvMigrationException(string code, string message) : Exception(message)
 {
@@ -167,11 +170,28 @@ public sealed partial class LegacyEnvMigrationService
     public async Task<LegacyEnvMigrationPreview> PreviewAsync(
         ReadOnlyMemory<byte> source,
         LegacyEnvMigrationActor actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool serviceAccessOnly = false)
     {
         ValidateActor(actor);
         PurgeExpired();
         var document = LegacyEnvParser.Parse(source);
+        if (serviceAccessOnly)
+        {
+            var key = document.Entries.FirstOrDefault(item => item.Key.Equals("JELLYFIN_API_KEY", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(item.Value));
+            if (key == null) throw new LegacyEnvMigrationException("service_key_unavailable", "No legacy media-server key is available. Enter administrator credentials in Media-server access instead.");
+            await using var accessDb = await _factory.CreateDbContextAsync(cancellationToken);
+            var accessRevisions = await accessDb.RuntimeSettings.AsNoTracking()
+                .Where(item => item.OwnerUserId == null && (item.Key.StartsWith("Backend:") || item.Key == "Identity:BackendInstanceId"))
+                .OrderBy(item => item.Key).Select(item => new { item.Id, item.Revision }).ToArrayAsync(cancellationToken);
+            var importCount = await accessDb.LegacyEnvImports.CountAsync(cancellationToken);
+            document = document with
+            {
+                Entries = [key],
+                Playlists = [],
+                SourceSha256 = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes("service-access:" + key.Value + ":" + actor.ActorUserId + ":" +
+                    JsonSerializer.Serialize(accessRevisions) + ":" + importCount)))
+            };
+        }
         var media = _mediaInventory?.Preview(document, cancellationToken) ?? LegacyMediaPlan.Empty;
         if (media.Files.Count > 0)
             document = document with

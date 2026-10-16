@@ -121,6 +121,19 @@ public sealed partial class TrackMatchCommandService
             .OrderByDescending(item => item.DecisionVersion)
             .FirstOrDefaultAsync(cancellationToken);
         var latestVersion = latestDecision?.DecisionVersion ?? 0;
+        var existingSelection = latestDecision ?? await db.TrackMatches.AsNoTracking()
+            .Where(item => item.OwnerUserId == snapshot.OwnerUserId &&
+                db.ExternalMetadataSnapshots.Any(previous =>
+                    previous.Id == item.ExternalSnapshotId &&
+                    previous.OwnerUserId == snapshot.OwnerUserId &&
+                    previous.Protocol == snapshot.Protocol &&
+                    previous.BackendInstanceId == snapshot.BackendInstanceId &&
+                    previous.BackendPrincipalId == snapshot.BackendPrincipalId &&
+                    previous.ProviderId == snapshot.ProviderId &&
+                    previous.ExternalIdHash == snapshot.ExternalIdHash))
+            .OrderByDescending(item => item.DecidedAt)
+            .ThenByDescending(item => item.DecisionVersion)
+            .FirstOrDefaultAsync(cancellationToken);
         if (TrackRematchAllService.RequiresAuthorityGuard(policyVersion) &&
             await HasManualAuthorityAsync(
                 db,
@@ -131,12 +144,26 @@ public sealed partial class TrackMatchCommandService
                 false,
                 TrackMatchCommandFailure.Conflict,
                 "A manual match became authoritative while the full rematch was running");
-        var candidateQuery = execution == null
-            ? await AccessibleTracksAsync(db, actor, cancellationToken)
-            : LibraryTrackAccess.Query(db, execution, await libraryAccess.ResolveAsync(execution, cancellationToken));
+        BackendLibraryAccessContext access;
+        try
+        {
+            access = execution == null
+                ? await libraryAccess.ResolveUserAsync(snapshot.OwnerUserId, cancellationToken)
+                : new(execution, await libraryAccess.ResolveAsync(execution, cancellationToken));
+        }
+        catch (Exception exception) when (existingSelection?.LibraryTrackId.HasValue == true &&
+            !cancellationToken.IsCancellationRequested &&
+            exception is HttpRequestException or InvalidOperationException or UnauthorizedAccessException or OperationCanceledException)
+        {
+            return await LocalLibraryUnavailableAsync(db, snapshot, correlationId, policyVersion, cancellationToken);
+        }
+        var candidateQuery = LibraryTrackAccess.Query(db, access);
         var candidates = await candidateQuery.Where(item =>
                 item.BackendInstanceId == snapshot.BackendInstanceId)
             .ToListAsync(cancellationToken);
+        if (existingSelection?.LibraryTrackId is { } existingLocalId &&
+            !await LocalLibraryAvailableAsync(db, snapshot, existingLocalId, access, candidates, cancellationToken))
+            return await LocalLibraryUnavailableAsync(db, snapshot, correlationId, policyVersion, cancellationToken);
         var payload = ReadMetadata(snapshot.PayloadJson);
         var sourceTrack = new ExternalTrackMatchSnapshot(
             snapshot.Id.ToString("N"),
@@ -344,6 +371,68 @@ public sealed partial class TrackMatchCommandService
             Confidence: decision.Confidence,
             CandidateCount: decision.Candidates.Count,
             DecisionVersion: record.DecisionVersion);
+    }
+
+    private async Task<TrackRematchCommandResult> LocalLibraryUnavailableAsync(
+        AllstarrDbContext db,
+        ExternalMetadataSnapshotRecord snapshot,
+        string correlationId,
+        string policyVersion,
+        CancellationToken cancellationToken)
+    {
+        if (!TrackRematchAllService.IsManagedPolicy(policyVersion))
+        {
+            db.AuditEvents.Add(new AuditEventRecord
+            {
+                Id = Guid.CreateVersion7(),
+                ActorUserId = snapshot.OwnerUserId,
+                Category = "track-rematch",
+                Action = "automatic.review",
+                Outcome = "retry_local_library_unavailable",
+                CorrelationId = correlationId,
+                DetailsJson = JsonSerializer.Serialize(new { row = TrackRematchAllService.RowHash(snapshot.Id) }),
+                CreatedAt = clock.UtcNow
+            });
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        return new(false, TrackMatchCommandFailure.LocalLibraryUnavailable,
+            "The local library is temporarily unavailable. The existing local match was kept; retry after the library refresh succeeds.");
+    }
+
+    private async Task<bool> LocalLibraryAvailableAsync(
+        AllstarrDbContext db,
+        ExternalMetadataSnapshotRecord snapshot,
+        Guid existingLocalId,
+        BackendLibraryAccessContext access,
+        IReadOnlyList<LibraryTrackRecord> candidates,
+        CancellationToken cancellationToken)
+    {
+        if (configuration != null && snapshot.Protocol.Equals("jellyfin", StringComparison.OrdinalIgnoreCase) &&
+            (string.IsNullOrWhiteSpace(configuration["Jellyfin:Url"]) || string.IsNullOrWhiteSpace(configuration["Jellyfin:ApiKey"])))
+            return false;
+        if (access.Context == null || !access.Access.Succeeded) return false;
+        var existing = candidates.FirstOrDefault(item => item.Id == existingLocalId);
+        if (existing == null) return false;
+        var lastIndexedAt = candidates.Where(item =>
+                item.BackendLibraryId == existing.BackendLibraryId)
+            .Max(item => item.IndexedAt);
+        if (clock.UtcNow - lastIndexedAt >= LocalLibraryAvailability.MaximumIndexAge) return false;
+        var failures = await db.Jobs.AsNoTracking()
+            .Where(item => item.Type == "library.index" && item.OwnerUserId == snapshot.OwnerUserId &&
+                item.LastErrorCode != null && item.LastAttemptCompletedAt >= lastIndexedAt)
+            .Select(item => item.PayloadJson)
+            .ToArrayAsync(cancellationToken);
+        foreach (var json in failures)
+        {
+            LibraryIndexJobPayload? payload;
+            try { payload = JsonSerializer.Deserialize<LibraryIndexJobPayload>(json); }
+            catch (JsonException) { continue; }
+            if (payload?.BackendInstanceId == snapshot.BackendInstanceId &&
+                payload.BackendPrincipalId == snapshot.BackendPrincipalId &&
+                (payload.BackendLibraryId == null || payload.BackendLibraryId == existing.BackendLibraryId))
+                return false;
+        }
+        return true;
     }
 
     private static async Task<bool> HasManualAuthorityAsync(

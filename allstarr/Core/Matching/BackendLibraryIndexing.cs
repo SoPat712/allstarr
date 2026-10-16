@@ -1,3 +1,4 @@
+using allstarr.Core.Configuration;
 using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text.Json;
@@ -68,7 +69,8 @@ public sealed class JellyfinLibraryCatalogScanner : JsonLibraryCatalogScanner, I
     public async Task<LibraryCatalogScanResult> ScanAsync(ProtocolExecutionContext context, LibraryCatalogScanRequest request, CancellationToken cancellationToken)
     {
         ValidateRequest(context, request);
-        if (context.Protocol != ProtocolKind.Jellyfin || string.IsNullOrWhiteSpace(_settings.Url) || string.IsNullOrWhiteSpace(_settings.ApiKey))
+        if (string.IsNullOrWhiteSpace(_settings.ApiKey)) throw new BackendAccessMissingException();
+        if (context.Protocol != ProtocolKind.Jellyfin || string.IsNullOrWhiteSpace(_settings.Url))
             throw new InvalidOperationException("Jellyfin library indexing requires configured backend URL and API authentication.");
         var viewerId = Uri.EscapeDataString(context.VerifiedBackendPrincipalId);
         var discoveryUri = new Uri(new Uri(_settings.Url.TrimEnd('/') + "/"),
@@ -303,6 +305,7 @@ public sealed class LibraryIndexJobHandler(IDbContextFactory<AllstarrDbContext> 
             await summaryDb.SaveChangesAsync(cancellationToken);
             return DurableJobCompletion.Success();
         }
+        catch (BackendAccessMissingException) { return DurableJobCompletion.Retry(BackendAccessMissingException.Code, BackendAccessMissingException.MessageText); }
         catch (HttpRequestException) { return DurableJobCompletion.Retry("library_index_backend_unavailable", "The backend catalog is temporarily unavailable."); }
         catch (InvalidOperationException) { return DurableJobCompletion.Failure("library_index_not_configured", "The backend catalog scanner is not configured."); }
     }
@@ -316,7 +319,7 @@ public sealed class LibraryIndexMaintenanceService(
     IPlatformClock clock,
     ILogger<LibraryIndexMaintenanceService> logger, BackgroundTaskActivity? taskActivity = null) : BackgroundService
 {
-    private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan RefreshInterval = LocalLibraryAvailability.RefreshInterval;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

@@ -23,7 +23,12 @@ public sealed class LegacyConfigurationController : ControllerBase
 
         var service = HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>();
         var status = await service.GetStatusAsync(cancellationToken);
-        return Ok(status with { SourcePresent = HttpContext.RequestServices.GetService<MountedLegacyEnvironment>()?.IsAvailable == true });
+        var source = HttpContext.RequestServices.GetService<MountedLegacyEnvironment>();
+        return Ok(status with
+        {
+            SourcePresent = source?.IsAvailable == true,
+            ServiceAccessAvailable = source != null && await source.HasServiceAccessAsync(cancellationToken)
+        });
     }
 
     [HttpPost("config/migration/preview")]
@@ -166,6 +171,28 @@ public sealed class LegacyConfigurationController : ControllerBase
         {
             return BadRequest(new { error = ex.Message, code = ex.Code });
         }
+    }
+
+    [HttpPost("config/migration/preview-service-access")]
+    public async Task<IActionResult> PreviewServiceAccess(CancellationToken cancellationToken = default)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var adminCheck = RequireAdministratorForSensitiveOperation("media-server access review");
+        if (adminCheck != null) return adminCheck;
+        try
+        {
+            var bytes = await HttpContext.RequestServices.GetRequiredService<MountedLegacyEnvironment>().ReadServiceAccessAsync(cancellationToken);
+            try
+            {
+                return Ok(await HttpContext.RequestServices.GetRequiredService<LegacyEnvMigrationService>()
+                .PreviewServiceAccessAsync(bytes, CreateMigrationActor(), cancellationToken));
+            }
+            finally { System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes); }
+        }
+        catch (LegacyEnvParseException error) { return BadRequest(new { error = error.Message, code = "invalid_env" }); }
+        catch (LegacyEnvMigrationException error) { return BadRequest(new { error = error.Message, code = error.Code }); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        { return Conflict(new { error = "Legacy media-server access is unavailable. Enter administrator credentials instead.", code = "service_key_unavailable" }); }
     }
 
     [HttpPost("config/migration/preview-mounted")]

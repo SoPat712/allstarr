@@ -67,6 +67,7 @@ public static class StartupConfiguration
     {
         configuration["Jellyfin:ApiKey"] = "";
         configuration["Jellyfin:UserId"] = "";
+        configuration["Setup:ServiceCredentialNeedsReview"] = configuration["Backend:Type"] == "Jellyfin" ? "true" : "false";
         if (!Guid.TryParse(configuration["Backend:ServiceCredentialReference"], out var reference)) return;
         try
         {
@@ -76,6 +77,7 @@ public static class StartupConfiguration
             {
                 configuration["Jellyfin:ApiKey"] = lease.ReadUtf8();
                 configuration["Jellyfin:UserId"] = configuration["Backend:ServiceUserId"];
+                configuration["Setup:ServiceCredentialNeedsReview"] = string.IsNullOrWhiteSpace(configuration["Jellyfin:ApiKey"]) ? "true" : "false";
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or CryptographicException or InvalidOperationException or KeyNotFoundException)

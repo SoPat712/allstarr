@@ -85,7 +85,8 @@ public sealed class LegacyMappingReadinessContractTests
         Assert.Contains("AddHostedService<LibraryIndexMaintenanceService>()", indexing, StringComparison.Ordinal);
         Assert.Contains("IncludeItemTypes=Audio", indexing, StringComparison.Ordinal);
         Assert.Contains("library.index", indexing, StringComparison.Ordinal);
-        Assert.Contains("TimeSpan.FromMinutes(15)", indexing, StringComparison.Ordinal);
+        Assert.Equal(TimeSpan.FromMinutes(15), allstarr.Core.Matching.LocalLibraryAvailability.RefreshInterval);
+        Assert.True(allstarr.Core.Matching.LocalLibraryAvailability.MaximumIndexAge >= 3 * allstarr.Core.Matching.LocalLibraryAvailability.RefreshInterval);
     }
 
     [Fact]
