@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Storage;
@@ -7,16 +8,18 @@ using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
 
+// The admin API does not apply a naming policy, so the WebUI's camelCase names are spelled out.
 public sealed class TrackMatchTarget(string providerId, string externalId)
 {
-    public string ProviderId { get; } = AppleMusicClient.NormalizeProviderId(providerId);
-    public string ExternalId { get; } = externalId;
-    public string? Title { get; set; }
-    public string? Artist { get; set; }
-    public string? Album { get; set; }
-    public long? DurationMilliseconds { get; set; }
+    [JsonPropertyName("providerId")] public string ProviderId { get; } = AppleMusicClient.NormalizeProviderId(providerId);
+    [JsonPropertyName("externalId")] public string ExternalId { get; } = externalId;
+    [JsonPropertyName("title")] public string? Title { get; set; }
+    [JsonPropertyName("artist")] public string? Artist { get; set; }
+    [JsonPropertyName("album")] public string? Album { get; set; }
+    [JsonPropertyName("durationMilliseconds")] public long? DurationMilliseconds { get; set; }
+    [JsonPropertyName("artworkUrl")]
     public string ArtworkUrl => $"/api/admin/downloads/artwork/{Uri.EscapeDataString($"ext-{ProviderId}-song-{ExternalId}")}";
-    public string? Isrc { get; set; }
+    [JsonPropertyName("isrc")] public string? Isrc { get; set; }
 }
 
 public sealed record TrackMatchTargetLookup(

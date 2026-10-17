@@ -17,6 +17,19 @@ namespace allstarr.Tests;
 public sealed class ProviderTargetProjectionTests
 {
     [Fact]
+    public void Target_serializes_with_the_names_the_web_ui_reads()
+    {
+        var target = new TrackMatchTarget("apple-download", "6792960885") { Title = "Broken chair", Artist = "Rachel Chinouriri" };
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(target));
+
+        Assert.Equal("apple-musickit", json.RootElement.GetProperty("providerId").GetString());
+        Assert.Equal("Broken chair", json.RootElement.GetProperty("title").GetString());
+        Assert.Equal("Rachel Chinouriri", json.RootElement.GetProperty("artist").GetString());
+        Assert.StartsWith("/api/admin/downloads/artwork/", json.RootElement.GetProperty("artworkUrl").GetString());
+    }
+
+    [Fact]
     public void Accepted_provider_target_uses_stored_evidence_when_candidates_are_not_displayed()
     {
         var recording = Guid.NewGuid();
