@@ -493,7 +493,7 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         await using var context = await _factory.CreateDbContextAsync();
         var archived = await context.ProviderAccounts.SingleAsync(item => item.Id == account.Id);
         Assert.False(archived.Enabled);
-        Assert.True(ProviderAccountsController.IsRemoved(archived));
+        Assert.True(ProviderAccountSettings.IsRemoved(archived));
         using var list = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
         Assert.Empty(list.RootElement.GetProperty("accounts").EnumerateArray());
     }
@@ -699,6 +699,7 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         Assert.IsType<OkObjectResult>(await controller.SetEnabled(id, new() { Enabled = true }));
         Assert.Null((await db.ProviderAccounts.AsNoTracking().SingleAsync()).SecretReferenceId);
         Assert.IsType<NoContentResult>(await controller.Revoke(id));
+        Assert.False(await db.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Id == id));
         Assert.IsType<NotFoundResult>(await controller.SetEnabled(id, new() { Enabled = true }));
     }
 

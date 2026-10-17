@@ -44,7 +44,8 @@ public sealed class ProviderAccountCheckRunner(
     public async Task RestoreAsync(CancellationToken token)
     {
         await using var db = await factory.CreateDbContextAsync(token);
-        var accounts = await db.ProviderAccounts.AsNoTracking().Where(row => row.Enabled).ToDictionaryAsync(row => row.Id, token);
+        var rows = await db.ProviderAccounts.AsNoTracking().Where(row => row.Enabled).ToListAsync(token);
+        var accounts = rows.Where(row => !ProviderAccountSettings.IsRemoved(row)).ToDictionary(row => row.Id);
         foreach (var result in await history.ReadLatestAsync(token))
         {
             if (result.Key.ProviderAccountId is { } id &&
@@ -64,7 +65,8 @@ public sealed class ProviderAccountCheckRunner(
             var accounts = await db.ProviderAccounts.AsNoTracking()
                 .Where(row => row.Enabled && (providerId == null || row.ProviderId == providerId))
                 .OrderBy(row => row.ProviderId).ThenBy(row => row.Id).ToArrayAsync(token);
-            var targets = accounts.SelectMany(account => status.GetAllManagedStatuses(account.ProviderId, account.Id,
+            var targets = accounts.Where(account => !ProviderAccountSettings.IsRemoved(account))
+                .SelectMany(account => status.GetAllManagedStatuses(account.ProviderId, account.Id,
                     new Dictionary<string, string>(), account.Revision)
                 .Select(item => (Status: item, Account: (ProviderAccountRecord?)account)))
                 .Concat(status.GetAllAccountFreeStatuses()
@@ -79,8 +81,12 @@ public sealed class ProviderAccountCheckRunner(
                 if (index > 0) await Task.Delay(pause, time, token);
                 var target = targets[index];
                 var account = target.Account;
-                if (account != null && !await db.ProviderAccounts.AsNoTracking().AnyAsync(row => row.Id == account.Id &&
-                        row.Enabled && row.Revision == account.Revision, token)) continue;
+                if (account != null)
+                {
+                    var current = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(row => row.Id == account.Id &&
+                        row.Enabled && row.Revision == account.Revision, token);
+                    if (current == null || ProviderAccountSettings.IsRemoved(current)) continue;
+                }
                 var key = account == null ? ProviderRuntimeStatusKey.CreateAccountFree(target.Status.Provider, target.Status.Capability) :
                     ProviderRuntimeStatusKey.CreateManaged(target.Status.Provider, target.Status.Capability, account.Id);
                 ProviderCheckResult result;

@@ -118,10 +118,10 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                     var accounts = await db.ProviderAccounts.AsNoTracking()
                         .Where(item => item.ProviderId == package.ExtensionId && item.Enabled &&
                             (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)))
-                        .Select(item => item.Id).ToListAsync(cancellationToken);
-                    foreach (var accountId in accounts)
+                        .ToListAsync(cancellationToken);
+                    foreach (var account in accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)))
                     {
-                        using var scope = sandbox.OpenSignedSessionAccount(accountId);
+                        using var scope = sandbox.OpenSignedSessionAccount(account.Id);
                         var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
                         if (view == null) continue;
                         if (view.Restored) _checkRequests?.Request(package.ExtensionId);
@@ -481,9 +481,10 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             var source = package.RegistryId?.ToString("N") ?? "local";
             var accounts = await db.ProviderAccounts.AsNoTracking()
                 .Where(item => item.ProviderId == package.ExtensionId).ToListAsync(cancellationToken);
-            var existing = accounts.FirstOrDefault(item => IsSessionSource(item, source));
+            var available = accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)).ToArray();
+            var existing = available.FirstOrDefault(item => IsSessionSource(item, source));
             if (existing != null) return existing;
-            var legacyAccount = accounts
+            var legacyAccount = available
                 .Where(item => !HasSessionSource(item))
                 .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id).FirstOrDefault();
             if (legacyAccount != null)
@@ -523,8 +524,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
         var accounts = await db.ProviderAccounts.AsNoTracking()
             .Where(item => item.ProviderId == package.ExtensionId).ToListAsync(cancellationToken);
-        var account = accountId.HasValue ? accounts.SingleOrDefault(item => item.Id == accountId)
-            : accounts.FirstOrDefault(item => IsSessionSource(item, package.RegistryId?.ToString("N") ?? "local"));
+        var available = accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)).ToArray();
+        var account = accountId.HasValue ? available.SingleOrDefault(item => item.Id == accountId)
+            : available.FirstOrDefault(item => IsSessionSource(item, package.RegistryId?.ToString("N") ?? "local"));
         if (account == null) throw new KeyNotFoundException("The extension account was not found.");
         return account.Id;
     }
@@ -532,10 +534,11 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private async Task<bool> SessionAccountIsCurrentAsync(ProviderAccountContext account, CancellationToken cancellationToken)
     {
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
-        return await db.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Id == account.AccountId &&
+        var current = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == account.AccountId &&
             item.ProviderId == account.ProviderId && item.Enabled && item.Revision == account.Revision &&
             item.OwnerUserId == account.OwnerUserId && item.SecretReferenceId == account.SecretReferenceId &&
             (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)), cancellationToken);
+        return current != null && !ProviderAccountSettings.IsRemoved(current);
     }
 
     private sealed class ExtensionAccountValues(

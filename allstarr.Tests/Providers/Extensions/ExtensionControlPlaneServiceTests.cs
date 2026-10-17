@@ -369,6 +369,89 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         Assert.Equal("local", settings.RootElement.GetProperty("__extensionSessionSource").GetString());
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ArchivedConnection_CreatesAndBindsANewSharedDefault(bool legacy, bool startup)
+    {
+        var package = await ReviewedPackage("5.0.0", "archived", signedSession: true);
+        var archived = await AddAccountAsync(package.ExtensionId);
+        var settings = legacy
+            ? """{"__removed":true,"__extensionSessionRemoved":true}"""
+            : """{"__removed":true,"__extensionSessionRemoved":true,"__extensionSessionSource":"local"}""";
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync(item => item.Id == archived.Id);
+            account.Enabled = false;
+            account.OwnerUserId = _reviewer;
+            account.SettingsJson = settings;
+            await db.SaveChangesAsync();
+        }
+        var coordinator = Coordinator(new SignedSessionHandler());
+        if (startup)
+        {
+            package = await _service.ActivateAsync(package.Id, package.Revision);
+            await coordinator.StartAsync(default);
+        }
+        else
+        {
+            package = await _service.ActivateAsync(package.Id, package.Revision);
+            await coordinator.DisableAsync(package.Id, package.Revision);
+            package = (await _service.ListPackagesAsync()).Single(item => item.Id == package.Id);
+            await coordinator.UninstallAsync(package.Id, package.Revision);
+            package = await ReviewedPackage("5.1.0", "reinstalled", signedSession: true);
+            package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        }
+
+        var signedIn = await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+
+        await using var check = await _factory.CreateDbContextAsync();
+        var fresh = Assert.Single(await check.ProviderAccounts.ToListAsync(), item => item.Id != archived.Id);
+        Assert.True(fresh.Enabled);
+        Assert.Equal(ProviderAccountScope.Shared, fresh.Scope);
+        Assert.Null(fresh.SecretReferenceId);
+        Assert.Equal(1, fresh.Revision);
+        using var freshSettings = JsonDocument.Parse(fresh.SettingsJson);
+        Assert.Equal("local", freshSettings.RootElement.GetProperty("__extensionSessionSource").GetString());
+        Assert.False(freshSettings.RootElement.TryGetProperty("__removed", out _));
+        Assert.Equal(fresh.Id, signedIn.AccountId);
+        Assert.Equal(ExtensionSessionStates.SignedIn, signedIn.State);
+        Assert.Equal(fresh.Id, (await coordinator.SignedSessionStatusAsync(package.Id)).AccountId);
+        var retained = await check.ProviderAccounts.SingleAsync(item => item.Id == archived.Id);
+        Assert.False(retained.Enabled);
+        Assert.Equal(_reviewer, retained.OwnerUserId);
+        Assert.Equal(settings, retained.SettingsJson);
+        Assert.Equal(archived.Revision, retained.Revision);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemovedExplicitConnection_IsRejectedByEverySessionAction(bool enabled)
+    {
+        var package = await ReviewedPackage("5.0.0", "removed-explicit", signedSession: true);
+        var handler = new SignedSessionHandler();
+        var coordinator = Coordinator(handler);
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        Guid accountId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync();
+            accountId = account.Id;
+            account.Enabled = enabled;
+            account.SettingsJson = """{"__removed":true,"__extensionSessionSource":"local"}""";
+            await db.SaveChangesAsync();
+        }
+
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => coordinator.SignedSessionStatusAsync(package.Id, accountId: accountId));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => coordinator.StartSignedSessionVerificationAsync(package.Id, package.Revision, accountId: accountId));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1", accountId: accountId));
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => coordinator.ClearSignedSessionAsync(package.Id, package.Revision, accountId: accountId));
+        Assert.Equal(0, handler.Calls);
+    }
+
     [Fact]
     public async Task SignedSessionAccount_AudienceRoundTripKeepsProtectedStateAndOtherAccountsStaySeparate()
     {
@@ -475,6 +558,29 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
             Assert.DoesNotContain("session-1", item.Message, StringComparison.Ordinal);
             Assert.DoesNotContain("challenge-1", item.Message, StringComparison.Ordinal);
         });
+    }
+
+    [Fact]
+    public async Task RemovedConnection_IsExcludedFromSessionRenewal()
+    {
+        var package = await _service.StageAsync(Package("6.0.0", "removed-renewal", signedSession: true, refreshSession: true));
+        package = await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
+            [new("network", "https://api.example.test/", true), new("secret", "accountToken", true)]);
+        var handler = new SignedSessionHandler { ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(30).ToString("O") };
+        var coordinator = Coordinator(handler);
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.ProviderAccounts.SingleAsync()).SettingsJson = """{"__removed":true,"__extensionSessionSource":"local"}""";
+            await db.SaveChangesAsync();
+        }
+        var calls = handler.Calls;
+
+        await coordinator.RefreshSignedSessionsAsync();
+
+        Assert.Equal(calls, handler.Calls);
+        Assert.Equal(0, handler.RefreshCalls);
     }
 
     [Theory]

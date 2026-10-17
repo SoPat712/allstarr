@@ -56,6 +56,50 @@ public sealed partial class EncryptedSecretStoreTests
             row => Assert.DoesNotContain("fixture-token", row.DetailsJson));
     }
 
+    [Fact]
+    public async Task RemovedAccounts_AreExcludedFromCheckRestorationAndSweeps()
+    {
+        var accountId = Guid.NewGuid();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new()
+            {
+                Id = accountId,
+                ProviderId = "listenbrainz",
+                OwnerUserId = _userId,
+                DisplayName = "Fixture",
+                Enabled = true,
+                Revision = 1,
+                SettingsJson = """{"__removed":true}"""
+            });
+            await db.SaveChangesAsync();
+        }
+        var configuration = new ConfigurationBuilder().Build();
+        using var handler = new ProviderCheckCredentialHandler();
+        var status = new ProviderStatusManager(configuration, new ProviderCheckHttpFactory(handler),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
+        var history = new ProviderCheckHistory(_factory, TimeProvider.System);
+        var key = ProviderRuntimeStatusKey.CreateManaged("listenbrainz", ProviderCapabilities.Scrobbling, accountId);
+        var previous = status.GetManagedStatus(key.Provider, key.Capability, accountId, new Dictionary<string, string>(), 1)
+            with
+        {
+            Health = ProviderHealthState.Healthy,
+            TestedAt = DateTimeOffset.UtcNow
+        };
+        await history.RecordAsync(new(key, 1, previous), "fixture", default);
+        var runner = new ProviderAccountCheckRunner(_factory, status, history, configuration,
+            TimeProvider.System, NullLogger<ProviderAccountCheckRunner>.Instance);
+
+        await runner.RestoreAsync(default);
+
+        Assert.Null(status.GetManagedStatus(key.Provider, key.Capability, accountId, new Dictionary<string, string>(), 1).TestedAt);
+        Assert.True(await runner.SweepAsync(default, "listenbrainz"));
+        await using var check = await _factory.CreateDbContextAsync();
+        Assert.Equal(1, await check.AuditEvents.CountAsync(row => row.Category == ProviderCheckHistory.Category));
+        Assert.Empty(handler.Tokens);
+    }
+
     private sealed class ProviderCheckHttpFactory(HttpMessageHandler handler) : IHttpClientFactory
     { public HttpClient CreateClient(string name) => new(handler, false); }
     private sealed class ProviderCheckCredentialHandler : HttpMessageHandler
