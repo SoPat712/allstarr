@@ -50,7 +50,7 @@ describe("source presentation", () => {
     expect(checkGuide("resolve")?.step).toContain("checked again every 6 hours");
     expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "service_unavailable" })).toBe("Service unavailable");
     expect(checkGuide("service_unavailable")?.step).toBe("The service's download server is failing right now. Try again later; nothing to change in Allstarr.");
-    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "TransientFailure" })).toBe("Playback didn't start");
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "TransientFailure" })).toBe("Service error");
     expect(checkGuide("AccountNeedsReauthentication")?.signIn).toBe(true);
     expect(checkGuide("some-new-code")).toBeNull();
     expect(checkGuide(null)).toBeNull();

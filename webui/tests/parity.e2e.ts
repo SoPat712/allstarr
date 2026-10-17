@@ -5901,6 +5901,17 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
   await notification.getByRole("button", { name: "Dismiss notification" }).click(); await expect(notification).toHaveCount(0);
 });
 
+test("Routing and quality is a card on the source list, not on a source page", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("#/integrations/services");
+  const card = page.getByRole("region", { name: "Routing and quality" });
+  await expect(card.getByRole("link", { name: "Open routing and quality" })).toHaveAttribute("href", "#/integrations/routing");
+  await expect(card.getByRole("link", { name: "Open routing and quality" })).toHaveAttribute("data-slot", "button");
+  await page.goto("#/integrations/services/lumen-audio");
+  await expect(page.getByRole("heading", { name: "Lumen Audio", level: 2 })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Routing and quality" })).toHaveCount(0);
+});
+
 test("A running source test shows progress until its result arrives", async ({ page }) => {
   await mockApi(page);
   let finish!: () => void;

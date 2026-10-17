@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "$lib/components/ui/button";
   import { onMount, type Component } from "svelte";
   import { page } from "$app/state";
   import BackendAccessWarning from "$lib/components/BackendAccessWarning.svelte";
@@ -438,7 +439,7 @@
         {/if}
       </p>
       {#if oidc.enabled && !oidc.linkPending && oidc.loginUrl}
-        <a class="button mt-4 w-full" href={adminUrl(oidc.loginUrl)}>Continue with {oidc.displayName}</a>
+        <Button class="mt-4 w-full" href={adminUrl(oidc.loginUrl)}>Continue with {oidc.displayName}</Button>
       {/if}
 
       <form class="mt-8 space-y-4" aria-busy={authBusy} onsubmit={(event) => { event.preventDefault(); void login(); }}>
@@ -463,7 +464,7 @@
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
         <button class="auth-submit w-full" type="submit" disabled={authBusy}>{authBusy ? "Signing in…" : oidc.linkPending ? "Link account and sign in" : "Sign in"}</button>
         {#if oidc.linkPending}
-          <button class="button w-full" type="button" disabled={authBusy} onclick={() => void cancelSsoLink()}>Continue without linking</button>
+          <Button class="w-full" type="button" disabled={authBusy} onclick={() => void cancelSsoLink()}>Continue without linking</Button>
         {/if}
       </form>
     </section>
@@ -564,7 +565,7 @@
       {#if oidc.linked}
         <div class="flex items-center justify-end gap-3 p-2 text-sm">
           <span class="text-ink-muted">{oidc.displayName} connected</span>
-          <button class="button" disabled={authBusy} onclick={() => void disconnectSso()}>Disconnect SSO</button>
+          <Button disabled={authBusy} onclick={() => void disconnectSso()}>Disconnect SSO</Button>
         </div>
       {/if}
       <header class="workspace-header">
@@ -622,7 +623,7 @@
         <section class="panel p-5 m-4 space-y-2" aria-label="Setup progress">
           <h2>Continue setting up Allstarr</h2><p>Your choices are saved. Review sources, imported songs and household settings when you are ready.</p>
           <ul>{#each (onboardingState.steps ?? []).filter((step) => step.state === "pending").slice(0, 3) as step}<li>{step.title} · {step.required ? "Required" : "Optional"}</li>{/each}</ul>
-          <a class="button" href="#/settings/setup">Continue setup</a>
+          <Button href="#/settings/setup">Continue setup</Button>
         </section>
       {/if}
       {#if forbiddenRoute}
@@ -631,8 +632,8 @@
                     <h2 id="administrator-required-title">This workspace is for administrators.</h2>
           <p>Your Home, listening preferences, playlists, accounts, and personal activity remain available.</p>
           <div class="flex flex-wrap justify-center gap-2">
-            <a class="button" href="#/">Go to Home</a>
-            <a class="button" href="#/preferences">Listening preferences</a>
+            <Button href="#/">Go to Home</Button>
+            <Button href="#/preferences">Listening preferences</Button>
           </div>
         </section>
       {:else if ActiveView && loadedViewKey === viewKey(route)}

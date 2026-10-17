@@ -50,7 +50,7 @@
         <article class="settings-card p-5 space-y-4">
           <Badge state={current.state === "reviewed" ? "healthy" : "suggested"}>{current.state === "pending" ? current.required ? "Required" : "Optional" : current.state}</Badge>
           <h3 bind:this={heading} tabindex="-1" class="text-lg font-semibold">{current.title}</h3><p>{current.explanation}</p>
-          {#if current.href && current.id !== "legacy-environment"}<a class="button secondary" href={current.href}>Open {current.title.toLowerCase()}</a>{/if}
+          {#if current.href && current.id !== "legacy-environment"}<Button variant="secondary" href={current.href}>Open {current.title.toLowerCase()}</Button>{/if}
           <div class="flex flex-wrap gap-2">
             <Button disabled={busy} onclick={() => void save("review")}>Reviewed, continue</Button>
             {#if !current.required}<Button variant="secondary" disabled={busy} onclick={() => void save("skip")}>Skip for now</Button>{/if}
@@ -64,7 +64,7 @@
       {#if error}<p role="alert" class="notice-error">{error}</p><Button variant="secondary" onclick={async () => { try { onChanged(await onboarding.status()); error = ""; } catch { error = "Setup is unavailable. Reload and retry."; } }}>Reload guide</Button>{/if}
       <article class="settings-card p-5 space-y-4">
         <p>Finish for now marks remaining optional steps as skipped. You can reopen this guide from Settings → Setup without resetting your choices.</p>
-        <div class="flex flex-wrap gap-2"><Button disabled={busy} onclick={() => void finish()}>Finish setup</Button><a class="button secondary" href="#/">Return to Home</a></div>
+        <div class="flex flex-wrap gap-2"><Button disabled={busy} onclick={() => void finish()}>Finish setup</Button><Button variant="secondary" href="#/">Return to Home</Button></div>
       </article>
     </div>
   </div>

@@ -46,7 +46,7 @@ const checkGuides: Record<string, CheckGuide> = {
   administrator_required: { label: "Needs an administrator", step: "Add an administrator in Settings so checks can run." },
 };
 // Playback checks can also report the provider's error kind.
-checkGuides.TransientFailure = checkGuides.resolve;
+checkGuides.TransientFailure = { label: "Service error", step: "The service answered with an error. This is usually on its side; it is checked again every 6 hours." };
 checkGuides.AccountNeedsReauthentication = checkGuides.Unauthorized = checkGuides.sign_in_needed;
 checkGuides.NotFound = { label: "Test song unavailable", step: "The service couldn't play the song it picked. It is checked again every 6 hours." };
 checkGuides.RateLimited = { label: "Rate limited", step: "The service is limiting requests. Wait a few minutes, then use Test." };
