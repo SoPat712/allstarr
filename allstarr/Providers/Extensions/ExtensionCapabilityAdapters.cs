@@ -177,10 +177,17 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
         accountRequired = manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Download).AccountRequired;
     }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Download;
-    public Task<ProviderOutcome<ProviderDownloadAvailability>> CheckAvailabilityAsync(ProviderExecutionContext context, ProviderDownloadAvailabilityRequest request)
+    public Task<ProviderOutcome<ProviderDownloadAvailability>> CheckAvailabilityAsync(ProviderExecutionContext context, ProviderDownloadAvailabilityRequest request) =>
+        CheckAvailabilityAsync(context, request, prepareForStreaming: false);
+
+    internal Task<ProviderOutcome<ProviderDownloadAvailability>> CheckAvailabilityAsync(
+        ProviderExecutionContext context, ProviderDownloadAvailabilityRequest request, bool prepareForStreaming)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
-        return InvokeAsync(context, "checkAvailability", new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString() }, value =>
+        object hookRequest = prepareForStreaming
+            ? new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString(), prepareForStreaming = true }
+            : new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString() };
+        return InvokeAsync(context, "checkAvailability", hookRequest, value =>
             new ProviderDownloadAvailability(EnumValue<ProviderDownloadAvailabilityState>(value, "state"),
                 value.TryGetProperty("availableQualities", out var qualities) ? qualities.EnumerateArray().Select(item => Enum.Parse<ProviderAudioQuality>(item.GetString()!, true)) : [], Long(value, "estimatedBytes")),
             requireAccount: accountRequired);
@@ -213,6 +220,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
 {
     private readonly ExtensionDownloadCapabilityAdapter download;
     private readonly ProviderDownloadArtifactResolver artifacts;
+    private readonly bool requiresPreparedContext;
 
     public ExtensionDownloadStreamingCapabilityAdapter(
         ExtensionSandbox sandbox,
@@ -223,6 +231,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
     {
         download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, secrets, artifacts, options);
         this.artifacts = artifacts;
+        requiresPreparedContext = manifest.RequiredRuntimeFeatures?.Contains("preparedContext@1", StringComparer.Ordinal) == true;
         ProviderId = manifest.Id;
     }
 
@@ -237,12 +246,16 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         if (!context.Policy.AllowManagedDownloads)
             return Failure<ProviderStreamLease>(ProviderErrorKind.Forbidden);
 
-        var availability = await download.CheckAvailabilityAsync(context,
-            new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality));
-        if (!availability.IsSuccess)
-            return ProviderOutcome<ProviderStreamLease>.Failure(availability.Error!);
-        if (availability.RequireValue().State != ProviderDownloadAvailabilityState.Available)
-            return Failure<ProviderStreamLease>(ProviderErrorKind.NotFound);
+        if (requiresPreparedContext)
+        {
+            var availability = await download.CheckAvailabilityAsync(context,
+                new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality), prepareForStreaming: true);
+            if (!availability.IsSuccess && availability.Error!.Kind is not
+                (ProviderErrorKind.NotSupported or ProviderErrorKind.TransientFailure))
+                return ProviderOutcome<ProviderStreamLease>.Failure(availability.Error);
+            if (availability.IsSuccess && availability.RequireValue().State == ProviderDownloadAvailabilityState.Unavailable)
+                return Failure<ProviderStreamLease>(ProviderErrorKind.NotFound);
+        }
 
         var jobId = Guid.CreateVersion7();
         var idempotencyKey = $"stream-{jobId:N}";

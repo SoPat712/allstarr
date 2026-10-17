@@ -519,9 +519,11 @@ public static class SpotiFlacExtensionCompatibility
             track = track || {};
             var artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
             var durationMs = Number(track.duration_ms || track.durationMs || 0) || undefined;
-            var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists,
-              { requestedQuality: request.requestedQuality, track: track, duration_ms: durationMs });
+            var options = { requestedQuality: request.requestedQuality, track: track, duration_ms: durationMs };
+            if (request.prepareForStreaming) options.spotify_id = request.trackId;
+            var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists, options);
             if (result && result.available !== false) _sfRememberPrepared(request.trackId, result.prepared_context || result.preparedContext);
+            if (request.prepareForStreaming && (!result || typeof result.available !== 'boolean')) return;
             return result && result.available !== false
               ? { state: 'Available', availableQualities: ['Any'], estimatedBytes: null }
               : { state: 'Unavailable', availableQualities: [], estimatedBytes: null };

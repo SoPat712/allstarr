@@ -1152,7 +1152,10 @@ public sealed class ExtensionCapabilityAdapterTests
             const string script = """
                 registerExtension({
                   getTrack:function(id){return {id:id,name:'Song',artists:'Artist'};},
-                  checkAvailability:function(){return {available:true,prepared_context:{ready:true}};},
+                  checkAvailability:function(isrc,name,artists,options){
+                    if (options.spotify_id !== 'track') return {available:false};
+                    return {available:true,prepared_context:{ready:true}};
+                  },
                   download:function(id,quality,path,progress,options){
                     if (!options.preparedContext.ready) throw new Error('preparation missing');
                     return file.download('https://api-v2.soundcloud.com/media',path,{});
@@ -1191,6 +1194,138 @@ public sealed class ExtensionCapabilityAdapterTests
                 Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
             }
             Assert.Empty(Directory.GetDirectories(options.RootPath));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("null", true)]
+    [InlineData("{}", true)]
+    [InlineData("{state:'Unknown'}", true)]
+    [InlineData("{available:false}", false)]
+    [InlineData("{available:true,prepared_context:{ready:true}}", true)]
+    public async Task SpotiFlacStreaming_PreparesSelectedTrackWithoutChangingManagedAvailability(string availability, bool streams)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-selected-stream", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string source = """
+                {"name":"prepared","displayName":"Prepared","version":"1.0.0","type":["download_provider"],
+                 "permissions":{"network":["media.example.test"]},"requiredRuntimeFeatures":["preparedContext@1"]}
+                """;
+            var requirePrepared = availability.Contains("prepared_context", StringComparison.Ordinal) ? "true" : "false";
+            var script = $$$"""
+                registerExtension({
+                  getTrack:function(){return null;},
+                  checkAvailability:function(isrc,name,artists,options){
+                    if (!options.spotify_id) return {available:false};
+                    if (options.spotify_id !== 'track-1') throw new Error('selected track missing');
+                    return {{{availability}}};
+                  },
+                  download:function(id,quality,path,progress,options){
+                    if ({{{requirePrepared}}} && !options.preparedContext.ready)
+                      throw new Error('preparation missing');
+                    return file.download('https://media.example.test/audio',path,{});
+                  }
+                });
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var handler = new BytesHandler([1, 2, 3, 4]);
+            var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var context = Context(manifest.Id);
+            var track = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "track-1");
+            var download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
+            Assert.Equal(ProviderDownloadAvailabilityState.Unavailable,
+                (await download.CheckAvailabilityAsync(context, new(track))).RequireValue().State);
+
+            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+            var result = await adapter.GetStreamLeaseAsync(context, new(track));
+
+            Assert.Equal(streams, result.IsSuccess);
+            Assert.Equal(streams ? 1 : 0, handler.CallCount);
+            if (streams)
+            {
+                var lease = result.RequireValue();
+                using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+                using var response = await lease.ProtectedResponseFactory!(request, default);
+                Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+                Assert.Empty(Directory.GetDirectories(options.RootPath));
+            }
+            else
+            {
+                Assert.Equal(ProviderErrorKind.NotFound, result.Error!.Kind);
+                Assert.False(Directory.Exists(options.RootPath));
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData(false, null, true)]
+    [InlineData(false, "throw new Error('availability must not run');", true)]
+    [InlineData(false, "return {state:'Unavailable'};", true)]
+    [InlineData(true, null, true)]
+    [InlineData(true, "return {state:'Unknown'};", true)]
+    [InlineData(true, "return {state:'Unsupported'};", true)]
+    [InlineData(true, "return {state:'UnavailableForNow'};", true)]
+    [InlineData(true, "return null;", true)]
+    [InlineData(true, "throw new Error('lookup failed');", true)]
+    [InlineData(true, "return {state:'Unavailable'};", false)]
+    public async Task DownloadStreaming_OnlyDefinitiveUnavailabilityBlocksPreparation(
+        bool requiresPreparation, string? availabilityBody, bool streams)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-download-stream", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var manifest = DownloadManifest() with
+            {
+                Capabilities = [new ExtensionSdkCapability(ProviderCapabilityKind.Download,
+                    availabilityBody == null ? ["download"] : ["checkAvailability", "download"],
+                    [], AccountRequired: false)],
+                RequiredRuntimeFeatures = requiresPreparation ? ["preparedContext@1"] : []
+            };
+            var availabilityHook = availabilityBody == null ? "" : $"checkAvailability:function(){{{availabilityBody}}},";
+            var script = $$$"""
+                registerExtension({ {{{availabilityHook}}} download:function() {
+                  const written = artifacts.download('https://media.example.test/audio', 'track.flac');
+                  return {artifactId:written.artifactId,sha256:written.sha256,sizeBytes:written.sizeBytes,
+                    verified:written.verified,media:{mimeType:'audio/flac',container:'flac',codec:'flac'}};
+                }});
+                """;
+            var handler = new BytesHandler([1, 2, 3, 4]);
+            var sandbox = new ExtensionSandbox(root,
+                """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+                script, new HttpClientFactory(handler), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var store = new MemoryArtifactStore();
+            var resolver = new ProviderDownloadArtifactResolver(store, options);
+            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+
+            var result = await adapter.GetStreamLeaseAsync(Context(), new(Id(ProviderResourceKind.Track, "track-1")));
+
+            Assert.Equal(streams, result.IsSuccess);
+            Assert.Equal(streams ? 1 : 0, handler.CallCount);
+            Assert.Empty(store.Artifacts);
+            if (streams)
+            {
+                var lease = result.RequireValue();
+                using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+                using var response = await lease.ProtectedResponseFactory!(request, default);
+                Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+                Assert.Empty(Directory.GetDirectories(options.RootPath));
+            }
+            else
+            {
+                Assert.Equal(ProviderErrorKind.NotFound, result.Error!.Kind);
+                Assert.False(Directory.Exists(options.RootPath));
+            }
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }

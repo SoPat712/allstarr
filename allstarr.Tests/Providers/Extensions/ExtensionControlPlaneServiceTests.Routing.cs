@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Extensions;
@@ -65,13 +66,16 @@ public sealed partial class ExtensionControlPlaneServiceTests
     }
 
     [Theory]
-    [InlineData("amazon", false)]
-    [InlineData("amazon", true)]
-    [InlineData("tidal-web", false)]
-    [InlineData("tidal-web", true)]
-    public async Task SignedConnections_ListenerStreamingPreparesDownloadWithTheSelectedSession(string name, bool personal)
+    [InlineData("amazon", false, true)]
+    [InlineData("amazon", true, true)]
+    [InlineData("tidal-web", false, true)]
+    [InlineData("tidal-web", true, true)]
+    [InlineData("tidal-web", false, false)]
+    [InlineData("tidal-web", true, false)]
+    public async Task SignedConnections_ListenerStreamingPreparesDownloadWithTheSelectedSession(
+        string name, bool personal, bool requiresPreparation)
     {
-        var fixture = await SignedRoutesAsync(name, personal);
+        var fixture = await SignedRoutesAsync(name, personal, requiresPreparation);
         var gateway = new ProtocolProviderGateway(fixture.Router, fixture.Registry, fixture.Clients);
         var stream = await gateway.OpenStreamAsync(fixture.Protocol, fixture.Signed.ExtensionId, "track",
             ProviderAudioQuality.Any, null);
@@ -79,7 +83,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         using (stream.Response)
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, await stream.Response.Content.ReadAsByteArrayAsync());
         Assert.Empty(Directory.GetDirectories(fixture.Options.RootPath));
-        Assert.True(fixture.Handler.CatalogCalls >= 2);
+        Assert.True(fixture.Handler.CatalogCalls >= (requiresPreparation ? 2 : 1));
     }
 
     [Theory]
@@ -149,7 +153,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         finally { fixture.Artifacts.DeleteTransientWorkspace(workspace); }
     }
 
-    private async Task<SignedRouteFixture> SignedRoutesAsync(string signedName, bool personal)
+    private async Task<SignedRouteFixture> SignedRoutesAsync(string signedName, bool personal, bool requiresPreparation = true)
     {
         var listener = Guid.CreateVersion7();
         await using (var db = await _factory.CreateDbContextAsync())
@@ -175,7 +179,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(MockBehavior.Strict),
             artifacts, options,
             _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
-        var signed = await RoutingPackageAsync(signedName);
+        var signed = await RoutingPackageAsync(signedName, requiresPreparation);
         signed = await runtime.ActivateAsync(signed.Id, signed.Revision);
         var view = await runtime.CompleteSignedSessionGrantAsync(signed.Id, signed.Revision, "grant-1");
         Assert.Equal(ExtensionSessionStates.SignedIn, view.State);
@@ -213,7 +217,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         return new(signed, expired, account, accounts, router, registry, clients.Object, handler, protocol, options, artifacts, runtime);
     }
 
-    private async Task<ExtensionPackageRecord> RoutingPackageAsync(string name)
+    private async Task<ExtensionPackageRecord> RoutingPackageAsync(string name, bool requiresPreparation = true)
     {
         const string script = """
             var country = '';
@@ -226,21 +230,28 @@ public sealed partial class ExtensionControlPlaneServiceTests
               initialize:function(settings){ country = settings.countryCode || ''; },
               customSearch:function(query,options){ authorize(); return options.filter === 'track' ? [track('track')] : []; },
               getTrack:function(id){ authorize(); return track(id); },
-              checkAvailability:function(){ authorize(); return {available:true,prepared_context:{ready:true}}; },
+              checkAvailability:function(){
+                if (!requiresPreparation) throw new Error('availability must not run');
+                authorize(); return {available:true,prepared_context:{ready:true}};
+              },
               download:function(id,quality,path,progress,options){
                 authorize();
-                if (!options.preparedContext.ready) throw new Error('preparation missing');
+                if (requiresPreparation && !options.preparedContext.ready) throw new Error('preparation missing');
                 return file.download('https://api.zarz.moe/audio',path,{});
               }
             });
             """;
-        var original = await File.ReadAllTextAsync(Path.Combine(RepositoryRoot(), "allstarr.Tests", "Fixtures", "Extensions", "Registry", name + ".json"));
-        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, script);
+        var original = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(RepositoryRoot(), "allstarr.Tests", "Fixtures", "Extensions", "Registry", name + ".json")))!;
+        var features = original["requiredRuntimeFeatures"]!.AsArray();
+        if (requiresPreparation && !features.Any(item => item!.GetValue<string>() == "preparedContext@1"))
+            features.Add("preparedContext@1");
+        var runtimeScript = "var requiresPreparation = " + (requiresPreparation ? "true" : "false") + ";\n" + script;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original.ToJsonString(), runtimeScript);
         var manifest = ExtensionSdkV1.ParseManifest(normalized);
         var path = Path.Combine(_root, "extensions", ".staging", name);
         Directory.CreateDirectory(path);
         await File.WriteAllTextAsync(Path.Combine(path, "manifest.json"), normalized);
-        await File.WriteAllTextAsync(Path.Combine(path, "index.js"), script);
+        await File.WriteAllTextAsync(Path.Combine(path, "index.js"), runtimeScript);
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(name)));
         var package = await _service.StageAsync(new(manifest, hash, 100, 100, 2, path, ExtensionSdkV1.ComputePackageContentSha256(path)));
         return await _service.ReviewAsync(package.Id, _reviewer, package.Revision,
