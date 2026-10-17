@@ -10,6 +10,7 @@ using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -196,7 +197,42 @@ public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
                 1_000, null, null, null));
 
         Assert.Equal(_localTrack, Assert.Single(tracks).Id);
-        Assert.Equal(_localTrack, Assert.Single(sourceAware).Id);
+        Assert.Empty(sourceAware);
+    }
+
+    [Fact]
+    public async Task SearchLocalTracks_MergesLiveResultsWithTheIndexRanksAndCapsSelectableTargets()
+    {
+        var clock = new PersistenceClock(_now);
+        var state = new DurableStorageState(_database.StorageOptions);
+        state.Set(DurableStorageReadiness.Ready, "fixture");
+        var index = new LibraryIndexService(_factory, state, clock, new TrackIdentityService(_factory, state, clock), _access);
+        var client = new Mock<IMatchLibraryClient>();
+        var songs = Enumerable.Range(0, 25).Select(number => new LibraryTrackIndexInput(
+            "music", number == 0 ? "local-1" : $"song-{number}", $"/music/{number}.flac", "Silk & Cologne",
+            number == 1 ? "Ei8ht" : "Other", number == 1 ? "Album" : null, null,
+            number == 1 ? 180000 : 240000, "jellyfin", _now, null, null, null, null, null, null, null, null, _now)).ToArray();
+        client.Setup(item => item.SearchAsync(It.IsAny<ProtocolExecutionContext>(), "music", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(songs);
+        client.Setup(item => item.ArtistSongsAsync(It.IsAny<ProtocolExecutionContext>(), "music", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(songs);
+        var matches = new TrackMatchCommandService(_factory, new TrackMatchDecisionEngine(), new ProviderAccountResolver(_factory), clock,
+            _access, librarySearch: new MatchLibrarySearch(client.Object), libraryIndex: index);
+        var source = new ExternalTrackMatchSnapshot("source", "spotify", "track", "Silk & Cologne", "Ei8ht", "Album", null, 180000, null, null, null);
+
+        var results = await matches.SearchLocalTracksAsync(new(_userA, false), "Silk & Cologne Ei8ht", "music", source: source);
+
+        Assert.Equal(20, results.Count);
+        Assert.Equal("song-1", results[0].BackendItemId);
+        Assert.Equal(results.Count, results.DistinctBy(item => item.BackendItemId).Count());
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(results, item => Assert.True(db.LibraryTracks.Any(track => track.Id == item.Id)));
+        client.Invocations.Clear();
+        Assert.Empty(await matches.SearchLocalTracksAsync(new(_userA, false), "Silk & Cologne", "private", source: source));
+        Assert.Empty(client.Invocations);
+        _access.Permissions[_userA] = BackendLibraryAccess.Unavailable;
+        Assert.Empty(await matches.SearchLocalTracksAsync(new(_userA, false), "Silk & Cologne", source: source));
+        Assert.Empty(client.Invocations);
     }
 
     [Theory]

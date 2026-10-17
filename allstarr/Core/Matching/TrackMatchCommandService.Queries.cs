@@ -11,6 +11,7 @@ using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
 using allstarr.Core.Settings;
 using allstarr.Models.Domain;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -183,42 +184,53 @@ public sealed partial class TrackMatchCommandService
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         limit = Math.Clamp(limit, 1, 50);
-        var patterns = query.Split((char[]?)null,
-                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(term => $"%{term.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_")}%")
-            .ToArray();
-        var tracks = await AccessibleTracksAsync(db, actor, cancellationToken);
+        var access = await libraryAccess.ResolveUserAsync(actor.UserId, cancellationToken);
+        var tracks = LibraryTrackAccess.Query(db, access);
         if (!string.IsNullOrWhiteSpace(backendLibraryId))
             tracks = tracks.Where(item => item.BackendLibraryId == backendLibraryId.Trim());
-        IReadOnlyList<LibraryTrackRecord> indexed = source == null
-            ? []
-            : await tracks.ToListAsync(cancellationToken);
-        var effectiveEngine = source == null
-            ? decisionEngine
-            : await DecisionEngineAsync(cancellationToken);
-        HashSet<Guid> automatic = source == null
-            ? []
-            : effectiveEngine.PrepareCandidates(indexed.Select(ToLocalCandidate))
-                .Select(source)
-                .Select(item => item.LibraryTrackId)
-                .ToHashSet();
-        foreach (var pattern in patterns)
-            tracks = tracks.Where(item =>
-                EF.Functions.Like(item.Title, pattern, "\\") ||
-                EF.Functions.Like(item.Artist, pattern, "\\") ||
-                item.Album != null && EF.Functions.Like(item.Album, pattern, "\\"));
-        var searched = await tracks
-            .OrderBy(item => item.Artist)
-            .ThenBy(item => item.Title)
-            .Take(limit)
-            .ToListAsync(cancellationToken);
-        if (automatic.Count == 0) return searched;
-        var indexedById = indexed.ToDictionary(item => item.Id);
-        var selected = effectiveEngine.ScoreCandidates(
-                source!,
-                indexed.Where(item => automatic.Contains(item.Id)).Select(ToLocalCandidate))
-            .Select(item => indexedById[item.LibraryTrackId]);
-        return selected.Concat(searched).DistinctBy(item => item.Id).Take(limit).ToArray();
+        var indexed = await tracks.ToListAsync(cancellationToken);
+        var title = MatchLibrarySearch.QueryTitle(query, source);
+        var searchSource = source == null
+            ? new ExternalTrackMatchSnapshot("search", "local", "search", title, "Unknown", null, null, null, null, null, null)
+            : source with { Title = title };
+        var variants = MatchLibrarySearch.QueryVariants(query, source);
+        var terms = query.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var found = indexed.Where(item =>
+                terms.All(term => $"{item.Title} {item.Artist} {item.Album}".Contains(term, StringComparison.OrdinalIgnoreCase)) ||
+                variants.Any(term => MatchLibrarySearch.SimilarTitle(term, item.Title)) ||
+                source?.Isrc != null && FuzzyMatcher.IdentifiersEqual(source.Isrc, item.Isrc) &&
+                MatchLibrarySearch.SimilarTitle(source.Title, title))
+            .ToList();
+        if (librarySearch != null && libraryIndex != null && access.Context != null && access.Access.Succeeded)
+        {
+            var libraries = access.Access.LibraryIds.Where(id => string.IsNullOrWhiteSpace(backendLibraryId) || id == backendLibraryId.Trim()).ToArray();
+            var gathered = await librarySearch.GatherAsync(access.Context, libraries, query, source, cancellationToken);
+            var inputs = gathered.Where(item => libraries.Contains(item.BackendLibraryId, StringComparer.Ordinal))
+                .Select(item => (Input: item, Candidate: new LocalTrackMatchCandidate(Guid.CreateVersion7(), actor.UserId,
+                    access.Context.BackendInstanceId, item.BackendLibraryId, item.BackendItemId, null,
+                    item.Title, item.Artist, item.Album, item.AlbumArtist, item.DurationMilliseconds, item.Isrc, item.MusicBrainzRecordingId, null)))
+                .ToArray();
+            var effectiveEngine = await DecisionEngineAsync(cancellationToken);
+            var byId = inputs.ToDictionary(item => item.Candidate.LibraryTrackId, item => item.Input);
+            var ranked = effectiveEngine.ScoreCandidates(searchSource, inputs.Select(item => item.Candidate));
+            foreach (var score in ranked.Take(limit))
+            {
+                var input = byId[score.LibraryTrackId];
+                var existing = indexed.FirstOrDefault(item => item.BackendItemId == input.BackendItemId);
+                if (existing != null)
+                {
+                    found.Add(existing);
+                    continue;
+                }
+                var added = await libraryIndex.UpsertAsync(access.Context, input, cancellationToken);
+                var record = await db.LibraryTracks.AsNoTracking().SingleAsync(item => item.Id == added.Id, cancellationToken);
+                found.Add(record);
+            }
+        }
+        var selected = found.DistinctBy(item => item.BackendItemId, StringComparer.Ordinal).ToDictionary(item => item.Id);
+        var engine = await DecisionEngineAsync(cancellationToken);
+        return engine.ScoreCandidates(searchSource, selected.Values.Select(ToLocalCandidate))
+            .Take(limit).Select(item => selected[item.LibraryTrackId]).ToArray();
     }
 
     public async Task<TrackMatchActivityData> GetActivityDataAsync(

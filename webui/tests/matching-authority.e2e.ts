@@ -2,6 +2,7 @@ import { expect, test, type Page, type Request, type Route } from "@playwright/t
 
 type AuthorityOptions = {
   administrator: boolean;
+  match?: Record<string, unknown>;
   resolve?: (route: Route) => Promise<void>;
   authorityAction?: (route: Route) => Promise<void>;
 };
@@ -100,7 +101,7 @@ async function mockMatching(page: Page, options: AuthorityOptions) {
     if (url.pathname.includes("/manual-authorities/"))
       return options.authorityAction?.(route) ?? json(route, { rematched: true, state: "accepted" });
     if (url.pathname === "/api/admin/track-matches") return json(route, {
-      matches: [matchFixture(options.administrator)],
+      matches: [{ ...matchFixture(options.administrator), ...options.match }],
       stats: {
         total: 1, matched: 1, accepted: 1, unresolved: 0, suggested: 0, review: 1,
         ambiguous: 1, rejected: 0, attention: 1, manualMatches: 1, manualRejections: 0,
@@ -122,6 +123,47 @@ test("match dialog shows field scores at 320px in dark mode", async ({ page }) =
   const dialog = page.getByRole("dialog", { name: "Layered song" });
   await expect(dialog.locator(".score-components")).toContainText("title");
   await expect(dialog.locator(".score-components")).toContainText("duration");
+});
+
+test("MatchDialog prefills the full title despite a legacy search query", async ({ page }) => {
+  await mockMatching(page, {
+    administrator: false,
+    match: { title: "Layered song - Live", searchQuery: "Example artist Layered song" },
+  });
+  const queries: string[] = [];
+  await page.route("**/api/admin/track-matches/targets/*?*", async (route) => {
+    queries.push(new URL(route.request().url()).searchParams.get("query") ?? "");
+    await json(route, { tracks: [], providers: [] });
+  });
+  await page.goto("#/library/mappings");
+  await page.getByRole("button", { name: "Interactive search" }).click();
+  const dialog = page.getByRole("dialog", { name: "Layered song - Live" });
+  await expect(dialog.getByLabel("Search local library and playable providers"))
+    .toHaveValue("Layered song - Live");
+  await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await expect.poll(() => queries).toEqual(["Layered song - Live", "Layered song - Live"]);
+});
+
+test("MatchDialog marks only the current candidate in the existing list", async ({ page }) => {
+  const candidate = matchFixture(false).candidates[0];
+  await mockMatching(page, {
+    administrator: false,
+    match: {
+      candidates: [
+        { ...candidate, isCurrent: true },
+        { ...candidate, libraryTrackId: "other-track", title: "Alternate recording", isCurrent: false },
+      ],
+    },
+  });
+  await page.goto("#/library/mappings");
+  await page.getByRole("button", { name: "Interactive search" }).click();
+  const dialog = page.getByRole("dialog", { name: "Layered song" });
+  const candidates = dialog.locator(".candidate-card");
+  await expect(candidates).toHaveCount(2);
+  await expect(candidates.first()).toContainText("Current match");
+  await expect(candidates.last()).not.toContainText("Current match");
+  await expect(candidates.getByText("· Current match", { exact: true })).toHaveCount(1);
+  await expect(candidates.getByRole("button", { name: "Choose candidate" })).toHaveCount(2);
 });
 
 test("listener uses personal authority and cannot choose or edit household", async ({ page }) => {

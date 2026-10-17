@@ -773,6 +773,7 @@ export type TargetPlaylist = {
 };
 
 export type MatchCandidate = {
+  isCurrent?: boolean;
   libraryTrackId?: string | null;
   backendItemId?: string | null;
   confidence?: number | null;
