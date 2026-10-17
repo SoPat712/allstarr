@@ -122,6 +122,24 @@ public sealed class ProtocolExecutionContextTests
         Assert.Equal(TimeSpan.FromSeconds(30), options.GetOperationTimeout());
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(301)]
+    public void DownloadDiagnosticTimeout_RejectsInvalidConfiguration(int seconds)
+    {
+        var options = new ProtocolExecutionOptions { DownloadDiagnosticTimeoutSeconds = seconds };
+        Assert.Throws<InvalidOperationException>(() => options.GetDownloadDiagnosticTimeout());
+    }
+
+    [Fact]
+    public void DownloadDiagnosticTimeout_KeepsPlaybackDefaults()
+    {
+        var options = new ProtocolExecutionOptions();
+        Assert.Equal(TimeSpan.FromMinutes(3), options.GetDownloadDiagnosticTimeout());
+        Assert.Equal(TimeSpan.FromSeconds(150), options.GetDownloadStreamTimeout());
+        Assert.Equal(TimeSpan.FromSeconds(30), options.GetOperationTimeout());
+    }
+
     [Fact]
     public void DefaultFactoryDeadline_RemainsThirtySeconds()
     {

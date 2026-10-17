@@ -135,6 +135,19 @@ public sealed class ProtocolExecutionOptions
 
     public int DownloadStreamTimeoutSeconds { get; set; } = 150;
 
+    public int DownloadDiagnosticTimeoutSeconds { get; set; } = 180;
+
+    public TimeSpan GetDownloadDiagnosticTimeout()
+    {
+        if (DownloadDiagnosticTimeoutSeconds is < 1 or > 300)
+        {
+            throw new InvalidOperationException(
+                "ProtocolExecution:DownloadDiagnosticTimeoutSeconds must be between 1 and 300.");
+        }
+
+        return TimeSpan.FromSeconds(DownloadDiagnosticTimeoutSeconds);
+    }
+
     public TimeSpan GetOperationTimeout()
     {
         if (OperationTimeoutSeconds is < 1 or > 300)

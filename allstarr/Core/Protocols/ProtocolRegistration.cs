@@ -10,6 +10,7 @@ public static class ProtocolRegistration
         configuration.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
         _ = options.GetOperationTimeout();
         _ = options.GetDownloadStreamTimeout();
+        _ = options.GetDownloadDiagnosticTimeout();
         services.AddSingleton(options);
         services.AddSingleton<ProtocolExecutionContextFactory>();
         services.AddHttpClient(BackendLibraryAccessResolver.HttpClientName);

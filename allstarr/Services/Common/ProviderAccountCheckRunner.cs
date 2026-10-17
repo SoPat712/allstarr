@@ -1,6 +1,7 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
+using allstarr.Core.Protocols;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -83,9 +84,23 @@ public sealed class ProviderAccountCheckRunner(
                 var key = account == null ? ProviderRuntimeStatusKey.CreateAccountFree(target.Status.Provider, target.Status.Capability) :
                     ProviderRuntimeStatusKey.CreateManaged(target.Status.Provider, target.Status.Capability, account.Id);
                 ProviderCheckResult result;
-                using var deadline = new CancellationTokenSource(timeout, time);
+                var downloadBacked = key.Capability == ProviderCapabilities.Streaming && media != null &&
+                    registry?.TryGetCapability<IProviderStreamingCapability>(key.Provider, ProviderCapabilityKind.Streaming, out var streaming) == true &&
+                    streaming is IProviderDownloadStreamingCapability;
+                var checkTimeout = timeout;
+                if (downloadBacked)
+                {
+                    var options = new ProtocolExecutionOptions();
+                    configuration.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
+                    checkTimeout = options.GetDownloadDiagnosticTimeout();
+                }
+                using var deadline = new CancellationTokenSource(checkTimeout, time);
                 using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
-                try { result = await CheckAsync(key, account, target.Status, correlation, linked.Token); }
+                try
+                {
+                    var check = CheckAsync(key, account, target.Status, correlation, linked.Token);
+                    result = downloadBacked ? await check.WaitAsync(linked.Token) : await check;
+                }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
                 catch (Exception exception)
                 {
@@ -145,7 +160,7 @@ public sealed class ProviderAccountCheckRunner(
                 Health = measured.Succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
                 TestedAt = time.GetUtcNow(),
                 LatencyMilliseconds = (long?)measured.ClickToStreamMilliseconds,
-                ReasonCode = measured.Succeeded ? null : measured.Stage
+                ReasonCode = measured.ReasonCode
             }, measured.SeekRung);
         }
         var tested = account == null

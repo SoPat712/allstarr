@@ -40,10 +40,16 @@ const checkGuides: Record<string, CheckGuide> = {
     label: "Playback didn't start",
     step: "The service found the song but sent no audio in time. This is usually on the service's side; it is checked again every 6 hours.",
   },
+  service_unavailable: { label: "Service unavailable", step: "The service's download server is failing right now. Try again later; nothing to change in Allstarr." },
   timeout: { label: "Timed out", step: "The service took too long to answer. It is checked again every 6 hours." },
   unreachable: { label: "Can't reach the service", step: "Check the server's internet connection, then use Test." },
   administrator_required: { label: "Needs an administrator", step: "Add an administrator in Settings so checks can run." },
 };
+// Playback checks can also report the provider's error kind.
+checkGuides.TransientFailure = checkGuides.resolve;
+checkGuides.AccountNeedsReauthentication = checkGuides.Unauthorized = checkGuides.sign_in_needed;
+checkGuides.NotFound = { label: "Test song unavailable", step: "The service couldn't play the song it picked. It is checked again every 6 hours." };
+checkGuides.RateLimited = { label: "Rate limited", step: "The service is limiting requests. Wait a few minutes, then use Test." };
 
 export const checkGuide = (reasonCode?: string | null): CheckGuide | null =>
   reasonCode ? checkGuides[reasonCode] ?? null : null;

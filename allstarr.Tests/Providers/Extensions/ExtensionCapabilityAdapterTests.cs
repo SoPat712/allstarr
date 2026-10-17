@@ -1071,6 +1071,42 @@ public sealed class ExtensionCapabilityAdapterTests
         }
     }
 
+    [Theory]
+    [InlineData("HTTP 503 private-provider-detail", "service_unavailable")]
+    [InlineData("HTTP 500", "service_unavailable")]
+    [InlineData("HTTP 502 Bad Gateway", "service_unavailable")]
+    [InlineData("Service unavailable", "service_unavailable")]
+    [InlineData("Bad gateway", "service_unavailable")]
+    [InlineData("Track not found", "not-found")]
+    [InlineData("Track unavailable", "not-found")]
+    [InlineData("unknown private-provider-detail", "transient-failure")]
+    public async Task DownloadStreaming_ClassifiesReportedFailuresWithoutReturningProviderText(string message, string code)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-download-failure", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string source = """
+                {"name":"failure","displayName":"Failure","version":"1.0.0","type":["download_provider"],"permissions":{}}
+                """;
+            var script = "registerExtension({download:function(){return {success:false,error_message:" + JsonSerializer.Serialize(message) + "};}});";
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([])), NullLogger.Instance, runtimeStateDirectory: Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+
+            var result = await adapter.GetStreamLeaseAsync(Context(manifest.Id), new(new(manifest.Id, ProviderResourceKind.Track, "track")));
+
+            Assert.False(result.IsSuccess);
+            Assert.Equal(code, result.Error!.Code);
+            Assert.DoesNotContain("private-provider-detail", JsonSerializer.Serialize(result), StringComparison.Ordinal);
+            Assert.Empty(Directory.GetDirectories(options.RootPath));
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Fact]
     public async Task SpotiFlacRuntimeAdapter_PassesPreparedAvailabilityContextToDownload()
     {
@@ -1184,6 +1220,7 @@ public sealed class ExtensionCapabilityAdapterTests
             {
                 Assert.False(result.IsSuccess);
                 Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
+                Assert.Equal("service_unavailable", result.Error.Code);
             }
             else
             {
