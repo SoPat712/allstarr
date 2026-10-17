@@ -105,17 +105,24 @@ public sealed partial class TrackMatchCommandService
             snapshotsQuery = snapshotsQuery.Where(item => item.OwnerUserId == actor.UserId);
         if (externalSnapshotId.HasValue)
             snapshotsQuery = snapshotsQuery.Where(item => item.Id == externalSnapshotId.Value);
-        if (!string.IsNullOrWhiteSpace(search))
+        var orderedSnapshots = snapshotsQuery.OrderByDescending(item => item.RetrievedAt);
+        var limit = Math.Clamp(scanLimit, 1, 10000);
+        List<ExternalMetadataSnapshotRecord> snapshots;
+        if (string.IsNullOrWhiteSpace(search))
+            snapshots = await orderedSnapshots.Take(limit).ToListAsync(cancellationToken);
+        else
         {
-            var pattern = $"%{search.Trim().Replace("%", "\\%").Replace("_", "\\_")}%";
-            snapshotsQuery = snapshotsQuery.Where(item =>
-                EF.Functions.Like(item.ProviderId, pattern, "\\") ||
-                EF.Functions.Like(item.PayloadJson, pattern, "\\"));
+            var normalizedSearch = TrackMatchReviewSearch.Normalize(search);
+            snapshots = [];
+            if (normalizedSearch.Length > 0)
+                await foreach (var snapshot in orderedSnapshots.AsAsyncEnumerable().WithCancellation(cancellationToken))
+                {
+                    if (!TrackMatchReviewSearch.Matches(snapshot.ProviderId, snapshot.PayloadJson, normalizedSearch))
+                        continue;
+                    snapshots.Add(snapshot);
+                    if (snapshots.Count == limit) break;
+                }
         }
-
-        var snapshots = await snapshotsQuery.OrderByDescending(item => item.RetrievedAt)
-            .Take(Math.Clamp(scanLimit, 1, 10000))
-            .ToListAsync(cancellationToken);
         var snapshotIds = snapshots.Select(item => item.Id).ToArray();
         var decisionQuery = db.TrackMatches.AsNoTracking()
             .Where(item => snapshotIds.Contains(item.ExternalSnapshotId));

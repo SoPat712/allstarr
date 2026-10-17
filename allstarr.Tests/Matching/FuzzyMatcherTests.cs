@@ -130,6 +130,79 @@ public class FuzzyMatcherTests
     }
 
     [Theory]
+    [InlineData("Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne [ei8ht and OFFSET] - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (EI8HT x Offset) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (EI8HT, Offset) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (EI8HT feat. Offset) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (EI8HT ft. Offset) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (EI8HT with Offset) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne - EI8HT & Offset - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne - EI8HT & Offset (Spider-Verse remix)")]
+    public void NormalizeTitleForMatchingUsesOnlyTheTracksOwnCredits(string title)
+    {
+        Assert.Equal(
+            FuzzyMatcher.NormalizeTitleForMatching("Silk and Cologne (Spider-Verse remix)", "Ei8ht, OFFSET"),
+            FuzzyMatcher.NormalizeTitleForMatching(title, "EI8HT, Offset"));
+    }
+
+    [Theory]
+    [InlineData("Silk & Cologne - EI8HT & Offset - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne - EI8HT & Offset (Spider-Verse remix)")]
+    public void SemanticVersionTagsUseTheSeparateRemixSegment(string title)
+    {
+        Assert.True(FuzzyMatcher.SemanticVersionTags("Silk and Cologne (Spider-Verse remix)")
+            .SetEquals(FuzzyMatcher.SemanticVersionTags(title)));
+    }
+
+    [Theory]
+    [InlineData("Song (First Producer - Remix)", "Song (Second Producer - Remix)")]
+    [InlineData("Song - First Producer Remix", "Song - Second Producer Remix")]
+    public void SemanticVersionTagsPreserveDifferentRemixers(string source, string candidate)
+    {
+        Assert.False(FuzzyMatcher.SemanticVersionTags(source)
+            .SetEquals(FuzzyMatcher.SemanticVersionTags(candidate)));
+    }
+
+    [Theory]
+    [InlineData("Silk & Cologne (Other Artist) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (EI8HT & Other Artist) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne (feat. Other Artist) - Spider-Verse Remix")]
+    [InlineData("Silk & Cologne - Other Artist - Spider-Verse Remix")]
+    public void NormalizeTitleForMatchingPreservesUncreditedArtists(string title)
+    {
+        Assert.NotEqual(
+            FuzzyMatcher.NormalizeTitleForMatching("Silk and Cologne (Spider-Verse remix)", "EI8HT, Offset"),
+            FuzzyMatcher.NormalizeTitleForMatching(title, "EI8HT, Offset"));
+    }
+
+    [Theory]
+    [InlineData("Silk and Cologne")]
+    [InlineData("Silk and Cologne (Other Producer remix)")]
+    [InlineData("Silk and Cologne (Live)")]
+    [InlineData("Silk and Cologne (Acoustic)")]
+    [InlineData("Silk and Cologne (Sped Up)")]
+    [InlineData("Silk and Cologne (Slowed)")]
+    [InlineData("Silk and Cologne (Instrumental)")]
+    [InlineData("Silk and Cologne (Karaoke)")]
+    public void NormalizeTitleForMatchingPreservesVersionLabels(string title)
+    {
+        Assert.NotEqual(
+            FuzzyMatcher.NormalizeTitleForMatching("Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix", "EI8HT, Offset"),
+            FuzzyMatcher.NormalizeTitleForMatching(title, "EI8HT, Offset"));
+    }
+
+    [Theory]
+    [InlineData("Song (Other Artist) - Remix", "Song - Other Artist - Remix")]
+    [InlineData("Song (Other Artist) - Remix", "Song Other Artist (Remix)")]
+    [InlineData("Song (Official Audio)", "Song")]
+    [InlineData("Song (Alpha & Beta) - Remix", "Song (Remix)")]
+    public void TitleAnnotationsMatchAllowsEquivalentAndBenignDecorators(string source, string candidate)
+    {
+        Assert.True(FuzzyMatcher.TitleAnnotationsMatch(source, "Alpha, Beta", candidate, "Alpha, Beta"));
+    }
+
+    [Theory]
     [InlineData("U2", "ua")]
     [InlineData("24K Magic", "2ak magic")]
     [InlineData("1999", "iggg")]

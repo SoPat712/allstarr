@@ -173,7 +173,9 @@ internal sealed class FieldScoreRule : ITrackMatchRule
     {
         var reasons = new List<string>();
         var warnings = new List<string>();
-        var title = TrackMatchSignals.Similarity(source.Title, candidate.Title);
+        var sourceTitle = FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist);
+        var candidateTitle = FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist);
+        var title = FuzzyMatcher.CalculateSimilarity(sourceTitle, candidateTitle) / 100d;
         var artist = TrackMatchSignals.ArtistSimilarity(source.Artist, candidate.Artist);
         var album = TrackMatchSignals.ComparableSimilarity(source.Album, candidate.Album);
         var albumArtist = TrackMatchSignals.ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
@@ -182,6 +184,8 @@ internal sealed class FieldScoreRule : ITrackMatchRule
                 source.DurationMilliseconds.Value, candidate.DurationMilliseconds.Value,
                 policy.DurationToleranceSeconds)
             : (double?)null;
+        var titleAnnotationsMatch = FuzzyMatcher.TitleAnnotationsMatch(
+            source.Title, source.Artist, candidate.Title, candidate.Artist);
         var versionMatch = FuzzyMatcher.SemanticVersionTags(source.Title)
             .SetEquals(FuzzyMatcher.SemanticVersionTags(candidate.Title));
         var components = new Dictionary<string, double>
@@ -191,10 +195,11 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             ["primaryArtist"] = TrackMatchSignals.Similarity(
                 FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault(),
                 FuzzyMatcher.SplitCredits(candidate.Artist).FirstOrDefault()),
-            ["versionTags"] = versionMatch ? 1 : 0
+            ["versionTags"] = versionMatch ? 1 : 0,
+            ["titleAnnotations"] = titleAnnotationsMatch ? 1 : 0
         };
         TrackMatchSignals.AddReason(reasons, "title", title);
-        if (TrackMatchSignals.TitleComparisonReason(source.Title, candidate.Title) is { } titleReason)
+        if (TrackMatchSignals.TitleComparisonReason(source.Title, candidate.Title, source.Artist, candidate.Artist) is { } titleReason)
             reasons.Add(titleReason);
         TrackMatchSignals.AddReason(reasons, "artist", artist);
         var weightedScore = (title * 0.42) + (artist * 0.30);
@@ -232,6 +237,7 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             confidence = Math.Max(0, confidence - 0.18);
             warnings.Add("semantic_version_mismatch");
         }
+        if (!titleAnnotationsMatch) warnings.Add("title_annotation_mismatch");
         if (source.IsExplicit.HasValue &&
             candidate.IsExplicit.HasValue &&
             source.IsExplicit != candidate.IsExplicit)
@@ -303,7 +309,8 @@ internal static class TrackMatchSignals
             ? 0
             : FuzzyMatcher.CalculateSimilarityAggressive(left, right) / 100d;
 
-    public static string? TitleComparisonReason(string? source, string? candidate)
+    public static string? TitleComparisonReason(
+        string? source, string? candidate, string? sourceArtist = null, string? candidateArtist = null)
     {
         if (string.IsNullOrWhiteSpace(source) || string.IsNullOrWhiteSpace(candidate) || source == candidate)
             return null;
@@ -311,8 +318,8 @@ internal static class TrackMatchSignals
             return "title_case_folded";
         if (FuzzyMatcher.NormalizeForMatching(source) == FuzzyMatcher.NormalizeForMatching(candidate))
             return "title_normalized";
-        var sourceBase = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(source));
-        var candidateBase = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(candidate));
+        var sourceBase = FuzzyMatcher.NormalizeTitleForMatching(source, sourceArtist, candidateArtist);
+        var candidateBase = FuzzyMatcher.NormalizeTitleForMatching(candidate, candidateArtist, sourceArtist);
         return sourceBase.Length > 0 && sourceBase == candidateBase
             ? "title_decorators_ignored"
             : "title_fuzzy";

@@ -287,10 +287,14 @@ public sealed class TrackMatchDecisionEngine
         score.Confidence >= _policy.AcceptThreshold &&
         HasStrongArtistEvidence(score) &&
         HasDurationWithinTolerance(score) &&
-        HasSameSemanticVersion(score);
+        HasSameSemanticVersion(score) &&
+        HasSameTitleAnnotations(score);
 
     private static bool HasSameSemanticVersion(TrackMatchCandidateScore score) =>
         score.Components == null || !score.Components.TryGetValue("versionTags", out var match) || match > 0;
+
+    private static bool HasSameTitleAnnotations(TrackMatchCandidateScore score) =>
+        score.Components == null || !score.Components.TryGetValue("titleAnnotations", out var match) || match > 0;
 
     private static bool HasDurationWithinTolerance(TrackMatchCandidateScore score) =>
         score.Components == null ||
@@ -414,6 +418,7 @@ public sealed class TrackMatchDecisionEngine
                 TrackMatchReviewState.Unresolved when !HasSameSemanticVersion(best) && decisionScore < _policy.AcceptThreshold =>
                     ["below_accept_threshold_review", "semantic_version_mismatch_review"],
                 TrackMatchReviewState.Unresolved when !HasSameSemanticVersion(best) => ["semantic_version_mismatch_review"],
+                TrackMatchReviewState.Suggested when !HasSameTitleAnnotations(best) => ["title_annotation_mismatch_review"],
                 TrackMatchReviewState.Suggested => ["below_accept_threshold_review"],
                 TrackMatchReviewState.Unresolved when
                     decisionScore >= _policy.SuggestThreshold && !strongArtistEvidence => ["weak_artist_evidence_review"],
@@ -472,15 +477,14 @@ public sealed class TrackMatchDecisionEngine
             return false;
         if (!FuzzyMatcher.SemanticVersionTags(left.Title)
                 .SetEquals(FuzzyMatcher.SemanticVersionTags(right.Title)) ||
+            !FuzzyMatcher.TitleAnnotationsMatch(left.Title, left.Artist, right.Title, right.Artist) ||
             !left.DurationMilliseconds.HasValue ||
             !right.DurationMilliseconds.HasValue ||
             Math.Abs(left.DurationMilliseconds.Value - right.DurationMilliseconds.Value) > 3_000)
             return false;
 
-        var leftTitle = FuzzyMatcher.NormalizeForMatching(
-            FuzzyMatcher.StripDecorators(left.Title));
-        var rightTitle = FuzzyMatcher.NormalizeForMatching(
-            FuzzyMatcher.StripDecorators(right.Title));
+        var leftTitle = FuzzyMatcher.NormalizeTitleForMatching(left.Title, left.Artist, right.Artist);
+        var rightTitle = FuzzyMatcher.NormalizeTitleForMatching(right.Title, right.Artist, left.Artist);
         var sameTitle = leftTitle.Equals(rightTitle, StringComparison.Ordinal);
         var sameArtist = FuzzyMatcher.SplitCredits(left.Artist)
             .Select(FuzzyMatcher.NormalizeForMatching)
@@ -567,8 +571,8 @@ public sealed class TrackMatchDecisionEngine
         source.Isrc,
         candidate.Isrc,
         candidate.ProviderTrackIds,
-        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(source.Title)),
-        FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(candidate.Title)),
+        FuzzyMatcher.NormalizeTitleForMatching(source.Title, source.Artist, candidate.Artist),
+        FuzzyMatcher.NormalizeTitleForMatching(candidate.Title, candidate.Artist, source.Artist),
         TrackMatchSignals.ArtistSimilarity(source.Artist, candidate.Artist),
         AlbumEvidence(source, candidate),
         source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
@@ -744,7 +748,7 @@ public sealed class TrackMatchCandidateIndex
 
     private static IEnumerable<string> BuildMatchKeys(string? titleValue, string? artistValue)
     {
-        var title = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(titleValue ?? string.Empty));
+        var title = FuzzyMatcher.NormalizeTitleForMatching(titleValue ?? string.Empty, artistValue);
         var artist = FuzzyMatcher.NormalizeForMatching(artistValue ?? string.Empty);
         if (title.Length == 0) yield break;
         yield return $"title:{title}";

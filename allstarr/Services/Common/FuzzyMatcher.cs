@@ -19,8 +19,20 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(]((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus(?: track)?|deluxe(?: edition)?|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|instrumental|stripped|remix|radio edit|extended(?: mix)?|original mix|clean|explicit)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|instrumental|stripped|remix|radio edit|extended(?: mix)?|original mix|clean|explicit|sped[ -]+up|slowed(?:[ -]+down)?|karaoke)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex SemanticVersionRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"[\(\[]([^\)\]]+)[\)\]]")]
+    private static partial System.Text.RegularExpressions.Regex BracketedTitlePartRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+[-–—]\s+([^\(\)\[\]]+?)(?=\s+[-–—]\s+|\s*[\(\[]|$)")]
+    private static partial System.Text.RegularExpressions.Regex DashTitlePartRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"^\s*(?:feat(?:uring)?\.?|ft\.?|with)\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex CreditPrefixRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"(?:[\(\[](?<label>[^\(\)\[\]]*?\bremix)\b|\s+[-–—]\s+(?<label>(?:(?!\s+[-–—]\s+)[^\(\)\[\]])*?\bremix)\b)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex RemixLabelRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[^\w\s]")]
     private static partial System.Text.RegularExpressions.Regex PunctuationRegex();
@@ -39,7 +51,7 @@ public static partial class FuzzyMatcher
         if (string.IsNullOrWhiteSpace(value)) return [];
         return System.Text.RegularExpressions.Regex.Split(
                 value,
-                @"\s*(?:,|&|;|\bfeat(?:uring)?\.?\b|\bft\.?\b|\bwith\b)\s*",
+                @"\s*(?:,|&|;|\band\b|\bx\b|\bfeat(?:uring)?\b\.?|\bft\b\.?|\bwith\b)\s*",
                 System.Text.RegularExpressions.RegexOptions.IgnoreCase |
                 System.Text.RegularExpressions.RegexOptions.CultureInvariant)
             .Select(artist => artist.Trim())
@@ -66,6 +78,59 @@ public static partial class FuzzyMatcher
         cleaned = cleaned.Trim();
 
         return cleaned;
+    }
+
+    public static string StripDecorators(string title, string? creditedArtists)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return string.Empty;
+        var artists = SplitCredits(creditedArtists)
+            .Select(NormalizeForMatching)
+            .ToHashSet(StringComparer.Ordinal);
+
+        bool IsOwnCredit(string value)
+        {
+            if (SemanticVersionRegex().IsMatch(value)) return false;
+            var credits = SplitCredits(CreditPrefixRegex().Replace(value.Trim(), ""));
+            return credits.Count > 0 && credits.All(credit => artists.Contains(NormalizeForMatching(credit)));
+        }
+
+        var cleaned = BracketedTitlePartRegex().Replace(title,
+            match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
+        cleaned = DashTitlePartRegex().Replace(cleaned,
+            match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
+        cleaned = FeatDecoratorRegex().Replace(cleaned,
+            match => IsOwnCredit(match.Value.Trim(' ', '(', ')', '[', ']')) ? " " : match.Value);
+        cleaned = FromAlbumDecoratorRegex().Replace(cleaned, "");
+        cleaned = VersionDecoratorRegex().Replace(cleaned, "");
+        cleaned = TypeDecoratorRegex().Replace(cleaned, "");
+        return cleaned.Trim();
+    }
+
+    public static string NormalizeTitleForMatching(
+        string title, string? creditedArtists, string? additionalArtists = null) =>
+        NormalizeForMatching(StripDecorators(title, string.Join(", ", creditedArtists, additionalArtists)));
+
+    public static bool TitleAnnotationsMatch(
+        string sourceTitle, string? sourceArtist, string candidateTitle, string? candidateArtist)
+    {
+        var creditedArtists = string.Join(", ", sourceArtist, candidateArtist);
+        var source = StripDecorators(sourceTitle, creditedArtists);
+        var candidate = StripDecorators(candidateTitle, creditedArtists);
+
+        static bool AnnotationsOccurIn(string title, string counterpart)
+        {
+            var normalizedCounterpart = " " + NormalizeForMatching(counterpart) + " ";
+            var annotations = BracketedTitlePartRegex().Matches(title)
+                .Concat(DashTitlePartRegex().Matches(title))
+                .Select(match => match.Groups[1].Value);
+            return annotations.All(annotation =>
+                SemanticVersionTags(annotation).Count > 0 ||
+                normalizedCounterpart.Contains(
+                    " " + NormalizeForMatching(CreditPrefixRegex().Replace(annotation, "")) + " ",
+                    StringComparison.Ordinal));
+        }
+
+        return AnnotationsOccurIn(source, candidate) && AnnotationsOccurIn(candidate, source);
     }
 
     public static string SearchQuery(string title)
@@ -207,7 +272,8 @@ public static partial class FuzzyMatcher
         var normalized = text.ToLowerInvariant().Trim();
 
         normalized = RemoveDiacritics(normalized);
-        normalized = normalized.Replace('$', 's').Replace('-', ' ').Replace('_', ' ');
+        normalized = normalized.Replace('$', 's').Replace('-', ' ').Replace('_', ' ')
+            .Replace("&", " and ", StringComparison.Ordinal);
 
         normalized = PunctuationRegex().Replace(normalized, "");
         normalized = WhitespaceRegex().Replace(normalized, " ").Trim();
@@ -234,12 +300,17 @@ public static partial class FuzzyMatcher
         }));
     }
 
-    public static IReadOnlySet<string> SemanticVersionTags(string? title) =>
-        string.IsNullOrWhiteSpace(title)
-            ? new HashSet<string>(StringComparer.Ordinal)
-            : SemanticVersionRegex().Matches(RemoveDiacritics(title).ToLowerInvariant())
-                .Select(match => WhitespaceRegex().Replace(match.Value, " ").Trim())
-                .ToHashSet(StringComparer.Ordinal);
+    public static IReadOnlySet<string> SemanticVersionTags(string? title)
+    {
+        var tags = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(title)) return tags;
+        var normalized = RemoveDiacritics(title).ToLowerInvariant();
+        tags.UnionWith(SemanticVersionRegex().Matches(normalized)
+            .Select(match => NormalizeForMatching(match.Value)));
+        tags.UnionWith(RemixLabelRegex().Matches(normalized)
+            .Select(match => "remix:" + NormalizeForMatching(match.Groups["label"].Value)));
+        return tags;
+    }
 
     private static string RemoveDiacritics(string text)
     {

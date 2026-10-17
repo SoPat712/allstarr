@@ -2288,6 +2288,7 @@
     "confidence": 1,
     "decisionReasons": [
       "album_artist_exact",
+      "album_exact",
       "artist_exact",
       "duration_close",
       "title_case_folded",
@@ -2295,6 +2296,7 @@
     ],
     "selectedReasons": [
       "album_artist_exact",
+      "album_exact",
       "artist_exact",
       "duration_close",
       "title_case_folded",
