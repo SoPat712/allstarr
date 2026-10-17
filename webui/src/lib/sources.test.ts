@@ -100,6 +100,7 @@ describe("source presentation", () => {
   it("labels built-in and extension implementations", () => {
     expect(sourceOriginLabel(provider)).toBe("Built-in");
     expect(sourceOriginLabel({ ...provider, implementationOrigin: "extension" })).toBe("Extension");
+    expect(sourceOriginLabel({ ...provider, implementationOrigin: "extension", originName: "SpotiFLAC" })).toBe("SpotiFLAC");
   });
 
   it("uses account readiness for arbitrary schema providers", () => {

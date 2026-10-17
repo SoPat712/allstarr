@@ -30,6 +30,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly SemaphoreSlim _runtimeGate = new(1, 1);
     private readonly SemaphoreSlim _sessionAccountGate = new(1, 1);
     private const string SessionSourceSetting = "__extensionSessionSource";
+    private readonly allstarr.Services.Common.IProviderCheckRequests? _checkRequests;
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -42,8 +43,10 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         ProviderDownloadWorkspaceOptions downloadOptions,
         IConfiguration configuration,
         ILogger<ExtensionRuntimeCoordinator> logger,
-        IDataProtectionProvider? dataProtectionProvider = null)
+        IDataProtectionProvider? dataProtectionProvider = null,
+        allstarr.Services.Common.IProviderCheckRequests? checkRequests = null)
     {
+        _checkRequests = checkRequests;
         _factory = factory;
         _controlPlane = controlPlane;
         _registry = registry;
@@ -117,6 +120,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                         using var scope = sandbox.OpenSignedSessionAccount(accountId);
                         var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
                         if (view == null) continue;
+                        if (view.Restored) _checkRequests?.Request(package.ExtensionId);
                         var (level, code, text) = RenewalLog(view);
                         await _controlPlane.WriteLogAsync(packageId, level, code, text, "extension-session", cancellationToken);
                     }
@@ -392,6 +396,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
         using var scope = sandbox.OpenSignedSessionAccount(await ResolveSessionAccountIdAsync(packageId, accountId, cancellationToken));
         var view = await sandbox.StartSignedSessionVerificationAsync(cancellationToken);
+        await RequestChecksIfSignedInAsync(packageId, view, cancellationToken);
         await LogSessionAsync(packageId, view, view.State == ExtensionSessionStates.SignedIn
             ? "Sign-in restored without verification."
             : "Sign-in verification started.", "session.started");
@@ -404,8 +409,16 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var sandbox = await RequireCurrentSandboxAsync(packageId, expectedRevision, cancellationToken);
         using var scope = sandbox.OpenSignedSessionAccount(await ResolveSessionAccountIdAsync(packageId, accountId, cancellationToken));
         var view = await sandbox.CompleteSignedSessionGrantAsync(grant, cancellationToken);
+        await RequestChecksIfSignedInAsync(packageId, view, cancellationToken);
         await LogSessionAsync(packageId, view, "Sign-in completed.", "session.granted");
         return view;
+    }
+
+    // A fresh sign-in is checked straight away instead of waiting for the next scheduled sweep.
+    private async Task RequestChecksIfSignedInAsync(Guid packageId, ExtensionSessionView view, CancellationToken cancellationToken)
+    {
+        if (_checkRequests == null || view.State != ExtensionSessionStates.SignedIn) return;
+        _checkRequests.Request((await GetPackageAsync(packageId, cancellationToken)).ExtensionId);
     }
 
     public async Task<ExtensionSessionView> ClearSignedSessionAsync(

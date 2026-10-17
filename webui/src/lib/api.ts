@@ -274,6 +274,7 @@ export type ProviderDefinition = {
   runtimeCapabilities?: ProviderRuntimeCapability[];
   connectionKind?: string | null;
   usesSignedSession?: boolean;
+  originName?: string | null;
   audience?: string | null;
   supportedAudiences?: ("Personal" | "Shared")[];
   sharingDescription?: string | null;

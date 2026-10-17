@@ -52,18 +52,23 @@ public sealed class ProviderAccountCheckRunner(
         }
     }
 
-    public async Task<bool> SweepAsync(CancellationToken token)
+    public async Task<bool> SweepAsync(CancellationToken token, string? providerId = null)
     {
-        if (!await gate.WaitAsync(0, token)) return true;
+        // A requested single-source check waits for a running sweep; a scheduled sweep never overlaps one.
+        if (providerId != null) await gate.WaitAsync(token);
+        else if (!await gate.WaitAsync(0, token)) return true;
         try
         {
             await using var db = await factory.CreateDbContextAsync(token);
-            var accounts = await db.ProviderAccounts.AsNoTracking().Where(row => row.Enabled)
+            var accounts = await db.ProviderAccounts.AsNoTracking()
+                .Where(row => row.Enabled && (providerId == null || row.ProviderId == providerId))
                 .OrderBy(row => row.ProviderId).ThenBy(row => row.Id).ToArrayAsync(token);
             var targets = accounts.SelectMany(account => status.GetAllManagedStatuses(account.ProviderId, account.Id,
                     new Dictionary<string, string>(), account.Revision)
                 .Select(item => (Status: item, Account: (ProviderAccountRecord?)account)))
-                .Concat(status.GetAllAccountFreeStatuses().Select(item => (Status: item, Account: (ProviderAccountRecord?)null)))
+                .Concat(status.GetAllAccountFreeStatuses()
+                    .Where(item => providerId == null || string.Equals(item.Provider, providerId, StringComparison.OrdinalIgnoreCase))
+                    .Select(item => (Status: item, Account: (ProviderAccountRecord?)null)))
                 .Where(item => item.Status.IsEnabled && status.CanTestCapability(item.Status.Provider, item.Status.Capability)).ToArray();
             var success = true;
             var correlation = Guid.NewGuid().ToString("N");

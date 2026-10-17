@@ -17,7 +17,7 @@ public sealed class ProviderCheckServiceTests
         var time = new ManualTimeProvider();
         var runner = new Runner();
         var activity = new BackgroundTaskActivity(factory, time, NullLogger<BackgroundTaskActivity>.Instance);
-        var service = new ProviderCheckService(runner, activity, new ConfigurationBuilder().AddInMemoryCollection(
+        var service = new ProviderCheckService(runner, new ProviderCheckRequests(), activity, new ConfigurationBuilder().AddInMemoryCollection(
             new Dictionary<string, string?> { ["ProviderChecks:IntervalHours"] = "2", ["ProviderChecks:InitialDelaySeconds"] = "120" }).Build(),
             time, NullLogger<ProviderCheckService>.Instance);
         await service.StartAsync(default);
@@ -48,7 +48,7 @@ public sealed class ProviderCheckServiceTests
         var factory = new Factory(database.Options);
         var time = new ManualTimeProvider();
         var runner = new Runner();
-        using var service = new ProviderCheckService(runner,
+        using var service = new ProviderCheckService(runner, new ProviderCheckRequests(),
             new BackgroundTaskActivity(factory, time, NullLogger<BackgroundTaskActivity>.Instance),
             new ConfigurationBuilder().Build(), time, NullLogger<ProviderCheckService>.Instance);
         await service.StartAsync(default);
@@ -67,7 +67,7 @@ public sealed class ProviderCheckServiceTests
         var time = new ManualTimeProvider();
         var runner = new Runner();
         runner.Release.TrySetResult();
-        using var service = new ProviderCheckService(runner,
+        using var service = new ProviderCheckService(runner, new ProviderCheckRequests(),
             new BackgroundTaskActivity(factory, time, NullLogger<BackgroundTaskActivity>.Instance),
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             { ["ProviderChecks:IntervalHours"] = "0" }).Build(), time, NullLogger<ProviderCheckService>.Instance);
@@ -87,7 +87,7 @@ public sealed class ProviderCheckServiceTests
         var runner = new Runner { Result = false };
         runner.Release.TrySetResult();
         var activity = new BackgroundTaskActivity(factory, time, NullLogger<BackgroundTaskActivity>.Instance);
-        using var service = new ProviderCheckService(runner, activity, new ConfigurationBuilder().Build(),
+        using var service = new ProviderCheckService(runner, new ProviderCheckRequests(), activity, new ConfigurationBuilder().Build(),
             time, NullLogger<ProviderCheckService>.Instance);
         await service.StartAsync(default);
         await time.NextTimerAsync();
@@ -103,6 +103,26 @@ public sealed class ProviderCheckServiceTests
         Assert.Equal("Scheduled", Assert.Single(await activity.ReadAsync(default)).State);
     }
 
+    [Fact]
+    public async Task RequestedCheck_RunsOnlyThatSourceWithoutWaitingForTheSchedule()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var time = new ManualTimeProvider();
+        var runner = new Runner();
+        var requests = new ProviderCheckRequests();
+        var activity = new BackgroundTaskActivity(factory, time, NullLogger<BackgroundTaskActivity>.Instance);
+        using var service = new ProviderCheckService(runner, requests, activity, new ConfigurationBuilder().Build(),
+            time, NullLogger<ProviderCheckService>.Instance);
+        await service.StartAsync(default);
+
+        requests.Request(" Spotiflac-Deezer ");
+
+        Assert.Equal("spotiflac-deezer", await runner.Requested.Task.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, runner.Runs);
+        await service.StopAsync(default);
+    }
+
     private sealed class Runner : IProviderCheckRunner
     {
         public int Runs;
@@ -112,9 +132,13 @@ public sealed class ProviderCheckServiceTests
         public bool Result = true;
         public TaskCompletionSource Entered = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<string> Requested = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task RestoreAsync(CancellationToken token) => Task.CompletedTask;
-        public async Task<bool> SweepAsync(CancellationToken token)
+        public List<string?> Providers = [];
+        public async Task<bool> SweepAsync(CancellationToken token, string? providerId = null)
         {
+            Providers.Add(providerId);
+            if (providerId != null) { Requested.TrySetResult(providerId); return Result; }
             Runs++;
             MaximumConcurrent = Math.Max(MaximumConcurrent, Interlocked.Increment(ref concurrent));
             Entered.TrySetResult();

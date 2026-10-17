@@ -78,13 +78,14 @@ public class AdminUiController : ControllerBase
         var activeBackend = _configuration.GetValue<string>("Backend:Type") ?? "Jellyfin";
         var policy = await TryEffectivePolicyAsync(cancellationToken);
         var disabledProviders = policy?.DisabledProviders;
+        var originNames = await ExtensionOriginNamesAsync(cancellationToken);
         if (!IsAdministratorSession())
         {
             return Ok(new AdminUiSchemaResponse
             {
                 ActiveBackend = activeBackend,
                 ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
-                Providers = BuildProviders(disabledProviders).Select(item => new AdminUiProvider
+                Providers = BuildProviders(disabledProviders, originNames).Select(item => new AdminUiProvider
                 {
                     Id = item.Id,
                     Name = item.Name,
@@ -97,6 +98,7 @@ public class AdminUiController : ControllerBase
                     AccountSettings = item.AccountSettings,
                     ConnectionKind = item.ConnectionKind,
                     UsesSignedSession = item.UsesSignedSession,
+                    OriginName = item.OriginName,
                     Audience = item.Audience,
                     SupportedAudiences = item.SupportedAudiences,
                     SharingDescription = item.SharingDescription,
@@ -122,7 +124,7 @@ public class AdminUiController : ControllerBase
             ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
             Routes = BuildRoutes(),
             Backends = BuildBackends(),
-            Providers = BuildProviders(disabledProviders),
+            Providers = BuildProviders(disabledProviders, originNames),
             ProviderSupportMatrix = CurrentProviderSupportCatalog.All.ToList(),
             MultiProviderCategories = ["metadata", "streaming", "download", "playlist", "lyrics", "enrichment"],
             PriorityGroups = BuildPriorityGroups(policy),
@@ -1029,7 +1031,22 @@ public class AdminUiController : ControllerBase
         }
     ];
 
-    private List<AdminUiProvider> BuildProviders(IReadOnlySet<string>? disabledProviders = null)
+    // Extensions are labelled with the registry they came from; everything else is built in.
+    private async Task<IReadOnlyDictionary<string, string>> ExtensionOriginNamesAsync(CancellationToken cancellationToken)
+    {
+        var factory = HttpContext?.RequestServices?.GetService<IDbContextFactory<AllstarrDbContext>>();
+        if (factory == null) return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        await using var db = await factory.CreateDbContextAsync(cancellationToken);
+        var rows = await (from package in db.ExtensionPackages.AsNoTracking()
+                          where package.State == ExtensionPackageState.Active && package.RegistryId != null
+                          join registry in db.ExtensionRegistries.AsNoTracking() on package.RegistryId equals registry.Id
+                          select new { package.ExtensionId, registry.Name }).ToListAsync(cancellationToken);
+        return rows.GroupBy(row => row.ExtensionId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Name, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private List<AdminUiProvider> BuildProviders(IReadOnlySet<string>? disabledProviders = null,
+        IReadOnlyDictionary<string, string>? originNames = null)
     {
         List<AdminUiProvider> providers =
         [
@@ -1161,6 +1178,7 @@ public class AdminUiController : ControllerBase
                 ? "operator_managed"
                 : "built_in";
             provider.ImplementationOrigin ??= "built_in";
+            provider.OriginName ??= "Built-in";
             provider.RouteId ??= $"builtin:{provider.Id}";
             provider.CapabilityRoutes.Add(new AdminUiProviderCapabilityRoute
             {
@@ -1251,6 +1269,9 @@ public class AdminUiController : ControllerBase
                         ? "extension"
                         : "built_in",
                     UsesSignedSession = item.UsesSignedSession,
+                    OriginName = item.Origin == ProviderOrigin.Extension
+                        ? originNames?.GetValueOrDefault(item.Id) ?? "Extension"
+                        : "Built-in",
                     ImplementationOrigin = item.Origin.ToString().ToLowerInvariant(),
                     RouteId = route.RouteId,
                     AccountSettings = accountSettings,

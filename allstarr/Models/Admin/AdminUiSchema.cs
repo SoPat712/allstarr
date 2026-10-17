@@ -145,6 +145,9 @@ public sealed class AdminUiProvider
     [JsonPropertyName("usesSignedSession")]
     public bool UsesSignedSession { get; set; }
 
+    [JsonPropertyName("originName")]
+    public string? OriginName { get; set; }
+
     [JsonPropertyName("audience")]
     public string? Audience { get; set; }
 
