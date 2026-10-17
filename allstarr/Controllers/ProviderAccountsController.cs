@@ -62,7 +62,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             .OrderBy(item => item.ProviderId)
             .ThenBy(item => item.DisplayName)
             .ToListAsync(cancellationToken))
-            .Where(item => !IsRemoved(item))
+            .Where(item => !ProviderAccountSettings.IsRemoved(item))
             .ToList();
         var secretIds = accounts
             .Where(item => item.SecretReferenceId.HasValue)
@@ -151,7 +151,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
             var connections = await existing.ProviderAccounts.AsNoTracking()
                 .Where(item => item.ProviderId == normalized.ProviderId)
                 .ToListAsync(cancellationToken);
-            if (connections.Any(item => !IsRemoved(item)))
+            if (connections.Any(item => !ProviderAccountSettings.IsRemoved(item)))
                 return Conflict(new { error = "This extension already has its connection. Change who can use it instead." });
         }
 
@@ -373,7 +373,7 @@ public sealed partial class ProviderAccountsController : ControllerBase
         account.UpdatedAt = DateTimeOffset.UtcNow;
         account.Revision++;
         var removedSettings = System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?.AsObject() ?? [];
-        removedSettings[RemovedSetting] = true;
+        removedSettings[ProviderAccountSettings.RemovedSetting] = true;
         if (UsesSignedSession(account.ProviderId)) removedSettings["__extensionSessionRemoved"] = true;
         account.SettingsJson = removedSettings.ToJsonString();
         if (account.SecretReferenceId.HasValue)
@@ -396,23 +396,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
         return NoContent();
     }
 
-    private const string RemovedSetting = "__removed";
-
     // Account changes are checked straight away instead of waiting for the next scheduled sweep.
     private void RequestCheck(string providerId) =>
         HttpContext?.RequestServices?.GetService<allstarr.Services.Common.IProviderCheckRequests>()?.Request(providerId);
-
-    internal static bool IsRemoved(ProviderAccountRecord account)
-    {
-        try
-        {
-            return System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?[RemovedSetting]?.GetValue<bool>() == true;
-        }
-        catch (Exception exception) when (exception is System.Text.Json.JsonException or InvalidOperationException or FormatException)
-        {
-            return false;
-        }
-    }
 
     // History, matches and scrobble deliveries keep pointing at a removed account, so only an unused one is deleted;
     // the rest stay archived and hidden.

@@ -153,6 +153,33 @@ public sealed partial class ExtensionControlPlaneServiceTests
         finally { fixture.Artifacts.DeleteTransientWorkspace(workspace); }
     }
 
+    [Fact]
+    public async Task RemovedSignedConnection_CannotBeUsedByAnExistingRoute()
+    {
+        var fixture = await SignedRoutesAsync("tidal-web", false);
+        var provider = fixture.Signed.ExtensionId;
+        var track = new ProviderExternalResourceId(provider, ProviderResourceKind.Track, "track");
+        var plan = await fixture.Router.PlanAsync<IProviderDownloadCapability>(new(
+            ProviderCapabilityKind.Download, fixture.Protocol.RequireActor(),
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, false, true, true, [provider]),
+            "download", "fixture", fixture.Protocol.Deadline, [provider],
+            [new(provider, availableQualities: [ProviderAudioQuality.Any])], track, "download"));
+        var candidate = Assert.Single(plan.Candidates);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.SingleAsync(item => item.Id == fixture.Account.Id);
+            account.SettingsJson = """{"__removed":true,"__extensionSessionSource":"local"}""";
+            await db.SaveChangesAsync();
+        }
+        var calls = fixture.Handler.CatalogCalls;
+
+        var result = await candidate.Implementation.CheckAvailabilityAsync(candidate.Context, new(track));
+
+        Assert.Equal(ProviderErrorKind.Forbidden, result.Error?.Kind);
+        Assert.Equal(calls, fixture.Handler.CatalogCalls);
+    }
+
     private async Task<SignedRouteFixture> SignedRoutesAsync(string signedName, bool personal, bool requiresPreparation = true)
     {
         var listener = Guid.CreateVersion7();

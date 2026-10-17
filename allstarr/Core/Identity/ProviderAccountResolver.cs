@@ -1,3 +1,4 @@
+using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 
@@ -20,10 +21,11 @@ public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext>
         CancellationToken cancellationToken = default, Guid? accountId = null)
     {
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
-        return await context.ProviderAccounts.AsNoTracking().AnyAsync(item => item.Enabled &&
+        var accounts = await context.ProviderAccounts.AsNoTracking().Where(item => item.Enabled &&
             (!accountId.HasValue || item.Id == accountId) &&
-            item.ProviderId == providerId && item.OwnerUserId != null && item.OwnerUserId != userId,
-            cancellationToken);
+            item.ProviderId == providerId && item.OwnerUserId != null && item.OwnerUserId != userId)
+            .ToListAsync(cancellationToken);
+        return accounts.Any(item => !ProviderAccountSettings.IsRemoved(item));
     }
 
     public async Task<ResolvedProviderAccount?> ResolveAsync(
@@ -62,6 +64,7 @@ public sealed class ProviderAccountResolver(IDbContextFactory<AllstarrDbContext>
             .ThenBy(item => item.Id)
             .ToListAsync(cancellationToken);
 
+        accounts.RemoveAll(ProviderAccountSettings.IsRemoved);
         if (request.RequestedAccountId.HasValue)
         {
             var requested = accounts.SingleOrDefault(item => item.Id == request.RequestedAccountId.Value)

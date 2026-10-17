@@ -8,7 +8,20 @@ namespace allstarr.Core.Capabilities;
 public static class ProviderAccountSettings
 {
     public const string Empty = "{}";
+    internal const string RemovedSetting = "__removed";
     private const int MaximumJsonLength = 8192;
+
+    internal static bool IsRemoved(ProviderAccountRecord account)
+    {
+        try
+        {
+            return System.Text.Json.Nodes.JsonNode.Parse(account.SettingsJson)?[RemovedSetting]?.GetValue<bool>() == true;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException or FormatException)
+        {
+            return false;
+        }
+    }
 
     public static string Project(ProviderDescriptor provider, ReadOnlyMemory<byte> configuration)
     {

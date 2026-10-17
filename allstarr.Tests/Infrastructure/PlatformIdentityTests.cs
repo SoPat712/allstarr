@@ -261,6 +261,42 @@ public sealed class PlatformIdentityTests : IAsyncLifetime
             providerAccountId == personalId ? new(state, circuitOpen) : new(ProviderRouteHealthState.Healthy, false);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemovedAccounts_AreExcludedFromProviderRoutingAndAudienceChecks(bool enabled)
+    {
+        var identities = Resolver(Options());
+        var user = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "listener")))!;
+        var other = (await identities.ResolveAsync(new BackendIdentityDescriptor("Jellyfin", "other")))!;
+        var personal = Account("spotify", ProviderAccountScope.Personal, user.UserId);
+        var shared = Account("spotify", ProviderAccountScope.Shared, null);
+        var otherPersonal = Account("spotify", ProviderAccountScope.Personal, other.UserId);
+        foreach (var account in new[] { personal, shared, otherPersonal })
+        {
+            account.Enabled = enabled;
+            account.SettingsJson = """{"__removed":true}""";
+        }
+        await AddAccounts(personal, shared, otherPersonal);
+        var resolver = new ProviderAccountResolver(_factory);
+        var routes = new DurableProviderRouteAccountResolver(resolver,
+            new AccountHealth(personal.Id, ProviderRouteHealthState.Healthy, false));
+        var actor = new ProviderActorContext(ProviderActorKind.User, user.UserId,
+            new ProviderBackendPrincipal("jellyfin", "fixture", "listener"));
+        var request = new ProviderRouteAccountRequest(actor, "spotify", ProviderCapabilityKind.Streaming, null);
+
+        Assert.Empty(await resolver.ResolveCandidatesAsync(new(user, "spotify", "streaming")));
+        Assert.Null(await routes.ResolveAsync(request));
+        Assert.False(await resolver.HasOtherPersonalAccountAsync(user.UserId, "spotify"));
+        Assert.False(await resolver.HasOtherPersonalAccountAsync(user.UserId, "spotify", accountId: otherPersonal.Id));
+        foreach (var account in new[] { personal, shared })
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => routes.ResolveAsync(request with { RequestedAccountId = account.Id }));
+
+        var fresh = Account("spotify", ProviderAccountScope.Shared, null);
+        await AddAccounts(fresh);
+        Assert.Equal(fresh.Id, (await routes.ResolveAsync(request))!.Account.AccountId);
+    }
+
     [Fact]
     public async Task AccountOwnership_AdministratorCannotImpersonateOwner()
     {
