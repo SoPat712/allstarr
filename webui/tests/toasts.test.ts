@@ -21,6 +21,14 @@ describe("shared toast lifecycle", () => {
     expect(get(toasts).map(item => item.message)).toEqual(["Retry needed"]);
   });
 
+  it("keeps progress until it is dismissed", () => {
+    const id = toast.progress("Testing");
+    vi.advanceTimersByTime(600000);
+    expect(get(toasts)).toEqual([{ id, message: "Testing", kind: "info", busy: true }]);
+    toast.dismiss(id);
+    expect(get(toasts)).toHaveLength(0);
+  });
+
   it("pauses remaining time while either hover or focus is active", () => {
     const id = toast.success("Saved");
     vi.advanceTimersByTime(2000);

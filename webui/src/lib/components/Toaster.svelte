@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { X } from "@lucide/svelte";
+  import { LoaderCircle, X } from "@lucide/svelte";
   import { toast, toasts, type Toast } from "$lib/toasts";
   let running = $state<number | null>(null);
   async function act(item: Toast) {
@@ -20,7 +20,7 @@
       onfocusin={() => toast.pause(item.id, "focus")}
       onfocusout={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) toast.resume(item.id, "focus"); }}
       onkeydown={(event) => { if (event.key === "Escape") { event.stopPropagation(); toast.dismiss(item.id); } }}>
-      <p>{item.message}</p>
+      {#if item.busy}<LoaderCircle class="toast-busy" size={18} aria-hidden="true" />{/if}<p>{item.message}</p>
       {#if item.action}<button type="button" class="toast-action" disabled={running !== null} onclick={() => void act(item)}>{item.action.label}</button>{/if}
       <button type="button" class="toast-dismiss" aria-label="Dismiss notification" onclick={() => toast.dismiss(item.id)}><X size={18} aria-hidden="true" /></button>
     </div>
@@ -34,8 +34,9 @@
   .toast button { flex: none; min-width: 44px; min-height: 44px; border: 0; border-radius: 8px; color: inherit; background: transparent; cursor: pointer; }
   .toast button:focus-visible { outline: 2px solid currentColor; outline-offset: -2px; }
   .toast-action { color: var(--md-sys-color-inverse-on-surface) !important; font-weight: 650; padding: 0 8px; }
+  .toast :global(.toast-busy) { flex: none; animation: signal-boot-spin 1s linear infinite; }
   .toast-error { border-left: 4px solid var(--md-sys-color-error); }
   @keyframes toast-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
   @media (max-width: 767px) { .toaster { left: 16px; right: 16px; width: auto; bottom: calc(var(--mobile-nav-height, 72px) + 16px); } }
-  @media (prefers-reduced-motion: reduce) { .toast { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { .toast, .toast :global(.toast-busy) { animation: none; } }
 </style>

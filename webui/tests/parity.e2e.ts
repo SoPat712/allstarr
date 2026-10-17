@@ -5901,6 +5901,28 @@ test("Playback diagnostic errors stay readable and persistent", async ({ page })
   await notification.getByRole("button", { name: "Dismiss notification" }).click(); await expect(notification).toHaveCount(0);
 });
 
+test("A running source test shows progress until its result arrives", async ({ page }) => {
+  await mockApi(page);
+  let finish!: () => void;
+  const answered = new Promise<void>(resolve => { finish = resolve; });
+  await page.route("**/api/admin/providers/test/lumen-audio/metadata?**", async route => {
+    await answered;
+    await route.fulfill({ json: { success: false, healthy: false, reasonCode: "timeout" } });
+  });
+  await page.goto("#/integrations/accounts");
+  await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+  const row = page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" });
+  await row.getByRole("button", { name: "Test", exact: true }).click();
+  const region = page.getByRole("region", { name: "Notifications" });
+  await expect(row.getByRole("button", { name: "Testing…" })).toBeDisabled();
+  await expect(region.getByRole("status")).toContainText("Testing Lumen Audio Metadata…");
+  await expect(region.locator(".toast-busy")).toHaveCount(1);
+  finish();
+  await expect(region.getByRole("alert")).toContainText("Lumen Audio Metadata needs attention.");
+  await expect(region.getByRole("status")).toHaveCount(0);
+  await expect(row.getByRole("button", { name: "Test", exact: true })).toBeEnabled();
+});
+
 test("Source selection and entered credentials survive a readiness refresh", async ({ page }) => {
   await mockApi(page);
   let connectedProvider = "lumen-audio";
