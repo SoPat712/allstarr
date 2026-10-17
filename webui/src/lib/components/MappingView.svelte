@@ -28,6 +28,7 @@
     type ProviderDefinition,
   } from "$lib/api";
   import {
+    allowedAuthorityScopes,
     authorityForScope,
     authorityScopeOf,
     canEditAuthority,
@@ -103,6 +104,12 @@
   const playbackProviders = $derived(playableProviderIds(providers));
   let action = $state("");
   let loadVersion = 0;
+  let rowsElement = $state<HTMLElement>();
+  // Visited pages show instantly; the next page is fetched ahead so paging feels immediate.
+  const pageCache = new Map<string, MatchReviewResponse>();
+  let chosen = $state(new Map<string, MatchReviewItem>());
+  let bulkConfirm = $state<"reject" | "clear">("reject");
+  let bulkConfirmOpen = $state(false);
 
   let dialogOpen = $state(false);
   let initialReviewOpened = $state(false);
@@ -119,21 +126,36 @@
     return providerDisplayName(providers, providerId);
   }
 
+  const query = (requested = page) => ({ page: requested, pageSize: 50, search, state: stateFilter, sort, backendLibraryId });
+  const cacheKey = (requested = page) => JSON.stringify(query(requested));
+
+  function remember(key: string, response: MatchReviewResponse) {
+    pageCache.delete(key);
+    pageCache.set(key, response);
+    if (pageCache.size > 8) pageCache.delete(pageCache.keys().next().value!);
+  }
+
+  async function prefetch(requested: number) {
+    const key = cacheKey(requested);
+    if (requested < 1 || !data || requested > data.pagination.totalPages || pageCache.has(key)) return;
+    try { remember(key, await matchReview.list(query(requested))); } catch { /* the page loads normally when opened */ }
+  }
+
   async function load() {
     const version = ++loadVersion;
-    refreshing = true;
+    const key = cacheKey();
+    const cached = pageCache.get(key);
+    if (cached) { data = cached; loading = false; }
+    refreshing = !cached;
     error = "";
     try {
-      const response = await matchReview.list({
-        page,
-        pageSize: 50,
-        search,
-        state: stateFilter,
-        sort,
-        backendLibraryId,
-      });
+      const response = await matchReview.list(query());
       if (version !== loadVersion) return;
       data = response;
+      remember(key, response);
+      for (const match of response.matches)
+        if (chosen.has(match.externalSnapshotId)) chosen.set(match.externalSnapshotId, match);
+      void prefetch(page + 1);
     } catch (cause) {
       if (version !== loadVersion) return;
       error = cause instanceof Error ? cause.message : "Match review is unavailable.";
@@ -169,12 +191,26 @@
     }
   }
 
-  const refreshScheduler = createRefreshScheduler(load);
+  // Decisions change other pages too, so cached pages are dropped before reloading.
+  function reload() {
+    pageCache.clear();
+    return load();
+  }
+
+  function goToPage(next: number) {
+    page = next;
+    void load();
+    if (rowsElement && rowsElement.getBoundingClientRect().top < 0)
+      rowsElement.scrollIntoView({ block: "start", behavior: "instant" });
+  }
+
+  const refreshScheduler = createRefreshScheduler(reload);
   const scheduleRefresh = refreshScheduler.schedule;
 
   function setState(value: string) {
     stateFilter = value;
     page = 1;
+    chosen = new Map();
     void load();
   }
 
@@ -207,6 +243,7 @@
   function submitFilters() {
     search = searchInput.trim();
     page = 1;
+    chosen = new Map();
     void load();
   }
 
@@ -218,13 +255,13 @@
   async function matchSaved(message: string) {
     const resolved = selected;
     toast.success(message);
-    await load();
+    await reload();
     if (resolved) removeResolvedFromQueue(resolved);
   }
 
   async function rematchAllQueued(_jobId: string, message: string) {
     toast.success(message);
-    await load();
+    await reload();
   }
 
   async function rematch(match: MatchReviewItem) {
@@ -233,7 +270,7 @@
     try {
       await matchReview.rematch(match.externalSnapshotId);
       toast.success(`${match.title || "Track"} rematched.`);
-      await load();
+      await reload();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "Rematch failed.");
     } finally {
@@ -256,7 +293,7 @@
         expectedAuthority: expectedAuthorityForScope(match, "personal"),
       });
       toast.success("Highest-confidence candidate accepted.");
-      await load();
+      await reload();
       removeResolvedFromQueue(match);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The candidate could not be accepted.");
@@ -310,13 +347,104 @@
       }
       destructiveOpen = false;
       dialogOpen = false;
-      await load();
+      await reload();
       if (destructive.kind === "reject") removeResolvedFromQueue(destructive.match);
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : "The action failed.");
     } finally {
       action = "";
     }
+  }
+
+  const chosenItems = $derived([...chosen.values()]);
+  const pageIds = $derived(data?.matches.map((match) => match.externalSnapshotId) ?? []);
+  const pageChosen = $derived(pageIds.filter((id) => chosen.has(id)).length);
+  const bestResolution = (match: MatchReviewItem) => candidateResolution(match.candidates.find((item) =>
+    candidateResolution(item, match.providerId, playbackProviders)), match.providerId, playbackProviders);
+  const bulkAccept = $derived(chosenItems.filter((match) =>
+    !currentTarget(match) && bestResolution(match) && canEditAuthorityScope(match, "personal")));
+  const bulkShare = $derived(chosenItems.filter((match) => currentTarget(match) &&
+    allowedAuthorityScopes(match).includes("household") && canEditAuthorityScope(match, "household")));
+  const bulkReject = $derived(chosenItems.filter((match) => canEditAuthorityScope(match, "personal")));
+  const bulkClear = $derived(chosenItems.filter((match) => {
+    const authority = authorityForScope(match, "personal");
+    return authority != null && canEditAuthority(authority);
+  }));
+
+  function toggleChosen(match: MatchReviewItem) {
+    const next = new Map(chosen);
+    if (next.has(match.externalSnapshotId)) next.delete(match.externalSnapshotId);
+    else next.set(match.externalSnapshotId, match);
+    chosen = next;
+  }
+
+  function togglePage() {
+    if (!data) return;
+    const next = new Map(chosen);
+    const all = pageChosen === pageIds.length;
+    for (const match of data.matches) {
+      if (all) next.delete(match.externalSnapshotId);
+      else next.set(match.externalSnapshotId, match);
+    }
+    chosen = next;
+  }
+
+  function songs(count: number) { return `${count} ${count === 1 ? "song" : "songs"}`; }
+
+  async function runBulk(verbs: [string, string], items: MatchReviewItem[], run: (match: MatchReviewItem) => Promise<unknown>) {
+    if (!items.length || action) return;
+    action = "bulk";
+    const pending = toast.progress(`${verbs[0]} ${songs(items.length)}…`);
+    let failed = 0;
+    let next = 0;
+    const worker = async () => {
+      while (next < items.length) {
+        const match = items[next++];
+        try { await run(match); } catch { failed++; }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, items.length) }, worker));
+    toast.dismiss(pending);
+    const done = items.length - failed;
+    if (failed) toast.error(`${verbs[1]} ${done} of ${songs(items.length)}. ${failed} could not be changed; try them again.`);
+    else toast.success(`${verbs[1]} ${songs(done)}.`);
+    chosen = new Map();
+    action = "";
+    await reload();
+  }
+
+  const bulkRematch = () => runBulk(["Rematching", "Rematched"], chosenItems,
+    (match) => matchReview.rematch(match.externalSnapshotId));
+  const bulkAcceptBest = () => runBulk(["Accepting", "Accepted"], bulkAccept, (match) =>
+    matchReview.resolve(match.externalSnapshotId, {
+      ...bestResolution(match)!,
+      reason: "Accepted highest-confidence automatic candidate",
+      authorityScope: "personal",
+      expectedAuthority: expectedAuthorityForScope(match, "personal"),
+    }));
+  const bulkShareHousehold = () => runBulk(["Sharing", "Shared"], bulkShare, (match) => {
+    const target = currentTarget(match)!;
+    const reason = "Shared with the household from match review";
+    return matchReview.resolve(match.externalSnapshotId, {
+      ...(target.providerId === "local"
+        ? { targetType: "local" as const, libraryTrackId: target.identity, reason }
+        : { targetType: "provider" as const, externalProvider: target.providerId, externalId: target.identity, reason }),
+      authorityScope: "household",
+      expectedAuthority: expectedAuthorityForScope(match, "household"),
+    });
+  });
+  async function applyBulkConfirm() {
+    bulkConfirmOpen = false;
+    if (bulkConfirm === "reject")
+      await runBulk(["Rejecting", "Rejected"], bulkReject, (match) => matchReview.resolve(match.externalSnapshotId, {
+        targetType: "reject",
+        reason: "Rejected from the match review queue",
+        authorityScope: "personal",
+        expectedAuthority: expectedAuthorityForScope(match, "personal"),
+      }));
+    else
+      await runBulk(["Clearing", "Cleared"], bulkClear, (match) =>
+        manualMatchAuthority.delete(authorityForScope(match, "personal")!));
   }
 
   function authorityLabel(authority: ManualMatchAuthority) {
@@ -415,7 +543,7 @@
         </div>
         <div class="panel-heading-actions playlist-toolbar-actions mapping-heading-actions">
           <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => rematchAllOpen = true}>Rematch all</Button>
-          <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => void load()}>Refresh</Button>
+          <Button variant="secondary" disabled={Boolean(action) || refreshing} onclick={() => void reload()}>Refresh</Button>
         </div>
       </header>
 
@@ -460,8 +588,20 @@
 
 
 
-      <div class="mapping-rows">
-        {#each data.matches as match}
+      {#if data.matches.length}
+        <div class="mapping-select-bar">
+          <label class="mapping-check">
+            <input type="checkbox" checked={pageChosen > 0 && pageChosen === pageIds.length}
+              indeterminate={pageChosen > 0 && pageChosen < pageIds.length} onchange={togglePage}
+              aria-label="Select all songs on this page" />
+          </label>
+          <span>{chosen.size ? `${chosen.size} selected` : "Select songs to change several at once"}</span>
+          {#if chosen.size}<button type="button" class="text-button" onclick={() => chosen = new Map()}>Clear selection</button>{/if}
+        </div>
+      {/if}
+
+      <div class="mapping-rows" bind:this={rowsElement}>
+        {#each data.matches as match (match.externalSnapshotId)}
           {@const target = currentTarget(match)}
           {@const candidate = match.candidates.find((item) =>
             candidateResolution(item, match.providerId, playbackProviders))}
@@ -477,7 +617,11 @@
             authorityScopeOf(left) === authorityScopeOf(right)
               ? 0
               : authorityScopeOf(left) === "personal" ? -1 : 1)}
-          <article class:needs-attention={isAttention(match.state)} class="mapping-row">
+          <article class:needs-attention={isAttention(match.state)} class:chosen={chosen.has(match.externalSnapshotId)} class="mapping-row">
+            <label class="mapping-check mapping-row-check">
+              <input type="checkbox" checked={chosen.has(match.externalSnapshotId)} onchange={() => toggleChosen(match)}
+                aria-label={`Select ${match.title || "song"}`} />
+            </label>
             <div class="mapping-comparison">
               <div class="mapping-party">
                 <MediaArtwork
@@ -648,11 +792,25 @@
       <nav class="playlist-pagination mapping-pagination" aria-label="Match review pages">
         <span>{data.pagination.total} {data.pagination.total === 1 ? "song" : "songs"}</span>
         <div>
-          <Button variant="secondary" size="sm" disabled={data.pagination.page <= 1} onclick={() => { page -= 1; void load(); }}>Previous</Button>
+          <Button variant="secondary" size="sm" disabled={data.pagination.page <= 1} onclick={() => goToPage(page - 1)}>Previous</Button>
           <span>Page {data.pagination.page} of {data.pagination.totalPages}</span>
-          <Button variant="secondary" size="sm" disabled={data.pagination.page >= data.pagination.totalPages} onclick={() => { page += 1; void load(); }}>Next</Button>
+          <Button variant="secondary" size="sm" disabled={data.pagination.page >= data.pagination.totalPages} onclick={() => goToPage(page + 1)}>Next</Button>
         </div>
       </nav>
+
+      {#if chosen.size}
+        <div class="mapping-bulk" role="toolbar" aria-label="Actions for selected songs">
+          <strong>{chosen.size} selected</strong>
+          <div>
+            {#if bulkAccept.length}<Button disabled={Boolean(action)} onclick={() => void bulkAcceptBest()}>Accept best ({bulkAccept.length})</Button>{/if}
+            <Button variant="secondary" disabled={Boolean(action)} onclick={() => void bulkRematch()}>Rematch ({chosen.size})</Button>
+            {#if bulkShare.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => void bulkShareHousehold()}>Share with household ({bulkShare.length})</Button>{/if}
+            {#if bulkClear.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkConfirm = "clear"; bulkConfirmOpen = true; }}>Clear my decisions ({bulkClear.length})</Button>{/if}
+            {#if bulkReject.length}<Button variant="secondary" disabled={Boolean(action)} onclick={() => { bulkConfirm = "reject"; bulkConfirmOpen = true; }}>Reject ({bulkReject.length})</Button>{/if}
+            <Button variant="ghost" disabled={Boolean(action)} onclick={() => chosen = new Map()}>Cancel</Button>
+          </div>
+        </div>
+      {/if}
     </article>
   </section>
 
@@ -666,6 +824,15 @@
   />
 
   <BulkRematchDialog kind="automatic" bind:open={rematchAllOpen} onQueued={rematchAllQueued} />
+  <ConfirmDialog
+    bind:open={bulkConfirmOpen}
+    title={bulkConfirm === "reject" ? `Reject ${songs(bulkReject.length)}?` : `Clear your decisions for ${songs(bulkClear.length)}?`}
+    description={bulkConfirm === "reject"
+      ? "Their current candidates are recorded as rejected for you. You can rematch them later."
+      : "Your personal decisions stop applying; household decisions or automatic matching take over. Audit history is kept."}
+    confirmLabel={bulkConfirm === "reject" ? "Reject songs" : "Clear decisions"}
+    onConfirm={applyBulkConfirm}
+  />
 
   <ConfirmDialog
     bind:open={destructiveOpen}
@@ -678,6 +845,31 @@
 {/if}
 
 <style>
+  .mapping-select-bar {
+    display: flex; align-items: center; gap: var(--space-2); min-height: 2.75rem;
+    padding: 0 var(--space-5) 0 calc(var(--space-5) - .75rem); color: var(--color-ink-muted); font-size: .8125rem;
+  }
+  .mapping-check {
+    display: grid; flex: none; width: 2.75rem; height: 2.75rem; place-items: center; cursor: pointer; border-radius: 50%;
+  }
+  .mapping-check:hover { background: color-mix(in srgb, var(--color-ink) 6%, transparent); }
+  .mapping-check input { width: 1.125rem; height: 1.125rem; margin: 0; accent-color: var(--md-sys-color-primary); cursor: pointer; }
+  .mapping-rows .mapping-row { position: relative; padding-left: calc(var(--space-5) + 2.25rem); }
+  .mapping-rows .mapping-row.chosen { background: color-mix(in srgb, var(--md-sys-color-primary) 8%, transparent); }
+  .mapping-row-check { position: absolute; top: calc(var(--space-4) + 1rem); left: calc(var(--space-5) - .75rem); }
+  .mapping-bulk {
+    position: sticky; z-index: 5; bottom: var(--space-4); display: flex; flex-wrap: wrap; align-items: center;
+    justify-content: space-between; gap: var(--space-3); margin: var(--space-4) var(--space-5) 0; padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-lg); background: var(--md-sys-color-inverse-surface); color: var(--md-sys-color-inverse-on-surface);
+    box-shadow: 0 8px 24px #0004;
+  }
+  .mapping-bulk > div { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .mapping-bulk :global([data-slot="button"]:last-child) { color: inherit; }
+  @media (max-width: 767px) {
+    .mapping-bulk { bottom: calc(var(--mobile-nav-height, 72px) + var(--space-3)); margin-inline: 0; }
+    .mapping-rows .mapping-row { padding-left: calc(var(--space-4) + 2.25rem); }
+    .mapping-row-check { left: calc(var(--space-4) - .75rem); }
+  }
   .manual-authority-row :global([data-slot="button"]) {
     min-width: 0;
     height: auto;
