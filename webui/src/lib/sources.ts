@@ -22,8 +22,43 @@ export interface SourceCheck {
   configuration?: string | null;
 }
 
+export interface CheckGuide {
+  label: string;
+  step: string;
+  signIn?: boolean;
+}
+
+// Plain labels and one next step for the reasons automatic checks report.
+const checkGuides: Record<string, CheckGuide> = {
+  sign_in_needed: { label: "Needs verification", step: "Sign in again in this source's Sign-in section.", signIn: true },
+  verification_required: { label: "Needs verification", step: "Sign in again in this source's Sign-in section.", signIn: true },
+  "track-selection": {
+    label: "No test song found",
+    step: "The service returned no search results. This is usually on the service's side; it is checked again every 6 hours.",
+  },
+  resolve: {
+    label: "Playback didn't start",
+    step: "The service found the song but sent no audio in time. This is usually on the service's side; it is checked again every 6 hours.",
+  },
+  timeout: { label: "Timed out", step: "The service took too long to answer. It is checked again every 6 hours." },
+  unreachable: { label: "Can't reach the service", step: "Check the server's internet connection, then use Test." },
+  administrator_required: { label: "Needs an administrator", step: "Add an administrator in Settings so checks can run." },
+};
+
+export const checkGuide = (reasonCode?: string | null): CheckGuide | null =>
+  reasonCode ? checkGuides[reasonCode] ?? null : null;
+
+export function sourceStatusLabel(state: string) {
+  if (state === "needs_config") return "Needs setup";
+  if (state === "needs_verification") return "Needs verification";
+  if (state === "disabled") return "Turned off";
+  return humanize(state);
+}
+
 export function checkStatusLabel(check: Omit<SourceCheck, "id">) {
   if (check.ready) return "Ready";
+  const guide = checkGuide(check.reasonCode);
+  if (guide) return guide.label;
   if (check.reasonCode) return providerReadinessLabel(check.reasonCode);
   if (check.configuration === "needs_configuration") return "Needs setup";
   if (check.configuration === "unsupported") return "Not supported";
@@ -35,6 +70,7 @@ export function checkStatusLabel(check: Omit<SourceCheck, "id">) {
 
 export function checkStatusState(check: Omit<SourceCheck, "id">) {
   if (check.ready) return "healthy";
+  if (checkGuide(check.reasonCode)?.signIn) return "needs_verification";
   if (check.health === "degraded" || check.health === "unavailable") return "degraded";
   if (check.reasonCode || check.configuration === "needs_configuration") return "suggested";
   return "";
@@ -124,7 +160,9 @@ export function sourceStatus(
   if (connected.length) {
     const ids = new Set(connected.map((item) => item.id));
     const checks = health.filter((item) => ids.has(item.providerAccountId) && item.canTest);
-    if (checks.some((item) => item.health === "degraded")) return "degraded";
+    const failing = checks.filter((item) => item.health === "degraded");
+    if (failing.length && failing.every((item) => checkGuide(item.reasonCode)?.signIn)) return "needs_verification";
+    if (failing.length) return "degraded";
     if (checks.length && checks.every((item) => item.health === "healthy")) return "healthy";
     // Signed extensions keep their sign-in outside the credential store; the sign-in panel shows its state.
     return provider.usesSignedSession || connected.every((item) => item.secret.configured && !item.secret.revoked)

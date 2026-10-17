@@ -49,7 +49,9 @@
     humanize,
     providerReadinessLabel,
     checkName,
+    checkGuide,
     checkStatusLabel,
+    sourceStatusLabel,
     checkStatusState,
     groupSourceChecks,
     type SourceCheck,
@@ -100,6 +102,16 @@
   let connectOpen = $state(false);
   let connectProviderId = $state("");
   let appleDownloadOpen = $state(false);
+
+  function goToSignIn() {
+    const panel = document.querySelector<HTMLElement>(".extension-session");
+    if (!panel) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    panel.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    const action = [...panel.querySelectorAll<HTMLButtonElement>("button:not([disabled])")]
+      .find((button) => /Reconnect|Start verification|Get a new link/.test(button.textContent ?? ""));
+    action?.focus({ preventScroll: true });
+  }
   let appleStatus = $state<AppleDownloadStatus | null>(null);
   let appleStatusError = $state("");
   let applePlaybackResult = $state("");
@@ -150,7 +162,7 @@
           ? 2
           : !sourceNeedsAccount(item) ||
               providerAccounts(item.id).some((account) => account.enabled) ? 0 : 1;
-      const order = { degraded: 0, needs_config: 1, partial_config: 1, available: 2, configured: 3, healthy: 4, disabled: 5 };
+      const order = { degraded: 0, needs_verification: 1, needs_config: 1, partial_config: 1, available: 2, configured: 3, healthy: 4, disabled: 5 };
       return section(left) - section(right) ||
         (order[sourceStatus(left, accounts, health) as keyof typeof order] ?? 2) -
         (order[sourceStatus(right, accounts, health) as keyof typeof order] ?? 2) ||
@@ -159,7 +171,7 @@
   );
   const canConnectAccounts = $derived(administrator || listenersCanConnectOwnAccounts);
   const needsSetup = $derived(providers.filter((item) =>
-    ["degraded", "needs_config", "partial_config"].includes(sourceStatus(item, accounts, health))));
+    ["degraded", "needs_verification", "needs_config", "partial_config"].includes(sourceStatus(item, accounts, health))));
   const pageId = $derived(serviceId || (initialSource && !(initialConnect && mode === "accounts") ? initialSource : ""));
   const pageSource = $derived(pageId ? provider(pageId) ?? null : null);
   const backHref = $derived(from === "accounts" ? "#/integrations/accounts" : "#/integrations/services");
@@ -437,7 +449,7 @@
               <ProviderArtwork id={account.providerId} definition={definition} />
               <span class="source-row-copy">
                 <strong>{providerDisplayName(providers, account.providerId)}</strong>
-                <small>{accountOwnershipLabel(account)}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
+                <small>{accountOwnershipLabel(account)}{definition?.usesSignedSession || account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
               </span>
               <span class="source-row-owner">
                 <small>Added by</small>
@@ -478,9 +490,10 @@
 {/snippet}
 
 {#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false)}
+  {@const guide = check.ready ? null : checkGuide(check.reasonCode)}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
-    <span><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/integrations/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
+    <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if guide}<small>{guide.step}</small>{#if guide.signIn}<button type="button" class="text-button" onclick={goToSignIn}>Go to sign-in</button>{/if}{/if}{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/integrations/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
     {#if canTest && onTest}<Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={onTest}>Test</Button>{/if}
   </li>
@@ -528,7 +541,7 @@
         <h2 id="service-title">{source.name}</h2>
         <p>{sourcePurpose(source)}</p>
         <div class="service-head-meta">
-          <Badge state={state}>{state === "needs_config" ? "Needs setup" : state === "disabled" ? "Turned off" : humanize(state)}</Badge>
+          <Badge state={state}>{sourceStatusLabel(state)}</Badge>
           <span>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</span>
           <span>{sourceOriginLabel(source)}</span>
         </div>
@@ -545,7 +558,7 @@
 
     <section class="settings-card service-overview" aria-label="Overview">
       <dl>
-        <div><dt>Status</dt><dd>{state === "needs_config" ? "Needs setup" : state === "disabled" ? "Turned off" : humanize(state)}</dd></div>
+        <div><dt>Status</dt><dd>{sourceStatusLabel(state)}</dd></div>
         <div><dt>Checks</dt><dd>{metrics.total ? `${metrics.passing} passed · ${metrics.failed} failing` : "None yet"}</dd></div>
         <div><dt>Last checked</dt><dd>{relativeTime(metrics.checkedAt, "Not checked yet")}</dd></div>
         <div><dt>Response time</dt><dd>{sourceTimingLabel(source, summary(source.id))}</dd></div>
@@ -573,7 +586,7 @@
               <header>
                 <span class="service-account-title">
                   <strong>{providerDisplayName(providers, account.providerId)}</strong>
-                  <small>{accountOwnershipLabel(account)}{account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
+                  <small>{accountOwnershipLabel(account)}{source.usesSignedSession || account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
                 </span>
                 <Badge state={!account.enabled ? "disabled" : readinessClass(capabilities.length > 0 && capabilities.every((item) => item.ready), capabilities.some((item) => item.health === "degraded") ? "degraded" : null)}>
                   {!account.enabled ? "Turned off" : capabilities.length && ready === capabilities.length ? "Working" : `${ready} of ${capabilities.length} ready`}
@@ -756,7 +769,7 @@
                 {#each (item.categories ?? []).slice(0, 4) as category}<span>{humanize(category)}</span>{/each}
               </span>
               <span class="source-row-status">
-                <Badge state={state}>{state === "needs_config" ? "Needs setup" : state === "disabled" ? "Turned off" : humanize(state)}</Badge>
+                <Badge state={state}>{sourceStatusLabel(state)}</Badge>
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
                 <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
               </span>

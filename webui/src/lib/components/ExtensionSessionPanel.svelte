@@ -131,7 +131,7 @@
       <div class="extension-connection-row">
         <span>
           <strong>Who can use this sign-in</strong>
-          <small>{selectedAccount.scope === "Shared" ? `Everyone in the household. ${sharingDescription(selectedAccount)}` : `Only ${selectedAccount.ownerDisplayName ?? "its owner"}.`}</small>
+          <small>{selectedAccount.scope === "Shared" ? sharingDescription(selectedAccount) : `Only ${selectedAccount.ownerDisplayName ?? "its owner"} can use it.`}</small>
         </span>
         {#if selectedAccount.canChangeAudience}<Button size="sm" variant="secondary" onclick={() => accessOpen = true}>Change</Button>{/if}
       </div>
