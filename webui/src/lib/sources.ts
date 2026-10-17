@@ -205,7 +205,7 @@ export const ctsMeasurementLabel = (measurement: CtsMeasurement) =>
   measurement.health === "healthy" ? `${measurement.latencyMs} ms` : "Failed";
 
 export const sourceOriginLabel = (provider: ProviderDefinition) =>
-  provider.implementationOrigin === "extension" ? "Extension" : "Built-in";
+  provider.originName || (provider.implementationOrigin === "extension" ? "Extension" : "Built-in");
 
 export function sourceTimingLabel(provider: ProviderDefinition, summary?: ProviderSummary) {
   if (summary?.p95LatencyMilliseconds != null)

@@ -9522,3 +9522,19 @@
     white-space: nowrap;
   }
 }
+
+@layer components {
+  .source-name {
+    display: inline-flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1) var(--space-2);
+  }
+
+  .source-name > .origin-badge {
+    font-weight: 600;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+}

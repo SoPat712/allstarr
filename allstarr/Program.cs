@@ -420,6 +420,8 @@ builder.Services.AddSingleton<ProviderStatusManager>();
 builder.Services.AddSingleton<ProviderCheckHistory>();
 builder.Services.AddSingleton<IProviderCheckSessions, ProviderCheckSessions>();
 builder.Services.AddSingleton<IProviderCheckRunner, ProviderAccountCheckRunner>();
+builder.Services.AddSingleton<ProviderCheckRequests>();
+builder.Services.AddSingleton<IProviderCheckRequests>(services => services.GetRequiredService<ProviderCheckRequests>());
 builder.Services.AddHostedService<ProviderCheckService>();
 builder.Services.AddSingleton<IPlaybackMetadataResolver, ExternalPlaybackMetadataResolver>();
 builder.Services.AddSingleton<IProtocolProviderGateway, ProtocolProviderGateway>();

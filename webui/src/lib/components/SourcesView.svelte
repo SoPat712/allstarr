@@ -212,6 +212,16 @@
   const readinessClass = (ready: boolean, health?: string | null) =>
     ready ? "healthy" : health === "degraded" ? "degraded" : "suggested";
 
+  let followUps: ReturnType<typeof setTimeout>[] = [];
+  // Signing in or changing an account starts checks in the background; pick up their results as they finish.
+  async function refreshAndFollow() {
+    await refresh();
+    for (const timer of followUps) clearTimeout(timer);
+    followUps = [5_000, 15_000, 45_000].map((delay) => setTimeout(() => void refresh(), delay));
+  }
+
+  $effect(() => () => { for (const timer of followUps) clearTimeout(timer); });
+
   async function refresh() {
     if (refreshing) return;
     refreshing = true;
@@ -448,7 +458,7 @@
             <a class="source-row-main" href={servicePath(account.providerId, account.id)} aria-label={`Open ${providerDisplayName(providers, account.providerId)} account`}>
               <ProviderArtwork id={account.providerId} definition={definition} />
               <span class="source-row-copy">
-                <strong>{providerDisplayName(providers, account.providerId)}</strong>
+                <span class="source-name"><strong>{providerDisplayName(providers, account.providerId)}</strong>{#if definition}<Badge tone="neutral" class="origin-badge">{sourceOriginLabel(definition)}</Badge>{/if}</span>
                 <small>{accountOwnershipLabel(account)}{definition?.usesSignedSession || account.secret.configured && !account.secret.revoked ? "" : " · Setup needed"}</small>
               </span>
               <span class="source-row-owner">
@@ -538,12 +548,11 @@
     <header class="service-head">
       <ProviderArtwork id={source.id} definition={source} />
       <div class="service-head-copy">
-        <h2 id="service-title">{source.name}</h2>
+        <div class="source-name source-title"><h2 id="service-title">{source.name}</h2><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(source)}</Badge></div>
         <p>{sourcePurpose(source)}</p>
         <div class="service-head-meta">
           <Badge state={state}>{sourceStatusLabel(state)}</Badge>
           <span>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</span>
-          <span>{sourceOriginLabel(source)}</span>
         </div>
       </div>
       <div class="sources-heading-actions">
@@ -681,7 +690,7 @@
         {/if}
       {/if}
 
-      {#if administrator}<ExtensionsView view="package" extensionId={source.id} onchanged={refresh} />{/if}
+      {#if administrator}<ExtensionsView view="package" extensionId={source.id} onchanged={refreshAndFollow} />{/if}
     {/if}
   </section>
 {/snippet}
@@ -716,7 +725,7 @@
         <section class="service-page">
           <a class="service-back" href={backHref}><ArrowLeft size={16} aria-hidden="true" />{backLabel}</a>
           <div class="compact-empty"><strong>This source isn't available</strong><p>It may have been removed or turned off.</p></div>
-          {#if administrator}<ExtensionsView view="package" extensionId={pageId} onchanged={refresh} />{/if}
+          {#if administrator}<ExtensionsView view="package" extensionId={pageId} onchanged={refreshAndFollow} />{/if}
         </section>
       {/if}
     {:else}
@@ -761,7 +770,7 @@
             <a class="source-row-main" href={servicePath(item.id)}>
               <ProviderArtwork id={item.id} definition={item} />
               <span class="source-row-copy">
-                <strong>{item.name}</strong>
+                <span class="source-name"><strong>{item.name}</strong><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(item)}</Badge></span>
                 <small>{sourcePurpose(item)}</small>
                 {#if appleReadiness}<small class="source-row-warning" role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
               </span>

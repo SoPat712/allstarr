@@ -6906,7 +6906,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await mockApi(page);
     await mockSignedSessionExtension(page, { state: "expired", accountId: "account", expiresAt: "2026-10-12T18:22:29Z" });
     await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema,
-      providers: [...schema.providers, { id: "signed-audio", name: "Signed Audio", categories: ["streaming"], accountSettings: [], usesSignedSession: true }],
+      providers: [...schema.providers, { id: "signed-audio", name: "Signed Audio", categories: ["streaming"], accountSettings: [], usesSignedSession: true, implementationOrigin: "extension", originName: "SpotiFLAC" }],
     } }));
     const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[]; audienceUsers: object[] };
     await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { ...fixture, accounts: [{ ...fixture.accounts[0],
@@ -6919,6 +6919,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     })) }));
     await page.goto("#/integrations/services/signed-audio");
     await expect(page.locator(".service-head-meta")).toContainText("Needs verification");
+    await expect(page.locator(".source-title .origin-badge")).toHaveText("SpotiFLAC");
     await expect(page.getByText("Degraded", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/Setup needed/)).toHaveCount(0);
     const check = page.locator(".service-check").filter({ hasText: "Streaming" }).first();
