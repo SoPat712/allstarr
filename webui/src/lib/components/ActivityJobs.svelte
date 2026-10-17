@@ -290,6 +290,7 @@
     .job-row-toggle { grid-template-columns: 2.5rem minmax(0, 1fr) 1.125rem; gap: var(--space-3); padding-inline: var(--space-4); }
     .job-row-end { grid-column: 2; grid-row: 2; gap: var(--space-3); }
     .job-row-end time { min-width: 0; text-align: left; }
+    .job-row-copy small { white-space: normal; overflow-wrap: anywhere; }
     .job-row-progress, .job-row-detail { padding-left: calc(2.5rem + var(--space-4) * 2); padding-right: var(--space-4); }
   }
 </style>
