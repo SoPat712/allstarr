@@ -78,7 +78,8 @@ public sealed class ProviderCtsDiagnosticRunner(
             item.Capability == ProviderCapabilityKind.Streaming);
         if (providerAccountId == Guid.Empty)
             providerAccountId = null;
-        if (capabilityDescriptor.AccountRequirement != ProviderAccountRequirement.None &&
+        // Optional accounts unlock extras; playback without one is still a valid check.
+        if (capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.Required &&
             !providerAccountId.HasValue)
         {
             return ProviderCtsDiagnosticResult.Failure(
