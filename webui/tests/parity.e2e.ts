@@ -3279,6 +3279,47 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await expect(page.locator(".mapping-row")).toHaveCount(0);
 });
 
+test("Match review pages from cache and acts on several selected songs", async ({ page }) => {
+  await mockApi(page);
+  const match = (id: string, title: string) => ({
+    externalSnapshotId: id, providerId: "lumen-audio", state: "suggested", decisionSource: "automatic", confidence: 0.82,
+    threshold: 0.9, title, artist: "Artist", album: "Album", durationMilliseconds: 180_000, providerIdentities: [],
+    reasons: [], warnings: [], candidates: [], manualAuthorities: [],
+  });
+  const pages: Record<string, ReturnType<typeof match>[]> = { "1": [match("one", "First song"), match("two", "Second song")], "2": [match("three", "Third song")] };
+  let holdFirstPage = false;
+  const rematched: string[] = [];
+  await page.route((url) => url.pathname === "/api/admin/track-matches", async (route) => {
+    const requested = new URL(route.request().url()).searchParams.get("page") ?? "1";
+    if (requested === "1" && holdFirstPage) await new Promise(() => {});
+    await route.fulfill({ json: { matches: pages[requested], pagination: { page: Number(requested), pageSize: 2, total: 3, totalPages: 2 },
+      stats: { total: 3, matched: 0, accepted: 0, unresolved: 0, suggested: 3, review: 3, rejected: 0, attention: 3 } } });
+  });
+  await page.route("**/api/admin/track-matches/*/rematch", (route) => {
+    rematched.push(new URL(route.request().url()).pathname.split("/")[4]);
+    return route.fulfill({ json: { rematched: true, state: "suggested" } });
+  });
+  await page.goto("#/library/mappings");
+  await expect(page.getByText("First song", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Next" }).click();
+  await expect(page.getByText("Third song", { exact: true })).toBeVisible();
+  holdFirstPage = true;
+  await page.getByRole("button", { name: "Previous" }).click();
+  await expect(page.getByText("First song", { exact: true })).toBeVisible({ timeout: 1000 });
+  holdFirstPage = false;
+
+  await page.getByRole("checkbox", { name: "Select all songs on this page" }).check();
+  const bar = page.getByRole("toolbar", { name: "Actions for selected songs" });
+  await expect(bar).toContainText("2 selected");
+  await page.getByRole("checkbox", { name: "Select Second song" }).uncheck();
+  await expect(page.getByRole("checkbox", { name: "Select all songs on this page" })).toHaveJSProperty("indeterminate", true);
+  await page.getByRole("checkbox", { name: "Select Second song" }).check();
+  await bar.getByRole("button", { name: "Rematch (2)" }).click();
+  await expect.poll(() => rematched.toSorted()).toEqual(["one", "two"]);
+  await expect(page.getByRole("status").filter({ hasText: "Rematched 2 songs." })).toBeVisible();
+  await expect(bar).toHaveCount(0);
+});
+
 test("Mappings keep mobile tabs, evidence, and actions readable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
