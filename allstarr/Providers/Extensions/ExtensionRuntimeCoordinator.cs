@@ -22,6 +22,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly ILogger<ExtensionRuntimeCoordinator> _logger;
     private readonly ProviderDownloadArtifactResolver _downloadArtifacts;
     private readonly ProviderDownloadWorkspaceOptions _downloadOptions;
+    private readonly ExtensionExecutionOptions _executionOptions;
     private readonly string _runtimeRoot;
     private readonly string _packageRoot;
     private readonly IDataProtector _sessionProtector;
@@ -46,6 +47,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         IDataProtectionProvider? dataProtectionProvider = null,
         allstarr.Services.Common.IProviderCheckRequests? checkRequests = null)
     {
+        _executionOptions = configuration.GetSection(ExtensionExecutionOptions.SectionName)
+            .Get<ExtensionExecutionOptions>() ?? new();
+        _executionOptions.GetSignedDownloadRequestTimeout();
         _checkRequests = checkRequests;
         _factory = factory;
         _controlPlane = controlPlane;
@@ -300,7 +304,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         var sandbox = new ExtensionSandbox(package.PackagePath, manifestJson,
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
-            _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId));
+            _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId),
+            executionOptions: _executionOptions);
         if (manifest.SignedSession != null)
         {
             var account = await EnsureDefaultSessionAccountAsync(package, manifest.DisplayName, cancellationToken);

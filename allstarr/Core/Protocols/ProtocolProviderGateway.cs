@@ -1023,12 +1023,16 @@ public sealed partial class ProtocolProviderGateway(
         ArgumentNullException.ThrowIfNull(protocol);
         if (protocol.Actor is null) return null;
 
+        protocol.CancellationToken.ThrowIfCancellationRequested();
+        var streamOpeningStartedAt = DateTimeOffset.UtcNow;
+        var protocolDeadline = protocol.Deadline;
+        if (protocolDeadline <= streamOpeningStartedAt)
+            throw new OperationCanceledException(protocol.CancellationToken);
         using var opening = CancellationTokenSource.CreateLinkedTokenSource(protocol.CancellationToken);
-        var remaining = protocol.Deadline - DateTimeOffset.UtcNow;
-        opening.CancelAfter(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero);
+        opening.CancelAfter(protocolDeadline - streamOpeningStartedAt);
         protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
             protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
-            protocol.Deadline, opening.Token, protocol.Client)
+            protocolDeadline, opening.Token, protocol.Client)
         { Policy = protocol.Policy, RequestedItemId = protocol.RequestedItemId };
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
@@ -1146,6 +1150,28 @@ public sealed partial class ProtocolProviderGateway(
                 servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision);
             if (cached != null)
                 return await OpenedAsync(cached with { SelectionReason = $"{routeReason}:managed-cache" }, candidate.Context, servingTrack);
+            var candidateDeadline = protocolDeadline;
+            if (candidate.Implementation is IProviderDownloadStreamingCapability)
+            {
+                opening.Token.ThrowIfCancellationRequested();
+                candidateDeadline = streamOpeningStartedAt.Add(GetDownloadStreamTimeout());
+            }
+            var candidateRemaining = candidateDeadline - DateTimeOffset.UtcNow;
+            if (candidateRemaining > TimeSpan.Zero)
+                opening.CancelAfter(candidateRemaining);
+            else
+                opening.Cancel();
+            opening.Token.ThrowIfCancellationRequested();
+            var candidateExecution = new ProviderExecutionContext(
+                candidate.Context.Actor,
+                candidate.Context.ProviderId,
+                candidate.Context.Account,
+                candidate.Context.Policy,
+                candidate.Context.OperationId,
+                candidate.Context.CorrelationId,
+                candidateDeadline,
+                protocol.CancellationToken,
+                candidate.Context.IdempotencyKey);
             var leaseRequest = new ProviderStreamLeaseRequest(
                 servingTrack,
                 quality,
@@ -1154,12 +1180,7 @@ public sealed partial class ProtocolProviderGateway(
             var leaseFailed = false;
             async Task<ProviderOutcome<ProviderStreamLease>> ResolveLeaseAsync()
             {
-                var resolved = await candidate.Implementation.GetStreamLeaseAsync(
-                    new ProviderExecutionContext(candidate.Context.Actor, candidate.Context.ProviderId,
-                        candidate.Context.Account, candidate.Context.Policy,
-                        candidate.Context.OperationId, candidate.Context.CorrelationId, protocol.Deadline,
-                        protocol.CancellationToken, candidate.Context.IdempotencyKey),
-                    leaseRequest);
+                var resolved = await candidate.Implementation.GetStreamLeaseAsync(candidateExecution, leaseRequest);
                 leaseFailed = !resolved.IsSuccess;
                 return resolved;
             }
@@ -1191,7 +1212,7 @@ public sealed partial class ProtocolProviderGateway(
                     servingTrack.Value, candidate.Context.Account?.AccountId,
                     EffectiveQuality: quality,
                     SelectionReason: $"{routeReason}:remote",
-                    ServingAccountRevision: candidate.Context.Account?.Revision), candidate.Context, servingTrack);
+                    ServingAccountRevision: candidate.Context.Account?.Revision), candidateExecution, servingTrack);
             }
             var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
             if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
@@ -1222,6 +1243,13 @@ public sealed partial class ProtocolProviderGateway(
                 stream.ServingProviderId, stream.IsCached);
             return stream;
         }
+    }
+
+    private TimeSpan GetDownloadStreamTimeout()
+    {
+        var options = new ProtocolExecutionOptions();
+        configuration?.GetSection(ProtocolExecutionOptions.SectionName).Bind(options);
+        return options.GetDownloadStreamTimeout();
     }
 
     private static async Task<ProviderOutcome<(HttpResponseMessage Response, ProviderStreamLease Lease)>> OpenCandidateAsync(

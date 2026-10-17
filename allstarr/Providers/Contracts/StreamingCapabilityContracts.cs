@@ -129,3 +129,7 @@ public interface IProviderStreamingCapability : IProviderCapability
         ProviderExecutionContext context,
         ProviderStreamLeaseRequest request);
 }
+
+public interface IProviderDownloadStreamingCapability : IProviderStreamingCapability
+{
+}

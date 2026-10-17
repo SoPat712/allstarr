@@ -133,6 +133,8 @@ public sealed class ProtocolExecutionOptions
 
     public int OperationTimeoutSeconds { get; set; } = 30;
 
+    public int DownloadStreamTimeoutSeconds { get; set; } = 150;
+
     public TimeSpan GetOperationTimeout()
     {
         if (OperationTimeoutSeconds is < 1 or > 300)
@@ -142,6 +144,17 @@ public sealed class ProtocolExecutionOptions
         }
 
         return TimeSpan.FromSeconds(OperationTimeoutSeconds);
+    }
+
+    public TimeSpan GetDownloadStreamTimeout()
+    {
+        if (DownloadStreamTimeoutSeconds is < 30 or > 300)
+        {
+            throw new InvalidOperationException(
+                "ProtocolExecution:DownloadStreamTimeoutSeconds must be between 30 and 300.");
+        }
+
+        return TimeSpan.FromSeconds(DownloadStreamTimeoutSeconds);
     }
 }
 
