@@ -4,6 +4,11 @@
   import { waitForRestart } from "$lib/restart";
   import { Button } from "$lib/components/ui/button";
   let { fields, config }: { fields: ConfigField[]; config: Record<string, unknown> } = $props();
+  const help: Record<string, string> = {
+    ODESLI_ENABLED: "Asks the public song.link service for the same song on your other sources when Allstarr has no match of its own. Song links are sent to song.link.",
+    ODESLI_RATE_LIMIT_MS: "Wait between song.link lookups so its free service doesn't block Allstarr.",
+    EXTENSIONS_ALLOW_REMOTE_INSTALL: "Off: extensions can be installed and updated only from your trusted admin networks, such as your home network. On: also from anywhere that can reach this admin page.",
+  };
   let busy = $state(false), error = $state(""), saved = $state(false);
   async function save(event: SubmitEvent) {
     event.preventDefault(); busy = true; error = "";
@@ -17,16 +22,17 @@
   }
 </script>
 {#if fields.length}
-  <form class="settings-card p-5 m-4 space-y-4" aria-label="Service policy" onsubmit={(event) => void save(event)}>
-    <h3>Service and extension policy</h3><p>Control optional link lookups and installing remote extension packages. Changes restart Allstarr.</p>
+  <form class="settings-card p-5 my-4 space-y-4" aria-label="Song links and extension installs" onsubmit={(event) => void save(event)}>
+    <h3 class="font-semibold">Song links and extension installs</h3><p>Changes restart Allstarr.</p>
     {#each fields as field}
       <label class="field"><span>{field.label}</span>
         {#if field.type === "toggle"}<select name={field.key} value={String(fieldValue(config, field) ?? false)} disabled={busy}><option value="false">Off</option><option value="true">On</option></select>
         {:else}<input name={field.key} value={String(fieldValue(config, field) ?? "")} type="number" min={field.min ?? undefined} max={field.max ?? undefined} disabled={busy} />{/if}
+        {#if help[field.key]}<small>{help[field.key]}</small>{/if}
       </label>
     {/each}
     {#if saved}<p role="status">Service policy saved.</p>{/if}
-    <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save service policy"}</Button>
+    <Button type="submit" disabled={busy}>{busy ? "Saving…" : "Save and restart"}</Button>
   </form>
 {/if}
 {#if error}<p class="notice-error m-4" role="alert">{error}</p>{/if}

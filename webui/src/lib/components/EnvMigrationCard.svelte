@@ -153,6 +153,6 @@
     </form>
   {/if}
   {#each checks as check}<p><strong>{humanize(check.providerId)} · {check.enabled ? "Enabled" : "Needs review"}</strong> {check.reason}</p>{/each}
-  {#if mediaQueued}<a class="button secondary" href="#/activity">Follow file import in Activity</a>{/if}
+  {#if mediaQueued}<Button variant="secondary" href="#/activity">Follow file import in Activity</Button>{/if}
   {#if feedback}<p class:notice-error={failed} class="migration-feedback" role={failed ? "alert" : "status"}>{feedback}</p>{/if}
 </article>
