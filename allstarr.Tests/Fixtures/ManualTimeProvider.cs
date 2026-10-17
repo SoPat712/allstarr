@@ -2,7 +2,7 @@ using System.Threading.Channels;
 
 namespace allstarr.Tests;
 
-internal sealed class ManualTimeProvider : TimeProvider
+internal sealed class ManualTimeProvider(DateTimeOffset? initialUtcNow = null) : TimeProvider
 {
     private readonly List<ManualTimer> timers = [];
     private readonly Channel<(ManualTimer Timer, int Version, TimeSpan Delay)> scheduled = Channel.CreateUnbounded<(ManualTimer, int, TimeSpan)>();
@@ -10,7 +10,7 @@ internal sealed class ManualTimeProvider : TimeProvider
 
     public override long TimestampFrequency => TimeSpan.TicksPerSecond;
     public override long GetTimestamp() => Interlocked.Read(ref timestamp);
-    public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
+    public override DateTimeOffset GetUtcNow() => (initialUtcNow ?? DateTimeOffset.UnixEpoch).AddTicks(GetTimestamp());
     public async Task<TimeSpan> NextTimerAsync()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));

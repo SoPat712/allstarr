@@ -16,6 +16,7 @@ public static class ObservedProviderCapabilities
             IProviderPlaylistCapability playlist when CanReturn<Playlist>() => new Playlist(playlist, observer),
             IProviderDownloadCapability download when CanReturn<Download>() => new Download(download, observer),
             IProviderLyricsCapability lyrics when CanReturn<Lyrics>() => new Lyrics(lyrics, observer),
+            IProviderDownloadStreamingCapability streaming when CanReturn<DownloadStreaming>() => new DownloadStreaming(streaming, observer),
             IProviderStreamingCapability streaming when CanReturn<Streaming>() => new Streaming(streaming, observer),
             IProviderIntelligenceCapability intelligence when CanReturn<Intelligence>() => new Intelligence(intelligence, observer),
             IProviderHealthProbeCapability health when CanReturn<Health>() => new Health(health, observer),
@@ -173,7 +174,7 @@ public static class ObservedProviderCapabilities
             InvokeAsync(context, () => Implementation.FetchLyricsAsync(context, request));
     }
 
-    private sealed class Streaming(IProviderStreamingCapability implementation, IProviderOutcomeObserver observer)
+    private class Streaming(IProviderStreamingCapability implementation, IProviderOutcomeObserver observer)
         : ObservedCapability<IProviderStreamingCapability>(implementation, observer), IProviderStreamingCapability
     {
         public Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
@@ -186,6 +187,9 @@ public static class ObservedProviderCapabilities
                 observationError: outcome => !outcome.IsSuccess ? outcome.Error :
                     outcome.RequireValue().Available ? null : new ProviderError(ProviderErrorKind.CapabilityUnavailable));
     }
+
+    private sealed class DownloadStreaming(IProviderDownloadStreamingCapability implementation, IProviderOutcomeObserver observer)
+        : Streaming(implementation, observer), IProviderDownloadStreamingCapability;
 
     private sealed class Intelligence(IProviderIntelligenceCapability implementation, IProviderOutcomeObserver observer)
         : ObservedCapability<IProviderIntelligenceCapability>(implementation, observer), IProviderIntelligenceCapability

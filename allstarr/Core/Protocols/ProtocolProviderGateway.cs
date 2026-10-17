@@ -174,7 +174,8 @@ public sealed partial class ProtocolProviderGateway(
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
     ITrackIdentityService? identities = null,
     IProviderOutcomeObserver? outcomes = null,
-    RecordingKeptFiles? keptFiles = null) : IProtocolProviderGateway
+    RecordingKeptFiles? keptFiles = null,
+    TimeProvider? timeProvider = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -1024,12 +1025,13 @@ public sealed partial class ProtocolProviderGateway(
         if (protocol.Actor is null) return null;
 
         protocol.CancellationToken.ThrowIfCancellationRequested();
-        var streamOpeningStartedAt = DateTimeOffset.UtcNow;
+        var clock = timeProvider ?? TimeProvider.System;
+        var streamOpeningStartedAt = clock.GetUtcNow();
         var protocolDeadline = protocol.Deadline;
         if (protocolDeadline <= streamOpeningStartedAt)
             throw new OperationCanceledException(protocol.CancellationToken);
-        using var opening = CancellationTokenSource.CreateLinkedTokenSource(protocol.CancellationToken);
-        opening.CancelAfter(protocolDeadline - streamOpeningStartedAt);
+        using var openingTimeout = new CancellationTokenSource(protocolDeadline - streamOpeningStartedAt, clock);
+        using var opening = CancellationTokenSource.CreateLinkedTokenSource(protocol.CancellationToken, openingTimeout.Token);
         protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
             protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
             protocolDeadline, opening.Token, protocol.Client)
@@ -1156,11 +1158,11 @@ public sealed partial class ProtocolProviderGateway(
                 opening.Token.ThrowIfCancellationRequested();
                 candidateDeadline = streamOpeningStartedAt.Add(GetDownloadStreamTimeout());
             }
-            var candidateRemaining = candidateDeadline - DateTimeOffset.UtcNow;
+            var candidateRemaining = candidateDeadline - clock.GetUtcNow();
             if (candidateRemaining > TimeSpan.Zero)
-                opening.CancelAfter(candidateRemaining);
+                openingTimeout.CancelAfter(candidateRemaining);
             else
-                opening.Cancel();
+                openingTimeout.Cancel();
             opening.Token.ThrowIfCancellationRequested();
             var candidateExecution = new ProviderExecutionContext(
                 candidate.Context.Actor,

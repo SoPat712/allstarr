@@ -8,6 +8,20 @@ namespace allstarr.Tests;
 
 public sealed class ObservedProviderCapabilitiesTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Streaming_PreservesDownloadStreamingSupport(bool downloadBacked)
+    {
+        var capability = Capability<IProviderStreamingCapability>(ProviderCapabilityKind.Streaming);
+        if (downloadBacked) capability.As<IProviderDownloadStreamingCapability>();
+
+        var wrapped = ObservedProviderCapabilities.Wrap(capability.Object, new RecordingObserver());
+
+        Assert.NotSame(capability.Object, wrapped);
+        Assert.Equal(downloadBacked, wrapped is IProviderDownloadStreamingCapability);
+    }
+
     [Fact]
     public async Task Metadata_ForwardsExactArgumentsAndReturnsOriginalOutcome()
     {
