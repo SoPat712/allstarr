@@ -1570,7 +1570,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(order.Split(','));
         gateway.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
-                ProviderLyricsFormat.LineTimed, "Fixture Song", It.IsAny<IReadOnlyList<string>>(), "Fixture Album", 123))
+                ProviderLyricsFormat.LineTimed, "Fixture Song", It.IsAny<IReadOnlyList<string>>(), "Fixture Album", 123, null))
             .Callback(() => calls.Add("lrclib"))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
                 providerTimed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,
@@ -1611,7 +1611,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib"]);
         gateway.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
-                It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()))
+                It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
                 ProviderLyricsFormat.LineTimed, "[00:01.000]Unverified metadata was used"));
         using var factory = new ProtocolFactory("Jellyfin", request => request.RequestUri!.AbsolutePath switch
@@ -1630,7 +1630,7 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.NotEqual(HttpStatusCode.OK, response.StatusCode);
         Assert.DoesNotContain("Unverified", await response.Content.ReadAsStringAsync(), StringComparison.Ordinal);
         gateway.Verify(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }
 
     [Fact]
@@ -3915,7 +3915,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(order.Split(','));
         gateway.Setup(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), "lrclib", It.IsAny<string>(),
-                ProviderLyricsFormat.LineTimed, "Fixture Song", It.IsAny<IReadOnlyList<string>>(), "Fixture Album", 123))
+                ProviderLyricsFormat.LineTimed, "Fixture Song", It.IsAny<IReadOnlyList<string>>(), "Fixture Album", 123, null))
             .Callback(() => calls.Add("lrclib"))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
                 providerTimed ? ProviderLyricsFormat.LineTimed : ProviderLyricsFormat.PlainText,

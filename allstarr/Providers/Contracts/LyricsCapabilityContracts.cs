@@ -26,7 +26,8 @@ public sealed record ProviderLyricsRequest
         string? trackTitle = null,
         IReadOnlyList<string>? artistNames = null,
         string? albumTitle = null,
-        int? durationSeconds = null)
+        int? durationSeconds = null,
+        string? isrc = null)
     {
         ArgumentNullException.ThrowIfNull(providerTrackId);
         if (canonicalRecordingId == Guid.Empty)
@@ -54,6 +55,7 @@ public sealed record ProviderLyricsRequest
             throw new ArgumentOutOfRangeException(nameof(durationSeconds));
         }
         DurationSeconds = durationSeconds;
+        Isrc = ProviderContractValidation.OptionalText(isrc, nameof(isrc), 100);
     }
 
     public Guid CanonicalRecordingId { get; }
@@ -71,6 +73,8 @@ public sealed record ProviderLyricsRequest
     public string? AlbumTitle { get; }
 
     public int? DurationSeconds { get; }
+
+    public string? Isrc { get; }
 }
 
 public sealed record ProviderLyricsTimedSegment

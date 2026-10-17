@@ -69,13 +69,13 @@ public sealed class ProtocolLyricsPreviewTests
         var calls = new List<string>();
         var providers = Providers(context, calls);
         providers.Setup(item => item.GetLyricsAsync(context, "spotify", "exact", ProviderLyricsFormat.LineTimed,
-                "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()))
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
             .Callback(cancellation.Cancel).ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
                 "spotify", ProviderLyricsFormat.LineTimed, "[00:01.234]Canceled words"));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Resolver(providers).FindAllAsync(context,
             new Song { Title = "Fixture", Artist = "Artist", ExternalProvider = "spotify", ExternalId = "exact" }, "recording"));
         providers.Verify(item => item.GetLyricsAsync(context, "lyricsplus", It.IsAny<string>(), It.IsAny<ProviderLyricsFormat?>(),
-            It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+            It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }
 
     private static ProtocolLyricsResolver Resolver(Mock<IProtocolProviderGateway> providers) =>
@@ -89,7 +89,7 @@ public sealed class ProtocolLyricsPreviewTests
         {
             var source = id;
             var setup = providers.Setup(item => item.GetLyricsAsync(context, source, It.IsAny<string>(),
-                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()))
+                ProviderLyricsFormat.LineTimed, "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
                 .Callback(() => calls.Add(source));
             if (id == "lrclib") setup.ThrowsAsync(new HttpRequestException("Synthetic unavailable source"));
             else setup.ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, source,

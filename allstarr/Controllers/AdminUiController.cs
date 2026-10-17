@@ -1142,6 +1142,24 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
+            Id = "lrcred",
+            Name = "lrc.red",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public word-synced TTML; no account required"]
+        },
+        new()
+        {
+            Id = "unison",
+            Name = "Unison",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Lyrics from Unison (https://unison.boidu.dev)"]
+        },
+        new()
+        {
             Id = "lyricsplus",
             Name = "LyricsPlus",
             Icon = "lyrics",

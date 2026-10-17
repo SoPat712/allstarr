@@ -444,7 +444,7 @@ public sealed class ProviderAccountCheckRunnerTests
     { Id = Guid.NewGuid(), ProviderId = provider, Enabled = enabled, DisplayName = "Fixture", Revision = 1 };
     private static IConfiguration Config(string enabled)
     {
-        var all = new[] { "apple-musickit", "qobuz", "deezer", "spotify", "lrclib", "lyricsplus", "musixmatch", "lastfm", "listenbrainz", "multi-scrobbler", "koito", "audiomuse-ai" };
+        var all = new[] { "apple-musickit", "qobuz", "deezer", "spotify", "lrcred", "unison", "lrclib", "lyricsplus", "musixmatch", "lastfm", "listenbrainz", "multi-scrobbler", "koito", "audiomuse-ai" };
         return new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = string.Join(',', all.Except(enabled.Split(','))),

@@ -37,7 +37,7 @@ public sealed partial class EncryptedSecretStoreTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["ProviderChecks:PauseMilliseconds"] = "0",
-            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "apple-musickit,spotify,deezer,qobuz,lrclib,lyricsplus,musixmatch,lastfm,multi-scrobbler,koito,audiomuse-ai"
+            ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "apple-musickit,spotify,deezer,qobuz,lrcred,unison,lrclib,lyricsplus,musixmatch,lastfm,multi-scrobbler,koito,audiomuse-ai"
         }).Build();
         using var handler = new ProviderCheckCredentialHandler();
         var status = new ProviderStatusManager(configuration, new ProviderCheckHttpFactory(handler),

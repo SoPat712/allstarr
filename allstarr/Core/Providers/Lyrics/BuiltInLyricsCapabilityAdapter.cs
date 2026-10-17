@@ -79,6 +79,24 @@ public static class BuiltInLyricsCapabilityRegistration
 {
     public static IServiceCollection AddBuiltInLyricsCapabilities(this IServiceCollection services)
     {
+        services.AddHttpClient(LrcRedCapabilityAdapter.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new LrcRedCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(LrcRedCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "lrcred", "lrc.red", "Public ISRC and metadata lookup with word-synced TTML.",
+            provider.GetRequiredService<LrcRedCapabilityAdapter>()));
+        services.AddHttpClient(UnisonCapabilityAdapter.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new UnisonCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(UnisonCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "unison", "Unison", "Lyrics from Unison (https://unison.boidu.dev)",
+            provider.GetRequiredService<UnisonCapabilityAdapter>()));
         services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
         services.AddSingleton(provider => new LyricsPlusCapabilityAdapter(
@@ -107,6 +125,11 @@ public static class BuiltInLyricsCapabilityRegistration
             CreateLrclib(provider.GetRequiredService<LrclibService>())));
         return services;
     }
+
+    private static ProviderRegistration PublicRegistration(string id, string name, string description, IProviderLyricsCapability adapter) => new(
+        new ProviderDescriptor(id, name, description, ProviderOrigin.BuiltIn, "1", "ttml-lyrics-v1",
+            [new(ProviderCapabilityKind.Lyrics, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["fetchLyrics"])],
+            new ProviderPermissionDescriptor()), [adapter]);
 
     public static BuiltInLyricsCapabilityAdapter CreateLrclib(LrclibService service) => new(
         "lrclib",

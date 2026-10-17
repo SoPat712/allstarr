@@ -263,11 +263,11 @@ public sealed class ProtocolLyricsResolver(
                         var recordingId = await ResolveAliasRecordingAsync();
                         if (!recordingId.HasValue) return null;
                         result = await providers.GetRecordingLyricsAsync(protocol, providerId, recordingId.Value,
-                            ProviderLyricsFormat.LineTimed, song.Title, artists, song.Album, song.Duration, householdOnly);
+                            ProviderLyricsFormat.LineTimed, song.Title, artists, song.Album, song.Duration, householdOnly, song.Isrc);
                     }
                     else result = householdOnly ? await providers.GetHouseholdLyricsAsync(
                         protocol, providerId, externalId, ProviderLyricsFormat.LineTimed,
-                        song.Title, artists, song.Album, song.Duration) : await providers.GetLyricsAsync(
+                        song.Title, artists, song.Album, song.Duration, song.Isrc) : await providers.GetLyricsAsync(
                         protocol,
                         providerId,
                         externalId,
@@ -275,7 +275,8 @@ public sealed class ProtocolLyricsResolver(
                         song.Title,
                         artists,
                         song.Album,
-                        song.Duration);
+                        song.Duration,
+                        song.Isrc);
                     protocol.CancellationToken.ThrowIfCancellationRequested();
                     if (string.IsNullOrWhiteSpace(result?.Content)) return null;
                     lyrics = new LyricsInfo
@@ -315,7 +316,7 @@ public sealed class ProtocolLyricsResolver(
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
-        if (providerId is "lrclib" or "lyricsplus" or "musixmatch")
+        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "unison")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
         var sourceIsApple = sourceProvider is not null &&

@@ -73,6 +73,36 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal("/api/get", request.AbsolutePath);
     }
 
+    [Theory]
+    [InlineData("lrcred", "{\"hits\":[]}", "lrc.red")]
+    [InlineData("unison", "{\"success\":false,\"code\":\"NOT_FOUND\"}", "unison.boidu.dev")]
+    public async Task PublicTimedLyricsProbeNeedsNoAccount(string provider, string body, string host)
+    {
+        var handler = new QueuedResponseHandler(Json(HttpStatusCode.OK, body));
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler));
+        Assert.True(manager.CanTestAccountFreeCapability(provider, "lyrics"));
+        Assert.Equal(ProviderConfigurationState.NotRequired, manager.GetAccountFreeStatus(provider, "lyrics").Configuration);
+        var status = await manager.TestAccountFreeProviderCapabilityAsync(provider, "lyrics");
+        Assert.Equal(ProviderHealthState.Healthy, status.Health);
+        Assert.Equal(host, Assert.Single(handler.Requests).Host);
+    }
+
+    [Fact]
+    public async Task PublicHealthProbesBypassTheLyricsCache()
+    {
+        var handler = new QueuedResponseHandler(
+            Json(HttpStatusCode.OK, "{\"success\":true,\"data\":{\"lyrics\":\"Fixture\",\"format\":\"plain\"}}"),
+            Json(HttpStatusCode.TooManyRequests, "{}"));
+        var adapter = new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(new HttpClient(handler), new TestMemoryApplicationCache());
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler),
+            services: Mock.Of<IServiceProvider>(provider => provider.GetService(typeof(allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter)) == adapter));
+        Assert.Equal(ProviderHealthState.Healthy, (await manager.TestAccountFreeProviderCapabilityAsync("unison", "lyrics")).Health);
+        var second = await manager.TestAccountFreeProviderCapabilityAsync("unison", "lyrics");
+        Assert.Equal(ProviderHealthState.Degraded, second.Health);
+        Assert.Equal("rate-limited", second.ReasonCode);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
     [Fact]
     public void LyricsPlusIsAccountFreeAndMusixmatchRequiresItsManagedToken()
     {

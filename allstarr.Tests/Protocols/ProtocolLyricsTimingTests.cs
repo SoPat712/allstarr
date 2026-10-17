@@ -27,7 +27,7 @@ public sealed class ProtocolLyricsTimingTests
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["fixture"]);
         providers.Setup(item => item.GetLyricsAsync(context, "fixture", "track", ProviderLyricsFormat.LineTimed,
-                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120))
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "fixture",
                 ProviderLyricsFormat.LineTimed, "[00:01.234]Synthetic words", "revision", lines));
         var song = new Song

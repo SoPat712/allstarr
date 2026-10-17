@@ -123,12 +123,12 @@ public interface IProtocolProviderGateway
         ProtocolExecutionContext protocol, string providerId, Guid recordingId,
         ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
         IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null,
-        bool householdOnly = false);
+        bool householdOnly = false, string? isrc = null);
 
     Task<ProviderLyricsResult?> GetHouseholdLyricsAsync(
         ProtocolExecutionContext protocol, string providerId, string externalId,
         ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
-        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null);
+        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null, string? isrc = null);
 
     Task<ProviderLyricsResult?> GetLyricsAsync(
         ProtocolExecutionContext protocol,
@@ -138,7 +138,8 @@ public interface IProtocolProviderGateway
         string? trackTitle = null,
         IReadOnlyList<string>? artistNames = null,
         string? albumTitle = null,
-        int? durationSeconds = null);
+        int? durationSeconds = null,
+        string? isrc = null);
 }
 
 public sealed class ProtocolProviderAccountAccessException()
@@ -1350,21 +1351,21 @@ public sealed partial class ProtocolProviderGateway(
         ProtocolExecutionContext protocol, string providerId, Guid recordingId,
         ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
         IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null,
-        bool householdOnly = false)
+        bool householdOnly = false, string? isrc = null)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         if (recordingId == Guid.Empty) throw new ArgumentException("A recording ID is required.", nameof(recordingId));
         protocol.CancellationToken.ThrowIfCancellationRequested();
         return GetLyricsCoreAsync(protocol, providerId, recordingId.ToString("D"), preferredFormat, trackTitle,
-            artistNames, albumTitle, durationSeconds, householdOnly ? [ProviderAccountScope.Shared] : null, recordingId);
+            artistNames, albumTitle, durationSeconds, householdOnly ? [ProviderAccountScope.Shared] : null, recordingId, isrc);
     }
 
     public Task<ProviderLyricsResult?> GetHouseholdLyricsAsync(
         ProtocolExecutionContext protocol, string providerId, string externalId,
         ProviderLyricsFormat? preferredFormat = null, string? trackTitle = null,
-        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null) =>
+        IReadOnlyList<string>? artistNames = null, string? albumTitle = null, int? durationSeconds = null, string? isrc = null) =>
         GetLyricsCoreAsync(protocol, providerId, externalId, preferredFormat, trackTitle, artistNames, albumTitle,
-            durationSeconds, [ProviderAccountScope.Shared]);
+            durationSeconds, [ProviderAccountScope.Shared], isrc: isrc);
 
     public Task<ProviderLyricsResult?> GetLyricsAsync(
         ProtocolExecutionContext protocol,
@@ -1374,14 +1375,15 @@ public sealed partial class ProtocolProviderGateway(
         string? trackTitle = null,
         IReadOnlyList<string>? artistNames = null,
         string? albumTitle = null,
-        int? durationSeconds = null) =>
+        int? durationSeconds = null,
+        string? isrc = null) =>
         GetLyricsCoreAsync(protocol, providerId, externalId, preferredFormat, trackTitle, artistNames, albumTitle,
-            durationSeconds, null);
+            durationSeconds, null, isrc: isrc);
 
     private async Task<ProviderLyricsResult?> GetLyricsCoreAsync(
         ProtocolExecutionContext protocol, string providerId, string externalId, ProviderLyricsFormat? preferredFormat,
         string? trackTitle, IReadOnlyList<string>? artistNames, string? albumTitle, int? durationSeconds,
-        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes, Guid? recordingId = null)
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes, Guid? recordingId = null, string? isrc = null)
     {
         providerId = NormalizeProvider(providerId);
         var trackId = new ProviderExternalResourceId(providerId, ProviderResourceKind.Track, externalId);
@@ -1405,7 +1407,8 @@ public sealed partial class ProtocolProviderGateway(
                 trackTitle: trackTitle,
                 artistNames: artistNames,
                 albumTitle: albumTitle,
-                durationSeconds: durationSeconds));
+                durationSeconds: durationSeconds,
+                isrc: isrc));
         if (outcome.IsSuccess)
         {
             var result = outcome.RequireValue();
