@@ -45,6 +45,8 @@ internal sealed class ExtensionSignedSessionClient
     private static readonly TimeSpan AdministratorRequestLimit = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ScriptRequestLimit = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(35);
+    private readonly TimeProvider _timeProvider;
+    private readonly TimeSpan _signedDownloadRequestLimit;
     private readonly ExtensionSignedSessionConfig _config;
     private readonly IHttpClientFactory _clients;
     private readonly IDataProtector _protector;
@@ -62,8 +64,12 @@ internal sealed class ExtensionSignedSessionClient
         IReadOnlySet<string> allowedOrigins,
         string runtimeStateDirectory,
         string extensionId,
-        string? legacyStateDirectory = null)
+        string? legacyStateDirectory = null,
+        TimeProvider? timeProvider = null,
+        ExtensionExecutionOptions? executionOptions = null)
     {
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _signedDownloadRequestLimit = (executionOptions ?? new()).GetSignedDownloadRequestTimeout();
         _config = config;
         _clients = clients;
         _protector = protector;
@@ -177,22 +183,42 @@ internal sealed class ExtensionSignedSessionClient
 
     private T RunScript<T>(Func<CancellationToken, Task<T>> operation)
     {
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None);
-        limit.CancelAfter(ScriptRequestLimit);
-        if (!_gate.Wait(GateWait)) throw new TimeoutException("The extension session is busy.");
-        try { return operation(limit.Token).GetAwaiter().GetResult(); }
+        WaitForGateAsync(CancellationToken.None).GetAwaiter().GetResult();
+        try
+        {
+            var budget = ExtensionInvocationBudget.Current;
+            var remaining = budget?.RemainingMilliseconds;
+            var requestLimit = budget is { IsDownload: true } && remaining > ScriptRequestLimit.TotalMilliseconds
+                ? _signedDownloadRequestLimit : ScriptRequestLimit;
+            if (remaining.HasValue)
+                requestLimit = TimeSpan.FromMilliseconds(Math.Min(remaining.Value, requestLimit.TotalMilliseconds));
+            using var timeout = new CancellationTokenSource(requestLimit, _timeProvider);
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(
+                budget?.Token ?? CancellationToken.None, timeout.Token);
+            return operation(limit.Token).GetAwaiter().GetResult();
+        }
         finally { _gate.Release(); }
     }
 
     private async Task<T> RunAdministratorAsync<T>(
         Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
     {
-        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        limit.CancelAfter(AdministratorRequestLimit);
-        if (!await _gate.WaitAsync(GateWait, cancellationToken))
-            throw new TimeoutException("The extension session is busy.");
+        using var timeout = new CancellationTokenSource(AdministratorRequestLimit, _timeProvider);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        await WaitForGateAsync(cancellationToken);
         try { return await operation(limit.Token); }
         finally { _gate.Release(); }
+    }
+
+    private async Task WaitForGateAsync(CancellationToken cancellationToken)
+    {
+        using var timeout = new CancellationTokenSource(GateWait, _timeProvider);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try { await _gate.WaitAsync(limit.Token); }
+        catch (OperationCanceledException) when (timeout.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("The extension session is busy.");
+        }
     }
 
     private void ClearRecord()
@@ -521,6 +547,7 @@ internal sealed class ExtensionSignedSessionClient
     {
         EnsureAllowed(target);
         using var client = _clients.CreateClient("ExtensionSdkV1");
+        client.Timeout = Timeout.InfiniteTimeSpan;
         using var request = new HttpRequestMessage(new HttpMethod(method), target);
         if (body.Length > 0) request.Content = new StringContent(body, Encoding.UTF8, "application/json");
         request.Headers.Accept.ParseAdd("application/json");

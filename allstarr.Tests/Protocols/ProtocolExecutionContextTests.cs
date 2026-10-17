@@ -113,6 +113,50 @@ public sealed class ProtocolExecutionContextTests
         Assert.Throws<InvalidOperationException>(() => options.GetOperationTimeout());
     }
 
+    [Fact]
+    public void DownloadStreamTimeout_DefaultsToOneHundredFiftySeconds()
+    {
+        var options = new ProtocolExecutionOptions();
+
+        Assert.Equal(TimeSpan.FromSeconds(150), options.GetDownloadStreamTimeout());
+        Assert.Equal(TimeSpan.FromSeconds(30), options.GetOperationTimeout());
+    }
+
+    [Fact]
+    public void DefaultFactoryDeadline_RemainsThirtySeconds()
+    {
+        var now = new DateTimeOffset(2026, 7, 11, 20, 0, 0, TimeSpan.Zero);
+        var context = new ProtocolExecutionContextFactory(
+            new ProtocolExecutionOptions(),
+            new FakeClock(now),
+            new IdentityOptions { BackendInstanceId = "primary" }).Create(
+            new DefaultHttpContext(),
+            ProtocolKind.Jellyfin,
+            "listener");
+
+        Assert.Equal(now.AddSeconds(30), context.Deadline);
+    }
+
+    [Theory]
+    [InlineData(29)]
+    [InlineData(301)]
+    public void DownloadStreamTimeoutConfiguration_IsBounded(int seconds)
+    {
+        var options = new ProtocolExecutionOptions { DownloadStreamTimeoutSeconds = seconds };
+
+        Assert.Throws<InvalidOperationException>(() => options.GetDownloadStreamTimeout());
+    }
+
+    [Theory]
+    [InlineData(30)]
+    [InlineData(300)]
+    public void DownloadStreamTimeoutConfiguration_AcceptsBoundaryValues(int seconds)
+    {
+        var options = new ProtocolExecutionOptions { DownloadStreamTimeoutSeconds = seconds };
+
+        Assert.Equal(TimeSpan.FromSeconds(seconds), options.GetDownloadStreamTimeout());
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin, JellyfinAuthFilter.BackendPrincipalIdItemKey)]
     [InlineData(ProtocolKind.Subsonic, SubsonicAuthFilter.BackendPrincipalNameItemKey)]

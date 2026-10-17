@@ -661,7 +661,8 @@ public class ExtensionSandbox
         string? sessionStateDirectory = null,
         TimeSpan? hookTimeout = null,
         TimeSpan? downloadTimeout = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ExtensionExecutionOptions? executionOptions = null)
     {
         _logger = logger;
         _hookTimeout = hookTimeout ?? TimeSpan.FromSeconds(12);
@@ -722,7 +723,9 @@ public class ExtensionSandbox
             manifest?.SignedSession,
             sessionProtector,
             Id,
-            sessionStateDirectory);
+            sessionStateDirectory,
+            _timeProvider,
+            executionOptions);
         _engine.SetValue("host", _hostBridge);
 
         var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
@@ -878,7 +881,7 @@ public class ExtensionSandbox
         lock (_engineLock)
         {
             var callerToken = ExtensionArtifactInvocationScope.Current?.CancellationToken ?? cancellationToken;
-            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider);
+            using var budget = new ExtensionInvocationBudget(hook == "download" ? _downloadTimeout : _hookTimeout, callerToken, _timeProvider, hook == "download");
             try
             {
                 var function = _extensionObj.Get(hook);
@@ -1225,7 +1228,9 @@ public partial class ExtensionHostBridge
         ExtensionSignedSessionConfig? signedSession = null,
         IDataProtector? sessionProtector = null,
         string? extensionId = null,
-        string? sessionStateDirectory = null)
+        string? sessionStateDirectory = null,
+        TimeProvider? timeProvider = null,
+        ExtensionExecutionOptions? executionOptions = null)
     {
         _folderPath = Path.GetFullPath(runtimeStateDirectory);
         Directory.CreateDirectory(_folderPath);
@@ -1242,12 +1247,12 @@ public partial class ExtensionHostBridge
                 signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
                 sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory),
                 extensionId ?? signedSession.Namespace,
-                sessionStateDirectory == null ? null : _folderPath);
+                sessionStateDirectory == null ? null : _folderPath, timeProvider, executionOptions);
             var sourceDirectory = sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory);
             _accountSessionFactory = (accountId, adopt) => new ExtensionSignedSessionClient(
                 signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
                 Path.Combine(sourceDirectory, "accounts", accountId.ToString("N")),
-                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null);
+                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null, timeProvider, executionOptions);
         }
         LoadStorage();
     }

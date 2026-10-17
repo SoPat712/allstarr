@@ -208,7 +208,8 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
     }
 }
 
-public sealed class ExtensionDownloadStreamingCapabilityAdapter : IProviderStreamingCapability
+public sealed class ExtensionDownloadStreamingCapabilityAdapter :
+    IProviderDownloadStreamingCapability
 {
     private readonly ExtensionDownloadCapabilityAdapter download;
     private readonly ProviderDownloadArtifactResolver artifacts;

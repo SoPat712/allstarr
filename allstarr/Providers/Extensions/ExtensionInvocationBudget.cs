@@ -15,10 +15,12 @@ internal sealed class ExtensionInvocationBudget : IDisposable
 
     public static ExtensionInvocationBudget? Current => Ambient.Value;
     public CancellationToken Token => cancellation.Token;
+    public bool IsDownload { get; }
     public long RemainingMilliseconds => Math.Max(0, (long)(duration - clock.GetElapsedTime(started)).TotalMilliseconds);
 
-    public ExtensionInvocationBudget(TimeSpan duration, CancellationToken token, TimeProvider clock)
+    public ExtensionInvocationBudget(TimeSpan duration, CancellationToken token, TimeProvider clock, bool isDownload = false)
     {
+        IsDownload = isDownload;
         this.duration = duration;
         this.clock = clock;
         started = clock.GetTimestamp();

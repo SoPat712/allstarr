@@ -394,6 +394,213 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         second.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
     }
 
+    [Theory]
+    [InlineData(null, 150)]
+    [InlineData("240", 240)]
+    public async Task OpenStream_GivesDownloadBackedSourcesTheirConfiguredDeadline(
+        string? configuredSeconds,
+        int expectedSeconds)
+    {
+        ProviderExecutionContext? observed = null;
+        var download = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        download.As<IProviderDownloadStreamingCapability>();
+        download.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => observed = context)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
+                "lease", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(5), true, true,
+                new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry,
+                (_, _) => Task.FromResult(AudioResponse()))));
+        var direct = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var settings = new Dictionary<string, string?>
+        {
+            ["Providers:StreamingOrder"] = "deezer,qobuz"
+        };
+        if (configuredSeconds != null)
+            settings["ProtocolExecution:DownloadStreamTimeoutSeconds"] = configuredSeconds;
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
+        var registry = Registry(download.Object, direct.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, download.Object));
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
+        var before = DateTimeOffset.UtcNow;
+
+        using var response = (await gateway.OpenStreamAsync(
+            Context(), "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+
+        Assert.NotNull(observed);
+        Assert.InRange(observed.Deadline, before.AddSeconds(expectedSeconds - 2), before.AddSeconds(expectedSeconds + 2));
+    }
+
+    [Fact]
+    public async Task OpenStream_KeepsTheProtocolDeadlineForDirectSources()
+    {
+        ProviderExecutionContext? observed = null;
+        var direct = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        direct.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => observed = context)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
+                "lease", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(5), true, true,
+                new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry,
+                (_, _) => Task.FromResult(AudioResponse()))));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, _) = FailoverGateway(direct, second);
+        var context = Context();
+
+        using var response = (await gateway.OpenStreamAsync(
+            context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+
+        Assert.NotNull(observed);
+        Assert.Equal(context.Deadline, observed.Deadline);
+    }
+
+    [Fact]
+    public async Task OpenStream_DoesNotCarryTheDownloadDeadlineIntoDirectFallback()
+    {
+        ProviderExecutionContext? downloadContext = null;
+        ProviderExecutionContext? directContext = null;
+        var download = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        download.As<IProviderDownloadStreamingCapability>();
+        download.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => downloadContext = context)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(
+                new ProviderError(ProviderErrorKind.TransientFailure)));
+        var direct = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        direct.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => directContext = context)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
+                "lease", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(5), true, true,
+                new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry,
+                (_, _) => Task.FromResult(AudioResponse()))));
+        var (gateway, _) = FailoverGateway(download, direct);
+        var context = Context();
+
+        using var response = (await gateway.OpenStreamAsync(
+            context, "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+
+        Assert.NotNull(downloadContext);
+        Assert.True(downloadContext.Deadline > context.Deadline);
+        Assert.NotNull(directContext);
+        Assert.Equal(context.Deadline, directContext.Deadline);
+    }
+
+    [Fact]
+    public async Task OpenStream_UsesOneDeadlineAcrossDownloadFallbackCandidates()
+    {
+        DateTimeOffset? firstDeadline = null;
+        DateTimeOffset? secondDeadline = null;
+        var first = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        first.As<IProviderDownloadStreamingCapability>();
+        first.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => firstDeadline = context.Deadline)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(
+                new ProviderError(ProviderErrorKind.TransientFailure)));
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        second.As<IProviderDownloadStreamingCapability>();
+        second.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Callback<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) => secondDeadline = context.Deadline)
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
+                "lease", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(5), true, true,
+                new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry,
+                (_, _) => Task.FromResult(AudioResponse()))));
+        var (gateway, _) = FailoverGateway(first, second);
+
+        using var response = (await gateway.OpenStreamAsync(
+            Context(), "deezer", "source-track", ProviderAudioQuality.Any, null))!.Response;
+
+        Assert.NotNull(firstDeadline);
+        Assert.Equal(firstDeadline, secondDeadline);
+    }
+
+    [Fact]
+    public async Task OpenStream_DownloadDeadlineDoesNotMaskRequestCancellation()
+    {
+        using var request = new CancellationTokenSource();
+        var download = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        download.As<IProviderDownloadStreamingCapability>();
+        download.SetupGet(item => item.ProviderId).Returns("deezer");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        download.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns<ProviderExecutionContext, ProviderStreamLeaseRequest>(async (context, _) =>
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.CancellationToken);
+                throw new InvalidOperationException();
+            });
+        var direct = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, _) = FailoverGateway(download, direct);
+        var opening = gateway.OpenStreamAsync(
+            ClientContext(request.Token), "deezer", "source-track", ProviderAudioQuality.Any, null);
+
+        request.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening);
+        direct.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OpenStream_DoesNotReviveAnExpiredDownloadContext()
+    {
+        var download = Streaming("deezer", (_, _) => Task.FromResult(AudioResponse()));
+        download.As<IProviderDownloadStreamingCapability>();
+        var direct = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, _) = FailoverGateway(download, direct);
+        var original = ClientContext();
+        var expired = new ProtocolExecutionContext(
+            original.Protocol, original.BackendInstanceId, original.VerifiedBackendPrincipalId,
+            original.Principal, original.CorrelationId, DateTimeOffset.UtcNow.AddSeconds(-1),
+            original.CancellationToken, original.Client);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => gateway.OpenStreamAsync(
+            expired, "deezer", "source-track", ProviderAudioQuality.Any, null));
+
+        download.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task OpenStream_DoesNotStartDirectFallbackAfterTheProtocolDeadlineExpires()
+    {
+        var download = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        download.As<IProviderDownloadStreamingCapability>();
+        download.SetupGet(item => item.ProviderId).Returns("deezer");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        download.Setup(item => item.GetStreamLeaseAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(async () =>
+            {
+                await Task.Delay(100);
+                return ProviderOutcome<ProviderStreamLease>.Failure(
+                    new ProviderError(ProviderErrorKind.TransientFailure));
+            });
+        var direct = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, _) = FailoverGateway(download, direct);
+        var original = ClientContext();
+        var shortContext = new ProtocolExecutionContext(
+            original.Protocol, original.BackendInstanceId, original.VerifiedBackendPrincipalId,
+            original.Principal, original.CorrelationId, DateTimeOffset.UtcNow.AddMilliseconds(50),
+            original.CancellationToken, original.Client);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => gateway.OpenStreamAsync(
+            shortContext, "deezer", "source-track", ProviderAudioQuality.Any, null));
+
+        direct.Verify(item => item.GetStreamLeaseAsync(
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+    }
+
     private static HttpResponseMessage AudioResponse(HttpStatusCode status = HttpStatusCode.OK) => new(status)
     {
         Content = new ByteArrayContent([1, 2, 3, 4])
