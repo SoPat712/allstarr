@@ -1072,6 +1072,171 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
+    [MemberData(nameof(DeclaredQualitySelections))]
+    public async Task SpotiFlacRuntimeAdapter_SelectsDeclaredQuality(string qualityOptions, ProviderAudioQuality requested, string expected)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(qualityOptions, requested);
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Code);
+        Assert.Equal([expected], observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(requested.ToString(), observed.GetProperty("requestedQuality").GetString());
+        Assert.Equal(expected, observed.GetProperty("quality").GetString());
+        Assert.Null(outcome.RequireValue().QualityDowngradeReason);
+    }
+
+    private const string MixedQualityOptions = """
+        [{"id":"DOLBY_ATMOS","kind":"spatial"},{"id":"HI_RES_LOSSLESS","kind":"lossless"},
+         {"id":"LOSSLESS","kind":"lossless"},{"id":"HIGH","kind":"lossy"},{"id":"LOW","kind":"lossy"}]
+        """;
+
+    private const string LosslessQualityOptions = """
+        [{"id":"HI_RES_LOSSLESS","kind":"lossless"},{"id":"HI_RES","kind":"lossless"},{"id":"LOSSLESS","kind":"lossless"}]
+        """;
+
+    public static IEnumerable<object[]> DeclaredQualitySelections()
+    {
+        ProviderAudioQuality[] requests = [ProviderAudioQuality.HighResolution, ProviderAudioQuality.Any,
+            ProviderAudioQuality.Lossless, ProviderAudioQuality.Lossy, ProviderAudioQuality.DataSaver];
+        (string Options, string[] Expected)[] cases =
+        [
+            (MixedQualityOptions, ["HI_RES_LOSSLESS", "HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"]),
+            (LosslessQualityOptions,
+                ["HI_RES_LOSSLESS", "HI_RES_LOSSLESS", "LOSSLESS", "HI_RES_LOSSLESS", "LOSSLESS"]),
+            ("""[{"id":"best","kind":"lossless"},{"id":"opus","kind":"lossy"},{"id":"eac3","kind":"spatial"},{"id":"ac4","kind":"spatial"}]""",
+                ["best", "best", "best", "opus", "opus"]),
+            ("""[{"id":"AAC_320","kind":"lossy"},{"id":"AAC_160","kind":"lossy"},{"id":"AAC_12","kind":"lossy"}]""",
+                ["AAC_320", "AAC_320", "AAC_320", "AAC_320", "AAC_12"]),
+            ("""[{"id":"flac"}]""", ["flac", "flac", "flac", "flac", "flac"]),
+            ("""[{"id":"mp3_192"},{"id":"aac_64"},{"id":"aac_32"}]""",
+                ["mp3_192", "mp3_192", "mp3_192", "mp3_192", "aac_32"]),
+            ("""[{"id":"top","kind":"lossless"},{"id":"standard","kind":"lossless"}]""",
+                ["top", "top", "standard", "top", "standard"]),
+            ("""[{"id":"top","kind":"LOSSLESS"},{"id":"Cd"},{"id":"small","kind":"LOSSY"}]""",
+                ["top", "top", "Cd", "small", "small"]),
+            ("""[{"id":"top","kind":"lossless"},{"id":"fLaC","kind":"lossless"},{"id":"standard","kind":"lossless"}]""",
+                ["top", "top", "fLaC", "top", "standard"]),
+            ("""[{"id":"surround","kind":"spatial"}]""", ["best", "best", "best", "best", "best"]),
+            ("[]", ["best", "best", "best", "best", "best"]),
+            ("", ["best", "best", "best", "best", "best"])
+        ];
+        foreach (var (options, expected) in cases)
+            for (var index = 0; index < requests.Length; index++)
+                yield return [options, requests[index], expected[index]];
+    }
+
+    [Theory]
+    [InlineData(MixedQualityOptions, ProviderAudioQuality.HighResolution, "return {success:false,error_message:'HTTP 503'};")]
+    [InlineData(MixedQualityOptions, ProviderAudioQuality.Any, "throw new Error('download unavailable');")]
+    [InlineData(LosslessQualityOptions, ProviderAudioQuality.HighResolution, "throw new Error('download unavailable');")]
+    [InlineData(LosslessQualityOptions, ProviderAudioQuality.Any, "return {success:false,error_message:'HTTP 503'};")]
+    public async Task SpotiFlacRuntimeAdapter_FallsBackToPlainLosslessOnce(string qualityOptions, ProviderAudioQuality requested, string failure)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(qualityOptions, requested,
+            "if (calls.length === 1) { " + failure + " }");
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Code);
+        Assert.Equal(["HI_RES_LOSSLESS", "LOSSLESS"], observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(44100, outcome.RequireValue().Media.SampleRate);
+        Assert.Contains("LOSSLESS", outcome.RequireValue().QualityDowngradeReason, StringComparison.Ordinal);
+        Assert.Contains("HI_RES_LOSSLESS", outcome.RequireValue().QualityDowngradeReason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("return {success:false,error_message:'HTTP 503'};", 2)]
+    [InlineData("throw new Error('download unavailable');", 2)]
+    [InlineData("return {success:false,error:'VERIFY_REQUIRED'};", 1)]
+    [InlineData("return {success:false,error_type:'verification_required',error_message:'Please verify'};", 1)]
+    [InlineData("throw new Error('VERIFY_REQUIRED');", 1)]
+    [InlineData("return {success:false,needsVerification:true,error_message:'Please verify'};", 1)]
+    [InlineData("return {success:false,error_message:'Download cancelled'};", 1)]
+    [InlineData("return {success:false,error_type:'cancelled',error_message:'Stopped'};", 1)]
+    [InlineData("throw new Error('Operation canceled');", 1)]
+    [InlineData("return {success:false,cancelled:true,error_message:'Stopped'};", 1)]
+    [InlineData("throw Object.assign(new Error('Stopped'), {name:'AbortError'});", 1)]
+    public async Task SpotiFlacRuntimeAdapter_BoundsQualityFallback(string failure, int expectedCalls)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions, ProviderAudioQuality.HighResolution, failure);
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal(expectedCalls, observed.GetProperty("calls").GetArrayLength());
+    }
+
+    [Theory]
+    [InlineData(ProviderAudioQuality.Lossless)]
+    [InlineData(ProviderAudioQuality.Lossy)]
+    [InlineData(ProviderAudioQuality.DataSaver)]
+    public async Task SpotiFlacRuntimeAdapter_DoesNotRetryOtherQualityRequests(ProviderAudioQuality requested)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions, requested,
+            "throw new Error('HTTP 503');");
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Single(observed.GetProperty("calls").EnumerateArray());
+    }
+
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("""[{"id":"best","kind":"lossless"}]""")]
+    [InlineData("""[{"id":"HIGH","kind":"lossy"},{"id":"LOSSLESS","kind":"lossless"}]""")]
+    public async Task SpotiFlacRuntimeAdapter_DoesNotRetryWithoutDifferentPlainLossless(string qualityOptions)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(qualityOptions, ProviderAudioQuality.HighResolution,
+            "throw new Error('HTTP 503');");
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Single(observed.GetProperty("calls").EnumerateArray());
+    }
+
+    private static async Task<(ProviderOutcome<ProviderStreamLease> Outcome, JsonElement Observed)> RunDeclaredQualityDownload(
+        string qualityOptions, ProviderAudioQuality requested, string failure = "")
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-quality-download", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var qualityDeclaration = qualityOptions.Length == 0 ? "" : ",\"qualityOptions\":" + qualityOptions;
+            var source = $$$"""
+                {"name":"demo","displayName":"Demo","version":"1.0.0","type":["metadata_provider","download_provider"],
+                 "permissions":{"network":["media.example.test"]},"requiredRuntimeFeatures":["preparedContext@1"]{{{qualityDeclaration}}}}
+                """;
+            var script = $$$"""
+                var calls = [], availabilityOptions = {};
+                registerExtension({
+                  getTrack:function(id){return {id:id,name:JSON.stringify({calls:calls,
+                    quality:availabilityOptions.quality,requestedQuality:availabilityOptions.requestedQuality})};},
+                  checkAvailability:function(isrc,name,artists,options){
+                    availabilityOptions = options;
+                    return {available:true,prepared_context:{marker:'prepared'}};
+                  },
+                  download:function(id,quality,path,progress,options){
+                    calls.push(quality);
+                    if (options.preparedContext.marker !== 'prepared') throw new Error('Missing prepared context');
+                    {{{failure}}}
+                    var result = file.download('https://media.example.test/audio', path, {});
+                    result.sample_rate = quality === 'LOSSLESS' ? 44100 : 96000;
+                    return result;
+                  }
+                });
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                new HashSet<string>(), new HashSet<string>());
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance, permissions, Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+
+            var outcome = await adapter.GetStreamLeaseAsync(Context(manifest.Id),
+                new(new(manifest.Id, ProviderResourceKind.Track, "track"), requested));
+            using var track = JsonDocument.Parse(sandbox.InvokeJson("getTrack", """{"id":"observation"}""")!);
+            using var observed = JsonDocument.Parse(track.RootElement.GetProperty("title").GetString()!);
+            return (outcome, observed.RootElement.Clone());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
     [InlineData("HTTP 503 private-provider-detail", "service_unavailable")]
     [InlineData("HTTP 500", "service_unavailable")]
     [InlineData("HTTP 502 Bad Gateway", "service_unavailable")]

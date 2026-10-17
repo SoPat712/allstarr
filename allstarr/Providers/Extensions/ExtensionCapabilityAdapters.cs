@@ -218,7 +218,8 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
         ExtensionArtifactInvocationScope? artifactScope = null;
         return InvokeAsync(context, "download", new { trackId = request.TrackId.Value, request.DurableJobId, workspaceId = request.Workspace.WorkspaceId, requestedQuality = request.RequestedQuality.ToString(), context.IdempotencyKey }, value =>
         {
-            var artifact = new ProviderDownloadedArtifact(Text(value, "artifactId"), Text(value, "sha256"), value.GetProperty("sizeBytes").GetInt64(), Media(value), Bool(value, "verified"));
+            var artifact = new ProviderDownloadedArtifact(Text(value, "artifactId"), Text(value, "sha256"), value.GetProperty("sizeBytes").GetInt64(), Media(value), Bool(value, "verified"),
+                qualityDowngradeReason: OptionalText(value, "qualityDowngradeReason"));
             var written = artifactScope?.Result ?? throw new JsonException("The extension did not write an artifact through the host broker.");
             if (!artifact.ArtifactId.Equals(written.ArtifactId, StringComparison.Ordinal) ||
                 !artifact.Sha256.Equals(written.Sha256, StringComparison.Ordinal) ||
@@ -367,7 +368,8 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
                 supportsSeeking: true,
                 media,
                 ProviderStreamRetryBehavior.DoNotRetry,
-                OpenAsync));
+                OpenAsync,
+                qualityDowngradeReason: output.QualityDowngradeReason));
         }
         catch (OperationCanceledException)
         {

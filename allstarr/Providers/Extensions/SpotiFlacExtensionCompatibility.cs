@@ -337,6 +337,35 @@ public static class SpotiFlacExtensionCompatibility
 
     public const string RuntimeAdapterScript = """
         var _spotiflacExtension = _registeredExtension;
+        var _sfQualitySelections = (function(options) {
+          options = options.map(function(option) {
+            return typeof option === 'string' ? { id: option, kind: '' }
+              : { id: option.id || option.value || option.name, kind: String(option.kind || '').toLowerCase() };
+          }).filter(function(option) { return option.kind !== 'spatial'; });
+          var first = options[0] || { id: 'best' };
+          var last = options[options.length - 1] || first;
+          var lossless = options.filter(function(option) { return option.kind === 'lossless'; });
+          var lossy = options.filter(function(option) { return option.kind === 'lossy'; });
+          var plain = options.filter(function(option) { return /^(LOSSLESS|FLAC|CD)$/i.test(option.id); })[0]
+            || lossless[lossless.length - 1] || first;
+          var highest = lossless[0] || first;
+          var highSelection = { id: highest.id, fallback: lossless.length && plain.id !== highest.id ? plain.id : null };
+          return {
+            HighResolution: highSelection, Any: highSelection,
+            Lossless: { id: plain.id }, Lossy: { id: (lossy[0] || first).id },
+            DataSaver: { id: (lossy[lossy.length - 1] || last).id }
+          };
+        })(JSON.parse(_allstarrQualityOptionsJson));
+        function _sfDownloadError(value) {
+          return value instanceof Error ? value
+            : new Error(typeof value === 'string' ? value : value && (value.error_message || value.error) || 'SpotiFLAC download failed');
+        }
+        function _sfStopQualityFallback(error) {
+          var reason = [error && error.error_type, error && error.code, error && error.error,
+            error && error.error_message, error && error.message, error && error.name, String(error)].join(' ');
+          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true)
+            || /\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b/i.test(reason);
+        }
         var _allstarrInitializedSettings = null;
         function _allstarrInitialize(settings) {
           var fingerprint = JSON.stringify(settings);
@@ -519,7 +548,8 @@ public static class SpotiFlacExtensionCompatibility
             track = track || {};
             var artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
             var durationMs = Number(track.duration_ms || track.durationMs || 0) || undefined;
-            var options = { requestedQuality: request.requestedQuality, track: track, duration_ms: durationMs };
+            var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
+            var options = { requestedQuality: request.requestedQuality, quality: selection.id, track: track, duration_ms: durationMs };
             if (request.prepareForStreaming) options.spotify_id = request.trackId;
             var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists, options);
             if (result && result.available !== false) _sfRememberPrepared(request.trackId, result.prepared_context || result.preparedContext);
@@ -537,10 +567,20 @@ public static class SpotiFlacExtensionCompatibility
             if (typeof _spotiflacExtension.download !== 'function') throw new Error('SpotiFLAC extension has no download hook');
             var safeId = String(request.trackId || 'track').replace(/[^A-Za-z0-9._-]/g, '_');
             var output = safeId + '.audio';
-            var quality = request.requestedQuality === 'Lossy' ? 'best' : 'best';
-            var result = _spotiflacExtension.download(request.trackId, quality, output, function() {},
-              { preparedContext: _sfPreparedFor(request.trackId) });
-            if (!result || result.success === false) throw new Error(result && (result.error_message || result.error) || 'SpotiFLAC download failed');
+            var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
+            var quality = selection.id;
+            var result;
+            try {
+              result = _spotiflacExtension.download(request.trackId, quality, output, function() {},
+                { preparedContext: _sfPreparedFor(request.trackId) });
+              if (result && result.success === false) throw result;
+            } catch (error) {
+              if (!selection.fallback || _sfStopQualityFallback(error)) throw _sfDownloadError(error);
+              quality = selection.fallback;
+              result = _spotiflacExtension.download(request.trackId, quality, output, function() {},
+                { preparedContext: _sfPreparedFor(request.trackId) });
+            }
+            if (!result || result.success === false) throw _sfDownloadError(result);
             var path = String(result.file_path || result.path || output);
             var extension = String(result.actual_extension || result.output_extension || path.substring(path.lastIndexOf('.')) || '.audio').toLowerCase();
             var artifactId = safeId + extension;
@@ -548,6 +588,8 @@ public static class SpotiFlacExtensionCompatibility
             var codec = String(result.audio_codec || (extension === '.m4a' ? 'aac' : extension.replace('.', '')) || 'unknown');
             var mime = extension === '.flac' ? 'audio/flac' : extension === '.m4a' ? 'audio/mp4' : extension === '.ogg' || extension === '.opus' ? 'audio/ogg' : 'audio/mpeg';
             return { artifactId: written.artifactId, sha256: written.sha256, sizeBytes: written.sizeBytes, verified: written.verified,
+              quality: quality, qualityDowngradeReason: quality !== selection.id
+                ? 'Using ' + quality + ' after ' + selection.id + ' download failed.' : null,
               media: { mimeType: mime, container: extension.replace('.', '') || 'audio', codec: codec,
                 sampleRate: Number(result.sample_rate || 0) || null, bitDepth: Number(result.bit_depth || 0) || null } };
           }
