@@ -17,7 +17,10 @@ import {
   supportsPlaybackDiagnostic,
   humanize,
   providerReadinessLabel,
+  checkGuide,
   checkStatusLabel,
+  checkStatusState,
+  sourceStatusLabel,
   groupSourceChecks,
   settingDefault,
   sourceTimingLabel,
@@ -38,6 +41,18 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("gives automatic check failures a plain label and next step", () => {
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("Needs verification");
+    expect(checkStatusState({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("needs_verification");
+    expect(checkGuide("sign_in_needed")?.signIn).toBe(true);
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "track-selection" })).toBe("No test song found");
+    expect(checkGuide("resolve")?.step).toContain("checked again every 6 hours");
+    expect(checkGuide("some-new-code")).toBeNull();
+    expect(checkGuide(null)).toBeNull();
+    expect(sourceStatusLabel("needs_verification")).toBe("Needs verification");
+    expect(sourceStatusLabel("needs_config")).toBe("Needs setup");
+  });
+
   it("names local lyric sources without fake provider services", () => {
     expect(lyricsSourceDisplayName([], "backend")).toBe("Media server lyrics");
     expect(lyricsSourceDisplayName([], "kept")).toBe("Kept LRC");

@@ -6898,3 +6898,35 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.screenshot({ path: `test-results/match-dialog-${width}-${theme}-end.png` });
   });
 }
+
+for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
+  test(`A source waiting for sign-in says so and leads to Reconnect at ${width}px ${theme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
+    await mockApi(page);
+    await mockSignedSessionExtension(page, { state: "expired", accountId: "account", expiresAt: "2026-10-12T18:22:29Z" });
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: { ...schema,
+      providers: [...schema.providers, { id: "signed-audio", name: "Signed Audio", categories: ["streaming"], accountSettings: [], usesSignedSession: true }],
+    } }));
+    const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[]; audienceUsers: object[] };
+    await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { ...fixture, accounts: [{ ...fixture.accounts[0],
+      providerId: "signed-audio", displayName: "Signed Audio", scope: "Shared", ownerUserId: null, supportedAudiences: ["Personal", "Shared"],
+      secret: { configured: false, revoked: false } }] } }));
+    await page.route("**/api/admin/providers/status", route => route.fulfill({ json: ["metadata", "streaming"].map(capability => ({
+      provider: "signed-audio", providerAccountId: "account", providerAccountName: "Signed Audio", capability, accountScope: "shared",
+      supported: true, enabled: true, configuration: "configured", health: "degraded", ready: false, canAttempt: true, canTest: true,
+      reasonCode: "sign_in_needed", testedAt: "2026-10-16T18:57:05Z",
+    })) }));
+    await page.goto("#/integrations/services/signed-audio");
+    await expect(page.locator(".service-head-meta")).toContainText("Needs verification");
+    await expect(page.getByText("Degraded", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/Setup needed/)).toHaveCount(0);
+    const check = page.locator(".service-check").filter({ hasText: "Streaming" }).first();
+    await expect(check).toContainText("Needs verification");
+    await expect(check).toContainText("Sign in again in this source's Sign-in section.");
+    await page.screenshot({ path: `test-results/needs-verification-${width}-${theme}.png`, fullPage: true });
+    await check.getByRole("button", { name: "Go to sign-in", exact: true }).click();
+    await expect(page.locator(".extension-session").getByRole("button", { name: "Reconnect", exact: true })).toBeFocused();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}
