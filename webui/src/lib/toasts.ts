@@ -2,7 +2,7 @@ import { readonly, writable } from "svelte/store";
 
 export type ToastKind = "success" | "info" | "error";
 export type ToastAction = { label: string; run: () => void | Promise<void> };
-export type Toast = { id: number; message: string; kind: ToastKind; action?: ToastAction };
+export type Toast = { id: number; message: string; kind: ToastKind; action?: ToastAction; busy?: boolean };
 const store = writable<Toast[]>([]);
 export const toasts = readonly(store);
 let sequence = 0;
@@ -19,7 +19,7 @@ function start(id: number) {
   life.started = Date.now();
   life.timer = setTimeout(() => dismiss(id), life.remaining);
 }
-function show(message: string, kind: ToastKind = "info", action?: ToastAction) {
+function show(message: string, kind: ToastKind = "info", action?: ToastAction, busy = false) {
   const id = ++sequence;
   store.update(items => {
     if (items.length >= 3) {
@@ -27,9 +27,9 @@ function show(message: string, kind: ToastKind = "info", action?: ToastAction) {
       clearTimeout(lifetimes.get(oldest)?.timer);
       lifetimes.delete(oldest);
     }
-    return [...items.slice(-2), { id, message, kind, action }];
+    return [...items.slice(-2), { id, message, kind, action, ...(busy ? { busy } : {}) }];
   });
-  if (kind !== "error") {
+  if (kind !== "error" && !busy) {
     lifetimes.set(id, { remaining: 5000, started: Date.now(), pauses: new Set() });
     start(id);
   }
@@ -40,6 +40,8 @@ export const toast = {
   success: (message: string, action?: ToastAction) => show(message, "success", action),
   info: (message: string, action?: ToastAction) => show(message, "info", action),
   error: (message: string, action?: ToastAction) => show(message, "error", action),
+  /** Stays until dismissed; replace it with the outcome when the work ends. */
+  progress: (message: string) => show(message, "info", undefined, true),
   dismiss,
   clear: () => {
     for (const life of lifetimes.values()) clearTimeout(life.timer);

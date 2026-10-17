@@ -369,7 +369,9 @@
     if (action) return;
     action = key;
     try {
-      const result = await sources.test(account, capability);
+      const slow = !capability || capability === "streaming";
+      const pending = toast.progress(`Testing ${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"}…${slow ? " Playback checks can take a few minutes." : ""}`);
+      const result = await sources.test(account, capability).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: result };
       let message = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
       if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
@@ -389,7 +391,8 @@
     if (action) return;
     action = key;
     try {
-      const result = await sources.deepStream(account.providerId, account.id);
+      const pending = toast.progress(`Measuring ${provider(account.providerId)?.name ?? account.providerId} click-to-stream… This can take a few minutes.`);
+      const result = await sources.deepStream(account.providerId, account.id).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: {
         ...result,
         latencyMs: result.clickToStreamMilliseconds ?? result.latencyMs,
@@ -413,7 +416,8 @@
     if (action) return;
     action = key;
     try {
-      const result = await sources.deepStream(item.id);
+      const pending = toast.progress(`Measuring ${item.name} click-to-stream… This can take a few minutes.`);
+      const result = await sources.deepStream(item.id).finally(() => toast.dismiss(pending));
       const passed = result.succeeded ?? result.healthy ?? result.success ?? false;
       toast.show(passed ? `${item.name} click-to-stream measured.` : diagnosticFailureMessage(result), passed ? "success" : "error");
       await refresh();
@@ -500,13 +504,13 @@
       </ul>
 {/snippet}
 
-{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false)}
+{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "")}
   {@const guide = check.ready ? null : checkGuide(check.reasonCode)}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
     <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if guide}<small>{guide.step}</small>{#if guide.signIn}<button type="button" class="text-button" onclick={goToSignIn}>Go to sign-in</button>{/if}{/if}{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/integrations/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
-    {#if canTest && onTest}<Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={onTest}>Test</Button>{/if}
+    {#if canTest && onTest}<Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={onTest}>{action && action === testKey ? "Testing…" : "Test"}</Button>{/if}
   </li>
 {/snippet}
 
@@ -630,7 +634,7 @@
               {#if capabilities.length}
                 <ul class="service-checks" aria-label={`Checks for ${account.displayName}`}>
                   {#each capabilities as capability}
-                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled)}
+                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled, `${account.id}:${capability.capability}`)}
                   {/each}
                 </ul>
               {/if}
