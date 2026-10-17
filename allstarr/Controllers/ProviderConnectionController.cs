@@ -327,8 +327,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
             bars = result.Bars,
             metric = "cts",
             testedAt = result.MeasuredAt,
-            reasonCode = result.Succeeded ? null :
-                result.Error is { } error && !error.Contains(' ') ? error : result.Stage,
+            reasonCode = result.ReasonCode,
+            stage = result.Stage,
             seekRung = result.SeekRung,
             sampleBytes = result.SampleBytes,
             failedCapabilities

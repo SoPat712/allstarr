@@ -17,3 +17,11 @@ it("points an Apple sign-in failure to the setup checklist", () => {
 it("explains account mismatch without exposing an identifier", () => {
   expect(diagnosticFailureMessage({ stage: "first-byte", failureCode: "account_mismatch" })).toContain("same Apple account");
 });
+
+it("explains a download service failure without suggesting setup changes", () => {
+  expect(diagnosticFailureMessage({ stage: "resolve", reasonCode: "service_unavailable" }))
+    .toBe("The service's download server is failing right now. Try again later; nothing to change in Allstarr.");
+});
+it("explains a diagnostic timeout", () => {
+  expect(diagnosticFailureMessage({ stage: "resolve", reasonCode: "timeout" })).toContain("too long");
+});

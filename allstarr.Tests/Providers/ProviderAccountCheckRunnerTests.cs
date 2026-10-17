@@ -356,6 +356,88 @@ public sealed class ProviderAccountCheckRunnerTests
         Assert.Single(notices);
         Assert.Equal("provider-degraded", notices[0].Action);
 
+        stream.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(ProviderError.ServiceUnavailable()));
+        Assert.False(await runner.SweepAsync(default));
+        Assert.Equal("service_unavailable", Assert.Single(await history.ReadLatestAsync(default)).Status.ReasonCode);
+
+    }
+
+    [Theory]
+    [InlineData(null, 180)]
+    [InlineData("60", 60)]
+    public async Task DownloadStreaming_AutomaticCheckUsesTheDiagnosticTimeCap(string? configuredSeconds, int seconds)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new ProviderCheckServiceTests.Factory(database.Options);
+        var user = Guid.CreateVersion7();
+        var recording = Guid.CreateVersion7();
+        await using (var db = factory.CreateDbContext())
+        {
+            db.Users.Add(new()
+            {
+                Id = user,
+                Enabled = true,
+                IsAdmin = true,
+                DisplayName = "Fixture",
+                BackendType = "jellyfin",
+                BackendInstanceId = "fixture",
+                BackendPrincipalId = "fixture"
+            });
+            db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = user });
+            db.ProviderTrackIdentities.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                CanonicalRecordingId = recording,
+                ProviderId = "fixture-stream",
+                ResourceKind = ProviderResourceKind.Track,
+                Scope = ProviderIdentityScope.Catalog,
+                ExternalId = "track",
+                ExternalIdHash = new string('c', 64),
+                CatalogNamespace = "default",
+                Verification = ProviderIdentityVerification.Verified,
+                VerificationMethod = "fixture",
+                DecisionVersion = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProviderOutcome<ProviderStreamLease>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var stream = new Mock<IProviderDownloadStreamingCapability>();
+        stream.SetupGet(item => item.ProviderId).Returns("fixture-stream");
+        stream.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        stream.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns<ProviderExecutionContext, ProviderStreamLeaseRequest>((context, _) =>
+            {
+                entered.TrySetResult();
+                return release.Task.WaitAsync(context.CancellationToken);
+            });
+        var registry = new ProviderRegistry([new(new ProviderDescriptor("fixture-stream", "Fixture", "Fixture",
+            ProviderOrigin.Extension, "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["getStreamLease"], [])], new(), entryPoint: "index.js"), [stream.Object])]);
+        var config = Config("");
+        if (configuredSeconds != null) config["ProtocolExecution:DownloadDiagnosticTimeoutSeconds"] = configuredSeconds;
+        var options = new allstarr.Core.Protocols.ProtocolExecutionOptions();
+        config.GetSection(allstarr.Core.Protocols.ProtocolExecutionOptions.SectionName).Bind(options);
+        var time = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var selector = new ProviderCtsTrackSelector(factory);
+        var media = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(), selector,
+            Mock.Of<IProviderOutcomeObserver>(), executionOptions: options, timeProvider: time);
+        var history = new ProviderCheckHistory(factory, time);
+        var runner = new ProviderAccountCheckRunner(factory, Manager(config, new Handler(), time, registry), history, config, time,
+            NullLogger<ProviderAccountCheckRunner>.Instance, registry: registry, media: media);
+        var pending = runner.SweepAsync(default);
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try
+        {
+            Assert.Equal(TimeSpan.FromSeconds(seconds), await time.NextTimerAsync());
+            time.Advance(TimeSpan.FromSeconds(seconds - 1));
+            Assert.False(pending.IsCompleted);
+            time.Advance(TimeSpan.FromSeconds(1));
+            Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal("timeout", Assert.Single(await history.ReadLatestAsync(default)).Status.ReasonCode);
+        }
+        finally { release.TrySetResult(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.Canceled))); }
     }
 
     private static ProviderAccountRecord Account(string provider, bool enabled) => new()

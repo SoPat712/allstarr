@@ -370,8 +370,10 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         Assert.Equal(StatusCodes.Status400BadRequest, badRequest.StatusCode);
     }
 
-    [Fact]
-    public async Task ManagedMediaTest_UsesExactEncryptedAccountAndVolatileStreamingStatus()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ManagedMediaTest_UsesExactEncryptedAccountAndVolatileStreamingStatus(bool serviceFailure)
     {
         var secretStore = CreateSecretStore();
         var secret = await secretStore.StoreAsync(
@@ -421,6 +423,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
                     new SecretAccessContext(null, $"provider-account:deezer:{_providerAccountId:N}", AllowShared: true));
                 Assert.Contains("selected-account-arl", credential.ReadUtf8(), StringComparison.Ordinal);
                 Assert.Equal("sample-track", request.TrackId.Value);
+                if (serviceFailure) return ProviderOutcome<ProviderStreamLease>.Failure(ProviderError.ServiceUnavailable());
                 return ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease("sample",
                     new Uri("https://fixture.invalid/media"), DateTimeOffset.UtcNow.AddMinutes(1), false, false,
                     new ProviderMediaFormat("audio/flac", "flac", "flac", 1411000, 44100, 16, 2),
@@ -450,9 +453,18 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             _providerAccountId));
         using (var resultDocument = JsonDocument.Parse(JsonSerializer.Serialize(result.Value)))
         {
-            Assert.True(resultDocument.RootElement.GetProperty("success").GetBoolean());
-            Assert.Equal("healthy", resultDocument.RootElement.GetProperty("health").GetString());
+            Assert.Equal(!serviceFailure, resultDocument.RootElement.GetProperty("success").GetBoolean());
+            Assert.Equal(serviceFailure ? "degraded" : "healthy", resultDocument.RootElement.GetProperty("health").GetString());
             Assert.Equal(_providerAccountId, resultDocument.RootElement.GetProperty("providerAccountId").GetGuid());
+        }
+
+        if (serviceFailure)
+        {
+            using var failure = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+            Assert.Equal("service_unavailable", failure.RootElement.GetProperty("reasonCode").GetString());
+            Assert.Equal("resolve", failure.RootElement.GetProperty("stage").GetString());
+            streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
+            return;
         }
 
         var observation = healthStore.Get(ProviderRuntimeStatusKey.CreateManaged("deezer", "streaming", _providerAccountId), accountRevision);

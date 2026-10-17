@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Providers.Spotify;
@@ -76,7 +77,23 @@ public abstract class ExtensionCapabilityAdapterBase
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         { return Failure<T>(ProviderErrorKind.Canceled); }
+        catch (Exception exception) when (hook == "download")
+        { return ProviderOutcome<T>.Failure(DownloadFailure(exception)); }
         catch { return Failure<T>(ProviderErrorKind.TransientFailure); }
+    }
+
+    private static ProviderError DownloadFailure(Exception exception)
+    {
+        var message = exception.Message;
+        if (exception is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } ||
+            Regex.IsMatch(message, @"\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*5\d{2}\b|\bservice[ _-]+unavailable\b|\bbad[ _-]+gateway\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return ProviderError.ServiceUnavailable();
+        if (exception is HttpRequestException { StatusCode: HttpStatusCode.NotFound or HttpStatusCode.Gone } ||
+            Regex.IsMatch(message, @"\btrack[ _-]+(?:not[ _-]+found|unavailable)\b|\bnot[ _-]+found\b|\bhttp\s*[:=]?\s*(?:404|410)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return new(ProviderErrorKind.NotFound);
+        return new(ProviderErrorKind.TransientFailure);
     }
 
     private IReadOnlyDictionary<string, string> ParseAccountValues(ReadOnlyMemory<byte> json)

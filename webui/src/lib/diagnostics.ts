@@ -1,6 +1,9 @@
+import { checkGuide } from "./sources";
+
 export type DiagnosticFailure = { stage?: string; failureCode?: string | null; reasonCode?: string | null; error?: string | null };
 export function diagnosticFailureMessage(result: DiagnosticFailure) {
   const code = (result.failureCode ?? result.reasonCode ?? result.error ?? "").toLowerCase();
+  if (code === "service_unavailable" || code === "timeout") return checkGuide(code)!.step;
   if (code.includes("account_mismatch") || code.includes("account-mismatch"))
     return "Use the same Apple account for the Media User Token and playback sign-in. Check steps 1 and 2.";
   if (code.includes("sign-in-required") || code.includes("needs_login"))

@@ -1576,7 +1576,13 @@ public partial class ExtensionHostBridge
         catch (Exception exception)
         {
             if (File.Exists(target)) File.Delete(target);
-            return new { success = false, path = "", error = exception is UnauthorizedAccessException ? "permission_denied" : "download_failed" };
+            return new
+            {
+                success = false,
+                path = "",
+                error = exception is UnauthorizedAccessException ? "permission_denied" :
+                exception is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } ? "service_unavailable" : "download_failed"
+            };
         }
     }
 
