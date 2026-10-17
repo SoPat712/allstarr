@@ -456,7 +456,8 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
     public async Task SignedSessionAccount_AudienceRoundTripKeepsProtectedStateAndOtherAccountsStaySeparate()
     {
         var package = await ReviewedPackage("5.0.0", "signed-account", signedSession: true);
-        var coordinator = Coordinator(new SignedSessionHandler());
+        var protection = new EphemeralDataProtectionProvider();
+        var coordinator = Coordinator(new SignedSessionHandler(), protection);
         package = await coordinator.ActivateAsync(package.Id, package.Revision);
         var signedIn = await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
         var id = Assert.IsType<Guid>(signedIn.AccountId);
@@ -487,9 +488,12 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
         var restored = new ExtensionRuntimeCoordinator(_factory, _service, descriptorRegistry, descriptorRegistry,
             Mock.Of<IHttpClientFactory>(), Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
             new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options), options,
-            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, protection);
         await restored.StartAsync(default);
-        Assert.Equal(id, (await restored.SignedSessionStatusAsync(package.Id)).AccountId);
+        var restoredView = await restored.SignedSessionStatusAsync(package.Id);
+        Assert.Equal(id, restoredView.AccountId);
+        Assert.Equal(ExtensionSessionStates.SignedIn, restoredView.State);
+        Assert.Equal(protectedState, await File.ReadAllBytesAsync(statePath));
         Assert.True(descriptorRegistry.TryGet(package.ExtensionId, out var descriptor));
         Assert.All(descriptor!.Capabilities, capability =>
         {
@@ -497,6 +501,30 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
             Assert.Contains(ProviderAccountScope.Shared, capability.AllowedAccountScopes);
             Assert.Contains(ProviderAccountScope.Personal, capability.AllowedAccountScopes);
         });
+    }
+
+    [Fact]
+    public async Task RestartWithoutProtectionKeysLogsStorageFailureAndRetainsSessionFile()
+    {
+        var package = await ReviewedPackage("5.0.0", "missing-protection", signedSession: true);
+        var coordinator = Coordinator(new SignedSessionHandler());
+        package = await coordinator.ActivateAsync(package.Id, package.Revision);
+        await coordinator.CompleteSignedSessionGrantAsync(package.Id, package.Revision, "grant-1");
+        var statePath = Assert.Single(Directory.GetFiles(Path.Combine(_root, "extensions", ".runtime", package.ExtensionId),
+            "signed-session-*.protected", SearchOption.AllDirectories));
+        var before = await File.ReadAllBytesAsync(statePath);
+        var restarted = Coordinator(new SignedSessionHandler());
+        await restarted.StartAsync(default);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => restarted.SignedSessionStatusAsync(package.Id));
+
+        Assert.Equal(before, await File.ReadAllBytesAsync(statePath));
+        await using var db = await _factory.CreateDbContextAsync();
+        var log = await db.ExtensionLogs.SingleAsync(item => item.ExtensionPackageId == package.Id &&
+            item.EventCode == "session.load-failed");
+        Assert.Contains("reason=protection_failed", log.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("session-1", log.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("secret-1", log.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -551,8 +579,12 @@ public sealed partial class ExtensionControlPlaneServiceTests : IAsyncLifetime
             .OrderBy(item => item.CreatedAt).ThenBy(item => item.Id)
             .Select(item => new { item.EventCode, item.Message })
             .ToListAsync();
-        Assert.Equal(["session.started", "session.granted", "session.failed", "session.cleared"],
+        Assert.Equal(["session.started", "session.granted", "session.failed", "session.reset", "session.cleared"],
             events.Select(item => item.EventCode));
+        var reset = Assert.Single(events, item => item.EventCode == "session.reset");
+        Assert.Contains("call=user_clear", reset.Message, StringComparison.Ordinal);
+        Assert.Contains("reason=user_requested", reset.Message, StringComparison.Ordinal);
+        Assert.Contains("time_left=true", reset.Message, StringComparison.Ordinal);
         Assert.All(events, item =>
         {
             Assert.DoesNotContain("session-1", item.Message, StringComparison.Ordinal);

@@ -767,7 +767,7 @@ public sealed class ExtensionCapabilityAdapterTests
             Assert.Equal("grant-1", handler.ExchangeGrant);
 
             var response = sandbox.InvokeJson("searchTracks", "{}");
-            if (scenario is "gateway-auth" or "legacy-auth")
+            if (scenario == "gateway-auth")
             {
                 Assert.Contains("VERIFY_REQUIRED", response, StringComparison.Ordinal);
                 Assert.NotEqual(ExtensionSessionStates.SignedIn, (await sandbox.SignedSessionStatusAsync()).State);
@@ -775,7 +775,13 @@ public sealed class ExtensionCapabilityAdapterTests
             else
             {
                 Assert.Equal(ExtensionSessionStates.SignedIn, (await sandbox.SignedSessionStatusAsync()).State);
-                if (scenario is "provider-auth" or "request-auth")
+                if (scenario == "legacy-auth")
+                {
+                    using var parsed = JsonDocument.Parse(response!);
+                    Assert.Equal(401, parsed.RootElement.GetProperty("statusCode").GetInt32());
+                    Assert.Equal("verification_required", (await sandbox.SignedSessionStatusAsync()).ReasonCode);
+                }
+                else if (scenario is "provider-auth" or "request-auth")
                 {
                     using var parsed = JsonDocument.Parse(response!);
                     Assert.Equal(scenario == "provider-auth" ? "provider" : "gateway", parsed.RootElement.GetProperty("origin").GetString());
