@@ -5,6 +5,7 @@ using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
@@ -35,7 +36,9 @@ public sealed class TrackMatchesController(
     IMediaAssetResolver mediaAssets,
     TrackMatchDecisionEngine matcher,
     TrackRematchAllService bulkRematches,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null) : ControllerBase
+    IEffectiveProviderPolicyResolver? effectivePolicies = null,
+    IApplicationCache? applicationCache = null,
+    RecordingOdesliEnrichmentQueue? enrichment = null) : ControllerBase
 {
     public sealed record ResolveTrackMatchRequest(
         string TargetType,
@@ -175,12 +178,42 @@ public sealed class TrackMatchesController(
         }
 
         var primaryLocal = localTracks.FirstOrDefault();
-        var latestSnapshot = snapshots.FirstOrDefault();
+        var latestSnapshot = snapshots.FirstOrDefault(item => item.ProviderId == "spotify" &&
+            (item.ExternalIdHash == Hash(spotifyId) || identities.Any(identity =>
+                identity.Id == item.ProviderTrackIdentityId && identity.ExternalId == spotifyId))) ?? snapshots.FirstOrDefault();
+        TrackMatchTarget? target = null;
+        if (latestSnapshot != null)
+        {
+            var sourceIdentity = identities.FirstOrDefault(item => item.Id == latestSnapshot.ProviderTrackIdentityId) ??
+                                 identities.FirstOrDefault(item => MatchesSourceIdentity(latestSnapshot, item));
+            var manual = ManualTrackOverrides.Index(snapshots, overrides, userId)
+                [latestSnapshot.Id].Effective;
+            IReadOnlyList<string> playableProviders = [];
+            try
+            {
+                var execution = await protocolContexts.CreateAsync(session, HttpContext.TraceIdentifier, cancellationToken);
+                playableProviders = await providerGateway.GetPlayableProviderOrderAsync(
+                    execution.RequireActor(), cancellationToken);
+            }
+            catch (UnauthorizedAccessException) { }
+            var sourceSnapshotIds = snapshots.Where(item => item.ProviderId == latestSnapshot.ProviderId &&
+                    item.ExternalIdHash == latestSnapshot.ExternalIdHash).Select(item => item.Id).ToHashSet();
+            var decision = decisions.FirstOrDefault(item => sourceSnapshotIds.Contains(item.ExternalSnapshotId));
+            var projection = TrackRouteProjector.Project(latestSnapshot, decision, manual,
+                sourceIdentity, localTracks, identities, playableProviders);
+            target = TrackMatchTargetResolver.Create(projection, decision);
+            if (target != null)
+                await new TrackMatchTargetResolver(contextFactory, applicationCache, enrichment).EnrichAsync(
+                    new(userId, session.IsAdministrator),
+                    [new(projection.CanonicalRecordingId, latestSnapshot.OwnerUserId, target, latestSnapshot,
+                        projection.PrimaryProviderRoute?.IsManual == true)], cancellationToken);
+        }
         var sourceMetadata = latestSnapshot == null ? default : Metadata(latestSnapshot.PayloadJson);
         var effectiveDuration = primaryLocal?.DurationMilliseconds ?? sourceMetadata.DurationMilliseconds;
         return Ok(new
         {
             spotifyId,
+            target,
             found = identities.Count > 0 || decisions.Count > 0 || localTracks.Count > 0,
             firstMappedAt,
             lastMappedAt,
@@ -210,21 +243,23 @@ public sealed class TrackMatchesController(
                 isrc = primaryLocal?.Isrc,
                 musicBrainzRecordingId = primaryLocal?.MusicBrainzRecordingId
             },
-            providerIdentities = identities.Select(item => new
-            {
-                item.Id,
-                item.CanonicalRecordingId,
-                item.ProviderId,
-                item.ExternalId,
-                resourceKind = item.ResourceKind.ToString().ToLowerInvariant(),
-                scope = item.Scope.ToString().ToLowerInvariant(),
-                verification = item.Verification.ToString().ToLowerInvariant(),
-                item.VerificationMethod,
-                item.DecisionVersion,
-                item.CreatedAt,
-                item.VerifiedAt,
-                item.UpdatedAt
-            }),
+            providerIdentities = identities
+                .DistinctBy(item => (AppleMusicClient.NormalizeProviderId(item.ProviderId), item.ExternalId))
+                .Select(item => new
+                {
+                    item.Id,
+                    item.CanonicalRecordingId,
+                    ProviderId = AppleMusicClient.NormalizeProviderId(item.ProviderId),
+                    item.ExternalId,
+                    resourceKind = item.ResourceKind.ToString().ToLowerInvariant(),
+                    scope = item.Scope.ToString().ToLowerInvariant(),
+                    verification = item.Verification.ToString().ToLowerInvariant(),
+                    item.VerificationMethod,
+                    item.DecisionVersion,
+                    item.CreatedAt,
+                    item.VerifiedAt,
+                    item.UpdatedAt
+                }),
             localTracks = localTracks.Select(item => new
             {
                 item.Id,
@@ -361,7 +396,11 @@ public sealed class TrackMatchesController(
             _ => filteredRows.ToArray()
         };
         var total = rows.Length;
-        var items = rows.Skip((page - 1) * pageSize).Take(pageSize).Select(row => row.Value).ToArray();
+        var pageRows = rows.Skip((page - 1) * pageSize).Take(pageSize).ToArray();
+        await new TrackMatchTargetResolver(contextFactory, applicationCache, enrichment).EnrichAsync(
+            new(userId, session.IsAdministrator),
+            pageRows.Select(row => row.TargetLookup).OfType<TrackMatchTargetLookup>().ToArray(), cancellationToken);
+        var items = pageRows.Select(row => row.Value).ToArray();
         return Ok(new
         {
             matches = items,
@@ -821,11 +860,13 @@ public sealed class TrackMatchesController(
         var track = projection.LibraryTrack;
         var trackId = track?.Id;
         var canonicalId = projection.CanonicalRecordingId;
+        var target = TrackMatchTargetResolver.Create(projection, decision);
         var providerIdentities = projection.ProviderIdentities
+            .DistinctBy(item => (AppleMusicClient.NormalizeProviderId(item.ProviderId), item.ExternalId))
             .Select(item => new
             {
                 id = item.Id,
-                providerId = item.ProviderId,
+                providerId = AppleMusicClient.NormalizeProviderId(item.ProviderId),
                 externalId = item.ExternalId,
                 scope = item.Scope.ToString(),
                 verification = item.Verification.ToString(),
@@ -911,6 +952,7 @@ public sealed class TrackMatchesController(
                 artworkUrl = candidateArtworkUrl,
                 providerIds = ParseObject(track.ProviderIdsJson)
             },
+            target,
             providerIdentities,
             candidates = ReviewCandidates(
                 snapshot, decision, projection, library, playableProviderSet, indexedLibraryTrackIds),
@@ -929,7 +971,9 @@ public sealed class TrackMatchesController(
             $"{metadata.Title} {metadata.Artist} {metadata.Album} {snapshot.ProviderId} {track?.Title} {track?.Artist}",
             hasManualMatch,
             hasManualRejection,
-            value);
+            value,
+            target == null ? null : new(canonicalId, snapshot.OwnerUserId, target, snapshot,
+                projection.PrimaryProviderRoute?.IsManual == true));
     }
 
     private static (string? Title, string? Artist, string? Album, string? ArtworkUrl, string? Isrc, long? DurationMilliseconds) Metadata(string json)
@@ -1278,7 +1322,8 @@ public sealed class TrackMatchesController(
         string SearchText,
         bool HasManualMatch,
         bool HasManualRejection,
-        object Value);
+        object Value,
+        TrackMatchTargetLookup? TargetLookup = null);
 
     private sealed record ManualAuthorityRow(
         Guid Id,

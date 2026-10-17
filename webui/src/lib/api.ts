@@ -842,6 +842,16 @@ export type MatchReviewItem = {
   candidateArtworkUrl?: string | null;
   isrc?: string | null;
   durationMilliseconds?: number | null;
+  target?: {
+    providerId: string;
+    externalId: string;
+    title?: string | null;
+    artist?: string | null;
+    album?: string | null;
+    durationMilliseconds?: number | null;
+    artworkUrl?: string | null;
+    isrc?: string | null;
+  } | null;
   localTrack?: {
     id: string;
     backendItemId: string;

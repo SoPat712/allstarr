@@ -96,6 +96,16 @@ export function hashSimilarity(left: bigint, right: bigint) {
 }
 
 export function currentTarget(match: MatchReviewItem) {
+  if (match.target)
+    return {
+      title: match.target.title || "Metadata unavailable",
+      artist: match.target.artist || "Unknown artist",
+      album: match.target.album,
+      durationMilliseconds: match.target.durationMilliseconds,
+      identity: match.target.externalId,
+      providerId: match.target.providerId,
+      artworkUrl: match.target.artworkUrl,
+    };
   if (match.localTrack)
     return {
       title: match.localTrack.title,
