@@ -6357,7 +6357,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
 
 for (const width of [390, 1280]) {
   for (const theme of ["light", "dark"] as const) {
-    for (const view of ["Queue", "History", "Tasks"] as const) {
+    for (const view of ["History", "Jobs", "Tasks"] as const) {
       test(`Activity views: ${view} at ${width}px in ${theme}`, async ({ page }) => {
         await page.setViewportSize({ width, height: 844 });
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
@@ -6405,7 +6405,7 @@ for (const width of [390, 1280]) {
         await page.goto("#/activity");
         await page.getByRole("tab", { name: view, exact: true }).click();
         await expect(page.getByRole("tab", { name: view, exact: true })).toHaveAttribute("aria-selected", "true");
-        if (view === "Queue") {
+        if (view === "Jobs") {
           await expect(page.getByText("Writing playlist", { exact: true })).toBeVisible();
           await expect(page.getByRole("progressbar", { name: /50%/ })).toBeVisible();
           for (const state of ["Waiting", "Running", "Retrying", "Deferred"])
@@ -6414,12 +6414,18 @@ for (const width of [390, 1280]) {
           await page.getByRole("alertdialog", { name: "Cancel this job?" }).getByRole("button", { name: "Cancel job", exact: true }).click();
           await expect.poll(() => cancelled).toBe(true);
           await expect(page.getByRole("button", { name: "Cancel job" })).toHaveCount(3);
-        } else if (view === "History") {
+          await expect(page.getByRole("region", { name: "Running and waiting" })).toBeVisible();
           await expect(page.getByText("The source is temporarily unavailable.", { exact: true }).first()).toBeVisible();
-          await page.getByRole("button", { name: "Show attempts" }).click();
+          const finished = page.locator('[data-job-id="finished-job"]').getByRole("button", { name: /Update playlist/ });
+          await expect(finished).toHaveAttribute("aria-expanded", "false");
+          await finished.click();
+          await expect(finished).toHaveAttribute("aria-expanded", "true");
           await expect(page.getByRole("region", { name: "Attempt history" })).toContainText("Attempt 1");
           await page.getByRole("button", { name: "Load earlier jobs" }).click();
           await expect(page.locator('[data-job-id="older-finished"]')).toBeVisible();
+        } else if (view === "History") {
+          await expect(page.getByRole("region", { name: /Event log|Your activity/ })).toBeVisible();
+          await expect(page.locator("[data-job-id]")).toHaveCount(0);
         } else {
           await expect(page.getByText("Sync Evening playlist", { exact: true })).toBeVisible();
           await expect(page.getByText("Activity retention", { exact: true })).toBeVisible();
@@ -6432,14 +6438,14 @@ for (const width of [390, 1280]) {
           await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-${view.toLowerCase()}-${width}-${theme}.png`, fullPage: true });
         await page.getByRole("tab", { name: view, exact: true }).focus();
         await page.keyboard.press("Home");
-        await expect(page.getByRole("tab", { name: "Queue", exact: true })).toBeFocused();
-        await expect(page.getByRole("tab", { name: "Queue", exact: true })).toHaveAttribute("aria-selected", "true");
+        await expect(page.getByRole("tab", { name: "History", exact: true })).toBeFocused();
+        await expect(page.getByRole("tab", { name: "History", exact: true })).toHaveAttribute("aria-selected", "true");
       });
     }
   }
 }
 
-for (const view of ["Queue", "History", "Tasks"] as const) {
+for (const view of ["Jobs", "Tasks"] as const) {
   test(`Activity ${view} recovers from errors into an accessible empty state`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockApi(page);
@@ -6454,10 +6460,29 @@ for (const view of ["Queue", "History", "Tasks"] as const) {
     await expect(page.getByText("fixture-private-response")).toHaveCount(0);
     fail = false;
     await alert.getByRole("button", { name: "Try again" }).click();
-    await expect(page.getByText(view === "Queue" ? "Nothing queued" : view === "History" ? "No finished jobs yet" : "No scheduled tasks", { exact: true })).toBeVisible();
+    await expect(page.getByText(view === "Jobs" ? "No background work yet" : "No scheduled tasks", { exact: true })).toBeVisible();
     await expectContainedMobileGeometry(page);
   });
 }
+
+test("Activity Jobs collapses repeated routine runs into one row", async ({ page }) => {
+  await mockApi(page);
+  const run = (id: string, time: string, extra = {}) => ({ id, type: "library.index", state: "Succeeded", ownerName: "Josh",
+    source: "Jellyfin library", completedAt: time, updatedAt: time, ...extra });
+  await page.route("**/api/admin/jobs?*", route => route.fulfill({ json: new URL(route.request().url()).searchParams.get("view") === "history"
+    ? { jobs: [run("scan-3", "2026-10-15T13:00:00Z"), run("scan-2", "2026-10-15T12:30:00Z"), run("scan-1", "2026-10-15T12:00:00Z"),
+      run("scan-failed", "2026-10-15T11:30:00Z", { state: "Failed", lastErrorMessage: "Jellyfin did not answer." })], progress: [], hasMore: false }
+    : { jobs: [], progress: [], hasMore: false } }));
+  await page.route("**/api/admin/jobs/scan-3?*", route => route.fulfill({ json: { job: run("scan-3", "2026-10-15T13:00:00Z"), attempts: [], hasMore: false } }));
+  await page.goto("#/activity");
+  await page.getByRole("tab", { name: "Jobs", exact: true }).click();
+  const grouped = page.getByRole("button", { name: /Refresh library index · 3 runs/ });
+  await expect(grouped).toBeVisible();
+  await expect(page.getByRole("button", { name: /Refresh library index/ })).toHaveCount(2);
+  await grouped.click();
+  await expect(page.getByRole("list", { name: "Runs" }).getByRole("listitem")).toHaveCount(3);
+  await expect(page.getByText("Jellyfin did not answer.", { exact: true })).toBeVisible();
+});
 
 test("Activity queue refreshes after reconnect and sends server-side filters", async ({ page }) => {
   await mockApi(page);
@@ -6490,7 +6515,7 @@ test("Activity queue refreshes after reconnect and sends server-side filters", a
     }});
   });
   await page.goto("#/activity");
-  await page.getByRole("tab", { name: "Queue", exact: true }).click();
+  await page.getByRole("tab", { name: "Jobs", exact: true }).click();
   await expect(page.getByText("Update playlist", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Job state", exact: true }).click();
   await page.getByRole("option", { name: "Running", exact: true }).click();
@@ -6540,6 +6565,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await page.goto("#/activity");
     const scope = page.getByRole("group", { name: "Activity scope" });
     await expect(scope.getByRole("button", { name: "Mine", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("tab", { name: "Jobs", exact: true }).click();
     await expect(page.locator('[data-job-id="own-scan"]')).toBeVisible();
     await expect(page.locator('[data-job-id="other-scan"]')).toHaveCount(0);
     expect(requests.filter(r => r.path !== "/api/admin/activity/tasks").every(r => r.scope === "mine")).toBe(true);
@@ -6551,6 +6577,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     await expect(scope.getByRole("button", { name: "Everyone", exact: true })).toBeFocused();
     await expect(scope.getByRole("button", { name: "Everyone", exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator('[data-job-id="other-scan"]')).toContainText("Alex");
+    await page.getByRole("tab", { name: "History", exact: true }).click();
     const other = page.locator(".event-log-group").filter({ hasText: "Alex" });
     await expect(other).toBeVisible();
     await expect(other.locator("summary").first()).toContainText("Jellyfin library");
@@ -6563,13 +6590,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     if (process.env.ALLSTARR_SCREENSHOT_DIR) await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/activity-ownership-${width}-${theme}.png`, fullPage: true });
     await page.reload();
     await expect(scope.getByRole("button", { name: "Everyone", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await page.getByRole("tab", { name: "Jobs", exact: true }).click();
     await expect(page.locator('[data-job-id="other-scan"]')).toBeVisible();
     await page.getByRole("tab", { name: "Tasks", exact: true }).click();
     await expect(page.getByText("Alex's playlist", { exact: true })).toBeVisible();
     await scope.getByRole("button", { name: "Mine", exact: true }).click();
     await expect(page.getByText("Josh's playlist", { exact: true })).toBeVisible();
     await expect(page.getByText("Alex's playlist", { exact: true })).toHaveCount(0);
-    await page.getByRole("tab", { name: "History", exact: true }).click();
+    await page.getByRole("tab", { name: "Jobs", exact: true }).click();
     await expect(page.locator('[data-job-id="own-scan"]')).toBeVisible();
     await expect(page.locator('[data-job-id="other-scan"]')).toHaveCount(0);
     await expect(page.locator(".event-log-group").filter({ hasText: "Alex" })).toHaveCount(0);

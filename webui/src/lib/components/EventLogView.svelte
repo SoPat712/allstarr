@@ -30,15 +30,17 @@
 </script>
 
 <SegmentedNav label="Activity views" items={[
-  { id: "queue", label: "Queue" }, { id: "history", label: "History" }, { id: "tasks", label: "Tasks" },
+  { id: "history", label: "History" }, { id: "jobs", label: "Jobs" }, { id: "tasks", label: "Tasks" },
 ]} active={view} onchange={(next) => view = next} />
-{#if administrator}
-  <div class="activity-audience" role="group" aria-label="Activity scope">
-    <button type="button" class="filter-chip" aria-pressed={scope === "mine"} onclick={() => chooseScope("mine")}>Mine</button>
-    <button bind:this={everyoneButton} type="button" class="filter-chip" aria-pressed={scope === "everyone"} onclick={() => chooseScope("everyone")}>Everyone</button>
-  </div>
-{/if}
-<p class="activity-scope">{scope === "everyone" ? "Work across your household" : "Your background work"} · <span role="status" aria-live="polite">{liveUpdates.state.status === "live" ? "Live updates connected" : "Reconnecting to live updates; checking periodically"}</span></p>
+<div class="activity-toolbar">
+  {#if administrator}
+    <div class="activity-audience" role="group" aria-label="Activity scope">
+      <button type="button" class="filter-chip" aria-pressed={scope === "mine"} onclick={() => chooseScope("mine")}>Mine</button>
+      <button bind:this={everyoneButton} type="button" class="filter-chip" aria-pressed={scope === "everyone"} onclick={() => chooseScope("everyone")}>Everyone</button>
+    </div>
+  {/if}
+  <p class="activity-scope">{scope === "everyone" ? "Work across your household" : "Your background work"} · <span role="status" aria-live="polite">{liveUpdates.state.status === "live" ? "Live updates connected" : "Reconnecting to live updates; checking periodically"}</span></p>
+</div>
 {#if administrator && scope === "mine" && attention}
   <div class="degraded-banner" role="status">
     <p><strong>Household work needs attention.</strong> Open Everyone to review failed background work.</p>
@@ -50,14 +52,14 @@
     {#if view === "tasks"}
       <ActivityTasks {administrator} {scope} />
     {:else}
-      <ActivityJobs mode={view === "queue" ? "queue" : "history"} {administrator} {scope} />
-      {#if view === "history"}<EventHistoryFeed {administrator} {scope} />{/if}
+      {#if view === "jobs"}<ActivityJobs {administrator} {scope} />{:else}<EventHistoryFeed {administrator} {scope} />{/if}
     {/if}
   {/key}
 {/if}
 
 <style>
-  .activity-audience { display: flex; gap: .5rem; margin-bottom: .75rem; }
+  .activity-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; margin-block: var(--space-5) var(--section-gap); }
+  .activity-audience { display: flex; gap: .5rem; }
   .activity-audience button { min-height: var(--control-md); }
-  .activity-scope { color: var(--md-sys-color-on-surface-variant); font-size: .8125rem; margin-block: 0 var(--section-gap); }
+  .activity-scope { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: .8125rem; }
 </style>
