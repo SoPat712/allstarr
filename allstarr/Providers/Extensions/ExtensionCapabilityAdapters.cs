@@ -246,6 +246,8 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         if (!context.Policy.AllowManagedDownloads)
             return Failure<ProviderStreamLease>(ProviderErrorKind.Forbidden);
 
+        // Availability only prepares the track here. Some extensions judge availability more strictly than their
+        // download does (SoundCloud), so playback always tries the download and lets that decide.
         if (requiresPreparedContext)
         {
             var availability = await download.CheckAvailabilityAsync(context,
@@ -253,8 +255,6 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
             if (!availability.IsSuccess && availability.Error!.Kind is not
                 (ProviderErrorKind.NotSupported or ProviderErrorKind.TransientFailure))
                 return ProviderOutcome<ProviderStreamLease>.Failure(availability.Error);
-            if (availability.IsSuccess && availability.RequireValue().State == ProviderDownloadAvailabilityState.Unavailable)
-                return Failure<ProviderStreamLease>(ProviderErrorKind.NotFound);
         }
 
         var jobId = Guid.CreateVersion7();

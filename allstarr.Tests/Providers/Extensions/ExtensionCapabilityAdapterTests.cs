@@ -1202,7 +1202,7 @@ public sealed class ExtensionCapabilityAdapterTests
     [InlineData("null", true)]
     [InlineData("{}", true)]
     [InlineData("{state:'Unknown'}", true)]
-    [InlineData("{available:false}", false)]
+    [InlineData("{available:false}", true)]
     [InlineData("{available:true,prepared_context:{ready:true}}", true)]
     public async Task SpotiFlacStreaming_PreparesSelectedTrackWithoutChangingManagedAvailability(string availability, bool streams)
     {
@@ -1275,8 +1275,8 @@ public sealed class ExtensionCapabilityAdapterTests
     [InlineData(true, "return {state:'UnavailableForNow'};", true)]
     [InlineData(true, "return null;", true)]
     [InlineData(true, "throw new Error('lookup failed');", true)]
-    [InlineData(true, "return {state:'Unavailable'};", false)]
-    public async Task DownloadStreaming_OnlyDefinitiveUnavailabilityBlocksPreparation(
+    [InlineData(true, "return {state:'Unavailable'};", true)]
+    public async Task DownloadStreaming_AvailabilityOnlyPreparesAndNeverBlocksTheDownload(
         bool requiresPreparation, string? availabilityBody, bool streams)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-download-stream", Guid.NewGuid().ToString("N"));
