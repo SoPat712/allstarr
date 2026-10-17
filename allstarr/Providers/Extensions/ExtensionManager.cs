@@ -618,7 +618,8 @@ public sealed record ExtensionRuntimePermissionSet(
     IReadOnlySet<string> SecretKeys,
     Func<string, string?>? SecretResolver = null,
     Action<string, string>? LogSink = null,
-    IReadOnlySet<string>? SettingKeys = null)
+    IReadOnlySet<string>? SettingKeys = null,
+    Action<string, string, string>? SessionLogSink = null)
 {
     public static ExtensionRuntimePermissionSet None { get; } = new(
         new HashSet<string>(StringComparer.Ordinal),
@@ -1252,12 +1253,12 @@ public partial class ExtensionHostBridge
                 signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
                 sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory),
                 extensionId ?? signedSession.Namespace,
-                sessionStateDirectory == null ? null : _folderPath, timeProvider, executionOptions);
+                sessionStateDirectory == null ? null : _folderPath, timeProvider, executionOptions, permissions.SessionLogSink);
             var sourceDirectory = sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory);
             _accountSessionFactory = (accountId, adopt) => new ExtensionSignedSessionClient(
                 signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
                 Path.Combine(sourceDirectory, "accounts", accountId.ToString("N")),
-                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null, timeProvider, executionOptions);
+                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null, timeProvider, executionOptions, permissions.SessionLogSink);
         }
         LoadStorage();
     }

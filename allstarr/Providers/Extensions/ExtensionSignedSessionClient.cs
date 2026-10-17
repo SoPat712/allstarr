@@ -56,6 +56,7 @@ internal sealed class ExtensionSignedSessionClient
     private readonly SemaphoreSlim _gate = new(1, 1);
     private string? _pendingAuthUrl;
     private string? _lastRenewalFailure;
+    private readonly Action<string, string, string>? _logSink;
 
     public ExtensionSignedSessionClient(
         ExtensionSignedSessionConfig config,
@@ -66,9 +67,11 @@ internal sealed class ExtensionSignedSessionClient
         string extensionId,
         string? legacyStateDirectory = null,
         TimeProvider? timeProvider = null,
-        ExtensionExecutionOptions? executionOptions = null)
+        ExtensionExecutionOptions? executionOptions = null,
+        Action<string, string, string>? logSink = null)
     {
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _logSink = logSink;
         _signedDownloadRequestLimit = (executionOptions ?? new()).GetSignedDownloadRequestTimeout();
         _config = config;
         _clients = clients;
@@ -123,7 +126,7 @@ internal sealed class ExtensionSignedSessionClient
 
     private bool ExpiredSignIn(SessionRecord record) =>
         !string.IsNullOrWhiteSpace(record.SessionId) && !string.IsNullOrWhiteSpace(record.SessionSecret) &&
-        _pendingAuthUrl == null && TryExpiry(record, out var expiry) && expiry <= DateTimeOffset.UtcNow;
+        _pendingAuthUrl == null && TryExpiry(record, out var expiry) && expiry <= _timeProvider.GetUtcNow();
 
     // Services can cap a sign-in's total lifetime; once it lapses, ask once whether this install may resume
     // without verification, as the mobile client does, instead of waiting for playback to fail.
@@ -132,7 +135,8 @@ internal sealed class ExtensionSignedSessionClient
     {
         if (_restoreAttemptedFor == record.ExpiresAt) return null;
         _restoreAttemptedFor = record.ExpiresAt;
-        var result = await BeginVerificationAsync(limit, cancellationToken, allowChallenge: false);
+        var result = await BeginVerificationAsync(limit, cancellationToken, allowChallenge: false, call: "restore");
+        if (result.ReasonCode is not (null or "verification_required")) _restoreAttemptedFor = null;
         cancellationToken.ThrowIfCancellationRequested();
         var current = Load();
         _lastRenewalFailure = HasUsableSession(current) ? null : result.ReasonCode ?? "verification_required";
@@ -142,8 +146,8 @@ internal sealed class ExtensionSignedSessionClient
     // Adapted from SpotiFLAC-Mobile (MIT), signed_session/ss_protocol.rs refresh_due.
     private bool RefreshDue(SessionRecord record) =>
         !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh) && HasUsableSession(record) &&
-        TryExpiry(record, out var expiry) && expiry > DateTimeOffset.UtcNow &&
-        expiry - DateTimeOffset.UtcNow <= RefreshSkew;
+        TryExpiry(record, out var expiry) && expiry > _timeProvider.GetUtcNow() &&
+        expiry - _timeProvider.GetUtcNow() <= RefreshSkew;
 
     public object Clear() => RunScript(_ =>
     {
@@ -224,18 +228,50 @@ internal sealed class ExtensionSignedSessionClient
     private void ClearRecord()
     {
         var record = Load();
-        Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
+        ResetRecord(record, "user_clear");
         _pendingAuthUrl = null;
         _lastRenewalFailure = null;
     }
 
+    private SessionRecord ResetRecord(SessionRecord record, string call, HttpStatusCode? status = null, ErrorContract? contract = null)
+    {
+        LogSession("session.reset", record, call, call == "user_clear" ? "user_requested" : "session_invalid", status, contract);
+        var cleared = record with { SessionId = null, SessionSecret = null, ExpiresAt = null };
+        Save(cleared);
+        _pendingAuthUrl = null;
+        _lastRenewalFailure = "verification_required";
+        return cleared;
+    }
+
+    private void RetainSession(SessionRecord record, string call, string reason, HttpStatusCode? status = null,
+        ErrorContract? contract = null)
+    {
+        _lastRenewalFailure = reason;
+        if (call == "restore") _restoreAttemptedFor = null;
+        LogSession("session.retained", record, call, reason, status, contract);
+    }
+
+    private void LogSession(string code, SessionRecord record, string call, string reason, HttpStatusCode? status = null,
+        ErrorContract? contract = null)
+    {
+        // Only recognized protocol labels enter durable logs; response text and request URLs may contain private data.
+        var origin = contract?.Origin is "gateway" or "provider" ? contract.Origin : string.IsNullOrEmpty(contract?.Origin) ? "none" : "unrecognized";
+        var errorCode = contract?.Code is "SESSION_INVALID" or "VERIFY_REQUIRED" or "PROVIDER_UNAVAILABLE" ? contract.Code : string.IsNullOrEmpty(contract?.Code) ? "none" : "unrecognized";
+        var action = contract?.Action is "bootstrap_session" or "verify" ? contract.Action : string.IsNullOrEmpty(contract?.Action) ? "none" : "unrecognized";
+        var timeLeft = TryExpiry(record, out var expiry) ? (expiry > _timeProvider.GetUtcNow() ? "true" : "false") : "unknown";
+        _logSink?.Invoke("warning", code,
+            $"Session outcome: call={call}; reason={reason}; status={(status.HasValue ? ((int)status.Value).ToString() : "none")}; origin={origin}; code={errorCode}; action={action}; time_left={timeLeft}.");
+    }
+
     private ExtensionSessionView ViewOf(SessionRecord record, string? reasonCode)
     {
+        reasonCode ??= _lastRenewalFailure is "verification_required" or "provider_unavailable" or "network_not_ready"
+            ? _lastRenewalFailure : null;
         if (HasUsableSession(record))
             return new(ExtensionSessionStates.SignedIn, record.ExpiresAt, null, reasonCode)
             {
                 RenewsAutomatically = !string.IsNullOrWhiteSpace(_config.Endpoints.Refresh) && TryExpiry(record, out _),
-                LastRenewalFailure = _lastRenewalFailure == "verification_required" ? null : _lastRenewalFailure
+                LastRenewalFailure = _lastRenewalFailure
             };
         if (_pendingAuthUrl != null)
             return new(ExtensionSessionStates.VerificationPending, null, _pendingAuthUrl, reasonCode);
@@ -334,7 +370,7 @@ internal sealed class ExtensionSignedSessionClient
     }
 
     private async Task<SessionResult> BeginVerificationAsync(CancellationToken cancellationToken,
-        CancellationToken callerToken = default, bool allowChallenge = true)
+        CancellationToken callerToken = default, bool allowChallenge = true, string call = "verification")
     {
         try
         {
@@ -345,8 +381,16 @@ internal sealed class ExtensionSignedSessionClient
             builder.Query = $"{separator}app_version={Uri.EscapeDataString(_config.AppVersion)}&install_id={Uri.EscapeDataString(record.InstallId)}";
             var response = await SendUnsignedAsync(HttpMethod.Get, builder.Uri, null, cancellationToken);
             if (!response.IsSuccessStatusCode)
-                return SessionResult.Failed(ResponseReason(response.StatusCode, "session_rejected"),
-                    $"session bootstrap failed: HTTP {(int)response.StatusCode}");
+            {
+                var contract = ErrorContract.Parse(response.Body);
+                if (contract.GatewayAction(response.StatusCode).Length > 0)
+                    ResetRecord(record, call, response.StatusCode, contract);
+                else
+                    RetainSession(record, call, ResponseReason(response.StatusCode,
+                        !string.IsNullOrWhiteSpace(record.SessionId) && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired
+                            ? "verification_required" : "session_rejected"), response.StatusCode, contract);
+                return SessionResult.Failed(_lastRenewalFailure!, $"session bootstrap failed: HTTP {(int)response.StatusCode}");
+            }
             var boot = JsonSerializer.Deserialize<SessionExchange>(response.Body,
                 new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (!string.IsNullOrWhiteSpace(boot?.SessionId) && !string.IsNullOrWhiteSpace(boot.SessionSecret) &&
@@ -354,6 +398,7 @@ internal sealed class ExtensionSignedSessionClient
             {
                 Save(record with { SessionId = boot.SessionId, SessionSecret = boot.SessionSecret, ExpiresAt = boot.ExpiresAt });
                 _pendingAuthUrl = null;
+                _lastRenewalFailure = null;
                 return SessionResult.Authenticated;
             }
             if (!allowChallenge)
@@ -375,7 +420,10 @@ internal sealed class ExtensionSignedSessionClient
         }
         catch (Exception exception)
         {
-            return SessionResult.Failed(ExceptionReason(exception), exception.Message);
+            if (exception is InvalidOperationException) throw;
+            var reason = ExceptionReason(exception);
+            RetainSession(Load(), call, reason);
+            return SessionResult.Failed(reason, "The session service is temporarily unavailable.");
         }
     }
 
@@ -392,6 +440,7 @@ internal sealed class ExtensionSignedSessionClient
     private static string ExceptionReason(Exception exception) => exception switch
     {
         UnauthorizedAccessException => "origin_not_approved",
+        HttpRequestException { HttpRequestError: HttpRequestError.NameResolutionError or HttpRequestError.ConnectionError } => "network_not_ready",
         HttpRequestException or OperationCanceledException or IOException => "provider_unavailable",
         _ => "unexpected_response"
     };
@@ -424,28 +473,47 @@ internal sealed class ExtensionSignedSessionClient
             return RunScript(async limit =>
             {
                 var record = Load();
-                if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit));
+                if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit, call: "signed_fetch"));
                 if (RefreshDue(record))
-                    record = await TryRefreshAsync(record, limit);
-                for (var retry = 0; ; retry++)
                 {
-                    var response = await SendSignedAsync(record, method, path, payload, extraHeaders, limit);
-                    var contract = ErrorContract.Parse(response.Response.Body);
-                    if (contract.ProviderRetry(response.StatusCode) && retry < 2)
+                    record = await TryRefreshAsync(record, limit);
+                    if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit, call: "signed_fetch"));
+                }
+                try
+                {
+                    for (var retry = 0; ; retry++)
                     {
-                        var delay = response.Response.RetryAfterSeconds > 0 ? response.Response.RetryAfterSeconds :
-                            contract.RetryAfterSeconds > 0 ? contract.RetryAfterSeconds : 1;
-                        await Task.Delay(TimeSpan.FromSeconds(Math.Min(10, delay)), limit);
-                        continue;
+                        var response = await SendSignedAsync(record, method, path, payload, extraHeaders, limit);
+                        var contract = ErrorContract.Parse(response.Response.Body);
+                        if (contract.ProviderRetry(response.StatusCode) && retry < 2)
+                        {
+                            var delay = response.Response.RetryAfterSeconds > 0 ? response.Response.RetryAfterSeconds :
+                                contract.RetryAfterSeconds > 0 ? contract.RetryAfterSeconds : 1;
+                            await Task.Delay(TimeSpan.FromSeconds(Math.Min(10, delay)), _timeProvider, limit);
+                            continue;
+                        }
+                        var reset = contract.GatewayAction(response.StatusCode).Length > 0;
+                        if (reset)
+                        {
+                            ResetRecord(record, "signed_fetch", response.StatusCode, contract);
+                            return HostResponse(await BeginVerificationAsync(limit, call: "signed_fetch"));
+                        }
+                        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired ||
+                            (int)response.StatusCode >= 500 || response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests)
+                            RetainSession(record, "signed_fetch", ResponseReason(response.StatusCode, "verification_required"), response.StatusCode, contract);
+                        else if (response.Response.IsSuccessStatusCode) _lastRenewalFailure = null;
+                        return response.ToHostResponse();
                     }
-                    var reset = contract.GatewayAction(response.StatusCode).Length > 0 ||
-                        contract.Origin.Length == 0 && response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired;
-                    if (reset)
-                    {
-                        Save(record with { SessionId = null, SessionSecret = null, ExpiresAt = null });
-                        return HostResponse(await BeginVerificationAsync(limit));
-                    }
-                    return response.ToHostResponse();
+                }
+                catch (OperationCanceledException exception)
+                {
+                    RetainSession(record, "signed_fetch", ExceptionReason(exception));
+                    throw;
+                }
+                catch (Exception exception) when (exception is HttpRequestException or IOException)
+                {
+                    RetainSession(record, "signed_fetch", ExceptionReason(exception));
+                    return new { ok = false, statusCode = 0, status = 0, error = "PROVIDER_UNAVAILABLE" };
                 }
             });
         }
@@ -460,7 +528,7 @@ internal sealed class ExtensionSignedSessionClient
     {
         var target = Resolve(path);
         var requestMethod = method.Trim().ToUpperInvariant();
-        var timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
+        var timestamp = _timeProvider.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
         var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
         var window = DateTimeOffset.Parse(timestamp).ToUnixTimeSeconds() / _config.TimeWindowSeconds;
@@ -492,7 +560,12 @@ internal sealed class ExtensionSignedSessionClient
             var result = await SendSignedAsync(record, "POST", _config.Endpoints.Refresh!, body, null, cancellationToken);
             if (!result.Response.IsSuccessStatusCode)
             {
-                _lastRenewalFailure = ResponseReason(result.StatusCode, "renewal_rejected");
+                var contract = ErrorContract.Parse(result.Response.Body);
+                if (contract.GatewayAction(result.StatusCode).Length > 0)
+                    return ResetRecord(record, "refresh", result.StatusCode, contract);
+                RetainSession(record, "refresh", ResponseReason(result.StatusCode,
+                    result.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.PreconditionRequired ? "verification_required" : "renewal_rejected"),
+                    result.StatusCode, contract);
                 return record;
             }
             var refreshed = JsonSerializer.Deserialize<SessionExchange>(result.Response.Body,
@@ -504,7 +577,7 @@ internal sealed class ExtensionSignedSessionClient
                 ExpiresAt = refreshed?.ExpiresAt ?? record.ExpiresAt
             };
             if (string.IsNullOrWhiteSpace(refreshed?.ExpiresAt) || !TryExpiry(next, out var expiry) ||
-                expiry <= DateTimeOffset.UtcNow || !HasUsableSession(next))
+                expiry <= _timeProvider.GetUtcNow() || !HasUsableSession(next))
             {
                 _lastRenewalFailure = "unexpected_response";
                 return record;
@@ -516,7 +589,7 @@ internal sealed class ExtensionSignedSessionClient
         }
         catch (Exception exception)
         {
-            _lastRenewalFailure = ExceptionReason(exception);
+            RetainSession(record, "refresh", ExceptionReason(exception));
             return record;
         }
     }
@@ -575,7 +648,7 @@ internal sealed class ExtensionSignedSessionClient
         var responseHeaders = response.Headers.Concat(response.Content.Headers)
             .ToDictionary(item => item.Key, item => (object)string.Join(", ", item.Value), StringComparer.OrdinalIgnoreCase);
         var retry = response.Headers.RetryAfter?.Delta is { } delta ? Math.Max(0, (int)delta.TotalSeconds) :
-            response.Headers.RetryAfter?.Date is { } date ? Math.Max(0, (int)(date - DateTimeOffset.UtcNow).TotalSeconds) : 0;
+            response.Headers.RetryAfter?.Date is { } date ? Math.Max(0, (int)(date - _timeProvider.GetUtcNow()).TotalSeconds) : 0;
         return new(response.StatusCode, Encoding.UTF8.GetString(output.ToArray()), responseHeaders, retry);
     }
 
@@ -604,29 +677,42 @@ internal sealed class ExtensionSignedSessionClient
 
     private SessionRecord Load()
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
-        if (File.Exists(_statePath))
+        try
         {
-            try
+            Directory.CreateDirectory(Path.GetDirectoryName(_statePath)!);
+            string protectedContents;
+            try { protectedContents = File.ReadAllText(_statePath); }
+            catch (FileNotFoundException)
             {
-                var json = _protector.Unprotect(File.ReadAllText(_statePath));
-                var loaded = JsonSerializer.Deserialize<SessionRecord>(json);
-                if (loaded != null) return loaded;
+                var record = new SessionRecord(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(), null, null, null);
+                try { Save(record, overwrite: false); }
+                catch (IOException) when (File.Exists(_statePath)) { return Load(); }
+                return record;
             }
-            catch { }
+            var json = _protector.Unprotect(protectedContents);
+            var loaded = JsonSerializer.Deserialize<SessionRecord>(json);
+            if (loaded == null || string.IsNullOrWhiteSpace(loaded.InstallId) ||
+                (string.IsNullOrWhiteSpace(loaded.SessionId) != string.IsNullOrWhiteSpace(loaded.SessionSecret)))
+                throw new InvalidDataException();
+            return loaded;
         }
-        var record = new SessionRecord(Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(), null, null, null);
-        Save(record);
-        return record;
+        catch (Exception exception) when (exception is CryptographicException or JsonException or IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            var reason = exception is CryptographicException ? "protection_failed" :
+                exception is JsonException or InvalidDataException ? "invalid_record" : "read_failed";
+            _logSink?.Invoke("error", "session.load-failed",
+                $"Stored session unavailable: call=load; reason={reason}; time_left=unknown. The file was retained; restore storage access or the protection keys before retrying.");
+            throw new InvalidOperationException("Stored session is unreadable; the existing file was retained.");
+        }
     }
 
-    private void Save(SessionRecord record)
+    private void Save(SessionRecord record, bool overwrite = true)
     {
-        var temporary = _statePath + ".tmp";
+        var temporary = _statePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
             File.WriteAllText(temporary, _protector.Protect(JsonSerializer.Serialize(record)));
-            File.Move(temporary, _statePath, overwrite: true);
+            File.Move(temporary, _statePath, overwrite);
         }
         finally
         {
@@ -634,9 +720,9 @@ internal sealed class ExtensionSignedSessionClient
         }
     }
 
-    private static bool HasUsableSession(SessionRecord record) =>
+    private bool HasUsableSession(SessionRecord record) =>
         !string.IsNullOrWhiteSpace(record.SessionId) && !string.IsNullOrWhiteSpace(record.SessionSecret) &&
-        (!TryExpiry(record, out var expiry) || expiry > DateTimeOffset.UtcNow);
+        (!TryExpiry(record, out var expiry) || expiry > _timeProvider.GetUtcNow());
 
     private static bool TryExpiry(SessionRecord record, out DateTimeOffset expiry) =>
         DateTimeOffset.TryParse(record.ExpiresAt, out expiry);
@@ -682,6 +768,7 @@ internal sealed class ExtensionSignedSessionClient
     private sealed record ErrorContract(string Error = "", string Code = "", string Origin = "", string Action = "",
         bool Retryable = false, string RetryMode = "", int RetryAfterSeconds = 0)
     {
+        // Only these exact gateway contracts revoke a stored sign-in; provider errors and bare statuses do not.
         public string GatewayAction(HttpStatusCode status) => (status, Origin, Code, Action) switch
         {
             (HttpStatusCode.Unauthorized, "gateway", "SESSION_INVALID", "bootstrap_session") => "bootstrap_session",

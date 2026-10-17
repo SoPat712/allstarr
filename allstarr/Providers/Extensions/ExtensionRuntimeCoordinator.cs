@@ -24,6 +24,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly ProviderDownloadWorkspaceOptions _downloadOptions;
     private readonly ExtensionExecutionOptions _executionOptions;
     private readonly string _runtimeRoot;
+    private readonly TimeProvider _timeProvider;
     private readonly string _packageRoot;
     private readonly IDataProtector _sessionProtector;
     private readonly ConcurrentDictionary<Guid, ExtensionSandbox> _sandboxes = new();
@@ -32,6 +33,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     private readonly SemaphoreSlim _sessionAccountGate = new(1, 1);
     private const string SessionSourceSetting = "__extensionSessionSource";
     private readonly allstarr.Services.Common.IProviderCheckRequests? _checkRequests;
+    private int _startupRenewalAttempted;
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -45,12 +47,14 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         IConfiguration configuration,
         ILogger<ExtensionRuntimeCoordinator> logger,
         IDataProtectionProvider? dataProtectionProvider = null,
-        allstarr.Services.Common.IProviderCheckRequests? checkRequests = null)
+        allstarr.Services.Common.IProviderCheckRequests? checkRequests = null,
+        TimeProvider? timeProvider = null)
     {
         _executionOptions = configuration.GetSection(ExtensionExecutionOptions.SectionName)
             .Get<ExtensionExecutionOptions>() ?? new();
         _executionOptions.GetSignedDownloadRequestTimeout();
         _checkRequests = checkRequests;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _factory = factory;
         _controlPlane = controlPlane;
         _registry = registry;
@@ -101,19 +105,29 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
-    public async Task RefreshSignedSessionsAsync(CancellationToken cancellationToken = default)
+    public Task RefreshSignedSessionsAsync(CancellationToken cancellationToken = default)
     {
+        var firstInvocation = Interlocked.Exchange(ref _startupRenewalAttempted, 1) == 0;
+        return firstInvocation
+            ? ExtensionSessionStartupRetry.RunAsync(RefreshSignedSessionsOnceAsync, _timeProvider, cancellationToken)
+            : RefreshSignedSessionsOnceAsync(cancellationToken);
+    }
+
+    private async Task<bool> RefreshSignedSessionsOnceAsync(CancellationToken cancellationToken)
+    {
+        var networkNotReady = false;
         foreach (var packageId in _sandboxes.Keys)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
             {
-                await WithRuntimeGateAsync(async () =>
+                networkNotReady |= await WithRuntimeGateAsync(async () =>
                 {
                     var package = await GetPackageAsync(packageId, cancellationToken);
                     if (package.State != ExtensionPackageState.Active ||
                         !_sandboxes.TryGetValue(packageId, out var sandbox) || !sandbox.HasSignedSession)
                         return false;
+                    var packageNetworkNotReady = false;
                     await using var db = await _factory.CreateDbContextAsync(cancellationToken);
                     var accounts = await db.ProviderAccounts.AsNoTracking()
                         .Where(item => item.ProviderId == package.ExtensionId && item.Enabled &&
@@ -124,11 +138,12 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                         using var scope = sandbox.OpenSignedSessionAccount(account.Id);
                         var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
                         if (view == null) continue;
+                        packageNetworkNotReady |= view.LastRenewalFailure == "network_not_ready";
                         if (view.Restored) _checkRequests?.Request(package.ExtensionId);
                         var (level, code, text) = RenewalLog(view);
                         await _controlPlane.WriteLogAsync(packageId, level, code, text, "extension-session", cancellationToken);
                     }
-                    return true;
+                    return packageNetworkNotReady;
                 }, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
@@ -138,6 +153,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
                 _logger.LogWarning("An extension session renewal check could not complete; it will be retried next tick");
             }
         }
+        return networkNotReady;
     }
 
     public async Task<ExtensionPackageRecord> ActivateAsync(
@@ -300,12 +316,14 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             cacheKeys, secretKeys, ExtensionInvocationSecretScope.Resolve,
             (level, message) => _controlPlane.WriteLogAsync(package.Id, level, "runtime.log", message,
                 "extension-runtime", CancellationToken.None).GetAwaiter().GetResult(),
-            (manifest.Settings ?? []).Select(setting => setting.Key).ToHashSet(StringComparer.Ordinal));
+            (manifest.Settings ?? []).Select(setting => setting.Key).ToHashSet(StringComparer.Ordinal),
+            (level, code, message) => _controlPlane.WriteLogAsync(package.Id, level, code, message,
+                "extension-session", CancellationToken.None).GetAwaiter().GetResult());
         var sandbox = new ExtensionSandbox(package.PackagePath, manifestJson,
             await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId),
-            executionOptions: _executionOptions);
+            timeProvider: _timeProvider, executionOptions: _executionOptions);
         if (manifest.SignedSession != null)
         {
             var account = await EnsureDefaultSessionAccountAsync(package, manifest.DisplayName, cancellationToken);
@@ -442,7 +460,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         { LastRenewalFailure: "renewal_capped" } => ("warning", "session.renewal-capped",
             $"The service will not extend this sign-in past {view.ExpiresAt}. Sign in again before then to avoid an interruption."),
         { LastRenewalFailure: "verification_required" } => ("warning", "session.verification-required",
-            "The sign-in expired and the service requires verification. Open the extension's sign-in to verify again."),
+            "The service requires sign-in verification. Open the extension's sign-in to verify again."),
         { LastRenewalFailure: { } failure } => ("warning", "session.renewal-failed",
             $"Automatic renewal failed ({failure}); the existing sign-in was retained."),
         _ => ("information", "session.renewed", $"Sign-in renewed automatically until {view.ExpiresAt}.")
