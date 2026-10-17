@@ -2257,23 +2257,6 @@
     padding: var(--space-4);
   }
 
-  .track-routes-panel ul {
-    list-style: none;
-    margin: var(--space-3) 0;
-    padding: 0;
-  }
-
-  .track-routes-panel li {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding-block: var(--space-2);
-  }
-
-  .track-routes-panel li small {
-    display: block;
-  }
-
   .track-menu-trigger {
     display: inline-grid;
     width: var(--control-md);

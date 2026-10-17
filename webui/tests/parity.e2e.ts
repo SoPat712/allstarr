@@ -940,7 +940,8 @@ for (const width of [390, 1280]) {
       const rows = [
         { title: "Streamed song", routeKind: "external", routeProviderId: "apple-musickit",
           matchState: "accepted", targetStatus: "streamed", outcomeCode: "streamed_through_allstarr",
-          targetEligible: false, providerRoutes: [{ providerId: "apple-musickit", externalId: "12345", pinned: false }] },
+          targetEligible: false, providerRoutes: [{ providerId: "apple-musickit", externalId: "12345", pinned: false },
+            { providerId: "apple-download", externalId: "12345", pinned: false }] },
         { title: "Local song", routeKind: "local", matchState: "accepted", targetStatus: "included",
           outcomeCode: "included_native_backend_item", targetEligible: true, providerRoutes: [] },
         { title: "Duplicate song", routeKind: "local", matchState: "accepted", targetStatus: "duplicate",
@@ -972,6 +973,16 @@ for (const width of [390, 1280]) {
       await expect(details.getByRole("row").filter({ hasText: "Local song" })).toContainText("Local library");
       await expect(details.getByRole("row").filter({ hasText: "Duplicate song" })).toContainText("Duplicate · not added twice");
       await expect(details.getByRole("row").filter({ hasText: "Unresolved song" })).toContainText("Not playable");
+      await streamed.getByRole("button", { name: "Routes for Streamed song" }).click();
+      const mapped = page.getByRole("list", { name: "Mapped providers for Streamed song" });
+      await expect(mapped.getByRole("listitem")).toHaveCount(1);
+      await expect(mapped).toContainText("Apple Music");
+      await expect(mapped).toContainText("Verified match · 2 sources");
+      const tile = await mapped.locator(".route-tile").first().boundingBox();
+      expect(Math.round(tile!.width)).toBe(32); expect(Math.round(tile!.height)).toBe(32);
+      if (process.env.ALLSTARR_SCREENSHOT_DIR)
+        await page.screenshot({ path: `${process.env.ALLSTARR_SCREENSHOT_DIR}/track-routes-${width}-${theme}.png` });
+      await page.keyboard.press("Escape");
       const labels = ["Streams through Allstarr", "Will be included in Jellyfin playlist",
         "Duplicate: not added twice to Jellyfin playlist", "Not added to Jellyfin playlist: no playable match yet"];
       for (const [index, row] of rows.entries()) {
@@ -4663,6 +4674,10 @@ test("Playlist details use a responsive dialog and track rows open mapping revie
   expect(Math.abs((playlistRow!.y + playlistRow!.height) - (playlistBar!.y + playlistBar!.height)))
     .toBeLessThanOrEqual(1);
   expect(playlistBar!.height).toBeGreaterThanOrEqual(6);
+  await coverage.nth(0).hover();
+  await expect(page.locator(".coverage-tip")).toHaveText("Lumen Audio · 1 song");
+  await coverage.nth(1).hover();
+  await expect(page.locator(".coverage-tip")).toHaveText("Unresolved · 1 song");
   const rematchPreview = page.waitForRequest((item) =>
     item.method() === "GET" && item.url().endsWith("/api/admin/playlist-links/rematch/preview"));
   await page.getByRole("button", { name: "Review rematch" }).click();
