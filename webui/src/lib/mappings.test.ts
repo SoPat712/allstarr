@@ -171,4 +171,90 @@ describe("mapping review presentation", () => {
       album: "Target album",
     });
   });
+
+  it("uses persisted provider target metadata when candidates are empty", () => {
+    expect(currentTarget({
+      externalSnapshotId: "snapshot",
+      providerId: "spotify",
+      state: "accepted",
+      decisionSource: "manual",
+      target: {
+        providerId: "qobuz",
+        externalId: "saved-target",
+        title: "Saved title",
+        artist: "Saved artist",
+        album: "Saved album",
+        durationMilliseconds: 210_000,
+        artworkUrl: "/artwork/saved-target",
+        isrc: "US1234567890",
+      },
+      localTrack: { id: "previous-local", backendItemId: "previous-local", title: "Previous title" },
+      providerIdentities: [
+        { providerId: "deezer", externalId: "other-target", scope: "catalog", verification: "verified" },
+      ],
+      candidates: [],
+      reasons: [],
+      warnings: [],
+    })).toEqual({
+      providerId: "qobuz",
+      identity: "saved-target",
+      title: "Saved title",
+      artist: "Saved artist",
+      album: "Saved album",
+      durationMilliseconds: 210_000,
+      artworkUrl: "/artwork/saved-target",
+    });
+  });
+
+  it("keeps provider targets visible when saved metadata is unavailable", () => {
+    expect(currentTarget({
+      externalSnapshotId: "snapshot",
+      providerId: "spotify",
+      state: "accepted",
+      decisionSource: "manual",
+      target: {
+        providerId: "qobuz",
+        externalId: "saved-target",
+        title: null,
+        artist: null,
+        album: null,
+        durationMilliseconds: null,
+        artworkUrl: null,
+        isrc: null,
+      },
+      providerIdentities: [],
+      candidates: [],
+      reasons: [],
+      warnings: [],
+    })).toEqual({
+      providerId: "qobuz",
+      identity: "saved-target",
+      title: "Metadata unavailable",
+      artist: "Unknown artist",
+      album: null,
+      durationMilliseconds: null,
+      artworkUrl: null,
+    });
+  });
+
+  it("falls back to the provider identity when saved targets and candidates are absent", () => {
+    expect(currentTarget({
+      externalSnapshotId: "snapshot",
+      providerId: "spotify",
+      state: "accepted",
+      decisionSource: "manual",
+      target: null,
+      providerIdentities: [
+        { providerId: "qobuz", externalId: "saved-target", scope: "catalog", verification: "verified" },
+      ],
+      candidates: [],
+      reasons: [],
+      warnings: [],
+    })).toMatchObject({
+      providerId: "qobuz",
+      identity: "saved-target",
+      title: "Metadata unavailable",
+      artist: "Unknown artist",
+    });
+  });
 });
