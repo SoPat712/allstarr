@@ -97,6 +97,18 @@ public sealed partial class TrackMatchCommandService
         var latestDecisions = await LatestDecisions(db.TrackMatches
                 .Where(item => snapshotIds.Contains(item.ExternalSnapshotId)))
             .ToDictionaryAsync(item => item.ExternalSnapshotId, cancellationToken);
+        var recordingIds = identities.Select(item => item.CanonicalRecordingId)
+            .Concat(latestDecisions.Values.Where(item => item.CanonicalRecordingId.HasValue)
+                .Select(item => item.CanonicalRecordingId!.Value))
+            .Distinct().ToArray();
+        var providerIdentities = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => recordingIds.Contains(item.CanonicalRecordingId) &&
+                           item.ResourceKind == ProviderResourceKind.Track &&
+                           item.Scope == ProviderIdentityScope.Catalog &&
+                           (item.Verification == ProviderIdentityVerification.Verified ||
+                            item.Verification == ProviderIdentityVerification.Pinned))
+            .ToArrayAsync(cancellationToken);
+        var providerOrder = providerIdentities.Select(item => item.ProviderId).Distinct().ToArray();
         var scopedLibraries = snapshots.Select(item => new { item.OwnerUserId, item.BackendInstanceId })
             .Distinct()
             .ToDictionary(item => (item.OwnerUserId, item.BackendInstanceId), item =>
@@ -192,30 +204,59 @@ public sealed partial class TrackMatchCommandService
                 selected.UpdatedAt = now;
             }
 
-            var state = Enum.Parse<TrackMatchState>(decision.State.ToString(), true);
-            var unchanged = latest?.State == state &&
-                            latest.LibraryTrackId == selected?.Id &&
-                            Math.Abs(latest.Confidence - decision.Confidence) < 0.0001 &&
-                            latest.SourceSnapshotVersion == snapshot.SnapshotVersion &&
-                            latest.LibraryIndexRevision == libraryIndexRevision &&
-                            latest.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion &&
-                            latest.PolicyVersion == "automatic-provider-neutral-v2";
+            var input = MatchDecisionInput.FromDecision(
+                snapshot.Id,
+                identity.CanonicalRecordingId,
+                decision,
+                (latest?.DecisionVersion ?? 0) + 1,
+                snapshot.SnapshotVersion,
+                libraryIndexRevision,
+                "automatic-provider-neutral-v2");
+            if (latest != null)
+            {
+                var providerEvidence = StoredProviderEvidence(latest.CandidateResultsJson);
+                var keepProviderDecision = decision.State != TrackMatchReviewState.Accepted &&
+                    latest.State == TrackMatchState.Accepted && !latest.LibraryTrackId.HasValue &&
+                    latest.Confidence >= latest.Threshold &&
+                    DurableProviderRouteSelector.Select(identity, providerIdentities, providerOrder,
+                        canonicalRecordingId: latest.CanonicalRecordingId).Count > 0;
+                if (keepProviderDecision)
+                {
+                    selected = null;
+                    input = input with
+                    {
+                        LibraryTrackId = null,
+                        CanonicalRecordingId = latest.CanonicalRecordingId,
+                        State = latest.State,
+                        Confidence = latest.Confidence,
+                        Threshold = latest.Threshold,
+                        MatcherVersion = latest.MatcherVersion,
+                        PolicyVersion = latest.PolicyVersion,
+                        ReasonsJson = latest.ReasonsJson,
+                        WarningsJson = latest.WarningsJson
+                    };
+                }
+                if (providerEvidence.Length > 0)
+                {
+                    var localEvidence = decision.Candidates.Select(item => JsonSerializer.SerializeToElement(item));
+                    input = input with
+                    {
+                        CandidateResultsJson = JsonSerializer.Serialize(keepProviderDecision
+                            ? providerEvidence.Concat(localEvidence)
+                            : localEvidence.Concat(providerEvidence))
+                    };
+                }
+            }
+            var unchanged = latest != null && MatchesImmutableDecision(latest, input);
             if (!unchanged)
             {
-                var input = MatchDecisionInput.FromDecision(
-                    snapshot.Id,
-                    identity.CanonicalRecordingId,
-                    decision,
-                    (latest?.DecisionVersion ?? 0) + 1,
-                    snapshot.SnapshotVersion,
-                    libraryIndexRevision,
-                    "automatic-provider-neutral-v2");
                 db.TrackMatches.Add(ToRecord(
                     input, snapshot.OwnerUserId,
                     correlationId, now));
             }
 
-            results.Add(ToAutomatedResult(seed, decision.State, selected, decision.Confidence));
+            results.Add(ToAutomatedResult(seed,
+                Enum.Parse<TrackMatchReviewState>(input.State.ToString(), true), selected, input.Confidence));
         }
 
         await db.SaveChangesAsync(cancellationToken);
@@ -228,6 +269,23 @@ public sealed partial class TrackMatchCommandService
 
     private static string SourceKey(string providerId, string externalId) =>
         $"{providerId.Trim().ToLowerInvariant()}:{externalId.Trim()}";
+
+    private static JsonElement[] StoredProviderEvidence(string candidatesJson)
+    {
+        using var candidates = JsonDocument.Parse(candidatesJson);
+        if (candidates.RootElement.ValueKind != JsonValueKind.Array) return [];
+        return candidates.RootElement.EnumerateArray().Where(candidate =>
+        {
+            if (candidate.ValueKind != JsonValueKind.Object) return false;
+            if (candidate.TryGetProperty("IsLocal", out var isLocal) && isLocal.ValueKind == JsonValueKind.False)
+                return true;
+            return candidate.TryGetProperty("ProviderTrackIds", out var providerIds) &&
+                   providerIds.ValueKind == JsonValueKind.Object && providerIds.EnumerateObject().Any() &&
+                   (!candidate.TryGetProperty("LibraryTrackId", out var libraryId) ||
+                    libraryId.ValueKind == JsonValueKind.Null ||
+                    libraryId.ValueKind == JsonValueKind.String && libraryId.GetString() == Guid.Empty.ToString());
+        }).Select(candidate => candidate.Clone()).ToArray();
+    }
 
     private static IQueryable<TrackMatchRecord> LatestDecisions(
         IQueryable<TrackMatchRecord> decisions)

@@ -871,8 +871,60 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
         Assert.Equal(0.07, score.Components!["priorityWindow"]);
     }
 
-    [Fact]
-    public void PriorityWindowDoesNotInflateConfidenceOrAutomaticAcceptance()
+    [Theory]
+    [InlineData("Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix", "The Album", "The Album", .992)]
+    [InlineData("Silk & Cologne - EI8HT & Offset - Spider-Verse Remix", "The Album", "The Album", .992)]
+    [InlineData("Silk & Cologne - EI8HT & Offset (Spider-Verse remix)", "The Album", "The Album", .992)]
+    [InlineData("Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix",
+        "Spider-Man: Across the Spider-Verse (Soundtrack From and Inspired by the Motion Picture)",
+        "Spider-Man: Across the Spider-Verse (Original Soundtrack From and Inspired by the Motion Picture)", .9909)]
+    public void CreditedArtistDecoratorsAndEquivalentRemixLabelsAreAccepted(
+        string title, string sourceAlbum, string candidateAlbum, double confidence)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = title,
+            Artist = "EI8HT, Offset",
+            Album = sourceAlbum,
+            AlbumArtist = null,
+            DurationMilliseconds = 222_000
+        };
+        var candidate = Candidate(scope) with
+        {
+            CanonicalRecordingId = null,
+            Title = "Silk and Cologne (Spider-Verse remix)",
+            Artist = "Ei8ht, OFFSET",
+            Album = candidateAlbum,
+            AlbumArtist = null,
+            DurationMilliseconds = 221_000
+        };
+        var engine = new TrackMatchDecisionEngine();
+        var selected = engine.PrepareCandidates([candidate]);
+        var result = engine.Decide(scope, source, selected);
+        var score = Assert.Single(result.Candidates);
+
+        Assert.Equal(confidence, score.Confidence);
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(candidate.LibraryTrackId, result.SelectedLibraryTrackId);
+        Assert.Equal(1, score.Components!["title"]);
+        Assert.Equal(score.NormalizedSourceTitle, score.NormalizedCandidateTitle);
+        Assert.Contains("title_exact", score.Reasons);
+        Assert.Contains("title_decorators_ignored", score.Reasons);
+        Assert.DoesNotContain("title_fuzzy", score.Reasons);
+        Assert.Contains(sourceAlbum == candidateAlbum ? "album_exact" : "album_strong", score.Reasons);
+    }
+
+    [Theory]
+    [InlineData("Silk and Cologne")]
+    [InlineData("Silk and Cologne (Other Producer remix)")]
+    [InlineData("Silk and Cologne (Spider-Verse remix) (Live)")]
+    [InlineData("Silk and Cologne (Spider-Verse remix) (Acoustic)")]
+    [InlineData("Silk and Cologne (Spider-Verse remix) (Sped Up)")]
+    [InlineData("Silk and Cologne (Spider-Verse remix) (Slowed)")]
+    [InlineData("Silk and Cologne (Spider-Verse remix) (Instrumental)")]
+    [InlineData("Silk and Cologne (Spider-Verse remix) (Karaoke)")]
+    public void CreditedArtistNormalizationPreservesRecordingVersions(string title)
     {
         var scope = Scope();
         var source = Source() with
@@ -880,11 +932,70 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
             Title = "Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix",
             Artist = "EI8HT, Offset"
         };
+        var result = new TrackMatchDecisionEngine(new TrackMatchPolicy
+        {
+            AcceptThreshold = .75,
+            SuggestThreshold = .70
+        }).Decide(scope, source,
+            [Candidate(scope) with { CanonicalRecordingId = null, Title = title, Artist = "Ei8ht, OFFSET" }]);
+
+        Assert.Equal(TrackMatchReviewState.Unresolved, result.State);
+        Assert.Contains("semantic_version_mismatch", Assert.Single(result.Candidates).Warnings);
+    }
+
+    [Fact]
+    public void CounterpartArtistCreditsVerifyTitleSideFeaturedArtists()
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "Song (feat. Guest)", Artist = "Main Artist" };
         var candidate = Candidate(scope) with
         {
-            Title = "Silk and Cologne (Spider-Verse remix)",
-            Artist = "Ei8ht, OFFSET"
+            CanonicalRecordingId = null,
+            Title = "Song",
+            Artist = "Main Artist, Guest"
         };
+        var result = new TrackMatchDecisionEngine().Decide(scope, source, [candidate]);
+        var score = Assert.Single(result.Candidates);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.State);
+        Assert.Equal(0.955, score.Confidence);
+        Assert.Equal(1, score.Components!["title"]);
+        Assert.Equal("song", score.NormalizedSourceTitle);
+        Assert.Equal(score.NormalizedSourceTitle, score.NormalizedCandidateTitle);
+        Assert.Contains("title_decorators_ignored", score.Reasons);
+        Assert.DoesNotContain("title_annotation_mismatch", score.Warnings);
+        Assert.True(TrackMatchDecisionEngine.SameRecordingIdentity(
+            candidate with { Title = source.Title, Artist = source.Artist }, candidate));
+    }
+
+    [Theory]
+    [InlineData("Silk and Cologne (Other Artist) - Spider-Verse Remix")]
+    [InlineData("Silk and Cologne (feat. Other Artist) - Spider-Verse Remix")]
+    [InlineData("Silk and Cologne - Other Artist - Spider-Verse Remix")]
+    public void UncreditedArtistAnnotationsRequireReview(string title)
+    {
+        var scope = Scope();
+        var source = Source() with
+        {
+            Title = "Silk & Cologne (EI8HT & Offset) - Spider-Verse Remix",
+            Artist = "EI8HT, Offset"
+        };
+        var result = new TrackMatchDecisionEngine().Decide(scope, source,
+            [Candidate(scope) with { CanonicalRecordingId = null, Title = title, Artist = "Ei8ht, OFFSET" }]);
+
+        Assert.NotEqual(TrackMatchReviewState.Accepted, result.State);
+        Assert.True(result.RequiresReview);
+        var score = Assert.Single(result.Candidates);
+        Assert.Contains("title_annotation_mismatch", score.Warnings);
+        Assert.DoesNotContain("semantic_version_mismatch", score.Warnings);
+    }
+
+    [Fact]
+    public void PriorityWindowDoesNotInflateConfidenceOrAutomaticAcceptance()
+    {
+        var scope = Scope();
+        var source = Source() with { Title = "A Song About The Journey Home" };
+        var candidate = Candidate(scope) with { Title = "A Song About Our Journey" };
         var engine = new TrackMatchDecisionEngine();
 
         var score = Assert.Single(engine.ScoreCandidates(source, [candidate]));
