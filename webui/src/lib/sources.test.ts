@@ -20,6 +20,7 @@ import {
   checkGuide,
   checkStatusLabel,
   checkStatusState,
+  sourceProblemLabel,
   sourceStatusLabel,
   groupSourceChecks,
   settingDefault,
@@ -50,6 +51,13 @@ describe("source presentation", () => {
     expect(checkGuide("some-new-code")).toBeNull();
     expect(checkGuide(null)).toBeNull();
     expect(sourceStatusLabel("needs_verification")).toBe("Needs verification");
+    const signed = { id: "signed", name: "Signed", usesSignedSession: true } as ProviderDefinition;
+    const connection = { ...account(), id: "a", providerId: "signed" };
+    const failing = (reasonCode: string, capability = "streaming") => ({ provider: "signed", providerAccountId: "a", capability,
+      health: "degraded", ready: false, canAttempt: true, canTest: true, reasonCode }) as ProviderHealth;
+    expect(sourceStatus(signed, [connection], [failing("resolve"), failing("sign_in_needed", "metadata")])).toBe("needs_verification");
+    expect(sourceStatus(signed, [connection], [failing("resolve")])).toBe("degraded");
+    expect(sourceProblemLabel(signed, [connection], [failing("resolve")])).toBe("Playback didn't start");
     expect(sourceStatusLabel("needs_config")).toBe("Needs setup");
   });
 

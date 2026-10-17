@@ -51,6 +51,7 @@
     checkName,
     checkGuide,
     checkStatusLabel,
+    sourceProblemLabel,
     sourceStatusLabel,
     checkStatusState,
     groupSourceChecks,
@@ -551,7 +552,7 @@
         <div class="source-name source-title"><h2 id="service-title">{source.name}</h2><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(source)}</Badge></div>
         <p>{sourcePurpose(source)}</p>
         <div class="service-head-meta">
-          <Badge state={state}>{sourceStatusLabel(state)}</Badge>
+          <Badge state={state}>{state === "degraded" ? sourceProblemLabel(source, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
           <span>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</span>
         </div>
       </div>
@@ -567,7 +568,7 @@
 
     <section class="settings-card service-overview" aria-label="Overview">
       <dl>
-        <div><dt>Status</dt><dd>{sourceStatusLabel(state)}</dd></div>
+        <div><dt>Status</dt><dd>{state === "degraded" ? sourceProblemLabel(source, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</dd></div>
         <div><dt>Checks</dt><dd>{metrics.total ? `${metrics.passing} passed · ${metrics.failed} failing` : "None yet"}</dd></div>
         <div><dt>Last checked</dt><dd>{relativeTime(metrics.checkedAt, "Not checked yet")}</dd></div>
         <div><dt>Response time</dt><dd>{sourceTimingLabel(source, summary(source.id))}</dd></div>
@@ -746,7 +747,7 @@
 
       <div class="source-filters" role="group" aria-label="Show">
         <button type="button" class="filter-chip" aria-pressed={listFilter === "all"} onclick={() => listFilter = "all"}>All sources <span class="segmented-tab-count">{providers.length}</span></button>
-        <button type="button" class="filter-chip" aria-pressed={listFilter === "attention"} onclick={() => listFilter = "attention"}>Needs setup <span class="segmented-tab-count">{needsSetup.length}</span></button>
+        <button type="button" class="filter-chip" aria-pressed={listFilter === "attention"} onclick={() => listFilter = "attention"}>Needs attention <span class="segmented-tab-count">{needsSetup.length}</span></button>
         <button type="button" class="filter-chip" aria-pressed={listFilter === "accounts"} onclick={() => listFilter = "accounts"}>Accounts <span class="segmented-tab-count">{accounts.length}</span></button>
       </div>
 
@@ -778,7 +779,7 @@
                 {#each (item.categories ?? []).slice(0, 4) as category}<span>{humanize(category)}</span>{/each}
               </span>
               <span class="source-row-status">
-                <Badge state={state}>{sourceStatusLabel(state)}</Badge>
+                <Badge state={state}>{state === "degraded" ? sourceProblemLabel(item, accounts, health) ?? sourceStatusLabel(state) : sourceStatusLabel(state)}</Badge>
                 <small>{metrics.checkedAt ? `${metrics.passing} of ${metrics.total || 0} checks passed · ${relativeTime(metrics.checkedAt)}` : "Not checked yet"}</small>
                 <small class="source-row-timing">{connected.length ? `${connected.filter((account) => account.enabled).length} of ${connected.length} account${connected.length === 1 ? "" : "s"} on · ` : ""}{timing}{#if cts} · CTS {ctsMeasurementLabel(cts)}{/if}</small>
               </span>

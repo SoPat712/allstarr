@@ -48,6 +48,19 @@ const checkGuides: Record<string, CheckGuide> = {
 export const checkGuide = (reasonCode?: string | null): CheckGuide | null =>
   reasonCode ? checkGuides[reasonCode] ?? null : null;
 
+/** The plain reason a source is failing, for its status badge instead of a generic "Degraded". */
+export function sourceProblemLabel(provider: ProviderDefinition, accounts: ProviderAccount[], health: ProviderHealth[]) {
+  const ids = new Set(accounts.filter((item) =>
+    item.providerId.toLowerCase() === provider.id.toLowerCase() && item.enabled).map((item) => item.id));
+  const failing = health.filter((item) => item.health === "degraded" &&
+    (ids.has(item.providerAccountId) || item.provider?.toLowerCase() === provider.id.toLowerCase()));
+  for (const item of failing) {
+    const guide = checkGuide(item.reasonCode);
+    if (guide) return guide.label;
+  }
+  return null;
+}
+
 export function sourceStatusLabel(state: string) {
   if (state === "needs_config") return "Needs setup";
   if (state === "needs_verification") return "Needs verification";
@@ -161,7 +174,8 @@ export function sourceStatus(
     const ids = new Set(connected.map((item) => item.id));
     const checks = health.filter((item) => ids.has(item.providerAccountId) && item.canTest);
     const failing = checks.filter((item) => item.health === "degraded");
-    if (failing.length && failing.every((item) => checkGuide(item.reasonCode)?.signIn)) return "needs_verification";
+    // A sign-in is the one failure the owner can fix, so it leads even when other checks also fail.
+    if (failing.some((item) => checkGuide(item.reasonCode)?.signIn)) return "needs_verification";
     if (failing.length) return "degraded";
     if (checks.length && checks.every((item) => item.health === "healthy")) return "healthy";
     // Signed extensions keep their sign-in outside the credential store; the sign-in panel shows its state.

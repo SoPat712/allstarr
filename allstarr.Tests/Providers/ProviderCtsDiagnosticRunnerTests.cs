@@ -174,8 +174,10 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         health.VerifyAll();
     }
 
-    [Fact]
-    public async Task Measure_AllowsAccountFreeStreamingWithoutInventingAnAccount()
+    [Theory]
+    [InlineData(ProviderAccountRequirement.None)]
+    [InlineData(ProviderAccountRequirement.Optional)]
+    public async Task Measure_AllowsAccountFreeStreamingWithoutInventingAnAccount(ProviderAccountRequirement requirement)
     {
         var media = new ProviderMediaFormat("audio/flac", "flac", "flac");
         var lease = new ProviderStreamLease(
@@ -201,15 +203,18 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 "apple-download", ProviderCapabilityKind.Streaming, out registered))
             .Returns(true);
         providers.Setup(item => item.GetRequired("apple-download"))
-            .Returns(Descriptor("apple-download", ProviderAccountRequirement.None));
+            .Returns(Descriptor("apple-download", requirement));
         using var selector = new ProviderCtsTrackSelector(
             Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
         var observer = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
         observer.Setup(item => item.Observe(It.Is<ProviderExecutionContext>(context => context.Account == null),
             ProviderCapabilityKind.Streaming, null, It.IsAny<TimeSpan>()));
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountResolution?)null);
         var runner = new ProviderCtsDiagnosticRunner(
             providers.Object,
-            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            accounts.Object,
             selector,
             observer.Object);
         var actor = new ProviderActorContext(
