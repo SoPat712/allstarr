@@ -157,7 +157,8 @@ public sealed record ProviderDownloadedArtifact
         string sha256,
         long sizeBytes,
         ProviderMediaFormat media,
-        bool verified)
+        bool verified,
+        string? qualityDowngradeReason = null)
     {
         ArgumentNullException.ThrowIfNull(media);
         if (sizeBytes < 1)
@@ -183,6 +184,9 @@ public sealed record ProviderDownloadedArtifact
         SizeBytes = sizeBytes;
         Media = media;
         Verified = true;
+        QualityDowngradeReason = qualityDowngradeReason == null
+            ? null
+            : ProviderContractValidation.SafeMessage(qualityDowngradeReason, nameof(qualityDowngradeReason));
     }
 
     public string ArtifactId { get; }
@@ -194,6 +198,8 @@ public sealed record ProviderDownloadedArtifact
     public ProviderMediaFormat Media { get; }
 
     public bool Verified { get; }
+
+    public string? QualityDowngradeReason { get; }
 }
 
 public interface IProviderDownloadCapability : IProviderCapability

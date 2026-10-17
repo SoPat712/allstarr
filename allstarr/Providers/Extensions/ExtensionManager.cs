@@ -800,7 +800,12 @@ public class ExtensionSandbox
         _engine.Execute(SpotiFlacExtensionCompatibility.RuntimePreludeScript);
         _engine.Execute(indexJs);
 
-        if (isSpotiFlac) _engine.Execute(SpotiFlacExtensionCompatibility.RuntimeAdapterScript);
+        if (isSpotiFlac)
+        {
+            _engine.SetValue("_allstarrQualityOptionsJson",
+                root.TryGetProperty("qualityOptions", out var qualityOptions) ? qualityOptions.GetRawText() : "[]");
+            _engine.Execute(SpotiFlacExtensionCompatibility.RuntimeAdapterScript);
+        }
 
         _extensionObj = _engine.GetValue("_registeredExtension");
         if (_extensionObj.IsUndefined() || _extensionObj.IsNull())
