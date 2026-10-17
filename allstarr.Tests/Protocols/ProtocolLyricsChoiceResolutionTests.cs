@@ -28,7 +28,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["backend", "spotify", "lrclib"]);
         providers.Setup(item => item.GetHouseholdLyricsAsync(context, "spotify", "exact", ProviderLyricsFormat.LineTimed,
-            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120)).ReturnsAsync(new ProviderLyricsResult(
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, "spotify", ProviderLyricsFormat.PlainText, "Shared chosen words"));
         var nativeCalls = 0;
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance,
@@ -43,7 +43,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         Assert.Equal(0, nativeCalls);
         policies.Verify(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
         providers.Verify(item => item.GetLyricsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<string>(),
-            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+            It.IsAny<ProviderLyricsFormat?>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }
 
     [Fact]
@@ -78,7 +78,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         Assert.Equal("lrclib", result?.Source);
         Assert.Equal("Chosen plain words", result?.PlainLyrics);
         provider.Verify(item => item.GetLyricsAsync(context, "spotify", It.IsAny<string>(), It.IsAny<ProviderLyricsFormat?>(),
-            It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+            It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
         choices.VerifyAll();
     }
 
@@ -112,7 +112,7 @@ public sealed class ProtocolLyricsChoiceResolutionTests
             effectivePolicies: policies.Object, choices: choices.Object).FindAsync(context, Song(recording), "source", "spotify", "exact");
         Assert.Equal("spotify", result?.Source);
         provider.Verify(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), It.IsAny<ProviderLyricsFormat?>(),
-            It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>()), Times.Never);
+            It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }
 
     [Fact]
@@ -161,10 +161,10 @@ public sealed class ProtocolLyricsChoiceResolutionTests
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spotify", "lrclib"]);
         providers.Setup(item => item.GetLyricsAsync(context, "spotify", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
-            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120)).ReturnsAsync(new ProviderLyricsResult(
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, "spotify", ProviderLyricsFormat.LineTimed, "[00:01.234]Automatic words"));
         providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
-            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120)).ReturnsAsync(chosenAvailable
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null)).ReturnsAsync(chosenAvailable
                 ? new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", ProviderLyricsFormat.PlainText, "Chosen plain words") : null);
         return providers;
     }

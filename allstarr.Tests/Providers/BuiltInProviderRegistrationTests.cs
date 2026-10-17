@@ -20,6 +20,28 @@ namespace allstarr.Tests;
 public sealed class BuiltInProviderRegistrationTests
 {
     [Fact]
+    public void PublicTimedLyricsRegisterUsableAccountFreeCapabilities()
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<allstarr.Services.Common.IApplicationCache>(new TestMemoryApplicationCache());
+        services.AddOptions<CacheSettings>();
+        services.AddSingleton<allstarr.Services.Lyrics.LrclibService>();
+        services.AddSingleton(Mock.Of<IProviderAccountSecretAccessor>());
+        services.AddBuiltInLyricsCapabilities();
+        using var provider = services.BuildServiceProvider();
+        var registry = new ProviderRegistry(provider.GetServices<ProviderRegistration>());
+        foreach (var id in new[] { "lrcred", "unison" })
+        {
+            var descriptor = registry.GetRequired(id);
+            Assert.Equal(ProviderOrigin.BuiltIn, descriptor.Origin);
+            var capability = Assert.Single(descriptor.Capabilities);
+            Assert.Equal(ProviderAccountRequirement.None, capability.AccountRequirement);
+            Assert.True(capability.HasUsableImplementation);
+            Assert.NotNull(registry.GetRequiredCapability<IProviderLyricsCapability>(id, ProviderCapabilityKind.Lyrics));
+        }
+    }
+
+    [Fact]
     public void ManagedDownloadPlacement_UsesTheKeptRootAndHonorsAnExplicitOverride()
     {
         var services = new ServiceCollection();

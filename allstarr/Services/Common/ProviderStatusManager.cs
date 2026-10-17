@@ -50,6 +50,8 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
+        ("lrcred", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("unison", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
@@ -577,7 +579,7 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
 
-            ("lrclib" or "lyricsplus", ProviderCapabilities.Lyrics) =>
+            ("lrcred" or "unison" or "lrclib" or "lyricsplus", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
 
             _ => (ProviderConfigurationState.NeedsConfiguration, "unsupported_capability")
@@ -677,7 +679,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("lrcred" or "unison" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -695,7 +697,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("lrcred" or "unison" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -732,7 +734,7 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken)),
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
-            ("lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
+            ("lrcred" or "unison" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(provider, accountSecrets, cancellationToken)),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
@@ -886,6 +888,19 @@ public class ProviderStatusManager
             using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.HttpClientName);
             result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
                 client, token!, request, timeout.Token);
+        }
+        else if (provider is "lrcred" or "unison")
+        {
+            using var client = _httpClientFactory.CreateClient(provider == "lrcred"
+                ? allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter.HttpClientName
+                : allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter.HttpClientName);
+            IProviderLyricsCapability adapter = provider == "lrcred"
+                ? new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null)
+                : new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null);
+            var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
+                new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
+                    true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(ProbeTimeout), timeout.Token);
+            result = await adapter.FetchLyricsAsync(context, request);
         }
         else
         {

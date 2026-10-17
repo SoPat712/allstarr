@@ -66,6 +66,16 @@ public static class CurrentProviderSupportCatalog
             Capability("lyrics", Supported, "Native account-bound Spotify lyrics reuse expiring tokens and preserve plain/timed content, source and stable revisions through shared Jellyfin/Subsonic routing.", "SpotifyPlaylistCapabilityAdapterTests; ProtocolLyricsResolverTests"),
             Capability("health", Partial, "Playlist and native lyrics probes remain independently sampled, so one lane does not mask the other.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
+            "lrcred", "lrcred", "lrc.red", "none",
+            "Public ISRC and metadata matching; no account or token required.",
+            Capability("lyrics", Supported, "TTML lookup preserves word timing and background vocals.", "LrcRedCapabilityAdapterTests; ProtocolLyricsResolverTests"),
+            Capability("health", Supported, "Bounded public metadata and TTML probe.", "ProviderStatusManagerTests")),
+        Provider(
+            "unison", "unison", "Unison", "none",
+            "Lyrics from Unison (https://unison.boidu.dev)",
+            Capability("lyrics", Supported, "Public community lyrics in TTML, LRC or plain text; paced reads and cached results.", "UnisonCapabilityAdapterTests"),
+            Capability("health", Supported, "Bounded public metadata probe.", "ProviderStatusManagerTests")),
+        Provider(
             "lyricsplus", "lyricsplus", "LyricsPlus", "none",
             "Public instances with fallback, or an exclusive optional self-hosted URL.",
             Capability("lyrics", Supported, "Metadata lookup preserves plain content and millisecond line timing through the shared resolver.", "LyricsPlusCapabilityAdapterTests; ProtocolLyricsResolverTests")),

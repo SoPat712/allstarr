@@ -70,6 +70,19 @@ public sealed class EffectiveProviderPolicyTests
             RuntimeSettingCatalog.Require("Providers:PlaylistOrder").DefaultValue);
     }
 
+    [Fact]
+    public void LyricsDefaultPlacesLrcRedAfterAppleAndSavedOrdersAppendIt()
+    {
+        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison",
+            RuntimeSettingCatalog.Require("Providers:LyricsOrder").DefaultValue);
+        var snapshot = new EffectiveProviderPolicySnapshot(
+            System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
+                .Add(ProviderCapabilityKind.Lyrics, ["lrclib", "lyricsplus"]),
+            System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0);
+        Assert.Equal(new[] { "lrclib", "lyricsplus", "lrcred" },
+            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["lrcred", "lyricsplus", "lrclib"]));
+    }
+
     private static EffectiveRuntimeSetting Setting(string key)
     {
         object value = key switch
