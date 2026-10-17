@@ -4306,8 +4306,10 @@ test("Maintenance stages a backup restore only after keyboard confirmation", asy
   expect(restoreRequests).toBe(0);
 
   await stage.click();
+  await expect(dialog).toBeVisible();
   const confirm = dialog.getByRole("button", { name: "Restore on restart" });
   await confirm.focus();
+  await expect(confirm).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(dialog.getByRole("alert")).toHaveText("Backup restore failed.");
   await expect(confirm).toBeEnabled();
@@ -4315,6 +4317,7 @@ test("Maintenance stages a backup restore only after keyboard confirmation", asy
 
   failRestore = false;
   await dialog.getByRole("button", { name: "Restore on restart" }).focus();
+  await expect(dialog.getByRole("button", { name: "Restore on restart" })).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(card.getByText("A restore is staged. Restart Allstarr to finish replacing saved state and credentials.")).toBeVisible();
   await expect(stage).toBeDisabled();
