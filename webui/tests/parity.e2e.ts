@@ -3167,7 +3167,7 @@ test("Manual and Rejected tabs expose explicit rematch and delete controls", asy
   expect(deleteUrl.searchParams.get("authorityScope")).toBe("personal");
 });
 
-test("Tentative mappings sort by confidence and deep links open review", async ({ page }) => {
+test("MatchDialog deep links preserve title prefill and tentative mapping review", async ({ page }) => {
   await mockApi(page);
   const delayedProvider = routeRelease();
   let localSearches = 0;
@@ -3207,7 +3207,7 @@ test("Tentative mappings sort by confidence and deep links open review", async (
   await page.goto("#/library/mappings?search=Test%20song&review=snapshot");
   const dialog = page.getByRole("dialog", { name: "Test song" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByLabel("Search local library and playable providers")).toHaveValue("Test song");
+  await expect(dialog.getByLabel("Search local library and playable providers")).toHaveValue("Test song - Remix");
   await expect(dialog.getByText("ISRC US-AAA-26-00001")).toHaveCount(2);
   await expect(dialog.locator(".candidate-provider").filter({ hasText: "Apple Music" })).toBeVisible();
   await expect(dialog.getByText("MusicBrainz album")).toHaveCount(0);

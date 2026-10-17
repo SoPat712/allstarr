@@ -88,7 +88,7 @@
     if (!match || preparedId === match.externalSnapshotId) return;
     preparedId = match.externalSnapshotId;
     showLyrics = false;
-    targetQuery = match.searchQuery || match.title || "";
+    targetQuery = match.title || "";
     providerFilter = "";
     results = [];
     searched = false;
@@ -297,6 +297,7 @@
                           definition={provider(candidateProvider(candidate))}
                         />
                         {providerName(candidateProvider(candidate))}
+                        {#if candidate.isCurrent}<span>· Current match</span>{/if}
                         {#if routingPreference(candidate.components)}
                           <span>· {routingPreference(candidate.components)}</span>
                         {/if}

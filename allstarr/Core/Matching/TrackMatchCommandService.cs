@@ -276,7 +276,8 @@ public sealed partial class TrackMatchCommandService(
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
     IProtocolProviderGateway? providerGateway = null,
     RecordingOdesliEnrichmentQueue? crossLinks = null, IProviderRegistry? registry = null,
-    IConfiguration? configuration = null) : ITrackMatchRepository
+    IConfiguration? configuration = null, MatchLibrarySearch? librarySearch = null,
+    ILibraryIndexService? libraryIndex = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
     private readonly ConcurrentDictionary<

@@ -2,6 +2,8 @@ using System.Reflection;
 using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Core.Storage;
+using allstarr.Core.Matching;
+using allstarr.Core.Capabilities;
 using allstarr.Models.Domain;
 
 namespace allstarr.Tests;
@@ -26,6 +28,52 @@ public sealed class TrackMatchesControllerContractTests
     {
         Assert.False(TrackMatchesController.IsSelectedPlayableProvider(
             resultProvider, ["apple-musickit", "deezer"], selected));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Review_row_keeps_current_match_even_without_credible_suggestions(bool provider, bool savedEvidence)
+    {
+        var localId = Guid.NewGuid();
+        var canonicalId = Guid.NewGuid();
+        var local = new LibraryTrackRecord { Id = localId, BackendInstanceId = "server", BackendItemId = "local-song", Title = "Silk & Cologne", Artist = "Ei8ht" };
+        var identity = new ProviderTrackIdentityRecord
+        {
+            Id = Guid.NewGuid(),
+            CanonicalRecordingId = canonicalId,
+            ProviderId = "qobuz",
+            ExternalId = "target",
+            ResourceKind = ProviderResourceKind.Track,
+            Scope = ProviderIdentityScope.Catalog,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "automatic-match"
+        };
+        var evidence = JsonSerializer.Serialize(new[] { new TrackMatchCandidateScore(localId, "local-song", .76,
+            ["title_fuzzy"], ["review_needed"], new Dictionary<string, double> { ["title"] = .7, ["artist"] = .6 },
+            Title: "Silk & Cologne", Artist: "Ei8ht", IsLocal: !provider,
+            ProviderTrackIds: provider ? new Dictionary<string, string> { ["deezer"] = "alternate", ["qobuz"] = "target" } : null) });
+        var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
+            .Invoke(null, [new ExternalMetadataSnapshotRecord { Id = Guid.NewGuid(), ProviderId = "spotify", BackendInstanceId = "server", PayloadJson = """{"title":"Silk & Cologne","artist":"Ei8ht"}""" },
+                new TrackMatchRecord { State = TrackMatchState.Suggested, LibraryTrackId = provider ? null : localId,
+                    CanonicalRecordingId = canonicalId, Confidence = .76, CandidateResultsJson = savedEvidence ? evidence : "[]",
+                    ReasonsJson = """["title_fuzzy"]""", WarningsJson = """["review_needed"]""" },
+                new ManualTrackOverrideLayers(null, null), new ProviderTrackIdentityRecord
+                { Id = Guid.NewGuid(), CanonicalRecordingId = canonicalId, ProviderId = "spotify", ExternalId = "source", ResourceKind = ProviderResourceKind.Track },
+                new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [canonicalId] = [identity] },
+                new[] { "qobuz", "deezer" }, Guid.NewGuid(), false])!;
+        var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
+        var candidate = Assert.Single(value.GetProperty("candidates").EnumerateArray());
+        Assert.True(candidate.GetProperty("isCurrent").GetBoolean());
+        Assert.Equal(.76, candidate.GetProperty("confidence").GetDouble());
+        Assert.Contains("title_fuzzy", candidate.GetProperty("reasons").ToString());
+        Assert.Contains("review_needed", candidate.GetProperty("warnings").ToString());
+        Assert.Equal("Silk & Cologne", value.GetProperty("searchQuery").GetString());
+        if (savedEvidence) Assert.Equal(.6, candidate.GetProperty("components").GetProperty("artist").GetDouble());
+        if (provider) Assert.Equal("qobuz", candidate.GetProperty("providerTrackIds").EnumerateObject().First().Name);
     }
 
     [Fact]
