@@ -726,8 +726,10 @@ public class ExtensionSandbox
             Id,
             sessionStateDirectory,
             _timeProvider,
-            executionOptions);
+            executionOptions,
+            isSpotiFlac ? SpotiFlacExtensionCompatibility.NetworkTimeout(root) : null);
         _engine.SetValue("host", _hostBridge);
+        _engine.SetValue("_allstarrSpotiFlacCompatibility", isSpotiFlac);
 
         var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
         _engine.SetValue("_allstarrSettingsJson", settingsJson);
@@ -796,7 +798,7 @@ public class ExtensionSandbox
             """);
         _engine.Execute("const artifacts = { download: function(url, artifactId, headers) { return host.ArtifactDownload(url, artifactId, headers); } };");
         _engine.Execute("var file = { download: function(url, path, options) { return host.FileDownload(url, path, options); }, exists: function(path) { return host.FileExists(path); }, delete: function(path) { return host.FileDelete(path); }, getSize: function(path) { return host.FileSize(path); }, readBytes: function(path, options) { return host.FileReadBytes(path, options); }, writeBytes: function(path, data, options) { return host.FileWriteBytes(path, data, options); } };");
-        _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, appUserAgent: function() { return host.AppUserAgent(); }, appVersion: function() { return '4.7.0'; }, sleep: function(ms) { host.Sleep(ms); }, sha256: function(value) { return host.Sha256(value); }, md5: function(value) { return host.Md5(value); }, base64Decode: function(value) { return host.Base64Decode(value); }, isDownloadCancelled: function() { return false; }, isRequestCancelled: function() { return false; }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
+        _engine.Execute("const utils = { randomUserAgent: function() { return host.RandomUserAgent(); }, appUserAgent: function() { return host.AppUserAgent(); }, appVersion: function() { return host.AppVersion(); }, sleep: function(ms) { if (typeof ms !== 'number' || !(ms > 0)) return true; return host.Sleep(Math.min(Math.trunc(ms), 300000)); }, sha256: function(value) { return host.Sha256(value); }, md5: function(value) { return host.Md5(value); }, base64Decode: function(value) { return host.Base64DecodeText(value); }, isDownloadCancelled: function() { return false; }, isRequestCancelled: function() { return false; }, hmacSHA1: function(key, data) { return host.HmacSHA1(key, data); }, hmacSHA1Secret: function(key, data) { return host.HmacSHA1Secret(key, data); } };");
 
         _engine.Execute(SpotiFlacExtensionCompatibility.RuntimePreludeScript);
         _engine.Execute(indexJs);
@@ -1208,6 +1210,7 @@ public partial class ExtensionHostBridge
     private static readonly object RuntimeLogLock = new();
     private readonly string _folderPath;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly TimeSpan? _networkRequestTimeout;
     private readonly ILogger _logger;
     private readonly Dictionary<string, string> _storage = new();
     private readonly string _storageFile;
@@ -1236,11 +1239,13 @@ public partial class ExtensionHostBridge
         string? extensionId = null,
         string? sessionStateDirectory = null,
         TimeProvider? timeProvider = null,
-        ExtensionExecutionOptions? executionOptions = null)
+        ExtensionExecutionOptions? executionOptions = null,
+        TimeSpan? networkRequestTimeout = null)
     {
         _folderPath = Path.GetFullPath(runtimeStateDirectory);
         Directory.CreateDirectory(_folderPath);
         _httpClientFactory = httpClientFactory;
+        _networkRequestTimeout = networkRequestTimeout;
         _logger = logger;
         _permissions = permissions;
         _extensionId = string.IsNullOrWhiteSpace(extensionId) ? "unknown" : extensionId;
@@ -1253,12 +1258,12 @@ public partial class ExtensionHostBridge
                 signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
                 sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory),
                 extensionId ?? signedSession.Namespace,
-                sessionStateDirectory == null ? null : _folderPath, timeProvider, executionOptions, permissions.SessionLogSink);
+                sessionStateDirectory == null ? null : _folderPath, timeProvider, executionOptions, permissions.SessionLogSink, networkRequestTimeout);
             var sourceDirectory = sessionStateDirectory == null ? _folderPath : Path.GetFullPath(sessionStateDirectory);
             _accountSessionFactory = (accountId, adopt) => new ExtensionSignedSessionClient(
                 signedSession, httpClientFactory, sessionProtector, permissions.NetworkOrigins,
                 Path.Combine(sourceDirectory, "accounts", accountId.ToString("N")),
-                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null, timeProvider, executionOptions, permissions.SessionLogSink);
+                extensionId ?? signedSession.Namespace, adopt ? sourceDirectory : null, timeProvider, executionOptions, permissions.SessionLogSink, networkRequestTimeout);
         }
         LoadStorage();
     }
@@ -1639,16 +1644,21 @@ public partial class ExtensionHostBridge
         return new { artifactId = result.ArtifactId, sha256 = result.Sha256, sizeBytes = result.SizeBytes, verified = true };
     }
 
-    public string RandomUserAgent() => "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/network/src/lib.rs.
+    public string RandomUserAgent() =>
+        $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{RandomNumberGenerator.GetInt32(127, 153)}.0.{RandomNumberGenerator.GetInt32(6000, 7500)}.{RandomNumberGenerator.GetInt32(100, 300)} Safari/537.36";
 
-    public string AppUserAgent() => "Allstarr/3.0 (SpotiFLAC compatibility runtime)";
+    public string AppVersion() => SpotiFlacExtensionCompatibility.AppVersion;
 
-    public void Sleep(int milliseconds)
+    public string AppUserAgent() => $"SpotiFLAC-Mobile/{AppVersion()}";
+
+    public bool Sleep(int milliseconds)
     {
-        if (milliseconds is < 0 or > 30_000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
+        if (milliseconds is < 0 or > 300_000) throw new ArgumentOutOfRangeException(nameof(milliseconds));
         (ExtensionInvocationBudget.Current is { } budget
             ? budget.DelayAsync(milliseconds)
             : Task.Delay(milliseconds)).GetAwaiter().GetResult();
+        return true;
     }
 
     public string Sha256(string value) =>
@@ -1656,6 +1666,12 @@ public partial class ExtensionHostBridge
 
     public string Md5(string value) =>
         Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(value ?? ""))).ToLowerInvariant();
+
+    public string Base64DecodeText(string value)
+    {
+        try { return Encoding.UTF8.GetString(Convert.FromBase64String(value ?? "")); }
+        catch (FormatException) { return ""; }
+    }
 
     public byte[] Base64Decode(string value) => Convert.FromBase64String(value ?? "");
 
@@ -1769,7 +1785,7 @@ public partial class ExtensionHostBridge
             }
 
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
-            client.Timeout = TimeSpan.FromSeconds(15);
+            client.Timeout = _networkRequestTimeout ?? TimeSpan.FromSeconds(15);
 
             var request = new HttpRequestMessage(new HttpMethod(normalizedMethod), safeUri);
 
@@ -1779,6 +1795,8 @@ public partial class ExtensionHostBridge
             }
 
             AddHeaders(request, headersObj);
+            if (!request.Headers.Contains("User-Agent"))
+                request.Headers.TryAddWithoutValidation("User-Agent", "Spotiflac-Extension/1.0");
 
             using var response = client.SendAsync(request, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
             if (response.RequestMessage?.RequestUri is { } finalUri &&

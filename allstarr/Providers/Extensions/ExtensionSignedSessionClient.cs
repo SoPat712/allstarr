@@ -1,3 +1,5 @@
+using System.Globalization;
+using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -47,6 +49,7 @@ internal sealed class ExtensionSignedSessionClient
     private static readonly TimeSpan GateWait = TimeSpan.FromSeconds(35);
     private readonly TimeProvider _timeProvider;
     private readonly TimeSpan _signedDownloadRequestLimit;
+    private readonly TimeSpan? _networkRequestTimeout;
     private readonly ExtensionSignedSessionConfig _config;
     private readonly IHttpClientFactory _clients;
     private readonly IDataProtector _protector;
@@ -68,10 +71,12 @@ internal sealed class ExtensionSignedSessionClient
         string? legacyStateDirectory = null,
         TimeProvider? timeProvider = null,
         ExtensionExecutionOptions? executionOptions = null,
-        Action<string, string, string>? logSink = null)
+        Action<string, string, string>? logSink = null,
+        TimeSpan? networkRequestTimeout = null)
     {
         _timeProvider = timeProvider ?? TimeProvider.System;
         _logSink = logSink;
+        _networkRequestTimeout = networkRequestTimeout;
         _signedDownloadRequestLimit = (executionOptions ?? new()).GetSignedDownloadRequestTimeout();
         _config = config;
         _clients = clients;
@@ -185,12 +190,14 @@ internal sealed class ExtensionSignedSessionClient
             return ViewOf(Load(), result.ReasonCode);
         }, cancellationToken);
 
-    private T RunScript<T>(Func<CancellationToken, Task<T>> operation)
+    private T RunScript<T>(Func<CancellationToken, Task<T>> operation, bool retryRequests = false)
     {
         WaitForGateAsync(CancellationToken.None).GetAwaiter().GetResult();
         try
         {
             var budget = ExtensionInvocationBudget.Current;
+            if (retryRequests && budget is { IsDownload: true })
+                return operation(budget.Token).GetAwaiter().GetResult();
             var remaining = budget?.RemainingMilliseconds;
             var requestLimit = budget is { IsDownload: true } && remaining > ScriptRequestLimit.TotalMilliseconds
                 ? _signedDownloadRequestLimit : ScriptRequestLimit;
@@ -473,11 +480,21 @@ internal sealed class ExtensionSignedSessionClient
             return RunScript(async limit =>
             {
                 var record = Load();
-                if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit, call: "signed_fetch"));
+                if (!HasUsableSession(record))
+                {
+                    var bootstrap = await BeginVerificationAsync(limit, call: "signed_fetch");
+                    record = Load();
+                    if (!HasUsableSession(record)) return HostResponse(bootstrap);
+                }
                 if (RefreshDue(record))
                 {
                     record = await TryRefreshAsync(record, limit);
-                    if (!HasUsableSession(record)) return HostResponse(await BeginVerificationAsync(limit, call: "signed_fetch"));
+                    if (!HasUsableSession(record))
+                    {
+                        var bootstrap = await BeginVerificationAsync(limit, call: "signed_fetch");
+                        record = Load();
+                        if (!HasUsableSession(record)) return HostResponse(bootstrap);
+                    }
                 }
                 try
                 {
@@ -487,9 +504,8 @@ internal sealed class ExtensionSignedSessionClient
                         var contract = ErrorContract.Parse(response.Response.Body);
                         if (contract.ProviderRetry(response.StatusCode) && retry < 2)
                         {
-                            var delay = response.Response.RetryAfterSeconds > 0 ? response.Response.RetryAfterSeconds :
-                                contract.RetryAfterSeconds > 0 ? contract.RetryAfterSeconds : 1;
-                            await Task.Delay(TimeSpan.FromSeconds(Math.Min(10, delay)), _timeProvider, limit);
+                            await Task.Delay(response.Response.ProviderDelay(contract.RetryAfterSeconds, _timeProvider.GetUtcNow()),
+                                _timeProvider, limit);
                             continue;
                         }
                         var reset = contract.GatewayAction(response.StatusCode).Length > 0;
@@ -515,7 +531,12 @@ internal sealed class ExtensionSignedSessionClient
                     RetainSession(record, "signed_fetch", ExceptionReason(exception));
                     return new { ok = false, statusCode = 0, status = 0, error = "PROVIDER_UNAVAILABLE" };
                 }
-            });
+            }, retryRequests: true);
+        }
+        catch (OperationCanceledException) when (_networkRequestTimeout.HasValue &&
+            ExtensionInvocationBudget.Current?.Token.IsCancellationRequested != true)
+        {
+            return new { ok = false, statusCode = 0, status = 0, error = "PROVIDER_UNAVAILABLE" };
         }
         catch (TimeoutException)
         {
@@ -528,10 +549,11 @@ internal sealed class ExtensionSignedSessionClient
     {
         var target = Resolve(path);
         var requestMethod = method.Trim().ToUpperInvariant();
-        var timestamp = _timeProvider.GetUtcNow().ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'");
+        var now = _timeProvider.GetUtcNow();
+        var timestamp = now.ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
         var nonce = Convert.ToHexString(RandomNumberGenerator.GetBytes(12)).ToLowerInvariant();
         var bodyHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
-        var window = DateTimeOffset.Parse(timestamp).ToUnixTimeSeconds() / _config.TimeWindowSeconds;
+        var window = now.ToUnixTimeSeconds() / _config.TimeWindowSeconds;
         var rolling = Base64Url(Hmac(Encoding.UTF8.GetBytes(record.SessionSecret!), $"{window}:{record.SessionId}"));
         var signingInput = string.Join('\n', _config.SchemeLabel, requestMethod, target.AbsolutePath, "", bodyHash,
             timestamp, nonce, record.SessionId, _config.AppVersion, _config.Platform);
@@ -548,8 +570,28 @@ internal sealed class ExtensionSignedSessionClient
         };
         if (extraHeaders != null)
             foreach (var (key, value) in extraHeaders) signedHeaders[key] = value;
+        var started = _timeProvider.GetTimestamp();
         var response = await SendAsync(requestMethod, target, payload, signedHeaders, cancellationToken);
+        if (!response.IsSuccessStatusCode)
+            LogResponse(requestMethod, target, response, _timeProvider.GetElapsedTime(started));
         return new(target, response);
+    }
+
+    private void LogResponse(string method, Uri target, ResponseData response, TimeSpan elapsed)
+    {
+        var contract = ErrorContract.Parse(response.Body);
+        static string Label(string value, params string[] allowed) => string.IsNullOrEmpty(value) ? "none" :
+            allowed.Contains(value, StringComparer.Ordinal) ? value : "unrecognized";
+        var path = string.Join('/', target.AbsolutePath.Split('/').Select(segment => segment is
+            "" or "v1" or "v2" or "tickets" or "dl" or "tid" or "tid2" or "bootstrap" or "challenge" or
+            "session" or "exchange" or "refresh" ? segment : "{redacted}"));
+        _logSink?.Invoke("warning", "session.response",
+            $"Signed response: method={Label(method, "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")}; path={path}; status={(int)response.StatusCode}; " +
+            $"error={Label(contract.Error, "PROVIDER_UNAVAILABLE", "VERIFY_REQUIRED", "SESSION_INVALID", "REQUEST_AUTH_INVALID")}; " +
+            $"code={Label(contract.Code, "PROVIDER_UNAVAILABLE", "VERIFY_REQUIRED", "SESSION_INVALID", "REQUEST_AUTH_INVALID", "PROVIDER_AUTH_REQUIRED", "TICKET_REQUIRED", "TICKET_INVALID", "TICKET_EXPIRED")}; " +
+            $"origin={Label(contract.Origin, "provider", "gateway")}; action={Label(contract.Action, "bootstrap_session", "verify")}; " +
+            $"retry_mode={Label(contract.RetryMode, "same_operation", "poll_existing", "new_ticket", "none")}; " +
+            $"retry_after={Math.Max(response.RetryAfterSeconds, contract.RetryAfterSeconds)}; elapsed_ms={(long)elapsed.TotalMilliseconds}.");
     }
 
     private async Task<SessionRecord> TryRefreshAsync(SessionRecord record, CancellationToken cancellationToken)
@@ -618,38 +660,75 @@ internal sealed class ExtensionSignedSessionClient
     private async Task<ResponseData> SendAsync(string method, Uri target, string body, IReadOnlyDictionary<string, string> headers,
         CancellationToken cancellationToken)
     {
+        var budget = ExtensionInvocationBudget.Current;
+        var requestLimit = budget is { IsDownload: true } ? _signedDownloadRequestLimit : ScriptRequestLimit;
+        if (_networkRequestTimeout is { } networkLimit && networkLimit < requestLimit) requestLimit = networkLimit;
+        if (budget != null) requestLimit = TimeSpan.FromMilliseconds(Math.Min(budget.RemainingMilliseconds, requestLimit.TotalMilliseconds));
+        using var timeout = budget is { IsDownload: true } || _networkRequestTimeout.HasValue
+            ? new CancellationTokenSource(requestLimit, _timeProvider) : null;
+        using var limit = timeout == null ? null : CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        cancellationToken = limit?.Token ?? cancellationToken;
         EnsureAllowed(target);
         using var client = _clients.CreateClient("ExtensionSdkV1");
         client.Timeout = Timeout.InfiniteTimeSpan;
-        using var request = new HttpRequestMessage(new HttpMethod(method), target);
-        if (body.Length > 0) request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+        using var request = new HttpRequestMessage(new HttpMethod(method), target)
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionOrLower
+        };
+        if (body.Length > 0)
+        {
+            request.Content = new ByteArrayContent(Encoding.UTF8.GetBytes(body));
+            request.Content.Headers.ContentType = new("application/json");
+        }
         request.Headers.Accept.ParseAdd("application/json");
         request.Headers.TryAddWithoutValidation("User-Agent", $"SpotiFLAC-Mobile/{_config.AppVersion}");
         foreach (var (key, value) in headers)
         {
             if (key.Equals("Host", StringComparison.OrdinalIgnoreCase) || key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+                key.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase) ||
                 key.Contains('\r') || key.Contains('\n') || value.Contains('\r') || value.Contains('\n')) continue;
-            if (key.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) && request.Content != null)
+            if (key.StartsWith("Content-", StringComparison.OrdinalIgnoreCase) && request.Content != null)
+            {
+                request.Content.Headers.Remove(key);
                 request.Content.Headers.TryAddWithoutValidation(key, value);
-            else request.Headers.TryAddWithoutValidation(key, value);
+            }
+            else
+            {
+                request.Headers.Remove(key);
+                request.Headers.TryAddWithoutValidation(key, value);
+            }
+        }
+        var automaticGzip = method != "HEAD" && !request.Headers.Contains("Range") &&
+            (!request.Headers.TryGetValues("Accept-Encoding", out var encodings) || string.IsNullOrEmpty(string.Join("", encodings)));
+        if (automaticGzip)
+        {
+            request.Headers.Remove("Accept-Encoding");
+            request.Headers.AcceptEncoding.ParseAdd("gzip");
         }
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (response.RequestMessage?.RequestUri is not { } finalUri) throw new HttpRequestException("Signed session response URL is unavailable.");
         EnsureAllowed(finalUri);
         await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var decoded = automaticGzip && response.Content.Headers.ContentEncoding.Contains("gzip", StringComparer.OrdinalIgnoreCase)
+            ? new GZipStream(stream, CompressionMode.Decompress, leaveOpen: true) : null;
+        var source = decoded ?? stream;
         using var output = new MemoryStream();
         var buffer = new byte[64 * 1024];
         int read;
-        while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
+        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
         {
             if (output.Length + read > MaximumResponseBytes) throw new InvalidDataException("Signed session response exceeds 4 MiB.");
             output.Write(buffer, 0, read);
         }
         var responseHeaders = response.Headers.Concat(response.Content.Headers)
+            .Where(header => decoded == null || !header.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) &&
+                !header.Key.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
             .ToDictionary(item => item.Key, item => (object)string.Join(", ", item.Value), StringComparer.OrdinalIgnoreCase);
         var retry = response.Headers.RetryAfter?.Delta is { } delta ? Math.Max(0, (int)delta.TotalSeconds) :
             response.Headers.RetryAfter?.Date is { } date ? Math.Max(0, (int)(date - _timeProvider.GetUtcNow()).TotalSeconds) : 0;
-        return new(response.StatusCode, Encoding.UTF8.GetString(output.ToArray()), responseHeaders, retry);
+        return new(response.StatusCode, Encoding.UTF8.GetString(output.ToArray()), responseHeaders, retry,
+            response.Headers.RetryAfter?.Delta, response.Headers.RetryAfter?.Date);
     }
 
     private Uri Resolve(string endpoint)
@@ -731,9 +810,18 @@ internal sealed class ExtensionSignedSessionClient
     private static string Base64Url(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
     private sealed record SessionRecord(string InstallId, string? SessionId, string? SessionSecret, string? ExpiresAt);
-    private sealed record ResponseData(HttpStatusCode StatusCode, string Body, IReadOnlyDictionary<string, object> Headers, int RetryAfterSeconds)
+    private sealed record ResponseData(HttpStatusCode StatusCode, string Body, IReadOnlyDictionary<string, object> Headers,
+        int RetryAfterSeconds, TimeSpan? RetryDelta, DateTimeOffset? RetryDate)
     {
         public bool IsSuccessStatusCode => (int)StatusCode is >= 200 and < 300;
+        // Adapted from SpotiFLAC-Mobile (MIT), signed_session/protocol.rs provider_delay.
+        public TimeSpan ProviderDelay(int contractSeconds, DateTimeOffset now)
+        {
+            var delay = RetryDelta ?? (RetryDate - now);
+            if (delay is not { } value || value <= TimeSpan.Zero)
+                value = TimeSpan.FromSeconds(contractSeconds > 0 ? contractSeconds : 1);
+            return value > TimeSpan.FromSeconds(120) ? TimeSpan.FromSeconds(120) : value;
+        }
     }
     private sealed record SignedResponse(Uri Target, ResponseData Response)
     {
@@ -786,12 +874,27 @@ internal sealed class ExtensionSignedSessionClient
                 using var document = JsonDocument.Parse(body);
                 var root = document.RootElement;
                 if (root.ValueKind != JsonValueKind.Object) return new();
-                string Text(string key) => root.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String
-                    ? value.GetString()!.Trim() : "";
+                var fields = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+                foreach (var property in root.EnumerateObject())
+                {
+                    var key = property.Name.ToLowerInvariant();
+                    var value = property.Value;
+                    if (value.ValueKind == JsonValueKind.Null) continue;
+                    var valid = key switch
+                    {
+                        "error" or "code" or "origin" or "action" or "retry_mode" => value.ValueKind == JsonValueKind.String,
+                        "retryable" => value.ValueKind is JsonValueKind.True or JsonValueKind.False,
+                        "retry_after_seconds" => value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out _),
+                        _ => true
+                    };
+                    if (!valid) return new();
+                    fields[key] = value;
+                }
+                string Text(string key) => fields.TryGetValue(key, out var value) ? value.GetString()!.Trim() : "";
                 return new(Text("error"), Text("code").ToUpperInvariant(), Text("origin").ToLowerInvariant(),
-                    Text("action").ToLowerInvariant(), root.TryGetProperty("retryable", out var retryable) && retryable.ValueKind == JsonValueKind.True,
-                    Text("retry_mode").ToLowerInvariant(), root.TryGetProperty("retry_after_seconds", out var seconds) &&
-                    seconds.ValueKind == JsonValueKind.Number && seconds.TryGetInt32(out var count) ? Math.Max(0, count) : 0);
+                    Text("action").ToLowerInvariant(), fields.TryGetValue("retryable", out var retryable) && retryable.GetBoolean(),
+                    Text("retry_mode").ToLowerInvariant(), fields.TryGetValue("retry_after_seconds", out var seconds)
+                        ? (int)Math.Clamp(seconds.GetInt64(), 0, int.MaxValue) : 0);
             }
             catch (JsonException) { return new(); }
         }
