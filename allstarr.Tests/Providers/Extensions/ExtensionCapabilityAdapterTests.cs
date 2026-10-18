@@ -1131,10 +1131,10 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData(MixedQualityOptions, ProviderAudioQuality.HighResolution, "return {success:false,error_message:'HTTP 503'};")]
+    [InlineData(MixedQualityOptions, ProviderAudioQuality.HighResolution, "return {success:false,error_type:'quality_unavailable',error_message:'Unavailable quality'};")]
     [InlineData(MixedQualityOptions, ProviderAudioQuality.Any, "throw new Error('download unavailable');")]
     [InlineData(LosslessQualityOptions, ProviderAudioQuality.HighResolution, "throw new Error('download unavailable');")]
-    [InlineData(LosslessQualityOptions, ProviderAudioQuality.Any, "return {success:false,error_message:'HTTP 503'};")]
+    [InlineData(LosslessQualityOptions, ProviderAudioQuality.Any, "return {success:false,error_type:'quality_unavailable',error_message:'Unavailable quality'};")]
     public async Task SpotiFlacRuntimeAdapter_FallsBackToPlainLosslessOnce(string qualityOptions, ProviderAudioQuality requested, string failure)
     {
         var (outcome, observed) = await RunDeclaredQualityDownload(qualityOptions, requested,
@@ -1148,7 +1148,10 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData("return {success:false,error_message:'HTTP 503'};", 2)]
+    [InlineData("return {success:false,error_message:'HTTP 503'};", 1)]
+    [InlineData("return {success:false,error_type:'api_error',error_message:'PROVIDER_UNAVAILABLE'};", 1)]
+    [InlineData("throw Object.assign(new Error('Busy'), {retryMode:'same_operation'});", 1)]
+    [InlineData("return {success:false,error_type:'timeout',error_message:'stream resolution timeout'};", 1)]
     [InlineData("throw new Error('download unavailable');", 2)]
     [InlineData("return {success:false,error:'VERIFY_REQUIRED'};", 1)]
     [InlineData("return {success:false,error_type:'verification_required',error_message:'Please verify'};", 1)]

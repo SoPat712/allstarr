@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
@@ -7,6 +8,23 @@ namespace allstarr.Core.Extensions;
 public static class SpotiFlacExtensionCompatibility
 {
     public const string Marker = "spotiflac-v1";
+    public const string AppVersion = "5.1.1";
+
+    // Adapted from SpotiFLAC-Mobile (MIT), extensions/src/environment.rs network_timeout.
+    internal static TimeSpan NetworkTimeout(JsonElement manifest)
+    {
+        long seconds = 0;
+        if (manifest.TryGetProperty("spotiflacManifest", out var source) &&
+            source.TryGetProperty("capabilities", out var capabilities) && capabilities.ValueKind == JsonValueKind.Object &&
+            capabilities.TryGetProperty("networkTimeoutSeconds", out var value))
+        {
+            if (value.ValueKind == JsonValueKind.String)
+                long.TryParse(value.GetString()?.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out seconds);
+            else if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number))
+                seconds = (long)Math.Clamp(number, 0, 300);
+        }
+        return TimeSpan.FromSeconds(seconds <= 0 ? 30 : Math.Clamp(seconds, 5, 300));
+    }
 
     public static bool IsManifest(string json)
     {
@@ -237,6 +255,53 @@ public static class SpotiFlacExtensionCompatibility
                 }
                 return goString(value);
             }
+            // Adapted from SpotiFLAC-Mobile (MIT), prelude.js bodyString/serialize.
+            function signedBody(value) {
+                if (value == null) return "";
+                if (typeof value === "string") return goString(value);
+                if (!isMap(value) && !Array.isArray(value)) return goString(value);
+                function quote(text) {
+                    return JSON.stringify(goString(text)).replace(/[<>&\u2028\u2029]/g,
+                        c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+                }
+                function compareKeys(a, b) {
+                    const left = Array.from(a), right = Array.from(b);
+                    for (let i = 0; i < Math.min(left.length, right.length); i++) {
+                        const difference = left[i].codePointAt(0) - right[i].codePointAt(0);
+                        if (difference) return difference;
+                    }
+                    return left.length - right.length;
+                }
+                const ancestors = [];
+                function encode(item) {
+                    if (item == null) return "null";
+                    if (typeof item === "string") return quote(item);
+                    if (typeof item === "boolean") return String(item);
+                    if (typeof item === "number") {
+                        if (!Number.isFinite(item)) throw new TypeError("unsupported JSON number");
+                        return Object.is(item, -0) ? "-0" : String(item);
+                    }
+                    if (typeof item !== "object" || item instanceof Map) throw new TypeError("unsupported JSON value");
+                    if (ancestors.length >= 128 || ancestors.includes(item)) throw new TypeError("cyclic or deeply nested JSON value");
+                    ancestors.push(item);
+                    const result = Array.isArray(item) || ArrayBuffer.isView(item) || item instanceof Set
+                        ? "[" + Array.from(item, encode).join(",") + "]"
+                        : "{" + Object.keys(item).sort(compareKeys).map(key => quote(key) + ":" + encode(item[key])).join(",") + "}";
+                    ancestors.pop();
+                    return result;
+                }
+                return encode(value);
+            }
+            if (_allstarrSpotiFlacCompatibility) {
+                session.signedFetch = function(method, path, body, headers) {
+                    if (arguments.length < 2) return {ok: false, error: "method and path are required"};
+                    try {
+                        const values = Object.create(null);
+                        if (isMap(headers)) for (const key of Object.keys(headers)) values[goString(key)] = formatGo(headers[key]);
+                        return host.SessionSignedFetch(goString(method), goString(path), signedBody(body), values);
+                    } catch (error) { return {ok: false, error: goString(error)}; }
+                };
+            }
             const responseByteArrays = new WeakMap();
             function binaryOptions(value) {
                 if (value === null || typeof value !== "object" || Array.isArray(value) || ArrayBuffer.isView(value)
@@ -363,8 +428,10 @@ public static class SpotiFlacExtensionCompatibility
         function _sfStopQualityFallback(error) {
           var reason = [error && error.error_type, error && error.code, error && error.error,
             error && error.error_message, error && error.message, error && error.name, String(error)].join(' ');
-          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true)
-            || /\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b/i.test(reason);
+          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true
+              || error.retryMode || error.retry_mode || error.retryable === true
+              || /^(api_error|timeout|network_error|download_error|expired_stream)$/.test(error.error_type || ''))
+            || /\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b|\bHTTP\s+(?:5\d\d|429|408)\b|PROVIDER_UNAVAILABLE|RESOLUTION_TIMEOUT/i.test(reason);
         }
         var _allstarrInitializedSettings = null;
         function _allstarrInitialize(settings) {
@@ -550,7 +617,10 @@ public static class SpotiFlacExtensionCompatibility
             var durationMs = Number(track.duration_ms || track.durationMs || 0) || undefined;
             var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
             var options = { requestedQuality: request.requestedQuality, quality: selection.id, track: track, duration_ms: durationMs };
-            if (request.prepareForStreaming) options.spotify_id = request.trackId;
+            options.spotify_id = track.spotify_id || (request.prepareForStreaming && !track.tidal_id && !track.deezer_id && !track.qobuz_id ? request.trackId : '');
+            options.deezer_id = track.deezer_id || '';
+            options.tidal_id = track.tidal_id || '';
+            options.qobuz_id = track.qobuz_id || '';
             var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists, options);
             if (result && result.available !== false) _sfRememberPrepared(request.trackId, result.prepared_context || result.preparedContext);
             if (request.prepareForStreaming && (!result || typeof result.available !== 'boolean')) return;

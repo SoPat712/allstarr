@@ -35,6 +35,7 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         await Task.WhenAny(handler.Entered.Task, pending).WaitAsync(TimeSpan.FromSeconds(10));
         if (pending.IsCompleted) await pending;
         Assert.True(handler.Entered.Task.IsCompleted);
+        Assert.False(handler.Canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(seconds));
         handler.Release.TrySetResult();
 
@@ -60,6 +61,7 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         await Task.WhenAny(handler.Entered.Task, pending).WaitAsync(TimeSpan.FromSeconds(10));
         if (pending.IsCompleted) await pending;
         Assert.True(handler.Entered.Task.IsCompleted);
+        Assert.False(handler.Canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(59));
         Assert.False(handler.Canceled.Task.IsCompleted);
         if (cancelCaller) caller.Cancel();
@@ -84,6 +86,7 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         await Task.WhenAny(handler.Entered.Task, pending).WaitAsync(TimeSpan.FromSeconds(10));
         if (pending.IsCompleted) await pending;
         Assert.True(handler.Entered.Task.IsCompleted);
+        Assert.False(handler.Canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(29));
         Assert.False(handler.Canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -101,6 +104,7 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         await Task.WhenAny(handler.Entered.Task, pending).WaitAsync(TimeSpan.FromSeconds(10));
         if (pending.IsCompleted) await pending;
         Assert.True(handler.Entered.Task.IsCompleted);
+        Assert.False(handler.Canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(29));
         Assert.False(handler.Canceled.Task.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(1));
@@ -114,7 +118,10 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         ProviderDownloadWorkspaceOptions Options)> GatewayAsync(string? configuredSeconds = null, bool direct = false)
     {
         const string script = """
-            function catalog() { session.signedFetch('GET','/catalog',null,{}); }
+            function catalog() {
+              var response = session.signedFetch('GET','/catalog',null,{});
+              if (response.ok === false) throw new Error('Catalog request failed');
+            }
             function track(id) { return {id:id,name:'Track',artists:'Artist'}; }
             registerExtension({
               customSearch:function(){catalog();return [track('track')];},
@@ -130,7 +137,9 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "allstarr.sln"))) directory = directory.Parent;
         var original = await File.ReadAllTextAsync(Path.Combine(directory!.FullName,
             "allstarr.Tests", "Fixtures", "Extensions", "Registry", "tidal-web.json"));
-        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, script);
+        var source = System.Text.Json.Nodes.JsonNode.Parse(original)!.AsObject();
+        source["capabilities"]!["networkTimeoutSeconds"] = 300;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source.ToJsonString(), script);
         var manifest = ExtensionSdkV1.ParseManifest(normalized);
         var clients = new Clients(handler);
         var sandbox = new ExtensionSandbox(root, normalized, script, clients, NullLogger.Instance,

@@ -33,7 +33,7 @@ public sealed class ExtensionSessionRetentionTests : IDisposable
         Assert.Equal(ExtensionSessionStates.SignedIn, view.State);
         Assert.Equal(reason, view.ReasonCode);
         Assert.Equal(reason, view.LastRenewalFailure);
-        var log = Assert.Single(_logs);
+        var log = Assert.Single(_logs, item => item.Code == "session.retained");
         Assert.Equal("session.retained", log.Code);
         Assert.Contains($"status={status}", log.Message);
         Assert.Contains("call=signed_fetch", log.Message);
