@@ -1281,6 +1281,156 @@ public sealed class ExtensionCapabilityAdapterTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Theory]
+    [InlineData("[\"tidal\"]", "return {available:true,track_id:' 125155092 ',prepared_context:{track_id:'125155092'}};", "{}", "125155092", true, -1)]
+    [InlineData("[\"tidal\"]", "return {available:true,track_id:' 125155092 ',prepared_context:{track_id:'125155092'}};", "{}", "125155092", true, 0)]
+    [InlineData("[\"tidal\"]", "return {available:true,track_id:' 125155092 ',prepared_context:{track_id:'125155092'}};", "{}", "125155092", true, 900001)]
+    [InlineData("[\"tidal\"]", "return {available:true,track_id:availabilityCalls === 1 ? '125155091' : '125155092',prepared_context:{track_id:'125155092'}};", "{}", "125155092", true, 1)]
+    [InlineData("null", "return {available:false};", "{}", "TiDaL:125155092", false, -1)]
+    [InlineData("[\"spotify\"]", "return {};", "{spotify_id:'SpOtIfY:spotify-track'}", "spotify-track", false, -1)]
+    [InlineData("[]", "return {available:true,track_id:'125155092'};", "{}", "125155092", false, -1)]
+    [InlineData("[\"tidal\"]", "throw new Error('availability failed');", "{}", "125155092", false, -1)]
+    [InlineData("[\"tidal\"]", "return {available:false,track_id:'wrong',prepared_context:{track_id:'wrong'}};", "{}", "125155092", false, -1)]
+    [InlineData("[]", "return {available:false};", "{}", "TiDaL:125155092", false, -1)]
+    [InlineData("[]", null, "{}", "TiDaL:125155092", false, -1)]
+    [InlineData("[\" TIDAL \"]", "return {available:true,track_id:'  '};", "{tidal_id:' native-tidal '}", "native-tidal", false, -1)]
+    [InlineData("[\"deezer\",\"qobuz\",\"tidal\"]", "return null;", "{tidal_id:'native-tidal',qobuz_id:'native-qobuz',deezer_id:'native-deezer'}", "native-tidal", false, -1)]
+    [InlineData("[\"qobuz\"]", "return {};", "{spotify_id:'QoBuZ:321',qobuz_id:' '}", "321", false, -1)]
+    [InlineData("[\"deezer\"]", "return {};", "{spotify_id:'spotify-track',deezer_id:'native-deezer'}", "native-deezer", false, -1)]
+    [InlineData("[]", "return {};", "{spotify_id:' spotify-track ',tidal_id:'native-tidal'}", "spotify-track", false, -1)]
+    public async Task SpotiFlacRuntimeAdapter_ResolvesDownloadTrackIdForBothCapabilities(
+        string replaces, string? availabilityBody, string metadata, string expectedId, bool prepared, int preparedAgeMs)
+    {
+        foreach (var streaming in new[] { false, true })
+        {
+            var root = Path.Combine(Path.GetTempPath(), "allstarr-resolved-download", Guid.NewGuid().ToString("N"));
+            try
+            {
+                var capabilities = replaces == "null" ? "" : ",\"capabilities\":{\"replacesBuiltInProviders\":" + replaces + "}";
+                var features = streaming ? "[\"preparedContext@1\"]" : "[]";
+                var source = $$$"""
+                    {"name":"resolved","displayName":"Resolved","version":"1.0.0","type":["download_provider"],
+                     "requiredRuntimeFeatures":{{{features}}},"permissions":{"network":["media.example.test"]}{{{capabilities}}}}
+                    """;
+                var availabilityHook = availabilityBody == null ? "" :
+                    "checkAvailability:function(isrc,name,artists,options){availabilityCalls++;availabilityOptions=options;" + availabilityBody + "},";
+                var script = $$$"""
+                    var observed = {}, availabilityCalls = 0, availabilityOptions = null, elapsed = 0;
+                    var now = Date.now;
+                    Date.now = function(){return now() + elapsed;};
+                    registerExtension({
+                      getTrack:function(id){
+                        if (id === 'advance') elapsed = {{{preparedAgeMs}}};
+                        if (id === 'observation') return {id:id,name:JSON.stringify(observed)};
+                        return Object.assign({id:id,name:'Song',artists:'Artist',duration_ms:1000,isrc:'recording'},{{{metadata}}});
+                      },
+                      {{{availabilityHook}}}
+                      download:function(id,quality,path,progress,options){
+                        observed = {id:id,path:path,prepared:options.preparedContext,timeout:options.resolutionTimeoutMs,
+                          availabilityCalls:availabilityCalls,availabilityOptions:availabilityOptions};
+                        return file.download('https://media.example.test/audio',path,{});
+                      }
+                    });
+                    """;
+                var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+                var manifest = ExtensionSdkV1.ParseManifest(normalized);
+                var sandbox = new ExtensionSandbox(root, normalized, script,
+                    new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance,
+                    new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                        new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+                var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+                var store = new MemoryArtifactStore();
+                var resolver = new ProviderDownloadArtifactResolver(store, options);
+                var context = Context(manifest.Id);
+                var track = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "TiDaL:125155092");
+                if (preparedAgeMs >= 0)
+                {
+                    sandbox.InvokeJson("checkAvailability", """{"trackId":"TiDaL:125155092","requestedQuality":"Any"}""");
+                    sandbox.InvokeJson("getTrack", """{"id":"advance"}""");
+                    if (preparedAgeMs == 1)
+                        sandbox.InvokeJson("checkAvailability", """{"trackId":"TiDaL:125155092","requestedQuality":"Any"}""");
+                }
+                if (streaming)
+                {
+                    var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+                    var result = await adapter.GetStreamLeaseAsync(context, new(track));
+                    Assert.True(result.IsSuccess, result.Error?.Kind.ToString());
+                    var lease = result.RequireValue();
+                    using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+                    using var response = await lease.ProtectedResponseFactory!(request, default);
+                    Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+                }
+                else
+                {
+                    var job = Guid.CreateVersion7();
+                    var workspace = await resolver.CreateWorkspaceAsync(new(context.Actor.EffectiveUserId, job, manifest.Id, null, "download"));
+                    var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
+                    var result = await adapter.DownloadAsync(context, new(track, job, workspace.Reference, ProviderAudioQuality.Any));
+                    Assert.True(result.IsSuccess, result.Error?.Kind.ToString());
+                    Assert.Equal("TiDaL_125155092.audio", result.RequireValue().ArtifactId);
+                }
+                using var observation = JsonDocument.Parse(sandbox.InvokeJson("getTrack", """{"id":"observation"}""")!);
+                using var recorded = JsonDocument.Parse(observation.RootElement.GetProperty("title").GetString()!);
+                var value = recorded.RootElement;
+                Assert.Equal(expectedId, value.GetProperty("id").GetString());
+                Assert.Equal("TiDaL_125155092.audio", value.GetProperty("path").GetString());
+                Assert.True(value.GetProperty("timeout").GetInt64() > 0);
+                Assert.Equal(availabilityBody == null ? 0 : preparedAgeMs > 0 ? 2 : 1, value.GetProperty("availabilityCalls").GetInt32());
+                var contextValue = value.GetProperty("prepared");
+                Assert.Equal("TiDaL:125155092", contextValue.GetProperty("host_track").GetProperty("id").GetString());
+                if (prepared) Assert.Equal("125155092", contextValue.GetProperty("track_id").GetString());
+                else Assert.False(contextValue.TryGetProperty("track_id", out _));
+                if (availabilityBody != null)
+                {
+                    var availabilityOptions = value.GetProperty("availabilityOptions");
+                    Assert.Equal(1000, availabilityOptions.GetProperty("duration_ms").GetInt32());
+                    Assert.Equal("Song", availabilityOptions.GetProperty("track").GetProperty("name").GetString());
+                    foreach (var key in new[] { "spotify_id", "tidal_id", "qobuz_id", "deezer_id" })
+                    {
+                        var knownId = availabilityOptions.GetProperty("track").TryGetProperty(key, out var known)
+                            ? known.GetString()?.Trim() : null;
+                        var expected = string.IsNullOrEmpty(knownId)
+                            ? key == "tidal_id" ? "125155092" : ""
+                            : knownId;
+                        Assert.Equal(expected, availabilityOptions.GetProperty(key).GetString());
+                    }
+                }
+            }
+            finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+        }
+    }
+
+    [Fact]
+    public void SpotiFlacRuntimeAdapter_ForwardsCachedTrackMetadataToAvailability()
+    {
+        const string source = """
+            {"name":"cached","displayName":"Cached","version":"1.0.0","type":["metadata_provider","download_provider"]}
+            """;
+        const string script = """
+            registerExtension({
+              customSearch:function(){return [{id:'track-1',name:'Song',artists:'Artist',duration_ms:123000,isrc:'recording',
+                spotify_id:'spotify-track',tidal_id:'tidal-track',qobuz_id:'qobuz-track',deezer_id:'deezer-track'}];},
+              checkAvailability:function(isrc,name,artists,options){
+                if (isrc !== 'recording' || name !== 'Song' || artists !== 'Artist' || options.duration_ms !== 123000 ||
+                    options.track.id !== 'track-1' || options.track.name !== 'Song' || options.track.duration_ms !== 123000 ||
+                    options.spotify_id !== 'spotify-track' || options.tidal_id !== 'tidal-track' ||
+                    options.qobuz_id !== 'qobuz-track' || options.deezer_id !== 'deezer-track')
+                  throw new Error('cached metadata missing');
+                return {available:true,track_id:'tidal-track'};
+              },
+              download:function(){}
+            });
+            """;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+        var sandbox = new ExtensionSandbox("demo", normalized, script, new HttpClientFactory(), NullLogger.Instance,
+            ExtensionRuntimePermissionSet.None, Path.GetTempPath());
+
+        sandbox.InvokeJson("searchTracks", """{"query":"Song","page":{"limit":10}}""");
+        var result = sandbox.InvokeJson("checkAvailability", """{"trackId":"track-1","requestedQuality":"Any"}""");
+
+        Assert.Contains("\"Available\"", result, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task SpotiFlacRuntimeAdapter_PassesPreparedAvailabilityContextToDownload()
     {
@@ -1302,9 +1452,8 @@ public sealed class ExtensionCapabilityAdapterTests
                   download: function(id, quality, path, progress, options) {
                     var prepared = options && options.preparedContext;
                     if (!prepared || typeof prepared !== 'object') throw new Error('prepared context must always be an object');
-                    if (id === 'track-1' && (!prepared.web_metadata || prepared.web_metadata.id !== 'track-1' ||
-                        prepared.web_metadata.title !== 'Song track-1')) throw new Error('prepared context was not returned');
-                    if (id === 'track-2' && Object.keys(prepared).length !== 0) throw new Error('prepared context leaked between tracks');
+                    if (!prepared.web_metadata || prepared.web_metadata.id !== id ||
+                        prepared.web_metadata.title !== 'Song ' + id) throw new Error('prepared context was not returned for this track');
                     return file.download('https://media.example.test/audio', path, {});
                   }
                 });
@@ -1415,7 +1564,7 @@ public sealed class ExtensionCapabilityAdapterTests
     [InlineData("{state:'Unknown'}", true)]
     [InlineData("{available:false}", true)]
     [InlineData("{available:true,prepared_context:{ready:true}}", true)]
-    public async Task SpotiFlacStreaming_PreparesSelectedTrackWithoutChangingManagedAvailability(string availability, bool streams)
+    public async Task SpotiFlacStreaming_PreparesSelectedTrackAndKeepsAvailabilityAdvisory(string availability, bool streams)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-selected-stream", Guid.NewGuid().ToString("N"));
         try
@@ -1451,8 +1600,9 @@ public sealed class ExtensionCapabilityAdapterTests
             var context = Context(manifest.Id);
             var track = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "track-1");
             var download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, artifacts: resolver, options: options);
-            Assert.Equal(ProviderDownloadAvailabilityState.Unavailable,
-                (await download.CheckAvailabilityAsync(context, new(track))).RequireValue().State);
+            var expectedAvailability = availability is "null" or "{available:false}"
+                ? ProviderDownloadAvailabilityState.Unavailable : ProviderDownloadAvailabilityState.Available;
+            Assert.Equal(expectedAvailability, (await download.CheckAvailabilityAsync(context, new(track))).RequireValue().State);
 
             var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
             var result = await adapter.GetStreamLeaseAsync(context, new(track));

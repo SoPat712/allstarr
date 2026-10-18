@@ -249,7 +249,9 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
     {
         download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, secrets, artifacts, options);
         this.artifacts = artifacts;
-        requiresPreparedContext = manifest.RequiredRuntimeFeatures?.Contains("preparedContext@1", StringComparer.Ordinal) == true;
+        // The compatibility shim prepares and resolves the track within its download hook.
+        requiresPreparedContext = manifest.Compatibility != SpotiFlacExtensionCompatibility.Marker &&
+            manifest.RequiredRuntimeFeatures?.Contains("preparedContext@1", StringComparer.Ordinal) == true;
         ProviderId = manifest.Id;
     }
 

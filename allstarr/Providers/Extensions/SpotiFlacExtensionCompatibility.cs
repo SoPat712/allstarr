@@ -402,6 +402,7 @@ public static class SpotiFlacExtensionCompatibility
 
     public const string RuntimeAdapterScript = """
         var _spotiflacExtension = _registeredExtension;
+        var _sfManifest = JSON.parse(_allstarrSpotiFlacManifestJson);
         var _sfQualitySelections = (function(options) {
           options = options.map(function(option) {
             return typeof option === 'string' ? { id: option, kind: '' }
@@ -488,6 +489,7 @@ public static class SpotiFlacExtensionCompatibility
             albumId: value.album_id || value.albumId || album.id || album.browse_id || album.browseId || null,
             albumTitle: String(value.album_name || value.albumTitle || album.name || album.title || '').trim() || null,
             durationMs: Number(value.duration_ms || value.durationMs || 0),
+            spotify_id: value.spotify_id, tidal_id: value.tidal_id, qobuz_id: value.qobuz_id, deezer_id: value.deezer_id,
             isrc: value.isrc ? String(value.isrc) : null,
             isExplicit: value.explicit == null ? null : Boolean(value.explicit),
             artworkUrl: _sfArtwork(value),
@@ -506,21 +508,97 @@ public static class SpotiFlacExtensionCompatibility
         }
         var _sfPrepared = Object.create(null);
         var _sfPreparedOrder = [];
-        function _sfRememberPrepared(trackId, context) {
+        function _sfForgetPrepared(sourceId) {
+          _sfPreparedOrder = _sfPreparedOrder.filter(function(id) {
+            if (_sfPrepared[id].sourceId !== String(sourceId)) return true;
+            delete _sfPrepared[id];
+            return false;
+          });
+        }
+        function _sfRememberPrepared(sourceId, trackId, context) {
           var id = String(trackId || '');
           if (!id) return;
-          if (!context || typeof context !== 'object' || Array.isArray(context)) { delete _sfPrepared[id]; return; }
+          if (!context || typeof context !== 'object' || Array.isArray(context)) return;
           var json;
           try { json = JSON.stringify(context); } catch (error) { return; }
           if (!json || json.length > 262144) return;
           if (!Object.prototype.hasOwnProperty.call(_sfPrepared, id)) _sfPreparedOrder.push(id);
-          _sfPrepared[id] = { json: json, at: Date.now() };
+          _sfPrepared[id] = { json: json, at: Date.now(), sourceId: String(sourceId) };
           while (_sfPreparedOrder.length > 256) delete _sfPrepared[_sfPreparedOrder.shift()];
         }
-        function _sfPreparedFor(trackId) {
+        function _sfPreparedFor(trackId, sourceId) {
           var entry = _sfPrepared[String(trackId || '')];
-          if (!entry || Date.now() - entry.at > 900000) return {};
+          if (!entry || entry.sourceId !== String(sourceId) || Date.now() - entry.at > 900000) return {};
           try { return JSON.parse(entry.json); } catch (error) { return {}; }
+        }
+        function _sfPreparedIdFor(sourceId) {
+          return Object.keys(_sfPrepared).filter(function(id) {
+            var entry = _sfPrepared[id];
+            return entry.sourceId === String(sourceId) && Date.now() - entry.at <= 900000;
+          })[0];
+        }
+        function _sfDownloadTrack(request) {
+          var track = null;
+          try {
+            if (typeof _spotiflacExtension.getTrack === 'function') track = _spotiflacExtension.getTrack(request.trackId);
+          } catch (_) {}
+          track = track || _sfTrackCache[String(request.trackId)] || {};
+          return Object.assign({}, track, { id: track.id || request.trackId, name: track.name || track.title || '',
+            duration_ms: Number(track.duration_ms || track.durationMs || 0) });
+        }
+        function _sfAvailabilityOptions(request, track) {
+          var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
+          var options = { requestedQuality: request.requestedQuality, quality: selection.id, track: track, duration_ms: track.duration_ms };
+          options.spotify_id = String(track.spotify_id || '').trim();
+          ['tidal', 'qobuz', 'deezer'].forEach(function(provider) {
+            var key = provider + '_id';
+            options[key] = String(track[key] || '').trim();
+            var prefix = provider + ':';
+            var id = String(request.trackId || '').trim();
+            if (!options[key] && id.toLowerCase().indexOf(prefix) === 0) options[key] = id.substring(prefix.length);
+          });
+          if (!options.spotify_id && !options.tidal_id && !options.qobuz_id && !options.deezer_id)
+            options.spotify_id = String(request.trackId || '').trim();
+          return options;
+        }
+        function _sfPreferredTrackId(options, explicit, sourceId) {
+          explicit = String(explicit || '').trim();
+          if (explicit) return explicit;
+          var spotifyId = options.spotify_id || String(sourceId || '').trim();
+          var replaces = (_sfManifest.capabilities || {}).replacesBuiltInProviders;
+          replaces = Array.isArray(replaces) ? replaces.filter(function(value) { return typeof value === 'string'; })
+            .map(function(value) { return value.trim().toLowerCase(); }) : [];
+          var providers = ['tidal', 'qobuz', 'deezer', 'spotify'];
+          for (var i = 0; i < providers.length; i++) {
+            var provider = providers[i];
+            if (replaces.indexOf(provider) < 0) continue;
+            var nativeId = options[provider + '_id'];
+            if (provider !== 'spotify' && nativeId) return nativeId;
+            var id = spotifyId;
+            if (id) {
+              var prefix = provider + ':';
+              return id.toLowerCase().indexOf(prefix) === 0 ? id.substring(prefix.length) : id;
+            }
+          }
+          return spotifyId || options.tidal_id || options.qobuz_id || options.deezer_id || '';
+        }
+        function _sfCheckAvailability(request, options) {
+          var track = options.track;
+          var artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
+          _sfForgetPrepared(request.trackId);
+          var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || '', artists, options);
+          if (result && result.available !== false) {
+            var id = _sfPreferredTrackId(options, result.track_id, request.trackId);
+            var context = result.prepared_context || result.preparedContext;
+            if (context && typeof context === 'object' && !Array.isArray(context))
+              _sfRememberPrepared(request.trackId, id, Object.assign({}, context, { host_track: track }));
+          }
+          return result;
+        }
+        function _sfDownloadOptions(request, trackId, track) {
+          var prepared = _sfPreparedFor(trackId, request.trackId);
+          prepared.host_track = track || prepared.host_track || _sfDownloadTrack(request);
+          return { preparedContext: prepared, resolutionTimeoutMs: utils.getResolutionRemainingMs() };
         }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
@@ -611,18 +689,8 @@ public static class SpotiFlacExtensionCompatibility
           checkAvailability: function(request) {
             if (typeof _spotiflacExtension.download !== 'function') return { state: 'Incompatible', availableQualities: [] };
             if (typeof _spotiflacExtension.checkAvailability !== 'function') return { state: 'Available', availableQualities: ['Any'] };
-            var track = typeof _spotiflacExtension.getTrack === 'function' ? _spotiflacExtension.getTrack(request.trackId) : null;
-            track = track || {};
-            var artists = _sfArtists(track).map(function(item) { return item.name; }).join(', ');
-            var durationMs = Number(track.duration_ms || track.durationMs || 0) || undefined;
-            var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
-            var options = { requestedQuality: request.requestedQuality, quality: selection.id, track: track, duration_ms: durationMs };
-            options.spotify_id = track.spotify_id || (request.prepareForStreaming && !track.tidal_id && !track.deezer_id && !track.qobuz_id ? request.trackId : '');
-            options.deezer_id = track.deezer_id || '';
-            options.tidal_id = track.tidal_id || '';
-            options.qobuz_id = track.qobuz_id || '';
-            var result = _spotiflacExtension.checkAvailability(track.isrc || '', track.name || track.title || '', artists, options);
-            if (result && result.available !== false) _sfRememberPrepared(request.trackId, result.prepared_context || result.preparedContext);
+            var options = _sfAvailabilityOptions(request, _sfDownloadTrack(request));
+            var result = _sfCheckAvailability(request, options);
             if (request.prepareForStreaming && (!result || typeof result.available !== 'boolean')) return;
             return result && result.available !== false
               ? { state: 'Available', availableQualities: ['Any'], estimatedBytes: null }
@@ -639,16 +707,26 @@ public static class SpotiFlacExtensionCompatibility
             var output = safeId + '.audio';
             var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
             var quality = selection.id;
+            var trackId = _sfPreparedIdFor(request.trackId);
+            var track;
+            if (!trackId) {
+              track = _sfDownloadTrack(request);
+              var availabilityOptions = _sfAvailabilityOptions(request, track);
+              var availability = null;
+              if (typeof _spotiflacExtension.checkAvailability === 'function') {
+                try { availability = _sfCheckAvailability(request, availabilityOptions); } catch (_) {}
+              }
+              var available = availability && availability.available !== false;
+              trackId = _sfPreferredTrackId(availabilityOptions, available ? availability.track_id : '', request.trackId);
+            }
             var result;
             try {
-              result = _spotiflacExtension.download(request.trackId, quality, output, function() {},
-                { preparedContext: _sfPreparedFor(request.trackId) });
+              result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
               if (result && result.success === false) throw result;
             } catch (error) {
               if (!selection.fallback || _sfStopQualityFallback(error)) throw _sfDownloadError(error);
               quality = selection.fallback;
-              result = _spotiflacExtension.download(request.trackId, quality, output, function() {},
-                { preparedContext: _sfPreparedFor(request.trackId) });
+              result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
             }
             if (!result || result.success === false) throw _sfDownloadError(result);
             var path = String(result.file_path || result.path || output);
