@@ -136,7 +136,10 @@ public sealed record ProviderRecordingAvailabilityRequest(
     IReadOnlyList<string> ArtistNames,
     string? Isrc,
     long? DurationMilliseconds,
-    IReadOnlyDictionary<string, string> ProviderIds);
+    IReadOnlyDictionary<string, string> ProviderIds)
+{
+    public int? ExplicitContentLyrics { get; init; }
+}
 
 public sealed record ProviderRecordingAvailability(ProviderExternalResourceId? TrackId, string? Reason = null);
 
