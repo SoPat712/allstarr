@@ -584,6 +584,107 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.DoesNotContain("raw-private", JsonSerializer.Serialize(result), StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    public async Task Measure_DownloadFallbackTriesCatalogSamplesWithoutSearching(bool available, bool timeout)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        var user = Guid.CreateVersion7();
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            db.Users.Add(new UserRecord { Id = user, BackendType = "fixture", BackendInstanceId = "fixture", BackendPrincipalId = user.ToString() });
+            for (var index = 0; index < 4; index++)
+            {
+                var recording = Guid.CreateVersion7();
+                var identity = Guid.CreateVersion7();
+                db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = recording, CreatedByUserId = user, Title = "Song", Revision = 1 });
+                db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+                {
+                    Id = identity,
+                    CanonicalRecordingId = recording,
+                    ProviderId = "deezer",
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = index.ToString(),
+                    ExternalIdHash = new string((char)('a' + index), 64),
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1,
+                    VerifiedAt = now,
+                    Revision = 1
+                });
+                db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = user,
+                    ProviderTrackIdentityId = identity,
+                    ProviderId = "deezer",
+                    ResourceKind = "track",
+                    ExternalIdHash = new string((char)('a' + index), 64),
+                    SnapshotVersion = 1,
+                    PayloadSha256 = new string('a', 64),
+                    RetrievedAt = now,
+                    PayloadJson = """{"Title":"Song","Artist":"Artist"}"""
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        var calls = 0;
+        var clock = new ManualTimeProvider(now);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProviderOutcome<ProviderRecordingAvailability>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var streaming = new Mock<IProviderDownloadStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.SupportsRecordingAvailability).Returns(true);
+        streaming.Setup(item => item.ResolveRecordingAsync(It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any))
+            .Returns((ProviderExecutionContext _, ProviderRecordingAvailabilityRequest sample, ProviderAudioQuality _) =>
+            {
+                Assert.True(sample.ProviderIds.ContainsKey("deezer"));
+                calls++;
+                entered.TrySetResult();
+                if (timeout) return release.Task;
+                return Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(
+                    available && calls == 2 ? new("fixture", ProviderResourceKind.Track, "resolved") : null, "not_found_on_pandora")));
+            });
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "resolved")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/audio"),
+                now.AddMinutes(5), false, false, new("audio/mpeg", "mp3", "mp3"), ProviderStreamRetryBehavior.DoNotRetry,
+                (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3, 4]) }))));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector, Mock.Of<IProviderOutcomeObserver>(), timeProvider: clock);
+        var pending = runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "recording-samples");
+        if (timeout)
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromSeconds(180));
+            try
+            {
+                var expired = await pending.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.False(expired.Succeeded);
+                Assert.Equal("track-selection", expired.Stage);
+                Assert.Equal("timeout", expired.ReasonCode);
+                Assert.Equal(1, calls);
+            }
+            finally { release.TrySetResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(null))); }
+            return;
+        }
+        var result = await pending;
+        Assert.Equal(available, result.Succeeded);
+        Assert.Equal(available ? 2 : 3, calls);
+        if (available) Assert.Equal("availability-corpus", result.SelectionMode);
+        else
+        {
+            Assert.Equal("track-selection", result.Stage);
+            Assert.Contains("not_found_on_pandora", result.Error, StringComparison.Ordinal);
+        }
+    }
+
     private static ProviderActorContext Actor() => new(
         ProviderActorKind.User,
         Guid.CreateVersion7(),

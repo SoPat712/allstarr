@@ -481,7 +481,8 @@ public static class ProviderManifestValidator
         var missingRequired = RequiredHooks[descriptor.Capability]
             .Where(hook => !descriptor.Hooks.Contains(hook, StringComparer.Ordinal))
             .ToArray();
-        if (descriptor.HasUsableImplementation && missingRequired.Length > 0)
+        if (descriptor.HasUsableImplementation && missingRequired.Length > 0 &&
+            !(origin == ProviderOrigin.Extension && descriptor.Capability == ProviderCapabilityKind.Metadata))
         {
             throw new InvalidOperationException(
                 $"Supported capability '{descriptor.Capability}' on provider '{providerId}' is missing required hooks: {string.Join(",", missingRequired)}.");

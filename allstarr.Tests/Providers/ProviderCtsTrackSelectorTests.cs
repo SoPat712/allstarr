@@ -58,6 +58,66 @@ public sealed class ProviderCtsTrackSelectorTests
             new[] { result.TrackId, next!.TrackId }.OrderBy(item => item, StringComparer.Ordinal));
     }
 
+    [Fact]
+    public async Task RecordingSamples_UseVerifiedPublicIdentitiesAndMetadata()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        var user = Guid.CreateVersion7();
+        var recording = Guid.CreateVersion7();
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            db.Users.Add(User(user, "Contributor", now));
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord
+            {
+                Id = recording,
+                CreatedByUserId = user,
+                Title = "Song",
+                DurationMilliseconds = 123000,
+                CreatedAt = now,
+                UpdatedAt = now,
+                Revision = 1,
+                Identifiers = [new() { Id = Guid.CreateVersion7(), RecordingId = recording,
+                    Kind = RecordingIdentifierKinds.Isrc, Value = "USABC1234567", Source = "fixture", CreatedAt = now }]
+            });
+            var identity = Identity(recording, "123", now);
+            db.ProviderTrackIdentities.Add(identity);
+            var unsupported = Identity(recording, "unsupported", now);
+            unsupported.ProviderId = "other";
+            db.ProviderTrackIdentities.Add(unsupported);
+            var account = Guid.CreateVersion7();
+            db.ProviderAccounts.Add(new ProviderAccountRecord { Id = account, ProviderId = "spotify", OwnerUserId = user, DisplayName = "Private" });
+            var privateIdentity = Identity(recording, "private", now);
+            privateIdentity.ProviderId = "spotify";
+            privateIdentity.Scope = ProviderIdentityScope.Account;
+            privateIdentity.ProviderAccountId = account;
+            db.ProviderTrackIdentities.Add(privateIdentity);
+            db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+            {
+                Id = Guid.CreateVersion7(),
+                OwnerUserId = user,
+                ProviderTrackIdentityId = identity.Id,
+                ProviderId = "deezer",
+                ResourceKind = "track",
+                RetrievedAt = now,
+                SnapshotVersion = 1,
+                ExternalIdHash = identity.ExternalIdHash,
+                PayloadSha256 = new string('a', 64),
+                PayloadJson = """{"Title":"Song","Artist":"Artist","durationMilliseconds":123000,"Isrc":"USABC1234567"}"""
+            });
+            await db.SaveChangesAsync();
+        }
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var samples = await selector.SelectRecordingSamplesAsync(CancellationToken.None);
+        var sample = Assert.Single(samples);
+        Assert.Equal("Song", sample.Title);
+        Assert.Equal(new[] { "Artist" }, sample.ArtistNames);
+        Assert.Equal("USABC1234567", sample.Isrc);
+        Assert.Equal(123000, sample.DurationMilliseconds);
+        Assert.Equal("123", sample.ProviderIds["deezer"]);
+        Assert.Single(sample.ProviderIds);
+    }
+
     private static UserRecord User(
         Guid id,
         string name,

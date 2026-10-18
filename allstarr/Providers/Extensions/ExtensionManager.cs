@@ -919,6 +919,15 @@ public class ExtensionSandbox
     public bool HasCallableHook(string hook) =>
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
 
+    internal bool HasSpotiFlacHook(string hook)
+    {
+        lock (_engineLock)
+        {
+            var exported = _engine.GetValue("_spotiflacExtension");
+            return exported.IsObject() && exported.AsObject().Get(hook).IsCallable();
+        }
+    }
+
     internal bool IsNetworkAllowed(Uri uri) => _hostBridge.IsNetworkAllowed(uri);
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;

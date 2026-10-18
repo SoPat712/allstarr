@@ -290,7 +290,7 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Equal(12, paths.Length);
         foreach (var path in paths)
         {
-            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(File.ReadAllText(path), "registerExtension({});");
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(File.ReadAllText(path), "registerExtension({customSearch:function(){return [];}});");
             var manifest = ExtensionSdkV1.ParseManifest(normalized);
             Assert.All(manifest.RequiredRuntimeFeatures ?? [], feature =>
                 Assert.True(ExtensionRuntimeCoordinator.SupportedRuntimeFeatures.Contains(feature), Path.GetFileName(path) + ": " + feature));
@@ -802,6 +802,153 @@ public sealed class ExtensionCapabilityAdapterTests
         {
             if (Directory.Exists(root)) Directory.Delete(root, true);
         }
+    }
+
+    [Fact]
+    public void DownloadOnlyMetadata_AdvertisesOnlyExportedLookupHooks()
+    {
+        const string source = """
+            {"name":"fixture","version":"1.0.0","type":["metadata_provider","download_provider"]}
+            """;
+        const string script = """
+            // customSearch is deliberately absent from the exported object.
+            function searchTracks() { return []; }
+            registerExtension({getTrack:function(){},getAlbum:function(){},getArtist:function(){},
+              checkAvailability:function(){return {available:false};},download:function(){}});
+            """;
+        var manifest = ExtensionSdkV1.ParseManifest(SpotiFlacExtensionCompatibility.NormalizeManifest(source, script));
+        var metadata = Assert.Single(manifest.Capabilities, item => item.Kind == ProviderCapabilityKind.Metadata);
+        Assert.Equal(new[] { "getTrack", "getAlbum", "getArtist" }, metadata.Hooks);
+    }
+
+    [Theory]
+    [InlineData("undefined")]
+    [InlineData("null")]
+    [InlineData("42")]
+    public void DownloadOnlyMetadata_DoesNotAdvertiseNonFunctionSearchValues(string value)
+    {
+        const string source = """
+            {"name":"fixture","version":"1.0.0","type":["metadata_provider","download_provider"]}
+            """;
+        var script = $$$"""
+            const search = {{{value}}};
+            registerExtension({customSearch:search,getTrack:function(){},download:function(){}});
+            """;
+        var manifest = ExtensionSdkV1.ParseManifest(SpotiFlacExtensionCompatibility.NormalizeManifest(source, script));
+        Assert.Equal(new[] { "getTrack" }, Assert.Single(manifest.Capabilities, item => item.Kind == ProviderCapabilityKind.Metadata).Hooks);
+    }
+
+    [Fact]
+    public void DownloadOnlyMetadata_ReconcilesPreviouslyAdvertisedSearchHooks()
+    {
+        const string source = """
+            {"name":"fixture","version":"1.0.0","type":["metadata_provider","download_provider"]}
+            """;
+        var previous = SpotiFlacExtensionCompatibility.NormalizeManifest(source,
+            "registerExtension({customSearch:function(){},download:function(){}});");
+        var corrected = SpotiFlacExtensionCompatibility.ReconcileMetadataHooks(previous,
+            "registerExtension({getTrack:function(){},download:function(){}});");
+        var metadata = Assert.Single(ExtensionSdkV1.ParseManifest(corrected).Capabilities, item => item.Kind == ProviderCapabilityKind.Metadata);
+        Assert.Equal(new[] { "getTrack" }, metadata.Hooks);
+    }
+
+    [Fact]
+    public void MetadataSearch_MapsExportedTypedSearchWithoutAdvertisingOtherSearches()
+    {
+        const string source = """
+            {"name":"fixture","version":"1.0.0","type":["metadata_provider"]}
+            """;
+        const string script = """
+            const extension = { searchTracks(query, options) {
+              return query === 'Song' && options.limit === 5 ? [{id:'123',name:'Song',artists:'Artist'}] : [];
+            }};
+            registerExtension(extension);
+            """;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+        var metadata = Assert.Single(ExtensionSdkV1.ParseManifest(normalized).Capabilities);
+        Assert.Equal(new[] { "searchTracks" }, metadata.Hooks);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script, new HttpClientFactory(), NullLogger.Instance,
+            ExtensionRuntimePermissionSet.None);
+        Assert.Contains("123", sandbox.InvokeJson("searchTracks", """{"query":"Song","page":{"limit":5}}"""), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DownloadOnlyMetadata_RequiresAnExportedAvailabilityFunction()
+    {
+        const string source = """
+            {"name":"fixture","version":"1.0.0","type":["download_provider"]}
+            """;
+        const string script = "registerExtension({download:function(){}});";
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+        var manifest = ExtensionSdkV1.ParseManifest(normalized);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script, new HttpClientFactory(), NullLogger.Instance,
+            ExtensionRuntimePermissionSet.None);
+        var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.GetTempPath(), MaximumArtifactBytes = 1024 };
+        var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+        var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+        Assert.False(adapter.SupportsRecordingAvailability);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DownloadOnlyMetadata_ResolvesForeignRecordingAndStreamsReturnedId(bool available)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-recording-availability", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string source = """
+                {"name":"fixture","version":"1.0.0","type":["metadata_provider","download_provider"],
+                 "permissions":{"network":["media.example.test"]}}
+                """;
+            var script = $$$"""
+                var calls = 0;
+                registerExtension({getTrack:function(){throw new Error('foreign id lookup');},
+                  checkAvailability:function(isrc,title,artist,options){
+                    calls++;
+                    if (isrc !== 'USABC1234567' || title !== 'Song' || artist !== 'Artist' ||
+                        options.deezer_id !== '123' || options.spotify_id !== 'sp' ||
+                        options.tidal_id !== 'td' || options.qobuz_id !== 'qb' || options.duration_ms !== 123000)
+                      throw new Error('missing recording metadata');
+                    return {{{(available ? "{available:true,track_id:'resolved'}" : "{available:false,reason:'not_found_on_pandora'}")}}};
+                  },download:function(id,quality,path){
+                    if (id !== 'resolved' || calls !== 1) throw new Error('resolved id lost');
+                    return file.download('https://media.example.test/audio',path,{});
+                  }});
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
+            IProviderDownloadStreamingCapability adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+            adapter = (IProviderDownloadStreamingCapability)ObservedProviderCapabilities.Wrap<IProviderStreamingCapability>(adapter,
+                Mock.Of<allstarr.Core.Health.IProviderOutcomeObserver>());
+            Assert.True(adapter.SupportsRecordingAvailability);
+            var result = await adapter.ResolveRecordingAsync(Context(manifest.Id),
+                new ProviderRecordingAvailabilityRequest("sample", "Song", ["Artist"], "USABC1234567", 123000,
+                    new Dictionary<string, string> { ["deezer"] = "123", ["spotify"] = "sp", ["tidal"] = "td", ["qobuz"] = "qb" }), ProviderAudioQuality.Any);
+            Assert.True(result.IsSuccess);
+            if (!available)
+            {
+                Assert.Null(result.RequireValue().TrackId);
+                Assert.Equal("not_found_on_pandora", result.RequireValue().Reason);
+                Assert.False(Directory.Exists(options.RootPath));
+                return;
+            }
+            var id = Assert.IsType<ProviderExternalResourceId>(result.RequireValue().TrackId);
+            Assert.Equal("resolved", id.Value);
+            var streamed = await adapter.GetStreamLeaseAsync(Context(manifest.Id), new ProviderStreamLeaseRequest(id));
+            Assert.True(streamed.IsSuccess, streamed.Error?.Kind.ToString());
+            var lease = streamed.RequireValue();
+            using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+            using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
     [Fact]

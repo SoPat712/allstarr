@@ -279,8 +279,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
     {
         var storedManifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
         var downloadBackedStreaming = SpotiFlacExtensionCompatibility.UsesDownloadBackedStreaming(storedManifest);
-        var manifestJson = SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(
-            package.ManifestJson);
+        var script = await File.ReadAllTextAsync(Path.Combine(package.PackagePath, storedManifest.EntryPoint), cancellationToken);
+        var manifestJson = SpotiFlacExtensionCompatibility.ReconcileMetadataHooks(
+            SpotiFlacExtensionCompatibility.EnsureDownloadStreamingCapability(package.ManifestJson), script);
         var manifest = ExtensionSdkV1.ParseManifest(manifestJson);
         if (!manifest.Id.Equals(package.ExtensionId, StringComparison.Ordinal) ||
             !manifest.Version.Equals(package.Version, StringComparison.Ordinal))
@@ -320,7 +321,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             (level, code, message) => _controlPlane.WriteLogAsync(package.Id, level, code, message,
                 "extension-session", CancellationToken.None).GetAwaiter().GetResult());
         var sandbox = new ExtensionSandbox(package.PackagePath, manifestJson,
-            await File.ReadAllTextAsync(Path.Combine(package.PackagePath, manifest.EntryPoint), cancellationToken),
+            script,
             _clients, _logger, permissions, Path.Combine(_runtimeRoot, manifest.Id),
             _sessionProtector, SessionStateDirectory(manifest.Id, package.RegistryId),
             timeProvider: _timeProvider, executionOptions: _executionOptions);

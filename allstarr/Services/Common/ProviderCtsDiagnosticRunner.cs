@@ -240,8 +240,36 @@ public sealed class ProviderCtsDiagnosticRunner(
             }
             else
             {
-                trackId = await samples.MoveNextAsync() ? samples.Current : null;
-                selectionMode = "search";
+                if (streaming is IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true } fallback)
+                {
+                    var recordings = await trackSelector.SelectRecordingSamplesAsync(cancellationToken);
+                    string? reason = null;
+                    foreach (var recording in recordings.Take(3))
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var availability = await fallback.ResolveRecordingAsync(execution, recording, quality);
+                        cancellationToken.ThrowIfCancellationRequested();
+                        if (!availability.IsSuccess) continue;
+                        var match = availability.RequireValue();
+                        reason = match.Reason ?? reason;
+                        if (match.TrackId is not { } id || id.ProviderId != providerId) continue;
+                        trackId = id.Value;
+                        break;
+                    }
+                    if (trackId == null)
+                        return ProviderCtsDiagnosticResult.Failure(
+                            StatusCodes.Status409Conflict, providerId, providerAccountId, "track-selection",
+                            recordings.Count == 0
+                                ? "No verified catalog recordings with supported provider identities and song metadata are available to test."
+                                : $"The provider could not resolve any of the sampled catalog recordings through availability{(reason == null ? "." : $": {reason}.")}");
+                    selectionMode = "availability-corpus";
+                    corpusSize = recordings.Count;
+                }
+                else
+                {
+                    trackId = await samples.MoveNextAsync() ? samples.Current : null;
+                    selectionMode = "search";
+                }
             }
             if (trackId == null)
             {
@@ -264,7 +292,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 leaseOutcome = await streaming.GetStreamLeaseAsync(execution,
                     new ProviderStreamLeaseRequest(new(providerId, ProviderResourceKind.Track, trackId!), quality, 0));
                 cancellationToken.ThrowIfCancellationRequested();
-                if (leaseOutcome.IsSuccess || !automatic || leaseOutcome.Error!.Kind is not
+                if (leaseOutcome.IsSuccess || !automatic || selectionMode == "availability-corpus" || leaseOutcome.Error!.Kind is not
                     (ProviderErrorKind.NotFound or ProviderErrorKind.IncompatibleMedia)) break;
                 progress.Stage = "track-selection";
                 string? nextTrack = null;

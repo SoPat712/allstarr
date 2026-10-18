@@ -1469,10 +1469,17 @@ public class AdminUiController : ControllerBase
             .ToList();
         if (_providerRegistry != null)
         {
-            providers.AddRange(_providerRegistry.FindByCapability(capability, includeNonOperational: true)
-                .Select(provider => provider.Id)
+            var available = _providerRegistry.FindByCapability(capability, includeNonOperational: true);
+            providers.AddRange(available.Select(provider => provider.Id)
                 .Where(providerId => !providers.Contains(providerId, StringComparer.OrdinalIgnoreCase))
                 .OrderBy(providerId => providerId, StringComparer.Ordinal));
+            if (capability == ProviderCapabilityKind.Metadata)
+            {
+                var lookupOnly = available.Where(provider => !provider.Capabilities
+                        .Single(item => item.Capability == capability).Hooks.Any(hook => hook is "searchTracks" or "searchAlbums" or "searchArtists"))
+                    .Select(provider => provider.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                providers.RemoveAll(lookupOnly.Contains);
+            }
         }
         if (capability == ProviderCapabilityKind.Lyrics)
             foreach (var source in new[] { "backend", "kept" })

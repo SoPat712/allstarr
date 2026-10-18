@@ -189,7 +189,14 @@ public static class ObservedProviderCapabilities
     }
 
     private sealed class DownloadStreaming(IProviderDownloadStreamingCapability implementation, IProviderOutcomeObserver observer)
-        : Streaming(implementation, observer), IProviderDownloadStreamingCapability;
+        : Streaming(implementation, observer), IProviderDownloadStreamingCapability
+    {
+        public bool SupportsRecordingAvailability => implementation.SupportsRecordingAvailability;
+
+        public Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
+            ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality) =>
+            InvokeAsync(context, () => implementation.ResolveRecordingAsync(context, recording, quality), observeSuccess: false);
+    }
 
     private sealed class Intelligence(IProviderIntelligenceCapability implementation, IProviderOutcomeObserver observer)
         : ObservedCapability<IProviderIntelligenceCapability>(implementation, observer), IProviderIntelligenceCapability

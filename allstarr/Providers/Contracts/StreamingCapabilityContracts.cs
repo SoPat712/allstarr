@@ -130,6 +130,21 @@ public interface IProviderStreamingCapability : IProviderCapability
         ProviderStreamLeaseRequest request);
 }
 
+public sealed record ProviderRecordingAvailabilityRequest(
+    string SampleId,
+    string Title,
+    IReadOnlyList<string> ArtistNames,
+    string? Isrc,
+    long? DurationMilliseconds,
+    IReadOnlyDictionary<string, string> ProviderIds);
+
+public sealed record ProviderRecordingAvailability(ProviderExternalResourceId? TrackId, string? Reason = null);
+
 public interface IProviderDownloadStreamingCapability : IProviderStreamingCapability
 {
+    bool SupportsRecordingAvailability => false;
+
+    Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
+        ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality) =>
+        Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Failure(new ProviderError(ProviderErrorKind.NotSupported)));
 }
