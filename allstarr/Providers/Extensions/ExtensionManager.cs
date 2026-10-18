@@ -807,6 +807,8 @@ public class ExtensionSandbox
         {
             _engine.SetValue("_allstarrQualityOptionsJson",
                 root.TryGetProperty("qualityOptions", out var qualityOptions) ? qualityOptions.GetRawText() : "[]");
+            _engine.SetValue("_allstarrSpotiFlacManifestJson",
+                root.TryGetProperty("spotiflacManifest", out var sourceManifest) ? sourceManifest.GetRawText() : "{}");
             _engine.Execute(SpotiFlacExtensionCompatibility.RuntimeAdapterScript);
         }
 
