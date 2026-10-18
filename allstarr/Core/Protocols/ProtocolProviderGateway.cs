@@ -1070,8 +1070,8 @@ public sealed partial class ProtocolProviderGateway(
             providerId,
             externalId,
             quality.ToString());
-        if (applicationCache?.IsEnabled == true &&
-            await applicationCache.ExistsAsync(exactRouteMissKey))
+        if ((identities == null || registry.FindByCapability(ProviderCapabilityKind.Streaming).Count == 0) &&
+            applicationCache?.IsEnabled == true && await applicationCache.ExistsAsync(exactRouteMissKey))
         {
             logger?.LogDebug(
                 "Skipping repeated playback translation miss for chosen provider {ChosenProvider}",
@@ -1079,6 +1079,7 @@ public sealed partial class ProtocolProviderGateway(
             return null;
         }
 
+        var availabilityOrder = StoredStreamingOrder(effectivePolicy);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy);
         if (effectivePolicy?.DisabledProviders.Contains(providerId) != true)
         {
@@ -1099,7 +1100,7 @@ public sealed partial class ProtocolProviderGateway(
             if (!providerOrder.Contains(resumeProvider, StringComparer.Ordinal)) return null;
             providerOrder = [resumeProvider];
         }
-        var plan = await router.PlanAsync<IProviderStreamingCapability>(Request(
+        var streamRequest = Request(
             protocol,
             actor,
             ProviderCapabilityKind.Streaming,
@@ -1108,12 +1109,24 @@ public sealed partial class ProtocolProviderGateway(
             trackId,
             quality,
             allowFallback: true,
-            allowManagedDownloads: true));
+            allowManagedDownloads: true);
+        var plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+        var availabilityAttempted = false;
+        async Task<bool> ResolveAvailabilityAsync()
+        {
+            if (availabilityAttempted || resuming || !hasPlaybackIdentity && providerId != "allstarr") return false;
+            availabilityAttempted = true;
+            var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
+                exactRouteMissKey, effectivePolicy, quality);
+            if (linked) plan = await router.PlanAsync<IProviderStreamingCapability>(streamRequest);
+            return linked;
+        }
+        if (plan.Candidates.Count == 0) await ResolveAvailabilityAsync();
         if (plan.Candidates.Count == 0)
         {
             if (plan.Decision.Candidates.Any(item =>
                     item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
-                    item.ReasonCode != "capability-unavailable"))
+                    item.ReasonCode is not ("capability-unavailable" or "verified-identity-required")))
             {
                 ThrowRejectedRoute(plan.Decision.Candidates.First(item => item.ProviderId == providerId));
             }
@@ -1122,7 +1135,7 @@ public sealed partial class ProtocolProviderGateway(
                     item.ReasonCode == "verified-identity-required") &&
                 plan.Decision.Candidates.All(item =>
                     item.ReasonCode is "capability-unavailable" or "verified-identity-required");
-            if (isTranslationMiss && applicationCache?.IsEnabled == true)
+            if (isTranslationMiss && identities == null && applicationCache?.IsEnabled == true)
             {
                 await applicationCache.SetStringAsync(
                     exactRouteMissKey,
@@ -1133,11 +1146,13 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         string? fallbackReason = null;
+        var attemptedRoutes = new HashSet<(string Provider, Guid? Account, string Track)>();
         for (var candidateIndex = 0; candidateIndex < plan.Candidates.Count; candidateIndex++)
         {
             protocol.CancellationToken.ThrowIfCancellationRequested();
             var candidate = plan.Candidates[candidateIndex];
             var servingTrack = candidate.TrackId ?? trackId;
+            if (!attemptedRoutes.Add((candidate.Provider.Id, candidate.Context.Account?.AccountId, servingTrack.Value))) continue;
             if (resuming && previous != null &&
                 (servingTrack.Value != previous.ExternalId || candidate.Context.Account?.AccountId != previous.AccountId ||
                     candidate.Context.Account?.Revision != previous.AccountRevision))
@@ -1225,6 +1240,12 @@ public sealed partial class ProtocolProviderGateway(
                 fallbackReason = fallback.ReasonCode.StartsWith("fallback-", StringComparison.Ordinal)
                     ? fallback.ReasonCode
                     : $"fallback-{fallback.ReasonCode}";
+                continue;
+            }
+            if (fallback?.Disposition == ProviderFallbackDisposition.Exhausted && await ResolveAvailabilityAsync())
+            {
+                candidateIndex = -1;
+                fallbackReason = $"fallback-{outcome.Error!.Code}";
                 continue;
             }
             ThrowRouteFailure(outcome.Error!);

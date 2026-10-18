@@ -1,3 +1,4 @@
+using System.Data;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
@@ -122,6 +123,10 @@ public interface ITrackIdentityService
     Task<TrackIdentityResolution?> ResolveTargetAsync(
         ProviderExecutionContext executionContext, Guid recordingId, ProviderTrackIdentityTarget target,
         CancellationToken cancellationToken = default);
+
+    Task<ProviderRecordingAvailabilityRequest?> GetRecordingAvailabilityAsync(
+        ProviderExecutionContext context, string publicId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<ProviderRecordingAvailabilityRequest?>(null);
 
     Task<CanonicalRecordingIdentity> MergeRecordingsAsync(
         ProviderActorContext actor, Guid firstId, Guid secondId, string correlationId,
@@ -296,6 +301,8 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         ThrowIfUnavailable(executionContext, cancellationToken);
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using var availabilityTransaction = request.VerificationMethod == "availability"
+            ? await context.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken) : null;
         var account = await ValidateExecutionContextAsync(
             context,
             executionContext,
@@ -308,6 +315,17 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
             ? account!.Id
             : (Guid?)null;
         var key = ExactKey(request.ExternalId);
+        if (availabilityTransaction != null)
+        {
+            var links = await context.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                item.CanonicalRecordingId == recording.Id && item.ResourceKind == ProviderResourceKind.Track &&
+                (item.Scope == ProviderIdentityScope.Catalog || account != null && item.ProviderAccountId == account.Id))
+                .ToArrayAsync(cancellationToken);
+            if (await HasAvailabilityAuthorityConflictAsync(context, links, executionContext.Actor.EffectiveUserId, cancellationToken) ||
+                links.Any(item => item.ProviderId == request.ExternalId.ProviderId && item.CatalogNamespace == key.Catalog &&
+                    item.ExternalId != request.ExternalId.Value))
+                return new(TrackIdentityLinkStatus.Conflict, recording.Id, null, null);
+        }
         var existing = await FindExactLinkAsync(
             context,
             key,
@@ -317,12 +335,12 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
             cancellationToken);
         if (existing != null)
         {
-            return await CompleteExistingLinkAsync(
+            return await CompleteAsync(CompleteExistingLinkAsync(
                 context,
                 executionContext,
                 request,
                 existing,
-                cancellationToken);
+                cancellationToken));
         }
 
         var now = _clock.UtcNow;
@@ -331,6 +349,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         try
         {
             await context.SaveChangesAsync(cancellationToken);
+            if (availabilityTransaction != null) await availabilityTransaction.CommitAsync(cancellationToken);
             return new TrackIdentityLinkResult(
                 TrackIdentityLinkStatus.Created,
                 request.CanonicalRecordingId,
@@ -352,13 +371,20 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
                 throw;
             }
 
-            return await CompleteExistingLinkAsync(
+            return await CompleteAsync(CompleteExistingLinkAsync(
                 context,
                 executionContext,
                 request,
                 existing,
                 cancellationToken,
-                concurrent: true);
+                concurrent: true));
+        }
+
+        async Task<TrackIdentityLinkResult> CompleteAsync(Task<TrackIdentityLinkResult> operation)
+        {
+            var result = await operation;
+            if (availabilityTransaction != null) await availabilityTransaction.CommitAsync(cancellationToken);
+            return result;
         }
     }
 
