@@ -209,14 +209,18 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
                 value.TryGetProperty("availableQualities", out var qualities) ? qualities.EnumerateArray().Select(item => Enum.Parse<ProviderAudioQuality>(item.GetString()!, true)) : [], Long(value, "estimatedBytes")),
             requireAccount: accountRequired);
     }
-    public Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(ProviderExecutionContext context, ProviderDownloadRequest request, IProgress<ProviderDownloadProgress>? progress = null)
+    public Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(ProviderExecutionContext context, ProviderDownloadRequest request, IProgress<ProviderDownloadProgress>? progress = null) =>
+        DownloadAsync(context, request, prepareForStreaming: false, progress);
+
+    internal Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(
+        ProviderExecutionContext context, ProviderDownloadRequest request, bool prepareForStreaming, IProgress<ProviderDownloadProgress>? progress = null)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         context.RequireIdempotencyKey();
         if (artifacts == null || maximumArtifactBytes < 1)
             return Task.FromResult(Failure<ProviderDownloadedArtifact>(ProviderErrorKind.CapabilityUnavailable));
         ExtensionArtifactInvocationScope? artifactScope = null;
-        return InvokeAsync(context, "download", new { trackId = request.TrackId.Value, request.DurableJobId, workspaceId = request.Workspace.WorkspaceId, requestedQuality = request.RequestedQuality.ToString(), context.IdempotencyKey }, value =>
+        return InvokeAsync(context, "download", new { trackId = request.TrackId.Value, request.DurableJobId, workspaceId = request.Workspace.WorkspaceId, requestedQuality = request.RequestedQuality.ToString(), prepareForStreaming, context.IdempotencyKey }, value =>
         {
             var artifact = new ProviderDownloadedArtifact(Text(value, "artifactId"), Text(value, "sha256"), value.GetProperty("sizeBytes").GetInt64(), Media(value), Bool(value, "verified"),
                 qualityDowngradeReason: OptionalText(value, "qualityDowngradeReason"));
@@ -300,7 +304,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
                 idempotencyKey);
             var outcome = await download.DownloadAsync(
                 downloadContext,
-                new ProviderDownloadRequest(request.TrackId, jobId, workspace.Reference, request.RequestedQuality));
+                new ProviderDownloadRequest(request.TrackId, jobId, workspace.Reference, request.RequestedQuality), prepareForStreaming: true);
             if (!outcome.IsSuccess)
             {
                 artifacts.DeleteTransientWorkspace(workspace);
@@ -391,7 +395,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
     {
         var result = await download.CheckAvailabilityAsync(
             context,
-            new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality));
+            new ProviderDownloadAvailabilityRequest(request.TrackId, request.RequestedQuality), prepareForStreaming: true);
         return result.IsSuccess
             ? ProviderOutcome<ProviderStreamProbeResult>.Success(new(
                 result.RequireValue().State == ProviderDownloadAvailabilityState.Available,

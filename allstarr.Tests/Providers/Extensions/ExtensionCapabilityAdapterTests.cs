@@ -1,6 +1,10 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Extensions;
 using allstarr.Core.Downloads;
+using allstarr.Core.Health;
+using allstarr.Core.Routing;
+using Microsoft.EntityFrameworkCore;
+using Moq;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -1148,11 +1152,13 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData("return {success:false,error_message:'HTTP 503'};", 1)]
-    [InlineData("return {success:false,error_type:'api_error',error_message:'PROVIDER_UNAVAILABLE'};", 1)]
-    [InlineData("throw Object.assign(new Error('Busy'), {retryMode:'same_operation'});", 1)]
-    [InlineData("return {success:false,error_type:'timeout',error_message:'stream resolution timeout'};", 1)]
+    [InlineData("return {success:false,error_message:'HTTP 503'};", 2)]
+    [InlineData("return {success:false,error_type:'api_error',error_message:'PROVIDER_UNAVAILABLE'};", 2)]
+    [InlineData("throw Object.assign(new Error('Busy'), {retryMode:'same_operation'});", 2)]
+    [InlineData("return {success:false,error_type:'timeout',error_message:'stream resolution timeout'};", 2)]
     [InlineData("throw new Error('download unavailable');", 2)]
+    [InlineData("return {success:false,error_type:'not_found',error_message:'Track not found'};", 1)]
+    [InlineData("throw new Error('HTTP 404');", 1)]
     [InlineData("return {success:false,error:'VERIFY_REQUIRED'};", 1)]
     [InlineData("return {success:false,error_type:'verification_required',error_message:'Please verify'};", 1)]
     [InlineData("throw new Error('VERIFY_REQUIRED');", 1)]
@@ -1196,8 +1202,77 @@ public sealed class ExtensionCapabilityAdapterTests
         Assert.Single(observed.GetProperty("calls").EnumerateArray());
     }
 
-    private static async Task<(ProviderOutcome<ProviderStreamLease> Outcome, JsonElement Observed)> RunDeclaredQualityDownload(
-        string qualityOptions, ProviderAudioQuality requested, string failure = "")
+    [Theory]
+    [InlineData(ProviderAudioQuality.HighResolution, "LOSSLESS", true)]
+    [InlineData(ProviderAudioQuality.Any, "LOSSLESS", true)]
+    [InlineData(ProviderAudioQuality.Lossless, "LOSSLESS", false)]
+    [InlineData(ProviderAudioQuality.Lossy, "HIGH", false)]
+    [InlineData(ProviderAudioQuality.DataSaver, "LOW", false)]
+    public async Task DownloadStreaming_UsesPlainLosslessForFasterStart(ProviderAudioQuality requested, string expected, bool downgraded)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions, requested, streaming: true);
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Code);
+        Assert.Equal([expected], observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal(expected, observed.GetProperty("quality").GetString());
+        Assert.Equal(downgraded ? "Streaming uses lossless for faster start" : null, outcome.RequireValue().QualityDowngradeReason);
+    }
+
+    [Theory]
+    [InlineData("[]", "best")]
+    [InlineData("""[{"id":"best","kind":"lossless"}]""", "best")]
+    [InlineData("""[{"id":"top","kind":"lossless"},{"id":"standard","kind":"lossless"}]""", "top")]
+    public async Task DownloadStreaming_KeepsHighestWithoutPlainLossless(string qualityOptions, string expected)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(qualityOptions, ProviderAudioQuality.HighResolution, streaming: true);
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Code);
+        Assert.Equal([expected], observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+        Assert.Null(outcome.RequireValue().QualityDowngradeReason);
+    }
+
+    [Theory]
+    [InlineData(119, true)]
+    [InlineData(120, true)]
+    [InlineData(121, false)]
+    public async Task Download_TimeoutFallbackRequiresThirtySecondsRemaining(int elapsedSeconds, bool succeeds)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions, ProviderAudioQuality.HighResolution,
+            "if (calls.length === 1) { http.get('https://media.example.test/failure', {}); return {success:false,error_type:'timeout'}; }",
+            elapsedSeconds: elapsedSeconds);
+
+        Assert.Equal(succeeds, outcome.IsSuccess);
+        Assert.Equal(succeeds ? ["HI_RES_LOSSLESS", "LOSSLESS"] : new[] { "HI_RES_LOSSLESS" },
+            observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+        if (succeeds) Assert.Contains("LOSSLESS", outcome.RequireValue().QualityDowngradeReason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(ProviderAudioQuality.HighResolution)]
+    [InlineData(ProviderAudioQuality.Any)]
+    public async Task StreamingDiagnostic_UsesPlaybackQuality(ProviderAudioQuality requested)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions, requested, diagnostic: true);
+
+        Assert.True(outcome.IsSuccess, outcome.Error?.Code);
+        Assert.Equal(["LOSSLESS"], observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+        Assert.Equal("LOSSLESS", observed.GetProperty("quality").GetString());
+        Assert.Equal("Streaming uses lossless for faster start", outcome.RequireValue().QualityDowngradeReason);
+    }
+
+    private sealed record QualityDownloadResult(ProviderMediaFormat Media, string? QualityDowngradeReason);
+
+    private sealed class QualityBudgetHandler(ManualTimeProvider clock, int elapsedSeconds) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.AbsolutePath == "/failure") clock.Advance(TimeSpan.FromSeconds(elapsedSeconds));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { RequestMessage = request, Content = new ByteArrayContent([1, 2, 3, 4]) });
+        }
+    }
+
+    private static async Task<(ProviderOutcome<QualityDownloadResult> Outcome, JsonElement Observed)> RunDeclaredQualityDownload(
+        string qualityOptions, ProviderAudioQuality requested, string failure = "", bool streaming = false, int elapsedSeconds = 0, bool diagnostic = false)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-quality-download", Guid.NewGuid().ToString("N"));
         try
@@ -1230,14 +1305,47 @@ public sealed class ExtensionCapabilityAdapterTests
             var manifest = ExtensionSdkV1.ParseManifest(normalized);
             var permissions = new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
                 new HashSet<string>(), new HashSet<string>());
+            var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
             var sandbox = new ExtensionSandbox(root, normalized, script,
-                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance, permissions, Path.Combine(root, "runtime"));
+                new HttpClientFactory(new QualityBudgetHandler(clock, elapsedSeconds)), NullLogger.Instance, permissions, Path.Combine(root, "runtime"),
+                downloadTimeout: TimeSpan.FromSeconds(150), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
-            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
-
-            var outcome = await adapter.GetStreamLeaseAsync(Context(manifest.Id),
-                new(new(manifest.Id, ProviderResourceKind.Track, "track"), requested));
+            var context = Context(manifest.Id);
+            var trackId = new ProviderExternalResourceId(manifest.Id, ProviderResourceKind.Track, "track");
+            ProviderOutcome<QualityDownloadResult> outcome;
+            if (diagnostic)
+            {
+                var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+                var descriptor = new ProviderDescriptor(manifest.Id, manifest.DisplayName, "Fixture", ProviderOrigin.Extension, "1", "1",
+                    [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None, "1", ["getStreamLease"], [])], new ProviderPermissionDescriptor(), entryPoint: manifest.EntryPoint);
+                var registry = new ProviderRegistry([new(descriptor, [adapter])]);
+                using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+                var runner = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+                    selector, Mock.Of<IProviderOutcomeObserver>(), timeProvider: clock);
+                var result = await runner.MeasureAsync(context.Actor, manifest.Id, null, requested, "quality-check", trackId.Value);
+                Assert.True(result.Succeeded, result.Error);
+                outcome = ProviderOutcome<QualityDownloadResult>.Success(new(result.Media!, result.QualityDowngradeReason));
+            }
+            else if (streaming)
+            {
+                var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+                var result = await adapter.GetStreamLeaseAsync(context, new(trackId, requested));
+                outcome = result.IsSuccess
+                    ? ProviderOutcome<QualityDownloadResult>.Success(new(result.RequireValue().Media, result.RequireValue().QualityDowngradeReason))
+                    : ProviderOutcome<QualityDownloadResult>.Failure(result.Error!);
+            }
+            else
+            {
+                var adapter = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, null, resolver, options);
+                var job = Guid.CreateVersion7();
+                var workspace = await resolver.CreateWorkspaceAsync(new(context.Actor.EffectiveUserId, job, manifest.Id, null, context.IdempotencyKey!));
+                var result = await adapter.DownloadAsync(context, new(trackId, job, workspace.Reference, requested));
+                outcome = result.IsSuccess
+                    ? ProviderOutcome<QualityDownloadResult>.Success(new(result.RequireValue().Media, result.RequireValue().QualityDowngradeReason))
+                    : ProviderOutcome<QualityDownloadResult>.Failure(result.Error!);
+            }
             using var track = JsonDocument.Parse(sandbox.InvokeJson("getTrack", """{"id":"observation"}""")!);
             using var observed = JsonDocument.Parse(track.RootElement.GetProperty("title").GetString()!);
             return (outcome, observed.RootElement.Clone());

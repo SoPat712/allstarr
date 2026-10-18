@@ -412,10 +412,11 @@ public static class SpotiFlacExtensionCompatibility
           var last = options[options.length - 1] || first;
           var lossless = options.filter(function(option) { return option.kind === 'lossless'; });
           var lossy = options.filter(function(option) { return option.kind === 'lossy'; });
-          var plain = options.filter(function(option) { return /^(LOSSLESS|FLAC|CD)$/i.test(option.id); })[0]
-            || lossless[lossless.length - 1] || first;
+          var declaredPlain = options.filter(function(option) { return /^(LOSSLESS|FLAC|CD)$/i.test(option.id); })[0];
+          var plain = declaredPlain || lossless[lossless.length - 1] || first;
           var highest = lossless[0] || first;
-          var highSelection = { id: highest.id, fallback: lossless.length && plain.id !== highest.id ? plain.id : null };
+          var highSelection = { id: highest.id, fallback: lossless.length && plain.id !== highest.id ? plain.id : null,
+            streaming: declaredPlain && declaredPlain.id !== highest.id ? declaredPlain.id : null };
           return {
             HighResolution: highSelection, Any: highSelection,
             Lossless: { id: plain.id }, Lossy: { id: (lossy[0] || first).id },
@@ -429,10 +430,13 @@ public static class SpotiFlacExtensionCompatibility
         function _sfStopQualityFallback(error) {
           var reason = [error && error.error_type, error && error.code, error && error.error,
             error && error.error_message, error && error.message, error && error.name, String(error)].join(' ');
-          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true
-              || error.retryMode || error.retry_mode || error.retryable === true
-              || /^(api_error|timeout|network_error|download_error|expired_stream)$/.test(error.error_type || ''))
-            || /\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b|\bHTTP\s+(?:5\d\d|429|408)\b|PROVIDER_UNAVAILABLE|RESOLUTION_TIMEOUT/i.test(reason);
+          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true)
+            || /\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b|\b(?:not[ _-]*found|track[ _-]+unavailable)\b|\bHTTP\s*[:=]?\s*(?:404|410)\b/i.test(reason);
+        }
+        function _sfQualitySelection(request) {
+          var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
+          return request.prepareForStreaming && selection.streaming
+            ? { id: selection.streaming, streamingDowngrade: true } : selection;
         }
         var _allstarrInitializedSettings = null;
         function _allstarrInitialize(settings) {
@@ -547,7 +551,7 @@ public static class SpotiFlacExtensionCompatibility
             duration_ms: Number(track.duration_ms || track.durationMs || 0) });
         }
         function _sfAvailabilityOptions(request, track) {
-          var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
+          var selection = _sfQualitySelection(request);
           var options = { requestedQuality: request.requestedQuality, quality: selection.id, track: track, duration_ms: track.duration_ms };
           options.spotify_id = String(track.spotify_id || '').trim();
           ['tidal', 'qobuz', 'deezer'].forEach(function(provider) {
@@ -705,7 +709,7 @@ public static class SpotiFlacExtensionCompatibility
             if (typeof _spotiflacExtension.download !== 'function') throw new Error('SpotiFLAC extension has no download hook');
             var safeId = String(request.trackId || 'track').replace(/[^A-Za-z0-9._-]/g, '_');
             var output = safeId + '.audio';
-            var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
+            var selection = _sfQualitySelection(request);
             var quality = selection.id;
             var trackId = _sfPreparedIdFor(request.trackId);
             var track;
@@ -724,7 +728,8 @@ public static class SpotiFlacExtensionCompatibility
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
               if (result && result.success === false) throw result;
             } catch (error) {
-              if (!selection.fallback || _sfStopQualityFallback(error)) throw _sfDownloadError(error);
+              if (!selection.fallback || _sfStopQualityFallback(error) || utils.getResolutionRemainingMs() < 30000)
+                throw _sfDownloadError(error);
               quality = selection.fallback;
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
             }
@@ -736,8 +741,9 @@ public static class SpotiFlacExtensionCompatibility
             var codec = String(result.audio_codec || (extension === '.m4a' ? 'aac' : extension.replace('.', '')) || 'unknown');
             var mime = extension === '.flac' ? 'audio/flac' : extension === '.m4a' ? 'audio/mp4' : extension === '.ogg' || extension === '.opus' ? 'audio/ogg' : 'audio/mpeg';
             return { artifactId: written.artifactId, sha256: written.sha256, sizeBytes: written.sizeBytes, verified: written.verified,
-              quality: quality, qualityDowngradeReason: quality !== selection.id
-                ? 'Using ' + quality + ' after ' + selection.id + ' download failed.' : null,
+              quality: quality, qualityDowngradeReason: selection.streamingDowngrade
+                ? 'Streaming uses lossless for faster start'
+                : quality !== selection.id ? 'Using ' + quality + ' after ' + selection.id + ' download failed.' : null,
               media: { mimeType: mime, container: extension.replace('.', '') || 'audio', codec: codec,
                 sampleRate: Number(result.sample_rate || 0) || null, bitDepth: Number(result.bit_depth || 0) || null } };
           }
