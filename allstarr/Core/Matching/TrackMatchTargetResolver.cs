@@ -42,22 +42,28 @@ public sealed class TrackMatchTargetResolver(
         try
         {
             using var document = JsonDocument.Parse(decision?.CandidateResultsJson ?? "[]");
-            if (document.RootElement.ValueKind != JsonValueKind.Array) return target;
-            foreach (var candidate in document.RootElement.EnumerateArray())
+            if (FindCandidate(document.RootElement, target.ProviderId, target.ExternalId) is { } candidate)
             {
-                var ids = Property(candidate, "providerTrackIds", "ProviderTrackIds");
-                if (ids is not { ValueKind: JsonValueKind.Object } ||
-                    !ids.Value.EnumerateObject().Any(item =>
-                        AppleMusicClient.NormalizeProviderId(item.Name) == target.ProviderId &&
-                        item.Value.ValueKind == JsonValueKind.String && item.Value.GetString() == target.ExternalId))
-                    continue;
                 Fill(target, candidate);
                 target.Isrc ??= Text(candidate, "candidateIsrc", "CandidateIsrc");
-                break;
             }
         }
         catch (JsonException) { }
         return target;
+    }
+
+    internal static JsonElement? FindCandidate(JsonElement candidates, string providerId, string externalId)
+    {
+        if (candidates.ValueKind != JsonValueKind.Array) return null;
+        foreach (var candidate in candidates.EnumerateArray())
+        {
+            var ids = Property(candidate, "providerTrackIds", "ProviderTrackIds");
+            if (ids is { ValueKind: JsonValueKind.Object } && ids.Value.EnumerateObject().Any(item =>
+                    AppleMusicClient.NormalizeProviderId(item.Name) == AppleMusicClient.NormalizeProviderId(providerId) &&
+                    item.Value.ValueKind == JsonValueKind.String && item.Value.GetString() == externalId))
+                return candidate;
+        }
+        return null;
     }
 
     public async Task EnrichAsync(TrackMatchActor actor, IReadOnlyCollection<TrackMatchTargetLookup> lookups,
