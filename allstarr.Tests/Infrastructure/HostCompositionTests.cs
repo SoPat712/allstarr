@@ -393,8 +393,10 @@ public sealed class HostCompositionTests
             [Status(ProviderConfigurationState.Configured)]));
     }
 
-    [Fact]
-    public async Task AdministratorSchema_IncludesActiveExtensionCapabilities()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task AdministratorSchema_IncludesActiveExtensionCapabilities(bool searchable)
     {
         using var factory = new AllstarrFactory("Jellyfin");
         using var scope = factory.Services.CreateScope();
@@ -404,7 +406,7 @@ public sealed class HostCompositionTests
                 ProviderOrigin.Extension, "1", "1.0",
                 [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata,
                     ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.Optional, "1.0",
-                    ["searchTracks", "getTrack"], [ProviderAccountScope.Personal])],
+                    searchable ? ["searchTracks", "getTrack"] : ["getTrack"], [ProviderAccountScope.Personal])],
                 new ProviderPermissionDescriptor(), entryPoint: "index.js"),
             [new FixtureExtensionMetadata()]));
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
@@ -415,6 +417,8 @@ public sealed class HostCompositionTests
         var provider = Assert.Single(schema.Providers, item => item.Id == "fixture-extension");
         Assert.Equal("Fixture provider", provider.Description);
         Assert.Contains("metadata", provider.Categories);
+        var metadata = Assert.Single(schema.PriorityGroups, item => item.Id == "metadata");
+        Assert.Equal(searchable, metadata.Providers.Contains(provider.Id));
     }
 
     [Fact]

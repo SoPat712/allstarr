@@ -20,6 +20,7 @@ public sealed class ProviderDownloadDiagnosticTests
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var streaming = new Mock<IProviderDownloadStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.SupportsRecordingAvailability).Returns(false);
         var tracks = new List<string>();
         streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
             .Returns<ProviderExecutionContext, ProviderStreamLeaseRequest>((_, request) =>

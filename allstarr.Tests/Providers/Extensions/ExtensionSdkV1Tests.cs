@@ -219,7 +219,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
             {"name":"buttons","version":"1.0.0","type":["metadata_provider"],"permissions":{},
              "settings":[{"key":"clear_token","type":"button","secret":true,"required":true,"default":"action","action":"clear"}]}
             """;
-        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, "registerExtension({});");
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, "registerExtension({getTrack:function(){}});");
         var manifest = ExtensionSdkV1.ParseManifest(normalized);
 
         Assert.Empty(manifest.Settings!);
@@ -237,7 +237,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
             {"name":"settings","version":"1.0.0","type":["metadata_provider"],"permissions":{},
              "settings":[{"key":"invalid_key","type":"string"}]}
             """;
-        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, "registerExtension({});");
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(original, "registerExtension({getTrack:function(){}});");
         Assert.Throws<ExtensionSdkValidationException>(() => ExtensionSdkV1.ParseManifest(normalized));
     }
 

@@ -209,6 +209,34 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
                 value.TryGetProperty("availableQualities", out var qualities) ? qualities.EnumerateArray().Select(item => Enum.Parse<ProviderAudioQuality>(item.GetString()!, true)) : [], Long(value, "estimatedBytes")),
             requireAccount: accountRequired);
     }
+    internal Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
+        ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality)
+    {
+        string Id(string provider) => recording.ProviderIds.GetValueOrDefault(provider) ?? "";
+        return InvokeAsync(context, "checkAvailability", new
+        {
+            trackId = recording.SampleId,
+            requestedQuality = quality.ToString(),
+            resolveRecording = true,
+            track = new
+            {
+                id = recording.SampleId,
+                name = recording.Title,
+                artists = recording.ArtistNames,
+                isrc = recording.Isrc,
+                duration_ms = recording.DurationMilliseconds ?? 0,
+                spotify_id = Id("spotify"),
+                deezer_id = Id("deezer"),
+                tidal_id = Id("tidal"),
+                qobuz_id = Id("qobuz")
+            }
+        }, value => new ProviderRecordingAvailability(
+            EnumValue<ProviderDownloadAvailabilityState>(value, "state") == ProviderDownloadAvailabilityState.Available &&
+            OptionalText(value, "trackId") is { Length: > 0 } id
+                ? new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Track, id) : null,
+            OptionalText(value, "reason")), requireAccount: accountRequired);
+    }
+
     public Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(ProviderExecutionContext context, ProviderDownloadRequest request, IProgress<ProviderDownloadProgress>? progress = null) =>
         DownloadAsync(context, request, prepareForStreaming: false, progress);
 
@@ -257,10 +285,25 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         requiresPreparedContext = manifest.Compatibility != SpotiFlacExtensionCompatibility.Marker &&
             manifest.RequiredRuntimeFeatures?.Contains("preparedContext@1", StringComparer.Ordinal) == true;
         ProviderId = manifest.Id;
+        SupportsRecordingAvailability = manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker &&
+            sandbox.HasSpotiFlacHook("checkAvailability") &&
+            manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Download && item.Hooks.Contains("checkAvailability")) &&
+            !manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Metadata && item.Hooks.Contains("searchTracks"));
     }
 
     public string ProviderId { get; }
+    public bool SupportsRecordingAvailability { get; }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Streaming;
+
+    public Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
+        ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality)
+    {
+        if (!SupportsRecordingAvailability)
+            return Task.FromResult(Failure<ProviderRecordingAvailability>(ProviderErrorKind.NotSupported));
+        if (!context.Policy.AllowManagedDownloads)
+            return Task.FromResult(Failure<ProviderRecordingAvailability>(ProviderErrorKind.Forbidden));
+        return download.ResolveRecordingAsync(context, recording, quality);
+    }
 
     public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
         ProviderExecutionContext context,

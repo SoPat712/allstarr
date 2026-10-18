@@ -2,6 +2,8 @@ using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Capabilities;
+using Acornima;
+using Acornima.Ast;
 
 namespace allstarr.Core.Extensions;
 
@@ -158,7 +160,68 @@ public static class SpotiFlacExtensionCompatibility
             ["compatibility"] = Marker,
             ["spotiflacManifest"] = original.DeepClone()
         };
-        return normalized.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        return ReconcileMetadataHooks(normalized.ToJsonString(), indexJs);
+    }
+
+    public static string ReconcileMetadataHooks(string normalizedJson, string indexJs)
+    {
+        var root = JsonNode.Parse(normalizedJson)!.AsObject();
+        if (Text(root, "compatibility") != Marker) return normalizedJson;
+        var capabilities = root["capabilities"]!.AsArray();
+        var metadata = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Metadata");
+        if (metadata == null) return normalizedJson;
+        var exports = ExportedHooks(indexJs);
+        var hooks = new[] { "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist" }
+            .Where(hook => exports.Contains(hook) ||
+                exports.Contains("customSearch") && (hook.StartsWith("search", StringComparison.Ordinal) || hook == "getTrack"))
+            .ToArray();
+        if (hooks.Length == 0) capabilities.Remove(metadata);
+        else metadata["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray());
+        return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static HashSet<string> ExportedHooks(string indexJs)
+    {
+        var nodes = new List<Node>();
+        var pending = new Stack<Node>();
+        pending.Push(new Parser().ParseScript(indexJs));
+        while (pending.TryPop(out var node))
+        {
+            nodes.Add(node);
+            foreach (var child in node.ChildNodes) pending.Push(child);
+        }
+        var variables = nodes.OfType<VariableDeclarator>()
+            .Where(item => item.Id is Identifier && item.Init != null)
+            .GroupBy(item => ((Identifier)item.Id).Name)
+            .ToDictionary(group => group.Key, group => group.First().Init!);
+        var functions = nodes.OfType<FunctionDeclaration>().Where(item => item.Id != null)
+            .Select(item => item.Id!.Name).ToHashSet(StringComparer.Ordinal);
+        bool IsFunction(Node? value)
+        {
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (value is Identifier identifier && visited.Add(identifier.Name))
+            {
+                if (functions.Contains(identifier.Name)) return true;
+                value = variables.GetValueOrDefault(identifier.Name);
+            }
+            return value is FunctionExpression or ArrowFunctionExpression;
+        }
+        var hooks = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var call in nodes.OfType<CallExpression>().Where(item => item.Callee is Identifier { Name: "registerExtension" }))
+        {
+            Node? value = call.Arguments.Count > 0 ? call.Arguments[0] : null;
+            var visited = new HashSet<string>(StringComparer.Ordinal);
+            while (value is Identifier identifier && visited.Add(identifier.Name))
+                value = variables.GetValueOrDefault(identifier.Name);
+            if (value is not ObjectExpression exported) continue;
+            foreach (var property in exported.Properties.OfType<ObjectProperty>())
+            {
+                var key = property.Key is Identifier name ? name.Name : (property.Key as StringLiteral)?.Value;
+                if (key != null && IsFunction(property.Value))
+                    hooks.Add(key);
+            }
+        }
+        return hooks;
     }
 
     public static string SettingsJson(string normalizedJson)
@@ -542,6 +605,7 @@ public static class SpotiFlacExtensionCompatibility
           })[0];
         }
         function _sfDownloadTrack(request) {
+          if (request.track && typeof request.track === 'object') return request.track;
           var track = null;
           try {
             if (typeof _spotiflacExtension.getTrack === 'function') track = _spotiflacExtension.getTrack(request.trackId);
@@ -561,7 +625,7 @@ public static class SpotiFlacExtensionCompatibility
             var id = String(request.trackId || '').trim();
             if (!options[key] && id.toLowerCase().indexOf(prefix) === 0) options[key] = id.substring(prefix.length);
           });
-          if (!options.spotify_id && !options.tidal_id && !options.qobuz_id && !options.deezer_id)
+          if (!request.resolveRecording && !options.spotify_id && !options.tidal_id && !options.qobuz_id && !options.deezer_id)
             options.spotify_id = String(request.trackId || '').trim();
           return options;
         }
@@ -594,8 +658,9 @@ public static class SpotiFlacExtensionCompatibility
           if (result && result.available !== false) {
             var id = _sfPreferredTrackId(options, result.track_id, request.trackId);
             var context = result.prepared_context || result.preparedContext;
-            if (context && typeof context === 'object' && !Array.isArray(context))
-              _sfRememberPrepared(request.trackId, id, Object.assign({}, context, { host_track: track }));
+            if (!context || typeof context !== 'object' || Array.isArray(context)) context = {};
+            _sfRememberPrepared(request.trackId, id, Object.assign({}, context, { host_track: track }));
+            if (request.resolveRecording) _sfRememberPrepared(id, id, Object.assign({}, context, { host_track: track }));
           }
           return result;
         }
@@ -614,8 +679,9 @@ public static class SpotiFlacExtensionCompatibility
           return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value), snapshotVersion: null };
         }
         function _sfSearch(request, filter, mapper) {
-          if (!_spotiflacExtension || typeof _spotiflacExtension.customSearch !== 'function') return { items: [], isPartial: false };
-          var result = _spotiflacExtension.customSearch(request.query || '', { limit: request.page && request.page.limit || 20, filter: filter.replace(/s$/, '') });
+          var search = _spotiflacExtension['search' + filter.charAt(0).toUpperCase() + filter.slice(1)] || _spotiflacExtension.customSearch;
+          if (typeof search !== 'function') return { items: [], isPartial: false };
+          var result = search.call(_spotiflacExtension, request.query || '', { limit: request.page && request.page.limit || 20, filter: filter.replace(/s$/, '') });
           var items = _sfArray(result).filter(function(item) {
             var type = String(item.item_type || item.type || '').toLowerCase();
             return !type || type === filter || type === filter.replace(/s$/, '');
@@ -697,8 +763,10 @@ public static class SpotiFlacExtensionCompatibility
             var result = _sfCheckAvailability(request, options);
             if (request.prepareForStreaming && (!result || typeof result.available !== 'boolean')) return;
             return result && result.available !== false
-              ? { state: 'Available', availableQualities: ['Any'], estimatedBytes: null }
-              : { state: 'Unavailable', availableQualities: [], estimatedBytes: null };
+              ? { state: 'Available', availableQualities: ['Any'], estimatedBytes: null,
+                  trackId: _sfPreferredTrackId(options, result.track_id, request.resolveRecording ? '' : request.trackId) }
+              : { state: 'Unavailable', availableQualities: [], estimatedBytes: null,
+                  reason: result && /^[a-z][a-z0-9_]{0,99}$/.test(result.reason || '') ? result.reason : null };
           },
           getStreamLease: function() { return null; },
           probeStream: function(request) {
