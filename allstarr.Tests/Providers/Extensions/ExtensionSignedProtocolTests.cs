@@ -76,8 +76,11 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
         handler.Failures = 2;
         handler.ErrorBody = JsonSerializer.Serialize(new
         {
-            origin = "provider", code = "PROVIDER_UNAVAILABLE", retryable = true,
-            retry_mode = mode, retry_after_seconds = bodyDelay
+            origin = "provider",
+            code = "PROVIDER_UNAVAILABLE",
+            retryable = true,
+            retry_mode = mode,
+            retry_after_seconds = bodyDelay
         });
         handler.RetryAfter = headerDelay;
         using var budget = new ExtensionInvocationBudget(TimeSpan.FromSeconds(300), default, clock, isDownload: true);
