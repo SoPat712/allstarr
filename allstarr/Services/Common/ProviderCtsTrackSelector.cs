@@ -1,5 +1,6 @@
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Caching.Memory;
@@ -82,10 +83,11 @@ public sealed class ProviderCtsTrackSelector(
     }
 
     public async Task<IReadOnlyList<ProviderRecordingAvailabilityRequest>> SelectRecordingSamplesAsync(
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? requestingAdministratorId = null)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
-        string[] sourceProviders = ["deezer", "spotify", "tidal", "qobuz"];
+        string[] sourceProviders = ["deezer", "spotify", "tidal", "qobuz", "spotiflac-tidal-web", "spotiflac-deezer", "spotiflac-qobuz-web"];
         var identities = await db.ProviderTrackIdentities.AsNoTracking()
             .Where(item => sourceProviders.Contains(item.ProviderId) && item.ResourceKind == ProviderResourceKind.Track &&
                 item.Scope == ProviderIdentityScope.Catalog && item.ProviderAccountId == null &&
@@ -93,53 +95,137 @@ public sealed class ProviderCtsTrackSelector(
             .OrderByDescending(item => item.VerifiedAt).ThenBy(item => item.Id)
             .Take(CorpusLimit * 4).ToArrayAsync(cancellationToken);
         var recordingIds = identities.Select(item => item.CanonicalRecordingId).Distinct().Take(CorpusLimit).ToArray();
+        if (recordingIds.Length == 0) return [];
         var recordings = await db.CanonicalRecordings.AsNoTracking().Include(item => item.Identifiers)
             .Where(item => recordingIds.Contains(item.Id) && item.MergedIntoId == null)
             .ToDictionaryAsync(item => item.Id, cancellationToken);
-        var identityIds = identities.Select(item => item.Id).ToArray();
-        var snapshots = await db.ExternalMetadataSnapshots.AsNoTracking()
-            .Where(item => item.ProviderTrackIdentityId != null && identityIds.Contains(item.ProviderTrackIdentityId.Value))
-            .OrderByDescending(item => item.RetrievedAt).ThenBy(item => item.Id)
+        var metadataQuery = from snapshot in db.ExternalMetadataSnapshots.AsNoTracking()
+                            join identity in db.ProviderTrackIdentities.AsNoTracking()
+                                on snapshot.ProviderTrackIdentityId equals (Guid?)identity.Id
+                            where recordingIds.Contains(identity.CanonicalRecordingId) &&
+                                  identity.ResourceKind == ProviderResourceKind.Track
+                            select new { identity.CanonicalRecordingId, identity.Scope, IdentityAccountId = identity.ProviderAccountId, Snapshot = snapshot };
+        var catalogSnapshots = await metadataQuery
+            .Where(item => item.Scope == ProviderIdentityScope.Catalog && item.IdentityAccountId == null && item.Snapshot.ProviderAccountId == null)
+            .OrderByDescending(item => item.Snapshot.RetrievedAt).ThenByDescending(item => item.Snapshot.SnapshotVersion).ThenBy(item => item.Snapshot.Id)
+            .Select(item => new StoredMetadata(item.CanonicalRecordingId, item.Snapshot.PayloadJson))
             .Take(CorpusLimit * 4).ToArrayAsync(cancellationToken);
+        var decisions = await db.TrackMatches.AsNoTracking()
+            .Where(item => item.CanonicalRecordingId != null && recordingIds.Contains(item.CanonicalRecordingId.Value))
+            .OrderByDescending(item => item.DecidedAt).ThenByDescending(item => item.DecisionVersion).ThenBy(item => item.Id)
+            .Select(item => new StoredMetadata(item.CanonicalRecordingId!.Value, item.CandidateResultsJson))
+            .Take(CorpusLimit * 4).ToArrayAsync(cancellationToken);
+        var accountSnapshots = requestingAdministratorId.HasValue
+            ? await metadataQuery
+                .Where(item => item.Snapshot.OwnerUserId == requestingAdministratorId.Value &&
+                    (item.Scope == ProviderIdentityScope.Account || item.IdentityAccountId != null || item.Snapshot.ProviderAccountId != null))
+                .OrderByDescending(item => item.Snapshot.RetrievedAt).ThenByDescending(item => item.Snapshot.SnapshotVersion).ThenBy(item => item.Snapshot.Id)
+                .Select(item => new StoredMetadata(item.CanonicalRecordingId, item.Snapshot.PayloadJson))
+                .Take(CorpusLimit * 4).ToArrayAsync(cancellationToken)
+            : [];
+        var catalogByRecording = catalogSnapshots.ToLookup(item => item.RecordingId);
+        var decisionsByRecording = decisions.ToLookup(item => item.RecordingId);
+        var accountByRecording = accountSnapshots.ToLookup(item => item.RecordingId);
         var result = new List<ProviderRecordingAvailabilityRequest>();
         foreach (var group in identities.GroupBy(item => item.CanonicalRecordingId))
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!recordings.TryGetValue(group.Key, out var recording)) continue;
-            var groupIds = group.Select(item => item.Id).ToHashSet();
-            foreach (var snapshot in snapshots.Where(item => groupIds.Contains(item.ProviderTrackIdentityId!.Value)))
+            var metadata = new SampleMetadata
+            {
+                Title = Nonempty(recording.Title),
+                DurationMilliseconds = recording.DurationMilliseconds,
+                Isrc = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.Isrc)
+                    .OrderBy(item => item.Value, StringComparer.Ordinal).Select(item => Nonempty(item.Value)).FirstOrDefault(item => item != null)
+            };
+            foreach (var snapshot in catalogByRecording[group.Key]) metadata.FillJson(snapshot.Json);
+            foreach (var decision in decisionsByRecording[group.Key])
             {
                 try
                 {
-                    using var document = JsonDocument.Parse(snapshot.PayloadJson);
-                    var root = document.RootElement;
-                    JsonElement Property(string name) => root.ValueKind == JsonValueKind.Object
-                        ? root.EnumerateObject().FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Value : default;
-                    string? Text(string name) => Property(name) is { ValueKind: JsonValueKind.String } value ? value.GetString() : null;
-                    long? Number(string name) => Property(name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt64(out var number) ? number : null;
-                    var artists = new List<string>();
-                    if (Text("artist") is { Length: > 0 } artist) artists.Add(artist);
-                    var credits = Property("artists");
-                    if (credits.ValueKind == JsonValueKind.Array)
-                        foreach (var credit in credits.EnumerateArray())
+                    using var document = JsonDocument.Parse(decision.Json);
+                    foreach (var identity in group)
+                        if (TrackMatchTargetResolver.FindCandidate(document.RootElement, identity.ProviderId, identity.ExternalId) is { } candidate)
                         {
-                            var name = credit.ValueKind == JsonValueKind.String ? credit.GetString() :
-                                credit.ValueKind == JsonValueKind.Object && credit.TryGetProperty("name", out var value) ? value.GetString() : null;
-                            if (!string.IsNullOrWhiteSpace(name)) artists.Add(name);
+                            metadata.Fill(candidate);
+                            break;
                         }
-                    var title = string.IsNullOrWhiteSpace(recording.Title) ? Text("title") : recording.Title;
-                    if (string.IsNullOrWhiteSpace(title) || artists.Count == 0) continue;
-                    result.Add(new(recording.Id.ToString("N"), title, artists.Distinct().ToArray(),
-                        recording.Identifiers.FirstOrDefault(item => item.Kind == RecordingIdentifierKinds.Isrc)?.Value ?? Text("isrc"),
-                        recording.DurationMilliseconds ?? Number("durationMilliseconds") ?? Number("durationMs"),
-                        group.GroupBy(item => item.ProviderId).ToDictionary(items => items.Key, items => items.First().ExternalId)));
-                    break;
                 }
                 catch (JsonException) { }
             }
+            foreach (var snapshot in accountByRecording[group.Key]) metadata.FillJson(snapshot.Json);
+            if (metadata.Title == null || metadata.Artists.Length == 0) continue;
+            var providerIds = group.Select(AvailabilityId).Where(item => !string.IsNullOrWhiteSpace(item.ExternalId))
+                .GroupBy(item => item.ProviderId).ToDictionary(items => items.Key, items => items.First().ExternalId);
+            if (providerIds.Count == 0) continue;
+            result.Add(new(recording.Id.ToString("N"), metadata.Title, metadata.Artists,
+                metadata.Isrc, metadata.DurationMilliseconds, providerIds));
         }
         if (result.Count == 0) return result;
         var offset = Random.Shared.Next(result.Count);
         return result.Skip(offset).Concat(result.Take(offset)).ToArray();
+    }
+
+    private static (string ProviderId, string ExternalId) AvailabilityId(ProviderTrackIdentityRecord identity)
+    {
+        var provider = identity.ProviderId switch
+        {
+            "spotiflac-tidal-web" => "tidal",
+            "spotiflac-deezer" => "deezer",
+            "spotiflac-qobuz-web" => "qobuz",
+            _ => identity.ProviderId
+        };
+        var prefix = $"{provider}:";
+        var externalId = provider != identity.ProviderId && identity.ExternalId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? identity.ExternalId[prefix.Length..] : identity.ExternalId;
+        return (provider, externalId);
+    }
+
+    private static string? Nonempty(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private sealed record StoredMetadata(Guid RecordingId, string Json);
+
+    private sealed class SampleMetadata
+    {
+        public string? Title { get; set; }
+        public string[] Artists { get; private set; } = [];
+        public string? Isrc { get; set; }
+        public long? DurationMilliseconds { get; set; }
+
+        public void FillJson(string json)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                Fill(document.RootElement);
+            }
+            catch (JsonException) { }
+        }
+
+        public void Fill(JsonElement root)
+        {
+            Title ??= Text(root, "title") ?? Text(root, "name");
+            Isrc ??= Text(root, "isrc") ?? Text(root, "candidateIsrc");
+            DurationMilliseconds ??= Number(root, "durationMilliseconds") ?? Number(root, "durationMs") ??
+                                      Number(root, "durationSeconds") * 1000;
+            if (Artists.Length > 0) return;
+            if (Property(root, "artists") is { ValueKind: JsonValueKind.Array } credits)
+                Artists = credits.EnumerateArray()
+                    .Select(item => item.ValueKind == JsonValueKind.String ? Nonempty(item.GetString()) : Text(item, "name"))
+                    .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (Artists.Length == 0 && (Text(root, "artist") ?? Text(root, "primaryArtist")) is { } artist)
+                Artists = [artist];
+        }
+
+        private static JsonElement Property(JsonElement root, string name) => root.ValueKind == JsonValueKind.Object
+            ? root.EnumerateObject().FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).Value : default;
+
+        private static string? Text(JsonElement root, string name) =>
+            Property(root, name) is { ValueKind: JsonValueKind.String } value ? Nonempty(value.GetString()) : null;
+
+        private static long? Number(JsonElement root, string name) =>
+            Property(root, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt64(out var number) && number > 0
+                ? number : null;
     }
 
     public void Dispose() => _nextIndexes.Dispose();

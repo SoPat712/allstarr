@@ -242,7 +242,8 @@ public sealed class ProviderCtsDiagnosticRunner(
             {
                 if (streaming is IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true } fallback)
                 {
-                    var recordings = await trackSelector.SelectRecordingSamplesAsync(cancellationToken);
+                    var recordings = await trackSelector.SelectRecordingSamplesAsync(cancellationToken,
+                        actor.Kind == ProviderActorKind.Administrator ? actor.UserId : null);
                     string? reason = null;
                     foreach (var recording in recordings.Take(3))
                     {

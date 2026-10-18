@@ -685,6 +685,107 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Measure_RecordingFallbackUsesRequestingAdministratorsOwnMetadata(bool actingForAnotherUser)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var now = DateTimeOffset.UtcNow;
+        var user = Guid.CreateVersion7();
+        var otherUser = Guid.CreateVersion7();
+        var recording = Guid.CreateVersion7();
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            foreach (var owner in new[] { user, otherUser })
+                db.Users.Add(new UserRecord { Id = owner, BackendType = "fixture", BackendInstanceId = "fixture", BackendPrincipalId = owner.ToString() });
+            db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = recording, CreatedByUserId = user, Title = "Song", Revision = 1 });
+            db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+            {
+                Id = Guid.CreateVersion7(),
+                CanonicalRecordingId = recording,
+                ProviderId = "deezer",
+                ResourceKind = ProviderResourceKind.Track,
+                Scope = ProviderIdentityScope.Catalog,
+                ExternalId = "123",
+                ExternalIdHash = new string('a', 64),
+                Verification = ProviderIdentityVerification.Verified,
+                VerificationMethod = "automatic-match",
+                DecisionVersion = 1,
+                VerifiedAt = now,
+                Revision = 1
+            });
+            foreach (var owner in new[] { user, otherUser })
+            {
+                var account = Guid.CreateVersion7();
+                db.ProviderAccounts.Add(new ProviderAccountRecord
+                {
+                    Id = account,
+                    ProviderId = "spotify",
+                    OwnerUserId = owner,
+                    DisplayName = "Private",
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+                var identity = new ProviderTrackIdentityRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    CanonicalRecordingId = recording,
+                    ProviderId = "spotify",
+                    ProviderAccountId = account,
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Account,
+                    ExternalId = owner.ToString("N"),
+                    ExternalIdHash = owner.ToString("N") + owner.ToString("N"),
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "source-snapshot-hash",
+                    DecisionVersion = 1,
+                    VerifiedAt = now,
+                    Revision = 1
+                };
+                db.ProviderTrackIdentities.Add(identity);
+                db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = owner,
+                    ProviderTrackIdentityId = identity.Id,
+                    ProviderAccountId = account,
+                    ProviderId = "spotify",
+                    ResourceKind = "track",
+                    ExternalIdHash = identity.ExternalIdHash,
+                    SnapshotVersion = 1,
+                    PayloadSha256 = new string('a', 64),
+                    RetrievedAt = owner == user ? now : now.AddMinutes(1),
+                    PayloadJson = owner == user ? """{"Artist":"Own artist"}""" : """{"Artist":"Other artist"}"""
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        var streaming = new Mock<IProviderDownloadStreamingCapability>(MockBehavior.Strict);
+        streaming.SetupGet(item => item.SupportsRecordingAvailability).Returns(true);
+        streaming.Setup(item => item.ResolveRecordingAsync(It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any))
+            .Returns((ProviderExecutionContext _, ProviderRecordingAvailabilityRequest sample, ProviderAudioQuality _) =>
+            {
+                Assert.Equal(new[] { "Own artist" }, sample.ArtistNames);
+                Assert.Equal("deezer", Assert.Single(sample.ProviderIds).Key);
+                return Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(null, "unavailable")));
+            });
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector, Mock.Of<IProviderOutcomeObserver>());
+        var actor = new ProviderActorContext(ProviderActorKind.Administrator, user,
+            new ProviderBackendPrincipal("fixture", "fixture", "principal"), actingForUserId: actingForAnotherUser ? otherUser : null);
+
+        var result = await runner.MeasureAsync(actor, "fixture", null, ProviderAudioQuality.Any, "recording-metadata");
+
+        Assert.Equal("track-selection", result.Stage);
+        Assert.Contains("unavailable", result.Error, StringComparison.Ordinal);
+        streaming.Verify(item => item.ResolveRecordingAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any), Times.Once);
+    }
+
     private static ProviderActorContext Actor() => new(
         ProviderActorKind.User,
         Guid.CreateVersion7(),
