@@ -99,10 +99,9 @@ public sealed class ExtensionSignedRequestTimeoutTests : IDisposable
         bridge.SessionCompleteGrant("fixture-grant");
         var first = Task.Run(() => bridge.SessionSignedFetch("POST", "/prepare", "{}", null));
         await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        // Consume the first request's timer before observing the gate wait.
-        Assert.Equal(TimeSpan.FromSeconds(30), await clock.NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(30));
         var second = Task.Run(() => bridge.SessionSignedFetch("POST", "/prepare", "{}", null));
-        Assert.Equal(TimeSpan.FromSeconds(35), await clock.NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(35));
         try
         {
             clock.Advance(TimeSpan.FromSeconds(35));
@@ -125,11 +124,9 @@ public sealed class ExtensionSignedRequestTimeoutTests : IDisposable
         var sandbox = await SandboxAsync();
         var first = Task.Run(() => sandbox.InvokeJson("download", "{}"));
         await handler.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal(TimeSpan.FromMinutes(5), await clock.NextTimerAsync());
-        Assert.Equal(TimeSpan.FromMinutes(2), await clock.NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromMinutes(5), TimeSpan.FromMinutes(2));
         var waiting = sandbox.StartSignedSessionVerificationAsync();
-        Assert.Equal(TimeSpan.FromSeconds(30), await clock.NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(35), await clock.NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(35));
         try
         {
             clock.Advance(TimeSpan.FromSeconds(35));

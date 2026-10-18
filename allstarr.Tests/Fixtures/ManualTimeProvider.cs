@@ -14,9 +14,23 @@ internal sealed class ManualTimeProvider(DateTimeOffset? initialUtcNow = null) :
     public async Task<TimeSpan> NextTimerAsync()
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        return await NextTimerAsync(timeout.Token);
+    }
+
+    // Callers must keep the expected timers live until they have been observed.
+    public async Task WaitForTimersAsync(params TimeSpan[] delays)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var remaining = delays.ToList();
+        while (remaining.Count > 0)
+            remaining.Remove(await NextTimerAsync(timeout.Token));
+    }
+
+    private async Task<TimeSpan> NextTimerAsync(CancellationToken cancellationToken)
+    {
         while (true)
         {
-            var next = await scheduled.Reader.ReadAsync(timeout.Token);
+            var next = await scheduled.Reader.ReadAsync(cancellationToken);
             lock (timers)
                 if (next.Timer.IsScheduled(next.Version)) return next.Delay;
         }

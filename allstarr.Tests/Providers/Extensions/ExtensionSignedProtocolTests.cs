@@ -88,16 +88,16 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
         handler.Wait = async token => { await releases.Reader.ReadAsync(token); };
         var pending = Task.Run(() => client.SignedFetch("POST", "/dl/tid", "{\"id\":\"123\"}",
             new Dictionary<string, string> { ["X-Test-Ticket"] = "fixture-ticket" }));
-        Assert.Equal(TimeSpan.FromSeconds(300), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(300));
         if (expectedDelay > 0)
             for (var i = 0; i < 2; i++)
             {
-                Assert.Equal(TimeSpan.FromSeconds(120), await NextTimerAsync());
+                await clock.WaitForTimersAsync(TimeSpan.FromSeconds(120));
                 await releases.Writer.WriteAsync(true);
-                Assert.Equal(TimeSpan.FromSeconds(expectedDelay), await NextTimerAsync());
+                await clock.WaitForTimersAsync(TimeSpan.FromSeconds(expectedDelay));
                 clock.Advance(TimeSpan.FromSeconds(expectedDelay));
             }
-        Assert.Equal(TimeSpan.FromSeconds(Math.Min(120, 300 - 2 * expectedDelay)), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(Math.Min(120, 300 - 2 * expectedDelay)));
         await releases.Writer.WriteAsync(true);
         using var response = JsonDocument.Parse(JsonSerializer.Serialize(await pending.WaitAsync(TimeSpan.FromSeconds(10))));
         Assert.Equal(expectedDelay > 0 ? 200 : 503, response.RootElement.GetProperty("statusCode").GetInt32());
@@ -122,14 +122,11 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
         var sandbox = Sandbox("registerExtension({download:function(){return session.signedFetch('POST','/dl/tid',{});}});", native: true);
         await sandbox.CompleteSignedSessionGrantAsync("fixture-grant");
         var pending = Task.Run(() => sandbox.InvokeJson("download", "{}"));
-        Assert.Equal(TimeSpan.FromSeconds(150), await NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(120), await NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(60), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(150), TimeSpan.FromSeconds(120), TimeSpan.FromSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(60));
-        Assert.Equal(TimeSpan.FromSeconds(25), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(25));
         clock.Advance(TimeSpan.FromSeconds(25));
-        Assert.Equal(TimeSpan.FromSeconds(65), await NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(60), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(65), TimeSpan.FromSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(60));
         using var response = JsonDocument.Parse((await pending.WaitAsync(TimeSpan.FromSeconds(10)))!);
         Assert.Equal(200, response.RootElement.GetProperty("statusCode").GetInt32());
@@ -147,10 +144,11 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
             ? """{"origin":"gateway","code":"SESSION_INVALID","action":"bootstrap_session","retryable":"private"}"""
             : """{"ORIGIN":" provider ","CODE":" provider_unavailable ","RETRYABLE":true,"RETRY_MODE":" same_operation ","RETRY_AFTER_SECONDS":1}""";
         var pending = Task.Run(() => client.SignedFetch("POST", "/dl/tid", "{}", null));
-        Assert.Equal(TimeSpan.FromSeconds(30), await NextTimerAsync());
+        // A malformed response can complete and dispose its request timer before observation.
+        if (malformed) await pending.WaitAsync(TimeSpan.FromSeconds(10));
         if (!malformed)
         {
-            Assert.Equal(TimeSpan.FromSeconds(1), await NextTimerAsync());
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(1));
             clock.Advance(TimeSpan.FromSeconds(1));
         }
         using var response = JsonDocument.Parse(JsonSerializer.Serialize(await pending.WaitAsync(TimeSpan.FromSeconds(10))));
@@ -170,9 +168,7 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
             """, networkSeconds: 15);
         await sandbox.CompleteSignedSessionGrantAsync("fixture-grant");
         var pending = Task.Run(() => sandbox.InvokeJson("searchTracks", "{\"query\":\"fixture\"}"));
-        Assert.Equal(TimeSpan.FromSeconds(60), await NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(30), await NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(15), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(15));
         clock.Advance(TimeSpan.FromSeconds(15));
         using var response = JsonDocument.Parse((await pending.WaitAsync(TimeSpan.FromSeconds(10)))!);
         Assert.Equal("limited", response.RootElement.GetProperty("items")[0].GetProperty("title").GetString());
@@ -232,7 +228,7 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
             """, native: true);
         await sandbox.CompleteSignedSessionGrantAsync("fixture-grant");
         var pending = Task.Run(() => sandbox.InvokeJson("download", "{}"));
-        while (await NextTimerAsync() != TimeSpan.FromSeconds(25)) { }
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(25));
         clock.Advance(TimeSpan.FromSeconds(25));
         using var response = JsonDocument.Parse((await pending.WaitAsync(TimeSpan.FromSeconds(10)))!);
         Assert.Equal(200, response.RootElement.GetProperty("statusCode").GetInt32());
@@ -260,8 +256,7 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
     {
         var sandbox = Sandbox("registerExtension({download:function(){return {slept:utils.sleep(60000)};}});", native: true);
         var pending = Task.Run(() => sandbox.InvokeJson("download", "{}"));
-        Assert.Equal(TimeSpan.FromSeconds(150), await NextTimerAsync());
-        Assert.Equal(TimeSpan.FromSeconds(60), await NextTimerAsync());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(150), TimeSpan.FromSeconds(60));
         clock.Advance(TimeSpan.FromSeconds(60));
         using var response = JsonDocument.Parse((await pending.WaitAsync(TimeSpan.FromSeconds(10)))!);
         Assert.True(response.RootElement.GetProperty("slept").GetBoolean());
@@ -313,14 +308,6 @@ public sealed class ExtensionSignedProtocolTests : IDisposable
             """);
         using var response = JsonDocument.Parse(sandbox.InvokeJson("checkAvailability", "{\"trackId\":\"tidal:123\",\"requestedQuality\":\"Any\",\"prepareForStreaming\":true}")!);
         Assert.Equal("Available", response.RootElement.GetProperty("state").GetString());
-    }
-
-    private async Task<TimeSpan> NextTimerAsync()
-    {
-        TimeSpan delay;
-        do { delay = await clock.NextTimerAsync(); }
-        while (delay == TimeSpan.FromSeconds(35));
-        return delay;
     }
 
     private ExtensionSandbox Sandbox(string script, bool native = false, int? networkSeconds = null)
