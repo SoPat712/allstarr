@@ -32,12 +32,12 @@ public sealed class ScopedListenBrainzTargetTests
 
         await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
             new ScopedPlaybackTrack("Track", "Artist", "Album", 180_000), null,
-            DateTimeOffset.FromUnixTimeSeconds(123456), "signal", CancellationToken.None);
+            DateTimeOffset.FromUnixTimeSeconds(1700000000), "signal", CancellationToken.None);
 
         using var document = JsonDocument.Parse(handler.Body!);
         var listen = Assert.Single(document.RootElement.GetProperty("payload").EnumerateArray());
         Assert.Equal("single", document.RootElement.GetProperty("listen_type").GetString());
-        Assert.Equal(123456, listen.GetProperty("listened_at").GetInt64());
+        Assert.Equal(1700000000, listen.GetProperty("listened_at").GetInt64());
     }
 
     [Fact]
@@ -49,7 +49,7 @@ public sealed class ScopedListenBrainzTargetTests
             "Album artist", "11111111-1111-1111-1111-111111111111", 4, ClientClass: "Finamp");
 
         await target.DeliverAsync(Scope(), PlaybackTransition.Stop, track, null,
-            DateTimeOffset.FromUnixTimeSeconds(123456), "signal", CancellationToken.None);
+            DateTimeOffset.FromUnixTimeSeconds(1700000000), "signal", CancellationToken.None);
 
         using var document = JsonDocument.Parse(handler.Body!);
         var metadata = Assert.Single(document.RootElement.GetProperty("payload").EnumerateArray())
@@ -92,7 +92,7 @@ public sealed class ScopedListenBrainzTargetTests
 
         await target.DeliverAsync(Scope(), PlaybackTransition.Stop,
             new ScopedPlaybackTrack("Track", "Artist", null, 180_000), null,
-            DateTimeOffset.FromUnixTimeSeconds(123456), "signal", CancellationToken.None);
+            DateTimeOffset.FromUnixTimeSeconds(1700000000), "signal", CancellationToken.None);
 
         Assert.Equal("https://koito.example/apis/listenbrainz/1/submit-listens", handler.RequestUri);
         Assert.Equal("Token", handler.AuthorizationScheme);
@@ -165,10 +165,10 @@ public sealed class ScopedListenBrainzTargetTests
             ? new KoitoPlaybackScrobbleTarget(http, accounts) : new MultiScrobblerPlaybackScrobbleTarget(http, accounts);
         Assert.Equal(providerId, target.ProviderId);
         await target.DeliverAsync(Scope(), PlaybackTransition.Submission, new("Track", "Artist", null, 180000),
-            null, DateTimeOffset.FromUnixTimeSeconds(123456), "signal", default);
+            null, DateTimeOffset.FromUnixTimeSeconds(1700000000), "signal", default);
         Assert.Equal("http://127.0.0.1:9078/1/submit-listens", handler.RequestUri);
         Assert.Equal("fixture-token", handler.AuthorizationParameter);
-        Assert.Contains("123456", handler.Body);
+        Assert.Contains("1700000000", handler.Body);
     }
 
     [Fact]

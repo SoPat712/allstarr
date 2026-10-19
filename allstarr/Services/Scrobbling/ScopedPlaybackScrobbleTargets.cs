@@ -14,7 +14,8 @@ using allstarr.Services.Common;
 
 namespace allstarr.Services.Scrobbling;
 
-public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
+public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts,
+    ILogger<LastFmScopedPlaybackScrobbleTarget>? logger = null)
     : IVerifiablePlaybackScrobbleTarget
 {
     public string ProviderId => "lastfm";
@@ -53,10 +54,12 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, 
             values["timestamp"] = observedAt.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture);
         }
         values["api_sig"] = Sign(values, Required(secret, "sharedSecret")); values["format"] = "json";
-        using var response = await http.PostAsync("https://ws.audioscrobbler.com/2.0/", new FormUrlEncodedContent(values), ct);
-        await response.Content.LoadIntoBufferAsync(64 * 1024, ct);
-        var body = await response.Content.ReadAsStringAsync(ct);
-        return Classify(response, body, method == "track.scrobble");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "https://ws.audioscrobbler.com/2.0/")
+        { Content = new FormUrlEncodedContent(values) };
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        var body = await ScrobbleResponseDiagnostics.ReadBodyAsync(response.Content, response.IsSuccessStatusCode ? 64 * 1024 : 2048, ct);
+        return ScrobbleResponseDiagnostics.Rejection(Classify(response, body, method == "track.scrobble"),
+            ProviderId, (int)response.StatusCode, method != "track.scrobble", ScrobbleResponseDiagnostics.Reason(body, secret), logger);
     }
     private static ScopedPlaybackScrobbleResult Classify(HttpResponseMessage response, string body, bool scrobble)
     {
@@ -69,9 +72,9 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, 
                 if (first == '{') return ParseJson(response.StatusCode, body, scrobble, retryAfter);
                 if (first == '<') return ParseXml(response.StatusCode, body, scrobble, retryAfter);
             }
-            catch (JsonException) { return Retry("invalid-response", response.StatusCode, retryAfter); }
-            catch (XmlException) { return Retry("invalid-response", response.StatusCode, retryAfter); }
-            catch (InvalidOperationException) { return Retry("invalid-response", response.StatusCode, retryAfter); }
+            catch (JsonException) { return HttpResult(response.StatusCode, retryAfter); }
+            catch (XmlException) { return HttpResult(response.StatusCode, retryAfter); }
+            catch (InvalidOperationException) { return HttpResult(response.StatusCode, retryAfter); }
         }
         return HttpResult(response.StatusCode, retryAfter);
     }
@@ -238,9 +241,14 @@ public sealed partial class LastFmScopedPlaybackScrobbleTarget(HttpClient http, 
     { var text = string.Concat(values.Where(x => x.Key != "format" && x.Key != "callback").Select(x => x.Key + x.Value)) + secret; return Convert.ToHexStringLower(MD5.HashData(Encoding.UTF8.GetBytes(text))); }
 }
 
-public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts, string providerId = "listenbrainz")
+public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts, string providerId = "listenbrainz",
+    ILogger<ListenBrainzScopedPlaybackScrobbleTarget>? logger = null)
     : IBoundPlaybackScrobbleTarget
 {
+    private const long MinimumListenTimestamp = 1033430400;
+    private const long MaximumDurationMilliseconds = 24L * 24 * 60 * 60 * 1000;
+    private const int MaximumListenBytes = 10 * 1024;
+
     public string ProviderId => providerId;
     public Task<bool> IsConfiguredAsync(IntelligenceScope scope, CancellationToken token) => accounts.HasAccountAsync(scope, ProviderId, token);
     public Task<bool> CanReplayAsync(IntelligenceScope scope, ProviderAccountContext account, CancellationToken token) =>
@@ -259,6 +267,16 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
         ScopedPlaybackTrack track, DateTimeOffset observedAt, CancellationToken ct)
     {
         var playing = transition is PlaybackTransition.Start or PlaybackTransition.InferredStart;
+        if (!playing && (observedAt.ToUnixTimeSeconds() < MinimumListenTimestamp || observedAt >= DateTimeOffset.UtcNow.AddHours(1)))
+            return ScopedPlaybackScrobbleResult.Ignored("invalid-listened-at",
+                "The listen was skipped because its timestamp is outside the supported range.",
+                JsonSerializer.Serialize(new { reason = "invalid-listened-at" }));
+        if (string.IsNullOrWhiteSpace(track.Title) || string.IsNullOrWhiteSpace(track.Artist))
+            return ScopedPlaybackScrobbleResult.Ignored("empty-metadata",
+                "The listen was skipped because its title or artist is empty.", "{\"reason\":\"empty-metadata\"}");
+        if (new[] { track.Title, track.Artist, track.Album, track.ClientClass }.Any(value => value?.Contains('\0') == true))
+            return ScopedPlaybackScrobbleResult.Ignored("invalid-metadata",
+                "The listen was skipped because its metadata contains a NUL character.", "{\"reason\":\"invalid-metadata\"}");
         var baseUri = ListenBrainzServiceEndpoint.FromSecret(secret, ProviderId);
         using var request = new HttpRequestMessage(HttpMethod.Post,
             ListenBrainzServiceEndpoint.Route(baseUri, "submit-listens"));
@@ -268,7 +286,7 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
             ["submission_client"] = "Allstarr",
             ["submission_client_version"] = AppVersion.Version
         };
-        if (track.DurationMilliseconds is > 0) additionalInfo["duration_ms"] = track.DurationMilliseconds.Value;
+        if (track.DurationMilliseconds is > 0 and <= MaximumDurationMilliseconds) additionalInfo["duration_ms"] = track.DurationMilliseconds.Value;
         if (Guid.TryParseExact(track.RecordingMusicBrainzId, "D", out var mbid) && mbid != Guid.Empty)
             additionalInfo["recording_mbid"] = mbid.ToString("D");
         if (track.TrackNumber is > 0) additionalInfo["tracknumber"] = track.TrackNumber.Value.ToString(CultureInfo.InvariantCulture);
@@ -282,13 +300,18 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
         if (!string.IsNullOrWhiteSpace(track.Album)) metadata["release_name"] = track.Album;
         var listen = new Dictionary<string, object> { ["track_metadata"] = metadata };
         if (!playing) listen["listened_at"] = observedAt.ToUnixTimeSeconds();
+        if (JsonSerializer.SerializeToUtf8Bytes(listen).Length > MaximumListenBytes)
+            return ScopedPlaybackScrobbleResult.Ignored("listen-too-large",
+                "The listen was skipped because its metadata exceeds the service size limit.", "{\"reason\":\"listen-too-large\"}");
         request.Content = JsonContent.Create(new Dictionary<string, object>
         {
             ["listen_type"] = playing ? "playing_now" : "single",
             ["payload"] = new[] { listen }
         });
-        using var response = await http.SendAsync(request, ct);
-        return response.StatusCode switch
+        using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        var reason = response.IsSuccessStatusCode ? null : ScrobbleResponseDiagnostics.Reason(
+            await ScrobbleResponseDiagnostics.ReadBodyAsync(response.Content, 2048, ct), secret);
+        var result = response.StatusCode switch
         {
             >= HttpStatusCode.OK and < HttpStatusCode.MultipleChoices =>
                 ScopedPlaybackScrobbleResult.Delivered(JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode })),
@@ -306,6 +329,7 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
                 "The listening service rejected the listen.",
                 detailsJson: JsonSerializer.Serialize(new { httpStatus = (int)response.StatusCode }))
         };
+        return ScrobbleResponseDiagnostics.Rejection(result, ProviderId, (int)response.StatusCode, playing, reason, logger);
     }
     private static string Required(JsonElement value, string property) => value.TryGetProperty(property, out var node) && !string.IsNullOrWhiteSpace(node.GetString()) ? node.GetString()! : throw new InvalidOperationException("Scoped scrobble account is incomplete.");
     private static TimeSpan? RetryAfter(HttpResponseMessage response)
@@ -317,8 +341,10 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
     }
 }
 
-public sealed class MultiScrobblerPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
-    : ListenBrainzScopedPlaybackScrobbleTarget(http, accounts, "multi-scrobbler");
+public sealed class MultiScrobblerPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts,
+    ILogger<ListenBrainzScopedPlaybackScrobbleTarget>? logger = null)
+    : ListenBrainzScopedPlaybackScrobbleTarget(http, accounts, "multi-scrobbler", logger);
 
-public sealed class KoitoPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts)
-    : ListenBrainzScopedPlaybackScrobbleTarget(http, accounts, "koito");
+public sealed class KoitoPlaybackScrobbleTarget(HttpClient http, IScopedRecommendationAccountAccessor accounts,
+    ILogger<ListenBrainzScopedPlaybackScrobbleTarget>? logger = null)
+    : ListenBrainzScopedPlaybackScrobbleTarget(http, accounts, "koito", logger);

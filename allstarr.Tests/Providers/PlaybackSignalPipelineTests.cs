@@ -755,6 +755,53 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
         Assert.Empty(await db.ListeningSignals.ToListAsync());
     }
 
+    [Theory]
+    [InlineData("applemusic", "AM")]
+    [InlineData("tidal", "T")]
+    [InlineData("ytmusic", "YM")]
+    public async Task ExternalDisplayLabels_DoNotReachScopedScrobbleMetadata(string provider, string label)
+    {
+        var song = new allstarr.Models.Domain.Song
+        {
+            Id = $"ext-{provider}-song-123",
+            Title = "Original [Live]",
+            Artist = "Original artist",
+            Album = "Original album",
+            AlbumArtist = "Original album artist",
+            Duration = 180,
+            ExternalProvider = provider,
+            ExplicitContentLyrics = 1
+        };
+        var display = new allstarr.Services.Jellyfin.JellyfinResponseBuilder().ConvertSongToJellyfinItem(song);
+        Assert.Equal("Original [Live] [A]/[E]", display["Name"]);
+        Assert.Equal($"Original album [{label}]", display["Album"]);
+        var gateway = new Moq.Mock<IProtocolProviderGateway>(Moq.MockBehavior.Strict);
+        gateway.Setup(item => item.GetPublicSongAsync(provider, "123", Moq.It.IsAny<CancellationToken>())).Returns(Task.FromResult<allstarr.Models.Domain.Song?>(song));
+        var metadata = new ExternalPlaybackMetadataResolver(gateway.Object, new TestMemoryApplicationCache(),
+            new MetadataHttpFactory(), clock, Microsoft.Extensions.Logging.Abstractions.NullLogger<ExternalPlaybackMetadataResolver>.Instance);
+        var resolver = new PlaybackTrackResolver(factory, new TestBackendLibraryAccess(factory, "music"), [metadata]);
+        var target = new Target("listenbrainz", true);
+        var delivery = new ScopedPlaybackScrobbleDelivery(factory, [target], new Checkpoints(), resolver);
+
+        await delivery.DeliverAsync(Payload() with
+        {
+            ItemId = song.Id,
+            Transition = PlaybackTransition.Submission,
+            PositionTicks = null
+        }, default);
+
+        Assert.NotNull(target.LastTrack);
+        Assert.Equal("Original [Live]", target.LastTrack.Title);
+        Assert.Equal("Original artist", target.LastTrack.Artist);
+        Assert.Equal("Original album", target.LastTrack.Album);
+        Assert.Equal("Original album artist", target.LastTrack.AlbumArtist);
+    }
+
+    private sealed class MetadataHttpFactory : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => throw new InvalidOperationException("Unexpected artwork request.");
+    }
+
     [Fact]
     public async Task SubmittedListenKeepsProvidedMetadataWithoutRelaying()
     {
