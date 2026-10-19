@@ -3,12 +3,49 @@ using System.Net;
 using System.Net.Http.Headers;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class OdesliServiceTests
 {
+    [Fact]
+    public async Task MissingKey_NeverCallsSongLink()
+    {
+        var handler = new Handler(_ => throw new InvalidOperationException("Unexpected request"));
+        var service = Create(handler, apiKey: null);
+        Assert.Empty(await service.GetTrackLinksAsync("https://tidal.com/browse/track/42", default));
+        Assert.Null(await service.ConvertTidalToSpotifyIdAsync("42"));
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task ConfiguredKey_IsSentAsKeyParameter()
+    {
+        var handler = new Handler(request =>
+        {
+            var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri!.Query);
+            Assert.Equal("fixture +/& key", query["key"]);
+            return Json("{\"linksByPlatform\":{}}");
+        });
+        await Create(handler, apiKey: "fixture +/& key").GetTrackLinksAsync("https://tidal.com/browse/track/42", default);
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task FailedTranslation_LogsOnlyTheErrorTypeWithoutTheKeyOrRequest()
+    {
+        var logger = new Mock<ILogger<OdesliService>>();
+        var handler = new Handler(_ => throw new HttpRequestException("private-key https://api.song.link/?key=private-key"));
+        var service = Create(handler, apiKey: "private-key", logger: logger.Object);
+        Assert.Null(await service.ConvertTidalToSpotifyIdAsync("42"));
+        var entry = Assert.Single(logger.Invocations, call => call.Method.Name == "Log");
+        Assert.DoesNotContain("private-key", entry.Arguments[2].ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain("api.song.link", entry.Arguments[2].ToString(), StringComparison.Ordinal);
+        Assert.Null(entry.Arguments[3]);
+    }
+
     [Theory]
     [InlineData(HttpStatusCode.Unauthorized)]
     [InlineData(HttpStatusCode.Forbidden)]
@@ -101,15 +138,15 @@ public sealed class OdesliServiceTests
         Assert.Equal(TimeSpan.FromSeconds(1), handler.Times[1] - handler.Times[0]);
     }
 
-    internal static OdesliService Create(HttpMessageHandler handler, TimeProvider? timeProvider = null)
+    internal static OdesliService Create(HttpMessageHandler handler, TimeProvider? timeProvider = null, string? apiKey = "fixture-key", ILogger<OdesliService>? logger = null)
     {
         CacheExtensions.InitializeCacheSettings(Mock.Of<IServiceProvider>());
         var factory = new Mock<IHttpClientFactory>();
         var client = new HttpClient(handler);
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", "fixture");
         factory.Setup(item => item.CreateClient("Odesli")).Returns(client);
-        return new(factory.Object, NullLogger<OdesliService>.Instance, new TestMemoryApplicationCache(),
-            Options.Create(new OdesliSettings { RateLimitMs = 1 }), timeProvider: timeProvider);
+        return new(factory.Object, logger ?? NullLogger<OdesliService>.Instance, new TestMemoryApplicationCache(),
+            Options.Create(new OdesliSettings { Enabled = true, RateLimitMs = 1, ApiKey = apiKey }), timeProvider: timeProvider);
     }
 
     private static HttpResponseMessage Json(string content) => new(HttpStatusCode.OK) { Content = new StringContent(content) };

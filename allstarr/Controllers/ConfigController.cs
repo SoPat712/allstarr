@@ -139,6 +139,15 @@ public class ConfigController : ControllerBase
             effectiveCookieSetDate = _spotifyApiSettings.SessionCookieSetDate ?? string.Empty;
         }
 
+        var operatorSettings = OperatorSettingPolicy.Definitions.ToDictionary(
+            item => item.Key, item => runtimeSettings.TryGetValue(item.Key, out var setting)
+                ? setting.Value : (object)(_configuration[item.Key] ?? item.DefaultValue ?? ""));
+        var hasOdesliKey = runtimeSettings.TryGetValue(OdesliApiKeySettingsService.ReferenceKey, out var keyReference) &&
+                          keyReference.Origin == RuntimeSettingOrigin.Durable
+            ? !string.IsNullOrEmpty(keyReference.NormalizedValue)
+            : !string.IsNullOrWhiteSpace(_configuration["Odesli:ApiKey"]);
+        operatorSettings["Odesli:ApiKey"] = hasOdesliKey ? "********" : "";
+
         return Ok(new
         {
             backendType,
@@ -263,8 +272,7 @@ public class ConfigController : ControllerBase
                 rateLimitMs = RuntimeInt("MusicBrainz:RateLimitMs", _musicBrainzSettings.RateLimitMs),
                 authorizedUserAgentOverride = RuntimeString("MusicBrainz:AuthorizedUserAgentOverride", _musicBrainzSettings.AuthorizedUserAgentOverride ?? "")
             },
-            operatorSettings = OperatorSettingPolicy.Definitions.ToDictionary(
-                item => item.Key, item => runtimeSettings.TryGetValue(item.Key, out var setting) ? setting.Value : (object)(_configuration[item.Key] ?? item.DefaultValue ?? "")),
+            operatorSettings,
             cache = new
             {
                 searchResultsMinutes = RuntimeInt("Cache:SearchResultsMinutes", _configuration.GetValue<int>("Cache:SearchResultsMinutes", 1)),
@@ -340,6 +348,11 @@ public class ConfigController : ControllerBase
             var normalized = new List<(string LegacyKey, string DurableKey, string Value)>();
             foreach (var (key, value) in request.Updates)
             {
+                if (key.Equals("ODESLI_API_KEY", StringComparison.OrdinalIgnoreCase))
+                {
+                    normalized.Add((key, OdesliApiKeySettingsService.ReferenceKey, value));
+                    continue;
+                }
                 if (!LegacyEnvParser.TryGetDurableAlias(key, out var durableKey))
                 {
                     return BadRequest(new
@@ -356,7 +369,9 @@ public class ConfigController : ControllerBase
 
             var settings = HttpContext.RequestServices.GetRequiredService<IDurableRuntimeSettings>();
             var current = await settings.GetManyAsync(normalized.Select(item => item.DurableKey));
-            var writes = normalized.Select(item =>
+            var keyUpdates = normalized.Where(item => item.DurableKey == OdesliApiKeySettingsService.ReferenceKey).ToArray();
+            if (keyUpdates.Length > 1) throw new ArgumentException("Supply the song.link API key only once.");
+            var writes = normalized.Where(item => item.DurableKey != OdesliApiKeySettingsService.ReferenceKey).Select(item =>
             {
                 var existing = current[item.DurableKey];
                 return new RuntimeSettingWrite(
@@ -364,11 +379,16 @@ public class ConfigController : ControllerBase
                     item.Value,
                     existing.Origin == RuntimeSettingOrigin.Durable ? existing.Revision : null);
             }).ToArray();
-            var result = await settings.ApplyBatchAsync(
-                writes,
-                "admin-ui",
-                session.AllstarrUserId,
-                HttpContext.RequestAborted);
+            RuntimeSettingBatchResult result;
+            if (keyUpdates.Length == 1)
+            {
+                var reference = current[OdesliApiKeySettingsService.ReferenceKey];
+                result = await HttpContext.RequestServices.GetRequiredService<OdesliApiKeySettingsService>().ApplyAsync(
+                    session, keyUpdates[0].Value,
+                    reference.Origin == RuntimeSettingOrigin.Durable ? reference.Revision : null,
+                    writes, HttpContext.RequestAborted);
+            }
+            else result = await settings.ApplyBatchAsync(writes, "admin-ui", session.AllstarrUserId, HttpContext.RequestAborted);
             var cacheEntriesInvalidated = normalized.Any(item =>
                 !item.DurableKey.StartsWith("Scrobbling:", StringComparison.OrdinalIgnoreCase) &&
                 !item.DurableKey.StartsWith("WebUi:", StringComparison.OrdinalIgnoreCase))
@@ -385,7 +405,8 @@ public class ConfigController : ControllerBase
                 requiresRestart,
                 changeVersion = result.ChangeVersion,
                 cacheEntriesInvalidated,
-                settings = result.Settings.Select(item => new { item.Key, item.Revision, item.UpdatedAt })
+                settings = result.Settings.Where(item => item.Key != OdesliApiKeySettingsService.ReferenceKey)
+                    .Select(item => new { item.Key, item.Revision, item.UpdatedAt })
             });
         }
         catch (RuntimeSettingConflictException ex)
@@ -395,6 +416,10 @@ public class ConfigController : ControllerBase
         catch (ArgumentException ex)
         {
             return BadRequest(new { error = ex.Message, code = "invalid_setting" });
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return StatusCode(StatusCodes.Status403Forbidden, new { error = "An active administrator is required." });
         }
         catch (Exception ex)
         {

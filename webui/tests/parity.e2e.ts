@@ -7051,3 +7051,40 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+test("Cross-service links explain built-in lookups and preserve the optional masked key", async ({ page }) => {
+  await mockApi(page);
+  const writes: Record<string, string>[] = [];
+  await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+    ...schema,
+    configSections: [{ id: "operator", label: "Service settings", fields: [
+      { key: "ODESLI_ENABLED", label: "Enable cross-service song links", type: "toggle", valuePath: "operatorSettings.Odesli:Enabled" },
+      { key: "ODESLI_RATE_LIMIT_MS", label: "Optional song.link request interval (ms)", type: "number", valuePath: "operatorSettings.Odesli:RateLimitMs" },
+      { key: "ODESLI_API_KEY", label: "Optional song.link API key", type: "password", sensitive: true, valuePath: "operatorSettings.Odesli:ApiKey" },
+    ] }],
+  } }));
+  await page.route("**/api/admin/config", route => {
+    if (route.request().method() === "POST") {
+      writes.push(route.request().postDataJSON().updates);
+      return route.fulfill({ json: { requiresRestart: false } });
+    }
+    return route.fulfill({ json: { ...(responses["/api/admin/config"] as Record<string, unknown>), operatorSettings: {
+      "Odesli:Enabled": true, "Odesli:RateLimitMs": 6000, "Odesli:ApiKey": "********",
+    } } });
+  });
+  await page.goto("#/sources");
+  const card = page.getByRole("form", { name: "Song links and extension installs" });
+  await expect(card).toContainText("Deezer, Apple Music and enabled sources");
+  await expect(card).toContainText("song.link is optional");
+  const key = card.getByLabel(/^Optional song\.link API key/);
+  await expect(key).toHaveAttribute("type", "password");
+  await card.getByRole("button", { name: "Save and restart" }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).not.toHaveProperty("ODESLI_API_KEY");
+  await key.fill("replacement-fixture-key");
+  await card.getByRole("button", { name: "Save and restart" }).click();
+  await expect.poll(() => writes[1]?.ODESLI_API_KEY).toBe("replacement-fixture-key");
+  await key.fill("");
+  await card.getByRole("button", { name: "Save and restart" }).click();
+  await expect.poll(() => writes[2]?.ODESLI_API_KEY).toBe("");
+});

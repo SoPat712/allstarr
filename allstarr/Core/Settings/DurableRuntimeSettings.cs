@@ -118,6 +118,8 @@ public static class RuntimeSettingCatalog
             items.Add(new(key, RuntimeSettingValueType.String, key,
                 Choices: choices.ToHashSet(Comparer), AllowEmpty: allowEmpty));
         items.AddRange(OperatorSettingPolicy.Definitions);
+        items.Add(new("Odesli:ApiKeyReference", RuntimeSettingValueType.String, "Odesli:ApiKeyReference",
+            AllowEmpty: true, MaximumLength: 36, DefaultValue: "", RequiresRestart: true));
         items.Add(new("Admin:Oidc:Enabled", RuntimeSettingValueType.Boolean, "Admin:Oidc:Enabled", DefaultValue: "false", RequiresRestart: true));
         foreach (var field in new[] { "Authority", "ClientId", "PublicUrl", "DisplayName", "ClientSecretReference" })
             items.Add(new("Admin:Oidc:" + field, RuntimeSettingValueType.String, "Admin:Oidc:" + field,
@@ -548,6 +550,12 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         DbErrors.IsTransientConflict(exception) || DbErrors.IsUniqueViolation(exception);
 
     public long PublishExternalCommit() => _signal.Publish();
+
+    public long PublishExternalCommit(IReadOnlyList<EffectiveRuntimeSetting> committed)
+    {
+        _liveOptions?.ApplyCommitted(committed);
+        return _signal.Publish();
+    }
 
     internal static EffectiveRuntimeSetting ProjectStoredRecord(RuntimeSettingRecord record) =>
         FromRecord(record, RuntimeSettingCatalog.Require(record.Key));

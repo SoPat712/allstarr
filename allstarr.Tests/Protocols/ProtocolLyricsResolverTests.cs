@@ -4,11 +4,8 @@ using allstarr.Core.Settings;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
-using allstarr.Models.Settings;
 using allstarr.Services.Common;
-using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using Moq;
 using allstarr.Core.Downloads;
 using allstarr.Core.Matching;
@@ -17,6 +14,31 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsResolverTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CrossServiceLyrics_UseOnlyVerifiedResolverResults(bool verified)
+    {
+        var context = LyricsContext();
+        var song = LyricsSong();
+        var providers = new Mock<IProtocolProviderGateway>();
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["spotify"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "spotify", "cross-id", ProviderLyricsFormat.LineTimed,
+                song.Title, It.IsAny<IReadOnlyList<string>>(), song.Album, song.Duration, song.Isrc))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "spotify",
+                ProviderLyricsFormat.LineTimed, "[00:01.000]Words"));
+        var links = new Mock<ICrossProviderLinkResolver>();
+        links.Setup(item => item.ResolveAsync(It.IsAny<ExternalTrackMatchSnapshot>(),
+                It.IsAny<IReadOnlyList<ProviderExternalResourceId>>(), context.Actor!, context.CorrelationId, context.CancellationToken))
+            .ReturnsAsync([new("spotify", "cross-id", verified, verified ? 1 : 0.7, "cross-service-match")]);
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, links.Object)
+            .FindAsync(context, song, "resource", "deezer", "42");
+        Assert.Equal(verified, result != null);
+        links.VerifyAll();
+        providers.Verify(item => item.GetLyricsAsync(context, "spotify", "cross-id", ProviderLyricsFormat.LineTimed,
+            song.Title, It.IsAny<IReadOnlyList<string>>(), song.Album, song.Duration, song.Isrc), verified ? Times.Once() : Times.Never());
+    }
+
     [Fact]
     public async Task LrcRedReceivesIsrcAndMetadataFromTheSong()
     {
@@ -278,14 +300,10 @@ public sealed class ProtocolLyricsResolverTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task Resolver_UsesCachedCrosslinksWithoutNetworkBeforeLyricsFallback(bool cached)
+    public async Task Resolver_UsesResolvedCrosslinksBeforeLyricsFallback(bool cached)
     {
-        using var services = new ServiceCollection()
-            .AddSingleton<IOptions<CacheSettings>>(Options.Create(new CacheSettings()))
-            .BuildServiceProvider();
-        CacheExtensions.InitializeCacheSettings(services);
         var protocol = new ProtocolExecutionContext(
-            ProtocolKind.Jellyfin, "backend", "api-key", null, "lyrics-translation",
+            ProtocolKind.Jellyfin, "backend", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend", "listener", "Listener", false), "lyrics-translation",
             DateTimeOffset.UtcNow.AddMinutes(1), CancellationToken.None);
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics))
@@ -300,28 +318,20 @@ public sealed class ProtocolLyricsResolverTests
             .ReturnsAsync(new ProviderLyricsResult(
                 ProviderLyricsAvailabilityState.Available, "apple-download",
                 ProviderLyricsFormat.LineTimed, "[00:01.00]Rocket line\n"));
-        var handler = new JsonHandler(
-            """{"linksByPlatform":{"deezer":{"url":"https://www.deezer.com/track/13190193"},"spotify":{"url":"https://open.spotify.com/track/2takcwOaAZWiXQijPHIx7B"},"appleMusic":{"url":"https://music.apple.com/us/album/fixture?i=2037093408"}}}""");
-        var cache = new TestMemoryApplicationCache();
-        if (cached)
-            await cache.SetAsync(CacheKeyBuilder.BuildOdesliTranslationKey(
-                OdesliService.BuildTrackUrl("deezer", "13190193")!, "aliases-v1"),
-                new Dictionary<string, string>
-                {
-                    ["deezer"] = "13190193",
-                    ["spotify"] = "2takcwOaAZWiXQijPHIx7B",
-                    ["apple-musickit"] = "2037093408"
-                });
         providers.Setup(item => item.GetLyricsAsync(protocol, "lrclib", It.IsAny<string>(),
                 ProviderLyricsFormat.LineTimed, "Rocket", It.IsAny<IReadOnlyList<string>>(), "Fixture album", 210, null))
             .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
                 ProviderLyricsFormat.LineTimed, "[00:01.00]Rocket line\n"));
-        var odesli = new OdesliService(
-            new HttpFactory(handler),
-            NullLogger<OdesliService>.Instance,
-            cache);
+        var links = new Mock<ICrossProviderLinkResolver>();
+        links.Setup(item => item.ResolveAsync(It.IsAny<ExternalTrackMatchSnapshot>(),
+                It.IsAny<IReadOnlyList<ProviderExternalResourceId>>(), It.IsAny<ProviderActorContext>(),
+                It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cached
+                ? [new("spotify", "2takcwOaAZWiXQijPHIx7B", true, 1, "isrc-lookup"),
+                    new("apple-musickit", "2037093408", true, 1, "isrc-lookup")]
+                : []);
         var resolver = new ProtocolLyricsResolver(
-            providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, odesli);
+            providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, links.Object);
 
         var result = await resolver.FindAsync(
             protocol,
@@ -330,7 +340,6 @@ public sealed class ProtocolLyricsResolverTests
             "deezer",
             "13190193");
 
-        Assert.Equal(0, handler.RequestCount);
         if (!cached)
         {
             Assert.Equal("lrclib", result?.Source);
@@ -451,24 +460,4 @@ public sealed class ProtocolLyricsResolverTests
         return providers;
     }
 
-    private sealed class HttpFactory(HttpMessageHandler handler) : IHttpClientFactory
-    {
-        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
-    }
-
-    private sealed class JsonHandler(string body) : HttpMessageHandler
-    {
-        public int RequestCount { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            RequestCount++;
-            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
-            {
-                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
-            });
-        }
-    }
 }

@@ -1517,7 +1517,11 @@ public class AdminUiController : ControllerBase
                 OperatorSettingLabel(item.Key),
                 item.ValueType == RuntimeSettingValueType.Boolean ? "toggle" : item.ValueType == RuntimeSettingValueType.Integer ? "number" : "text",
                 "operatorSettings." + item.Key, requiresRestart: true, min: item.Minimum, max: item.Maximum,
-                helpText: "Saved in the data folder. Allstarr restarts after saving this setting.")).ToList()),
+                helpText: "Saved in the data folder. Allstarr restarts after saving this setting."))
+            .Append(Field("ODESLI_API_KEY", "Optional song.link API key", "password", "operatorSettings.Odesli:ApiKey",
+                sensitive: true, requiresRestart: true,
+                helpText: "Stored encrypted. Optional; blank clears a saved key. Allstarr restarts after saving."))
+            .ToList()),
         Section("general", "General",
         [
             Field(
@@ -1591,8 +1595,8 @@ public class AdminUiController : ControllerBase
     {
         "Backend:MusicLibraryIds" => "Music library identifiers (blank selects all permitted libraries)",
         "Extensions:AllowRemoteInstall" => "Allow remote extension installation",
-        "Odesli:Enabled" => "Enable public cross-provider links",
-        "Odesli:RateLimitMs" => "Cross-provider request interval (ms)",
+        "Odesli:Enabled" => "Enable cross-service song links",
+        "Odesli:RateLimitMs" => "Optional song.link request interval (ms)",
         "Cors:AllowedOrigins" => "Browser origins (comma separated)",
         "Cors:AllowedMethods" => "Browser HTTP methods (blank uses defaults)",
         "Cors:AllowedHeaders" => "Browser request headers (blank uses defaults)",

@@ -249,10 +249,11 @@ public class DeezerProviderTests
     [Fact]
     public async Task FindSongByIsrcAsync_UsesExactTrackEndpoint()
     {
-        var requests = new List<string>();
+        var requests = new List<(HttpMethod Method, string Uri, string[] Headers)>();
         SetupHttpResponse(request =>
         {
-            requests.Add(request.RequestUri!.PathAndQuery);
+            requests.Add((request.Method, request.RequestUri!.AbsoluteUri,
+                request.Headers.Select(header => header.Key).ToArray()));
 
             return CreateJsonResponse(JsonSerializer.Serialize(new
             {
@@ -277,7 +278,34 @@ public class DeezerProviderTests
         Assert.NotNull(result);
         Assert.Equal("ext-deezer-song-116348632", result.Id);
         Assert.Equal("GBUM71505902", result.Isrc);
-        Assert.Equal(["/track/isrc:GBUM71505902"], requests);
+        Assert.Equal("Hey Jude", result.Title);
+        Assert.Equal("The Beatles", result.Artist);
+        var request = Assert.Single(requests);
+        Assert.Equal(HttpMethod.Get, request.Method);
+        Assert.Equal("https://api.deezer.com/track/isrc:GBUM71505902", request.Uri);
+        Assert.Empty(request.Headers);
+    }
+
+    [Theory]
+    [InlineData("GBUM71505903")]
+    [InlineData(null)]
+    public async Task FindSongByIsrcAsync_RejectsMismatchedOrMissingRecordingCode(string? returnedIsrc)
+    {
+        SetupHttpResponse(JsonSerializer.Serialize(new
+        {
+            id = 116348632,
+            title = "Hey Jude",
+            isrc = returnedIsrc,
+            duration = 429,
+            artist = new { id = 1, name = "The Beatles" },
+            album = new { id = 12047956, title = "1" }
+        }));
+
+        var result = await _service.FindSongByIsrcAsync("GBUM71505902");
+
+        Assert.Null(result);
+        _httpMessageHandlerMock.Protected().Verify("SendAsync", Times.Once(),
+            ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
     }
 
     [Fact]

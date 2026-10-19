@@ -71,6 +71,7 @@ builder.Services.AddSingleton<MountedLegacyEnvironment>();
 builder.Services.AddSingleton<IBackendConnectionVerifier, BackendConnectionVerifier>();
 builder.Services.AddSingleton<BackendSetupService>();
 builder.Services.AddSingleton<AdminOidcSettingsService>();
+builder.Services.AddSingleton<OdesliApiKeySettingsService>();
 builder.Services.AddPlatformIdentity(builder.Configuration);
 var releaseComposition = ReleaseComposition.Resolve(builder.Configuration);
 builder.Services.AddSingleton(releaseComposition);
@@ -241,7 +242,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddHttpClient();
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
-builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(5))
+builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(5)).RemoveAllLoggers()
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
 builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient("ExtensionSdkV1")
@@ -361,6 +362,7 @@ builder.Services.AddSingleton<IApplicationCache>(sp =>
 builder.Services.AddSingleton<IMediaAssetResolver, MediaAssetResolver>();
 builder.Services.AddHostedService<ApplicationCacheMaintenanceService>();
 builder.Services.AddSingleton<OdesliService>();
+builder.Services.AddSingleton<ICrossProviderLinkResolver, CrossProviderLinkResolver>();
 builder.Services.AddSingleton<IDownloadedSongMappingStore, EfDownloadedSongMappingStore>();
 builder.Services.AddSingleton<ILocalLibraryService, LocalLibraryService>();
 builder.Services.AddSingleton<LrclibService>();
