@@ -1,4 +1,9 @@
 using System.Collections.Immutable;
+using System.Text.Json;
+using allstarr.Core.Downloads;
+using allstarr.Core.Extensions;
+using allstarr.Services.Common;
+using Microsoft.Extensions.Logging.Abstractions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
@@ -11,6 +16,60 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RecordingAvailability_SearchExtensionResolvesOnlyWithinStreamingOrder(bool inOrder)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-playback-availability", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string source = """
+                {"name":"fixture","version":"1.0.0","type":["metadata_provider","download_provider"],
+                 "permissions":{"network":["media.example.test"]}}
+                """;
+            const string script = """
+                var calls = 0;
+                registerExtension({customSearch:function(){throw new Error('playback must not search');},
+                  getTrack:function(id){return {id:id,name:String(calls),artists:'Artist'};},
+                  checkAvailability:function(isrc,title,artist,options){
+                    if (options.qobuz_id === 'source-track') calls++;
+                    return {available:true,track_id:'target-track'};
+                  },download:function(id,quality,path){return file.download('https://media.example.test/audio',path,{});}});
+                """;
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var clients = new Mock<IHttpClientFactory>();
+            clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(new AvailabilityDownloadHandler()));
+            var sandbox = new ExtensionSandbox(root, normalized, script, clients.Object, NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var store = new Mock<IProviderDownloadArtifactStore>(MockBehavior.Strict);
+            store.Setup(item => item.GetWorkspaceAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync((ProviderDownloadWorkspaceEntity?)null);
+            var streaming = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null,
+                new ProviderDownloadArtifactResolver(store.Object, options), options);
+            var fixture = new AvailabilityFixture(inOrder ? manifest.Id : "qobuz", implementation: streaming);
+
+            var first = await fixture.Open();
+            Assert.Equal(inOrder, first != null);
+            if (first != null)
+            {
+                Assert.Equal(manifest.Id, first.ServingProviderId);
+                first.Response.Dispose();
+                using var second = (await fixture.Open())!.Response;
+                var link = Assert.Single(fixture.Links);
+                Assert.Equal("target-track", link.ExternalId.Value);
+                Assert.Equal(ProviderIdentityVerification.Verified, link.Verification);
+            }
+            else Assert.Empty(fixture.Links);
+            using var count = JsonDocument.Parse(sandbox.InvokeJson("getTrack", """{"id":"calls"}""")!);
+            Assert.Equal(inOrder ? "1" : "0", count.RootElement.GetProperty("title").GetString());
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
     [Fact]
     public async Task RecordingAvailability_AbsentStreamingOrderDoesNotResolve()
     {
@@ -250,6 +309,16 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         fixture.VerifyLookups(2);
     }
 
+    private sealed class AvailabilityDownloadHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var response = AudioResponse();
+            response.RequestMessage = request;
+            return Task.FromResult(response);
+        }
+    }
+
     private sealed class AvailabilityFixture
     {
         private readonly ProtocolProviderGateway gateway;
@@ -263,9 +332,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(new("pandora", ProviderResourceKind.Track, "target-track"))));
 
         public AvailabilityFixture(string order, bool verifiedFirst = false, bool accountBound = false,
-            string? restriction = null, bool conflict = false, ProviderErrorKind? firstError = null, bool explicitDenied = false, string? effectiveOrder = null, TimeProvider? clock = null)
+            string? restriction = null, bool conflict = false, ProviderErrorKind? firstError = null, bool explicitDenied = false, string? effectiveOrder = null, TimeProvider? clock = null,
+            IProviderDownloadStreamingCapability? implementation = null)
         {
-            download.SetupGet(item => item.ProviderId).Returns("pandora");
+            var provider = implementation?.ProviderId ?? "pandora";
+            download.SetupGet(item => item.ProviderId).Returns(provider);
             download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
             download.SetupGet(item => item.SupportsRecordingAvailability).Returns(true);
             download.Setup(item => item.ResolveRecordingAsync(It.IsAny<ProviderExecutionContext>(),
@@ -284,19 +355,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
             var first = Capability("qobuz", firstError is { } error
                 ? ProviderOutcome<ProviderStreamLease>.Failure(new(error)) : ProviderOutcome<ProviderStreamLease>.Success(lease));
-            var registry = new ProviderRegistry(new IProviderStreamingCapability[] { first.Object, download.Object }.Select(capability =>
+            var registry = new ProviderRegistry(new IProviderStreamingCapability[] { first.Object, implementation ?? download.Object }.Select(capability =>
                 new ProviderRegistration(new ProviderDescriptor(capability.ProviderId, capability.ProviderId, "Test provider",
                     ProviderOrigin.BuiltIn, "1", "1",
                     [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
-                        capability.ProviderId == "pandora" && (accountBound || restriction == "account")
+                        capability.ProviderId == provider && (accountBound || restriction == "account")
                             ? ProviderAccountRequirement.Required : ProviderAccountRequirement.None,
-                        "1", ["getStreamLease"], capability.ProviderId == "pandora" && (accountBound || restriction == "account")
+                        "1", ["getStreamLease"], capability.ProviderId == provider && (accountBound || restriction == "account")
                             ? [ProviderAccountScope.Personal] : [])], new ProviderPermissionDescriptor()), [capability])));
             var identities = new Mock<ITrackIdentityService>();
             identities.Setup(item => item.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), RecordingId,
                     It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((ProviderExecutionContext context, Guid _, ProviderTrackIdentityTarget target, CancellationToken _) =>
-                    target.ProviderId == "pandora" && Linked || target.ProviderId == "qobuz" && verifiedFirst
+                    target.ProviderId == provider && Linked || target.ProviderId == "qobuz" && verifiedFirst
                         ? new(RecordingId, Guid.CreateVersion7(), new(target.ProviderId, ProviderResourceKind.Track, "target-track"),
                             context.Account == null ? ProviderIdentityScope.Catalog : ProviderIdentityScope.Account,
                             context.Account?.AccountId, ProviderIdentityVerification.Verified, "availability", 1) : null);
@@ -324,26 +395,26 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             {
                 var accountId = Guid.CreateVersion7();
                 accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
-                    .ReturnsAsync(() => new ProviderRouteAccountResolution(new(accountId, "pandora", ProviderAccountScope.Personal,
+                    .ReturnsAsync(() => new ProviderRouteAccountResolution(new(accountId, provider, ProviderAccountScope.Personal,
                         AccountRevision, ownerUserId: protocol.RequireActor().EffectiveUserId), AccountRevision));
             }
             if (restriction == "health")
-                health.Setup(item => item.Get("pandora", It.IsAny<Guid?>(), ProviderCapabilityKind.Streaming))
+                health.Setup(item => item.Get(provider, It.IsAny<Guid?>(), ProviderCapabilityKind.Streaming))
                     .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Unavailable, false));
             var router = new ProviderRouter(registry, accounts.Object, health.Object, Mock.Of<IProviderRouteSidecarSource>(), identities.Object);
             var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["Providers:StreamingOrder"] = order,
-                ["Providers:DownloadOrder"] = "pandora",
-                ["Providers:MetadataOrder"] = "pandora",
-                ["Providers:Disabled"] = restriction == "policy" ? "pandora" : ""
+                ["Providers:DownloadOrder"] = provider,
+                ["Providers:MetadataOrder"] = provider,
+                ["Providers:Disabled"] = restriction == "policy" ? provider : ""
             }).Build();
             if (explicitDenied || effectiveOrder != null)
                 protocol = protocol with
                 {
                     Policy = new(
                     ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty
-                        .Add(ProviderCapabilityKind.Streaming, (effectiveOrder ?? "pandora").Split(',').ToImmutableArray()),
+                        .Add(ProviderCapabilityKind.Streaming, (effectiveOrder ?? provider).Split(',').ToImmutableArray()),
                     ImmutableHashSet<string>.Empty, "max", 0.07)
                     { UserId = protocol.RequireActor().EffectiveUserId, Preferences = new(explicitDenied ? "CleanOnly" : "All") }
                 };

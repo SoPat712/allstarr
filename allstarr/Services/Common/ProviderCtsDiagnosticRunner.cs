@@ -20,7 +20,8 @@ public sealed class ProviderCtsDiagnosticRunner(
     IProviderOutcomeObserver health,
     IDbContextFactory<AllstarrDbContext>? contextFactory = null,
     ProtocolExecutionOptions? executionOptions = null,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    IProviderCheckSessions? sessions = null)
 {
     private const int SampleLimitBytes = 64 * 1024;
     private static readonly BoundedOperationGate Concurrency = new(2);
@@ -112,7 +113,8 @@ public sealed class ProviderCtsDiagnosticRunner(
                 "capability",
                 "The selected provider does not expose streaming diagnostics.");
         }
-        var capabilityDescriptor = providers.GetRequired(providerId).Capabilities.Single(item =>
+        var descriptor = providers.GetRequired(providerId);
+        var capabilityDescriptor = descriptor.Capabilities.Single(item =>
             item.Capability == ProviderCapabilityKind.Streaming);
         if (providerAccountId == Guid.Empty)
             providerAccountId = null;
@@ -125,7 +127,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 providerId,
                 null,
                 "account-resolution",
-                "The selected provider streaming capability requires an account.");
+                descriptor.UsesSignedSession ? "sign_in_needed" : "The selected provider streaming capability requires an account.");
         }
         if (capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.None &&
             providerAccountId.HasValue)
@@ -175,6 +177,13 @@ public sealed class ProviderCtsDiagnosticRunner(
                 providerAccountId,
                 "account-resolution",
                 "The selected provider account is not authorized.");
+        }
+
+        if (descriptor.UsesSignedSession &&
+            (resolved == null || sessions == null || !await sessions.IsSignedInAsync(providerId, resolved.Account.AccountId, cancellationToken)))
+        {
+            return ProviderCtsDiagnosticResult.Failure(
+                StatusCodes.Status409Conflict, providerId, providerAccountId, "account-resolution", "sign_in_needed");
         }
 
         if ((capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.Required && resolved == null) ||
@@ -228,6 +237,39 @@ public sealed class ProviderCtsDiagnosticRunner(
         var automatic = string.IsNullOrWhiteSpace(trackId);
         var triedTracks = new HashSet<string>(StringComparer.Ordinal);
         await using var samples = SearchSampleTracksAsync(providerId, execution, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        IReadOnlyList<ProviderRecordingAvailabilityRequest>? recordings = null;
+        var recordingIndex = 0;
+        string? availabilityReason = null;
+        async Task<string?> NextSampleAsync()
+        {
+            progress.Stage = "track-selection";
+            while (await samples.MoveNextAsync())
+            {
+                if (triedTracks.Contains(samples.Current)) continue;
+                selectionMode = "search";
+                corpusSize = null;
+                return samples.Current;
+            }
+            if (streaming is not IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true } fallback)
+                return null;
+            recordings ??= await trackSelector.SelectRecordingSamplesAsync(cancellationToken,
+                actor.Kind == ProviderActorKind.Administrator ? actor.UserId : null);
+            while (recordingIndex < Math.Min(3, recordings.Count))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var availability = await fallback.ResolveRecordingAsync(execution, recordings[recordingIndex++], quality);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!availability.IsSuccess) continue;
+                var match = availability.RequireValue();
+                availabilityReason = match.Reason ?? availabilityReason;
+                if (match.TrackId is not { } id || id.ProviderId != providerId || triedTracks.Contains(id.Value)) continue;
+                selectionMode = "availability-corpus";
+                corpusSize = recordings.Count;
+                return id.Value;
+            }
+            return null;
+        }
+
         progress.Stage = "track-selection";
         if (automatic)
         {
@@ -238,45 +280,16 @@ public sealed class ProviderCtsDiagnosticRunner(
                 selectionMode = "rotating-corpus";
                 corpusSize = automaticTrack.CorpusSize;
             }
-            else
-            {
-                if (streaming is IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true } fallback)
-                {
-                    var recordings = await trackSelector.SelectRecordingSamplesAsync(cancellationToken,
-                        actor.Kind == ProviderActorKind.Administrator ? actor.UserId : null);
-                    string? reason = null;
-                    foreach (var recording in recordings.Take(3))
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        var availability = await fallback.ResolveRecordingAsync(execution, recording, quality);
-                        cancellationToken.ThrowIfCancellationRequested();
-                        if (!availability.IsSuccess) continue;
-                        var match = availability.RequireValue();
-                        reason = match.Reason ?? reason;
-                        if (match.TrackId is not { } id || id.ProviderId != providerId) continue;
-                        trackId = id.Value;
-                        break;
-                    }
-                    if (trackId == null)
-                        return ProviderCtsDiagnosticResult.Failure(
-                            StatusCodes.Status409Conflict, providerId, providerAccountId, "track-selection",
-                            recordings.Count == 0
-                                ? "No verified catalog recordings with supported provider identities and song metadata are available to test."
-                                : $"The provider could not resolve any of the sampled catalog recordings through availability{(reason == null ? "." : $": {reason}.")}");
-                    selectionMode = "availability-corpus";
-                    corpusSize = recordings.Count;
-                }
-                else
-                {
-                    trackId = await samples.MoveNextAsync() ? samples.Current : null;
-                    selectionMode = "search";
-                }
-            }
+            else trackId = await NextSampleAsync();
             if (trackId == null)
             {
+                var error = recordings == null
+                    ? $"{descriptor.DisplayName} has no song to test with. None of its songs appear in your playlists yet, and its search returned no results."
+                    : recordings.Count == 0
+                        ? "No verified catalog recordings with supported provider identities and song metadata are available to test."
+                        : $"The provider could not resolve any of the sampled catalog recordings through availability{(availabilityReason == null ? "." : $": {availabilityReason}.")}";
                 return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status409Conflict, providerId, providerAccountId, "track-selection",
-                    $"{providers.GetRequired(providerId).DisplayName} has no song to test with. None of its songs appear in your playlists yet, and its search returned no results.");
+                    StatusCodes.Status409Conflict, providerId, providerAccountId, "track-selection", error);
             }
         }
         else trackId = trackId!.Trim();
@@ -293,20 +306,11 @@ public sealed class ProviderCtsDiagnosticRunner(
                 leaseOutcome = await streaming.GetStreamLeaseAsync(execution,
                     new ProviderStreamLeaseRequest(new(providerId, ProviderResourceKind.Track, trackId!), quality, 0));
                 cancellationToken.ThrowIfCancellationRequested();
-                if (leaseOutcome.IsSuccess || !automatic || selectionMode == "availability-corpus" || leaseOutcome.Error!.Kind is not
+                if (leaseOutcome.IsSuccess || !automatic || leaseOutcome.Error!.Kind is not
                     (ProviderErrorKind.NotFound or ProviderErrorKind.IncompatibleMedia)) break;
-                progress.Stage = "track-selection";
-                string? nextTrack = null;
-                while (await samples.MoveNextAsync())
-                {
-                    if (triedTracks.Contains(samples.Current)) continue;
-                    nextTrack = samples.Current;
-                    break;
-                }
+                var nextTrack = await NextSampleAsync();
                 if (nextTrack == null) break;
                 trackId = nextTrack;
-                selectionMode = "search";
-                corpusSize = null;
             }
             var preparationMilliseconds = (total.Elapsed - preparationStartedAt).TotalMilliseconds;
             var resolveMilliseconds = preparationMilliseconds;

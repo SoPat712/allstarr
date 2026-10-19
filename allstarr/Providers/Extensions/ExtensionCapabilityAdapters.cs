@@ -78,21 +78,29 @@ public abstract class ExtensionCapabilityAdapterBase
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         { return Failure<T>(ProviderErrorKind.Canceled); }
         catch (Exception exception) when (hook == "download")
-        { return ProviderOutcome<T>.Failure(DownloadFailure(exception)); }
+        {
+            _sandbox.LogDownloadFailure(exception);
+            return ProviderOutcome<T>.Failure(DownloadFailure(exception));
+        }
         catch { return Failure<T>(ProviderErrorKind.TransientFailure); }
     }
 
     private static ProviderError DownloadFailure(Exception exception)
     {
         var message = exception.Message;
-        if (exception is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } ||
-            Regex.IsMatch(message, @"\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*5\d{2}\b|\bservice[ _-]+unavailable\b|\bbad[ _-]+gateway\b",
+        if (exception is TimeoutException or OperationCanceledException ||
+            exception is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } ||
+            Regex.IsMatch(message, @"\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*5\d{2}\b|\bservice[ _-]+unavailable\b|\bbad[ _-]+gateway\b|\b(?:timeout|timed[ _-]+out)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return ProviderError.ServiceUnavailable();
         if (exception is HttpRequestException { StatusCode: HttpStatusCode.NotFound or HttpStatusCode.Gone } ||
-            Regex.IsMatch(message, @"\btrack[ _-]+(?:not[ _-]+found|unavailable)\b|\bnot[ _-]+found\b|\bhttp\s*[:=]?\s*(?:404|410)\b",
+            Regex.IsMatch(message, @"\btrack[ _-]+(?:not[ _-]+found|unavailable)\b|\bnot[ _-]+found\b|\bhttp\s*[:=]?\s*(?:404|410)\b|\bno[ _-]+longer[ _-]+playable\b|\b(?:track|song)\b.*\bremoved\b|\b(?:geo|region)(?:graphically)?[ _-]*(?:blocked|restricted)\b|\b(?:not[ _-]+available|unavailable|blocked|restricted)\b.*\b(?:region|country|territory)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return new(ProviderErrorKind.NotFound);
+        if (Regex.IsMatch(message,
+                @"\b(?:preview|snippet)\b|\b(?:not|does[ _-]+not)\b.*\bfull[ _-]+playable[ _-]+stream\b|\bduration\b.*\b(?:mismatch|does[ _-]+not[ _-]+match)\b|\bencrypted\b.*\bstreams?\b|\bunsupported[ _-]+stream\b|\bstreams?\b.*\bnot[ _-]+supported\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return new(ProviderErrorKind.IncompatibleMedia);
         return new(ProviderErrorKind.TransientFailure);
     }
 
@@ -287,8 +295,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         ProviderId = manifest.Id;
         SupportsRecordingAvailability = manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker &&
             sandbox.HasSpotiFlacHook("checkAvailability") &&
-            manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Download && item.Hooks.Contains("checkAvailability")) &&
-            !manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Metadata && item.Hooks.Contains("searchTracks"));
+            manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Download && item.Hooks.Contains("checkAvailability"));
     }
 
     public string ProviderId { get; }

@@ -890,9 +890,11 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task DownloadOnlyMetadata_ResolvesForeignRecordingAndStreamsReturnedId(bool available)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task DownloadOnlyMetadata_ResolvesForeignRecordingAndStreamsReturnedId(bool available, bool searches)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-recording-availability", Guid.NewGuid().ToString("N"));
         try
@@ -903,7 +905,7 @@ public sealed class ExtensionCapabilityAdapterTests
                 """;
             var script = $$$"""
                 var calls = 0;
-                registerExtension({getTrack:function(){throw new Error('foreign id lookup');},
+                registerExtension({{{{(searches ? "customSearch:function(){return [];}," : "")}}}getTrack:function(){throw new Error('foreign id lookup');},
                   checkAvailability:function(isrc,title,artist,options){
                     calls++;
                     if (isrc !== 'USABC1234567' || title !== 'Song' || artist !== 'Artist' ||
@@ -1501,6 +1503,112 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
+    [InlineData("preview")]
+    [InlineData("error")]
+    [InlineData("empty")]
+    public async Task DownloadStreaming_DiagnosticFindsPlayableSampleAfterSearchOrTrackFailure(string search)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-preview-samples", Guid.NewGuid().ToString("N"));
+        try
+        {
+            const string source = """
+                {"name":"fixture","version":"1.0.0","type":["metadata_provider","download_provider"],
+                 "permissions":{"network":["media.example.test"]}}
+                """;
+            var script = """
+                var downloads = [];
+                registerExtension({customSearch:function(){SEARCH_BODY},
+                  checkAvailability:function(isrc,title,artist,options){
+                    if (title !== 'Song' || artist !== 'Artist' || options.deezer_id !== 'source-track')
+                      throw new Error('missing recording metadata');
+                    return {available:true,track_id:'full'};
+                  },
+                  download:function(id,quality,path){
+                    downloads.push(id);
+                    if (id === 'preview') return {success:false,error_type:'download_error',
+                      error_message:'This track does not offer a full playable stream'};
+                    if (downloads.join(',') !== 'EXPECTED_DOWNLOADS') throw new Error('unexpected samples');
+                    return file.download('https://media.example.test/audio',path,{});
+                  }});
+                """.Replace("SEARCH_BODY", search switch
+            {
+                "error" => "throw new Error('showSearch HTTP 500');",
+                "empty" => "return [];",
+                _ => "return [{id:'preview',name:'Preview',artists:'Artist'},{id:'full',name:'Song',artists:'Artist'}];"
+            }, StringComparison.Ordinal).Replace("EXPECTED_DOWNLOADS", search == "preview" ? "preview,full" : "full", StringComparison.Ordinal);
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var sandbox = new ExtensionSandbox(root, normalized, script,
+                new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+            var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
+            var streaming = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null,
+                new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options), options);
+            var metadata = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+            var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(manifest.Id, "Fixture", "Test provider",
+                ProviderOrigin.Extension, "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None, "1", ["getStreamLease"], []),
+                    new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
+                        ProviderAccountRequirement.None, "1", ["searchTracks"], [])], new ProviderPermissionDescriptor(), entryPoint: "index.js"), [streaming, metadata])]);
+            await using var database = await SqliteTestDatabase.CreateAsync();
+            var actor = Context(manifest.Id).Actor;
+            if (search != "preview")
+            {
+                await using var db = new AllstarrDbContext(database.Options);
+                var user = actor.EffectiveUserId!.Value;
+                var recording = Guid.CreateVersion7();
+                var identity = Guid.CreateVersion7();
+                db.Users.Add(new UserRecord { Id = user, BackendType = "fixture", BackendInstanceId = "fixture", BackendPrincipalId = user.ToString() });
+                db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = recording, CreatedByUserId = user, Title = "Song", Revision = 1 });
+                db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+                {
+                    Id = identity,
+                    CanonicalRecordingId = recording,
+                    ProviderId = "deezer",
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = "source-track",
+                    ExternalIdHash = new string('a', 64),
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1,
+                    VerifiedAt = DateTimeOffset.UtcNow,
+                    Revision = 1
+                });
+                db.ExternalMetadataSnapshots.Add(new ExternalMetadataSnapshotRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = user,
+                    ProviderTrackIdentityId = identity,
+                    ProviderId = "deezer",
+                    ResourceKind = "track",
+                    ExternalIdHash = new string('a', 64),
+                    SnapshotVersion = 1,
+                    PayloadSha256 = new string('a', 64),
+                    RetrievedAt = DateTimeOffset.UtcNow,
+                    PayloadJson = """{"Title":"Song","Artist":"Artist"}"""
+                });
+                await db.SaveChangesAsync();
+            }
+            var factory = new Mock<IDbContextFactory<AllstarrDbContext>>();
+            factory.Setup(item => item.CreateDbContextAsync(It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => new AllstarrDbContext(database.Options));
+            using var selector = new ProviderCtsTrackSelector(factory.Object);
+            var runner = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+                selector, Mock.Of<IProviderOutcomeObserver>());
+
+            var result = await runner.MeasureAsync(actor, manifest.Id, null, ProviderAudioQuality.Any, "preview-samples");
+
+            Assert.True(result.Succeeded, result.Error);
+            Assert.Equal(4, result.SampleBytes);
+            Assert.Equal(search == "preview" ? "search" : "availability-corpus", result.SelectionMode);
+            Assert.DoesNotContain("full playable stream", JsonSerializer.Serialize(result), StringComparison.Ordinal);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
     [InlineData("HTTP 503 private-provider-detail", "service_unavailable")]
     [InlineData("HTTP 500", "service_unavailable")]
     [InlineData("HTTP 502 Bad Gateway", "service_unavailable")]
@@ -1508,6 +1616,21 @@ public sealed class ExtensionCapabilityAdapterTests
     [InlineData("Bad gateway", "service_unavailable")]
     [InlineData("Track not found", "not-found")]
     [InlineData("Track unavailable", "not-found")]
+    [InlineData("This SoundCloud track does not offer a full playable stream", "incompatible-media")]
+    [InlineData("Track not found: 123", "not-found")]
+    [InlineData("SoundCloud track is no longer playable", "not-found")]
+    [InlineData("Track has been removed", "not-found")]
+    [InlineData("Track is geo-blocked", "not-found")]
+    [InlineData("Track is not available in your region", "not-found")]
+    [InlineData("Preview-only track", "incompatible-media")]
+    [InlineData("Only a snippet is available", "incompatible-media")]
+    [InlineData("Preview asset returned", "incompatible-media")]
+    [InlineData("SoundCloud stream duration does not match the full track", "incompatible-media")]
+    [InlineData("Stream duration mismatch", "incompatible-media")]
+    [InlineData("Encrypted SoundCloud streams are not supported", "incompatible-media")]
+    [InlineData("Unsupported stream format", "incompatible-media")]
+    [InlineData("HTTP 503 fetching preview asset", "service_unavailable")]
+    [InlineData("Timeout fetching preview asset", "service_unavailable")]
     [InlineData("unknown private-provider-detail", "transient-failure")]
     public async Task DownloadStreaming_ClassifiesReportedFailuresWithoutReturningProviderText(string message, string code)
     {
@@ -1517,11 +1640,12 @@ public sealed class ExtensionCapabilityAdapterTests
             const string source = """
                 {"name":"failure","displayName":"Failure","version":"1.0.0","type":["download_provider"],"permissions":{}}
                 """;
-            var script = "registerExtension({download:function(){return {success:false,error_message:" + JsonSerializer.Serialize(message) + "};}});";
+            var script = "registerExtension({download:function(){return {success:false,error_type:'api_error',error_message:" + JsonSerializer.Serialize(message) + "};}});";
             var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
             var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var logger = new Mock<Microsoft.Extensions.Logging.ILogger>();
             var sandbox = new ExtensionSandbox(root, normalized, script,
-                new HttpClientFactory(new BytesHandler([])), NullLogger.Instance, runtimeStateDirectory: Path.Combine(root, "runtime"));
+                new HttpClientFactory(new BytesHandler([])), logger.Object, runtimeStateDirectory: Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
             var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
@@ -1530,6 +1654,8 @@ public sealed class ExtensionCapabilityAdapterTests
 
             Assert.False(result.IsSuccess);
             Assert.Equal(code, result.Error!.Code);
+            Assert.Contains(logger.Invocations, invocation => invocation.Arguments.OfType<Exception>()
+                .Any(exception => exception.Message.Contains(message, StringComparison.Ordinal)));
             Assert.DoesNotContain("private-provider-detail", JsonSerializer.Serialize(result), StringComparison.Ordinal);
             Assert.Empty(Directory.GetDirectories(options.RootPath));
         }

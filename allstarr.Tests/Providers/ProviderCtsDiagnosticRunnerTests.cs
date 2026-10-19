@@ -528,6 +528,60 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         observer.VerifyAll();
     }
 
+    [Theory]
+    [InlineData(ProviderAccountRequirement.None)]
+    [InlineData(ProviderAccountRequirement.Optional)]
+    [InlineData(ProviderAccountRequirement.Required)]
+    public async Task Measure_SignedOutProviderReportsSignInBeforeSelectingTracks(ProviderAccountRequirement requirement)
+    {
+        var registry = AccountFreeRegistry("fixture", Mock.Of<IProviderStreamingCapability>(MockBehavior.Strict),
+            Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        registry.Setup(item => item.GetRequired("fixture"))
+            .Returns(Descriptor("fixture", requirement) with { UsesSignedSession = true });
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderRouteAccountResolution?)null);
+        using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, accounts.Object, selector, Mock.Of<IProviderOutcomeObserver>());
+
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "signed-out");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal("account-resolution", result.Stage);
+        Assert.Equal("sign_in_needed", result.ReasonCode);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Measure_ChecksResolvedSignedSessionBeforeStreaming(bool signedIn)
+    {
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.IncompatibleMedia)));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        registry.Setup(item => item.GetRequired("fixture"))
+            .Returns(Descriptor("fixture", ProviderAccountRequirement.Required) with { UsesSignedSession = true });
+        var actor = Actor();
+        var account = new ProviderAccountContext(Guid.CreateVersion7(), "fixture", ProviderAccountScope.Personal, 1, ownerUserId: actor.EffectiveUserId);
+        var accounts = new Mock<IProviderRouteAccountResolver>(MockBehavior.Strict);
+        accounts.Setup(item => item.ResolveAsync(It.IsAny<ProviderRouteAccountRequest>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ProviderRouteAccountResolution(account, 1));
+        var sessions = new Mock<IProviderCheckSessions>(MockBehavior.Strict);
+        sessions.Setup(item => item.IsSignedInAsync("fixture", account.AccountId, It.IsAny<CancellationToken>())).ReturnsAsync(signedIn);
+        using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, accounts.Object, selector, Mock.Of<IProviderOutcomeObserver>(), sessions: sessions.Object);
+
+        var result = await runner.MeasureAsync(actor, "fixture", account.AccountId, ProviderAudioQuality.Any, "session-check", "track");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(signedIn ? "resolve" : "account-resolution", result.Stage);
+        Assert.Equal(signedIn ? "IncompatibleMedia" : "sign_in_needed", result.ReasonCode);
+        streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()),
+            Times.Exactly(signedIn ? 1 : 0));
+        sessions.VerifyAll();
+    }
+
     [Fact]
     public async Task Measure_ExplainsWhenTheProviderHasNoSongToTest()
     {
@@ -585,10 +639,14 @@ public sealed class ProviderCtsDiagnosticRunnerTests
     }
 
     [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, false)]
-    [InlineData(false, true)]
-    public async Task Measure_DownloadFallbackTriesCatalogSamplesWithoutSearching(bool available, bool timeout)
+    [InlineData(true, false, "none")]
+    [InlineData(false, false, "none")]
+    [InlineData(false, true, "none")]
+    [InlineData(true, false, "error")]
+    [InlineData(true, false, "empty")]
+    [InlineData(true, false, "track-failures")]
+    [InlineData(true, false, "catalog-track-failures")]
+    public async Task Measure_DownloadFallbackTriesCatalogSamplesWhenSearchCannotSupplyPlayableTracks(bool available, bool timeout, string search)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var now = DateTimeOffset.UtcNow;
@@ -647,14 +705,33 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 entered.TrySetResult();
                 if (timeout) return release.Task;
                 return Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(
-                    available && calls == 2 ? new("fixture", ProviderResourceKind.Track, "resolved") : null, "not_found_on_pandora")));
+                    available && calls == 2 ? new("fixture", ProviderResourceKind.Track, "resolved") :
+                        search == "catalog-track-failures" && calls == 1 ? new("fixture", ProviderResourceKind.Track, "catalog-preview") : null,
+                    "not_found_on_pandora")));
             });
         streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
                 It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "resolved")))
             .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/audio"),
                 now.AddMinutes(5), false, false, new("audio/mpeg", "mp3", "mp3"), ProviderStreamRetryBehavior.DoNotRetry,
                 (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3, 4]) }))));
-        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "catalog-preview")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.IncompatibleMedia)));
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(() => search == "error"
+                ? ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(ProviderError.ServiceUnavailable())
+                : ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture", search == "track-failures"
+                    ? [new(new("fixture", ProviderResourceKind.Track, "preview"), "Song", [new("Artist")])] : [])));
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "preview")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.IncompatibleMedia)));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, metadata.Object);
+        if (search == "none")
+        {
+            IProviderMetadataCapability? absent = null;
+            registry.Setup(item => item.TryGetCapability<IProviderMetadataCapability>("fixture", ProviderCapabilityKind.Metadata, out absent)).Returns(false);
+        }
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
             selector, Mock.Of<IProviderOutcomeObserver>(), timeProvider: clock);
@@ -676,6 +753,12 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         }
         var result = await pending;
         Assert.Equal(available, result.Succeeded);
+        metadata.Verify(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()),
+            Times.Exactly(search == "none" ? 0 : 3));
+        streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+            It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "preview")), Times.Exactly(search == "track-failures" ? 1 : 0));
+        streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+            It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "catalog-preview")), Times.Exactly(search == "catalog-track-failures" ? 1 : 0));
         Assert.Equal(available ? 2 : 3, calls);
         if (available) Assert.Equal("availability-corpus", result.SelectionMode);
         else
