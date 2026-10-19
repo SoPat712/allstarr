@@ -196,7 +196,7 @@ public sealed class QobuzDownloadCapabilityAdapter : IProviderDownloadCapability
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Metadata,
                     ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.Optional,
+                    ProviderAccountRequirement.Required,
                     compatibilityVersion: "1",
                     hooks:
                     [

@@ -1117,6 +1117,7 @@ public class AdminUiController : ControllerBase
             LogoUrl = "/images/providers/qobuz.webp",
             Status = ProviderStatus("qobuz", string.IsNullOrWhiteSpace(_qobuzSettings.UserAuthToken) ? "needs_config" : "configured", disabledProviders),
             Categories = ["metadata", "download", "streaming", "playlist"],
+            Notes = ["A Qobuz account is required for metadata search and playback."],
             ConfigSchema =
             [
                 Field("QOBUZ_MIN_REQUEST_INTERVAL_MS", "Minimum request interval", "number", "qobuz.minRequestIntervalMs", min: 0)
@@ -1309,6 +1310,14 @@ public class AdminUiController : ControllerBase
             {
                 provider.RuntimeCapabilities = statuses.Select(ToAdminRuntimeCapability).ToList();
                 provider.Status = AggregateProviderStatus(statuses);
+            }
+            else if (_providerRegistry?.TryGet(provider.Id, out var descriptor) == true &&
+                     descriptor!.Origin == ProviderOrigin.BuiltIn &&
+                     descriptor.Capabilities.Any(capability => capability.HasUsableImplementation) &&
+                     descriptor.Capabilities.Where(capability => capability.HasUsableImplementation)
+                         .All(capability => capability.AccountRequirement == ProviderAccountRequirement.Required))
+            {
+                provider.Status = "needs_config";
             }
             if (disabledProviders?.Contains(provider.Id) == true)
                 provider.Status = "disabled";
