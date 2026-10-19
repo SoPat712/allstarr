@@ -110,6 +110,10 @@ builder.Services.AddPlatformOperations(builder.Configuration);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<ProviderCtsTrackSelector>();
 builder.Services.AddSingleton<ProviderCtsDiagnosticRunner>();
+builder.Services.AddSingleton<ProviderDiagnosticExecutionFactory>();
+builder.Services.AddSingleton<ProviderTryOperations>();
+builder.Services.AddSingleton<ProviderTryMediaStore>();
+builder.Services.AddSingleton<ProviderTryService>();
 builder.Services.AddHostedService<AuditEventRetentionService>();
 
 // Trust forwarded headers only from proxies or networks named in deployment config.
@@ -545,6 +549,8 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+app.Services.GetRequiredService<ProviderTryMediaStore>();
+app.Services.GetRequiredService<ProviderDownloadArtifactResolver>().DeleteAbandonedTryWorkspaces();
 
 CacheExtensions.InitializeCacheSettings(app.Services);
 

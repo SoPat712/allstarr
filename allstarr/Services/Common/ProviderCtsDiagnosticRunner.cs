@@ -113,123 +113,21 @@ public sealed class ProviderCtsDiagnosticRunner(
                 "capability",
                 "The selected provider does not expose streaming diagnostics.");
         }
-        var descriptor = providers.GetRequired(providerId);
-        var capabilityDescriptor = descriptor.Capabilities.Single(item =>
-            item.Capability == ProviderCapabilityKind.Streaming);
-        if (providerAccountId == Guid.Empty)
-            providerAccountId = null;
-        // Optional accounts unlock extras; playback without one is still a valid check.
-        if (capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.Required &&
-            !providerAccountId.HasValue)
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status400BadRequest,
-                providerId,
-                null,
-                "account-resolution",
-                descriptor.UsesSignedSession ? "sign_in_needed" : "The selected provider streaming capability requires an account.");
-        }
-        if (capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.None &&
-            providerAccountId.HasValue)
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status400BadRequest,
-                providerId,
-                providerAccountId,
-                "account-resolution",
-                "The selected provider streaming capability does not use an account.");
-        }
-
         using var probeLease = await Concurrency.TryEnterAsync(cancellationToken);
         if (probeLease == null)
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status429TooManyRequests,
-                providerId,
-                providerAccountId,
-                "concurrency",
-                "Two click-to-stream diagnostics are already running. Retry after one completes.",
-                retryAfterSeconds: 5);
-        }
-
+            return ProviderCtsDiagnosticResult.Failure(429, providerId, providerAccountId,
+                "concurrency", "busy", retryAfterSeconds: 5);
+        var descriptor = providers.GetRequired(providerId);
         var total = Stopwatch.StartNew();
-        ProviderRouteAccountResolution? resolved = null;
         progress.Stage = "account-resolution";
-        try
-        {
-            if (capabilityDescriptor.AccountRequirement != ProviderAccountRequirement.None)
-            {
-                resolved = await accounts.ResolveAsync(new ProviderRouteAccountRequest(
-                    actor,
-                    providerId,
-                    ProviderCapabilityKind.Streaming,
-                    providerAccountId,
-                    null,
-                    AllowManagedDiagnosticAccount: actor.Kind == ProviderActorKind.Administrator &&
-                        providerAccountId.HasValue), cancellationToken);
-            }
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status403Forbidden,
-                providerId,
-                providerAccountId,
-                "account-resolution",
-                "The selected provider account is not authorized.");
-        }
-
-        if (descriptor.UsesSignedSession &&
-            (resolved == null || sessions == null || !await sessions.IsSignedInAsync(providerId, resolved.Account.AccountId, cancellationToken)))
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status409Conflict, providerId, providerAccountId, "account-resolution", "sign_in_needed");
-        }
-
-        if ((capabilityDescriptor.AccountRequirement == ProviderAccountRequirement.Required && resolved == null) ||
-            (providerAccountId.HasValue && resolved?.Account.AccountId != providerAccountId))
-        {
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status404NotFound,
-                providerId,
-                providerAccountId,
-                "account-resolution",
-                "The selected provider account is unavailable.");
-        }
-        providerAccountId = resolved?.Account.AccountId;
+        var prepared = await new ProviderDiagnosticExecutionFactory(providers, accounts, sessions).CreateAsync(
+            actor, providerId, ProviderCapabilityKind.Streaming, providerAccountId, correlationId, expiresAt, cancellationToken);
+        if (prepared.Context == null)
+            return ProviderCtsDiagnosticResult.Failure(prepared.StatusCode, providerId, providerAccountId,
+                "account-resolution", prepared.ReasonCode!);
+        var execution = prepared.Context;
+        providerAccountId = execution.Account?.AccountId;
         var routeMilliseconds = total.Elapsed.TotalMilliseconds;
-
-        var executionActor = actor;
-        if (actor.Kind == ProviderActorKind.Administrator &&
-            resolved != null &&
-            resolved.Account.Scope == ProviderAccountScope.Personal &&
-            resolved.Account.OwnerUserId.HasValue &&
-            resolved.Account.OwnerUserId.Value != actor.EffectiveUserId)
-        {
-            executionActor = new ProviderActorContext(
-                actor.Kind,
-                actor.UserId,
-                actor.BackendPrincipal,
-                actor.DurableJobId,
-                resolved.Account.OwnerUserId.Value);
-        }
-
-        var policy = new ProviderExecutionPolicy(
-            new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
-            ProviderExplicitContentPolicy.Allow,
-            allowFallback: false,
-            allowSharedAccount: true,
-            allowManagedDownloads: true,
-            [providerId]);
-        var execution = new ProviderExecutionContext(
-            executionActor,
-            providerId,
-            resolved?.Account,
-            policy,
-            "provider-click-to-stream-diagnostic",
-            ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100),
-            expiresAt,
-            cancellationToken);
 
         progress.Execution = execution;
         var selectionMode = "manual";
@@ -432,7 +330,7 @@ public sealed class ProviderCtsDiagnosticRunner(
             var totalMilliseconds = total.Elapsed.TotalMilliseconds;
             health.Observe(execution, ProviderCapabilityKind.Streaming, null,
                 TimeSpan.FromMilliseconds(firstByteMilliseconds.Value));
-            return ProviderCtsDiagnosticResult.Success(
+            var success = ProviderCtsDiagnosticResult.Success(
                 providerId,
                 providerAccountId,
                 selectionMode,
@@ -461,6 +359,8 @@ public sealed class ProviderCtsDiagnosticRunner(
                 lease.QualityDowngradeReason,
                 DateTimeOffset.UtcNow,
                 sampleRequest.Headers.Range?.ToString());
+            success.SelectedTrackId = trackId;
+            return success;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -584,6 +484,9 @@ public sealed class ProviderCtsDiagnosticResult
 {
     [JsonIgnore]
     public int StatusCode { get; init; }
+
+    [JsonIgnore]
+    public string? SelectedTrackId { get; internal set; }
 
     public bool Succeeded { get; init; }
     public string ProviderId { get; init; } = string.Empty;

@@ -520,6 +520,95 @@ export type ConnectivityResult = {
   sampleBytes?: number;
 };
 
+export type ProviderTryCapability = "metadata" | "lyrics" | "playlist" | "streaming" | "download" | "scrobbling";
+export type ProviderTryInput = "query" | "kind" | "id" | "isrc" | "url" | "title" | "artist" | "album" | "durationSeconds" | "trackId" | "quality";
+export type ProviderTrySearchKind = "tracks" | "albums" | "artists";
+
+export type ProviderTryCatalog = {
+  provider: string;
+  capabilities: {
+    capability: ProviderTryCapability;
+    accountRequirement: "none" | "optional" | "required";
+    operations: { id: string; inputs: ProviderTryInput[]; kinds?: ProviderTrySearchKind[] }[];
+  }[];
+};
+
+export type ProviderTryRequest = {
+  capability: ProviderTryCapability;
+  operation: string;
+  accountId?: string | null;
+  query?: string;
+  kind?: ProviderTrySearchKind;
+  id?: string;
+  isrc?: string;
+  url?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  durationSeconds?: number;
+  trackId?: string;
+  quality?: "any" | "lossy" | "lossless" | "high-resolution";
+};
+
+export type ProviderTryTrack = {
+  id: string;
+  title: string;
+  artists: string[];
+  album: string | null;
+  durationSeconds: number | null;
+  isrc: string | null;
+  explicit: boolean | null;
+  artworkUrl: string | null;
+  year: number | null;
+};
+
+export type ProviderTryPlaylist = {
+  id: string;
+  title: string;
+  owner: string | null;
+  trackCount: number | null;
+  artworkUrl: string | null;
+};
+
+export type ProviderTryResult = {
+  provider: string;
+  capability: ProviderTryCapability;
+  operation: string;
+  accountId: string | null;
+  succeeded: boolean;
+  elapsedMs: number;
+  reasonCode: string | null;
+  message: string | null;
+  tracks?: ProviderTryTrack[];
+  albums?: { id: string; title: string; artists: string[]; year: number | null; trackCount: number | null; artworkUrl: string | null }[];
+  artists?: { id: string; name: string; artworkUrl: string | null }[];
+  playlist?: ProviderTryPlaylist;
+  playlists?: ProviderTryPlaylist[];
+  lyrics?: {
+    format: "word" | "line" | "plain";
+    source: string | null;
+    language: string | null;
+    lineCount: number;
+    lines: { startMs: number | null; text: string }[];
+  };
+  media?: {
+    kind: "stream" | "download";
+    url: string;
+    expiresAt: string;
+    fileName: string | null;
+    sizeBytes: number | null;
+    contentType: string;
+    codec: string | null;
+    sampleRateHz: number | null;
+    bitDepth: number | null;
+    bitrateKbps: number | null;
+    durationSeconds: number | null;
+    quality: string | null;
+    seekMode: string | null;
+    startMs: number | null;
+  };
+};
+
 export type CtsMeasurement = {
   providerAccountId?: string | null;
   providerId: string;
@@ -1558,6 +1647,23 @@ export const sources = {
       `/api/admin/providers/test/${encodeURIComponent(account.providerId)}${capability ? `/${encodeURIComponent(capability)}` : ""}?accountId=${encodeURIComponent(account.id)}`,
       { method: "POST" },
     ),
+  testWithoutAccount: (providerId: string, capability: string) =>
+    json<ConnectivityResult>(
+      `/api/admin/providers/test/${encodeURIComponent(providerId)}/${encodeURIComponent(capability)}`,
+      { method: "POST" },
+    ),
+  tryOperations: (providerId: string, accountId?: string | null, signal?: AbortSignal) =>
+    json<ProviderTryCatalog>(
+      `/api/admin/providers/${encodeURIComponent(providerId)}/try${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ""}`,
+      { signal },
+    ),
+  try: (providerId: string, body: ProviderTryRequest, signal?: AbortSignal) =>
+    json<ProviderTryResult>(`/api/admin/providers/${encodeURIComponent(providerId)}/try`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    }),
   deepStream: (providerId: string, providerAccountId?: string | null, quality = 0) =>
     json<ConnectivityResult & {
       clickToStreamMilliseconds?: number;

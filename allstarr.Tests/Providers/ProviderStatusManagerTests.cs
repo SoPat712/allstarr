@@ -255,12 +255,19 @@ public sealed class ProviderStatusManagerTests
             manager.GetAccountFreeStatus("apple-musickit", ProviderCapabilities.Metadata).Health);
     }
 
-    [Fact]
-    public async Task ActiveExtensionCapabilitiesReceiveReadinessChecks()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ActiveExtensionCapabilitiesReceiveReadinessChecks(bool succeeds)
     {
         var implementation = new Mock<IProviderMetadataCapability>();
         implementation.SetupGet(item => item.ProviderId).Returns("fixture-extension");
         implementation.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        implementation.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Daft Punk Get Lucky")))
+            .ReturnsAsync(succeeds ? ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture-extension",
+                [new(new("fixture-extension", ProviderResourceKind.Track, "track"), "Get Lucky", [new("Daft Punk")])])) :
+                ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.TransientFailure)));
         var registry = new ProviderRegistry([new ProviderRegistration(new ProviderDescriptor(
             "fixture-extension", "Fixture", "Fixture extension", ProviderOrigin.Extension, "1", "1.0",
             [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
@@ -274,7 +281,9 @@ public sealed class ProviderStatusManagerTests
 
         Assert.True(manager.CanTestCapability("fixture-extension", "metadata"));
         Assert.False(before.IsReady);
-        Assert.True(after.IsReady);
+        Assert.Equal(succeeds, after.IsReady);
+        Assert.Equal(succeeds ? ProviderHealthState.Healthy : ProviderHealthState.Degraded, after.Health);
+        implementation.VerifyAll();
     }
 
     [Fact]
@@ -833,8 +842,10 @@ public sealed class ProviderStatusManagerTests
             appleDownloadDiscovery: appleDownloadDiscovery,
             services: services ?? (providerRegistry == null
                 ? null
-                : Mock.Of<IServiceProvider>(provider =>
-                    provider.GetService(typeof(IProviderRegistry)) == providerRegistry)),
+                : new ServiceCollection().AddSingleton(providerRegistry)
+                    .AddSingleton(Mock.Of<allstarr.Core.Routing.IProviderRouteAccountResolver>())
+                    .AddSingleton<ProviderDiagnosticExecutionFactory>().AddSingleton<ProviderTryOperations>()
+                    .BuildServiceProvider()),
             clock: clock);
     }
 

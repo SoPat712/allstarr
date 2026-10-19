@@ -51,7 +51,10 @@ public sealed class ProviderDownloadArtifactEntity
 }
 
 public sealed record ProviderDownloadWorkspaceRequest(Guid? OwnerUserId, Guid DurableJobId,
-    string ProviderId, Guid? ProviderAccountId, string IdempotencyKey);
+    string ProviderId, Guid? ProviderAccountId, string IdempotencyKey)
+{
+    public long? MaximumBytes { get; init; }
+}
 
 public sealed record ProviderDownloadWorkspace(Guid RecordId, ProviderManagedWorkspaceReference Reference);
 
