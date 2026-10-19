@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using allstarr.Core.Storage;
 using allstarr.Core.Providers.AppleMusicKit;
 using System.Collections.Concurrent;
 using System.Net;
@@ -406,7 +408,7 @@ public class ProviderStatusManager
                 key.Provider,
                 key.Capability,
                 accountSecrets,
-                cancellationToken);
+                cancellationToken, providerAccountId);
             if (key.Provider == "apple-musickit")
             {
                 baseline = BuildBaselineStatus(key);
@@ -664,6 +666,22 @@ public class ProviderStatusManager
             };
     }
 
+    public void RecordTryResult(string provider, string capability, Guid? accountId, long? revision,
+        bool succeeded, long elapsedMilliseconds, string? reasonCode)
+    {
+        var key = accountId.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, accountId.Value) :
+            ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
+        _health.Record(key, revision, succeeded, elapsedMilliseconds, reasonCode);
+        if (_recordedChecks.ContainsKey(key))
+            RestoreCheckResult(key, revision, BuildBaselineStatus(key) with
+            {
+                Health = succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                TestedAt = _clock.UtcNow,
+                LatencyMilliseconds = elapsedMilliseconds,
+                ReasonCode = reasonCode
+            });
+    }
+
     private bool IsCapabilitySupported(string provider, string capability)
     {
         if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
@@ -706,12 +724,37 @@ public class ProviderStatusManager
         string provider,
         string capability,
         IReadOnlyDictionary<string, string>? accountSecrets,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Guid? providerAccountId = null)
     {
         if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
-            return new ProbeOutcome(
-                extensionCapability!.HasUsableImplementation,
-                MeasuresLatency: false);
+        {
+            if (!extensionCapability!.HasUsableImplementation) return new(false, "probe_not_available");
+            var factory = _services?.GetService<ProviderDiagnosticExecutionFactory>();
+            var operations = _services?.GetService<ProviderTryOperations>();
+            if (factory == null || operations == null) return new(false, "probe_not_available");
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+            var actor = new ProviderActorContext(ProviderActorKind.SystemJob, null, durableJobId: Guid.NewGuid());
+            if (providerAccountId.HasValue)
+            {
+                var database = _services?.GetService<IDbContextFactory<AllstarrDbContext>>();
+                if (database == null) return new(false, "administrator_required");
+                await using var db = await database.CreateDbContextAsync(linked.Token);
+                var administrator = await db.Users.AsNoTracking().Where(item => item.Enabled && item.IsAdmin)
+                    .OrderBy(item => item.Id).FirstOrDefaultAsync(linked.Token);
+                if (administrator == null) return new(false, "administrator_required");
+                actor = new(ProviderActorKind.Administrator, administrator.Id,
+                    new ProviderBackendPrincipal(administrator.BackendType, administrator.BackendInstanceId, administrator.BackendPrincipalId));
+            }
+            var kind = extensionCapability.Capability;
+            var prepared = await factory.CreateAsync(actor, provider, kind, providerAccountId,
+                Guid.NewGuid().ToString("N"), DateTimeOffset.UtcNow.AddSeconds(30), linked.Token);
+            if (prepared.Context == null) return new(false, prepared.ReasonCode);
+            var outcome = await operations.ProbeAsync(prepared.Context, ProviderRegistry!.GetRequired(provider), kind);
+            cancellationToken.ThrowIfCancellationRequested();
+            return linked.IsCancellationRequested ? new(false, "timeout") : new(outcome.Succeeded, outcome.ReasonCode);
+        }
         return (provider, capability) switch
         {
             ("spotify", ProviderCapabilities.Playlist) => await TestSpotifyPlaylistAsync(

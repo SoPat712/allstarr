@@ -31,6 +31,7 @@
   import AccountAccessDialog from "$lib/components/AccountAccessDialog.svelte";
   import AppleDownloadDialog from "$lib/components/AppleDownloadDialog.svelte";
   import ConnectSourceDialog from "$lib/components/ConnectSourceDialog.svelte";
+  import ProviderTryDialog from "$lib/components/ProviderTryDialog.svelte";
   import ConnectivityBars from "$lib/components/ConnectivityBars.svelte";
   import ProviderArtwork from "$lib/components/ProviderArtwork.svelte";
   import PlaylistConsent from "$lib/components/PlaylistConsent.svelte";
@@ -103,6 +104,15 @@
   let connectOpen = $state(false);
   let connectProviderId = $state("");
   let appleDownloadOpen = $state(false);
+  let tryOpen = $state(false);
+  let tryTarget = $state<{ provider: ProviderDefinition; account: ProviderAccount | null; capability: string } | null>(null);
+  const tryable = new Set(["metadata", "lyrics", "playlist", "streaming", "download", "scrobbling"]);
+
+  function openTry(providerDefinition: ProviderDefinition | undefined, account: ProviderAccount | null, capability: string) {
+    if (!providerDefinition) return;
+    tryTarget = { provider: providerDefinition, account, capability };
+    tryOpen = true;
+  }
 
   function goToSignIn() {
     const panel = document.querySelector<HTMLElement>(".extension-session");
@@ -386,6 +396,24 @@
     }
   }
 
+  async function testWithoutAccount(source: ProviderDefinition, capability: string) {
+    const key = `${source.id}:${capability}`;
+    if (action) return;
+    action = key;
+    try {
+      const pending = toast.progress(`Testing ${source.name} ${humanize(capability)}…${capability === "streaming" ? " Playback checks can take a few minutes." : ""}`);
+      const result = await sources.testWithoutAccount(source.id, capability).finally(() => toast.dismiss(pending));
+      testResults = { ...testResults, [key]: result };
+      const passed = result.healthy ?? result.success ?? false;
+      toast.show(`${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage(result)}` : ""}`, passed ? "success" : "error");
+      await refresh();
+    } catch (cause) {
+      toast.error(diagnosticError(cause));
+    } finally {
+      action = "";
+    }
+  }
+
   async function measure(account: ProviderAccount) {
     const key = `${account.id}:cts`;
     if (action) return;
@@ -504,13 +532,18 @@
       </ul>
 {/snippet}
 
-{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "")}
+{#snippet checkRow(label: string, check: Omit<SourceCheck, "id">, result?: ConnectivityResult, onTest?: () => void, canTest = false, testKey = "", onTry?: () => void)}
   {@const guide = check.ready ? null : checkGuide(check.reasonCode)}
   <li class="service-check">
     <span class="service-check-name">{label}</span>
     <span class="service-check-status"><Badge state={checkStatusState(check)}>{checkStatusLabel(check)}</Badge>{#if guide}<small>{guide.step}</small>{#if guide.signIn}<button type="button" class="text-button" onclick={goToSignIn}>Go to sign-in</button>{/if}{/if}{#if check.reasonCode === "apple-download-sign-in-required"}{#if administrator}<button type="button" class="text-button" onclick={() => appleDownloadOpen = true}>Open step 2: Apple Music sign-in</button>{:else}<a href="#/integrations/services/apple-musickit">See step 2: Apple Music sign-in</a>{/if}{/if}</span>
     {#if result?.bars != null}<ConnectivityBars bars={result.healthy ?? result.success ? result.bars : 0} latency={result.latencyMs} />{:else}<span></span>{/if}
-    {#if canTest && onTest}<Button variant="secondary" size="sm" disabled={Boolean(action)} onclick={onTest}>{action && action === testKey ? "Testing…" : "Test"}</Button>{/if}
+    {#if (canTest && onTest) || onTry}
+      <span class="service-check-actions">
+        {#if canTest && onTest}<Button variant="secondary" size="sm" class={onTry ? "rounded-e-none" : ""} disabled={Boolean(action)} onclick={onTest}>{action && action === testKey ? "Testing…" : "Test"}</Button>{/if}
+        {#if onTry}<Button variant="secondary" size="sm" class={canTest && onTest ? "rounded-s-none px-1.5" : ""} aria-label={`Try ${label}`} title={`Try ${label}`} onclick={onTry}>{#if canTest && onTest}<ChevronRight aria-hidden="true" />{:else}Try<ChevronRight aria-hidden="true" />{/if}</Button>{/if}
+      </span>
+    {:else}<span></span>{/if}
   </li>
 {/snippet}
 
@@ -634,7 +667,7 @@
               {#if capabilities.length}
                 <ul class="service-checks" aria-label={`Checks for ${account.displayName}`}>
                   {#each capabilities as capability}
-                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled, `${account.id}:${capability.capability}`)}
+                    {@render checkRow(checkName(capability.capability), capability, testResults[`${account.id}:${capability.capability}`], () => void test(account, capability.capability), administrator && capability.canTest && account.canManage && account.enabled, `${account.id}:${capability.capability}`, administrator && account.canManage && account.enabled && tryable.has(capability.capability.toLowerCase()) ? () => openTry(source, account, capability.capability) : undefined)}
                   {/each}
                 </ul>
               {/if}
@@ -658,7 +691,9 @@
           <header><div><h3 id="service-checks-title">Checks</h3><small>What this service can do right now.</small></div></header>
           <ul class="service-checks">
             {#each groupSourceChecks(source.runtimeCapabilities ?? []) as group}
-              {@render checkRow(group.label, group.checks[0])}
+              {@const check = group.checks[0]}
+              {@const single = group.checks.length === 1}
+              {@render checkRow(group.label, check, testResults[`${source.id}:${check.id}`], () => void testWithoutAccount(source, check.id), administrator && single && Boolean(check.canTest), `${source.id}:${check.id}`, administrator && single && tryable.has(check.id.toLowerCase()) ? () => openTry(source, null, check.id) : undefined)}
             {/each}
           </ul>
           {#if (source.runtimeCapabilities ?? []).some((item) => item.reasonCode === "apple-download-gateway-update-required")}
@@ -806,6 +841,7 @@
 
   <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />
+  {#if tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} />{/if}
   <AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />
   {#if administrator}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/if}
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />
@@ -818,3 +854,23 @@
     onConfirm={remove}
   />
 {/if}
+
+<style>
+  @layer components {
+    :global {
+      .service-check-actions {
+        display: inline-flex;
+        align-items: center;
+      }
+
+      .service-check-actions > :last-child:not(:only-child) {
+        border-inline-start-color: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 22%, transparent);
+      }
+
+      .service-check-actions > [data-slot="button"] {
+        min-width: var(--control-md);
+        min-height: var(--control-md);
+      }
+    }
+  }
+</style>

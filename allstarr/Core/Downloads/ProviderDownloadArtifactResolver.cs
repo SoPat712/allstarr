@@ -7,6 +7,7 @@ namespace allstarr.Core.Downloads;
 public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactStore store, ProviderDownloadWorkspaceOptions options)
 {
     private readonly ConcurrentDictionary<string, ProviderDownloadWorkspaceRequest> transientWorkspaces = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> transientWriteGates = new(StringComparer.Ordinal);
 
     public ProviderTransientDownloadWorkspace CreateTransientWorkspace(ProviderDownloadWorkspaceRequest request)
     {
@@ -14,22 +15,39 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
             throw new ArgumentException("Download workspace lineage is incomplete.", nameof(request));
 
-        var workspaceId = $"transient-{Guid.NewGuid():N}";
+        if (request.MaximumBytes is <= 0) throw new ArgumentOutOfRangeException(nameof(request));
+        var diagnostic = request.IdempotencyKey.StartsWith("provider-try-", StringComparison.Ordinal);
+        var workspaceId = $"{(diagnostic ? "try-transient" : "transient")}-{Guid.NewGuid():N}";
         if (!transientWorkspaces.TryAdd(workspaceId, request))
             throw new InvalidOperationException("Could not reserve a transient provider workspace.");
+        if (request.MaximumBytes.HasValue) transientWriteGates.TryAdd(workspaceId, new(1, 1));
         var directory = Contained(WorkspaceRoot(), workspaceId);
         try
         {
             Directory.CreateDirectory(directory);
             RejectSymlink(directory);
+            if (diagnostic && !OperatingSystem.IsWindows())
+                File.SetUnixFileMode(directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             return new(new ProviderManagedWorkspaceReference(workspaceId), request.DurableJobId);
         }
         catch
         {
             transientWorkspaces.TryRemove(workspaceId, out _);
+            transientWriteGates.TryRemove(workspaceId, out _);
             throw;
         }
     }
+    public void DeleteAbandonedTryWorkspaces()
+    {
+        var root = WorkspaceRoot();
+        if (!Directory.Exists(root)) return;
+        foreach (var directory in Directory.EnumerateDirectories(root, "try-transient-*"))
+        {
+            RejectSymlink(directory);
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
     public async Task<ProviderDownloadWorkspace> CreateWorkspaceAsync(ProviderDownloadWorkspaceRequest request, CancellationToken cancellationToken = default)
     {
         if (request.OwnerUserId == Guid.Empty || request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) || string.IsNullOrWhiteSpace(request.IdempotencyKey))
@@ -79,65 +97,82 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ArgumentNullException.ThrowIfNull(request.Produce);
-        if (request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) ||
-            request.MaximumBytes < 1 || request.ExpectedBytes is < 0)
-            throw new ArgumentException("Download artifact write constraints are invalid.", nameof(request));
-        if (request.ExpectedBytes > request.MaximumBytes)
-            throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
-
-        var providerId = request.ProviderId.Trim().ToLowerInvariant();
-        var persistedWorkspace = await store.GetWorkspaceAsync(request.Workspace.WorkspaceId, cancellationToken);
-        var transientWorkspace = persistedWorkspace == null &&
-                                 transientWorkspaces.TryGetValue(request.Workspace.WorkspaceId, out var transient)
-            ? transient
-            : null;
-        if (persistedWorkspace == null && transientWorkspace == null)
-            throw new InvalidOperationException("The provider download workspace is not registered.");
-        if ((persistedWorkspace?.DurableJobId ?? transientWorkspace!.DurableJobId) != request.DurableJobId ||
-            !(persistedWorkspace?.ProviderId ?? transientWorkspace!.ProviderId)
-                .Equals(providerId, StringComparison.OrdinalIgnoreCase))
-            throw new UnauthorizedAccessException("The provider download does not belong to this workspace.");
-
-        var relative = NormalizeArtifactReference(request.ArtifactId);
-        var workspaceRoot = Contained(WorkspaceRoot(), request.Workspace.WorkspaceId);
-        RejectSymlink(workspaceRoot);
-        var destination = Contained(workspaceRoot, relative);
-        var parent = Path.GetDirectoryName(destination)!;
-        Directory.CreateDirectory(parent);
-        RejectPathSymlinks(workspaceRoot, parent);
-
-        if (File.Exists(destination))
-            return await DescribeExistingAsync(relative, destination, request.MaximumBytes, cancellationToken);
-
-        var partial = destination + ".partial-" + Guid.NewGuid().ToString("N");
+        transientWriteGates.TryGetValue(request.Workspace.WorkspaceId, out var writeGate);
+        if (writeGate != null) await writeGate.WaitAsync(cancellationToken);
         try
         {
-            long written;
-            string hash;
-            await using (var output = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None,
-                             128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
-            using (var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+            ArgumentNullException.ThrowIfNull(request.Produce);
+            if (request.DurableJobId == Guid.Empty || string.IsNullOrWhiteSpace(request.ProviderId) ||
+                request.MaximumBytes < 1 || request.ExpectedBytes is < 0)
+                throw new ArgumentException("Download artifact write constraints are invalid.", nameof(request));
+            if (request.ExpectedBytes > request.MaximumBytes)
+                throw new InvalidDataException("The provider download exceeds the managed artifact size limit.");
+
+            var providerId = request.ProviderId.Trim().ToLowerInvariant();
+            var persistedWorkspace = await store.GetWorkspaceAsync(request.Workspace.WorkspaceId, cancellationToken);
+            var transientWorkspace = persistedWorkspace == null &&
+                                     transientWorkspaces.TryGetValue(request.Workspace.WorkspaceId, out var transient)
+                ? transient
+                : null;
+            if (persistedWorkspace == null && transientWorkspace == null)
+                throw new InvalidOperationException("The provider download workspace is not registered.");
+            if ((persistedWorkspace?.DurableJobId ?? transientWorkspace!.DurableJobId) != request.DurableJobId ||
+                !(persistedWorkspace?.ProviderId ?? transientWorkspace!.ProviderId)
+                    .Equals(providerId, StringComparison.OrdinalIgnoreCase))
+                throw new UnauthorizedAccessException("The provider download does not belong to this workspace.");
+
+            var maximumBytes = Math.Min(request.MaximumBytes, transientWorkspace?.MaximumBytes ?? request.MaximumBytes);
+            if (request.ExpectedBytes > maximumBytes)
+                throw new InvalidDataException("The provider download exceeds the temporary storage limit.");
+            var relative = NormalizeArtifactReference(request.ArtifactId);
+            var workspaceRoot = Contained(WorkspaceRoot(), request.Workspace.WorkspaceId);
+            RejectSymlink(workspaceRoot);
+            var destination = Contained(workspaceRoot, relative);
+            var parent = Path.GetDirectoryName(destination)!;
+            Directory.CreateDirectory(parent);
+            RejectPathSymlinks(workspaceRoot, parent);
+
+            if (File.Exists(destination))
+                return await DescribeExistingAsync(relative, destination, maximumBytes, cancellationToken);
+
+            if (transientWorkspace?.MaximumBytes is { } workspaceLimit)
             {
-                await using var bounded = new BoundedHashingWriteStream(
-                    output, hasher, request.MaximumBytes, request.ExpectedBytes, request.Progress);
-                await request.Produce(bounded, cancellationToken);
-                written = bounded.BytesWritten;
-                if (written < 1)
-                    throw new InvalidDataException("The provider returned an empty download artifact.");
-                if (request.ExpectedBytes.HasValue && written != request.ExpectedBytes.Value)
-                    throw new InvalidDataException("The provider download length does not match its response contract.");
-                await bounded.FlushAsync(cancellationToken);
-                hash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+                var usedBytes = Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories)
+                    .Sum(path => new FileInfo(path).Length);
+                maximumBytes = Math.Min(maximumBytes, workspaceLimit - usedBytes);
+                if (maximumBytes <= 0 || request.ExpectedBytes > maximumBytes)
+                    throw new InvalidDataException("The provider download exceeds the temporary storage limit.");
             }
-            File.Move(partial, destination, overwrite: false);
-            return new(relative, hash, written);
+            var partial = destination + ".partial-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                long written;
+                string hash;
+                await using (var output = new FileStream(partial, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                                 128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan))
+                using (var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256))
+                {
+                    await using var bounded = new BoundedHashingWriteStream(
+                        output, hasher, maximumBytes, request.ExpectedBytes, request.Progress);
+                    await request.Produce(bounded, cancellationToken);
+                    written = bounded.BytesWritten;
+                    if (written < 1)
+                        throw new InvalidDataException("The provider returned an empty download artifact.");
+                    if (request.ExpectedBytes.HasValue && written != request.ExpectedBytes.Value)
+                        throw new InvalidDataException("The provider download length does not match its response contract.");
+                    await bounded.FlushAsync(cancellationToken);
+                    hash = Convert.ToHexString(hasher.GetHashAndReset()).ToLowerInvariant();
+                }
+                File.Move(partial, destination, overwrite: false);
+                return new(relative, hash, written);
+            }
+            catch
+            {
+                if (File.Exists(partial)) File.Delete(partial);
+                throw;
+            }
         }
-        catch
-        {
-            if (File.Exists(partial)) File.Delete(partial);
-            throw;
-        }
+        finally { writeGate?.Release(); }
     }
 
     public async Task<VerifiedProviderDownloadArtifact> ResolveAsync(ProviderManagedWorkspaceReference workspace,
@@ -218,8 +253,10 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
 
     public void DeleteTransientWorkspace(ProviderTransientDownloadWorkspace workspace)
     {
-        if (!transientWorkspaces.TryRemove(workspace.Reference.WorkspaceId, out _)) return;
+        if (!transientWorkspaces.ContainsKey(workspace.Reference.WorkspaceId)) return;
         DeleteWorkspaceDirectory(workspace.Reference.WorkspaceId);
+        transientWorkspaces.TryRemove(workspace.Reference.WorkspaceId, out _);
+        transientWriteGates.TryRemove(workspace.Reference.WorkspaceId, out _);
     }
 
     private void DeleteWorkspaceDirectory(string workspaceId)

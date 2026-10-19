@@ -7128,3 +7128,103 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
   await card.getByRole("button", { name: "Save and restart" }).click();
   await expect.poll(() => writes[2]?.ODESLI_API_KEY).toBe("");
 });
+
+const tryCatalog = {
+  provider: "lumen-audio",
+  capabilities: [
+    { capability: "metadata", accountRequirement: "required", operations: [
+      { id: "search", inputs: ["query", "kind"], kinds: ["tracks", "albums", "artists"] },
+      { id: "track", inputs: ["id"] }, { id: "isrc", inputs: ["isrc"] },
+    ] },
+    { capability: "lyrics", accountRequirement: "required", operations: [{ id: "lyrics", inputs: ["title", "artist", "album", "durationSeconds", "isrc", "trackId"] }] },
+    { capability: "streaming", accountRequirement: "required", operations: [{ id: "stream", inputs: ["trackId", "quality"] }] },
+    { capability: "download", accountRequirement: "required", operations: [{ id: "download", inputs: ["trackId", "quality"] }] },
+  ],
+};
+
+const tryTracks = [
+  { id: "lumen-71230", title: "Get Lucky (feat. Pharrell Williams and Nile Rodgers)", artists: ["Daft Punk", "Pharrell Williams", "Nile Rodgers"], album: "Random Access Memories", durationSeconds: 369, isrc: "USQX91300108", explicit: false, artworkUrl: null, year: 2013 },
+  { id: "lumen-71231", title: "Get Lucky (Radio Edit)", artists: ["Daft Punk"], album: "Get Lucky", durationSeconds: 248, isrc: "USQX91300105", explicit: true, artworkUrl: null, year: 2013 },
+];
+
+async function mockTry(page: Page, requests: Record<string, unknown>[] = []) {
+  await page.route("**/api/admin/providers/lumen-audio/try**", async (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: tryCatalog });
+    const body = route.request().postDataJSON() as Record<string, unknown>;
+    requests.push(body);
+    const base = { provider: "lumen-audio", capability: body.capability, operation: body.operation, accountId: body.accountId ?? null, succeeded: true, elapsedMs: 840, reasonCode: null, message: null };
+    if (body.operation === "search") return route.fulfill({ json: { ...base, tracks: body.query === "nothing" ? [] : tryTracks } });
+    if (body.operation === "lyrics") return route.fulfill({ json: { ...base, elapsedMs: 1320, lyrics: { format: "word", source: "Lumen Audio", language: "en", lineCount: 3, lines: [
+      { startMs: 31405, text: "Like the legend of the phoenix" }, { startMs: 33728, text: "All ends with beginnings" }, { startMs: 37200, text: "What keeps the planet spinning" },
+    ] } } });
+    if (body.operation === "stream") return route.fulfill({ json: { ...base, elapsedMs: 1450, media: { kind: "stream", url: "/api/admin/providers/try/media/stream-ticket", expiresAt: "2026-10-19T20:00:00Z", fileName: null, sizeBytes: null, contentType: "audio/flac", codec: "flac", sampleRateHz: 44100, bitDepth: 16, bitrateKbps: null, durationSeconds: 369, quality: "lossless", seekMode: "byte-range", startMs: 1180 } } });
+    if (body.operation === "download") return route.fulfill({ json: { ...base, elapsedMs: 9400, media: { kind: "download", url: "/api/admin/providers/try/media/download-ticket", expiresAt: "2026-10-19T20:00:00Z", fileName: "Daft Punk - Get Lucky.flac", sizeBytes: 46_137_344, contentType: "audio/flac", codec: "flac", sampleRateHz: 96000, bitDepth: 24, bitrateKbps: null, durationSeconds: 369, quality: "high-resolution", seekMode: null, startMs: null } } });
+    return route.fulfill({ status: 404, json: { error: "Unknown operation" } });
+  });
+  await page.route("**/api/admin/providers/try/media/**", (route) => route.fulfill({ status: 204 }));
+}
+
+test("Try panel searches one source and sends a result to lyrics, playback and download", async ({ page }) => {
+  await mockApi(page);
+  const requests: Record<string, unknown>[] = [];
+  await mockTry(page, requests);
+  await page.goto("#/integrations/accounts");
+  await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+  const row = page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" });
+  await expect(row.getByRole("button", { name: "Test", exact: true })).toBeVisible();
+  await row.getByRole("button", { name: "Try Metadata" }).click();
+
+  const dialog = page.getByRole("dialog", { name: "Try Lumen Audio" });
+  await expect(dialog).toContainText("Uses Lumen account.");
+  await expect(dialog.getByRole("tab", { name: "Search" })).toHaveAttribute("aria-selected", "true");
+  await dialog.getByRole("searchbox", { name: "Search" }).fill("get lucky");
+  await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  await expect(dialog.getByRole("status")).toContainText("2 songs found in 840 ms");
+  await expect(dialog.getByRole("list", { name: "Results" }).getByRole("listitem")).toHaveCount(2);
+  expect(requests.at(-1)).toMatchObject({ capability: "metadata", operation: "search", query: "get lucky", kind: "tracks", accountId: "account" });
+
+  await dialog.getByRole("button", { name: "Get lyrics for Get Lucky (feat. Pharrell Williams and Nile Rodgers)" }).click();
+  await expect(dialog.getByRole("tab", { name: "Lyrics" })).toHaveAttribute("aria-selected", "true");
+  await expect(dialog.getByLabel("Title")).toHaveValue("Get Lucky (feat. Pharrell Williams and Nile Rodgers)");
+  await expect(dialog.getByText("Word-timed")).toBeVisible();
+  await expect(dialog.locator(".try-lyric-lines time").first()).toHaveText("0:31.40");
+  expect(requests.at(-1)).toMatchObject({ capability: "lyrics", trackId: "lumen-71230", isrc: "USQX91300108", durationSeconds: 369 });
+
+  await dialog.getByRole("tab", { name: "Search" }).click();
+  await dialog.getByRole("button", { name: "Play Get Lucky (Radio Edit)" }).click();
+  await expect(dialog.getByRole("tab", { name: "Playback" })).toHaveAttribute("aria-selected", "true");
+  await expect(dialog.locator("audio")).toHaveAttribute("src", /try\/media\/stream-ticket$/);
+  await expect(dialog.locator(".try-media-facts")).toContainText("Byte Range");
+  expect(requests.at(-1)).toMatchObject({ capability: "streaming", operation: "stream", trackId: "lumen-71231", quality: "lossless" });
+
+  await dialog.getByRole("tab", { name: "Download" }).click();
+  await dialog.getByLabel("Song").fill("get lucky");
+  await dialog.getByRole("button", { name: "Find" }).click();
+  await dialog.getByRole("button", { name: "Download Get Lucky (feat. Pharrell Williams and Nile Rodgers)" }).click();
+  await expect(dialog.getByRole("link", { name: "Save file" })).toHaveAttribute("href", /download-ticket\?download=1$/);
+  await expect(dialog.locator(".try-media-facts")).toContainText("24-bit / 96 kHz");
+  await expect(dialog.locator(".try-media-facts")).toContainText("44.0 MB");
+});
+
+test("Sources without an account can be tested and tried", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/ui/schema", (route) => route.fulfill({ json: {
+    ...schema, providers: [...schema.providers, { id: "lrclib", name: "LRCLIB", categories: ["lyrics"], runtimeCapabilities: [
+      { id: "lyrics", supported: true, health: "healthy", ready: true, canAttempt: true, canTest: true, configuration: "not-required" },
+    ] }],
+  } }));
+  let tested = 0;
+  await page.route("**/api/admin/providers/test/lrclib/lyrics", (route) => { tested++; return route.fulfill({ json: { success: true, healthy: true, latencyMs: 120, bars: 4 } }); });
+  await page.route("**/api/admin/providers/lrclib/try**", (route) => route.fulfill({ json: { provider: "lrclib", capabilities: [
+    { capability: "lyrics", accountRequirement: "none", operations: [{ id: "lyrics", inputs: ["title", "artist"] }] },
+  ] } }));
+  await page.goto("#/integrations/services/lrclib");
+  const row = page.locator(".service-check").filter({ hasText: "Lyrics" });
+  await row.getByRole("button", { name: "Test", exact: true }).click();
+  await expect.poll(() => tested).toBe(1);
+  await row.getByRole("button", { name: "Try Lyrics" }).click();
+  const dialog = page.getByRole("dialog", { name: "Try LRCLIB" });
+  await expect(dialog).toContainText("Runs on LRCLIB only");
+  await expect(dialog.getByRole("tablist")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Get lyrics" })).toBeDisabled();
+});
