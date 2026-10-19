@@ -10,6 +10,9 @@ public partial class ExtensionHostBridge
 {
     public long ResolutionRemainingMs() => ExtensionInvocationBudget.Current?.RemainingMilliseconds ?? 12_000;
 
+    public bool IsRequestCancelled() => ExtensionInvocationBudget.Current?.Token.IsCancellationRequested == true ||
+        ExtensionArtifactInvocationScope.Current?.CancellationToken.IsCancellationRequested == true;
+
     // Adapted from SpotiFLAC-Mobile (MIT), rust_backend/crates/core/src/matching.rs.
     private static string Lowercase(string value)
     {

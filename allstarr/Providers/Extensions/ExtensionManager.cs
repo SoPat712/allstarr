@@ -1825,6 +1825,7 @@ public partial class ExtensionHostBridge
                 return new
                 {
                     ok = false,
+                    status = 503,
                     statusCode = 503,
                     statusText = "Temporarily unavailable",
                     url = safeUri.AbsoluteUri,
@@ -1840,18 +1841,7 @@ public partial class ExtensionHostBridge
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
             client.Timeout = _networkRequestTimeout ?? TimeSpan.FromSeconds(15);
 
-            var request = new HttpRequestMessage(new HttpMethod(normalizedMethod), safeUri);
-
-            if (body != null)
-            {
-                request.Content = new StringContent(ResolveSecretMarkers(body), Encoding.UTF8, "application/json");
-            }
-
-            AddHeaders(request, headersObj);
-            if (!request.Headers.Contains("User-Agent"))
-                request.Headers.TryAddWithoutValidation("User-Agent", "Spotiflac-Extension/1.0");
-
-            using var response = client.SendAsync(request, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
+            using var response = SendHttpRequest(client, normalizedMethod, safeUri, body, headersObj);
             if (response.RequestMessage?.RequestUri is { } finalUri &&
                 !IsNetworkAllowed(finalUri))
                 throw new UnauthorizedAccessException("Extension redirect left its approved origin.");
@@ -1880,11 +1870,12 @@ public partial class ExtensionHostBridge
 
             var respHeaders = response.Headers.Concat(response.Content.Headers)
                 .GroupBy(header => header.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key, group => (object)string.Join(", ", group.SelectMany(item => item.Value)), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(group => group.Key.ToLowerInvariant(), group => (object)string.Join(", ", group.SelectMany(item => item.Value)), StringComparer.OrdinalIgnoreCase);
 
             return new
             {
                 ok = response.IsSuccessStatusCode,
+                status = (int)response.StatusCode,
                 statusCode = (int)response.StatusCode,
                 statusText = response.ReasonPhrase ?? string.Empty,
                 url = response.RequestMessage?.RequestUri?.AbsoluteUri ?? safeUri.AbsoluteUri,
@@ -1898,10 +1889,47 @@ public partial class ExtensionHostBridge
             return new
             {
                 ok = false,
-                statusCode = 500,
+                status = 0,
+                statusCode = 0,
                 body = "",
                 error = ex is UnauthorizedAccessException ? "permission_denied" : "extension_request_failed"
             };
+        }
+    }
+
+    // Behaviour matches SpotiFLAC-Module-Version (MIT).
+    private HttpResponseMessage SendHttpRequest(HttpClient client, string method, Uri uri, string? body, object? headers)
+    {
+        for (var redirects = 0; ; redirects++)
+        {
+            if (!OutboundRequestGuard.TryCreateSafeHttpUri(uri.AbsoluteUri, out _, out _) ||
+                uri.Scheme != Uri.UriSchemeHttps || !IsNetworkAllowed(uri))
+                throw new UnauthorizedAccessException("Extension redirect origin is not approved.");
+            using var request = new HttpRequestMessage(new HttpMethod(method), uri);
+            if (body != null)
+                request.Content = new StringContent(ResolveSecretMarkers(body), Encoding.UTF8, "application/json");
+            AddHeaders(request, headers);
+            if (!request.Headers.Contains("User-Agent"))
+                request.Headers.TryAddWithoutValidation("User-Agent", "Spotiflac-Extension/1.0");
+            var response = client.SendAsync(request, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
+            if (response.Headers.Location is not { } location ||
+                (int)response.StatusCode is not (301 or 302 or 303 or 307 or 308)) return response;
+            using (response)
+            {
+                if (redirects >= 5) throw new HttpRequestException("Too many redirects.");
+                var next = new Uri(uri, location);
+                if (!next.GetLeftPart(UriPartial.Authority).Equals(uri.GetLeftPart(UriPartial.Authority), StringComparison.OrdinalIgnoreCase))
+                {
+                    headers = null;
+                    if (body != null) throw new UnauthorizedAccessException("Extension request body cannot be redirected to another origin.");
+                }
+                if ((int)response.StatusCode is not (307 or 308) && method != "HEAD")
+                {
+                    method = "GET";
+                    body = null;
+                }
+                uri = next;
+            }
         }
     }
 
