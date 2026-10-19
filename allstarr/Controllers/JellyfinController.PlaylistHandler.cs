@@ -1,5 +1,6 @@
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
+using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -126,12 +127,11 @@ public partial class JellyfinController
                 var items = tracks.Select(track =>
                 {
                     var item = _responseBuilder.ConvertSongToJellyfinItem(track);
-                    item["ParentId"] = playlistId;
+                    if (new JellyfinItemFields(Request.Query).Includes("ParentId"))
+                        item["ParentId"] = playlistId;
+                    item["PlaylistItemId"] = track.Id;
                     item["AlbumId"] = playlistId;
                     item["AlbumPrimaryImageTag"] = playlistId;
-                    item["ParentLogoItemId"] = playlistId;
-                    item["ParentLogoImageTag"] = playlistId;
-                    item["ParentBackdropItemId"] = playlistId;
                     return item;
                 }).ToList();
 

@@ -1,3 +1,4 @@
+using allstarr.Services.Jellyfin;
 using System.Net;
 using System.Text;
 using System.Text.Json;
@@ -515,7 +516,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            "/Items?ArtistIds=ext-deezer-curator-fixture&IncludeItemTypes=MusicAlbum&api_key=fixture-key");
+            "/Items?ArtistIds=ext-deezer-curator-fixture&IncludeItemTypes=MusicAlbum&Fields=ChildCount&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -1400,9 +1401,11 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream(bool knownRecording)
+    [InlineData(false, "GET", "")]
+    [InlineData(true, "GET", "")]
+    [InlineData(false, "POST", "&Fields=Genres")]
+    [InlineData(true, "POST", "&Fields=Genres")]
+    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream(bool knownRecording, string method, string fields)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetSongAsync(
@@ -1434,8 +1437,9 @@ public sealed partial class ProtocolRouteFixtureTests
             });
         using var client = factory.CreateClient();
 
-        using var response = await client.GetAsync(
-            "/Items/ext-applemusic-song-6768469976/PlaybackInfo?api_key=fixture-key");
+        using var request = new HttpRequestMessage(new HttpMethod(method),
+            "/Items/ext-applemusic-song-6768469976/PlaybackInfo?api_key=fixture-key" + fields);
+        using var response = await client.SendAsync(request);
         var responseBody = await response.Content.ReadAsStringAsync();
         Assert.True(response.StatusCode == HttpStatusCode.OK, responseBody);
         using var document = JsonDocument.Parse(responseBody);
@@ -1445,7 +1449,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(
             knownRecording ? "/Audio/ext-deezer-first/stream?static=true" : "/Audio/ext-applemusic-song-6768469976/stream?static=true",
             source.GetProperty("DirectStreamUrl").GetString());
+        Assert.Equal(
+            knownRecording ? "/Audio/ext-deezer-first/universal?container=flac&audioCodec=flac" : "/Audio/ext-applemusic-song-6768469976/universal?container=flac&audioCodec=flac",
+            source.GetProperty("TranscodingUrl").GetString());
         Assert.False(source.GetProperty("RequiresOpening").GetBoolean());
+        Assert.True(source.GetProperty("SupportsDirectStream").GetBoolean());
         gateway.VerifyAll();
     }
 
@@ -2440,7 +2448,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            fixture.RootElement.GetProperty("requestPath").GetString());
+            fixture.RootElement.GetProperty("requestPath").GetString() + "&Fields=ParentId");
         var rawBody = await response.Content.ReadAsStringAsync();
         Assert.True(
             response.StatusCode == HttpStatusCode.OK,
@@ -3150,10 +3158,10 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var browseResponse = await client.GetAsync(
-            "/Users/user-1/Items?includeItemTypes=Playlist&recursive=true&startIndex=0&limit=200&api_key=fixture-key");
+            "/Users/user-1/Items?includeItemTypes=Playlist&recursive=true&startIndex=0&limit=200&Fields=ChildCount,ProviderIds,CanDelete&api_key=fixture-key");
         using var browse = JsonDocument.Parse(await browseResponse.Content.ReadAsStringAsync());
         using var tracksResponse = await client.GetAsync(
-            $"/Playlists/{nativeId}/Items?fields=SortName%2CCanDelete%2CMediaSources%2CDateCreated%2CCanDelete&userId=user-1&startIndex=0&limit=200&api_key=fixture-key");
+            $"/Playlists/{nativeId}/Items?fields=SortName%2CCanDelete%2CMediaSources%2CDateCreated%2CParentId&userId=user-1&startIndex=0&limit=200&api_key=fixture-key");
         using var playlist = JsonDocument.Parse(await tracksResponse.Content.ReadAsStringAsync());
         using var parentResponse = await client.GetAsync(
             $"/Users/user-1/Items?parentId={nativeId}&includeItemTypes=Audio&startIndex=0&limit=200&api_key=fixture-key");
@@ -3326,7 +3334,7 @@ public sealed partial class ProtocolRouteFixtureTests
 
         using var itemResponse = await client.GetAsync($"/Items/{virtualId}?api_key=fixture-key");
         using var definitionResponse = await client.GetAsync($"/Playlists/{virtualId}?api_key=fixture-key");
-        using var tracksResponse = await client.GetAsync($"/Playlists/{virtualId}/Items?api_key=fixture-key");
+        using var tracksResponse = await client.GetAsync($"/Playlists/{virtualId}/Items?Fields=CanDownload,MediaSources&api_key=fixture-key");
         using var unresolvedFile = await client.GetAsync(
             "/Items/allstarr-unresolved-source-hash/File?api_key=fixture-key");
         using var unresolvedStream = await client.GetAsync(
@@ -4827,6 +4835,15 @@ public sealed partial class ProtocolRouteFixtureTests
             _responder = responder;
             _configureServices = configureServices;
             _configuration = configuration;
+        }
+
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            var host = base.CreateHost(builder);
+            if (_backend == "Jellyfin")
+                host.Services.GetRequiredService<JellyfinProxyService>().RememberServerId(
+                    _configuration?.GetValueOrDefault("Identity:BackendInstanceId") ?? "primary", "fixture-server");
+            return host;
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)

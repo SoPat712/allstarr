@@ -133,8 +133,7 @@ public partial class JellyfinController
         // Preserve a new alias until playback records it; known recordings keep their saved ID.
         if (!song.CanonicalRecordingId.HasValue) song.Id = itemId;
 
-        var item = _responseBuilder.ConvertSongToJellyfinItem(song);
-        item.TryGetValue("MediaSources", out var mediaSources);
+        var mediaSources = _responseBuilder.CreatePlaybackMediaSources(song);
         return new JsonResult(new
         {
             MediaSources = mediaSources ?? Array.Empty<object>(),

@@ -56,8 +56,8 @@ public sealed partial class ProtocolRouteFixtureTests
 
         foreach (var path in new[]
         {
-            $"/Playlists/{nativeId}/Items?StartIndex=0&Limit=50",
-            $"/Users/user-1/Items?ParentId={nativeId}&IncludeItemTypes=Audio"
+            $"/Playlists/{nativeId}/Items?StartIndex=0&Limit=50&Fields=ParentId",
+            $"/Users/user-1/Items?ParentId={nativeId}&IncludeItemTypes=Audio&Fields=ParentId"
         })
         {
             using var response = await client.GetAsync($"{path}&api_key=fixture-key");
@@ -73,7 +73,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var detail = await client.GetAsync($"/Items/{nativeId}?api_key=fixture-key");
         using var detailJson = JsonDocument.Parse(await detail.Content.ReadAsStringAsync());
         Assert.Equal(3, detailJson.RootElement.GetProperty("ChildCount").GetInt32());
-        using var browse = await client.GetAsync("/Users/user-1/Items?IncludeItemTypes=Playlist&api_key=fixture-key");
+        using var browse = await client.GetAsync("/Users/user-1/Items?IncludeItemTypes=Playlist&Fields=ChildCount&api_key=fixture-key");
         using var browseJson = JsonDocument.Parse(await browse.Content.ReadAsStringAsync());
         var summary = Assert.Single(browseJson.RootElement.GetProperty("Items").EnumerateArray());
         Assert.Equal(nativeId, summary.GetProperty("Id").GetString());
