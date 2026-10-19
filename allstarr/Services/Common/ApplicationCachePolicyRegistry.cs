@@ -91,6 +91,7 @@ public static class ApplicationCachePolicyRegistry
                 "odesli:tidal-to-spotify:v2:",
                 "odesli:url-to-spotify:v2:",
                 "odesli:translate:v2:",
+                "cross-links:v1:",
                 "jellyfin:item-type:v1:",
                 "jellyfin:item-type:v2:",
                 "backend:libraries:v1:"))

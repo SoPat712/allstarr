@@ -42,7 +42,7 @@ public interface IProtocolLyricsResolver
 public sealed class ProtocolLyricsResolver(
     IProtocolProviderGateway providers,
     ILogger<ProtocolLyricsResolver> logger,
-    OdesliService? odesli = null,
+    ICrossProviderLinkResolver? crossLinks = null,
     IEffectiveProviderPolicyResolver? effectivePolicies = null,
     IKeptLyricsReader? keptLyrics = null,
     ILibraryIndexService? libraryIndex = null,
@@ -224,9 +224,7 @@ public sealed class ProtocolLyricsResolver(
                 ProviderCapabilityKind.Lyrics,
                 order);
         }
-        var sourceUrl = !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId)
-            ? OdesliService.BuildTrackUrl(sourceProvider, sourceExternalId)
-            : null;
+        IReadOnlyList<CrossProviderLinkCandidate>? resolvedLinks = null;
 
         if (preferredSourceId != null && order.Contains(preferredSourceId, StringComparer.Ordinal))
             order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
@@ -254,9 +252,15 @@ public sealed class ProtocolLyricsResolver(
                     if (providerId is "backend" or "kept") return null;
                     var externalId = ResolveExternalId(
                         providerId, resourceKey, sourceProvider, sourceExternalId, spotifyTrackId ?? song.SpotifyId);
-                    if (externalId == null && sourceUrl != null && odesli != null)
-                        externalId = await odesli.TranslateCachedTrackUrlAsync(
-                            sourceUrl, providerId, protocol.CancellationToken);
+                    if (externalId == null && crossLinks != null && protocol.Actor != null &&
+                        !string.IsNullOrWhiteSpace(sourceProvider) && !string.IsNullOrWhiteSpace(sourceExternalId))
+                    {
+                        resolvedLinks ??= await crossLinks.ResolveAsync(new(resourceKey, sourceProvider, sourceExternalId,
+                                song.Title, string.Join(", ", artists), song.Album, null, (long?)song.Duration * 1000,
+                                song.Isrc, null, null), [], protocol.Actor, protocol.CorrelationId, protocol.CancellationToken);
+                        externalId = resolvedLinks.FirstOrDefault(item => item.Verified &&
+                            OdesliService.NormalizeProviderId(item.ProviderId) == OdesliService.NormalizeProviderId(providerId))?.ExternalId;
+                    }
                     ProviderLyricsResult? result;
                     if (externalId == null)
                     {

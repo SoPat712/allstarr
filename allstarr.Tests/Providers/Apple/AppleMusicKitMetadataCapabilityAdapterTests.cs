@@ -13,6 +13,45 @@ namespace allstarr.Tests;
 public sealed class AppleMusicKitMetadataCapabilityAdapterTests
 {
     [Fact]
+    public async Task Isrc_lookup_uses_authenticated_catalog_song_filter_and_maps_the_recording()
+    {
+        var handler = new AppleMetadataHandler();
+        var secrets = new SecretAccessor(new("music-user-token", "us"));
+        var adapter = AppleProviderTestFactory.Metadata(new HttpClient(handler), secrets);
+
+        var result = await adapter.LookupByIsrcAsync(Context(), new("USABC1234567"));
+
+        Assert.True(result.IsSuccess, result.Error?.ToString());
+        var track = result.RequireValue();
+        Assert.Equal("101", track.Id.Value);
+        Assert.Equal("apple-musickit", track.Id.ProviderId);
+        Assert.Equal("USABC1234567", track.Isrc);
+        Assert.Equal("Library Song", track.Title);
+        Assert.Equal("\"revision-1\"", track.SnapshotVersion);
+        var uri = Assert.Single(handler.RequestUris);
+        Assert.Equal("https://amp-api.music.apple.com", uri.GetLeftPart(UriPartial.Authority));
+        Assert.Equal("/v1/catalog/us/songs?filter[isrc]=USABC1234567", Uri.UnescapeDataString(uri.PathAndQuery));
+        Assert.Equal(HttpMethod.Get, Assert.Single(handler.Methods));
+        Assert.Equal("Bearer " + AppleProviderTestFactory.Bearer, Assert.Single(handler.Authorization));
+        Assert.Equal("", Assert.Single(handler.UserTokens));
+        Assert.Empty(secrets.AccountIds);
+    }
+
+    [Fact]
+    public async Task Isrc_lookup_without_a_catalog_match_returns_not_found()
+    {
+        var handler = new AppleMetadataHandler { EmptyCatalog = true };
+        var adapter = AppleProviderTestFactory.Metadata(
+            new HttpClient(handler), new SecretAccessor(new("music-user-token", "us")));
+
+        var result = await adapter.LookupByIsrcAsync(Context(), new("USABC1234567"));
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(ProviderErrorKind.NotFound, result.Error!.Kind);
+        Assert.Single(handler.Paths);
+    }
+
+    [Fact]
     public async Task Public_catalog_search_and_personal_lookups_map_all_entity_types_and_page_deterministically()
     {
         var handler = new AppleMetadataHandler();
@@ -164,8 +203,11 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
     {
         public HttpStatusCode? Failure { get; set; }
         public bool Malformed { get; set; }
+        public bool EmptyCatalog { get; set; }
         public Uri? FinalOrigin { get; set; }
         public List<string> Paths { get; } = [];
+        public List<Uri> RequestUris { get; } = [];
+        public List<HttpMethod> Methods { get; } = [];
         public List<string> Authorization { get; } = [];
         public List<string> UserTokens { get; } = [];
 
@@ -173,6 +215,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Paths.Add(request.RequestUri!.PathAndQuery);
+            RequestUris.Add(request.RequestUri);
+            Methods.Add(request.Method);
             Authorization.Add(request.Headers.Authorization!.ToString());
             UserTokens.Add(request.Headers.TryGetValues("Cookie", out var cookies) ? cookies.Single().Replace("media-user-token=", "") : "");
 
@@ -181,6 +225,11 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
                 response = Json(failure, new { errors = new[] { new { detail = "private-provider-body" } } });
             else if (Malformed)
                 response = Json(HttpStatusCode.OK, new { results = new { library_songs = new { data = new[] { new { id = "broken" } } } } });
+            else if (request.RequestUri.AbsolutePath.EndsWith("/songs", StringComparison.Ordinal))
+                response = Json(HttpStatusCode.OK, new
+                {
+                    data = EmptyCatalog ? Array.Empty<object>() : new[] { Entity("songs", "101") }
+                });
             else if (request.RequestUri.AbsolutePath.EndsWith("/tracks", StringComparison.Ordinal))
                 response = Json(HttpStatusCode.OK, new { data = new[] { Entity("songs", "i.song") } });
             else if (request.RequestUri.AbsolutePath.EndsWith("/search", StringComparison.Ordinal))

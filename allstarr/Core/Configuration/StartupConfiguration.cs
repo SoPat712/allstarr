@@ -38,6 +38,7 @@ public static class StartupConfiguration
                         configuration[backend + ":" + item.Key[8..]] = item.NormalizedValue;
             }
             await allstarr.Services.Admin.AdminOidcSettingsService.LoadForStartupAsync(scope, configuration, token);
+            await allstarr.Services.Admin.OdesliApiKeySettingsService.LoadForStartupAsync(scope, configuration, token);
             if (saved.ContainsKey("Backend:Type"))
             {
                 if (!saved.TryGetValue("Backend:Url", out var endpoint) ||

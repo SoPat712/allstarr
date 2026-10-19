@@ -7,6 +7,7 @@ namespace allstarr.Services.Common;
 public sealed class OdesliSettings
 {
     public bool Enabled { get; set; }
+    public string? ApiKey { get; set; }
     public int RateLimitMs { get; set; } = 6000;
 }
 
@@ -17,7 +18,7 @@ public sealed class OdesliLookupException(bool retryable, TimeSpan? retryAfter =
     public TimeSpan? RetryAfter { get; } = retryAfter;
 }
 
-/// <summary>Cached, bounded public track links from Odesli/song.link.</summary>
+/// <summary>Cached, bounded optional track links from Odesli/song.link.</summary>
 public class OdesliService(
     IHttpClientFactory httpClientFactory,
     ILogger<OdesliService> logger,
@@ -79,6 +80,8 @@ public class OdesliService(
 
     public async Task<IReadOnlyDictionary<string, string>> GetTrackLinksAsync(string sourceUrl, CancellationToken cancellationToken)
     {
+        var apiKey = settings?.Value.ApiKey;
+        if (settings?.Value.Enabled != true || string.IsNullOrWhiteSpace(apiKey)) return new Dictionary<string, string>();
         if (ParseTrackUrl(sourceUrl) is not { } source) return new Dictionary<string, string>();
         var canonicalUrl = BuildTrackUrl(source.Provider, source.Id)!;
         var key = CacheKeyBuilder.BuildOdesliTranslationKey(canonicalUrl, "aliases-v1");
@@ -98,7 +101,7 @@ public class OdesliService(
                 if (delay > TimeSpan.Zero) await Task.Delay(delay, _timeProvider, cancellationToken);
                 _nextRequestAt = _timeProvider.GetUtcNow().AddMilliseconds(Math.Clamp(settings?.Value.RateLimitMs ?? 6000, 1000, 60000));
                 using var request = new HttpRequestMessage(HttpMethod.Get,
-                    "https://api.song.link/v1-alpha.1/links?url=" + Uri.EscapeDataString(canonicalUrl) + "&userCountry=US");
+                    "https://api.song.link/v1-alpha.1/links?url=" + Uri.EscapeDataString(canonicalUrl) + "&userCountry=US&key=" + Uri.EscapeDataString(apiKey));
                 using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
                 {

@@ -5,7 +5,6 @@ using allstarr.Core.Operations;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Matching;
 
@@ -17,7 +16,7 @@ public sealed class RecordingOdesliEnrichmentQueue(
 {
     public const string JobType = "recording.odesli.enrich";
 
-    // ISRC lookups use the providers already configured, so the job runs whether or not Odesli is enabled.
+    // Queue optional evidence after the saved decision; the resolver applies the current source policy.
     public async Task EnqueueAsync(Guid userId, Guid sourceIdentityId, string correlationId, CancellationToken cancellationToken)
     {
         try
@@ -36,8 +35,8 @@ public sealed class RecordingOdesliEnrichmentQueue(
 }
 
 public sealed class RecordingOdesliEnrichmentJobHandler(
-    IDbContextFactory<AllstarrDbContext> factory, OdesliService odesli, IOptions<OdesliSettings> settings,
-    ITrackIdentityService identities, IProviderRegistry registry, IPlatformClock clock,
+    IDbContextFactory<AllstarrDbContext> factory, ICrossProviderLinkResolver links,
+    ITrackIdentityService identities, IPlatformClock clock,
     DurableJobQueue jobs) : IDurableJobHandler
 {
     public string JobType => RecordingOdesliEnrichmentQueue.JobType;
@@ -77,24 +76,45 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
                 .Where(item => item.RecordingId == source.CanonicalRecordingId && item.Kind == RecordingIdentifierKinds.Isrc)
                 .Select(item => item.Value)
                 .FirstOrDefaultAsync(cancellationToken);
-            var added = isrc == null
-                ? 0
-                : await identities.AddExactAliasesAsync(context, sourceTrack,
-                    await FindByIsrcAsync(actor, source.ProviderId, isrc, execution.Claim.CorrelationId, cancellationToken),
-                    "isrc-lookup", cancellationToken);
-            var url = settings.Value.Enabled ? OdesliService.BuildTrackUrl(source.ProviderId, source.ExternalId) : null;
-            if (url != null)
+            var recording = await db.CanonicalRecordings.AsNoTracking().SingleAsync(
+                item => item.Id == source.CanonicalRecordingId, cancellationToken);
+            var snapshotJson = await db.ExternalMetadataSnapshots.AsNoTracking().Where(item =>
+                    item.ProviderTrackIdentityId == source.Id && item.OwnerUserId == execution.Claim.OwnerUserId)
+                .OrderByDescending(item => item.RetrievedAt).Select(item => item.PayloadJson).FirstOrDefaultAsync(cancellationToken);
+            using var metadata = JsonDocument.Parse(snapshotJson ?? "{}");
+            long? Duration()
             {
-                var links = await odesli.GetTrackLinksAsync(url, cancellationToken);
-                var aliases = registry.Providers.Select(provider =>
-                        links.TryGetValue(OdesliService.NormalizeProviderId(provider.Id), out var id)
-                            ? new ProviderExternalResourceId(provider.Id, ProviderResourceKind.Track, id) : null)
-                    .OfType<ProviderExternalResourceId>().Take(32).ToArray();
-                added += await identities.AddExactAliasesAsync(context, sourceTrack, aliases, "odesli-link", cancellationToken);
+                foreach (var name in new[] { "durationMilliseconds", "DurationMilliseconds", "durationMs", "DurationMs",
+                             "durationSeconds", "DurationSeconds", "duration", "Duration" })
+                    if (metadata.RootElement.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number &&
+                        value.TryGetDouble(out var number) && number > 0 && number < 86400000)
+                        return (long)Math.Round(name.Contains("Milliseconds", StringComparison.OrdinalIgnoreCase) ||
+                            name.EndsWith("Ms", StringComparison.OrdinalIgnoreCase) ? number : number * 1000);
+                return null;
             }
+            string? Text(string lower, string upper) => metadata.RootElement.TryGetProperty(lower, out var value) ||
+                metadata.RootElement.TryGetProperty(upper, out value)
+                    ? value.ValueKind == JsonValueKind.String ? value.GetString() : null : null;
+            var known = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
+                    item.CanonicalRecordingId == source.CanonicalRecordingId &&
+                    item.Verification == ProviderIdentityVerification.Verified && item.VerificationMethod != "automatic-suggestion" &&
+                    item.VerificationMethod != ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod &&
+                    item.VerificationMethod != ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod &&
+                    (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id))
+                .Select(item => new ProviderExternalResourceId(item.ProviderId, ProviderResourceKind.Track, item.ExternalId,
+                    item.CatalogNamespace == "default" ? null : item.CatalogNamespace)).ToArrayAsync(cancellationToken);
+            var evidence = await links.ResolveAsync(new(source.Id.ToString("N"), source.ProviderId, source.ExternalId,
+                    Text("title", "Title") ?? recording.Title, TrackSnapshotMetadata.Artist(metadata.RootElement) ?? "",
+                    Text("album", "Album"), Text("albumArtist", "AlbumArtist"), Duration() ?? recording.DurationMilliseconds, isrc, null, recording.IsExplicit),
+                known, actor, execution.Claim.CorrelationId, cancellationToken);
+            var added = 0;
+            foreach (var group in evidence.Where(item => item.Verified).GroupBy(item => item.Method))
+                added += await identities.AddExactAliasesAsync(context, sourceTrack, group.Select(item => item.Id).Take(32).ToArray(),
+                    group.Key, cancellationToken);
             if (added > 0 || await db.ProviderTrackIdentities.AnyAsync(item =>
                     item.CanonicalRecordingId == source.CanonicalRecordingId &&
-                    (item.VerificationMethod == "odesli-link" || item.VerificationMethod == "isrc-lookup"),
+                    (item.VerificationMethod == "odesli-link" || item.VerificationMethod == "isrc-lookup" ||
+                     item.VerificationMethod == "cross-service-match"),
                     cancellationToken))
             {
                 var snapshots = await db.ExternalMetadataSnapshots.Where(item =>
@@ -122,40 +142,6 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
         {
             return DurableJobCompletion.Retry("cross_links_unavailable", "Cross-provider evidence will retry.");
         }
-    }
-
-    /// <summary>
-    /// The same recording on other account-free providers, found by an exact ISRC match.
-    /// A provider that cannot look up ISRCs, or fails, simply adds nothing.
-    /// </summary>
-    private async Task<IReadOnlyList<ProviderExternalResourceId>> FindByIsrcAsync(
-        ProviderActorContext actor, string sourceProviderId, string isrc, string correlationId,
-        CancellationToken cancellationToken)
-    {
-        var lookups = registry.Providers
-            .Where(provider => provider.Id != sourceProviderId && provider.Capabilities.Any(capability =>
-                capability.Capability == ProviderCapabilityKind.Metadata &&
-                capability.AccountRequirement != ProviderAccountRequirement.Required))
-            .Select(async provider =>
-            {
-                if (!registry.TryGetCapability<IProviderMetadataCapability>(
-                        provider.Id, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null) return null;
-                try
-                {
-                    var outcome = await metadata.LookupByIsrcAsync(
-                        EvidenceContext(actor, provider.Id, null, correlationId, cancellationToken),
-                        new ProviderIsrcLookupRequest(isrc));
-                    return outcome.IsSuccess &&
-                           string.Equals(outcome.RequireValue().Isrc, isrc, StringComparison.OrdinalIgnoreCase)
-                        ? outcome.RequireValue().Id
-                        : null;
-                }
-                catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
-                {
-                    return null;
-                }
-            });
-        return (await Task.WhenAll(lookups)).OfType<ProviderExternalResourceId>().Take(32).ToArray();
     }
 
     private ProviderExecutionContext EvidenceContext(ProviderActorContext actor, string providerId,

@@ -82,6 +82,32 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         await context.SaveChangesAsync();
     }
     [Fact]
+    public async Task Song_link_key_is_saved_with_settings_and_only_its_mask_is_returned()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(true));
+        var result = Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new()
+        {
+            Updates = new() { ["ODESLI_API_KEY"] = "private-song-link", ["ODESLI_ENABLED"] = "true" }
+        }));
+        var response = JsonSerializer.Serialize(result.Value);
+        Assert.DoesNotContain("private-song-link", response, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApiKeyReference", response, StringComparison.Ordinal);
+        using (var config = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetConfig()).Value)))
+        {
+            Assert.Equal("********", config.RootElement.GetProperty("operatorSettings").GetProperty("Odesli:ApiKey").GetString());
+            Assert.DoesNotContain("private-song-link", config.RootElement.GetRawText(), StringComparison.Ordinal);
+            Assert.DoesNotContain("ApiKeyReference", config.RootElement.GetRawText(), StringComparison.Ordinal);
+        }
+        Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new()
+        { Updates = new() { ["ODESLI_API_KEY"] = "" } }));
+        using var cleared = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetConfig()).Value));
+        Assert.Equal("", cleared.RootElement.GetProperty("operatorSettings").GetProperty("Odesli:ApiKey").GetString());
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.NotNull((await db.SecretReferences.SingleAsync()).RevokedAt);
+        Assert.DoesNotContain("private-song-link", JsonSerializer.Serialize(await db.AuditEvents.ToListAsync()), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task OperatorSettingApiPersistsValidatedPolicyAndReportsRestart()
     {
         var controller = CreateController(CreateHttpContextWithSession(true));
@@ -612,6 +638,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             .AddSingleton<IDurableRuntimeSettings>(durableSettings)
             .AddSingleton<IEffectiveProviderPolicyResolver>(effectiveProviderPolicies)
             .AddSingleton(migration)
+            .AddSingleton(new OdesliApiKeySettingsService(_factory, durableSettings, effectiveSecretStore, clock))
             .AddSingleton(effectiveSecretStore);
         if (mounted != null) services.AddSingleton(mounted);
         services.AddSingleton(healthStore ?? new ProviderRuntimeHealth());

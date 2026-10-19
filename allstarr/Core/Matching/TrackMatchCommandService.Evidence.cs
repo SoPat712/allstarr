@@ -12,7 +12,8 @@ public sealed partial class TrackMatchCommandService
         if (ids.Length == 0) return new Dictionary<Guid, IReadOnlyDictionary<string, string>>();
         var links = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
                 ids.Contains(item.CanonicalRecordingId) && item.Scope == ProviderIdentityScope.Catalog &&
-                item.Verification == ProviderIdentityVerification.Verified && item.VerificationMethod == "odesli-link")
+                item.Verification == ProviderIdentityVerification.Verified && (item.VerificationMethod == "odesli-link" || item.VerificationMethod == "isrc-lookup" ||
+                 item.VerificationMethod == "cross-service-match"))
             .ToArrayAsync(cancellationToken);
         return links.GroupBy(item => item.CanonicalRecordingId).ToDictionary(group => group.Key,
             group => (IReadOnlyDictionary<string, string>)group.GroupBy(item => item.ProviderId)
