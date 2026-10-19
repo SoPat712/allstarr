@@ -713,7 +713,9 @@ public class ExtensionSandbox
         _engine = new Engine(options =>
         {
             options.LimitRecursion(150);
-            options.LimitMemory(64L * 1024 * 1024);
+            // Jint counts every byte allocated on the thread during an invocation, host work included,
+            // not live heap. A download script can allocate far more over its run than it ever holds.
+            options.LimitMemory(512L * 1024 * 1024);
             options.MaxStatements(1_000_000);
             options.Constraints.Constraints.Add(new ExtensionInvocationBudget.ExecutionConstraint());
         });
