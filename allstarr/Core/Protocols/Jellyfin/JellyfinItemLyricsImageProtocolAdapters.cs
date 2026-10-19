@@ -112,7 +112,7 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
                 lyrics.ArtistName,
                 lyrics.AlbumName,
                 lyrics.TrackName,
-                lyrics.Duration,
+                lyrics.Duration * TimeSpan.TicksPerSecond,
                 isSynced),
             lines);
 
@@ -122,23 +122,39 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
             JsonSerializer.Serialize(response, SerializerOptions));
     }
 
-    private static IReadOnlyList<Dictionary<string, object>> ParseSyncedLines(string lyrics) =>
-        MusicLyrics.ParseSyncedLines(lyrics).Select(line => new Dictionary<string, object>
+    private static IReadOnlyList<Dictionary<string, object>> ParseSyncedLines(string lyrics)
+    {
+        var lines = MusicLyrics.ParseSyncedLines(lyrics);
+        return lines.Select((line, index) =>
         {
-            ["Text"] = line.Text,
-            ["Start"] = line.StartMilliseconds * 10_000L
+            var result = new Dictionary<string, object>
+            {
+                ["Text"] = line.Text,
+                ["Start"] = line.StartMilliseconds * TimeSpan.TicksPerMillisecond
+            };
+            // Jellyfin always sends Cues, empty when the lyrics carry no word timing.
+            result["Cues"] = (line.Cues ?? []).Select(cue => new
+            {
+                cue.Position,
+                cue.EndPosition,
+                Start = cue.StartMilliseconds * TimeSpan.TicksPerMillisecond,
+                End = (cue.EndMilliseconds ?? (index + 1 < lines.Count ? lines[index + 1].StartMilliseconds : (long?)null))
+                    * TimeSpan.TicksPerMillisecond
+            }).ToArray();
+            return result;
         }).ToList();
+    }
 
     private static IReadOnlyList<Dictionary<string, object>> ParsePlainLines(string? lyrics)
     {
         var result = (lyrics ?? string.Empty)
             .Split(['\n', '\r'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(line => new Dictionary<string, object> { ["Text"] = line.Trim() })
+            .Select(line => new Dictionary<string, object> { ["Text"] = line.Trim(), ["Cues"] = Array.Empty<object>() })
             .ToList();
 
         if (result.Count == 0)
         {
-            result.Add(new Dictionary<string, object> { ["Text"] = string.Empty });
+            result.Add(new Dictionary<string, object> { ["Text"] = string.Empty, ["Cues"] = Array.Empty<object>() });
         }
 
         return result;
@@ -152,6 +168,6 @@ public sealed class JellyfinLyricsProtocolAdapter : IJellyfinLyricsProtocolAdapt
         string Artist,
         string Album,
         string Title,
-        int Length,
+        long Length,
         bool IsSynced);
 }

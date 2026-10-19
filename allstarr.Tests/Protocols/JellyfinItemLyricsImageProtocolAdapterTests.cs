@@ -45,10 +45,53 @@ public sealed class JellyfinItemLyricsImageProtocolAdapterTests
         using var document = JsonDocument.Parse(response.Body);
         var root = document.RootElement;
         Assert.True(root.GetProperty("Metadata").GetProperty("IsSynced").GetBoolean());
+        Assert.Equal(1_230_000_000L, root.GetProperty("Metadata").GetProperty("Length").GetInt64());
         Assert.Equal("first", root.GetProperty("Lyrics")[0].GetProperty("Text").GetString());
         Assert.Equal(12_500_000, root.GetProperty("Lyrics")[0].GetProperty("Start").GetInt64());
         // ".125" is 125 ms; it used to be read as hundredths and land a second late.
         Assert.Equal(21_250_000, root.GetProperty("Lyrics")[1].GetProperty("Start").GetInt64());
+    }
+
+    [Fact]
+    public void LyricsAdapter_EnhancedTextKeepsSpacesAndUsesCharacterRangesForCues()
+    {
+        var response = new JellyfinLyricsProtocolAdapter().Shape(new LyricsInfo
+        {
+            SyncedLyrics = "[offset:100]\n[00:01.00]<00:01.00>t'he 'a <00:02.125>last<00:03.00>\n[00:04.00]next"
+        });
+
+        using var document = JsonDocument.Parse(response.Body);
+        var line = document.RootElement.GetProperty("Lyrics")[0];
+        Assert.Equal("t'he 'a last", line.GetProperty("Text").GetString());
+        Assert.Equal(9_000_000L, line.GetProperty("Start").GetInt64());
+        var cues = line.GetProperty("Cues");
+        Assert.Equal(2, cues.GetArrayLength());
+        Assert.Equal(0, cues[0].GetProperty("Position").GetInt32());
+        Assert.Equal(8, cues[0].GetProperty("EndPosition").GetInt32());
+        Assert.Equal(9_000_000L, cues[0].GetProperty("Start").GetInt64());
+        Assert.Equal(20_250_000L, cues[0].GetProperty("End").GetInt64());
+        Assert.Equal(8, cues[1].GetProperty("Position").GetInt32());
+        Assert.Equal(12, cues[1].GetProperty("EndPosition").GetInt32());
+        Assert.Equal(29_000_000L, cues[1].GetProperty("End").GetInt64());
+    }
+
+    [Theory]
+    [InlineData(" ")]
+    [InlineData("\u2800")]
+    public void LyricsAdapter_ConvertedSidecarsReturnOrdinarySpacesAndKeepJoinedSyllables(string gap)
+    {
+        var response = new JellyfinLyricsProtocolAdapter().Shape(new LyricsInfo
+        {
+            SyncedLyrics = $"[00:01.00][00:05.00]<00:01.00>😀one{gap}<00:02.00>to<00:02.50>gether\n[00:08.00]next"
+        });
+
+        using var document = JsonDocument.Parse(response.Body);
+        var lines = document.RootElement.GetProperty("Lyrics");
+        Assert.Equal("😀one together", lines[0].GetProperty("Text").GetString());
+        Assert.DoesNotContain("\u2800", lines[0].GetProperty("Text").GetString()!);
+        Assert.Equal(6, lines[0].GetProperty("Cues")[0].GetProperty("EndPosition").GetInt32());
+        Assert.Equal(60_000_000L, lines[1].GetProperty("Cues")[1].GetProperty("Start").GetInt64());
+        Assert.Equal(80_000_000L, lines[1].GetProperty("Cues")[2].GetProperty("End").GetInt64());
     }
 
     [Fact]

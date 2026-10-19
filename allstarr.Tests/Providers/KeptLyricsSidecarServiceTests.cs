@@ -1,5 +1,6 @@
 using allstarr.Core.Identity;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Models.Lyrics;
 using allstarr.Services.Lyrics;
@@ -10,6 +11,45 @@ namespace allstarr.Tests;
 
 public sealed class KeptLyricsSidecarServiceTests
 {
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, null, true)]
+    [InlineData(ProtocolKind.Jellyfin, true, true)]
+    [InlineData(ProtocolKind.Jellyfin, false, false)]
+    [InlineData(ProtocolKind.Subsonic, null, false)]
+    [InlineData(ProtocolKind.Subsonic, true, false)]
+    public async Task SidecarProtectsWordGapsOnlyForEnabledJellyfinFiles(ProtocolKind protocol, bool? enabled, bool converted)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-tests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var path = Path.Combine(root, "Fixture.mp3");
+            await File.WriteAllTextAsync(path, "synthetic audio");
+            var backend = protocol == ProtocolKind.Jellyfin ? "jellyfin" : "subsonic";
+            var context = new ProtocolExecutionContext(protocol, "backend", "principal",
+                new AllstarrPrincipal(Guid.NewGuid(), backend, "backend", "principal", "Listener", false),
+                "sidecar", DateTimeOffset.UtcNow.AddMinutes(1), default);
+            var resolver = new Mock<IProtocolLyricsResolver>(MockBehavior.Strict);
+            resolver.Setup(item => item.FindAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<Song>(),
+                    It.IsAny<string>(), It.Is<ProtocolLyricsSources>(sources => sources.HouseholdOnly)))
+                .ReturnsAsync(new LyricsInfo { SyncedLyrics = "[00:01.00]<00:01.00>first <00:02.00>last\n[00:03.00]line synced" });
+            var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+            if (enabled.HasValue)
+                settings.Setup(item => item.GetAsync("Lyrics:JellyfinWordGap", It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(new EffectiveRuntimeSetting("Lyrics:JellyfinWordGap", RuntimeSettingValueType.Boolean,
+                        enabled.Value, enabled.Value ? "true" : "false", RuntimeSettingOrigin.Durable, 1, "fixture", null, null));
+            var service = new KeptLyricsSidecarService(resolver.Object, NullLogger<KeptLyricsSidecarService>.Instance,
+                enabled.HasValue ? settings.Object : null);
+            var result = await service.EnsureSidecarAsync(path, new Song { Title = "Fixture", Artist = "Artist" }, protocol: context);
+            Assert.NotNull(result);
+            var text = await File.ReadAllTextAsync(result!);
+            Assert.Contains(converted ? "first\u2800<00:02.00>last" : "first <00:02.00>last", text, StringComparison.Ordinal);
+            Assert.Contains("[00:03.00]line synced", text, StringComparison.Ordinal);
+            Assert.Equal("synthetic audio", await File.ReadAllTextAsync(path));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Fact]
     public async Task PublishedSidecarUsesHouseholdLookupInsteadOfTheAdministratorsPersonalChoice()
     {
