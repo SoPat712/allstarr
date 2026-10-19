@@ -77,7 +77,7 @@ public static class CurrentProviderSupportCatalog
             Capability("health", Supported, "Bounded public metadata probe.", "ProviderStatusManagerTests")),
         Provider(
             "paxsenix", "paxsenix", "Paxsenix", "none",
-            "Public QQ, NetEase and Kugou lyrics lookup; no account or token required.",
+            "Apple Music lyrics through Paxsenix; no account required.",
             Capability("lyrics", Supported, "Metadata search with public timed and plain lyrics; paced reads and cached results.", "PaxsenixCapabilityAdapterTests; ProtocolLyricsResolverTests"),
             Capability("health", Supported, "Bounded public metadata probe.", "ProviderStatusManagerTests")),
         Provider(

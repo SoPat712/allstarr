@@ -109,25 +109,47 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public async Task PaxsenixProbeUsesAllPublicSearchSourcesWithoutAnAccount()
+    public async Task PaxsenixProbeResolvesSampleIsrcWithoutAnAccount()
     {
-        var handler = new QueuedResponseHandler(
-            Json(HttpStatusCode.OK, "[]"),
-            Json(HttpStatusCode.OK, "[]"),
-            Json(HttpStatusCode.OK, "[]"));
+        var handler = new QueuedResponseHandler(Json(HttpStatusCode.OK,
+            """{"type":"Line","content":[{}],"lrc":"[00:01]Never gonna give you up"}"""));
+        var apple = AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(request =>
+        {
+            Assert.Equal("/v1/catalog/us/songs", request.RequestUri!.AbsolutePath);
+            Assert.Contains("filter[isrc]=GBARL9300135", Uri.UnescapeDataString(request.RequestUri.Query));
+            Assert.False(request.Headers.Contains("Cookie"));
+            return Json(HttpStatusCode.OK,
+                """{"data":[{"id":"1558533900","attributes":{"name":"Never Gonna Give You Up","artistName":"Rick Astley","durationInMillis":215000}}]}""");
+        })));
         var manager = CreateManager(new Dictionary<string, string?>(),
-            httpClientFactory: new HandlerHttpClientFactory(handler));
+            httpClientFactory: new HandlerHttpClientFactory(handler), services:
+            Mock.Of<IServiceProvider>(provider => provider.GetService(typeof(AppleMusicClient)) == apple));
 
         Assert.True(manager.CanTestAccountFreeCapability("paxsenix", "lyrics"));
         Assert.Equal(ProviderConfigurationState.NotRequired,
             manager.GetAccountFreeStatus("paxsenix", "lyrics").Configuration);
-        Assert.Equal("paxsenix", manager.GetEnabledLyricsProviders().Last());
         var status = await manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
 
         Assert.Equal(ProviderHealthState.Healthy, status.Health);
-        Assert.Equal(new[] { "/qq/search", "/netease/search", "/kugou/search" },
-            handler.Requests.Select(request => request.AbsolutePath));
-        Assert.All(handler.Requests, request => Assert.Equal("lyrics.paxsenix.org", request.Host));
+        var uri = Assert.Single(handler.Requests);
+        Assert.Equal("lyrics.paxsenix.org", uri.Host);
+        Assert.Equal("/apple-music/lyrics", uri.AbsolutePath);
+        Assert.Equal("?id=1558533900", uri.Query);
+    }
+
+    [Fact]
+    public async Task PaxsenixProbeReportsMissingAppleWebToken()
+    {
+        using var http = new HttpClient(new QueuedResponseHandler(Json(HttpStatusCode.ServiceUnavailable, "{}")));
+        var apple = new AppleMusicClient(http, new AppleWebTokenProvider(http),
+            Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>());
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(new AppleProviderTestFactory.Handler(_ =>
+                throw new InvalidOperationException("Unexpected lyrics read."))), services:
+            Mock.Of<IServiceProvider>(provider => provider.GetService(typeof(AppleMusicClient)) == apple));
+        var status = await manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal("apple-web-token-unavailable", status.ReasonCode);
     }
 
     [Fact]

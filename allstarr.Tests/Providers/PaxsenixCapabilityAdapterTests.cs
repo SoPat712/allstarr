@@ -1,147 +1,265 @@
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Matching;
+using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Providers.Lyrics;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
+using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class PaxsenixCapabilityAdapterTests
 {
-    private const string Match = """{"songmid":"fixture","id":42,"title":"月光","singer":[{"name":"歌手"}],"interval":180}""";
+    private const string Song = """{"id":"617154366","type":"songs","attributes":{"name":"月光","artistName":"歌手","durationInMillis":180000}}""";
+    private const string Lyrics = """{"type":"Line","content":[{}],"lrc":"[00:01.000]月光"}""";
 
     [Theory]
-    [InlineData("\"[00:01.000]<00:01.000>月<00:01.500>光\"", ProviderLyricsFormat.LineTimed)]
-    [InlineData("{\"data\":{\"lrc\":{\"lyric\":\"[00:01.000]月光\"}}}", ProviderLyricsFormat.LineTimed)]
-    [InlineData("{\"lyrics\":[\"月光\",\"照耀\"]}", ProviderLyricsFormat.PlainText)]
-    [InlineData("{\"plainLyrics\":\"月光\"}", ProviderLyricsFormat.PlainText)]
-    [InlineData("{\"result\":{\"content\":\"月光\"}}", ProviderLyricsFormat.PlainText)]
-    [InlineData("{\"syncedLyrics\":\"[00:01.000]月光\",\"plainLyrics\":\"月光\"}", ProviderLyricsFormat.LineTimed)]
-    [InlineData("{\"ttml\":\"<tt><body><p begin='1'><span begin='1' end='2'>月光</span></p></body></tt>\"}", ProviderLyricsFormat.LineTimed)]
-    [InlineData("{\"yrc\":{\"lyric\":\"[1000,2000](1000,500,0)月(1500,500,0)光\"}}", ProviderLyricsFormat.LineTimed)]
-    [InlineData("{\"krc\":\"[1000,2000]<0,500,0>月<500,500,0>光\"}", ProviderLyricsFormat.LineTimed)]
-    [InlineData("{\"krc\":\"[id:fixture]\\n[ar:歌手]\\n[1000,2000]<0,500,0>月<500,500,0>光\"}", ProviderLyricsFormat.LineTimed)]
-    public async Task SupportedLyricsShapesPreserveBestTiming(string payload, ProviderLyricsFormat format)
+    [InlineData("ttmlContent", "<tt><body><p begin='1'><span begin='1' end='2'>月光</span></p></body></tt>", ProviderLyricsFormat.LineTimed)]
+    [InlineData("elrc", "[00:01.000]<00:01.000>月<00:01.500>光", ProviderLyricsFormat.LineTimed)]
+    [InlineData("lrc", "[00:01.000]月光", ProviderLyricsFormat.LineTimed)]
+    [InlineData("plain", "月光", ProviderLyricsFormat.PlainText)]
+    public async Task ResponseFormatsPreserveBestTiming(string field, string text, ProviderLyricsFormat format)
     {
-        var handler = new Handler((_, index) => Response(index == 1 ? "[" + Match + "]" : payload));
+        var payload = new Dictionary<string, object> { ["type"] = "Syllable", ["content"] = new[] { new { } }, [field] = text };
+        if (field != "plain") payload["plain"] = "fallback";
+        if (field == "ttmlContent") payload["elrc"] = "[00:02.000]fallback";
+        var handler = new Handler((_, _) => Response(JsonSerializer.Serialize(payload)));
         var value = (await Adapter(handler).FetchLyricsAsync(Context(), Request())).RequireValue();
         Assert.Equal(format, value.Format);
         Assert.Equal("paxsenix", value.Source);
         Assert.StartsWith("sha256:", value.Revision);
         Assert.Contains("月", value.Content);
-        Assert.Equal(2, handler.Requests.Count);
-        Assert.Equal("/qq/search", handler.Requests[0].AbsolutePath);
-        Assert.Contains("id=fixture", handler.Requests[1].Query);
-        if (payload.Contains("ttml")) Assert.NotNull(Assert.Single(value.TimedLines!).Segments);
-        if (payload.Contains("yrc") || payload.Contains("krc"))
-        {
-            var words = allstarr.Core.Music.MusicLyrics.ParseSyncedLines(value.Content);
-            Assert.Equal("月光", Assert.Single(words).Text);
-            Assert.Equal(2, words[0].Cues!.Count);
-        }
+        Assert.Equal("/apple-music/lyrics", Assert.Single(handler.Requests).AbsolutePath);
+        Assert.Equal("?id=617154366", handler.Requests[0].Query);
+        if (field == "ttmlContent") Assert.NotNull(Assert.Single(value.TimedLines!).Segments);
+        if (field == "elrc") Assert.Equal(2, Assert.Single(allstarr.Core.Music.MusicLyrics.ParseSyncedLines(value.Content)).Cues!.Count);
     }
 
-    [Theory]
-    [InlineData("netease", "{\"result\":{\"songs\":[{\"id\":42,\"name\":\"月光\",\"ar\":[{\"name\":\"歌手\"}],\"dt\":180000}]}}", "42")]
-    [InlineData("kugou", "{\"data\":{\"tracks\":[{\"hash\":\"fixture-hash\",\"name\":\"月光\",\"artist\":\"歌手\",\"duration\":180}]}}", "fixture-hash")]
-    public async Task SearchesOtherCatalogsAndRequestsWordTiming(string catalog, string search, string id)
+    [Fact]
+    public async Task VerifiedRecordingIdentityPrecedesCatalogReadsAndRouterTrackId()
     {
-        var handler = new Handler((uri, _) => Response(uri.AbsolutePath == $"/{catalog}/search" ? search
-            : uri.AbsolutePath.EndsWith("/search") ? "[]" : "{\"lyrics\":\"[00:01.000]月光\"}"));
-        var result = await Adapter(handler).FetchLyricsAsync(Context(), Request());
+        var recording = Guid.CreateVersion7();
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(value => value.ResolveTargetAsync(It.Is<ProviderExecutionContext>(c => c.ProviderId == "apple-musickit" && c.Account == null),
+                recording, It.Is<ProviderTrackIdentityTarget>(t => t.ProviderId == "apple-musickit"), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TrackIdentityResolution(recording, Guid.CreateVersion7(), new("apple-musickit", ProviderResourceKind.Track, "123"),
+                ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "source-use", 1));
+        var apple = Catalog(_ => throw new InvalidOperationException("Unexpected catalog read."));
+        var handler = new Handler((_, _) => Response(Lyrics));
+        await Adapter(handler, apple: apple, identities: identities.Object).FetchLyricsAsync(Context(), Request(recording: recording));
+        Assert.Equal("?id=123", Assert.Single(handler.Requests).Query);
+        identities.VerifyAll();
+    }
+
+    [Fact]
+    public async Task RecordingIdentityServiceIsResolvedOnlyDuringLookup()
+    {
+        var resolutions = 0;
+        var identities = new Mock<ITrackIdentityService>();
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
+            new PaxsenixRequestPacer(TimeProvider.System, TimeSpan.Zero), TimeProvider.System, Catalog(),
+            () => { resolutions++; return identities.Object; });
+
+        Assert.Equal(0, resolutions);
+        var result = await adapter.FetchLyricsAsync(Context(), Request());
+
         Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
-        var lyrics = handler.Requests.Last();
-        Assert.Equal($"/{catalog}/lyrics", lyrics.AbsolutePath);
-        Assert.Contains("word=true", lyrics.Query);
-        Assert.Contains($"id={id}", lyrics.Query);
-        Assert.Contains("v=1", lyrics.Query);
+        Assert.Equal(1, resolutions);
+        identities.Verify(value => value.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), Recording,
+            It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task IdenticalMetadataDoesNotShareLyricsBetweenRecordings()
+    {
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(value => value.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<Guid>(),
+                It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((ProviderExecutionContext _, Guid recording, ProviderTrackIdentityTarget _, CancellationToken _) =>
+                new TrackIdentityResolution(recording, Guid.CreateVersion7(),
+                    new("apple-musickit", ProviderResourceKind.Track, recording == first ? "123" : "456"),
+                    ProviderIdentityScope.Catalog, null, ProviderIdentityVerification.Verified, "source-use", 1));
+        var handler = new Handler((uri, _) => Response(Lyrics.Replace("月光", uri.Query)));
+        var adapter = Adapter(handler, new TestMemoryApplicationCache(), identities: identities.Object);
+        var firstResult = await adapter.FetchLyricsAsync(Context(), Request(recording: first));
+        var secondResult = await adapter.FetchLyricsAsync(Context(), Request(recording: second));
+        Assert.Contains("123", firstResult.RequireValue().Content);
+        Assert.Contains("456", secondResult.RequireValue().Content);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task IsrcPrecedesSearchAndResolvedIdsAreCachedAcrossMetadataChanges()
+    {
+        var calls = new List<Uri>();
+        var apple = Catalog(request =>
+        {
+            calls.Add(request.RequestUri!);
+            Assert.Contains("filter[isrc]=", Uri.UnescapeDataString(request.RequestUri!.Query));
+            Assert.Contains("GBARL9300135", request.RequestUri.Query);
+            Assert.False(request.Headers.Contains("Cookie"));
+            return Response("{\"data\":[" + Song + "]}");
+        });
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var adapter = Adapter(handler, new TestMemoryApplicationCache(), apple);
+        await adapter.FetchLyricsAsync(Context(), Request());
+        await adapter.FetchLyricsAsync(Context(), Request(title: "Changed title"));
+        await adapter.FetchLyricsAsync(Context(), Request(title: "Another title", recording: Guid.CreateVersion7()));
+        Assert.Single(calls);
+        Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task RecordingCacheWorksWithoutIsrcAndUsesConfiguredLyricsLifetime()
+    {
+        var calls = 0;
+        var apple = Catalog(_ => { calls++; return Response("{\"results\":{\"songs\":{\"data\":[" + Song + "]}}}"); });
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var cache = new TestMemoryApplicationCache();
+        var adapter = Adapter(handler, cache, apple);
+        await adapter.FetchLyricsAsync(Context(), Request(isrc: null));
+        await adapter.FetchLyricsAsync(Context(), Request(isrc: null, title: "Changed title"));
+        Assert.Equal(1, calls);
+        Assert.Equal(2, handler.Requests.Count);
+
+        var lifetime = TimeSpan.FromHours(12);
+        var observed = new Mock<IApplicationCache>();
+        observed.Setup(value => value.SetAsync(It.IsAny<string>(), It.IsAny<string>(), lifetime)).ReturnsAsync(true);
+        adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), observed.Object,
+            new PaxsenixRequestPacer(TimeProvider.System, TimeSpan.Zero), TimeProvider.System, Catalog(), lyricsTtl: () => lifetime);
+        await adapter.FetchLyricsAsync(Context(), Request());
+        observed.Verify(value => value.SetAsync(It.IsAny<string>(), "617154366", lifetime), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task IsrcCanResolveWithoutTitleOrArtists()
+    {
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var request = new ProviderLyricsRequest(Recording, new("paxsenix", ProviderResourceKind.Track, "lookup"), isrc: "GBARL9300135");
+        Assert.Equal(ProviderLyricsAvailabilityState.Available,
+            (await Adapter(handler).FetchLyricsAsync(Context(), request)).RequireValue().Availability);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task AppleCatalogReadCannotExceedTotalLookupBudget()
+    {
+        var clock = new ManualTimeProvider();
+        var slow = new WaitingHandler();
+        var apple = new AppleMusicKitMetadataCapabilityAdapter(AppleProviderTestFactory.Client(new HttpClient(slow)));
+        var lyrics = new Handler((_, _) => throw new InvalidOperationException("Unexpected lyrics read."));
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(lyrics), null,
+            new PaxsenixRequestPacer(clock), clock, apple);
+        var pending = adapter.FetchLyricsAsync(Context(), Request());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(18));
+        clock.Advance(TimeSpan.FromSeconds(18));
+        Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
+        Assert.Equal(1, slow.Calls);
+        Assert.Empty(lyrics.Requests);
     }
 
     [Theory]
-    [InlineData("{\"id\":\"wrong\",\"title\":\"Another song\",\"artist\":\"歌手\"}")]
-    [InlineData("{\"id\":\"wrong\",\"title\":\"月光\",\"artist\":\"Someone else\"}")]
-    [InlineData("{\"id\":\"wrong\",\"title\":\"月光\",\"artist\":\"歌手\",\"duration\":240}")]
-    [InlineData("{\"id\":\"wrong\",\"title\":\"月光 (Live)\",\"artist\":\"歌手\"}")]
-    [InlineData("{\"id\":\"wrong\",\"title\":\"月光\"}")]
-    [InlineData("{\"id\":\"wrong\",\"title\":\"白月光\",\"artist\":\"歌手\"}")]
-    public async Task PoorOrIncompleteMatchesNeverFetchLyrics(string candidate)
+    [InlineData("Other song", "歌手", 180000)]
+    [InlineData("月光", "Someone else", 180000)]
+    [InlineData("月光 (Live)", "歌手", 180000)]
+    [InlineData("白月光", "歌手", 180000)]
+    [InlineData("月光", "歌手", 186000)]
+    public async Task SearchRejectsPoorMatches(string title, string artist, int duration)
     {
-        var handler = new Handler((_, _) => Response("[" + candidate + "]"));
-        var result = await Adapter(handler).FetchLyricsAsync(Context(), Request());
+        var candidate = JsonSerializer.Serialize(new { id = "123", attributes = new { name = title, artistName = artist, durationInMillis = duration } });
+        var handler = new Handler((_, _) => throw new InvalidOperationException("Unexpected lyrics read."));
+        var apple = Catalog(_ => Response("{\"results\":{\"songs\":{\"data\":[" + candidate + "]}}}"));
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request(isrc: null));
         Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
-        Assert.Equal(3, handler.Requests.Count);
-        Assert.All(handler.Requests, uri => Assert.EndsWith("/search", uri.AbsolutePath));
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
-    public async Task ChoosesBestMatchInsteadOfFirstSearchHit()
+    public async Task IsrcMissFallsBackToStrictSearchAndChoosesBestMatch()
     {
-        var handler = new Handler((_, index) => Response(index == 1
-            ? "[{\"songmid\":\"wrong\",\"title\":\"Other\",\"artist\":\"歌手\"}," + Match + "]"
-            : "{\"lyrics\":\"月光\"}"));
-        Assert.True((await Adapter(handler).FetchLyricsAsync(Context(), Request())).IsSuccess);
-        Assert.Contains("id=fixture", handler.Requests.Last().Query);
+        var calls = new List<Uri>();
+        var apple = Catalog(request =>
+        {
+            calls.Add(request.RequestUri!);
+            return Response(calls.Count == 1 ? "{\"data\":[]}" : "{\"results\":{\"songs\":{\"data\":[" +
+                Song.Replace("月光", "Other song").Replace("617154366", "1") + "," + Song + "]}}}");
+        });
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal(2, calls.Count);
+        Assert.Equal("/v1/catalog/us/search", calls[1].AbsolutePath);
+        Assert.Contains(Uri.EscapeDataString("月光 歌手"), calls[1].AbsoluteUri);
+        Assert.Equal("?id=617154366", Assert.Single(handler.Requests).Query);
     }
 
-    [Fact]
-    public async Task MissingLyricsFallsBackAndCacheRetainsRichContentForProjections()
+    [Theory]
+    [InlineData("{\"type\":\"None\",\"content\":[{}],\"plain\":\"月光\"}")]
+    [InlineData("{\"type\":\"Line\",\"content\":[],\"lrc\":\"[00:01]月光\"}")]
+    [InlineData("{\"type\":\"Line\",\"content\":[{}],\"plain\":\"\"}")]
+    public async Task EmptyLyricsAreUnavailable(string payload)
     {
-        var handler = new Handler((uri, _) => uri.AbsolutePath.EndsWith("/search") ? Response("[" + Match + "]")
-            : uri.AbsolutePath == "/qq/lyrics" ? new(HttpStatusCode.NotFound)
-            : Response("{\"lyrics\":\"[00:01.000]<00:01.000>月<00:01.500>光\"}"));
-        var adapter = Adapter(handler, new TestMemoryApplicationCache());
-        var probe = await adapter.FetchLyricsAsync(Context(), Request(availability: true));
-        var plain = await adapter.FetchLyricsAsync(Context(), Request(format: ProviderLyricsFormat.PlainText));
-        var timed = await adapter.FetchLyricsAsync(Context(), Request());
-        Assert.Null(probe.RequireValue().Content);
-        Assert.Equal("月光", plain.RequireValue().Content);
-        Assert.Contains("<00:01.500>", timed.RequireValue().Content);
-        Assert.Equal(4, handler.Requests.Count);
+        var handler = new Handler((_, _) => Response(payload));
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable,
+            (await Adapter(handler).FetchLyricsAsync(Context(), Request())).RequireValue().Availability);
     }
 
     [Theory]
     [InlineData("{}")]
     [InlineData("not json")]
-    [InlineData("{\"lyrics\":42}")]
-    [InlineData("{\"lyrics\":\"<html>Error</html>\"}")]
-    [InlineData("{\"yrc\":\"[1000,2000](bad)月光\"}")]
-    public async Task UnsupportedResponsesFailAsContractChanges(string payload)
+    [InlineData("<html>Error</html>")]
+    [InlineData("{\"type\":\"Line\",\"content\":[{}],\"lrc\":42}")]
+    [InlineData("{\"type\":\"Line\",\"content\":[{}]}")]
+    [InlineData("{\"type\":\"Syllable\",\"content\":[{}],\"elrc\":\"invalid timing\"}")]
+    [InlineData("{\"type\":\"Line\",\"content\":[{}],\"plain\":\"<html>Error</html>\"}")]
+    public async Task MalformedResponsesFailAsContractChanges(string payload)
     {
-        var handler = new Handler((_, index) => Response(index == 1 ? "[" + Match + "]" : payload));
-        var result = await Adapter(handler).FetchLyricsAsync(Context(), Request());
+        var result = await Adapter(new Handler((_, _) => Response(payload))).FetchLyricsAsync(Context(), Request());
         Assert.Equal("provider-contract-changed", result.Error!.Code);
     }
 
-    [Fact]
-    public async Task MissesAreCachedAndEmptyMetadataNeverSends()
-    {
-        var handler = new Handler((_, _) => Response("[]"));
-        var adapter = Adapter(handler, new TestMemoryApplicationCache());
-        await adapter.FetchLyricsAsync(Context(), Request());
-        await adapter.FetchLyricsAsync(Context(), Request());
-        Assert.Equal(3, handler.Requests.Count);
-        var empty = new ProviderLyricsRequest(Guid.CreateVersion7(), new("paxsenix", ProviderResourceKind.Track, "lookup"));
-        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable,
-            (await adapter.FetchLyricsAsync(Context(), empty)).RequireValue().Availability);
-        Assert.Equal(3, handler.Requests.Count);
-    }
-
     [Theory]
+    [InlineData(HttpStatusCode.Forbidden, ProviderErrorKind.PermanentFailure)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, ProviderErrorKind.TransientFailure)]
     [InlineData(HttpStatusCode.TooManyRequests, ProviderErrorKind.RateLimited)]
     [InlineData(HttpStatusCode.TemporaryRedirect, ProviderErrorKind.PermanentFailure)]
-    public async Task RateLimitsAndRedirectsStopFurtherRequests(HttpStatusCode status, ProviderErrorKind error)
+    public async Task HttpFailuresKeepPublicLyricsClassification(HttpStatusCode status, ProviderErrorKind kind)
     {
-        var handler = new Handler((_, _) =>
-        {
-            var response = new HttpResponseMessage(status);
-            response.Headers.RetryAfter = new(TimeSpan.FromSeconds(42));
-            if (status == HttpStatusCode.TemporaryRedirect) response.Headers.Location = new("https://other.example/lyrics");
-            return response;
-        });
-        var result = await Adapter(handler).FetchLyricsAsync(Context(), Request());
-        Assert.Equal(error, result.Error!.Kind);
+        var handler = new Handler((_, _) => new(status) { Content = new StringContent("{\"error\":\"Forbidden\"}") });
+        Assert.Equal(kind, (await Adapter(handler).FetchLyricsAsync(Context(), Request())).Error!.Kind);
         Assert.Single(handler.Requests);
-        if (status == HttpStatusCode.TooManyRequests) Assert.Equal(TimeSpan.FromSeconds(42), result.Error.RetryAfter);
+    }
+
+    [Fact]
+    public async Task NotFoundIsUnavailableAndRichLyricsAreCachedForProjections()
+    {
+        var missing = Adapter(new Handler((_, _) => new(HttpStatusCode.NotFound)));
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, (await missing.FetchLyricsAsync(Context(), Request())).RequireValue().Availability);
+        var handler = new Handler((_, _) => Response(Lyrics));
+        var adapter = Adapter(handler, new TestMemoryApplicationCache());
+        Assert.Null((await adapter.FetchLyricsAsync(Context(), Request(availability: true))).RequireValue().Content);
+        Assert.Equal("月光", (await adapter.FetchLyricsAsync(Context(), Request(format: ProviderLyricsFormat.PlainText))).RequireValue().Content);
+        Assert.Contains("[00:01.000]", (await adapter.FetchLyricsAsync(Context(), Request())).RequireValue().Content);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task NoCatalogIdIsUnavailableAndMissesAreCached()
+    {
+        var calls = 0;
+        var apple = Catalog(_ => { calls++; return Response("{\"results\":{\"songs\":{\"data\":[]}}}"); });
+        var handler = new Handler((_, _) => throw new InvalidOperationException("Unexpected lyrics read."));
+        var adapter = Adapter(handler, new TestMemoryApplicationCache(), apple);
+        await adapter.FetchLyricsAsync(Context(), Request(isrc: null));
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable,
+            (await adapter.FetchLyricsAsync(Context(), Request(isrc: null))).RequireValue().Availability);
+        Assert.Equal(1, calls);
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -159,8 +277,8 @@ public sealed class PaxsenixCapabilityAdapterTests
         var clock = new ManualTimeProvider();
         var pacer = new PaxsenixRequestPacer(clock);
         var handler = new Handler((_, _) => new(HttpStatusCode.TooManyRequests));
-        var first = new PaxsenixCapabilityAdapter(new HttpClient(handler), null, pacer, clock);
-        var second = new PaxsenixCapabilityAdapter(new HttpClient(handler), null, pacer, clock);
+        var first = new PaxsenixCapabilityAdapter(new HttpClient(handler), null, pacer, clock, Catalog());
+        var second = new PaxsenixCapabilityAdapter(new HttpClient(handler), null, pacer, clock, Catalog());
         await first.FetchLyricsAsync(Context(), Request());
         using var cancel = new CancellationTokenSource();
         var pending = second.FetchLyricsAsync(Context(cancel.Token), Request());
@@ -182,16 +300,17 @@ public sealed class PaxsenixCapabilityAdapterTests
         var clock = new ManualTimeProvider();
         var handler = new WaitingHandler();
         var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
-            new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock);
+            new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, Catalog());
         var pending = adapter.FetchLyricsAsync(Context(), Request());
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
         clock.Advance(TimeSpan.FromSeconds(8));
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Equal(1, handler.Calls);
 
-        var paced = new Handler((_, _) => Response("[]"));
+        var paced = new Handler((_, _) => Response(Lyrics));
         adapter = new PaxsenixCapabilityAdapter(new HttpClient(paced), null,
-            new PaxsenixRequestPacer(clock, TimeSpan.FromSeconds(20)), clock);
+            new PaxsenixRequestPacer(clock, TimeSpan.FromSeconds(20)), clock, Catalog());
+        await adapter.FetchLyricsAsync(Context(), Request());
         pending = adapter.FetchLyricsAsync(Context(), Request());
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(20));
         clock.Advance(TimeSpan.FromSeconds(18));
@@ -199,12 +318,18 @@ public sealed class PaxsenixCapabilityAdapterTests
         Assert.Single(paced.Requests);
     }
 
-    private static PaxsenixCapabilityAdapter Adapter(HttpMessageHandler handler, IApplicationCache? cache = null) =>
-        new(new HttpClient(handler), cache, new PaxsenixRequestPacer(TimeProvider.System, TimeSpan.Zero), TimeProvider.System);
+    private static AppleMusicKitMetadataCapabilityAdapter Catalog(Func<HttpRequestMessage, HttpResponseMessage>? send = null) =>
+        new(AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(send ?? (_ => Response("{\"data\":[" + Song + "]}"))))));
+    private static PaxsenixCapabilityAdapter Adapter(HttpMessageHandler handler, IApplicationCache? cache = null,
+        AppleMusicKitMetadataCapabilityAdapter? apple = null, ITrackIdentityService? identities = null) =>
+        new(new HttpClient(handler), cache, new PaxsenixRequestPacer(TimeProvider.System, TimeSpan.Zero), TimeProvider.System,
+            apple ?? Catalog(), identities == null ? null : () => identities);
     private static HttpResponseMessage Response(string json) => new(HttpStatusCode.OK) { Content = new StringContent(json) };
-    private static ProviderLyricsRequest Request(bool availability = false, ProviderLyricsFormat? format = null) =>
-        new(Guid.CreateVersion7(), new("paxsenix", ProviderResourceKind.Track, "lookup"), availability, format,
-            "月光", ["歌手"], durationSeconds: 180);
+    private static readonly Guid Recording = Guid.CreateVersion7();
+    private static ProviderLyricsRequest Request(bool availability = false, ProviderLyricsFormat? format = null,
+        string? isrc = "GBARL9300135", string title = "月光", Guid? recording = null) =>
+        new(recording ?? Recording, new("paxsenix", ProviderResourceKind.Track, "lookup"), availability, format,
+            title, ["歌手"], durationSeconds: 180, isrc: isrc);
     private static ProviderExecutionContext Context(CancellationToken token = default) =>
         new(new(ProviderActorKind.PublicRead, null), "paxsenix", null,
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,

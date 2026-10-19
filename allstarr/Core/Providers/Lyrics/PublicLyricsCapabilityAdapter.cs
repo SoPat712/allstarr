@@ -13,6 +13,7 @@ public abstract class PublicLyricsCapabilityAdapter(
 {
     private const int MaximumBytes = 2_000_000;
     protected virtual TimeProvider Clock => TimeProvider.System;
+    protected virtual string CacheScope(ProviderLyricsRequest request) => string.Empty;
     protected virtual TimeSpan LookupBudget => TimeSpan.FromSeconds(3);
     protected virtual TimeSpan RequestTimeout => Timeout.InfiniteTimeSpan;
     public abstract string ProviderId { get; }
@@ -33,7 +34,7 @@ public abstract class PublicLyricsCapabilityAdapter(
         var token = budget.Token;
         try
         {
-            var key = $"lyrics:v3:{ProviderId}:" + Hash(JsonSerializer.Serialize(new
+            var key = $"lyrics:v3:{ProviderId}:" + CacheScope(request) + Hash(JsonSerializer.Serialize(new
             {
                 request.Isrc,
                 request.TrackTitle,
@@ -48,7 +49,7 @@ public abstract class PublicLyricsCapabilityAdapter(
                 if (cached != null) return Project(cached, request);
             }
             catch (Exception exception) when (exception is not OperationCanceledException) { }
-            var result = await ReadAsync(request, token);
+            var result = await ReadAsync(context, request, token);
             token.ThrowIfCancellationRequested();
             if (!result.IsSuccess) return result;
             try
@@ -71,6 +72,8 @@ public abstract class PublicLyricsCapabilityAdapter(
     }
 
     protected abstract Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(ProviderLyricsRequest request, CancellationToken token);
+    protected virtual Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(
+        ProviderExecutionContext context, ProviderLyricsRequest request, CancellationToken token) => ReadAsync(request, token);
     protected virtual Task BeforeRequestAsync(CancellationToken token) => Task.CompletedTask;
 
     protected async Task<(string? Content, ProviderError? Error)> GetAsync(Uri endpoint, CancellationToken token)

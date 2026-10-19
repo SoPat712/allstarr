@@ -1166,7 +1166,7 @@ public class AdminUiController : ControllerBase
             Icon = "lyrics",
             Status = "available",
             Categories = ["lyrics"],
-            Notes = ["Public QQ, NetEase and Kugou lyrics; no account required"]
+            Notes = ["Apple Music lyrics through Paxsenix; no account required"]
         },
         new()
         {

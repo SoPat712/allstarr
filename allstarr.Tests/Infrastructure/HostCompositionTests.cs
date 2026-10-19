@@ -431,6 +431,23 @@ public sealed class HostCompositionTests
     }
 
     [Fact]
+    public void Host_ResolvesPaxsenixRegistrationWithRecordingIdentities()
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        var registry = factory.Services.GetRequiredService<IProviderRegistry>();
+        var registration = Assert.Single(factory.Services.GetServices<ProviderRegistration>(),
+            item => item.Descriptor.Id == "paxsenix");
+        var lyrics = factory.Services.GetRequiredService<allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter>();
+
+        Assert.Equal(ProviderAccountRequirement.None, Assert.Single(registration.Descriptor.Capabilities).AccountRequirement);
+        Assert.Same(lyrics, registry.GetRequiredCapability<IProviderLyricsCapability>("paxsenix", ProviderCapabilityKind.Lyrics));
+        Assert.IsType<allstarr.Core.Matching.TrackIdentityService>(
+            factory.Services.GetRequiredService<allstarr.Core.Matching.ITrackIdentityService>());
+        Assert.IsType<allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter>(
+            factory.Services.GetRequiredService<allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter>());
+    }
+
+    [Fact]
     public void Host_RegistersDeezerAsTypedBuiltInMetadataCapability()
     {
         using var factory = new AllstarrFactory("Jellyfin");

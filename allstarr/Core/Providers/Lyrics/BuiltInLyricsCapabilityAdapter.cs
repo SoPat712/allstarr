@@ -102,9 +102,11 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton(provider => new PaxsenixCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(PaxsenixCapabilityAdapter.HttpClientName),
             provider.GetRequiredService<IApplicationCache>(),
+            provider.GetRequiredService<allstarr.Core.Providers.AppleMusicKit.AppleMusicKitMetadataCapabilityAdapter>(),
+            () => provider.GetRequiredService<allstarr.Core.Matching.ITrackIdentityService>(),
             () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
         services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
-            "paxsenix", "Paxsenix", "Public QQ, NetEase and Kugou lyrics lookup; no account required.",
+            "paxsenix", "Paxsenix", "Apple Music lyrics through Paxsenix; no account required.",
             provider.GetRequiredService<PaxsenixCapabilityAdapter>()));
         services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
