@@ -571,27 +571,9 @@ public sealed partial class ProtocolProviderGateway(
             "protocol-playable-track-search",
             providerIds: providerOrder,
             sourceTrackId: null));
-        using var searchGate = new SemaphoreSlim(ProviderSearchConcurrency);
-        var tasks = plan.Candidates.Select(async candidate =>
-        {
-            await searchGate.WaitAsync(protocol.CancellationToken);
-            try
-            {
-                var outcome = await TrySearchAsync(
-                    () => candidate.Implementation.SearchTracksAsync(
-                        candidate.Context,
-                        new ProviderMetadataSearchRequest(query, new ProviderPageRequest(limit))),
-                    protocol.CancellationToken);
-                return outcome;
-            }
-            finally
-            {
-                searchGate.Release();
-            }
-        });
-        var songs = (await Task.WhenAll(tasks))
-            .Where(outcome => outcome?.IsSuccess == true)
-            .SelectMany(outcome => outcome!.RequireValue().Items.Select(Map))
+        var snapshots = await SearchPlayableProvidersWithinBudgetAsync(
+            plan.Candidates, query, limit, protocol.CancellationToken);
+        var songs = snapshots.SelectMany(snapshot => snapshot.Result.Songs)
             .Where(song => effectivePolicy?.Includes(song) != false)
             .Where(song => providerOrder.Contains(
                 NormalizeProvider(song.ExternalProvider), StringComparer.Ordinal));

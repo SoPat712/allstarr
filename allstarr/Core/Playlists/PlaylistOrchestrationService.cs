@@ -32,7 +32,7 @@ public sealed record PlaylistOrchestrationResult(
     bool ReusedRun,
     string? ErrorCode = null);
 
-public sealed record PlaylistRefreshResult(Guid SnapshotId, int SnapshotVersion, string SourceRevision);
+public sealed record PlaylistRefreshResult(Guid SnapshotId, int SnapshotVersion, string SourceRevision, Guid? JobId = null);
 
 public interface IPlaylistOrchestrationService
 {
@@ -216,6 +216,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
     private readonly IProviderRegistry? _registry;
     private readonly ILogger<PlaylistOrchestrationService>? _logger;
     private readonly allstarr.Core.ManagedFiles.RecordingKeptFiles? _kept;
+    private readonly DurableJobQueue _jobs;
 
     public PlaylistOrchestrationService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -230,7 +231,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         ILogger<PlaylistOrchestrationService>? logger = null,
         IEffectiveProviderPolicyResolver? effectivePolicies = null,
         IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null,
-        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null)
+        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null, DurableJobQueue? jobs = null)
     {
         (_factory, _source, _targets, _planner, _matcher, _trackMatches, _clock, _logger) =
             (factory, source, targets, planner, matcher, trackMatches, clock, logger);
@@ -240,6 +241,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         _providerGateway = providerGateway;
         _registry = registry;
         _kept = kept;
+        var jobOptions = new DurableJobOptions();
+        _jobs = jobs ?? new DurableJobQueue(factory, jobOptions, new JobPayloadPolicy(jobOptions), clock);
     }
 
     private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
@@ -445,9 +448,9 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var snapshot = await CollectWithRetentionLogAsync(
             execution, link, jobId, cancellationToken);
         var (_, _, decisionIds) = await MatchAndLoadAsync(execution, link, snapshot, null, cancellationToken);
-        await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
+        var rematchJobId = await PublishGenerationAsync(link, snapshot, decisionIds, cancellationToken);
         await LogReconciliationAsync(link, cancellationToken);
-        return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision);
+        return new PlaylistRefreshResult(snapshot.Id, snapshot.SnapshotVersion, snapshot.ProviderRevision, rematchJobId);
     }
 
     public async Task PublishExistingDecisionsAsync(
@@ -581,12 +584,13 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         }
     }
 
-    internal async Task PublishGenerationAsync(
+    internal async Task<Guid?> PublishGenerationAsync(
         PlaylistLinkRecord link,
         PlaylistSourceSnapshotRecord snapshot,
         IReadOnlyDictionary<Guid, Guid?> decisionIds,
         CancellationToken cancellationToken)
     {
+        await using var publicationLock = await _locks.AcquireAsync($"playlist-publication:{link.Id:N}", cancellationToken);
         var access = _kept == null ? BackendLibraryAccessContext.Unavailable :
             await _libraryAccess.ResolveUserAsync(link.OwnerUserId, cancellationToken);
         await using var db = await _factory.CreateDbContextAsync(cancellationToken);
@@ -625,7 +629,21 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 preparation: preparation);
             await db.SaveChangesAsync(cancellationToken);
         }
+        Guid? rematchJobId = null;
+        if (_trackMatches is { SupportsExternalMatching: true } && matches.Values.Any(item =>
+                item.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or TrackMatchState.Ambiguous))
+        {
+            var queued = await _jobs.EnqueuePlaylistRematchInExistingTransactionAsync(db,
+                new DurableJobEnqueueRequest<PlaylistRematchJobPayload>(
+                    TrackRematchJobHandler.Type,
+                    $"playlist-refresh-rematch:{link.Id:N}:",
+                    new("", "", PlaylistLinkId: link.Id, RefreshPending: true, RequestedSnapshotId: snapshot.Id),
+                    link.OwnerUserId, CorrelationId: published.CorrelationId), cancellationToken);
+            rematchJobId = queued.JobId;
+            await db.SaveChangesAsync(cancellationToken);
+        }
         await transaction.CommitAsync(cancellationToken);
+        return rematchJobId;
     }
 
     private async Task<PlaylistSourceSnapshotRecord> CollectAndPersistAsync(
@@ -1044,48 +1062,6 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 execution, pendingDecisions.Values, cancellationToken);
             foreach (var stored in storedDecisions)
                 storedByExternalId[stored.ExternalSnapshotId] = stored;
-        }
-
-        var rematchedExternal = false;
-        if (_trackMatches.SupportsExternalMatching)
-        {
-            var pendingExternal = storedByExternalId.Values.Where(item =>
-                    item.State is TrackMatchState.Unresolved or
-                        TrackMatchState.Suggested or
-                        TrackMatchState.Ambiguous)
-                .ToArray();
-            foreach (var stored in pendingExternal)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                var manual = allManualOverrides.GetValueOrDefault(stored.ExternalSnapshotId)?.Effective;
-                if (manual != null &&
-                    (manual.Decision == ManualOverrideDecision.Pin ||
-                     manual.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue))
-                    continue;
-                var rematch = await _trackMatches.RematchSnapshotAsync(
-                    execution,
-                    stored.ExternalSnapshotId,
-                    execution.CorrelationId,
-                    link.PolicyVersion,
-                    cancellationToken);
-                if (rematch.Succeeded)
-                    rematchedExternal = true;
-            }
-        }
-        if (rematchedExternal)
-        {
-            resolution = await _trackMatches.GetResolutionDataAsync(
-                new TrackMatchActor(
-                    actor.EffectiveUserId ?? link.OwnerUserId,
-                    actor.Kind == ProviderActorKind.Administrator),
-                link.OwnerUserId,
-                externalIds,
-                cancellationToken);
-            storedByExternalId = resolution.LatestDecisions
-                .ToDictionary(item => item.ExternalSnapshotId);
-            allManualOverrides = ManualTrackOverrides.Index(
-                externals.Values, resolution.ActiveOverrides, viewerUserId);
-            providerOrder = await PlayableProviderOrderAsync();
         }
 
         var decisions = new List<PersistedPlaylistMatchDecision>(entries.Count);

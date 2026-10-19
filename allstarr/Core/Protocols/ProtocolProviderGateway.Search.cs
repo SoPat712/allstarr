@@ -16,6 +16,47 @@ public sealed partial class ProtocolProviderGateway
     private CacheSettings SearchSettings => searchSettings?.Value ??
         configuration?.GetSection("Cache").Get<CacheSettings>() ?? new();
 
+    private async Task<IReadOnlyList<SearchSnapshot>> SearchPlayableProvidersWithinBudgetAsync(
+        IReadOnlyList<ProviderRouteCandidate<IProviderMetadataCapability>> candidates,
+        string query,
+        int limit,
+        CancellationToken cancellationToken)
+    {
+        var clock = timeProvider ?? TimeProvider.System;
+        var budget = TimeSpan.FromSeconds(9);
+        var settings = SearchSettings;
+        var started = clock.GetTimestamp();
+        var tasks = candidates.Select(async candidate =>
+        {
+            var snapshot = await SearchProviderWithinWindowAsync(
+                candidate, query, limit, true, false, false, settings);
+            return (Snapshot: snapshot, CompletedAfter: clock.GetElapsedTime(started));
+        }).ToArray();
+        try
+        {
+            var remaining = budget - clock.GetElapsedTime(started);
+            await Task.WhenAll(tasks).WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero,
+                clock, cancellationToken);
+        }
+        catch (TimeoutException)
+        {
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var droppedProviders = candidates.Where((_, index) =>
+                !tasks[index].IsCompletedSuccessfully || tasks[index].Result.CompletedAfter > budget)
+            .Select(candidate => candidate.Provider.Id)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (droppedProviders.Length > 0)
+            logger?.LogInformation("Playable search budget expired for providers {ProviderIds}",
+                string.Join(", ", droppedProviders));
+        return tasks.Where(task => task.IsCompletedSuccessfully && task.Result.CompletedAfter <= budget)
+            .Select(task => task.Result.Snapshot)
+            .OfType<SearchSnapshot>()
+            .ToArray();
+    }
+
     private async Task<SearchSnapshot?> SearchProviderWithinWindowAsync(
         ProviderRouteCandidate<IProviderMetadataCapability> candidate, string query, int limit,
         bool songs, bool albums, bool artists, CacheSettings settings)

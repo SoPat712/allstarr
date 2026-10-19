@@ -63,6 +63,92 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     }
 
     [Fact]
+    public async Task PlayableSearch_DropsLateProvidersAndKeepsTheirCacheWorkRunning()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        using var guard = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var cache = new TestMemoryApplicationCache();
+        var writes = Channel.CreateUnbounded<string>();
+        var observedCache = new Mock<IApplicationCache>();
+        observedCache.SetupGet(item => item.IsEnabled).Returns(true);
+        observedCache.Setup(item => item.GetStringAsync(It.IsAny<string>()))
+            .Returns((string key) => cache.GetStringAsync(key));
+        observedCache.Setup(item => item.SetStringAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<TimeSpan?>()))
+            .Returns(async (string key, string result, TimeSpan? ttl) =>
+            {
+                var saved = await cache.SetStringAsync(key, result, ttl);
+                writes.Writer.TryWrite(key);
+                return saved;
+            });
+        var fast = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        var slow = DelayedSearchProvider("qobuz", clock, TimeSpan.FromSeconds(12));
+        foreach (var provider in new[] { fast, slow })
+            provider.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .Returns(async (ProviderExecutionContext execution, ProviderMetadataSearchRequest _) =>
+                {
+                    var id = provider.Object.ProviderId;
+                    await Task.Delay(id == "deezer" ? TimeSpan.Zero : TimeSpan.FromSeconds(12), clock,
+                        execution.CancellationToken);
+                    return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(id,
+                        [new(new(id, ProviderResourceKind.Track, "track"), "Track", [new("Artist")],
+                            duration: TimeSpan.FromSeconds(240))]));
+                });
+        var log = new Mock<ILogger<ProtocolProviderGateway>>();
+        var gateway = BudgetGateway(clock, observedCache.Object, null, log.Object, fast.Object, slow.Object);
+        using var requestCancellation = new CancellationTokenSource();
+        var context = WithSearchCancellation(Context(), requestCancellation.Token);
+        var service = new TrackMatchPlayableSearch(gateway, new TrackMatchDecisionEngine(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<TrackMatchPlayableSearch>.Instance);
+
+        var search = service.MatchAsync(context,
+            new ExternalTrackMatchSnapshot("source", "spotify", "source-track", "Track", "Artist",
+                null, null, 240_000, null, null, null),
+            new TrackMatchScope(context.Principal!.UserId, "main", Guid.CreateVersion7(), 2, 1,
+                new HashSet<string>(StringComparer.Ordinal)), [], null, requestCancellation.Token);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(9));
+        await writes.Reader.ReadAsync(guard.Token);
+        Assert.False(search.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(9));
+        var result = await search.WaitAsync(guard.Token);
+
+        Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
+        Assert.Equal("deezer", result.SelectedExternal!.ExternalProvider);
+        Assert.DoesNotContain(result.Decision.Candidates, candidate => candidate.ProviderTrackIds?.ContainsKey("qobuz") == true);
+        log.Verify(item => item.Log(LogLevel.Information, It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) => state.ToString() == "Playable search budget expired for providers qobuz"),
+            null, It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+
+        requestCancellation.Cancel();
+        clock.Advance(TimeSpan.FromSeconds(3));
+        await writes.Reader.ReadAsync(guard.Token);
+        var repeated = await BudgetGateway(clock, cache, fast.Object, slow.Object)
+            .SearchPlayableSongsAsync(WithSearchCancellation(context, CancellationToken.None), "Track Artist", 15);
+        Assert.Equal(new[] { "deezer", "qobuz" }, repeated.Select(song => song.ExternalProvider));
+        VerifySearchCount(fast, "songs", 1);
+        VerifySearchCount(slow, "songs", 1);
+    }
+
+    [Fact]
+    public async Task PlayableSearch_ExcludesProvidersCompletingAfterBudgetDuringFanOut()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var fast = DelayedSearchProvider("deezer", clock, TimeSpan.Zero);
+        var slow = DelayedSearchProvider("qobuz", clock, TimeSpan.Zero);
+        slow.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() =>
+            {
+                clock.Advance(TimeSpan.FromSeconds(10));
+                return Task.FromResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("qobuz",
+                    [new(new("qobuz", ProviderResourceKind.Track, "track"), "Track", [new("Artist")])])));
+            });
+        var gateway = BudgetGateway(clock, new TestMemoryApplicationCache(), fast.Object, slow.Object);
+
+        var result = await gateway.SearchPlayableSongsAsync(Context(), "Track Artist", 15);
+
+        Assert.Equal(new[] { "deezer" }, result.Select(song => song.ExternalProvider));
+    }
+
+    [Fact]
     public async Task MetadataSearch_CachePreservesTrackIdentityAndPreciseDuration()
     {
         var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
