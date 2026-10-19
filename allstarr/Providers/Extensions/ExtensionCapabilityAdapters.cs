@@ -98,7 +98,7 @@ public abstract class ExtensionCapabilityAdapterBase
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return new(ProviderErrorKind.NotFound);
         if (Regex.IsMatch(message,
-                @"\b(?:preview|snippet)\b|\b(?:not|does[ _-]+not)\b.*\bfull[ _-]+playable[ _-]+stream\b|\bduration\b.*\b(?:mismatch|does[ _-]+not[ _-]+match)\b|\bencrypted\b.*\bstreams?\b|\bunsupported[ _-]+stream\b|\bstreams?\b.*\bnot[ _-]+supported\b",
+                @"\b(?:preview|snippet)\b|\b(?:not|does[ _-]+not)\b.*\bfull[ _-]+playable[ _-]+stream\b|\bno\b.*\b(?:supported|playable|full)\b.*\bstreams?\b.*\b(?:available|found)\b|\bduration\b.*\b(?:mismatch|does[ _-]+not[ _-]+match)\b|\bencrypted\b.*\bstreams?\b|\bunsupported[ _-]+stream\b|\bstreams?\b.*\bnot[ _-]+supported\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return new(ProviderErrorKind.IncompatibleMedia);
         return new(ProviderErrorKind.TransientFailure);
