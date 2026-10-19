@@ -649,6 +649,9 @@ public class ExtensionSandbox
     private readonly TimeSpan _hookTimeout;
     private readonly TimeSpan _downloadTimeout;
     private readonly TimeProvider _timeProvider;
+    internal TimeProvider Clock => _timeProvider;
+    internal bool AllowsProgressiveDownload { get; }
+    internal ExtensionDeezerSpeculation? DeezerSpeculation { get; }
 
     public ExtensionSandbox(
         string folderPath,
@@ -669,6 +672,7 @@ public class ExtensionSandbox
         _hookTimeout = hookTimeout ?? TimeSpan.FromSeconds(12);
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromMinutes(5);
         _timeProvider = timeProvider ?? TimeProvider.System;
+        AllowsProgressiveDownload = ExtensionProgressiveTransfer.IsEligible(indexJs);
 
         using var doc = JsonDocument.Parse(manifestJson);
         var root = doc.RootElement;
@@ -716,6 +720,8 @@ public class ExtensionSandbox
 
         var isSpotiFlac = SpotiFlacExtensionCompatibility.IsNormalizedManifest(manifestJson);
         var manifest = root.TryGetProperty("sdkVersion", out _) ? ExtensionSdkV1.ParseManifest(manifestJson) : null;
+        if (manifest?.Compatibility == SpotiFlacExtensionCompatibility.Marker)
+            DeezerSpeculation = ExtensionDeezerSpeculation.ForVersion(Id, Version, indexJs, logger);
         _hostBridge = new ExtensionHostBridge(
             runtimeStateDirectory ?? Path.Combine(Path.GetTempPath(), "allstarr-extension-runtime", Id),
             httpClientFactory,
@@ -1593,21 +1599,32 @@ public partial class ExtensionHostBridge
             if (response.Content.Headers.ContentLength > scope.MaximumBytes)
                 throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
             using var source = response.Content.ReadAsStream(scope.CancellationToken);
-            using var destination = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var decrypted = scope.Progressive?.StartDeezerDownload(safeUri, finalUri, target, response.Content.Headers.ContentLength);
+            if (decrypted == null)
+                scope.Progressive?.Begin(target, target, response.Content.Headers.ContentLength, response.Content.Headers.ContentType?.MediaType);
+            using var destination = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.Read);
             var buffer = new byte[128 * 1024];
             long written = 0;
             int read;
-            while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+            while ((read = source.ReadAsync(buffer, scope.CancellationToken).AsTask().GetAwaiter().GetResult()) > 0)
             {
                 written += read;
                 if (written > scope.MaximumBytes)
                     throw new InvalidDataException("Extension download exceeds the managed artifact size limit.");
                 destination.Write(buffer, 0, read);
+                destination.Flush();
+                if (decrypted != null) decrypted.Append(buffer.AsSpan(0, read));
+                else scope.Progressive?.Append(buffer.AsSpan(0, read));
             }
+            scope.CancellationToken.ThrowIfCancellationRequested();
+            if (response.Content.Headers.ContentLength is { } expected && written != expected)
+                throw new InvalidDataException("The download length does not match its response contract.");
+            decrypted?.Complete();
             return new { success = true, path = outputPath, size = written };
         }
         catch (Exception exception)
         {
+            scope.Progressive?.Fail();
             if (File.Exists(target)) File.Delete(target);
             return new
             {
@@ -1657,11 +1674,20 @@ public partial class ExtensionHostBridge
         return new { success = true, path, size = bytes.LongLength };
     }
 
+    public void PreparePatternedDownload(string trackId) =>
+        ExtensionArtifactInvocationScope.Current?.Progressive?.PrepareDeezer(trackId);
+
     public object CommitFile(string path, string artifactId)
     {
         var scope = RequireFileScope();
         var resolved = scope.ResolveTemporaryPath(path);
         using var stream = new FileStream(resolved, FileMode.Open, FileAccess.Read, FileShare.Read);
+        if (scope.Progressive?.Published == true)
+        {
+            var digest = Convert.ToHexString(SHA256.HashDataAsync(stream, scope.CancellationToken).GetAwaiter().GetResult());
+            scope.Progressive.Verify(resolved, digest, stream.Length);
+            stream.Position = 0;
+        }
         var result = scope.Write(artifactId, stream, stream.Length);
         return new { artifactId = result.ArtifactId, sha256 = result.Sha256, sizeBytes = result.SizeBytes, verified = true };
     }
