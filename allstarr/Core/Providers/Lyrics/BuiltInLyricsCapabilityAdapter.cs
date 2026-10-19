@@ -97,6 +97,15 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
             "unison", "Unison", "Lyrics from Unison (https://unison.boidu.dev)",
             provider.GetRequiredService<UnisonCapabilityAdapter>()));
+        services.AddHttpClient(PaxsenixCapabilityAdapter.HttpClientName)
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new PaxsenixCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(PaxsenixCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "paxsenix", "Paxsenix", "Public QQ, NetEase and Kugou lyrics lookup; no account required.",
+            provider.GetRequiredService<PaxsenixCapabilityAdapter>()));
         services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName)
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
         services.AddSingleton(provider => new LyricsPlusCapabilityAdapter(
