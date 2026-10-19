@@ -32,7 +32,8 @@ public sealed class JellyfinItemProtocolAdapter(JellyfinResponseBuilder response
             context.BackendInstanceId))
             return responseBuilder.CreateSongResponse(song);
 
-        var item = responseBuilder.ConvertSongToJellyfinItem(song);
+        var item = responseBuilder.ConvertSongToJellyfinItem(song,
+            ExternalTrackPresentation.Preferences(http), null, includeAllFields: true);
         var label = $"Last stream: {source.ProviderId}{(source.Cached ? " (cached)" : "")}";
         item["Overview"] = $"{ExternalTrackPresentation.PlaybackDescription}\n{label}. Opened {source.OpenedAt:O}.";
         if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] mediaSources)

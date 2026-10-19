@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using System.Text.Json;
 using Xunit;
 using allstarr.Models.Domain;
@@ -16,7 +17,9 @@ public class JellyfinResponseStructureTests
 
     public JellyfinResponseStructureTests()
     {
-        _builder = new JellyfinResponseBuilder();
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString("?Fields=" + JellyfinAudioShapeTests.RequestedFields);
+        _builder = new JellyfinResponseBuilder(httpContexts: new HttpContextAccessor { HttpContext = http });
     }
 
     [Fact]
@@ -49,7 +52,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("Path", mediaSource.Keys);
         Assert.Contains("Type", mediaSource.Keys);
         Assert.Contains("Container", mediaSource.Keys);
-        Assert.Contains("Bitrate", mediaSource.Keys);
+        Assert.DoesNotContain("Bitrate", mediaSource.Keys);
         Assert.Contains("ETag", mediaSource.Keys);
         Assert.Contains("RunTimeTicks", mediaSource.Keys);
 
@@ -109,7 +112,7 @@ public class JellyfinResponseStructureTests
         Assert.Equal("flac", audioStream["Codec"]);
         Assert.Contains("Type", audioStream.Keys);
         Assert.Equal("Audio", audioStream["Type"]);
-        Assert.Contains("BitRate", audioStream.Keys);
+        Assert.DoesNotContain("BitRate", audioStream.Keys);
         Assert.Contains("Channels", audioStream.Keys);
         Assert.Contains("SampleRate", audioStream.Keys);
         Assert.Contains("BitDepth", audioStream.Keys);
@@ -125,7 +128,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("LocalizedExternal", audioStream.Keys);
 
         Assert.Contains("IsInterlaced", audioStream.Keys);
-        Assert.Contains("IsAVC", audioStream.Keys);
+        Assert.DoesNotContain("IsAVC", audioStream.Keys);
         Assert.Contains("IsDefault", audioStream.Keys);
         Assert.Contains("IsForced", audioStream.Keys);
         Assert.Contains("IsHearingImpaired", audioStream.Keys);
@@ -134,7 +137,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("SupportsExternalStream", audioStream.Keys);
 
         Assert.Contains("Index", audioStream.Keys);
-        Assert.Contains("Level", audioStream.Keys);
+        Assert.DoesNotContain("Level", audioStream.Keys);
     }
 
     [Fact]
@@ -256,7 +259,8 @@ public class JellyfinResponseStructureTests
             foreach (var mediaSource in mediaSources.EnumerateArray())
             {
                 RequiredString(mediaSource, "Id");
-                Assert.StartsWith("/Audio/", RequiredString(mediaSource, "DirectStreamUrl"), StringComparison.Ordinal);
+                RequiredString(mediaSource, "DirectStreamUrl");
+                RequiredString(mediaSource, "TranscodingUrl");
                 foreach (var mediaStream in mediaSource.GetProperty("MediaStreams").EnumerateArray())
                     Assert.Equal(JsonValueKind.Number, mediaStream.GetProperty("Index").ValueKind);
             }

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -16,7 +17,10 @@ public class JellyfinResponseBuilderTests
 
     public JellyfinResponseBuilderTests()
     {
-        _builder = new JellyfinResponseBuilder();
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString("?Fields=" + JellyfinAudioShapeTests.RequestedFields + ",ChildCount,ItemCounts,Overview,Tags");
+        http.Items[JellyfinResponseBuilder.ServerIdItemKey] = "backend-server";
+        _builder = new JellyfinResponseBuilder(httpContexts: new HttpContextAccessor { HttpContext = http });
     }
 
     [Fact]
@@ -106,7 +110,7 @@ public class JellyfinResponseBuilderTests
         Assert.True(Assert.IsType<bool>(result["HasLyrics"]));
         var mediaSource = Assert.IsType<Dictionary<string, object?>>(
             Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
-        Assert.Null(mediaSource["Bitrate"]);
+        Assert.False(mediaSource.ContainsKey("Bitrate"));
     }
 
     [Fact]
@@ -126,7 +130,7 @@ public class JellyfinResponseBuilderTests
             Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
         Assert.Equal(0L, result["RunTimeTicks"]);
         Assert.Equal(0L, mediaSource["RunTimeTicks"]);
-        Assert.Null(mediaSource["Size"]);
+        Assert.False(mediaSource.ContainsKey("Size"));
     }
 
     [Fact]
@@ -148,18 +152,20 @@ public class JellyfinResponseBuilderTests
             Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
         var mediaStream = Assert.IsType<Dictionary<string, object?>>(
             Assert.IsAssignableFrom<object[]>(mediaSource["MediaStreams"])[0]);
-        Assert.Null(mediaSource["Bitrate"]);
-        Assert.Null(mediaStream["BitRate"]);
-        Assert.Null(mediaSource["Size"]);
+        Assert.False(mediaSource.ContainsKey("Bitrate"));
+        Assert.False(mediaStream.ContainsKey("BitRate"));
+        Assert.False(mediaSource.ContainsKey("Size"));
     }
 
     [Fact]
-    public void ConvertSongToJellyfinItem_UsesTheAdvertisedProxyServerIdentity()
+    public void ConvertSongToJellyfinItem_UsesTheBackendServerIdentity()
     {
+        var http = new DefaultHttpContext();
+        http.Items[JellyfinResponseBuilder.ServerIdItemKey] = "backend-server";
         var builder = new JellyfinResponseBuilder(Options.Create(new JellyfinSettings
         {
-            DeviceId = "proxy-server-id"
-        }));
+            DeviceId = "client-device"
+        }), new HttpContextAccessor { HttpContext = http });
 
         var result = builder.ConvertSongToJellyfinItem(new Song
         {
@@ -171,7 +177,7 @@ public class JellyfinResponseBuilderTests
             ExternalId = "42"
         });
 
-        Assert.Equal("proxy-server-id", result["ServerId"]);
+        Assert.Equal("backend-server", result["ServerId"]);
         var imageTags = Assert.IsType<Dictionary<string, string>>(result["ImageTags"]);
         Assert.Equal("ext-applemusic-song-42-art-v2", imageTags["Primary"]);
     }
@@ -199,7 +205,7 @@ public class JellyfinResponseBuilderTests
         Assert.Equal("ext-apple-musickit-song-i.song", result["Id"]);
         Assert.Equal("ext-apple-musickit-album-i.album", result["AlbumId"]);
         Assert.Equal("ext-apple-musickit-album-i.album", result["AlbumPrimaryImageTag"]);
-        Assert.Equal("ext-apple-musickit-album-i.album", result["ParentLogoImageTag"]);
+        Assert.False(result.ContainsKey("ParentLogoImageTag"));
         var imageTags = Assert.IsType<Dictionary<string, string>>(result["ImageTags"]);
         Assert.Equal("ext-apple-musickit-song-i.song-art-v2", imageTags["Primary"]);
     }
@@ -383,9 +389,9 @@ public class JellyfinResponseBuilderTests
         });
 
         Assert.Equal(["Primary [D]", "Feature [D]"], Assert.IsType<string[]>(song["Artists"]));
-        Assert.Null(song["AlbumId"]);
-        Assert.Null(song["AlbumPrimaryImageTag"]);
-        Assert.Null(song["ParentLogoImageTag"]);
+        Assert.False(song.ContainsKey("AlbumId"));
+        Assert.False(song.ContainsKey("AlbumPrimaryImageTag"));
+        Assert.False(song.ContainsKey("ParentLogoImageTag"));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["ArtistItems"]));
         Assert.Empty(Assert.IsType<Dictionary<string, object?>[]>(song["AlbumArtists"]));
         Assert.Equal(["Primary [D]"], Assert.IsType<string[]>(album["Artists"]));
@@ -564,7 +570,7 @@ public class JellyfinResponseBuilderTests
         Assert.Equal(2023, result["ProductionYear"]);
         Assert.Equal("Summer Vibes [D/P]", result["SortName"]);
         Assert.NotNull(result["DateCreated"]);
-        Assert.NotNull(result["BasicSyncInfo"]);
+        Assert.False(result.ContainsKey("BasicSyncInfo"));
     }
 
     [Fact]
@@ -677,7 +683,7 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
-    public void CreateAlbumResponse_IncludesChildrenForSongs()
+    public void CreateAlbumResponse_ExternalAlbumOmitsEmbeddedTracks()
     {
         var album = new Album
         {
@@ -697,10 +703,11 @@ public class JellyfinResponseBuilderTests
         Assert.NotNull(jsonResult.Value);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
         Assert.Equal(75 * TimeSpan.TicksPerSecond, document.RootElement.GetProperty("RunTimeTicks").GetInt64());
+        Assert.False(document.RootElement.TryGetProperty("Children", out _));
     }
 
     [Fact]
-    public void CreateArtistResponse_IncludesAlbumsList()
+    public void CreateArtistResponse_ExternalArtistOmitsEmbeddedAlbums()
     {
         var artist = new Artist { Id = "art-1", Name = "Test Artist" };
         var albums = new List<Album>
@@ -715,6 +722,7 @@ public class JellyfinResponseBuilderTests
         Assert.NotNull(jsonResult.Value);
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
         Assert.Equal(2, document.RootElement.GetProperty("AlbumCount").GetInt32());
+        Assert.False(document.RootElement.TryGetProperty("Albums", out _));
     }
 
     [Fact]
@@ -738,6 +746,8 @@ public class JellyfinResponseBuilderTests
 
         var jsonResult = Assert.IsType<JsonResult>(result);
         Assert.NotNull(jsonResult.Value);
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
+        Assert.False(document.RootElement.TryGetProperty("Children", out _));
     }
 
     private static void AssertRequiredKeys(

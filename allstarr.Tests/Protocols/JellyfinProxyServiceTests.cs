@@ -1,3 +1,6 @@
+using allstarr.Core.Protocols;
+using allstarr.Filters;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -85,6 +88,158 @@ public class JellyfinProxyServiceTests
                 _cache,
                 new Mock<ILogger<MediaAssetResolver>>().Object),
             new ConfigurationBuilder().Build());
+    }
+
+    [Fact]
+    public async Task GetServerIdAsync_FetchesAndCachesTheBackendIdentity()
+    {
+        SetupMockResponse(HttpStatusCode.OK, "{\"Id\":\"backend-server\"}", "application/json");
+
+        Assert.Equal("backend-server", await _service.GetServerIdAsync("primary"));
+        Assert.Equal("backend-server", await _service.GetServerIdAsync("primary"));
+        Assert.Equal("backend-server", await _service.GetServerIdAsync("second"));
+        _mockHandler.Protected().Verify("SendAsync", Times.Exactly(2),
+            ItExpr.Is<HttpRequestMessage>(request => request.RequestUri!.AbsolutePath == "/System/Info/Public"),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task GetServerIdAsync_KeepsBackendInstancesSeparate()
+    {
+        SetupMockResponse(HttpStatusCode.OK, "{\"Id\":\"first-server\"}", "application/json");
+        Assert.Equal("first-server", await _service.GetServerIdAsync("first"));
+        SetupMockResponse(HttpStatusCode.OK, "{\"Id\":\"second-server\"}", "application/json");
+        Assert.Equal("second-server", await _service.GetServerIdAsync("second"));
+        Assert.Equal("first-server", await _service.GetServerIdAsync("first"));
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("[]")]
+    [InlineData("{\"Id\":null}")]
+    [InlineData("{\"Id\":\"\"}")]
+    [InlineData("invalid-json")]
+    public async Task GetServerIdAsync_UnknownIdentityNeverUsesTheDeviceIdOrCachesFailure(string body)
+    {
+        SetupMockResponse(HttpStatusCode.OK, body, "application/json");
+        await Assert.ThrowsAsync<HttpRequestException>(() => _service.GetServerIdAsync("primary"));
+        SetupMockResponse(HttpStatusCode.OK, "{\"Id\":\"backend-server\"}", "application/json");
+        Assert.Equal("backend-server", await _service.GetServerIdAsync("primary"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ExternalItemResponses_UseNeighboringServerIdAndPreserveNativeItems(bool content)
+    {
+        const string body = """
+            {"Items":[
+              {"Id":"local","Type":"Audio","ServerId":"library-server","UnknownFutureField":null},
+              {"Id":"ext-deezer-song-1","Type":"Audio","MediaSources":[{"Id":"ext-deezer-song-1","Type":"Default"}]}
+            ]}
+            """;
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString("?Fields=MediaSources");
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        IActionResult result = content
+            ? new ContentResult { ContentType = "application/json", Content = body }
+            : new JsonResult(JsonNode.Parse(body));
+        await new JellyfinItemResponseFilter(_service).PrepareAsync(result, http);
+        var actual = content ? JsonNode.Parse(((ContentResult)result).Content!)!
+            : JsonSerializer.SerializeToNode(((JsonResult)result).Value)!;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(body)!["Items"]![0], actual["Items"]![0]));
+        Assert.Equal("library-server", actual["Items"]![1]!["ServerId"]!.GetValue<string>());
+        Assert.Null(actual["Items"]![1]!["MediaSources"]![0]!["ServerId"]);
+        Assert.Equal("library-server", await _service.GetServerIdAsync("primary"));
+        _mockHandler.Protected().Verify("SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task ExternalOnlyResponses_FetchTheBackendIdentity()
+    {
+        SetupMockResponse(HttpStatusCode.OK, "{\"Id\":\"backend-server\"}", "application/json");
+        var http = new DefaultHttpContext();
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var result = new JsonResult(new JellyfinResponseBuilder().ConvertSongToJellyfinItem(
+            new allstarr.Models.Domain.Song { Id = "ext-deezer-song-1", Title = "Track", ExternalProvider = "deezer" }));
+        await new JellyfinItemResponseFilter(_service).PrepareAsync(result, http);
+        var actual = JsonSerializer.SerializeToNode(result.Value)!;
+        Assert.Equal("backend-server", actual["ServerId"]!.GetValue<string>());
+        Assert.False(actual.AsObject().ContainsKey("MediaSources"));
+    }
+
+    [Theory]
+    [InlineData("/Items/ext-deezer-song-1")]
+    [InlineData("/Users/listener/Items/ext-deezer-song-1")]
+    public async Task SingleItemResponses_PreserveOptionalFieldsWhileReplacingServerId(string path)
+    {
+        SetupMockResponse(HttpStatusCode.OK, "{\"Id\":\"backend-server\"}", "application/json");
+        var http = new DefaultHttpContext();
+        http.Request.Path = path;
+        http.Request.QueryString = new QueryString("?Fields=Genres");
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var result = new JsonResult(JsonNode.Parse("""
+            {"Id":"ext-deezer-song-1","Type":"Audio","ServerId":"old-server",
+             "ProviderIds":{"deezer":"1"},"Overview":"Description","MediaSources":[{"DirectStreamUrl":"/Audio/stream"}]}
+            """));
+        await new JellyfinItemResponseFilter(_service).PrepareAsync(result, http);
+        var actual = JsonSerializer.SerializeToNode(result.Value)!;
+        Assert.Equal("backend-server", actual["ServerId"]!.GetValue<string>());
+        Assert.Equal("1", actual["ProviderIds"]!["deezer"]!.GetValue<string>());
+        Assert.Equal("Description", actual["Overview"]!.GetValue<string>());
+        Assert.Equal("/Audio/stream", actual["MediaSources"]![0]!["DirectStreamUrl"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("POST")]
+    public async Task PlaybackInfoResponses_PreserveAllSourceProperties(string method)
+    {
+        var http = new DefaultHttpContext();
+        http.Request.Method = method;
+        http.Request.Path = "/Items/ext-deezer-song-1/PlaybackInfo";
+        http.Request.QueryString = new QueryString("?Fields=Genres");
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var result = new JsonResult(new
+        {
+            MediaSources = new JellyfinResponseBuilder().CreatePlaybackMediaSources(
+                new allstarr.Models.Domain.Song { Id = "ext-deezer-song-1", Title = "Track", ExternalProvider = "deezer" }),
+            PlaySessionId = "session",
+            ErrorCode = (string?)null
+        });
+        var before = JsonSerializer.Serialize(result.Value);
+        await new JellyfinItemResponseFilter(_service).PrepareAsync(result, http);
+        Assert.Equal(before, JsonSerializer.Serialize(result.Value));
+        var source = JsonSerializer.SerializeToNode(result.Value)!["MediaSources"]![0]!;
+        Assert.Equal("/Audio/ext-deezer-song-1/stream?static=true", source["DirectStreamUrl"]!.GetValue<string>());
+        _mockHandler.Protected().Verify("SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
+    }
+
+    [Theory]
+    [InlineData("""{"Id":"local","Type":"Audio","ServerId":"native-server"}""")]
+    [InlineData("""{"Id":"local","Type":"Audio","UnknownFutureField":{"Id":"ext-deezer-song-1","Type":"Audio"}}""")]
+    [InlineData("""{"Id":"ext-deezer-song-1","ItemId":"ext-deezer-song-1","Type":"Audio"}""")]
+    public async Task NativeItemsAndSearchHints_DoNotResolveOrRewriteServerIdentity(string body)
+    {
+        var result = new ContentResult
+        {
+            ContentType = "application/json",
+            Content = body
+        };
+        var before = result.Content;
+        var http = new DefaultHttpContext();
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        await new JellyfinItemResponseFilter(_service).PrepareAsync(result, http);
+        Assert.Equal(before, result.Content);
+        _mockHandler.Protected().Verify("SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(),
+            ItExpr.IsAny<CancellationToken>());
     }
 
     [Fact]
@@ -723,17 +878,16 @@ public class JellyfinProxyServiceTests
 
     private void SetupMockResponse(HttpStatusCode statusCode, string content, string contentType)
     {
-        var response = new HttpResponseMessage(statusCode)
-        {
-            Content = new StringContent(content)
-        };
-        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
-
         _mockHandler.Protected()
             .Setup<Task<HttpResponseMessage>>("SendAsync",
                 ItExpr.IsAny<HttpRequestMessage>(),
                 ItExpr.IsAny<CancellationToken>())
-            .ReturnsAsync(response);
+            .ReturnsAsync(() =>
+            {
+                var response = new HttpResponseMessage(statusCode) { Content = new StringContent(content) };
+                response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+                return response;
+            });
     }
 
     private sealed class CollectingLogger<T>(List<string> messages) : ILogger<T>

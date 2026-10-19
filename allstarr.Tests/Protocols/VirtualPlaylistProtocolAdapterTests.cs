@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Http;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
@@ -21,6 +22,34 @@ public sealed class VirtualPlaylistProtocolAdapterTests
     private static readonly Guid LinkId = Guid.Parse("0198a537-719c-7ea8-9e5a-17e1f2f963f0");
     private static readonly string ProtocolId = PlaylistVirtualizationService.CreateProtocolId(LinkId);
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task JellyfinPlaylistEntries_IncludeOccurrenceIdentityAndHonorFields(bool includeFields)
+    {
+        var model = Model() with
+        {
+            ProjectionMode = PlaylistProjectionMode.Resolved,
+            Tracks =
+            [
+                new(0, "ext-deezer-song-1", "Track", "Artist", "Album", null, 180_000, null,
+                    TrackMatchState.Accepted, RouteKind: TrackRouteKind.External,
+                    RouteProviderId: "deezer", RouteExternalId: "1", NativePlaylistEntryId: "entry-7")
+            ]
+        };
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(new StubVirtualizationService(model),
+            new StubJellyfinMutationResolver(null), responseBuilder: new JellyfinResponseBuilder());
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(Context(ProtocolKind.Jellyfin),
+            ProtocolId, null, includeFields ? FullQuery() : null, default));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        var item = Assert.Single(json.RootElement.GetProperty("Items").EnumerateArray());
+        Assert.Equal("entry-7", item.GetProperty("PlaylistItemId").GetString());
+        foreach (var field in new[] { "ParentId", "MediaSources", "MediaStreams", "ProviderIds", "Genres", "GenreItems" })
+            Assert.Equal(includeFields, item.TryGetProperty(field, out _));
+        foreach (var field in new[] { "AudioInfo", "SupportsSync", "ParentLogoItemId", "ParentBackdropItemId" })
+            Assert.False(item.TryGetProperty(field, out _));
+    }
+
     [Fact]
     public async Task JellyfinRead_PreservesEverySourceRowWithoutInventingPlayback()
     {
@@ -28,7 +57,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             new StubVirtualizationService(Model()),
             new StubJellyfinMutationResolver(null));
         var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
-            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+            Context(ProtocolKind.Jellyfin), ProtocolId, null, FullQuery(), CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         var items = json.RootElement.GetProperty("Items");
 
@@ -74,12 +103,12 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         Assert.Equal("Road Trip", item["Name"]);
         Assert.Equal("Playlist", item["Type"]);
         Assert.Equal("Audio", item["MediaType"]);
-        Assert.Equal(3, item["ChildCount"]);
+        Assert.False(item.ContainsKey("ChildCount"));
         Assert.True((long)item["RunTimeTicks"]! > 0);
         var userData = Assert.IsType<Dictionary<string, object>>(item["UserData"]);
         Assert.Equal(ProtocolId, userData["ItemId"]);
         Assert.Equal(ProtocolId, userData["Key"]);
-        Assert.NotEmpty(Assert.IsType<Dictionary<string, string>>(item["ProviderIds"]));
+        Assert.False(item.ContainsKey("ProviderIds"));
         var definitionResult = Assert.IsType<JsonResult>(await adapter.ReadDefinitionAsync(
             Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
         using var definition = JsonDocument.Parse(JsonSerializer.Serialize(definitionResult.Value));
@@ -94,6 +123,26 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             await adapter.GetImageSourceIdAsync(
                 Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
         Assert.Null(await adapter.GetImageSourceIdAsync(null, ProtocolId, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("?Fields=Genres")]
+    public async Task JellyfinPlaylistDetail_IgnoresListingFieldSelection(string query)
+    {
+        var http = new DefaultHttpContext();
+        http.Request.Path = $"/Items/{ProtocolId}";
+        http.Request.QueryString = new QueryString(query);
+        var adapter = new JellyfinVirtualPlaylistProtocolAdapter(
+            new StubVirtualizationService(Model()), new StubJellyfinMutationResolver(null),
+            httpContexts: new HttpContextAccessor { HttpContext = http });
+        var result = Assert.IsType<JsonResult>(await adapter.ReadItemAsync(
+            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+        var item = Assert.IsType<Dictionary<string, object?>>(result.Value);
+        Assert.Equal(3, item["ChildCount"]);
+        Assert.True(item.ContainsKey("ProviderIds"));
+        Assert.True(item.ContainsKey("Overview"));
+        Assert.False(item.ContainsKey("PlaylistItemId"));
     }
 
     [Fact]
@@ -131,7 +180,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             new StubJellyfinMutationResolver(null));
 
         var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
-            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+            Context(ProtocolKind.Jellyfin), ProtocolId, null, FullQuery(), CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         var item = json.RootElement.GetProperty("Items")[0];
 
@@ -185,7 +234,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             providerGateway: gateway.Object);
 
         var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
-            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+            Context(ProtocolKind.Jellyfin), ProtocolId, null, FullQuery(), CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         var item = json.RootElement.GetProperty("Items")[0];
 
@@ -225,7 +274,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             new StubVirtualizationService(model), new StubJellyfinMutationResolver(null),
             responseBuilder: new JellyfinResponseBuilder());
         var result = Assert.IsType<JsonResult>(await adapter.ReadItemsAsync(
-            Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+            Context(ProtocolKind.Jellyfin), ProtocolId, null, FullQuery(), CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
         var item = Assert.Single(json.RootElement.GetProperty("Items").EnumerateArray());
 
@@ -440,7 +489,7 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             .Select(item => item.GetProperty("id").GetString()).ToArray();
         var jellyfinResult = Assert.IsType<JsonResult>(await new JellyfinVirtualPlaylistProtocolAdapter(
             service, new StubJellyfinMutationResolver(null)).ReadItemsAsync(
-                Context(ProtocolKind.Jellyfin), ProtocolId, CancellationToken.None));
+                Context(ProtocolKind.Jellyfin), ProtocolId, null, FullQuery(), CancellationToken.None));
         using var jellyfin = JsonDocument.Parse(JsonSerializer.Serialize(jellyfinResult.Value));
         var jellyfinIds = jellyfin.RootElement.GetProperty("Items").EnumerateArray()
             .Select(item => item.GetProperty("Id").GetString()).ToArray();
@@ -482,7 +531,10 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             ]
         };
         var service = new StubVirtualizationService(model);
-        var jellyfin = new JellyfinVirtualPlaylistProtocolAdapter(service, new StubJellyfinMutationResolver(null));
+        var http = new DefaultHttpContext();
+        http.Request.QueryString = new QueryString("?Fields=ChildCount");
+        var jellyfin = new JellyfinVirtualPlaylistProtocolAdapter(service, new StubJellyfinMutationResolver(null),
+            httpContexts: new HttpContextAccessor { HttpContext = http });
         var subsonic = new SubsonicVirtualPlaylistProtocolAdapter(service, new StubMutationResolver(null));
         foreach (var filter in new[] { "CleanOnly", "All", "ExplicitOnly" })
         {
@@ -538,6 +590,12 @@ public sealed class VirtualPlaylistProtocolAdapterTests
                 SourceIdentity: new("apple-music", Guid.NewGuid(), "source-hash", "revision-7", 7),
                 SourceMetadata: new("Missing", ["Artist C"], "Album C", 4_000))
         ]);
+
+    private static IQueryCollection FullQuery() => new QueryCollection(
+        new Dictionary<string, Microsoft.Extensions.Primitives.StringValues>
+        {
+            ["Fields"] = JellyfinAudioShapeTests.RequestedFields + ",CanDownload,CanDelete"
+        });
 
     private static ProtocolExecutionContext Context(ProtocolKind protocol) => new(
         protocol, "backend", "principal", null, "correlation", DateTimeOffset.UtcNow.AddMinutes(1),

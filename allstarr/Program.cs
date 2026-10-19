@@ -386,6 +386,7 @@ if (backendType == BackendType.Jellyfin)
     builder.Services.AddSingleton<IPlaybackActivitySource, JellyfinPlaybackActivitySource>();
     builder.Services.AddSingleton<IPlaybackMetadataResolver, JellyfinPlaybackMetadataResolver>();
     builder.Services.AddScoped<JellyfinAuthFilter>();
+    builder.Services.AddScoped<JellyfinItemResponseFilter>();
 
     builder.Services.AddScoped<allstarr.Controllers.JellyfinController>();
 }

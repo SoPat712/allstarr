@@ -30,6 +30,7 @@ using allstarr.Core.Music;
 namespace allstarr.Controllers;
 
 // Jellyfin remains the authentication authority while Allstarr augments its music surface.
+[ServiceFilter(typeof(JellyfinItemResponseFilter))]
 [ApiController]
 [Route("")]
 [ServiceFilter(typeof(JellyfinAuthFilter), Order = int.MinValue)]
@@ -1344,7 +1345,7 @@ public partial class JellyfinController : ControllerBase
             }
 
             _logger.LogWarning(
-                "Jellyfin public system information returned {StatusCode}; using the configured proxy identity",
+                "Jellyfin public system information returned {StatusCode}; server identity is unavailable",
                 statusCode);
             return _responseBuilder.CreateJsonResponse(new
             {
@@ -1353,7 +1354,6 @@ public partial class JellyfinController : ControllerBase
                 Version = AppVersion.Version,
                 ProductName = "Allstarr (Jellyfin Proxy)",
                 OperatingSystem = Environment.OSVersion.Platform.ToString(),
-                Id = _settings.DeviceId,
                 StartupWizardCompleted = true
             });
         }

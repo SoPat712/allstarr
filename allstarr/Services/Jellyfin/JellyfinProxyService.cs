@@ -5,6 +5,7 @@ using allstarr.Models.Settings;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using System.Net;
+using System.Collections.Concurrent;
 using System.Net.Http.Headers;
 using System.Text.Json;
 
@@ -21,6 +22,49 @@ public class JellyfinProxyService
     private readonly IApplicationCache _cache;
     private readonly IMediaAssetResolver _mediaAssets;
     private readonly IConfiguration _configuration;
+
+    private readonly ConcurrentDictionary<string, string> _serverIds = new(StringComparer.Ordinal);
+    private readonly SemaphoreSlim _serverIdLock = new(1, 1);
+
+    private string ServerIdentityKey(string backendInstanceId) =>
+        $"{_settings.Url?.TrimEnd('/')}|{backendInstanceId}";
+
+    internal void RememberServerId(string backendInstanceId, string serverId)
+    {
+        if (!string.IsNullOrWhiteSpace(serverId)) _serverIds[ServerIdentityKey(backendInstanceId)] = serverId;
+    }
+
+    public async Task<string> GetServerIdAsync(string backendInstanceId, CancellationToken cancellationToken = default)
+    {
+        var key = ServerIdentityKey(backendInstanceId);
+        if (_serverIds.TryGetValue(key, out var known)) return known;
+        await _serverIdLock.WaitAsync(cancellationToken);
+        try
+        {
+            if (_serverIds.TryGetValue(key, out known)) return known;
+            var (body, status) = await GetJsonAsync("System/Info/Public", cancellationToken: cancellationToken);
+            using (body)
+            {
+                if (status is >= 200 and < 300 && body?.RootElement.ValueKind == JsonValueKind.Object &&
+                    body.RootElement.TryGetProperty("Id", out var id) &&
+                    id.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(id.GetString()))
+                {
+                    known = id.GetString()!;
+                    RememberServerId(backendInstanceId, known);
+                    return known;
+                }
+            }
+            throw new HttpRequestException("The backend did not return a server identity.");
+        }
+        catch (JsonException exception)
+        {
+            throw new HttpRequestException("The backend did not return a valid server identity.", exception);
+        }
+        finally
+        {
+            _serverIdLock.Release();
+        }
+    }
 
     public HttpClient HttpClient => _httpClient;
 
@@ -209,7 +253,20 @@ public class JellyfinProxyService
             return (null, statusCode);
         }
 
-        return (JsonDocument.Parse(content), statusCode);
+        var document = JsonDocument.Parse(content);
+        var path = new Uri(url).AbsolutePath.TrimEnd('/');
+        var incomingPath = _httpContextAccessor.HttpContext?.Request.Path.Value?.TrimEnd('/');
+        if (string.Equals(incomingPath, path, StringComparison.OrdinalIgnoreCase) &&
+            (path.EndsWith("/System/Info/Public", StringComparison.OrdinalIgnoreCase) ||
+             path.EndsWith("/System/Info", StringComparison.OrdinalIgnoreCase)) &&
+            document.RootElement.ValueKind == JsonValueKind.Object &&
+            document.RootElement.TryGetProperty("Id", out var serverId) && serverId.ValueKind == JsonValueKind.String)
+        {
+            var instance = _httpContextAccessor.HttpContext?.GetProtocolExecutionContext()?.BackendInstanceId ??
+                _configuration["Identity:BackendInstanceId"] ?? "primary";
+            RememberServerId(instance, serverId.GetString()!);
+        }
+        return (document, statusCode);
     }
 
     private HttpRequestMessage CreateClientGetRequest(
