@@ -150,8 +150,8 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
     [Theory]
     [InlineData("var data=file.readBytes(path); file.writeBytes(path,data.data);")]
     [InlineData("file.transformPatternedBlocks(path,path+'.clear',{algorithm:'blowfish',mode:'cbc',operation:'decrypt',key:'bad'});")]
-    [InlineData("var files=file; files.writeBytes(path,'AQIDBA==');")]
-    [InlineData("var rewrite=file['writeBytes']; rewrite(path,'AQIDBA==');")]
+    [InlineData("var files=file; files.writeBytes(path,'AQIDBA==',{truncate:true});")]
+    [InlineData("var rewrite=file['writeBytes']; rewrite(path,'AQIDBA==',{truncate:true});")]
     [InlineData("var decryption={strategy:'decrypt'};")]
     public async Task Playback_PostprocessingUsesTheCompletedArtifact(string processing)
     {
@@ -425,7 +425,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
     [Fact]
     public async Task Playback_CancelingAPendingFallbackListenerPreservesTheSharedDownload()
     {
-        var (adapter, context, track) = Setup(true, "file.writeBytes(path,'AQIDBA==');");
+        var (adapter, context, track) = Setup(true, "file.writeBytes(path,'AQIDBA==',{truncate:true});");
         using var cancellation = new CancellationTokenSource();
         var canceledContext = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account, context.Policy,
             context.OperationId, context.CorrelationId, context.Deadline, cancellation.Token, context.IdempotencyKey);

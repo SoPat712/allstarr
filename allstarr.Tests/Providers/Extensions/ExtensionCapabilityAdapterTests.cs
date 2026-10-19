@@ -16,7 +16,7 @@ using Microsoft.AspNetCore.DataProtection;
 
 namespace allstarr.Tests;
 
-public sealed class ExtensionCapabilityAdapterTests
+public sealed partial class ExtensionCapabilityAdapterTests
 {
     [Fact]
     public void DownloadFailureReason_DropsLinksAndStaysShort()

@@ -234,14 +234,7 @@ public static class SpotiFlacExtensionCompatibility
             {
                 if (!setting.TryGetProperty("key", out var key) || key.ValueKind != JsonValueKind.String ||
                     !setting.TryGetProperty("default", out var defaultValue)) continue;
-                values[key.GetString()!] = defaultValue.ValueKind switch
-                {
-                    JsonValueKind.String => defaultValue.GetString(),
-                    JsonValueKind.Number when defaultValue.TryGetInt64(out var number) => number,
-                    JsonValueKind.True => true,
-                    JsonValueKind.False => false,
-                    _ => null
-                };
+                values[key.GetString()!] = defaultValue.Clone();
             }
         }
         return JsonSerializer.Serialize(values);
@@ -356,6 +349,43 @@ public static class SpotiFlacExtensionCompatibility
                 return encode(value);
             }
             if (_allstarrSpotiFlacCompatibility) {
+                // Behaviour matches SpotiFLAC-Module-Version (MIT).
+                function requestHeaders(value) {
+                    if (isMap(value) && Object.keys(value).length === 1 && isMap(value.headers)) value = value.headers;
+                    const result = Object.create(null);
+                    if (isMap(value)) for (const key of Object.keys(value)) result[goString(key)] = formatGo(value[key]);
+                    return result;
+                }
+                function request(method, url, body, headers) {
+                    return host.HttpRequest(method, goString(url), body == null ? null : signedBody(body), requestHeaders(headers));
+                }
+                http.get = function(url, headers) { return request("GET", url, null, headers); };
+                http.delete = function(url, headers) { return request("DELETE", url, null, headers); };
+                for (const method of ["post", "put", "patch"]) {
+                    http[method] = function(url, body, headers) { return request(method.toUpperCase(), url, body, headers); };
+                }
+                http.request = function(url, options) {
+                    options = isMap(options) ? options : {};
+                    return request(goString(options.method || "GET"), url, options.body, options.headers);
+                };
+                storage.get = function(key, fallback) {
+                    if (!arguments.length) return undefined;
+                    const value = host.StorageGet(goString(key));
+                    if (value == null) return fallback;
+                    const text = String(value);
+                    return text.startsWith("\u0000json:") ? JSON.parse(text.slice(6)) : text;
+                };
+                storage.set = function(key, value) {
+                    if (arguments.length < 2) return false;
+                    try { host.StorageSet(goString(key), "\u0000json:" + signedBody([value === undefined ? null : value]).slice(1, -1)); return true; }
+                    catch (_) { return false; }
+                };
+                storage.remove = function(key) {
+                    if (!arguments.length) return false;
+                    host.StorageRemove(goString(key));
+                    return true;
+                };
+                storage.delete = storage.remove;
                 session.signedFetch = function(method, path, body, headers) {
                     if (arguments.length < 2) return {ok: false, error: "method and path are required"};
                     try {
@@ -459,6 +489,33 @@ public static class SpotiFlacExtensionCompatibility
                 normalizeString(value) { return arguments.length ? host.Normalize(goString(value)) : ""; }
             };
                 globalThis.gobackend = null;
+                if (_allstarrSpotiFlacCompatibility) {
+                    utils.isDownloadCancelled = utils.isRequestCancelled = function() { return host.IsRequestCancelled(); };
+                    utils.sha256 = function(value) { return arguments.length ? host.Sha256(goString(value)) : ""; };
+                    utils.md5 = function(value) { return arguments.length ? host.Md5(goString(value)) : ""; };
+                    const hmacSHA1 = utils.hmacSHA1;
+                    utils.hmacSHA1 = function(key, message) {
+                        function bytes(value) {
+                            return typeof value === "string" ? value : Array.isArray(value)
+                                ? Array.from(value, item => typeof item === "number" ? item & 255 : 0) : null;
+                        }
+                        key = bytes(key); message = bytes(message);
+                        return key === null || message === null ? [] : Array.from(hmacSHA1(key, message));
+                    };
+                    file.delete = function(path) {
+                        try { return host.FileExists(goString(path)) && host.FileDelete(goString(path)); }
+                        catch (_) { return false; }
+                    };
+                    file.getSize = function(path) { return host.FileStat(goString(path)); };
+                    file.readBytes = function(path, options) { return host.FileReadRange(goString(path), JSON.stringify(binaryOptions(options))); };
+                    file.writeBytes = function(path, data, options) { return host.FileWriteEncoded(goString(path), goString(data), JSON.stringify(binaryOptions(options))); };
+                    utils.decryptBlockCipher = function(data, options) {
+                        if (arguments.length < 2) return {success: false, error: "data and options are required"};
+                        return host.DecryptBlockCipher(goString(data), JSON.stringify(binaryOptions(options)));
+                    };
+                    utils.getLocalTime = function() { return host.LocalTime(); };
+                    globalThis.gobackend = utils;
+                }
                 utils.getResolutionRemainingMs = function() { return host.ResolutionRemainingMs(); };
                 })(host);
         """;
