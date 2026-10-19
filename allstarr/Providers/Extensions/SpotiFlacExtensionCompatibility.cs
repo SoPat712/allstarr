@@ -689,9 +689,12 @@ public static class SpotiFlacExtensionCompatibility
           } else if (typeof _spotiflacExtension.customSearch === 'function') {
             result = _spotiflacExtension.customSearch(request.query || '', { limit: limit, filter: filter.replace(/s$/, '') });
           } else return { items: [], isPartial: false };
+          // Typed hooks only return their own kind; customSearch results are filtered by type ("song" counts as a track).
+          var singular = filter.replace(/s$/, '');
           var items = _sfArray(result).filter(function(item) {
+            if (typeof typed === 'function') return true;
             var type = String(item.item_type || item.type || '').toLowerCase();
-            return !type || type === filter || type === filter.replace(/s$/, '');
+            return !type || type === filter || type === singular || (singular === 'track' && (type === 'song' || type === 'songs'));
           }).map(mapper).filter(function(item) { return item.id; });
           if (filter === 'tracks') items.forEach(_sfRememberTrack);
           return { items: items, nextCursor: null, isPartial: false, snapshotVersion: null };
