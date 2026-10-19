@@ -111,7 +111,9 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(lease.ProtectedSourceUri.AbsoluteUri, out var uri, out _))
                 throw new HttpRequestException("Provider media is unavailable.");
             using var outbound = new HttpRequestMessage(HttpMethod.Get, uri);
-            outbound.Headers.Range = parsedRange;
+            // Like listener playback: only ranged leases get a Range header; others are read from the
+            // start (e.g. Deezer's decrypting stream) and the media controller skips to the offset.
+            if (lease.SupportsByteRanges) outbound.Headers.Range = parsedRange;
             if (lease.ProtectedResponseFactory != null) return await lease.ProtectedResponseFactory(outbound, cancellationToken);
             return await StreamClient.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         }, measured.ContentType ?? media.MimeType, "preview." + media.Container, length);
