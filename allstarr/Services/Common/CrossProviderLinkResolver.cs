@@ -93,7 +93,7 @@ public sealed class CrossProviderLinkResolver(
                     revision = account?.Revision,
                     version = TrackMatchDecisionEngine.AlgorithmVersion
                 }))));
-                var key = $"cross-links:v1:{providerId}:{digest}";
+                var key = $"cross-links:v2:{providerId}:{digest}";
                 var cached = await cache.GetAsync<List<CrossProviderLinkCandidate>>(key);
                 if (cached != null) { results.AddRange(cached); continue; }
                 var found = await _coalescer.RunAsync(key, async () =>
@@ -129,16 +129,20 @@ public sealed class CrossProviderLinkResolver(
                         if (search.IsSuccess) tracks.AddRange(search.RequireValue().Items);
                     }
                     // Optional links are candidates too: their target metadata must pass the same match rules.
-                    if (tracks.Count == 0 && odesli != null && !string.IsNullOrWhiteSpace(settings.Value.ApiKey))
+                    if (tracks.Count == 0 && odesli != null)
                     {
                         var url = verifiedIdentities.Select(id => OdesliService.BuildTrackUrl(id.ProviderId, id.Value)).FirstOrDefault(url => url != null);
                         if (url != null)
                         {
-                            try { optionalLinks ??= await odesli.GetTrackLinksAsync(url, deadline.Token); }
+                            try { optionalLinks ??= await odesli.GetTrackLinksAsync(url, timeout.Token, recording.Isrc, recording.Title, recording.Artist); }
                             catch (OdesliLookupException) { transient = true; }
                             if (optionalLinks?.TryGetValue(OdesliService.NormalizeProviderId(providerId), out var id) == true)
                             {
-                                var lookup = await metadata.GetTrackAsync(context, new(new(providerId, ProviderResourceKind.Track, id))).WaitAsync(deadline.Token);
+                                using var linkDeadline = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+                                linkDeadline.CancelAfter(TimeSpan.FromSeconds(10));
+                                var linkContext = new ProviderExecutionContext(actor, providerId, account, context.Policy,
+                                    context.OperationId, correlationId, clock.UtcNow.AddSeconds(10), linkDeadline.Token);
+                                var lookup = await metadata.GetTrackAsync(linkContext, new(new(providerId, ProviderResourceKind.Track, id))).WaitAsync(linkDeadline.Token);
                                 transient |= IsTransient(lookup.Error);
                                 if (lookup.IsSuccess) tracks.Add(lookup.RequireValue());
                             }
@@ -148,7 +152,7 @@ public sealed class CrossProviderLinkResolver(
                         .DistinctBy(track => track.Id).Take(20).ToArray(), userId);
                     if (!transient) await cache.SetAsync(key, found, found.Count == 0 ? TimeSpan.FromMinutes(15) : TimeSpan.FromDays(1));
                     return found;
-                }, deadline.Token);
+                }, timeout.Token);
                 results.AddRange(found);
             }
             catch (Exception error) when (error is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
@@ -156,6 +160,7 @@ public sealed class CrossProviderLinkResolver(
                 // Optional metadata cannot prevent other configured sources from resolving links.
             }
         }
+        cancellationToken.ThrowIfCancellationRequested();
         return results;
     }
 

@@ -5,9 +5,9 @@
   import { Button } from "$lib/components/ui/button";
   let { fields, config }: { fields: ConfigField[]; config: Record<string, unknown> } = $props();
   const help: Record<string, string> = {
-    ODESLI_ENABLED: "Finds cross-service song links with Allstarr's own lookups using Deezer, Apple Music and enabled sources. Only sources in your metadata order are used; song.link is optional with an API key.",
-    ODESLI_RATE_LIMIT_MS: "Wait between optional song.link lookups when an API key is configured.",
-    ODESLI_API_KEY: "Optional song.link API key. Leave unchanged to keep it, or clear to remove it. Song links are sent to song.link only when a key is configured.",
+    ODESLI_ENABLED: "Finds cross-service song links with Allstarr's own lookups using Deezer, Apple Music and enabled sources. Linked tracks are checked against your metadata sources. Song.link Web, UniTune, MusicBrainz and Squigly provide fallback links without a key.",
+    ODESLI_RATE_LIMIT_MS: "Wait between official song.link API lookups when a key is configured. Other link services use their own request limits.",
+    ODESLI_API_KEY: "Optional song.link API key. Leave unchanged to keep it, or clear to remove it. With a key, the official API is tried first, followed by the fallback link services.",
     EXTENSIONS_ALLOW_REMOTE_INSTALL: "Off: extensions can be installed and updated only from your trusted admin networks, such as your home network. On: also from anywhere that can reach this admin page.",
   };
   let changedSecrets = $state<Record<string, boolean>>({});

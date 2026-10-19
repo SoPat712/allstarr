@@ -194,6 +194,36 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
             cancellationToken);
     }
 
+    public async Task<IReadOnlyList<string>> LookupPlatformLinksAsync(string? isrc, string? title, string? artist,
+        CancellationToken cancellationToken = default)
+    {
+        if (!_settings.Enabled) return [];
+        var requestTimeout = TimeSpan.FromSeconds(6);
+        MusicBrainzRecording? recording = null;
+        if (NormalizeIsrc(isrc) is { } normalizedIsrc)
+        {
+            var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalizedIsrc, _sourceId) + ":exact-unique";
+            recording = await GetCachedAsync(key,
+                token => LookupIsrcUncachedAsync(normalizedIsrc, token, requestTimeout), cancellationToken);
+        }
+        if (recording == null && !string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(artist))
+        {
+            var normalizedTitle = NormalizeRequiredText(title, nameof(title));
+            var normalizedArtist = NormalizeRequiredText(artist, nameof(artist));
+            var key = CacheKeyBuilder.BuildMusicBrainzSearchKey(normalizedTitle, normalizedArtist, 5, _sourceId);
+            var candidates = await GetCachedListAsync(key,
+                token => SearchUncachedAsync(normalizedTitle, normalizedArtist, 5, token, requestTimeout), cancellationToken);
+            recording = SelectCandidate(candidates.Where(item => item.Score >= 90).ToArray(),
+                normalizedTitle, normalizedArtist, null)?.Recording;
+        }
+        if (NormalizeMbid(recording?.Id) is not { } mbid) return [];
+        var relationsKey = CacheKeyBuilder.BuildMusicBrainzResourceKey(_sourceId, "recording-links", mbid);
+        var result = await GetCachedAsync(relationsKey,
+            token => GetJsonAsync<MusicBrainzRecordingLinks>($"recording/{mbid}?fmt=json&inc=url-rels+isrcs", token, requestTimeout),
+            cancellationToken);
+        return result?.Relations?.Select(item => item.Url?.Resource).OfType<string>().Take(64).ToArray() ?? [];
+    }
+
     public async Task<MusicBrainzRecordingMatch?> ResolveRecordingAsync(
         string? recordingMbid,
         string? isrc,
@@ -251,11 +281,12 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
 
     private async Task<MusicBrainzRecording?> LookupIsrcUncachedAsync(
         string isrc,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? requestTimeout = null)
     {
         var response = await GetJsonAsync<MusicBrainzIsrcResponse>(
             $"isrc/{isrc}?fmt=json&inc=artists+releases+release-groups+isrcs+genres+tags",
-            cancellationToken);
+            cancellationToken, requestTimeout);
         var recordings = response?.Recordings;
         if (recordings is not { Count: > 0 }) return null;
         var exact = recordings.Where(recording => NormalizeMbid(recording.Id) != null &&
@@ -268,12 +299,13 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         string title,
         string artist,
         int limit,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        TimeSpan? requestTimeout = null)
     {
         var query = $"recording:\"{EscapeLucene(title)}\" AND artist:\"{EscapeLucene(artist)}\"";
         var response = await GetJsonAsync<MusicBrainzSearchResponse>(
             $"recording?query={Uri.EscapeDataString(query)}&fmt=json&limit={limit}",
-            cancellationToken);
+            cancellationToken, requestTimeout);
         return response?.Recordings;
     }
 
@@ -284,10 +316,13 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
             $"recording/{mbid}?fmt=json&inc=artists+releases+release-groups+isrcs+genres+tags",
             cancellationToken);
 
-    private async Task<T?> GetJsonAsync<T>(string relativeUrl, CancellationToken cancellationToken)
+    private async Task<T?> GetJsonAsync<T>(string relativeUrl, CancellationToken cancellationToken, TimeSpan? requestTimeout = null)
         where T : class
     {
         await RateLimitAsync(cancellationToken);
+        using var deadline = new CancellationTokenSource(requestTimeout ?? Timeout.InfiniteTimeSpan, _timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        cancellationToken = linked.Token;
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, BuildUri(relativeUrl));
@@ -728,4 +763,22 @@ public sealed class MusicBrainzTag
     public string? Name { get; set; }
     [JsonPropertyName("count")]
     public int Count { get; set; }
+}
+
+internal sealed class MusicBrainzRecordingLinks
+{
+    [JsonPropertyName("relations")]
+    public List<MusicBrainzUrlRelation>? Relations { get; set; }
+}
+
+internal sealed class MusicBrainzUrlRelation
+{
+    [JsonPropertyName("url")]
+    public MusicBrainzUrlResource? Url { get; set; }
+}
+
+internal sealed class MusicBrainzUrlResource
+{
+    [JsonPropertyName("resource")]
+    public string? Resource { get; set; }
 }

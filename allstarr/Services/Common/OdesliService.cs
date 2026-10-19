@@ -1,5 +1,4 @@
-using System.Net;
-using System.Text.Json;
+using allstarr.Services.MusicBrainz;
 using Microsoft.Extensions.Options;
 
 namespace allstarr.Services.Common;
@@ -18,28 +17,19 @@ public sealed class OdesliLookupException(bool retryable, TimeSpan? retryAfter =
     public TimeSpan? RetryAfter { get; } = retryAfter;
 }
 
-/// <summary>Cached, bounded optional track links from Odesli/song.link.</summary>
+/// <summary>Cached, bounded cross-provider track links.</summary>
 public class OdesliService(
     IHttpClientFactory httpClientFactory,
     ILogger<OdesliService> logger,
     IApplicationCache cache,
     IOptions<OdesliSettings>? settings = null,
     ApplicationCacheRequestCoalescer? coalescer = null,
-    TimeProvider? timeProvider = null)
+    TimeProvider? timeProvider = null,
+    MusicBrainzService? musicBrainz = null)
 {
-    private readonly HttpClient _httpClient = PublicClient(httpClientFactory);
-    private readonly SemaphoreSlim _requests = new(1, 1);
+    private readonly PlatformLinkResolverChain _chain = new(httpClientFactory.CreateClient("Odesli"),
+        timeProvider ?? TimeProvider.System, musicBrainz);
     private readonly ApplicationCacheRequestCoalescer _coalescer = coalescer ?? new(new ApplicationCacheActivityMetrics());
-    private readonly TimeProvider _timeProvider = timeProvider ?? TimeProvider.System;
-    private DateTimeOffset _nextRequestAt;
-    private long _optionalUnavailableUntilUtcTicks;
-
-    private static HttpClient PublicClient(IHttpClientFactory factory)
-    {
-        var client = factory.CreateClient("Odesli");
-        client.DefaultRequestHeaders.Authorization = null;
-        return client;
-    }
 
     public Task<string?> ConvertTidalToSpotifyIdAsync(string tidalTrackId, CancellationToken cancellationToken = default) =>
         TranslateTrackUrlAsync(BuildTrackUrl("tidal", tidalTrackId)!, "spotify", cancellationToken);
@@ -66,79 +56,31 @@ public class OdesliService(
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (ParseTrackUrl(sourceUrl) is not { } source) return null;
-        var key = CacheKeyBuilder.BuildOdesliTranslationKey(BuildTrackUrl(source.Provider, source.Id)!, "aliases-v1");
+        var key = CacheKeyBuilder.BuildOdesliTranslationKey(BuildTrackUrl(source.Provider, source.Id)!, "platform-links-v2");
         var cached = await cache.GetAsync<Dictionary<string, string>>(key);
         cancellationToken.ThrowIfCancellationRequested();
         return cached?.GetValueOrDefault(NormalizeProviderId(targetProvider));
     }
 
-    private void ThrowIfOptionalUnavailable()
+    public async Task<IReadOnlyDictionary<string, string>> GetTrackLinksAsync(string sourceUrl, CancellationToken cancellationToken,
+        string? isrc = null, string? title = null, string? artist = null)
     {
-        if (Interlocked.Read(ref _optionalUnavailableUntilUtcTicks) > _timeProvider.GetUtcNow().UtcTicks)
-            throw new OdesliLookupException(false);
-    }
-
-    public async Task<IReadOnlyDictionary<string, string>> GetTrackLinksAsync(string sourceUrl, CancellationToken cancellationToken)
-    {
-        var apiKey = settings?.Value.ApiKey;
-        if (settings?.Value.Enabled != true || string.IsNullOrWhiteSpace(apiKey)) return new Dictionary<string, string>();
-        if (ParseTrackUrl(sourceUrl) is not { } source) return new Dictionary<string, string>();
-        var canonicalUrl = BuildTrackUrl(source.Provider, source.Id)!;
-        var key = CacheKeyBuilder.BuildOdesliTranslationKey(canonicalUrl, "aliases-v1");
         cancellationToken.ThrowIfCancellationRequested();
+        if (settings?.Value.Enabled != true || ParseTrackUrl(sourceUrl) is not { } source)
+            return new Dictionary<string, string>();
+        var canonicalUrl = BuildTrackUrl(source.Provider, source.Id)!;
+        var key = CacheKeyBuilder.BuildOdesliTranslationKey(canonicalUrl, "platform-links-v2");
         var cached = await cache.GetAsync<Dictionary<string, string>>(key);
+        cancellationToken.ThrowIfCancellationRequested();
         if (cached != null) return cached;
-        ThrowIfOptionalUnavailable();
         return await _coalescer.RunAsync(key, async () =>
         {
-            ThrowIfOptionalUnavailable();
-            await _requests.WaitAsync(cancellationToken);
-            try
-            {
-                ThrowIfOptionalUnavailable();
-                var now = _timeProvider.GetUtcNow();
-                var delay = _nextRequestAt - now;
-                if (delay > TimeSpan.Zero) await Task.Delay(delay, _timeProvider, cancellationToken);
-                _nextRequestAt = _timeProvider.GetUtcNow().AddMilliseconds(Math.Clamp(settings?.Value.RateLimitMs ?? 6000, 1000, 60000));
-                using var request = new HttpRequestMessage(HttpMethod.Get,
-                    "https://api.song.link/v1-alpha.1/links?url=" + Uri.EscapeDataString(canonicalUrl) + "&userCountry=US&key=" + Uri.EscapeDataString(apiKey));
-                using var response = await _httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-                if (response.StatusCode == HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500)
-                {
-                    var retry = response.Headers.RetryAfter?.Delta ??
-                        (response.Headers.RetryAfter?.Date - _timeProvider.GetUtcNow()) ?? TimeSpan.FromMinutes(1);
-                    retry = TimeSpan.FromSeconds(Math.Clamp(retry.TotalSeconds, 1, 3600));
-                    _nextRequestAt = _timeProvider.GetUtcNow().Add(retry);
-                    throw new OdesliLookupException(true, retry);
-                }
-                if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden or HttpStatusCode.Gone)
-                {
-                    Interlocked.Exchange(ref _optionalUnavailableUntilUtcTicks,
-                        _timeProvider.GetUtcNow().AddHours(1).UtcTicks);
-                    throw new OdesliLookupException(false);
-                }
-                var links = new Dictionary<string, string>(StringComparer.Ordinal);
-                if (response.IsSuccessStatusCode)
-                {
-                    await response.Content.LoadIntoBufferAsync(1024 * 1024, cancellationToken);
-                    using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-                    if (json.RootElement.TryGetProperty("linksByPlatform", out var platforms) && platforms.ValueKind == JsonValueKind.Object)
-                        foreach (var item in platforms.EnumerateObject())
-                        {
-                            if (item.Value.ValueKind != JsonValueKind.Object || !item.Value.TryGetProperty("url", out var url) ||
-                                url.ValueKind != JsonValueKind.String || ParseTrackUrl(url.GetString()) is not { } target)
-                                continue;
-                            if (links.TryGetValue(target.Provider, out var existing) && existing != target.Id)
-                                throw new OdesliLookupException(false);
-                            links[target.Provider] = target.Id;
-                        }
-                    // A cross-link response must still identify the exact requested source track.
-                    if (links.GetValueOrDefault(source.Provider) != source.Id) links.Clear();
-                }
-                await cache.SetAsync(key, links, links.Count == 0 ? TimeSpan.FromHours(6) : CacheExtensions.OdesliLookupTTL);
-                return links;
-            }
-            finally { _requests.Release(); }
+            var links = await _chain.ResolveAsync(canonicalUrl, settings.Value.ApiKey, settings.Value.RateLimitMs,
+                isrc, title, artist, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (links.Count > 0)
+                await cache.SetAsync(key, links, CacheExtensions.OdesliLookupTTL);
+            return links;
         }, cancellationToken);
     }
 
@@ -153,11 +95,13 @@ public class OdesliService(
             "apple-musickit" => $"https://music.apple.com/us/song/{id}",
             "qobuz" => $"https://open.qobuz.com/track/{id}",
             "tidal" => $"https://tidal.com/browse/track/{id}",
+            "amazon" => $"https://music.amazon.com/tracks/{id}",
+            "youtube" => $"https://music.youtube.com/watch?v={id}",
             _ => null
         };
     }
 
-    private static (string Provider, string Id)? ParseTrackUrl(string? value)
+    internal static (string Provider, string Id)? ParseTrackUrl(string? value)
     {
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != "https" ||
             !uri.IsDefaultPort || uri.UserInfo.Length != 0) return null;
@@ -165,9 +109,11 @@ public class OdesliService(
         {
             "open.spotify.com" => "spotify",
             "www.deezer.com" or "deezer.com" => "deezer",
-            "music.apple.com" => "apple-musickit",
+            "music.apple.com" or "geo.music.apple.com" => "apple-musickit",
             "open.qobuz.com" or "play.qobuz.com" => "qobuz",
-            "tidal.com" or "listen.tidal.com" => "tidal",
+            "tidal.com" or "www.tidal.com" or "listen.tidal.com" => "tidal",
+            "music.amazon.com" => "amazon",
+            "music.youtube.com" or "youtube.com" or "www.youtube.com" or "youtu.be" => "youtube",
             _ => null
         };
         if (provider == null) return null;
@@ -179,13 +125,33 @@ public class OdesliService(
                 id = queryId[0];
             else if (Array.IndexOf(path, "song") >= 0) id = path.LastOrDefault();
         }
+        else if (provider == "amazon")
+        {
+            var position = Array.IndexOf(path, "tracks");
+            if (position >= 0 && position == path.Length - 2) id = path[^1];
+            else if (Array.IndexOf(path, "albums") >= 0 &&
+                Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query).TryGetValue("trackAsin", out var asin) && asin.Count == 1)
+                id = asin[0];
+        }
+        else if (provider == "youtube")
+        {
+            if (uri.Host == "youtu.be" && path.Length == 1) id = path[0];
+            else if (path is ["watch"] &&
+                Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(uri.Query).TryGetValue("v", out var video) && video.Count == 1)
+                id = video[0];
+        }
         else
         {
             var position = Array.IndexOf(path, "track");
             if (position >= 0 && position == path.Length - 2) id = path[^1];
         }
         return id is { Length: > 0 and <= 128 } && id.All(character =>
-            provider == "spotify" ? char.IsAsciiLetterOrDigit(character) : char.IsAsciiDigit(character))
+            provider switch
+            {
+                "spotify" or "amazon" => char.IsAsciiLetterOrDigit(character),
+                "youtube" => char.IsAsciiLetterOrDigit(character) || character is '_' or '-',
+                _ => char.IsAsciiDigit(character)
+            })
             ? (provider, id) : null;
     }
 
@@ -197,6 +163,8 @@ public class OdesliService(
         return normalized switch
         {
             "spotify-web" => "spotify",
+            "amazonmusic" or "amazon-music" => "amazon",
+            "youtubemusic" or "youtube-music" => "youtube",
             "qobuz-web" => "qobuz",
             "tidal-web" => "tidal",
             "applemusic" or "apple-music" or "apple-download" => "apple-musickit",

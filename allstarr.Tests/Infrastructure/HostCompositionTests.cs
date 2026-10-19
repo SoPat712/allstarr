@@ -479,8 +479,8 @@ public sealed class HostCompositionTests
         using var factory = new AllstarrFactory("Jellyfin");
         var clients = factory.Services.GetRequiredService<IHttpClientFactory>();
 
-        Assert.All(new[] { "Odesli", "Lrclib" }, name =>
-            Assert.Equal(TimeSpan.FromSeconds(5), clients.CreateClient(name).Timeout));
+        Assert.Equal(TimeSpan.FromSeconds(5), clients.CreateClient("Lrclib").Timeout);
+        Assert.Equal(TimeSpan.FromSeconds(6), clients.CreateClient("Odesli").Timeout);
     }
 
     private static ControllerContext Context(bool administrator)
