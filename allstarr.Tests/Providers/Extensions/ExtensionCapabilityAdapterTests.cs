@@ -1628,6 +1628,7 @@ public sealed class ExtensionCapabilityAdapterTests
     [InlineData("Track not found", "not-found")]
     [InlineData("Track unavailable", "not-found")]
     [InlineData("This SoundCloud track does not offer a full playable stream", "incompatible-media")]
+    [InlineData("No supported full SoundCloud stream is available", "incompatible-media")]
     [InlineData("Track not found: 123", "not-found")]
     [InlineData("SoundCloud track is no longer playable", "not-found")]
     [InlineData("Track has been removed", "not-found")]
