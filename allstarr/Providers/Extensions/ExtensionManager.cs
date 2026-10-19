@@ -1794,6 +1794,7 @@ public partial class ExtensionHostBridge
                 _lastSyntheticCooldownResponseAt = DateTimeOffset.UtcNow;
                 return new
                 {
+                    ok = false,
                     statusCode = 503,
                     statusText = "Temporarily unavailable",
                     url = safeUri.AbsoluteUri,
@@ -1853,6 +1854,7 @@ public partial class ExtensionHostBridge
 
             return new
             {
+                ok = response.IsSuccessStatusCode,
                 statusCode = (int)response.StatusCode,
                 statusText = response.ReasonPhrase ?? string.Empty,
                 url = response.RequestMessage?.RequestUri?.AbsoluteUri ?? safeUri.AbsoluteUri,
@@ -1865,6 +1867,7 @@ public partial class ExtensionHostBridge
         {
             return new
             {
+                ok = false,
                 statusCode = 500,
                 body = "",
                 error = ex is UnauthorizedAccessException ? "permission_denied" : "extension_request_failed"

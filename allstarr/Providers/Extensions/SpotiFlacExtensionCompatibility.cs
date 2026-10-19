@@ -814,6 +814,7 @@ public static class SpotiFlacExtensionCompatibility
             if (!result || result.success === false) throw _sfDownloadError(result);
             var path = String(result.file_path || result.path || output);
             var extension = String(result.actual_extension || result.output_extension || path.substring(path.lastIndexOf('.')) || '.audio').toLowerCase();
+            if (extension.charAt(0) !== '.') extension = '.' + extension;
             var artifactId = safeId + extension;
             var written = host.CommitFile(path, artifactId);
             var codec = String(result.audio_codec || (extension === '.m4a' ? 'aac' : extension.replace('.', '')) || 'unknown');
