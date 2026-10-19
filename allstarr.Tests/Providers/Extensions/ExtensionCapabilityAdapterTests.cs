@@ -18,6 +18,17 @@ namespace allstarr.Tests;
 
 public sealed class ExtensionCapabilityAdapterTests
 {
+    [Fact]
+    public void DownloadFailureReason_DropsLinksAndStaysShort()
+    {
+        var reason = ExtensionSandbox.SafeFailureReason(
+            "Stream failed for https://cdn.example/track.m4a?token=secret\n  after " + new string('x', 300));
+
+        Assert.DoesNotContain("secret", reason);
+        Assert.StartsWith("Stream failed for <link> after ", reason);
+        Assert.True(reason.Length <= 201);
+    }
+
     [Theory]
     [InlineData("blowfish", "cbc", 2048, false)]
     [InlineData("aes", "cbc", 2048, false)]

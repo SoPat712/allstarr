@@ -917,7 +917,15 @@ public class ExtensionSandbox
     }
 
     internal void LogDownloadFailure(Exception exception) =>
-        _logger.LogWarning(exception, "Extension download failed for {ProviderId}", Id);
+        _logger.LogWarning(exception, "Extension download failed for {ProviderId}: {Reason}", Id, SafeFailureReason(exception.Message));
+
+    // Extension errors are provider text: keep the reason readable but drop links (which can carry tokens) and bound it.
+    internal static string SafeFailureReason(string? message)
+    {
+        var text = Regex.Replace(message ?? "", @"\b(?:https?|wss?)://\S+", "<link>", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        return text.Length <= 200 ? text : text[..200] + "…";
+    }
 
     public bool HasCallableHook(string hook) =>
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
