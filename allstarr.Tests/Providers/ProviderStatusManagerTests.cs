@@ -22,22 +22,19 @@ public sealed class ProviderStatusManagerTests
     [InlineData("playlist")]
     [InlineData("streaming")]
     [InlineData("download")]
-    public async Task QobuzProbe_UsesPublicCatalogOrTheExactSelectedAccount(string capability)
+    public async Task QobuzProbe_UsesTheExactSelectedAccount(string capability)
     {
         var calls = 0;
-        var usesAccount = capability is "streaming" or "download";
+        var testsFavorites = capability is "streaming" or "download";
         using var handler = new AppleProviderTestFactory.Handler(request =>
         {
             calls++;
             Assert.Equal("www.qobuz.com", request.RequestUri!.Host);
-            Assert.Equal(usesAccount ? "/api.json/0.2/favorite/getUserFavorites" : "/api.json/0.2/track/search",
+            Assert.Equal(testsFavorites ? "/api.json/0.2/favorite/getUserFavorites" : "/api.json/0.2/track/search",
                 request.RequestUri.AbsolutePath);
-            if (usesAccount)
-            {
+            if (testsFavorites)
                 Assert.Contains("user_id=selected-user", request.RequestUri.Query);
-                Assert.Equal("selected-token", request.Headers.GetValues("X-User-Auth-Token").Single());
-            }
-            else Assert.False(request.Headers.Contains("X-User-Auth-Token"));
+            Assert.Equal("selected-token", request.Headers.GetValues("X-User-Auth-Token").Single());
             return Json(HttpStatusCode.OK, "{\"tracks\":{\"items\":[]}}");
         });
         var manager = CreateManager(new Dictionary<string, string?>(),
@@ -51,6 +48,28 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal(ProviderHealthState.Healthy, status.Health);
         Assert.NotNull(status.TestedAt);
         Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData("metadata")]
+    [InlineData("playlist")]
+    public async Task QobuzCatalogWithoutAccountSecretsNeedsConfigurationBeforeProbing(string capability)
+    {
+        var http = new CountingHttpClientFactory();
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: http,
+            qobuzSettings: new QobuzSettings { UserAuthToken = "other-token", UserId = "other-user" });
+        var status = await manager.TestManagedProviderCapabilityAsync("qobuz", capability, Guid.NewGuid(),
+            new Dictionary<string, string>());
+
+        Assert.Equal(ProviderConfigurationState.NeedsConfiguration, status.Configuration);
+        Assert.Equal("missing_provider_account_secret", status.ReasonCode);
+        Assert.Equal(ProviderHealthState.Unknown, status.Health);
+        Assert.Null(status.TestedAt);
+        Assert.False(status.CanAttempt);
+        Assert.False(manager.CanTestAccountFreeCapability("qobuz", capability));
+        Assert.Throws<InvalidOperationException>(() => manager.GetAccountFreeStatus("qobuz", capability));
+        Assert.DoesNotContain("qobuz", manager.GetEnabledSearchProviders());
+        Assert.Equal(0, http.CreateCount);
     }
 
     [Theory]
@@ -315,7 +334,7 @@ public sealed class ProviderStatusManagerTests
         var statuses = CreateManager(new Dictionary<string, string?>()).GetAllAccountFreeStatuses();
 
         Assert.Contains(statuses, item => item.Provider == "deezer" && item.Capability == ProviderCapabilities.Metadata);
-        Assert.Contains(statuses, item => item.Provider == "qobuz" && item.Capability == ProviderCapabilities.Metadata);
+        Assert.DoesNotContain(statuses, item => item.Provider == "qobuz");
         Assert.Contains(statuses, item => item.Provider == "apple-musickit" && item.Capability == ProviderCapabilities.Playlist);
         Assert.DoesNotContain(statuses, item => item.Capability == ProviderCapabilities.Scrobbling);
         Assert.DoesNotContain(statuses, item => item.Provider == "apple-musickit" && item.Capability == ProviderCapabilities.Download);

@@ -497,6 +497,11 @@ public sealed class ProviderCtsDiagnosticRunner(
     }
 
     private static readonly string[] SampleSearchQueries = ["Daft Punk", "Taylor Swift", "The Beatles"];
+    private static readonly Dictionary<string, string[]> ProviderSampleSearchQueries = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["jiosaavn"] = ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal"],
+        ["spotiflac-jiosaavn"] = ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal"]
+    };
 
     /// <summary>
     /// Falls back to the provider's own search when no known track is stored for it yet,
@@ -511,7 +516,10 @@ public sealed class ProviderCtsDiagnosticRunner(
                 providerId, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null)
             yield break;
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var query in SampleSearchQueries)
+        var queries = ProviderSampleSearchQueries.TryGetValue(providerId, out var providerQueries)
+            ? providerQueries.Concat(SampleSearchQueries)
+            : SampleSearchQueries;
+        foreach (var query in queries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             ProviderOutcome<ProviderPage<ProviderTrackMetadata>>? outcome = null;

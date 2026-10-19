@@ -12,15 +12,14 @@ namespace allstarr.Tests;
 
 public sealed class QobuzProviderSearchTests
 {
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task SearchTracks_UsesOnlyCatalogEndpointUntilPlaybackRequestsLease(bool authenticatedSearch)
+    [Fact]
+    public async Task SearchTracks_UsesOnlyCatalogEndpointUntilPlaybackRequestsLease()
     {
         var requests = new List<Uri>();
         using var http = new HttpClient(new Handler(request =>
         {
             requests.Add(request.RequestUri!);
+            Assert.Equal("fixture-token", request.Headers.GetValues("X-User-Auth-Token").Single());
             return request.RequestUri!.AbsolutePath switch
             {
                 "/api.json/0.2/track/search" => Json("""
@@ -48,7 +47,7 @@ public sealed class QobuzProviderSearchTests
         var streaming = new QobuzStreamingCapabilityAdapter(http, secrets,
             new QobuzMediaClient(http, bundles.Object, NullLogger<QobuzMediaClient>.Instance), "FLAC_16");
 
-        var outcome = await catalog.SearchTracksAsync(Context(authenticatedSearch), new("Artist & First", new(20)));
+        var outcome = await catalog.SearchTracksAsync(Context(true), new("Artist & First", new(20)));
 
         Assert.True(outcome.IsSuccess);
         var tracks = outcome.RequireValue().Items;
@@ -69,6 +68,26 @@ public sealed class QobuzProviderSearchTests
             requests.Select(uri => uri.AbsolutePath));
         Assert.Equal("42", QueryHelpers.ParseQuery(requests[1].Query)["track_id"].ToString());
         bundles.Verify(item => item.GetSigningCredentialsAsync(It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task SearchTracks_RequiresAnAccountBeforeSendingCatalogRequests()
+    {
+        using var http = new HttpClient(new Handler(_ => throw new InvalidOperationException("Unexpected request.")));
+        var factory = Mock.Of<IHttpClientFactory>(item => item.CreateClient(It.IsAny<string>()) == http);
+        var bundles = new Mock<QobuzBundleService>(factory, NullLogger<QobuzBundleService>.Instance);
+        bundles.Setup(item => item.GetAppIdAsync(It.IsAny<CancellationToken>())).ReturnsAsync("fixture-app");
+        var catalog = new QobuzProvider(http, bundles.Object, new Secrets(), NullLogger<QobuzProvider>.Instance);
+        var registration = QobuzDownloadCapabilityAdapter.CreateRegistration(
+            Mock.Of<IProviderDownloadCapability>(), Mock.Of<IProviderStreamingCapability>(), catalog,
+            Mock.Of<IProviderPlaylistCapability>());
+
+        var outcome = await catalog.SearchTracksAsync(Context(false), new("Artist", new(20)));
+
+        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, outcome.Error?.Kind);
+        Assert.Equal(ProviderAccountRequirement.Required,
+            registration.Descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Metadata).AccountRequirement);
+        bundles.Verify(item => item.GetAppIdAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
     private static ProviderExecutionContext Context(bool withAccount)

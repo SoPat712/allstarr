@@ -42,7 +42,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
     internal override Task<T> UseCatalogAsync<T>(
         ProviderExecutionContext context, Func<ProviderCatalogMetadata, Task<T>> operation)
     {
-        if (context.Account == null) return operation(this);
+        if (context.Account == null) throw new KeyNotFoundException("A Qobuz account is required for catalog requests.");
         return _secrets.UseAsync(context.Account, bytes =>
         {
             using var document = JsonDocument.Parse(bytes);

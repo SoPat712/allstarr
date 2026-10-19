@@ -135,7 +135,7 @@ public sealed class QobuzProviderPagingTests
     }
 
     [Fact]
-    public async Task SelectedAccountsStayIsolatedWhilePublicCatalogSendsNoToken()
+    public async Task SelectedAccountsStayIsolatedWhileMissingAccountSendsNoRequest()
     {
         var observed = new System.Collections.Concurrent.ConcurrentBag<string?>();
         var provider = Provider(request =>
@@ -149,11 +149,12 @@ public sealed class QobuzProviderPagingTests
         var outcomes = await Task.WhenAll(
             provider.SearchTracksAsync(first, request), provider.SearchTracksAsync(second, request),
             provider.SearchTracksAsync(Context(false), request));
-        Assert.All(outcomes, result => Assert.True(result.IsSuccess));
-        Assert.Contains(null, observed);
+        Assert.All(outcomes.Take(2), result => Assert.True(result.IsSuccess));
+        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, outcomes[2].Error!.Kind);
+        Assert.DoesNotContain(null, observed);
         Assert.Contains(first.Account!.AccountId.ToString(), observed);
         Assert.Contains(second.Account!.AccountId.ToString(), observed);
-        Assert.Equal(3, observed.Distinct().Count());
+        Assert.Equal(2, observed.Distinct().Count());
     }
 
     [Theory]

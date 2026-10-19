@@ -275,10 +275,17 @@ public sealed class HostCompositionTests
         }
     }
 
-    [Fact]
-    public async Task LyricsSourcesExposeTheirExistingSetupAndRoutingSurface()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task LyricsSourcesExposeTheirExistingSetupAndRoutingSurface(bool disabled)
     {
-        using var factory = new AllstarrFactory("Jellyfin");
+        var policy = new EffectiveProviderPolicySnapshot(
+            ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
+                item => item.Capability, item => item.DefaultValue.Split(',').ToImmutableArray()),
+            disabled ? ImmutableHashSet.Create(StringComparer.OrdinalIgnoreCase, "musixmatch") : ImmutableHashSet<string>.Empty,
+            "CdLossless", 0.07);
+        using var factory = new AllstarrFactory("Jellyfin", effectivePolicy: policy);
         using var scope = factory.Services.CreateScope();
         var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider);
         controller.ControllerContext = Context(administrator: true);
@@ -288,6 +295,8 @@ public sealed class HostCompositionTests
         Assert.Equal("operator_managed", plus.ConnectionKind);
         Assert.Equal("lyricsPlus.baseUrl", Assert.Single(plus.ConfigSchema).ValuePath);
         var musixmatch = Assert.Single(schema.Providers, item => item.Id == "musixmatch");
+        Assert.Equal(disabled ? "disabled" : "needs_config", musixmatch.Status);
+        Assert.Equal("needs_config", Assert.Single(schema.Providers, item => item.Id == "qobuz").Status);
         var secret = Assert.Single(musixmatch.AccountSettings);
         Assert.Equal("userToken", secret.Key);
         Assert.True(secret.Required);

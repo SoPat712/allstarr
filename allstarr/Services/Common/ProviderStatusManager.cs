@@ -46,7 +46,7 @@ public class ProviderStatusManager
         ("deezer", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
         ("deezer", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
         ("deezer", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
-        ("qobuz", ProviderCapabilities.Metadata, ProviderAccountRequirement.Optional),
+        ("qobuz", ProviderCapabilities.Metadata, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Streaming, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Download, ProviderAccountRequirement.Required),
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
@@ -567,12 +567,8 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_deezer_arl"),
 
-            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) =>
-                (ProviderConfigurationState.NotRequired, null),
-            ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
-                IsConfiguredValue(_qobuzSettings.UserAuthToken) && IsConfiguredValue(_qobuzSettings.UserId)
-                    ? (ProviderConfigurationState.Configured, null)
-                    : (ProviderConfigurationState.NeedsConfiguration, "missing_qobuz_account"),
+            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
+                (ProviderConfigurationState.NeedsConfiguration, "missing_qobuz_account"),
 
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
                 _spotifySettings.Enabled && IsConfiguredValue(_spotifySettings.SessionCookie)
@@ -635,7 +631,7 @@ public class ProviderStatusManager
                 IsConfiguredValue(SecretValue(secrets, "sessioncookie", "spdc", "cookie")),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "arl")),
-            ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
+            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) =>
                 IsConfiguredValue(SecretValue(secrets, "userauthtoken", "token")) &&
                 IsConfiguredValue(SecretValue(secrets, "userid")),
             ("lastfm", ProviderCapabilities.Scrobbling) =>
@@ -728,7 +724,8 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
                 cancellationToken)),
-            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestQobuzMetadataAsync(cancellationToken)),
+            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestQobuzMetadataAsync(
+                SecretValue(accountSecrets, "userauthtoken", "token"), cancellationToken)),
             ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestQobuzAccountAsync(
                 SecretValue(accountSecrets, "userauthtoken", "token") ?? _qobuzSettings.UserAuthToken,
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
@@ -1037,7 +1034,7 @@ public class ProviderStatusManager
         return false;
     }
 
-    private async Task<bool> TestQobuzMetadataAsync(CancellationToken cancellationToken)
+    private async Task<bool> TestQobuzMetadataAsync(string? userAuthToken, CancellationToken cancellationToken)
     {
         const string appId = "798273057";
         const string apiUrl = "https://www.qobuz.com/api.json/0.2/track/search?query=test&limit=1&app_id=" + appId;
@@ -1045,6 +1042,7 @@ public class ProviderStatusManager
         using var client = _httpClientFactory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
         request.Headers.Add("X-App-Id", appId);
+        request.Headers.Add("X-User-Auth-Token", userAuthToken);
         request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
         using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
         if (!response.IsSuccessStatusCode)

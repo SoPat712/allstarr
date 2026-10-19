@@ -16,6 +16,55 @@ namespace allstarr.Tests;
 public sealed class ProviderCtsDiagnosticRunnerTests
 {
     [Theory]
+    [InlineData("spotiflac-jiosaavn", "Arijit Singh")]
+    [InlineData("spotiflac-jiosaavn", "A. R. Rahman")]
+    [InlineData("spotiflac-jiosaavn", "Shreya Ghoshal")]
+    [InlineData("spotiflac-jiosaavn", "The Beatles")]
+    [InlineData("jiosaavn", "Arijit Singh")]
+    [InlineData("fixture", "Daft Punk")]
+    public async Task Measure_TriesProviderCatalogQueriesBeforeGenericQueries(string provider, string matchingQuery)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var queries = new List<string>();
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.SearchTracksAsync(
+                It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns((ProviderExecutionContext _, ProviderMetadataSearchRequest request) =>
+            {
+                queries.Add(request.Query);
+                return Task.FromResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(provider,
+                    request.Query == matchingQuery
+                        ? [new ProviderTrackMetadata(new(provider, ProviderResourceKind.Track, "catalog-track"), "Song", [new("Artist")])]
+                        : [])));
+            });
+        var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/aac", "aac", "aac"),
+            ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent([1, 2, 3, 4])
+            }));
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "catalog-track")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var providers = AccountFreeRegistry(provider, streaming.Object, metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(providers.Object,
+            Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict), selector, Mock.Of<IProviderOutcomeObserver>());
+
+        var result = await runner.MeasureAsync(Actor(), provider, null, ProviderAudioQuality.Any, "catalog-queries");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal("search", result.SelectionMode);
+        Assert.Equal(4, result.SampleBytes);
+        string[] expected = provider == "fixture"
+            ? ["Daft Punk", "Taylor Swift", "The Beatles"]
+            : ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal", "Daft Punk", "Taylor Swift", "The Beatles"];
+        Assert.Equal(expected.Take(Array.IndexOf(expected, matchingQuery) + 1), queries);
+        streaming.VerifyAll();
+    }
+
+    [Theory]
     [InlineData("bytes 0-9/100", 10, "byte-range")]
     [InlineData("bytes 0-9/*", 10, "sequential")]
     [InlineData("bytes 0-9/100", 9, "sequential")]
