@@ -111,7 +111,8 @@ public sealed class PlaylistVirtualizationService(
                           item.TargetProtocol == "opensubsonic" ||
                           item.TargetProtocol == "navidrome") &&
                     item.Enabled &&
-                    (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid))
+                    (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid ||
+                     context.Protocol == ProtocolKind.Jellyfin))
                 .OrderBy(item => item.CreatedAt)
                 .Select(item => item.Id)
                 .ToArrayAsync(cancellationToken);
@@ -147,7 +148,9 @@ public sealed class PlaylistVirtualizationService(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(context);
-        if (!TryParseProtocolId(protocolId, out var linkId) || context.Actor == null)
+        var virtualId = TryParseProtocolId(protocolId, out var linkId);
+        if (context.Actor == null || string.IsNullOrWhiteSpace(protocolId) ||
+            !virtualId && context.Protocol != ProtocolKind.Jellyfin)
             return null;
 
         var actor = context.Actor;
@@ -157,16 +160,19 @@ public sealed class PlaylistVirtualizationService(
                 user.BackendType == backendType && user.BackendInstanceId == context.BackendInstanceId &&
                 user.BackendPrincipalId == context.VerifiedBackendPrincipalId, cancellationToken))
             return null;
-        var link = await db.PlaylistLinks.AsNoTracking().SingleOrDefaultAsync(item =>
-            item.Id == linkId &&
+        var links = await db.PlaylistLinks.AsNoTracking().Where(item =>
+            (virtualId ? item.Id == linkId : item.TargetPlaylistId == protocolId) &&
             (item.OwnerUserId == actor.EffectiveUserId || item.TargetPlaylistId != null) &&
             item.TargetBackendInstanceId == context.BackendInstanceId &&
             (context.Protocol == ProtocolKind.Jellyfin
                 ? item.TargetProtocol == "jellyfin"
                 : item.TargetProtocol == "subsonic" || item.TargetProtocol == "opensubsonic" || item.TargetProtocol == "navidrome") &&
-            item.Enabled && (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid),
-            cancellationToken);
-        if (link == null) return null;
+            item.Enabled && (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid ||
+                context.Protocol == ProtocolKind.Jellyfin)).ToArrayAsync(cancellationToken);
+        var owned = links.Where(item => item.OwnerUserId == actor.EffectiveUserId).ToArray();
+        var selected = owned.Length > 0 ? owned : links;
+        if (selected.Length != 1) return null;
+        var link = selected[0];
         BackendPlaylistSnapshot? authorizedTarget = null;
         if (!string.IsNullOrWhiteSpace(link.TargetPlaylistId))
         {
@@ -248,10 +254,10 @@ public sealed class PlaylistVirtualizationService(
         var artwork = targetSnapshot == null
             ? projection.ArtworkReferenceKey
             : targetSnapshot.ArtworkReference;
-        return new VirtualPlaylistReadModel(protocolId, link.Id, projection.SnapshotId,
+        return new VirtualPlaylistReadModel(CreateProtocolId(link.Id), link.Id, projection.SnapshotId,
             name, description, artwork, link.SourceProviderId,
             link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, selectedMode,
-            targetSnapshot?.BackendPlaylistId);
+            link.TargetPlaylistId);
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadBySourceAsync(
@@ -282,7 +288,8 @@ public sealed class PlaylistVirtualizationService(
                       item.TargetProtocol == "opensubsonic" ||
                       item.TargetProtocol == "navidrome") &&
                 item.Enabled &&
-                (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid))
+                (item.Mode == PlaylistLinkMode.Virtual || item.Mode == PlaylistLinkMode.Hybrid ||
+                 context.Protocol == ProtocolKind.Jellyfin))
             .OrderBy(item => item.CreatedAt)
             .Select(item => new { item.Id, item.OwnerUserId })
             .ToArrayAsync(cancellationToken);

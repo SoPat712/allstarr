@@ -123,6 +123,11 @@ public partial class JellyfinController
 
         if (!string.IsNullOrWhiteSpace(parentId))
         {
+            var durable = await _virtualPlaylistProtocolAdapter.ReadItemsAsync(
+                HttpContext.RequireProtocolExecutionContext(), parentId,
+                Request.Headers, Request.Query, HttpContext.RequestAborted);
+            if (durable != null) return durable;
+
             if (_spotifySettings.Enabled && _spotifySettings.IsSpotifyPlaylist(parentId))
             {
                 return await GetPlaylistTracks(parentId);
@@ -884,6 +889,23 @@ public partial class JellyfinController
         var context = HttpContext.RequireProtocolExecutionContext();
         var virtualPlaylists = await _virtualPlaylistProtocolAdapter.ListAsync(context, cancellationToken);
         var aliasedProtocolIds = new HashSet<string>(StringComparer.Ordinal);
+        var byTargetId = virtualPlaylists
+            .Where(item => !string.IsNullOrWhiteSpace(item.TargetPlaylistId))
+            .GroupBy(item => item.TargetPlaylistId!, StringComparer.Ordinal)
+            .Where(group => group.Count() == 1)
+            .ToDictionary(group => group.Key, group => group.Single(), StringComparer.Ordinal);
+        foreach (var playlist in byTargetId.Values)
+            aliasedProtocolIds.Add(playlist.ProtocolId);
+        foreach (var item in items.OfType<JsonObject>())
+        {
+            if (item["Id"] is not JsonValue idValue || !idValue.TryGetValue<string>(out var id) ||
+                !byTargetId.TryGetValue(id, out var playlist)) continue;
+            item["Name"] = playlist.Name;
+            item["Overview"] = playlist.Description;
+            item["ChildCount"] = playlist.Tracks.Count;
+            item["RunTimeTicks"] = playlist.Tracks.Sum(track => track.DurationMilliseconds) *
+                                   TimeSpan.TicksPerMillisecond;
+        }
         if (_spotifySettings.Enabled)
         {
             var bySourceId = virtualPlaylists

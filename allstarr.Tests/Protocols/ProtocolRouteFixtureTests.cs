@@ -3066,6 +3066,9 @@ public sealed partial class ProtocolRouteFixtureTests
             allstarr.Core.Storage.PlaylistLinkMode.Virtual,
             tracks);
         var virtualization = new Mock<IPlaylistVirtualizationService>(MockBehavior.Strict);
+        virtualization.Setup(service => service.ReadAsync(
+                It.IsAny<ProtocolExecutionContext>(), nativeId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((VirtualPlaylistReadModel?)null);
         virtualization.Setup(service => service.ListAsync(
                 It.IsAny<ProtocolExecutionContext>(),
                 It.IsAny<CancellationToken>()))

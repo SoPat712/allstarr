@@ -26,7 +26,7 @@ using Xunit.Abstractions;
 namespace allstarr.Tests;
 
 [Collection(nameof(PlaylistTimingCollection))]
-public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper output) : IAsyncLifetime
+public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHelper output) : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private DbFactory _factory = null!;
@@ -1156,6 +1156,77 @@ public sealed class PlaylistOrchestrationIntegrationTests(ITestOutputHelper outp
         Assert.DoesNotContain(
             await verify.ProviderTrackIdentities.ToListAsync(),
             item => item.ProviderId == "musicbrainz");
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Scheduled_refresh_matches_added_rows_and_reused_unresolved_rows_once(bool previouslyImported)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        var existing = Entry(0, "existing", "source-1", "One");
+        var added = Entry(1, "added", "new-source", "New Song");
+        _source.Snapshot = previouslyImported
+            ? Snapshot("initial", existing, added)
+            : Snapshot("initial", existing);
+        await _service.RefreshAsync(Context(), _link);
+        _source.Snapshot = Snapshot("expanded", existing, added,
+            Entry(2, "duplicate", "new-source", "New Song"),
+            Entry(3, "later", "later-source", "Later Song"));
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
+        gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["deezer"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(
+                It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 60))
+            .ReturnsAsync([
+                new Song { ExternalProvider = "deezer", ExternalId = "new-song", Title = "New Song",
+                    Artist = "Artist", Album = "Album", Duration = 180 },
+                new Song { ExternalProvider = "deezer", ExternalId = "later-song", Title = "Later Song",
+                    Artist = "Artist", Album = "Album", Duration = 180 }
+            ]);
+        var matcher = new TrackMatchDecisionEngine();
+        var matches = new TrackMatchCommandService(_factory, matcher, new ProviderAccountResolver(_factory),
+            new Clock(_now), new TestBackendLibraryAccess(_factory, "music"),
+            new TrackMatchPlayableSearch(gateway.Object, matcher, NullLogger<TrackMatchPlayableSearch>.Instance));
+        var service = new PlaylistOrchestrationService(_factory, _source, new FakeTargetResolver(_target),
+            new PlaylistMaterializationPlanner(), matcher, matches, new Clock(_now), new KeyedAsyncLock(),
+            new TestBackendLibraryAccess(_factory, "music"), providerGateway: gateway.Object);
+        var options = new DurableJobOptions();
+        var queue = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), new Clock(_now));
+        await queue.EnqueueAsync(new DurableJobEnqueueRequest<PlaylistSyncScheduledPayload>(
+            "playlist.materialize", "scheduled-refresh",
+            new(Guid.CreateVersion7(), _link, _now, 1, "default", "default"),
+            _user, ProviderAccountId: _account, Capability: "playlist"));
+        var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("scheduled-refresh-worker"));
+
+        var completion = await new PlaylistMaterializationJobHandler(_factory, service, new Clock(_now))
+            .ExecuteAsync(new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "New Song", 60), Times.Once);
+        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Later Song", 60), Times.Once);
+        var projection = await new DurablePlaylistProjectionReader(_factory,
+            new TestBackendLibraryAccess(_factory, "music"), gateway.Object).ReadByLinkIdAsync(_user, _link);
+        Assert.NotNull(projection);
+        Assert.Equal(4, projection.TotalCount);
+        Assert.Equal(1, projection.LocalCount);
+        Assert.Equal(3, projection.ExternalCount);
+        Assert.Equal(4, projection.PlayableCount);
+        Assert.Equal(0, projection.MissingCount);
+        Assert.Equal(0, projection.ReviewCount);
+        await using var db = await _factory.CreateDbContextAsync();
+        var entries = await db.PlaylistSourceEntries.Where(item => item.PlaylistSourceSnapshotId == projection.SnapshotId)
+            .OrderBy(item => item.SourcePosition).ToArrayAsync();
+        Assert.Equal(entries[1].ExternalMetadataSnapshotId, entries[2].ExternalMetadataSnapshotId);
+        foreach (var entry in entries.Skip(1))
+        {
+            var published = await db.TrackMatches.SingleAsync(item => item.Id == entry.PublishedTrackMatchId);
+            Assert.Equal(TrackMatchState.Accepted, published.State);
+            Assert.Null(published.LibraryTrackId);
+            Assert.NotNull(published.CanonicalRecordingId);
+            Assert.NotEqual("[]", published.CandidateResultsJson);
+        }
     }
 
     [Theory]
