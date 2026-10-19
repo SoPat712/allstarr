@@ -10,7 +10,7 @@ using System.Text.Json;
 
 namespace allstarr.Core.Extensions;
 
-public sealed class ExtensionRuntimeCoordinator : IHostedService, IAsyncDisposable
+public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsyncDisposable
 {
     private const long MaximumStorageBytesPerExtension = 4L * 1024 * 1024;
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -34,6 +34,8 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService, IAsyncDisposab
     private const string SessionSourceSetting = "__extensionSessionSource";
     private readonly allstarr.Services.Common.IProviderCheckRequests? _checkRequests;
     private int _startupRenewalAttempted;
+    private readonly ExtensionSessionVerificationClient? _sessionVerification;
+    private readonly allstarr.Core.Jobs.DurableJobQueue? _sessionJobs;
 
     public ExtensionRuntimeCoordinator(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -48,8 +50,12 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService, IAsyncDisposab
         ILogger<ExtensionRuntimeCoordinator> logger,
         IDataProtectionProvider? dataProtectionProvider = null,
         allstarr.Services.Common.IProviderCheckRequests? checkRequests = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        ExtensionSessionVerificationClient? sessionVerification = null,
+        allstarr.Core.Jobs.DurableJobQueue? sessionJobs = null)
     {
+        _sessionVerification = sessionVerification;
+        _sessionJobs = sessionJobs;
         _executionOptions = configuration.GetSection(ExtensionExecutionOptions.SectionName)
             .Get<ExtensionExecutionOptions>() ?? new();
         _executionOptions.GetSignedDownloadRequestTimeout();
@@ -146,6 +152,9 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService, IAsyncDisposab
                     {
                         using var scope = sandbox.OpenSignedSessionAccount(account.Id);
                         var view = await sandbox.RefreshSignedSessionIfDueAsync(cancellationToken);
+                        if (_sessionVerification?.Enabled == true && _sessionJobs != null)
+                            await EnqueueSessionVerificationAsync(package, account,
+                                sandbox.SignedSessionClient, cancellationToken);
                         if (view == null) continue;
                         packageNetworkNotReady |= view.LastRenewalFailure == "network_not_ready";
                         if (view.Restored) _checkRequests?.Request(package.ExtensionId);

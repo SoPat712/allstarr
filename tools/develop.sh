@@ -26,6 +26,10 @@ if [[ -f "$ROOT/.allstarr-profiles" ]]; then
   while IFS= read -r profile; do
     case "$profile" in
       apple) COMPOSE+=(--profile apple) ;;
+      sessions)
+        COMPOSE+=(--profile sessions)
+        export SESSION_VERIFIER_URL="${SESSION_VERIFIER_URL:-http://session-verifier:8000}"
+        ;;
       ""|spotify|spotify-lyrics) ;;
       *) die "unsupported saved profile '$profile'" ;;
     esac
@@ -42,6 +46,9 @@ fi
 docker compose "${COMPOSE[@]}" build allstarr
 if [[ -f "$ROOT/.allstarr-profiles" ]] && grep -qx apple "$ROOT/.allstarr-profiles"; then
   docker compose "${COMPOSE[@]}" build apple-gateway
+fi
+if [[ -f "$ROOT/.allstarr-profiles" ]] && grep -qx sessions "$ROOT/.allstarr-profiles"; then
+  docker compose "${COMPOSE[@]}" build session-verifier
 fi
 printf '%s\n' "$mode" > "$MODE_FILE"
 docker compose "${COMPOSE[@]}" up -d --remove-orphans --wait --wait-timeout 180

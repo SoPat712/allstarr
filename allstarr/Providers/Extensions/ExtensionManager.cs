@@ -950,6 +950,7 @@ public class ExtensionSandbox
     internal bool IsNetworkAllowed(Uri uri) => _hostBridge.IsNetworkAllowed(uri);
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;
+    internal ExtensionSignedSessionClient SignedSessionClient => _hostBridge.SignedSessionClient;
 
     private Func<ProviderAccountContext, CancellationToken, Task<bool>>? _signedAccountValidator;
 
@@ -1299,6 +1300,7 @@ public partial class ExtensionHostBridge
     }
 
     public bool HasSignedSession => _signedSession != null;
+    internal ExtensionSignedSessionClient SignedSessionClient => RequireSignedSession();
     internal Task<ExtensionSessionView?> RefreshSessionIfDueAsync(CancellationToken cancellationToken) =>
         RequireSignedSession().RefreshDueAsync(cancellationToken);
     public object SessionStatus() => RequireSignedSession().Status();

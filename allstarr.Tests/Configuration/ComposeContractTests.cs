@@ -26,6 +26,7 @@ public sealed class ComposeContractTests
         Assert.DoesNotContain("spotify-lyrics:", compose, StringComparison.Ordinal);
         Assert.Matches("(?s)apple-gateway:.*?profiles:\\s*- apple", compose);
         Assert.Matches("(?s)apple-wrapper:.*?profiles:\\s*- apple", compose);
+        Assert.Matches("(?s)session-verifier:.*?profiles:\\s*- sessions", compose);
         Assert.DoesNotContain("spotify-lyrics-api", compose, StringComparison.Ordinal);
         Assert.DoesNotContain("SpotifyApi__LyricsApiUrl", compose, StringComparison.Ordinal);
         Assert.Contains("APPLE_GATEWAY_WRAPPER_DECRYPT_PORT", compose, StringComparison.Ordinal);
@@ -98,6 +99,8 @@ public sealed class ComposeContractTests
     [InlineData()]
     [InlineData("spotify-lyrics")]
     [InlineData("apple")]
+    [InlineData("sessions")]
+    [InlineData("apple", "sessions")]
     public void ComposeProfiles_RenderSuccessfully(params string[] profiles)
     {
         var startInfo = new ProcessStartInfo
@@ -129,6 +132,7 @@ public sealed class ComposeContractTests
             .ToHashSet(StringComparer.Ordinal);
         var expected = new HashSet<string>(["allstarr"], StringComparer.Ordinal);
         if (profiles.Contains("apple")) expected.UnionWith(["apple-gateway", "apple-wrapper"]);
+        if (profiles.Contains("sessions")) expected.Add("session-verifier");
 
         Assert.True(process.ExitCode == 0, error);
         Assert.True(expected.SetEquals(services),

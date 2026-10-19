@@ -5,6 +5,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Core.ManagedFiles;
+using allstarr.Core.Extensions;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Jobs;
@@ -61,6 +62,15 @@ public sealed class DurableJobContextAuthorizer
         CancellationToken cancellationToken = default,
         string? jobType = null)
     {
+        if (jobType == ExtensionSessionVerificationJobHandler.Type)
+        {
+            if (providerAccountId == null || capability != null)
+                throw new ArgumentException("Session verification requires an exact account and no provider capability.");
+            var sessionAccount = await SessionVerificationAccountAsync(ownerUserId, providerAccountId.Value, cancellationToken)
+                ?? throw new UnauthorizedAccessException("The sign-in connection is no longer available.");
+            return new(ownerUserId, providerAccountId, null, RedactCorrelationId(correlationId),
+                JsonSerializer.Serialize(SessionVerificationSnapshot(sessionAccount)));
+        }
         if (jobType == ManagedStorageRecovery.JobType)
         {
             if (ownerUserId != null || providerAccountId != null || capability != null)
@@ -125,7 +135,8 @@ public sealed class DurableJobContextAuthorizer
         DurableJobClaim claim,
         CancellationToken cancellationToken = default)
     {
-        if ((!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty) && claim.Type != ManagedStorageRecovery.JobType)
+        if ((!claim.OwnerUserId.HasValue || claim.OwnerUserId == Guid.Empty) &&
+            claim.Type is not (ManagedStorageRecovery.JobType or ExtensionSessionVerificationJobHandler.Type))
         {
             return DurableJobContextAuthorization.Deny(
                 "job_context_missing",
@@ -147,6 +158,16 @@ public sealed class DurableJobContextAuthorizer
             return DurableJobContextAuthorization.Deny(
                 "job_policy_snapshot_invalid",
                 "The durable job policy snapshot is missing or unsupported.");
+        }
+
+        if (claim.Type == ExtensionSessionVerificationJobHandler.Type || savedSnapshot.AuthorizationRule == "extension_session_verification")
+        {
+            var sessionAccount = claim.ProviderAccountId is { } accountId
+                ? await SessionVerificationAccountAsync(claim.OwnerUserId, accountId, cancellationToken) : null;
+            return claim.Type == ExtensionSessionVerificationJobHandler.Type && claim.ProviderCapability == null &&
+                sessionAccount != null && savedSnapshot == SessionVerificationSnapshot(sessionAccount)
+                ? DurableJobContextAuthorization.Allow()
+                : DurableJobContextAuthorization.Deny("job_provider_account_unauthorized", "The sign-in connection changed before verification completed.");
         }
 
         if (claim.Type == ManagedStorageRecovery.JobType || savedSnapshot.AuthorizationRule == "managed_storage_verification")
@@ -235,6 +256,20 @@ public sealed class DurableJobContextAuthorizer
 
     private static DurableJobPolicySnapshot StorageSnapshot() =>
         new(SnapshotVersion, "managed_storage_verification", null, null, null);
+
+    private static DurableJobPolicySnapshot SessionVerificationSnapshot(ProviderAccountRecord account) =>
+        new(SnapshotVersion, "extension_session_verification", account.ProviderId, null,
+            account.Scope.ToString().ToLowerInvariant(), account.Revision);
+
+    private async Task<ProviderAccountRecord?> SessionVerificationAccountAsync(Guid? ownerUserId, Guid accountId,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        var account = await db.ProviderAccounts.AsNoTracking().SingleOrDefaultAsync(item => item.Id == accountId &&
+            item.OwnerUserId == ownerUserId && item.Enabled &&
+            (item.OwnerUserId == null || db.Users.Any(user => user.Id == item.OwnerUserId && user.Enabled)), cancellationToken);
+        return account != null && !ProviderAccountSettings.IsRemoved(account) ? account : null;
+    }
 
     private DurableJobPolicySnapshot BuildSnapshot(
         ProviderAccountRecord? account,

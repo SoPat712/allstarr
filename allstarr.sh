@@ -13,7 +13,7 @@ profiles() {
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r value; do
       case "$value" in
-        apple) printf '%s\n' "$value" ;;
+        apple|sessions) printf '%s\n' "$value" ;;
       esac
     done < "$PROFILE_FILE"
   fi
@@ -30,6 +30,10 @@ compose_args() {
   while IFS= read -r profile; do
     case "$profile" in
       apple) COMPOSE+=(--profile apple) ;;
+      sessions)
+        COMPOSE+=(--profile sessions)
+        export SESSION_VERIFIER_URL="${SESSION_VERIFIER_URL:-http://session-verifier:8000}"
+        ;;
     esac
   done < <(profiles)
 }
@@ -185,9 +189,9 @@ validate_deployment_files() {
   if [[ -f "$PROFILE_FILE" ]]; then
     while IFS= read -r profile; do
       case "$profile" in
-        ""|apple) ;;
+        ""|apple|sessions) ;;
         spotify|spotify-lyrics) echo "Spotify lyrics runs inside Allstarr. Configure its account in Integrations > Accounts." >&2 ;;
-        *) die "unsupported saved profile '$profile'; use apple" ;;
+        *) die "unsupported saved profile '$profile'; use apple or sessions" ;;
       esac
     done < "$PROFILE_FILE"
   fi
@@ -200,6 +204,9 @@ up() {
   docker compose "${COMPOSE[@]}" config --quiet
   if profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" build apple-gateway
+  fi
+  if profiles | grep -qx sessions; then
+    docker compose "${COMPOSE[@]}" build session-verifier
   fi
   start_stack
   docker compose "${COMPOSE[@]}" ps
@@ -214,6 +221,9 @@ update() {
   if profiles | grep -qx apple; then
     docker compose "${COMPOSE[@]}" build apple-gateway
   fi
+  if profiles | grep -qx sessions; then
+    docker compose "${COMPOSE[@]}" build session-verifier
+  fi
   start_stack
   docker compose "${COMPOSE[@]}" ps
 }
@@ -227,12 +237,37 @@ disable_apple() {
   echo "Apple disabled. Stored data, sessions, and accounts are preserved."
 }
 
+enable_sessions() {
+  validate_deployment_files
+  remember_profile sessions
+  if [[ -f "$ROOT/.allstarr-mode" ]] && grep -qx source "$ROOT/.allstarr-mode"; then
+    bash "$ROOT/tools/develop.sh" up
+  else
+    up
+  fi
+}
+
+disable_sessions() {
+  compose_args
+  docker compose "${COMPOSE[@]}" --profile sessions stop session-verifier
+  docker compose "${COMPOSE[@]}" --profile sessions rm -f session-verifier
+  forget_profile sessions
+  export SESSION_VERIFIER_URL=""
+  if [[ -f "$ROOT/.allstarr-mode" ]] && grep -qx source "$ROOT/.allstarr-mode"; then
+    bash "$ROOT/tools/develop.sh" up
+  else
+    up
+  fi
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./allstarr.sh COMMAND
 
   enable apple [INPUT] [ARCH]       Verify staged libraries, build and start Apple
   disable apple                     Stop and remove Apple containers; preserve sessions
+  enable sessions                   Build and start automatic extension sign-in verification
+  disable sessions                  Stop automatic verification; retain saved sign-ins
   update                            Pull the configured image and recreate saved profiles
   status                            Show containers and saved profiles
   logs [service]                    Follow container logs
@@ -259,15 +294,18 @@ case "$command" in
   status) compose_args; echo "Profiles: $(profiles | paste -sd, -)"; docker compose "${COMPOSE[@]}" ps ;;
   logs) compose_args; docker compose "${COMPOSE[@]}" logs --tail=200 -f "$@" ;;
   enable)
-    [[ "${1:-}" == apple ]] || die "only apple is an optional profile; Spotify lyrics runs inside Allstarr"
-    shift
-    install_apple "$@"
+    case "${1:-}" in
+      apple) shift; install_apple "$@" ;;
+      sessions) enable_sessions ;;
+      *) die "choose apple or sessions; Spotify lyrics runs inside Allstarr" ;;
+    esac
     ;;
   disable)
     case "${1:-}" in
       apple) disable_apple ;;
+      sessions) disable_sessions ;;
       spotify|spotify-lyrics) forget_profile "$1" ;;
-      *) die "choose apple" ;;
+      *) die "choose apple or sessions" ;;
     esac
     ;;
   down) compose_args; docker compose "${COMPOSE[@]}" down ;;
