@@ -120,6 +120,9 @@ public static class RuntimeEnvConfiguration
             ["EXTENSION_REPOSITORIES"] = ["EXTENSION_REPOSITORIES"],
 
             ["CACHE_SEARCH_RESULTS_MINUTES"] = ["Cache:SearchResultsMinutes"],
+            ["CACHE_SEARCH_BUDGET_MILLISECONDS"] = ["Cache:SearchBudgetMilliseconds"],
+            ["CACHE_SEARCH_BACKGROUND_SECONDS"] = ["Cache:SearchBackgroundSeconds"],
+            ["CACHE_SEARCH_FAILURE_COOLDOWN_SECONDS"] = ["Cache:SearchFailureCooldownSeconds"],
             ["CACHE_PLAYLIST_IMAGES_HOURS"] = ["Cache:PlaylistImagesHours"],
             ["CACHE_LYRICS_DAYS"] = ["Cache:LyricsDays"],
             ["CACHE_GENRE_DAYS"] = ["Cache:GenreDays"],

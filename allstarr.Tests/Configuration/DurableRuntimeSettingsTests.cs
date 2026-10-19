@@ -396,6 +396,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         [
             new(ProviderAccountOptions.ListenerConnectionsKey, "false"),
             new("Cache:SearchResultsMinutes", "15"), new("Deezer:Quality", "FLAC"),
+            new("Cache:SearchBudgetMilliseconds", "2000"), new("Cache:SearchBackgroundSeconds", "20"),
+            new("Cache:SearchFailureCooldownSeconds", "120"),
             new("Providers:StreamingOrder", "deezer,qobuz"), new("Library:DownloadMode", "Album"),
             new("AppleDownload:BaseUrl", "http://apple-gateway.lan/base"),
             new("AppleDownload:Quality", "alac-24-96"),
@@ -407,6 +409,9 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await service.StartAsync(CancellationToken.None);
         using var projectionTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         while (cache.SearchResultsMinutes != 15) await Task.Delay(50, projectionTimeout.Token);
+        Assert.Equal(2000, cache.SearchBudgetMilliseconds);
+        Assert.Equal(20, cache.SearchBackgroundSeconds);
+        Assert.Equal(120, cache.SearchFailureCooldownSeconds);
         var migrated = await service.GetAsync(AudioQualityPolicy.SettingKey);
         Assert.Equal(RuntimeSettingOrigin.Durable, migrated.Origin);
         Assert.Equal("HiResLossless", migrated.Value);

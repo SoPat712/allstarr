@@ -3,6 +3,9 @@ namespace allstarr.Models.Settings;
 public class CacheSettings
 {
     public int SearchResultsMinutes { get; set; } = 1;
+    public int SearchBudgetMilliseconds { get; set; } = 3500;
+    public int SearchBackgroundSeconds { get; set; } = 30;
+    public int SearchFailureCooldownSeconds { get; set; } = 300;
     public int PlaylistImagesHours { get; set; } = 168;
     public int LyricsDays { get; set; } = 14;
     public int GenreDays { get; set; } = 30;
@@ -24,6 +27,9 @@ public class CacheSettings
         new(StringComparer.OrdinalIgnoreCase);
 
     public TimeSpan SearchResultsTTL => TimeSpan.FromMinutes(Math.Clamp(SearchResultsMinutes, 1, 1440));
+    public TimeSpan SearchBudget => TimeSpan.FromMilliseconds(Math.Clamp(SearchBudgetMilliseconds, 100, 30000));
+    public TimeSpan SearchBackgroundWindow => TimeSpan.FromSeconds(Math.Clamp(SearchBackgroundSeconds, 1, 120));
+    public TimeSpan SearchFailureCooldown => TimeSpan.FromSeconds(Math.Clamp(SearchFailureCooldownSeconds, 1, 3600));
     public TimeSpan PlaylistImagesTTL => TimeSpan.FromHours(Math.Clamp(PlaylistImagesHours, 1, 8760));
     public TimeSpan LyricsTTL => TimeSpan.FromDays(Math.Clamp(LyricsDays, 1, 3650));
     public TimeSpan GenreTTL => TimeSpan.FromDays(Math.Clamp(GenreDays, 1, 3650));

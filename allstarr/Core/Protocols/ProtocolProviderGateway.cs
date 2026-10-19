@@ -14,10 +14,12 @@ using allstarr.Core.Downloads;
 using allstarr.Core.ManagedFiles;
 using allstarr.Models.Domain;
 using allstarr.Models.Search;
+using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
 using allstarr.Services;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace allstarr.Core.Protocols;
 
@@ -176,7 +178,8 @@ public sealed partial class ProtocolProviderGateway(
     ITrackIdentityService? identities = null,
     IProviderOutcomeObserver? outcomes = null,
     RecordingKeptFiles? keptFiles = null,
-    TimeProvider? timeProvider = null) : IProtocolProviderGateway
+    TimeProvider? timeProvider = null,
+    IOptions<CacheSettings>? searchSettings = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
     private const int ProviderSearchConcurrency = 4;
@@ -345,65 +348,48 @@ public sealed partial class ProtocolProviderGateway(
 
         var routed = new SearchResult();
         var trackLookups = new List<(Song Song, TrackIdentityLookup Lookup)>();
-        using var metadataSearchGate = new SemaphoreSlim(ProviderSearchConcurrency);
+        var settings = SearchSettings;
+        var clock = timeProvider ?? TimeProvider.System;
+        var searchStarted = clock.GetTimestamp();
+        var searchBudget = settings.SearchBudget;
         var searchTasks = plan.Candidates.Select(async candidate =>
         {
-            await metadataSearchGate.WaitAsync(protocol.CancellationToken);
-            try
-            {
-                var request = new ProviderMetadataSearchRequest(query, new ProviderPageRequest(fetchLimit));
-                var songsTask = TrySearchAsync(
-                    () => candidate.Implementation.SearchTracksAsync(candidate.Context, request),
-                    protocol.CancellationToken, enabled: songLimit > 0);
-                var albumsTask = TrySearchAsync(
-                    () => candidate.Implementation.SearchAlbumsAsync(candidate.Context, request),
-                    protocol.CancellationToken, enabled: albumLimit > 0);
-                var artistsTask = TrySearchAsync(
-                    () => candidate.Implementation.SearchArtistsAsync(candidate.Context, request),
-                    protocol.CancellationToken, enabled: artistLimit > 0);
-                await Task.WhenAll(songsTask, albumsTask, artistsTask);
-                return new
-                {
-                    ProviderId = NormalizeProvider(candidate.Provider.Id),
-                    Context = candidate.Context,
-                    SongsResult = await songsTask,
-                    AlbumsResult = await albumsTask,
-                    ArtistsResult = await artistsTask
-                };
-            }
-            finally
-            {
-                metadataSearchGate.Release();
-            }
-        }).ToList();
-
-        var searchOutcomes = await Task.WhenAll(searchTasks);
-
-        foreach (var outcome in searchOutcomes)
+            var snapshot = await SearchProviderWithinWindowAsync(
+                candidate, query, fetchLimit, songLimit > 0, albumLimit > 0, artistLimit > 0, settings);
+            return (Snapshot: snapshot, CompletedAfter: clock.GetElapsedTime(searchStarted));
+        }).ToArray();
+        try
         {
-            var albums = outcome.AlbumsResult?.IsSuccess == true
-                ? outcome.AlbumsResult.RequireValue().Items
-                : [];
-            var artists = outcome.ArtistsResult?.IsSuccess == true
-                ? outcome.ArtistsResult.RequireValue().Items
-                : [];
-            if (playableProviders.Contains(outcome.ProviderId) && outcome.SongsResult?.IsSuccess == true)
+            var remaining = searchBudget - clock.GetElapsedTime(searchStarted);
+            await Task.WhenAll(searchTasks).WaitAsync(remaining > TimeSpan.Zero ? remaining : TimeSpan.Zero,
+                clock, protocol.CancellationToken);
+        }
+        catch (TimeoutException)
+        {
+            logger?.LogDebug("Provider search response budget expired with {PendingCount} sources still pending",
+                searchTasks.Count(task => !task.IsCompleted));
+        }
+
+        for (var index = 0; index < searchTasks.Length; index++)
+        {
+            if (!searchTasks[index].IsCompletedSuccessfully) continue;
+            var outcome = searchTasks[index].Result;
+            if (outcome.CompletedAfter > searchBudget) continue;
+            var snapshot = outcome.Snapshot;
+            if (snapshot == null) continue;
+            var result = snapshot.Result;
+            var candidate = plan.Candidates[index];
+            if (playableProviders.Contains(NormalizeProvider(candidate.Provider.Id)))
             {
-                foreach (var item in outcome.SongsResult.RequireValue().Items)
+                for (var songIndex = 0; songIndex < result.Songs.Count; songIndex++)
                 {
-                    var song = EnrichRelationships(Map(item), albums, artists);
+                    var song = result.Songs[songIndex];
                     routed.Songs.Add(song);
-                    trackLookups.Add((song, new TrackIdentityLookup(outcome.Context, item.Id)));
+                    trackLookups.Add((song, new TrackIdentityLookup(candidate.Context, snapshot.TrackIds[songIndex])));
                 }
             }
-            if (outcome.AlbumsResult?.IsSuccess == true)
-            {
-                routed.Albums.AddRange(outcome.AlbumsResult.RequireValue().Items.Select(Map));
-            }
-            if (outcome.ArtistsResult?.IsSuccess == true)
-            {
-                routed.Artists.AddRange(outcome.ArtistsResult.RequireValue().Items.Select(Map));
-            }
+            routed.Albums.AddRange(result.Albums);
+            routed.Artists.AddRange(result.Artists);
         }
 
         var songs = await CollapseVerifiedSearchTracksAsync(

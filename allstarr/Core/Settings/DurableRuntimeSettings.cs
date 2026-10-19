@@ -132,6 +132,12 @@ public static class RuntimeSettingCatalog
         items.Add(new("Backend:ServiceUserId", RuntimeSettingValueType.String, "Backend:ServiceUserId", AllowEmpty: true, MaximumLength: 200));
         items.Add(new("Identity:BackendInstanceId", RuntimeSettingValueType.String, "Identity:BackendInstanceId", DefaultValue: "primary", MaximumLength: 200));
         Int("Cache:SearchResultsMinutes", 1, 1440); Int("Cache:PlaylistImagesHours", 1, 8760);
+        items.Add(new("Cache:SearchBudgetMilliseconds", RuntimeSettingValueType.Integer, "Cache:SearchBudgetMilliseconds",
+            Minimum: 100, Maximum: 30000, DefaultValue: "3500"));
+        items.Add(new("Cache:SearchBackgroundSeconds", RuntimeSettingValueType.Integer, "Cache:SearchBackgroundSeconds",
+            Minimum: 1, Maximum: 120, DefaultValue: "30"));
+        items.Add(new("Cache:SearchFailureCooldownSeconds", RuntimeSettingValueType.Integer, "Cache:SearchFailureCooldownSeconds",
+            Minimum: 1, Maximum: 3600, DefaultValue: "300"));
         Int("Cache:LyricsDays", 1, 3650); Int("Cache:GenreDays", 1, 3650); Int("Cache:MetadataDays", 1, 3650);
         Int("Cache:OdesliLookupDays", 1, 3650); Int("Cache:ProxyImagesDays", 1, 3650);
         Int("Cache:TranscodeCacheMinutes", 1, 10080);
@@ -764,6 +770,9 @@ public sealed class RuntimeSettingsLiveOptions
         {
             case ProviderAccountOptions.ListenerConnectionsKey: _providerAccounts.ListenersCanConnectOwnAccounts = (bool)value; break;
             case "Cache:SearchResultsMinutes": _cache.SearchResultsMinutes = (int)value; break;
+            case "Cache:SearchBudgetMilliseconds": _cache.SearchBudgetMilliseconds = (int)value; break;
+            case "Cache:SearchBackgroundSeconds": _cache.SearchBackgroundSeconds = (int)value; break;
+            case "Cache:SearchFailureCooldownSeconds": _cache.SearchFailureCooldownSeconds = (int)value; break;
             case "Cache:PlaylistImagesHours": _cache.PlaylistImagesHours = (int)value; break;
             case "Cache:LyricsDays": _cache.LyricsDays = (int)value; break;
             case "Cache:GenreDays": _cache.GenreDays = (int)value; break;

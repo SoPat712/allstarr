@@ -6,6 +6,26 @@ namespace allstarr.Tests;
 public class CacheKeyBuilderTests
 {
     [Fact]
+    public void ProviderSearchKeys_IsolateAccountRevisionsPoliciesAndRequestedCategories()
+    {
+        var account = Guid.CreateVersion7();
+        string Key(Guid? accountId = null, long revision = 1, string scope = "listener-policy",
+            string query = "private query", int limit = 10, bool albums = false) =>
+            CacheKeyBuilder.BuildProviderSearchKey("qobuz", accountId ?? account, revision, scope, query,
+                limit, true, albums, false);
+        var key = Key();
+        Assert.Equal(ApplicationCacheCategory.SearchResults, ApplicationCachePolicyRegistry.Classify(key));
+        Assert.DoesNotContain("private query", key);
+        Assert.DoesNotContain("listener-policy", key);
+        Assert.NotEqual(key, Key(accountId: Guid.CreateVersion7()));
+        Assert.NotEqual(key, Key(revision: 2));
+        Assert.NotEqual(key, Key(scope: "another-listener-policy"));
+        Assert.NotEqual(key, Key(query: "another query"));
+        Assert.NotEqual(key, Key(limit: 20));
+        Assert.NotEqual(key, Key(albums: true));
+    }
+
+    [Fact]
     public void LyricsAndMetadataKeys_ShouldMatchExpectedFormats()
     {
         Assert.StartsWith("lyrics:v2:", CacheKeyBuilder.BuildLyricsKey("Artist", "Title", "Album", 240));
