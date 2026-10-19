@@ -518,7 +518,7 @@
         {#if permissions.length}
           <div class="permission-bulk">
             <strong>This extension asks to</strong>
-            <div><Button size="sm" variant="ghost" onclick={() => decideAll(true)}>Allow all</Button><Button size="sm" variant="ghost" onclick={() => decideAll(false)}>Deny all</Button></div>
+            <div><Button size="sm" variant="outline" onclick={() => decideAll(true)}>Allow all</Button><Button size="sm" variant="outline" onclick={() => decideAll(false)}>Deny all</Button></div>
           </div>
         {/if}
         <ul class="extension-permissions">
@@ -555,7 +555,7 @@
       {#if reviewError}<p class="notice-error" role="alert">{reviewError}</p>{/if}
       <div class="extension-review-footer">
         <label class="permission-confirm"><Checkbox bind:checked={permissionConfirmed} /><span>I understand what this extension can access.</span></label>
-        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Saving…" : "Save review"}</Button></footer>
+        <footer class="dialog-actions"><Button variant="secondary" disabled={Boolean(action)} onclick={closeReview}>Close review</Button><Button disabled={!permissionConfirmed || permissions.some((item) => decisions[item.id] === undefined) || Boolean(action)} onclick={() => void approve()}>{action.startsWith("review:") ? "Approving…" : "Approve"}</Button></footer>
       </div>
     </Dialog.Content></Dialog.Portal>
   </Dialog.Root>

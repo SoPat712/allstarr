@@ -2277,6 +2277,44 @@ test("Legacy integration links open their canonical tabs", async ({ page }) => {
   }
 });
 
+test("extension review scrolls long permission lists", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await mockApi(page);
+  const reviewPackage = {
+    extensionId: "lumen-audio", displayName: "Lumen Audio", lifecycle: "disabled", id: "new", version: "1.0.0",
+    state: "reviewRequired", active: false, installed: true, permissionReviewRequired: true,
+    capabilities: ["metadata", "streaming"], revision: 1, stagedAt: "2026-02-01",
+  };
+  await page.route("**/api/admin/extensions/packages", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify([reviewPackage]),
+  }));
+  await page.route("**/packages/new/permissions", (route) => route.fulfill({
+    contentType: "application/json",
+    body: JSON.stringify(Array.from({ length: 14 }, (_, index) => ({
+      id: `network-${index}`, permissionKind: "network", permissionValue: `https://host-${index}.example.test/`,
+      required: true, decision: "pending",
+    }))),
+  }));
+
+  await page.goto("#/settings/extensions");
+  await page.getByRole("button", { name: "Review permissions" }).click();
+  const review = page.getByRole("dialog", { name: "Review permissions" });
+  await expect(review).toBeVisible();
+  const body = review.locator(".extension-review-body");
+  await body.hover();
+  await page.mouse.wheel(0, 2000);
+  await expect.poll(() => body.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(review.getByText("Connect to host-13.example.test")).toBeInViewport();
+
+  for (const name of ["Allow all", "Deny all"]) {
+    const borderColor = await review.getByRole("button", { name }).evaluate((element) => getComputedStyle(element).borderTopColor);
+    expect(borderColor).not.toBe("rgba(0, 0, 0, 0)");
+  }
+  await review.getByRole("button", { name: "Allow all" }).click();
+  await review.getByRole("checkbox").click();
+  await expect(review.getByRole("button", { name: "Approve" })).toBeEnabled();
+});
+
 test("extension updates explain access changes on mobile", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await mockApi(page);
@@ -2359,10 +2397,10 @@ test("extension updates explain access changes on mobile", async ({ page }) => {
   await expect(review.getByText("Update from 1.0.0 to 2.0.0")).toBeVisible();
   await expect(review.getByText("New access", { exact: false })).toBeVisible();
   await expect(review.getByText("Removed access", { exact: false })).toBeVisible();
-  await expect(review.getByRole("button", { name: "Save review" })).toBeInViewport();
+  await expect(review.getByRole("button", { name: "Approve" })).toBeInViewport();
   await review.getByRole("button", { name: "Allow all" }).click();
   await review.getByRole("checkbox").check();
-  await review.getByRole("button", { name: "Save review" }).click();
+  await review.getByRole("button", { name: "Approve" }).click();
   const activation = page.getByRole("alertdialog", { name: "Activate Lumen Audio?" });
   await expect(activation).toBeVisible();
   expect(activationRequests).toBe(0);

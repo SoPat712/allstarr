@@ -7398,6 +7398,7 @@
     min-height: 0;
     flex: 1;
     align-content: start;
+    grid-auto-rows: max-content;
     gap: var(--space-4);
     overflow: auto;
     padding: var(--space-5) var(--space-6);
