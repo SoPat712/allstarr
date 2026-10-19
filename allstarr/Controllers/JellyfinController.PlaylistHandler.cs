@@ -18,6 +18,10 @@ public partial class JellyfinController
                    ?? NotFound();
         }
 
+        var durable = await _virtualPlaylistProtocolAdapter.ReadDefinitionAsync(
+            HttpContext.RequireProtocolExecutionContext(), playlistId, HttpContext.RequestAborted);
+        if (durable != null) return durable;
+
         var linkedPlaylist = _spotifySettings.Enabled
             ? _spotifySettings.GetPlaylistByJellyfinId(playlistId)
             : null;
@@ -86,6 +90,11 @@ public partial class JellyfinController
                            Request.Headers, Request.Query, HttpContext.RequestAborted)
                        ?? _responseBuilder.CreateError(404, "Playlist not found");
             }
+
+            var durable = await _virtualPlaylistProtocolAdapter.ReadItemsAsync(
+                HttpContext.RequireProtocolExecutionContext(), playlistId,
+                Request.Headers, Request.Query, HttpContext.RequestAborted);
+            if (durable != null) return durable;
 
             var linkedPlaylist = _spotifySettings.Enabled
                 ? _spotifySettings.GetPlaylistByJellyfinId(playlistId)

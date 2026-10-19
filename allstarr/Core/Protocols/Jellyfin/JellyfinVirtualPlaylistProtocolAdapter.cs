@@ -124,7 +124,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         if (playlist == null) return null;
-        return new JsonResult(ToItem(playlist));
+        return new JsonResult(ToItem(playlist, id));
     }
 
     public async Task<IActionResult?> ReadItemBySourceAsync(
