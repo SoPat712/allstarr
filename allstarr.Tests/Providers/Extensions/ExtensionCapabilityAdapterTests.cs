@@ -1058,7 +1058,8 @@ public sealed class ExtensionCapabilityAdapterTests
             registerExtension({
               searchTracks:function(query, limit) {
                 if (query !== 'Song' || limit !== 10) return {tracks:[]};
-                return {tracks:[{id:'typed-1',name:'Song',artists:'Artist',type:'song'}], total:1};
+                return {tracks:[{id:'typed-1',name:'Song',artists:'Artist',type:'song'},
+                                {id:'album-1',name:'Album',artists:'Artist',item_type:'album'}], total:2};
               },
               customSearch:function() { return [{id:'custom-1',name:'Wrong',artists:'Artist',item_type:'track'}]; }
             });
