@@ -7091,6 +7091,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
 }
 
 test("Cross-service links explain built-in lookups and preserve the optional masked key", async ({ page }) => {
+  await page.route("**/*", route => new URL(route.request().url()).hostname === "127.0.0.1" ? route.continue() : route.abort());
   await mockApi(page);
   const writes: Record<string, string>[] = [];
   await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
@@ -7113,7 +7114,8 @@ test("Cross-service links explain built-in lookups and preserve the optional mas
   await page.goto("#/sources");
   const card = page.getByRole("form", { name: "Song links and extension installs" });
   await expect(card).toContainText("Deezer, Apple Music and enabled sources");
-  await expect(card).toContainText("song.link is optional");
+  await expect(card).toContainText("Song.link Web, UniTune, MusicBrainz and Squigly");
+  await expect(card).toContainText("With a key, the official API is tried first");
   const key = card.getByLabel(/^Optional song\.link API key/);
   await expect(key).toHaveAttribute("type", "password");
   await card.getByRole("button", { name: "Save and restart" }).click();

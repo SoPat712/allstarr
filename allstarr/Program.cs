@@ -242,8 +242,8 @@ builder.Services.AddControllers()
 
 builder.Services.AddHttpClient();
 builder.Services.Configure<OdesliSettings>(builder.Configuration.GetSection("Odesli"));
-builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(5)).RemoveAllLoggers()
-    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false });
+builder.Services.AddHttpClient("Odesli", client => client.Timeout = TimeSpan.FromSeconds(6)).RemoveAllLoggers()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false, UseDefaultCredentials = false });
 builder.Services.AddHttpClient("Lrclib", client => client.Timeout = TimeSpan.FromSeconds(5));
 builder.Services.AddHttpClient("ExtensionSdkV1")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler

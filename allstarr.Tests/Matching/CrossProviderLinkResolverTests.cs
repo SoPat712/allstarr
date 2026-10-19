@@ -124,10 +124,44 @@ public sealed class CrossProviderLinkResolverTests
         policies.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task PublicFallback_WithoutKeyValidatesLinkedTrackMetadata()
+    {
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
+        metadata.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderTrackLookupRequest>(request => request.Id.Value == "99")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(Track("Song", null)));
+        var handler = new LinkHandler();
+        var resolver = Create(metadata.Object, ["deezer"], odesli: OdesliServiceTests.Create(handler));
+        var result = Assert.Single(await resolver.ResolveAsync(Source(null),
+            [new("tidal", ProviderResourceKind.Track, "42")], Actor(), "fixture", default));
+        Assert.True(result.Verified);
+        Assert.Equal("99", result.ExternalId);
+        Assert.Equal(3, handler.Calls);
+        metadata.VerifyAll();
+    }
+
+    private sealed class LinkHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(request.RequestUri!.Host == "song.link"
+                ? new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("<a href='https://deezer.com/track/99'>Listen</a>")
+                }
+                : new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+        }
+    }
+
     internal static CrossProviderLinkResolver Create(Mock<IProviderMetadataCapability> metadata, string[] order, string[]? disabled = null)
         => Create(metadata.Object, order, disabled);
 
-    internal static CrossProviderLinkResolver Create(IProviderMetadataCapability metadata, string[] order, string[]? disabled = null)
+    internal static CrossProviderLinkResolver Create(IProviderMetadataCapability metadata, string[] order, string[]? disabled = null, OdesliService? odesli = null)
     {
         IProviderMetadataCapability? registered = metadata;
         var registry = new Mock<IProviderRegistry>();
@@ -142,7 +176,7 @@ public sealed class CrossProviderLinkResolverTests
             (disabled ?? []).ToImmutableHashSet(), "Any", 0.07);
         policy.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(snapshot);
         return new(registry.Object, policy.Object, new TrackMatchDecisionEngine(), new TestMemoryApplicationCache(),
-            Options.Create(new OdesliSettings { Enabled = true }), new SystemPlatformClock());
+            Options.Create(new OdesliSettings { Enabled = true }), new SystemPlatformClock(), odesli);
     }
 
     private static ProviderActorContext Actor() => new(ProviderActorKind.User, Guid.Parse("11111111-1111-1111-1111-111111111111"), new("jellyfin", "fixture", "listener"));
