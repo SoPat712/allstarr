@@ -173,6 +173,8 @@ public static class RuntimeSettingCatalog
             "Playback:LastFmSimilarEnabled", DefaultValue: "true"));
         items.Add(new("Playback:ListenBrainzSimilarEnabled", RuntimeSettingValueType.Boolean,
             "Playback:ListenBrainzSimilarEnabled", DefaultValue: "true"));
+        items.Add(new("Lyrics:JellyfinWordGap", RuntimeSettingValueType.Boolean,
+            "Lyrics:JellyfinWordGap", DefaultValue: "true"));
         items.Add(new("Library:DownloadMode", RuntimeSettingValueType.String, "Jellyfin:DownloadMode", Choices: new HashSet<string>(["Track", "Album"], Comparer)));
         items.Add(new("Library:StorageMode", RuntimeSettingValueType.String, "Jellyfin:StorageMode", Choices: new HashSet<string>(["Cache", "Permanent"], Comparer)));
         Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");

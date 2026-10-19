@@ -6,7 +6,9 @@ namespace allstarr.Core.Music;
 
 public sealed record ProviderSongLyrics(Song Song, LyricsInfo? Lyrics);
 
-public sealed record TimedLyricLine(long StartMilliseconds, string Text);
+public sealed record TimedLyricLine(long StartMilliseconds, string Text, IReadOnlyList<TimedLyricCue>? Cues = null);
+
+public sealed record TimedLyricCue(int Position, int EndPosition, long StartMilliseconds, long? EndMilliseconds);
 
 /// <summary>
 /// Lyrics lookup shared by every protocol: provider song metadata, lookup metadata without
@@ -101,20 +103,54 @@ public static partial class MusicLyrics
             var matches = TimestampRegex().Matches(rawLine);
             if (matches.Count == 0) continue;
             var text = TimestampRegex().Replace(rawLine, string.Empty).Trim();
+            var wordTags = WordTimestampRegex().Matches(text);
+            var plainText = WordTimestampRegex().Replace(text, string.Empty).Replace('\u2800', ' ');
+            var leading = plainText.Length - plainText.TrimStart().Length;
+            plainText = plainText.Trim();
+            var firstTimestamp = ReadTimestamp(matches[0]);
             foreach (System.Text.RegularExpressions.Match match in matches)
             {
-                var minutes = int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
-                var seconds = int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
-                var milliseconds = match.Groups[3].Success
-                    ? int.Parse(match.Groups[3].Value.PadRight(3, '0')[..3], System.Globalization.CultureInfo.InvariantCulture)
-                    : 0;
-                var timestamp = (((long)minutes * 60) + seconds) * 1000 + milliseconds;
+                var timestamp = ReadTimestamp(match);
                 if (timestamp <= 86_400_000)
-                    lines.Add(new TimedLyricLine(Math.Max(0, timestamp - offset), text));
+                {
+                    var cues = new List<TimedLyricCue>();
+                    var position = wordTags.Count > 0 ? wordTags[0].Index : 0;
+                    var shift = timestamp - firstTimestamp - offset;
+                    if (position > leading && wordTags.Count > 0)
+                        cues.Add(new(0, Math.Min(position - leading, plainText.Length),
+                            Math.Max(0, timestamp - offset), Math.Max(0, ReadTimestamp(wordTags[0]) + shift)));
+                    for (var index = 0; index < wordTags.Count; index++)
+                    {
+                        var tag = wordTags[index];
+                        var end = index + 1 < wordTags.Count ? wordTags[index + 1].Index : text.Length;
+                        var length = end - tag.Index - tag.Length;
+                        var startPosition = Math.Max(0, position - leading);
+                        var endPosition = Math.Min(position + length - leading, plainText.Length);
+                        if (endPosition > startPosition && !string.IsNullOrWhiteSpace(plainText[startPosition..endPosition]))
+                            cues.Add(new(startPosition, endPosition, Math.Max(0, ReadTimestamp(tag) + shift),
+                                index + 1 < wordTags.Count ? Math.Max(0, ReadTimestamp(wordTags[index + 1]) + shift) : null));
+                        position += length;
+                    }
+                    lines.Add(new TimedLyricLine(Math.Max(0, timestamp - offset),
+                        wordTags.Count > 0 ? plainText : text, cues.Count > 0 ? cues : null));
+                }
             }
         }
         return lines.OrderBy(line => line.StartMilliseconds).ToList();
     }
+
+    private static long ReadTimestamp(System.Text.RegularExpressions.Match match)
+    {
+        var minutes = int.Parse(match.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var seconds = int.Parse(match.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture);
+        var milliseconds = match.Groups[3].Success
+            ? int.Parse(match.Groups[3].Value.PadRight(3, '0')[..3], System.Globalization.CultureInfo.InvariantCulture)
+            : 0;
+        return (((long)minutes * 60) + seconds) * 1000 + milliseconds;
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"<(\d{1,4}):([0-5]?\d)(?:[.:](\d{1,3}))?>")]
+    private static partial System.Text.RegularExpressions.Regex WordTimestampRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\[(\d{1,4}):([0-5]?\d)(?:[.:](\d{1,3}))?\]")]
     private static partial System.Text.RegularExpressions.Regex TimestampRegex();

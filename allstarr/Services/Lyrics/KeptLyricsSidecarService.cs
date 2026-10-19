@@ -1,5 +1,6 @@
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Core.Settings;
 using System.Text.RegularExpressions;
 using TagLib;
 using allstarr.Models.Domain;
@@ -29,13 +30,16 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
 
     private readonly IProtocolLyricsResolver _lyrics;
     private readonly ILogger<KeptLyricsSidecarService> _logger;
+    private readonly IDurableRuntimeSettings? _settings;
 
     public KeptLyricsSidecarService(
         IProtocolLyricsResolver lyrics,
-        ILogger<KeptLyricsSidecarService> logger)
+        ILogger<KeptLyricsSidecarService> logger,
+        IDurableRuntimeSettings? settings = null)
     {
         _lyrics = lyrics;
         _logger = logger;
+        _settings = settings;
     }
 
     public string GetSidecarPath(string audioFilePath)
@@ -125,6 +129,10 @@ public class KeptLyricsSidecarService : IKeptLyricsSidecarService
             {
                 return null;
             }
+
+            if (context.Protocol == ProtocolKind.Jellyfin &&
+                (_settings == null || (bool)(await _settings.GetAsync("Lyrics:JellyfinWordGap", context.CancellationToken)).Value))
+                lrcContent = JellyfinLyricsWordGap.Apply(lrcContent);
 
             context.CancellationToken.ThrowIfCancellationRequested();
             var temporary = Path.Combine(Path.GetDirectoryName(sidecarPath)!, $".lyrics-{Guid.NewGuid():N}.tmp");

@@ -90,6 +90,14 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task JellyfinWordGapDefaultsOnAndCanBeDisabledDurably()
+    {
+        Assert.True((bool)(await CreateService([]).GetAsync("Lyrics:JellyfinWordGap")).Value);
+        await CreateService([]).ApplyBatchAsync([new("Lyrics:JellyfinWordGap", "false")], "fixture", _userId);
+        Assert.False((bool)(await CreateService([]).GetAsync("Lyrics:JellyfinWordGap")).Value);
+    }
+
+    [Fact]
     public async Task MetadataDefaultsUseTheSamePublicContractAsTheCatalogClient()
     {
         Assert.Equal(new MusicBrainzSettings().BaseUrl, (await CreateService([]).GetAsync("MusicBrainz:BaseUrl")).Value);
