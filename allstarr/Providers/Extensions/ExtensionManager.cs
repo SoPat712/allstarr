@@ -916,6 +916,9 @@ public class ExtensionSandbox
         }
     }
 
+    internal void LogDownloadFailure(Exception exception) =>
+        _logger.LogWarning(exception, "Extension download failed for {ProviderId}", Id);
+
     public bool HasCallableHook(string hook) =>
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
 

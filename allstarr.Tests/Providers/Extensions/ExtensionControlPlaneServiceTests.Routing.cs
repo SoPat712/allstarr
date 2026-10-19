@@ -93,7 +93,8 @@ public sealed partial class ExtensionControlPlaneServiceTests
     {
         var fixture = await SignedRoutesAsync(name, false);
         using var selector = new ProviderCtsTrackSelector(_factory);
-        var runner = new ProviderCtsDiagnosticRunner(fixture.Registry, fixture.Accounts, selector, new ProviderRuntimeHealth());
+        var runner = new ProviderCtsDiagnosticRunner(fixture.Registry, fixture.Accounts, selector, new ProviderRuntimeHealth(),
+            sessions: new ProviderCheckSessions(_factory, fixture.Runtime));
         var result = await runner.MeasureAsync(fixture.Protocol.RequireActor(), fixture.Signed.ExtensionId,
             fixture.Account.Id, ProviderAudioQuality.Any, "signed-streaming-check");
         Assert.True(result.Succeeded, result.Stage + ": " + result.Error);
