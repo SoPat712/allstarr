@@ -38,6 +38,39 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             : ProviderOutcome<ProviderTrackMetadata>.Success(MapTrack(item, result.ETag));
     });
 
+    internal Task<ProviderOutcome<IReadOnlyList<ProviderTrackMetadata>>> LookupAllByIsrcAsync(
+        ProviderExecutionContext context, ProviderIsrcLookupRequest request) => ExecuteAsync(context, async (credential, storefront, ct) =>
+    {
+        var matches = new List<(ProviderTrackMetadata Track, bool Compilation, DateTime Release)>();
+        var offset = 0;
+        // Popular songs appear on many compilations; a few pages are enough to find the album release.
+        for (var page = 0; page < 3; page++)
+        {
+            var result = await SendAsync(credential, $"v1/catalog/{storefront}/songs?filter[isrc]=" +
+                Uri.EscapeDataString(request.Isrc) + $"&include=albums&limit=100&offset={offset}", ct);
+            if (!result.Outcome.IsSuccess) return ProviderOutcome<IReadOnlyList<ProviderTrackMetadata>>.Failure(result.Outcome.Error!);
+            using var document = JsonDocument.Parse(result.Body!);
+            var entries = Data(document.RootElement).ToArray();
+            foreach (var item in entries)
+            {
+                var track = MapTrack(item, result.ETag);
+                var album = item.TryGetProperty("relationships", out var relationships) && relationships.TryGetProperty("albums", out var albums)
+                    ? Data(albums).FirstOrDefault() : default;
+                var attributes = album.ValueKind == JsonValueKind.Object && album.TryGetProperty("attributes", out var value)
+                    ? value : default;
+                var compilation = attributes.ValueKind == JsonValueKind.Object &&
+                    attributes.TryGetProperty("isCompilation", out var flag) && flag.ValueKind == JsonValueKind.True;
+                var release = String(attributes, "releaseDate") ?? track.ReleaseDate;
+                matches.Add((track, compilation, DateTime.TryParse(release, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var date) ? date : DateTime.MaxValue));
+            }
+            if (!HasNext(document.RootElement) || entries.Length == 0) break;
+            offset += entries.Length;
+        }
+        return ProviderOutcome<IReadOnlyList<ProviderTrackMetadata>>.Success(matches.OrderBy(item => item.Compilation)
+            .ThenBy(item => item.Release).Select(item => item.Track).ToArray());
+    });
+
     public Task<ProviderOutcome<ProviderPage<ProviderAlbumMetadata>>> SearchAlbumsAsync(
         ProviderExecutionContext context, ProviderMetadataSearchRequest request) => SearchAsync(
             context, request, "albums", MapAlbum);

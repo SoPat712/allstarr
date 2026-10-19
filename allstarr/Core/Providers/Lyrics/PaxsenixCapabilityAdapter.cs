@@ -1,3 +1,5 @@
+using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
@@ -57,14 +59,45 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                 true, false, false, [AppleMusicClient.ProviderId]), "lyrics-lookup", context?.CorrelationId ?? "lyrics-lookup",
             context?.Deadline ?? DateTimeOffset.UtcNow.Add(LookupBudget), token);
-        var resolved = await ResolveAppleIdAsync(appleContext, request, token);
-        token.ThrowIfCancellationRequested();
-        if (resolved.Error != null) return ProviderOutcome<ProviderLyricsResult>.Failure(resolved.Error);
-        if (resolved.Id == null) return Unavailable();
-        var response = await GetAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(resolved.Id)}"), token);
-        if (response.Error != null) return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);
-        if (response.Content == null) return Unavailable();
-        using var document = JsonDocument.Parse(response.Content, new JsonDocumentOptions { MaxDepth = 32 });
+        var attempted = new HashSet<string>(StringComparer.Ordinal);
+        ProviderError? transient = null;
+        var unavailable = false;
+        await foreach (var candidate in ResolveAppleIdsAsync(appleContext, request, token))
+        {
+            token.ThrowIfCancellationRequested();
+            if (candidate.Error != null)
+            {
+                if (attempted.Count == 0) return ProviderOutcome<ProviderLyricsResult>.Failure(candidate.Error);
+                break;
+            }
+            var id = candidate.Id!;
+            if (!IsCatalogId(id) || !attempted.Add(id)) continue;
+            var response = await GetResponseAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(id)}"), token);
+            if (response.Error != null)
+            {
+                if (response.StatusCode is >= HttpStatusCode.InternalServerError)
+                    transient = response.Error;
+                else return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);
+            }
+            else
+            {
+                var result = string.IsNullOrWhiteSpace(response.Content) ? Unavailable() : ParseLyrics(response.Content);
+                if (!result.IsSuccess) return result;
+                if (result.RequireValue().Availability == ProviderLyricsAvailabilityState.Available)
+                {
+                    await CacheAppleIdAsync(id, AppleIdCacheKeys(request), token);
+                    return result;
+                }
+                unavailable = true;
+            }
+            if (attempted.Count == 3) break;
+        }
+        return unavailable || transient == null ? Unavailable() : ProviderOutcome<ProviderLyricsResult>.Failure(transient);
+    }
+
+    private ProviderOutcome<ProviderLyricsResult> ParseLyrics(string payload)
+    {
+        using var document = JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 32 });
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("type", out var type) ||
             type.ValueKind != JsonValueKind.String) return ContractFailure();
@@ -89,55 +122,83 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         return foundFormat ? Unavailable() : ContractFailure();
     }
 
-    private async Task<(string? Id, ProviderError? Error)> ResolveAppleIdAsync(
-        ProviderExecutionContext context, ProviderLyricsRequest request, CancellationToken token)
+    private async IAsyncEnumerable<(string? Id, ProviderError? Error)> ResolveAppleIdsAsync(
+        ProviderExecutionContext context, ProviderLyricsRequest request, [EnumeratorCancellation] CancellationToken token)
     {
-        string? id = null;
+        var keys = AppleIdCacheKeys(request);
+        var cached = await CachedAppleIdAsync(keys[0], token);
+        if (cached != null) yield return (cached, null);
         var identities = _identities?.Invoke();
         if (identities != null)
         {
             var identity = await identities.ResolveTargetAsync(context, request.CanonicalRecordingId,
                 new(AppleMusicClient.ProviderId), token).WaitAsync(token);
             if (identity is { Scope: ProviderIdentityScope.Catalog, Verification: ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned } &&
-                IsCatalogId(identity.ExternalId.Value)) id = identity.ExternalId.Value;
+                IsCatalogId(identity.ExternalId.Value)) yield return (identity.ExternalId.Value, null);
         }
-        var keys = new List<string> { $"lyrics:paxsenix:apple-id:recording:{request.CanonicalRecordingId:N}" };
-        if (!string.IsNullOrWhiteSpace(request.Isrc)) keys.Add("lyrics:paxsenix:apple-id:isrc:" + Hash(request.Isrc.Trim().ToUpperInvariant()));
-        if (id != null) return (await CacheAppleIdAsync(id, keys, token), null);
-        foreach (var key in keys)
+        if (keys.Count > 1)
         {
-            try
-            {
-                var cached = _cache == null ? null : await _cache.GetAsync<string>(key).WaitAsync(token);
-                if (cached != null && IsCatalogId(cached)) return (cached, null);
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException) { }
+            cached = await CachedAppleIdAsync(keys[1], token);
+            if (cached != null) yield return (cached, null);
         }
         if (string.IsNullOrWhiteSpace(request.Isrc) &&
-            (string.IsNullOrWhiteSpace(request.TrackTitle) || request.ArtistNames.Count == 0)) return (null, null);
-        if (_apple == null) return (null, ProviderError.AppleWebTokenUnavailable());
+            (string.IsNullOrWhiteSpace(request.TrackTitle) || request.ArtistNames.Count == 0)) yield break;
+        if (_apple == null)
+        {
+            yield return (null, ProviderError.AppleWebTokenUnavailable());
+            yield break;
+        }
         if (!string.IsNullOrWhiteSpace(request.Isrc))
         {
-            var lookup = await _apple.LookupByIsrcAsync(context, new(request.Isrc)).WaitAsync(token);
+            var lookup = await _apple.LookupAllByIsrcAsync(context, new(request.Isrc)).WaitAsync(token);
             token.ThrowIfCancellationRequested();
-            if (lookup.IsSuccess && IsCatalogId(lookup.RequireValue().Id.Value)) id = lookup.RequireValue().Id.Value;
-            else if (!lookup.IsSuccess && lookup.Error!.Kind != ProviderErrorKind.NotFound) return (null, lookup.Error);
+            if (lookup.IsSuccess)
+            {
+                foreach (var track in lookup.RequireValue()) yield return (track.Id.Value, null);
+            }
+            else if (lookup.Error!.Kind != ProviderErrorKind.NotFound)
+            {
+                yield return (null, lookup.Error);
+                yield break;
+            }
         }
-        if (id == null && !string.IsNullOrWhiteSpace(request.TrackTitle) && request.ArtistNames.Count > 0)
+        if (!string.IsNullOrWhiteSpace(request.TrackTitle) && request.ArtistNames.Count > 0)
         {
             var search = await _apple.SearchTracksAsync(context,
                 new(request.TrackTitle + " " + string.Join(" ", request.ArtistNames), new(25))).WaitAsync(token);
             token.ThrowIfCancellationRequested();
             if (!search.IsSuccess)
-                return search.Error!.Kind == ProviderErrorKind.NotFound ? (null, null) : (null, search.Error);
-            id = search.RequireValue().Items.Select(item => (Item: item, Score: MatchScore(item, request)))
-                .Where(item => IsCatalogId(item.Item.Id.Value) && item.Score >= 0)
-                .OrderByDescending(item => item.Score).Select(item => item.Item.Id.Value).FirstOrDefault();
+            {
+                if (search.Error!.Kind != ProviderErrorKind.NotFound) yield return (null, search.Error);
+                yield break;
+            }
+            foreach (var match in search.RequireValue().Items.Select(item => (Item: item, Score: MatchScore(item, request)))
+                .Where(item => item.Score >= 0)
+                .OrderByDescending(item => !string.IsNullOrWhiteSpace(request.Isrc) &&
+                    string.Equals(item.Item.Isrc, request.Isrc.Trim(), StringComparison.OrdinalIgnoreCase))
+                .ThenByDescending(item => item.Score))
+                yield return (match.Item.Id.Value, null);
         }
-        return (id == null ? null : await CacheAppleIdAsync(id, keys, token), null);
     }
 
-    private async Task<string> CacheAppleIdAsync(string id, IReadOnlyList<string> keys, CancellationToken token)
+    private static List<string> AppleIdCacheKeys(ProviderLyricsRequest request)
+    {
+        var keys = new List<string> { $"lyrics:paxsenix:apple-id:recording:{request.CanonicalRecordingId:N}" };
+        if (!string.IsNullOrWhiteSpace(request.Isrc)) keys.Add("lyrics:paxsenix:apple-id:isrc:" + Hash(request.Isrc.Trim().ToUpperInvariant()));
+        return keys;
+    }
+
+    private async Task<string?> CachedAppleIdAsync(string key, CancellationToken token)
+    {
+        try
+        {
+            var cached = _cache == null ? null : await _cache.GetAsync<string>(key).WaitAsync(token);
+            return cached != null && IsCatalogId(cached) ? cached : null;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException) { return null; }
+    }
+
+    private async Task CacheAppleIdAsync(string id, IReadOnlyList<string> keys, CancellationToken token)
     {
         if (_cache != null)
         {
@@ -147,7 +208,6 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
                 catch (Exception exception) when (exception is not OperationCanceledException) { }
             }
         }
-        return id;
     }
 
     private static bool IsCatalogId(string id) => id.Length > 0 && id.All(char.IsAsciiDigit);

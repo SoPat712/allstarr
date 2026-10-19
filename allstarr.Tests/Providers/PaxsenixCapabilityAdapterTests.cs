@@ -12,7 +12,7 @@ namespace allstarr.Tests;
 
 public sealed class PaxsenixCapabilityAdapterTests
 {
-    private const string Song = """{"id":"617154366","type":"songs","attributes":{"name":"月光","artistName":"歌手","durationInMillis":180000}}""";
+    private const string Song = """{"id":"617154366","type":"songs","attributes":{"name":"月光","artistName":"歌手","durationInMillis":180000,"isrc":"GBARL9300135"}}""";
     private const string Lyrics = """{"type":"Line","content":[{}],"lrc":"[00:01.000]月光"}""";
 
     [Theory]
@@ -112,6 +112,138 @@ public sealed class PaxsenixCapabilityAdapterTests
         await adapter.FetchLyricsAsync(Context(), Request(title: "Another title", recording: Guid.CreateVersion7()));
         Assert.Single(calls);
         Assert.Equal(3, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task IsrcMatchesPreferOriginalAlbumsThenEarliestRelease()
+    {
+        var apple = Catalog(request =>
+        {
+            Assert.Contains("include=albums", request.RequestUri!.Query);
+            return Response("{\"data\":[" + CatalogSong("1", true, "2000-01-01") + "," +
+                CatalogSong("2", false, "2020-01-01") + "," + CatalogSong("3", false, "2013-05-17") + "]}");
+        });
+        var handler = new Handler((_, _) => Response(Lyrics));
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal("?id=3", Assert.Single(handler.Requests).Query);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.InternalServerError)]
+    [InlineData(HttpStatusCode.NotFound)]
+    public async Task FailedIsrcCandidateFallsThroughToStrictSearch(HttpStatusCode status)
+    {
+        var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+            ? "{\"results\":{\"songs\":{\"data\":[" + CatalogSong("2") + "]}}}"
+            : "{\"data\":[" + CatalogSong("1", true) + "]}"));
+        var handler = new Handler((_, attempt) => attempt == 1 ? Busy(status) : Response(Lyrics));
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal(["?id=1", "?id=2"], handler.Requests.Select(uri => uri.Query));
+    }
+
+    [Theory]
+    [InlineData(2, ProviderLyricsAvailabilityState.Available)]
+    [InlineData(20, null)]
+    public async Task CandidateFallbackKeepsPacingAndTotalBudget(int spacingSeconds, ProviderLyricsAvailabilityState? availability)
+    {
+        var clock = new ManualTimeProvider();
+        var apple = Catalog(_ => Response("{\"data\":[" + CatalogSong("1") + "," + CatalogSong("2") + "]}"));
+        var handler = new Handler((_, attempt) => attempt == 1 ? Busy() : Response(Lyrics));
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
+            new PaxsenixRequestPacer(clock, TimeSpan.FromSeconds(spacingSeconds)), clock, apple);
+
+        var pending = adapter.FetchLyricsAsync(Context(), Request());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(spacingSeconds));
+        Assert.Single(handler.Requests);
+        clock.Advance(TimeSpan.FromSeconds(Math.Min(spacingSeconds, 18)));
+        var result = await pending;
+
+        if (availability == null)
+        {
+            Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
+            Assert.Single(handler.Requests);
+        }
+        else
+        {
+            Assert.Equal(availability, result.RequireValue().Availability);
+            Assert.Equal(["?id=1", "?id=2"], handler.Requests.Select(uri => uri.Query));
+        }
+    }
+
+    [Fact]
+    public async Task AllBusyCandidatesReturnTransientFailureAndStopAtThreeDistinctIds()
+    {
+        var apple = Catalog(_ => Response("{\"data\":[" + string.Join(',', new[] { "1", "1", "2", "3", "4" }
+            .Select(id => CatalogSong(id))) + "]}"));
+        var handler = new Handler((_, _) => Busy());
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
+        Assert.Equal(["?id=1", "?id=2", "?id=3"], handler.Requests.Select(uri => uri.Query));
+    }
+
+    [Theory]
+    [InlineData("{\"type\":\"None\"}")]
+    [InlineData("{\"type\":\"Line\",\"content\":[],\"lrc\":\"[00:01]月光\"}")]
+    public async Task EmptyCandidateAndBusyCandidateReturnUnavailable(string payload)
+    {
+        var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+            ? "{\"results\":{\"songs\":{\"data\":[]}}}"
+            : "{\"data\":[" + CatalogSong("1") + "," + CatalogSong("2") + "]}"));
+        var handler = new Handler((_, attempt) => attempt == 1 ? Response(payload) : Busy());
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task WinningIdReplacesCachedIdAndPrecedesVerifiedIdentityOnLaterLookups()
+    {
+        var cache = new TestMemoryApplicationCache();
+        await cache.SetAsync($"lyrics:paxsenix:apple-id:recording:{Recording:N}", "1", TimeSpan.FromDays(1));
+        var identities = new Mock<ITrackIdentityService>();
+        identities.Setup(value => value.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), Recording,
+                It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TrackIdentityResolution(Recording, Guid.CreateVersion7(),
+                new("apple-musickit", ProviderResourceKind.Track, "1"), ProviderIdentityScope.Catalog, null,
+                ProviderIdentityVerification.Verified, "source-use", 1));
+        var catalogCalls = 0;
+        var apple = Catalog(_ => { catalogCalls++; return Response("{\"data\":[" + CatalogSong("1") + "," + CatalogSong("2") + "]}"); });
+        var handler = new Handler((uri, _) => uri.Query == "?id=1" ? Busy() : Response(Lyrics));
+        var adapter = Adapter(handler, cache, apple, identities.Object);
+
+        await adapter.FetchLyricsAsync(Context(), Request());
+        await adapter.FetchLyricsAsync(Context(), Request(title: "Changed title"));
+        await adapter.FetchLyricsAsync(Context(), Request(recording: Guid.CreateVersion7()));
+
+        Assert.Equal(["?id=1", "?id=2", "?id=2", "?id=2"], handler.Requests.Select(uri => uri.Query));
+        Assert.Equal(1, catalogCalls);
+        Assert.Equal("2", await cache.GetAsync<string>($"lyrics:paxsenix:apple-id:recording:{Recording:N}"));
+    }
+
+    [Fact]
+    public async Task SearchPrefersEqualIsrcAndDeduplicatesEarlierCandidates()
+    {
+        var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+            ? "{\"results\":{\"songs\":{\"data\":[" + CatalogSong("1") + "," +
+                CatalogSong("2").Replace("GBARL9300135", "OTHER") + "," + CatalogSong("3") + "]}}}"
+            : "{\"data\":[" + CatalogSong("1") + "]}"));
+        var handler = new Handler((_, attempt) => attempt == 1 ? Busy() : Response(Lyrics));
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal(["?id=1", "?id=3"], handler.Requests.Select(uri => uri.Query));
     }
 
     [Fact]
@@ -317,6 +449,18 @@ public sealed class PaxsenixCapabilityAdapterTests
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Single(paced.Requests);
     }
+
+    private static string CatalogSong(string id, bool compilation = false, string releaseDate = "2013-05-17") =>
+        JsonSerializer.Serialize(new
+        {
+            id,
+            type = "songs",
+            attributes = new { name = "月光", artistName = "歌手", durationInMillis = 180000, isrc = "GBARL9300135", releaseDate },
+            relationships = new { albums = new { data = new[] { new { id = "10" + id, attributes = new { isCompilation = compilation, releaseDate } } } } }
+        });
+
+    private static HttpResponseMessage Busy(HttpStatusCode status = HttpStatusCode.ServiceUnavailable) =>
+        new(status) { Content = new StringContent("{\"message\":\"Lyrics service busy; retry later\",\"error\":true}") };
 
     private static AppleMusicKitMetadataCapabilityAdapter Catalog(Func<HttpRequestMessage, HttpResponseMessage>? send = null) =>
         new(AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(send ?? (_ => Response("{\"data\":[" + Song + "]}"))))));

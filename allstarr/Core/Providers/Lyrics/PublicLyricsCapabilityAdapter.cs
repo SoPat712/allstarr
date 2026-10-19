@@ -78,6 +78,13 @@ public abstract class PublicLyricsCapabilityAdapter(
 
     protected async Task<(string? Content, ProviderError? Error)> GetAsync(Uri endpoint, CancellationToken token)
     {
+        var response = await GetResponseAsync(endpoint, token);
+        return (response.Content, response.Error);
+    }
+
+    protected async Task<(string? Content, ProviderError? Error, HttpStatusCode? StatusCode)> GetResponseAsync(
+        Uri endpoint, CancellationToken token)
+    {
         await BeforeRequestAsync(token);
         using var timeout = new CancellationTokenSource(RequestTimeout, Clock);
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
@@ -88,26 +95,26 @@ public abstract class PublicLyricsCapabilityAdapter(
         {
             using var response = await http.SendAsync(outbound, HttpCompletionOption.ResponseHeadersRead, attempt.Token);
             if (response.RequestMessage?.RequestUri is { } actual && actual != endpoint)
-                return (null, new(ProviderErrorKind.PermanentFailure));
-            if (response.StatusCode == HttpStatusCode.NotFound) return (null, null);
+                return (null, new(ProviderErrorKind.PermanentFailure), response.StatusCode);
+            if (response.StatusCode == HttpStatusCode.NotFound) return (null, null, response.StatusCode);
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
                 var delay = response.Headers.RetryAfter?.Delta ??
                     (response.Headers.RetryAfter?.Date - DateTimeOffset.UtcNow) ?? TimeSpan.FromSeconds(30);
-                return (null, new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(Math.Clamp(delay.TotalSeconds, 0, 300))));
+                return (null, new(ProviderErrorKind.RateLimited, TimeSpan.FromSeconds(Math.Clamp(delay.TotalSeconds, 0, 300))), response.StatusCode);
             }
             if (!response.IsSuccessStatusCode || response.Headers.Location != null)
                 return (null, new((int)response.StatusCode >= 500 || response.StatusCode == HttpStatusCode.RequestTimeout
-                    ? ProviderErrorKind.TransientFailure : ProviderErrorKind.PermanentFailure));
-            if (response.Content.Headers.ContentLength > MaximumBytes) return (null, ProviderError.CompatibilityContractChanged());
+                    ? ProviderErrorKind.TransientFailure : ProviderErrorKind.PermanentFailure), response.StatusCode);
+            if (response.Content.Headers.ContentLength > MaximumBytes) return (null, ProviderError.CompatibilityContractChanged(), response.StatusCode);
             try { await response.Content.LoadIntoBufferAsync(MaximumBytes, attempt.Token); }
-            catch (HttpRequestException) { return (null, ProviderError.CompatibilityContractChanged()); }
-            return (await response.Content.ReadAsStringAsync(attempt.Token), null);
+            catch (HttpRequestException) { return (null, ProviderError.CompatibilityContractChanged(), response.StatusCode); }
+            return (await response.Content.ReadAsStringAsync(attempt.Token), null, response.StatusCode);
         }
         catch (Exception exception) when (exception is HttpRequestException or IOException ||
             exception is OperationCanceledException && !token.IsCancellationRequested)
         {
-            return (null, new(ProviderErrorKind.TransientFailure));
+            return (null, new(ProviderErrorKind.TransientFailure), null);
         }
     }
 
