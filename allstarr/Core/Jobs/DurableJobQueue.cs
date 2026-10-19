@@ -35,7 +35,8 @@ public sealed record DurableJobClaim(
     Guid? ProviderAccountId,
     string? ProviderCapability,
     JsonElement PolicySnapshot,
-    string CorrelationId);
+    string CorrelationId,
+    string? RequestFingerprint = null);
 
 public enum DurableJobCompletionKind
 {
@@ -330,7 +331,8 @@ public sealed partial class DurableJobQueue
             job.ProviderAccountId,
             job.ProviderCapability,
             policySnapshot.RootElement.Clone(),
-            job.CorrelationId);
+            job.CorrelationId,
+            job.RequestFingerprint);
     }
 
     public Task<DurableJobContextAuthorization> ReauthorizeAsync(
@@ -422,9 +424,23 @@ public sealed partial class DurableJobQueue
             : completion.Kind;
         var errorCode = SafeOperationalText.Sanitize(completion.ErrorCode, 100);
         var safeMessage = SafeOperationalText.Sanitize(completion.SafeMessage);
+        if (effectiveKind != DurableJobCompletionKind.Cancelled && claim.RequestFingerprint != null &&
+            job.RequestFingerprint != claim.RequestFingerprint)
+        {
+            effectiveKind = DurableJobCompletionKind.Succeeded;
+            errorCode = null;
+            safeMessage = null;
+        }
         switch (effectiveKind)
         {
             case DurableJobCompletionKind.Succeeded:
+                if (claim.RequestFingerprint != null && job.RequestFingerprint != claim.RequestFingerprint)
+                {
+                    job.State = DurableJobState.Pending;
+                    job.AvailableAt = now;
+                    job.LastAttemptOutcome = "superseded";
+                    break;
+                }
                 job.State = DurableJobState.Succeeded;
                 job.CompletedAt = now;
                 job.LastAttemptOutcome = "succeeded";

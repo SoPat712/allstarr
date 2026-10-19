@@ -724,7 +724,7 @@ public sealed class PlaylistLinksController(
             var context = await CreateExecutionAsync(session, cancellationToken);
             var refreshed = await orchestration.RefreshAsync(context, id, cancellationToken: cancellationToken);
             var preview = await playlists.ReadPreviewAsync(context, id, refreshed.SnapshotId, cancellationToken);
-            return Ok(new { snapshot = new { snapshotId = refreshed.SnapshotId, snapshotVersion = refreshed.SnapshotVersion, sourceRevision = refreshed.SourceRevision }, preview = ToPreviewDto(preview) });
+            return Ok(new { snapshot = new { snapshotId = refreshed.SnapshotId, snapshotVersion = refreshed.SnapshotVersion, sourceRevision = refreshed.SourceRevision }, preview = ToPreviewDto(preview), jobId = refreshed.JobId });
         });
     }
 

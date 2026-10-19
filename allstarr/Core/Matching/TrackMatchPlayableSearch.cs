@@ -42,14 +42,20 @@ public sealed class TrackMatchPlayableSearch(
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(cancellationToken);
-        var songs = (await Task.WhenAll(queries.Select(SearchAsync)))
-            .SelectMany(result => result)
+        var primarySongs = queries.Length == 0 ? [] : await SearchAsync(queries[0]);
+        var primaryMatch = DecideMatch(
+            source, scope, primarySongs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
+        if (primaryMatch.Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned)
+            return primaryMatch;
+
+        var songs = primarySongs.Concat((await Task.WhenAll(queries.Skip(1).Select(SearchAsync)))
+                .SelectMany(result => result))
             .DistinctBy(song => $"{song.ExternalProvider}:{song.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .ToArray();
         return DecideMatch(source, scope, songs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
 
         async Task<Song[]> SearchAsync(string query) =>
-            ((await gateway.SearchPlayableSongsAsync(context, query, 60)) ?? [])
+            ((await gateway.SearchPlayableSongsAsync(context, query, 15)) ?? [])
             .Where(song => IsPlayable(song, providerOrder))
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                            !string.IsNullOrWhiteSpace(song.ExternalId))

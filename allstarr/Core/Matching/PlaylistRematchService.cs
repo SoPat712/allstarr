@@ -56,7 +56,8 @@ public sealed class PlaylistRematchService(
     public async Task<PlaylistRematchPreview> PreviewAsync(
         Guid ownerUserId,
         CancellationToken cancellationToken = default,
-        Guid? playlistLinkId = null)
+        Guid? playlistLinkId = null,
+        bool includePending = false)
     {
         await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
         var links = await db.PlaylistLinks.AsNoTracking()
@@ -140,15 +141,16 @@ public sealed class PlaylistRematchService(
             var publicationOutdated = decision != null && group.Any(item =>
                 !publishedByLink.TryGetValue((item.Link.Id, group.Key), out var published) ||
                 published.Any(id => id != decision.Id));
+            var pending = decision?.State is TrackMatchState.Unresolved or TrackMatchState.Suggested or TrackMatchState.Ambiguous;
             if (overrides.ContainsKey(group.Key) || contextConflicts.Contains(group.Key) ||
-                decision != null && !stale && !genericProviderIdentity && !publicationOutdated)
+                decision != null && !stale && !genericProviderIdentity && !publicationOutdated && !(includePending && pending))
                 continue;
             targetIds.Add(group.Key);
             targets.Add(new(
                 group.Key,
                 snapshot.SnapshotVersion,
                 decision?.DecisionVersion ?? 0,
-                decision == null || stale || genericProviderIdentity,
+                decision == null || stale || genericProviderIdentity || includePending && pending,
                 row.Link.Id,
                 row.Link.Revision,
                 byLink[row.Link.Id].SnapshotId,
@@ -240,7 +242,9 @@ public sealed record PlaylistRematchJobPayload(
     string ScopeFingerprint,
     IReadOnlyList<PlaylistRematchTarget>? ApprovedTargets = null,
     Guid? PlaylistLinkId = null,
-    string Scope = TrackRematchScopes.Playlist);
+    string Scope = TrackRematchScopes.Playlist,
+    bool RefreshPending = false,
+    Guid? RequestedSnapshotId = null);
 
 public sealed class PlaylistRematchJobHandler(
     IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -256,22 +260,24 @@ public sealed class PlaylistRematchJobHandler(
         PlaylistRematchJobPayload? payload;
         try { payload = context.Claim.Payload.Deserialize<PlaylistRematchJobPayload>(); }
         catch (JsonException) { payload = null; }
-        if (payload?.ConfirmationId is not { Length: 64 } ||
-            payload.ScopeFingerprint is not { Length: 64 } ||
-            !IsHex(payload.ConfirmationId) || !IsHex(payload.ScopeFingerprint) ||
-            !context.Claim.OwnerUserId.HasValue)
+        if (payload == null || !context.Claim.OwnerUserId.HasValue ||
+            (payload.RefreshPending
+                ? !payload.PlaylistLinkId.HasValue || payload.PlaylistLinkId == Guid.Empty
+                : payload.ConfirmationId is not { Length: 64 } ||
+                  payload.ScopeFingerprint is not { Length: 64 } ||
+                  !IsHex(payload.ConfirmationId) || !IsHex(payload.ScopeFingerprint)))
             return DurableJobCompletion.Failure("playlist_rematch_payload_invalid", "The rematch payload is invalid.");
 
         var preview = await rematches.PreviewAsync(
-            context.Claim.OwnerUserId.Value, cancellationToken, payload.PlaylistLinkId);
-        if (!preview.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
+            context.Claim.OwnerUserId.Value, cancellationToken, payload.PlaylistLinkId, payload.RefreshPending);
+        if (!payload.RefreshPending && !preview.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
             return DurableJobCompletion.Failure(
                 "playlist_rematch_scope_changed", "A playlist or library changed. Review the rematch preview again.");
-        if (context.Claim.AttemptNumber == 1 &&
+        if (!payload.RefreshPending && context.Claim.AttemptNumber == 1 &&
             !preview.ConfirmationId.Equals(payload.ConfirmationId, StringComparison.Ordinal))
             return DurableJobCompletion.Failure(
                 "playlist_rematch_preview_changed", "The match state changed. Review the rematch preview again.");
-        var approvedTargets = payload.ApprovedTargets ?? preview.Targets;
+        var approvedTargets = payload.RefreshPending ? preview.Targets : payload.ApprovedTargets ?? preview.Targets;
 
         var runtime = await LoadRuntimeAsync(context, cancellationToken);
         var started = Stopwatch.GetTimestamp();
@@ -282,45 +288,40 @@ public sealed class PlaylistRematchJobHandler(
         {
             var eligible = await EligibleTargetsAsync(
                 context.Claim.OwnerUserId.Value, chunk, cancellationToken);
-            var audits = new List<AuditEventRecord>(chunk.Length);
-            foreach (var target in chunk)
+            var audits = new System.Collections.Concurrent.ConcurrentBag<AuditEventRecord>();
+            await Parallel.ForEachAsync(chunk, new ParallelOptions
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                MaxDegreeOfParallelism = 3,
+                CancellationToken = cancellationToken
+            }, async (target, token) =>
+            {
                 if (!eligible.Contains(target.ExternalSnapshotId))
                 {
                     audits.Add(Audit(context, target.ExternalSnapshotId, "skipped_revision_conflict", null));
-                    completed++;
-                    continue;
+                    Interlocked.Increment(ref completed);
+                    return;
                 }
-
                 if (!target.RequiresDecision)
                 {
                     audits.Add(Audit(context, target.ExternalSnapshotId, "republished", target.DecisionVersion));
-                    completed++;
-                    continue;
+                    Interlocked.Increment(ref completed);
+                    return;
                 }
-                var execution = CreateExecution(
-                    context, runtime, target.TargetProtocol, target.BackendInstanceId,
-                    cancellationToken);
-                var result = await trackMatches.RematchSnapshotAsync(
-                    execution,
-                    target.ExternalSnapshotId,
-                    context.Claim.CorrelationId,
-                    target.PolicyVersion,
-                    cancellationToken);
-                audits.Add(Audit(
-                    context,
-                    target.ExternalSnapshotId,
+                var execution = CreateExecution(context, runtime, target.TargetProtocol, target.BackendInstanceId, token);
+                var result = await trackMatches.RematchSnapshotAsync(execution, target.ExternalSnapshotId,
+                    context.Claim.CorrelationId, target.PolicyVersion, token);
+                audits.Add(Audit(context, target.ExternalSnapshotId,
                     result.Succeeded ? "rematched"
                         : result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable
                             ? "retry_local_library_unavailable"
                             : $"skipped_{result.Failure.ToString().ToLowerInvariant()}",
                     result.Succeeded ? result.DecisionVersion : null));
-                if (!result.Succeeded) failures++;
-                if (result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable) localLibraryFailures++;
-                completed++;
-            }
-            await SaveAuditsAsync(audits, cancellationToken);
+                if (!result.Succeeded) Interlocked.Increment(ref failures);
+                if (result.Failure == TrackMatchCommandFailure.LocalLibraryUnavailable)
+                    Interlocked.Increment(ref localLibraryFailures);
+                Interlocked.Increment(ref completed);
+            });
+            await SaveAuditsAsync(audits.ToArray(), cancellationToken);
             await context.ReportProgressAsync(new(
                 TrackRematchJobHandler.Type,
                 $"Reviewed {completed} of {preview.Targets.Count} stale tracks.",
@@ -335,8 +336,10 @@ public sealed class PlaylistRematchJobHandler(
                 $"{localLibraryFailures} local matches were kept while the library is unavailable and will be retried.",
                 TimeSpan.FromMinutes(1));
         var current = await rematches.PreviewAsync(
-            context.Claim.OwnerUserId.Value, cancellationToken, payload.PlaylistLinkId);
-        if (!current.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
+            context.Claim.OwnerUserId.Value, cancellationToken, payload.PlaylistLinkId, payload.RefreshPending);
+        if (payload.RefreshPending && !current.ScopeFingerprint.Equals(preview.ScopeFingerprint, StringComparison.Ordinal))
+            return DurableJobCompletion.Retry("playlist_refresh_changed", "The refreshed playlist changed and will be reviewed again.", TimeSpan.Zero);
+        if (!payload.RefreshPending && !current.ScopeFingerprint.Equals(payload.ScopeFingerprint, StringComparison.Ordinal))
             return DurableJobCompletion.Failure(
                 "playlist_rematch_scope_changed", "A playlist or library changed. Review the rematch preview again.");
         foreach (var publication in approvedTargets.GroupBy(item => new
