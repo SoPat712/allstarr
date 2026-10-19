@@ -115,6 +115,24 @@ public sealed partial class TrackIdentityServiceTests
     }
 
     [Fact]
+    public async Task RecordingTarget_PicksStrongestOfSeveralVerifiedReleases()
+    {
+        var actor = Actor(_userA);
+        var recording = (await _service.CreateRecordingAsync(actor, "several-releases")).Recording;
+        var execution = Context(actor, "qobuz");
+        await _service.LinkAsync(execution, new(recording.Id, Track("qobuz", "album-release"),
+            ProviderIdentityScope.Catalog, ProviderIdentityVerification.Verified, "playlist-match", 2));
+        await _service.LinkAsync(execution, new(recording.Id, Track("qobuz", "single-release"),
+            ProviderIdentityScope.Catalog, ProviderIdentityVerification.Verified, "playlist-match", 5));
+        await _service.LinkAsync(execution, new(recording.Id, Track("qobuz", "suggested-release"),
+            ProviderIdentityScope.Catalog, ProviderIdentityVerification.Verified, "automatic-suggestion", 9));
+
+        var target = await _service.ResolveTargetAsync(execution, recording.Id, new("qobuz"));
+
+        Assert.Equal("single-release", target!.ExternalId.Value);
+    }
+
+    [Fact]
     public async Task RecordingAvailabilityLink_ManualPinPreventsCompetingAssociation()
     {
         var actor = Actor(_userA);
