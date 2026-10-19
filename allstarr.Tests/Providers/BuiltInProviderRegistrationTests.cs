@@ -27,6 +27,8 @@ public sealed class BuiltInProviderRegistrationTests
         services.AddOptions<CacheSettings>();
         services.AddSingleton<allstarr.Services.Lyrics.LrclibService>();
         services.AddSingleton(Mock.Of<IProviderAccountSecretAccessor>());
+        services.AddSingleton(new AppleMusicKitMetadataCapabilityAdapter(AppleProviderTestFactory.Client()));
+        services.AddSingleton(Mock.Of<allstarr.Core.Matching.ITrackIdentityService>());
         services.AddBuiltInLyricsCapabilities();
         using var provider = services.BuildServiceProvider();
         var registry = new ProviderRegistry(provider.GetServices<ProviderRegistration>());

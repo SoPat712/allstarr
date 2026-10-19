@@ -878,7 +878,8 @@ public class ProviderStatusManager
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(probeTimeout);
         var request = new ProviderLyricsRequest(Guid.NewGuid(), new(provider, ProviderResourceKind.Track, "connection-probe"),
-            availabilityOnly: true, trackTitle: "Never Gonna Give You Up", artistNames: ["Rick Astley"], durationSeconds: 215);
+            availabilityOnly: true, trackTitle: "Never Gonna Give You Up", artistNames: ["Rick Astley"], durationSeconds: 215,
+            isrc: provider == "paxsenix" ? "GBARL9300135" : null);
         ProviderOutcome<ProviderLyricsResult> result;
         if (provider == "musixmatch")
         {
@@ -896,11 +897,14 @@ public class ProviderStatusManager
                 "unison" => allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter.HttpClientName,
                 _ => allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.HttpClientName
             });
+            var apple = provider == "paxsenix" ? _services?.GetService<AppleMusicClient>() : null;
+            if (provider == "paxsenix" && apple == null) return new(false, "apple-web-token-unavailable");
             IProviderLyricsCapability adapter = provider switch
             {
                 "lrcred" => new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null),
                 "unison" => new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null),
-                _ => new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null)
+                _ => new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
+                    new AppleMusicKitMetadataCapabilityAdapter(apple!))
             };
             var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
                 new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
