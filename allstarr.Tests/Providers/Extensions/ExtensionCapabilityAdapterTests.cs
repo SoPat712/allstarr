@@ -1027,6 +1027,27 @@ public sealed class ExtensionCapabilityAdapterTests
     }
 
     [Fact]
+    public void HttpResponses_ReportOkLikeFetch()
+    {
+        var handler = new StatusHandler(HttpStatusCode.OK, HttpStatusCode.NotFound);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(),
+            """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
+            """
+            registerExtension({searchTracks:function(){
+              var found = http.get('https://api.example.test/found', {});
+              var missing = http.get('https://api.example.test/missing', {});
+              return {items:[{id:String(found.ok) + '-' + String(missing.ok), title:'Track', artists:[{name:'Artist'}]}]};
+            }});
+            """,
+            new HttpClientFactory(handler), NullLogger.Instance,
+            new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api.example.test/"]), new HashSet<string>(), new HashSet<string>()));
+
+        using var result = JsonDocument.Parse(sandbox.InvokeJson("searchTracks", """{"query":"q","page":{"limit":5}}""")!);
+
+        Assert.Equal("true-false", result.RootElement.GetProperty("items")[0].GetProperty("id").GetString());
+    }
+
+    [Fact]
     public void SpotiFlacRuntimeAdapter_CallsTypedSearchWithQueryAndNumericLimit()
     {
         const string sourceManifest = """
