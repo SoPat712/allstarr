@@ -203,6 +203,19 @@ jobs:
           UV_CACHE_DIR=/tmp/allstarr-uv-cache uv sync --frozen --extra test
           UV_CACHE_DIR=/tmp/allstarr-uv-cache uv run --frozen --extra test pytest
 
+      - name: Test session verifier contracts
+        working-directory: sidecars/session-verifier
+        run: python -m unittest discover -s tests -v
+
+      - name: Test session verifier browser with offline fixtures
+        run: |
+          docker build -t allstarr/session-verifier:contract sidecars/session-verifier
+          docker run --rm --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+            --tmpfs /tmp:size=512m,mode=1777 --tmpfs /home/verifier:size=32m,uid=10001,gid=10001,mode=700 \
+            --shm-size 256m --memory 1g --pids-limit 256 -e PYTHONPATH=/app \
+            -v "$PWD/sidecars/session-verifier/tools/smoke_browser.py:/tmp/smoke_browser.py:ro" \
+            allstarr/session-verifier:contract sh /app/entrypoint.sh python /tmp/smoke_browser.py
+
   compose-contracts:
     runs-on: ubuntu-latest
     steps:
@@ -215,6 +228,8 @@ jobs:
         run: |
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.yml --profile apple config --quiet
+          docker compose -f docker-compose.yml --profile sessions config --quiet
+          docker compose -f docker-compose.yml --profile apple --profile sessions config --quiet
 
   v2-image-upgrade:
     runs-on: ubuntu-latest

@@ -41,7 +41,7 @@ Create and download a backup in Settings → Backups, and retain the previous im
 ./allstarr.sh update
 ```
 
-The command validates deployment files, pulls the configured Allstarr image and recreates the saved profiles. A failed pull or Apple gateway build prevents startup. It does not change Git files or delete volumes. Changing to a different pinned release requires setting `ALLSTARR_IMAGE` in the optional `.env` first.
+The command validates deployment files, pulls the configured Allstarr image and recreates the saved profiles. A failed pull or optional service build prevents startup. It does not change Git files or delete volumes. Changing to a different pinned release requires setting `ALLSTARR_IMAGE` in the optional `.env` first.
 
 `./allstarr.sh up` starts the saved profiles without pulling the application image. `status` lists their containers; `logs [service]` follows their logs. `down` stops the saved deployment without deleting its volumes.
 
@@ -68,6 +68,17 @@ Configure the gateway address as `http://apple-gateway:8000` in the Apple servic
 This stops and removes only the two Apple containers and forgets the saved profile. It preserves gateway data, wrapper sessions, application records and media. The script reads `.allstarr-profiles`; plain Compose does not read that file. For manual Compose operation, supply `--profile apple` explicitly when Apple should run. Neither path needs a Docker socket mounted in Allstarr.
 
 Spotify lyrics run inside Allstarr with a selected Spotify account and need no Compose profile.
+
+## Optional extension sign-in verification
+
+`./allstarr.sh enable sessions` builds an optional Chromium service and configures
+its private address in Allstarr. It completes fresh verification for approved
+`api.zarz.moe` connections after expiry or before a capped session expires. The
+saved profile works with release and source deployments. Use
+`./allstarr.sh disable sessions` to return to manual verification without deleting
+connections. The service exposes no host port and stores no provider sessions.
+See the [session verifier](../../sidecars/session-verifier/README.md) for its
+restricted origins, retries, direct Compose setup, and recovery behavior.
 
 ## Backup, restore and rollback
 

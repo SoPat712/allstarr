@@ -74,6 +74,25 @@ public sealed class DeploymentScriptContractTests : IDisposable
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SessionVerifier_EnableAndDisablePreservesSavedConnections(bool source)
+    {
+        if (source) File.WriteAllText(Path.Combine(root, ".allstarr-mode"), "source\n");
+        Assert.Equal(0, (await RunAsync("allstarr.sh", ["enable", "sessions"])).Code);
+        Assert.Equal("sessions\n", File.ReadAllText(Path.Combine(root, ".allstarr-profiles")));
+        Assert.Contains(Commands, line => line.Contains("--profile sessions", StringComparison.Ordinal) &&
+            line.EndsWith("build session-verifier", StringComparison.Ordinal));
+        Assert.DoesNotContain(Commands, line => line.Contains("volume rm", StringComparison.Ordinal));
+
+        Assert.Equal(0, (await RunAsync("allstarr.sh", ["disable", "sessions"])).Code);
+        Assert.DoesNotContain("sessions", File.ReadAllText(Path.Combine(root, ".allstarr-profiles")), StringComparison.Ordinal);
+        Assert.Contains(Commands, line => line.EndsWith("stop session-verifier", StringComparison.Ordinal));
+        Assert.Contains(Commands, line => line.EndsWith("rm -f session-verifier", StringComparison.Ordinal));
+        Assert.DoesNotContain(Commands, line => line.Contains("down -v", StringComparison.Ordinal) || line.Contains("--volumes", StringComparison.Ordinal));
+    }
+
+    [Theory]
     [InlineData("up", false, false)]
     [InlineData("update", true, true)]
     public async Task Release_PreservesExistingVolumeBeforeRecreation(string command, bool existingEnvironment, bool emptyData)

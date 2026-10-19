@@ -655,5 +655,6 @@ public sealed partial class DurableJobQueue
         $"user:{ownerUserId:N}";
 
     private static string CreateSavedScopeKey(DurableJobSavedContext context) =>
-        context.OwnerUserId is { } user ? CreateUserScopeKey(user) : "system:managed-storage";
+        context.OwnerUserId is { } user ? CreateUserScopeKey(user)
+        : context.ProviderAccountId is { } account ? $"account:{account:N}" : "system:managed-storage";
 }

@@ -616,6 +616,11 @@ public static class ExtensionControlPlaneRegistration
     {
         services.AddSingleton<ExtensionControlPlaneService>();
         services.AddSingleton<ExtensionRuntimeCoordinator>();
+        services.AddSingleton<ExtensionSessionVerificationClient>();
+        services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, ExtensionSessionVerificationJobHandler>();
+        services.AddHttpClient(ExtensionSessionVerificationClient.HttpClientName, client => client.Timeout = TimeSpan.FromSeconds(130))
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false });
         services.AddHostedService(provider => provider.GetRequiredService<ExtensionRuntimeCoordinator>());
         services.AddHostedService<ExtensionSessionRenewalService>();
         return services;

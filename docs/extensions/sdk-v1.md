@@ -129,6 +129,15 @@ The Sign-in section shows automatic renewal, the current expiry and the last
 renewal failure observed by this runtime. The upstream service controls the new
 expiry and may limit how long a session can keep renewing.
 
+For approved `api.zarz.moe` challenges, an optional Chromium verifier can complete
+fresh verification when a sign-in expires or its renewal reaches the service's
+lifetime cap. Enable it with `./allstarr.sh enable sessions`; see
+[the session verifier](../../sidecars/session-verifier/README.md) for deployment,
+limits, and recovery. Verification uses durable work scoped to the exact package
+and connection revision. Sign-out, removal, or a changed connection discards its
+result. Initial sign-in remains manual, and **Reconnect** is available if
+automatic verification fails. Other services use the existing manual flow.
+
 The host supports `signedSession@1`, `signedSession@2` and `signedSession@3`. Explicit
 provider-unavailable responses may retry twice with cancellable delays capped at ten seconds.
 Provider authentication errors retain the session; gateway session-invalid or verification-required

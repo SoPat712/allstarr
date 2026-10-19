@@ -88,6 +88,11 @@ Apple/GAMDL download support uses an optional Compose profile.
 
 Spotify lyrics run inside Allstarr using a selected Spotify account. The Apple profile requires a legally obtained compatible APK/APKM supplied by the operator. Allstarr does not distribute Apple binaries. Follow the [Apple provider](docs/operations/apple-download-provider.md) and [Spotify lyrics](docs/operations/spotify-lyrics.md) guides.
 
+For automatic renewal of approved `api.zarz.moe` extension sign-ins, run
+`./allstarr.sh enable sessions`. This optional Chromium service completes fresh
+verification when the upstream session reaches its lifetime cap. See the
+[session verifier](sidecars/session-verifier/README.md) for setup and recovery.
+
 ## Documentation
 
 | Need | Start here |

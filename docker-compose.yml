@@ -21,6 +21,7 @@ services:
       Admin__BindAnyIp: "${ADMIN_BIND_ANY_IP:-false}"
       Admin__TrustedSubnets: "${ADMIN_TRUSTED_SUBNETS:-}"
       Admin__BasePath: "${ADMIN_BASE_PATH:-}"
+      Extensions__SessionVerification__BaseUrl: "${SESSION_VERIFIER_URL:-}"
     volumes:
     - "${ALLSTARR_DATA_PATH:-./data}:/app/data"
     tmpfs:
@@ -41,6 +42,36 @@ services:
     - allstarr
     security_opt:
     - no-new-privileges:true
+  session-verifier:
+    build:
+      context: "./sidecars/session-verifier"
+    image: "${SESSION_VERIFIER_IMAGE:-allstarr/session-verifier:1.0.0}"
+    restart: unless-stopped
+    networks:
+    - allstarr
+    security_opt:
+    - no-new-privileges:true
+    cap_drop:
+    - ALL
+    read_only: true
+    tmpfs:
+    - "/tmp:size=512m,mode=1777"
+    - "/home/verifier:size=32m,uid=10001,gid=10001,mode=700"
+    shm_size: 256m
+    mem_limit: 1g
+    pids_limit: 256
+    healthcheck:
+      test:
+      - CMD
+      - python
+      - "-c"
+      - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    profiles:
+    - sessions
   apple-gateway:
     build:
       context: "./sidecars/apple-gateway"
