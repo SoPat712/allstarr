@@ -123,6 +123,32 @@ public sealed class ProviderTryServiceTests
     }
 
     [Fact]
+    public async Task Stream_WithoutByteRangesOpensFromTheStartWithoutARangeHeader()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var ranges = new List<RangeHeaderValue?>();
+        fixture.Streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(() => Task.FromResult(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/file"),
+                DateTimeOffset.UtcNow.AddMinutes(5), false, false, new("audio/mpeg", "mp3", "mp3", 320000, 44100, null),
+                ProviderStreamRetryBehavior.DoNotRetry, (message, _) =>
+                {
+                    ranges.Add(message.Headers.Range);
+                    var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(new byte[100000]) };
+                    response.Content.Headers.ContentType = new MediaTypeHeaderValue("audio/mpeg");
+                    return Task.FromResult(response);
+                }))));
+        var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
+        { Capability = "streaming", Operation = "stream", TrackId = "track", Quality = "lossless" }, "stream", CancellationToken.None);
+        Assert.True(result.Result!.Succeeded);
+        var url = JsonSerializer.SerializeToElement(result.Result).GetProperty("media").GetProperty("url").GetString()!;
+        ranges.Clear();
+        var entry = fixture.Tickets.Find(fixture.Actor.UserId!.Value, url[(url.LastIndexOf('/') + 1)..]);
+        using var opened = await entry!.OpenAsync("bytes=1000-1999", CancellationToken.None);
+        Assert.Equal(HttpStatusCode.OK, opened.StatusCode);
+        Assert.Equal([null], ranges);
+    }
+
+    [Fact]
     public async Task Download_UsesTransientArtifactAndDeletesWorkspaceAtTicketExpiry()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -247,6 +273,7 @@ public sealed class ProviderTryServiceTests
         public string WorkspaceRoot => Path.Combine(root, "workspaces");
         public string TicketRoot => Path.Combine(root, "tickets");
         private ProviderTryMediaStore tickets = null!;
+        public ProviderTryMediaStore Tickets => tickets;
         private ProviderCtsTrackSelector selector = null!;
         private SqliteTestDatabase database = null!;
         private Factory factory = null!;

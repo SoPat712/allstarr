@@ -7136,7 +7136,7 @@ const tryCatalog = {
       { id: "search", inputs: ["query", "kind"], kinds: ["tracks", "albums", "artists"] },
       { id: "track", inputs: ["id"] }, { id: "isrc", inputs: ["isrc"] },
     ] },
-    { capability: "lyrics", accountRequirement: "required", operations: [{ id: "lyrics", inputs: ["title", "artist", "album", "durationSeconds", "isrc", "trackId"] }] },
+    { capability: "lyrics", accountRequirement: "none", operations: [{ id: "lyrics", inputs: ["title", "artist", "album", "durationSeconds", "isrc", "trackId"] }] },
     { capability: "streaming", accountRequirement: "required", operations: [{ id: "stream", inputs: ["trackId", "quality"] }] },
     { capability: "download", accountRequirement: "required", operations: [{ id: "download", inputs: ["trackId", "quality"] }] },
   ],
@@ -7188,7 +7188,7 @@ test("Try panel searches one source and sends a result to lyrics, playback and d
   await expect(dialog.getByLabel("Title")).toHaveValue("Get Lucky (feat. Pharrell Williams and Nile Rodgers)");
   await expect(dialog.getByText("Word-timed")).toBeVisible();
   await expect(dialog.locator(".try-lyric-lines time").first()).toHaveText("0:31.40");
-  expect(requests.at(-1)).toMatchObject({ capability: "lyrics", trackId: "lumen-71230", isrc: "USQX91300108", durationSeconds: 369 });
+  expect(requests.at(-1)).toMatchObject({ capability: "lyrics", trackId: "lumen-71230", isrc: "USQX91300108", durationSeconds: 369, accountId: null });
 
   await dialog.getByRole("tab", { name: "Search" }).click();
   await dialog.getByRole("button", { name: "Play Get Lucky (Radio Edit)" }).click();

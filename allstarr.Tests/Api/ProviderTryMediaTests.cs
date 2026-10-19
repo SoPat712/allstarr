@@ -189,6 +189,36 @@ public sealed class ProviderTryMediaTests : IDisposable
         Assert.Equal("789", Encoding.UTF8.GetString(((MemoryStream)controller.Response.Body).ToArray()));
     }
 
+    [Theory]
+    [InlineData("bytes=0-", 200, "0123456789")]
+    [InlineData("bytes=4-", 416, "")]
+    public async Task Streaming_without_a_known_length_serves_the_whole_song_from_the_start(string range, int status, string body)
+    {
+        using var store = CreateStore();
+        var ticket = store.CreateStream(_user, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new UnknownLengthContent("0123456789")
+        }), "audio/flac", "sample.flac", null);
+        var controller = Controller(store);
+        controller.Request.Headers.Range = range;
+        await Execute(controller, await controller.Get(ticket.Token));
+        Assert.Equal(status, controller.Response.StatusCode);
+        Assert.Equal(body, Encoding.UTF8.GetString(((MemoryStream)controller.Response.Body).ToArray()));
+        Assert.False(controller.Response.Headers.ContainsKey("Content-Range") && status == 200);
+    }
+
+    private sealed class UnknownLengthContent(string text) : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, TransportContext? context) =>
+            stream.WriteAsync(Encoding.UTF8.GetBytes(text)).AsTask();
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
     private ProviderTryMediaStore CreateStore(long maximumBytes = ProviderTryMediaStore.DefaultMaximumTemporaryBytes) =>
         new(_clock, _directory, maximumBytes);
 

@@ -61,6 +61,10 @@ public sealed class ProviderTryMediaController(
         long? count = upstream.Content.Headers.ContentLength;
         var status = (int)upstream.StatusCode;
         string? contentRange = upstream.Content.Headers.ContentRange?.ToString();
+        // A player's opening request ("bytes=0-") on a stream of unknown length gets the whole song.
+        if (range != null && upstream.StatusCode == HttpStatusCode.OK && totalLength == null &&
+            range.Ranges.Count == 1 && range.Ranges.Single() is { From: 0, To: null })
+            range = null;
         if (range != null && upstream.StatusCode == HttpStatusCode.OK)
         {
             if (totalLength is not { } length || !StreamByteRanges.TryResolve(range, length, out var start, out var end))

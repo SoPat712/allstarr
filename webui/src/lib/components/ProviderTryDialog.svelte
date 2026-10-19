@@ -127,7 +127,10 @@
     if (into === "pick") picking = target;
     errors = { ...errors, [target]: "" };
     try {
-      const value = await sources.try(provider.id, { capability: into === "pick" ? "metadata" : target, accountId: account?.id ?? null, ...body }, request.signal);
+      const capability = into === "pick" ? "metadata" : target;
+      // Features that never use an account (Deezer search, public lyrics) refuse one.
+      const usesAccount = capabilities.find((item) => item.capability === capability)?.accountRequirement !== "none";
+      const value = await sources.try(provider.id, { capability, accountId: usesAccount ? account?.id ?? null : null, ...body }, request.signal);
       if (into === "pick") picks = { ...picks, [target]: value.tracks ?? [] };
       if (into === "pick" && !value.succeeded) errors = { ...errors, [target]: failure(value) };
       if (into === "result") results = { ...results, [target]: value };
