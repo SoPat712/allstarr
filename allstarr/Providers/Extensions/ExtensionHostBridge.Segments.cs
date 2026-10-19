@@ -50,7 +50,8 @@ public partial class ExtensionHostBridge
             for (var index = 0; index < Math.Min(parallel, segments.Length); index++) StartNext();
             long written = 0;
             var completed = 0;
-            using (var destination = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            scope.Progressive?.Begin(staged, target, null, null);
+            using (var destination = new FileStream(staged, FileMode.CreateNew, FileAccess.Write, FileShare.Read))
             {
                 while (workers.Count > 0)
                 {
@@ -64,8 +65,16 @@ public partial class ExtensionHostBridge
                         cancellation.Token.ThrowIfCancellationRequested();
                         using (var source = File.OpenRead(segmentPath))
                         {
-                            source.CopyToAsync(destination, cancellation.Token).GetAwaiter().GetResult();
-                            written += source.Length;
+                            var buffer = new byte[128 * 1024];
+                            int count;
+                            while ((count = source.Read(buffer, 0, buffer.Length)) > 0)
+                            {
+                                cancellation.Token.ThrowIfCancellationRequested();
+                                destination.Write(buffer, 0, count);
+                                destination.Flush();
+                                scope.Progressive?.Append(buffer.AsSpan(0, count));
+                                written += count;
+                            }
                         }
                         File.Delete(segmentPath);
                         completed++;
@@ -77,11 +86,13 @@ public partial class ExtensionHostBridge
                 }
             }
             cancellation.Token.ThrowIfCancellationRequested();
-            File.Move(staged, target, overwrite: true);
+            if (scope.Progressive != null) scope.Progressive.Move(staged, target, () => File.Move(staged, target, overwrite: true));
+            else File.Move(staged, target, overwrite: true);
             return new { success = true, path = output, size = written, segments = completed };
         }
         catch (Exception exception)
         {
+            ExtensionArtifactInvocationScope.Current?.Progressive?.Fail();
             var failure = exception as SegmentFailure ?? new SegmentFailure(exception switch
             {
                 OperationCanceledException => "cancelled",

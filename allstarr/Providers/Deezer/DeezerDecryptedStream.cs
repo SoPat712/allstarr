@@ -96,7 +96,7 @@ internal sealed class DeezerDecryptedStream(
         return bufferCount;
     }
 
-    private static byte[] Key(string trackId)
+    internal static byte[] Key(string trackId)
     {
         var hash = Convert.ToHexString(MD5.HashData(Encoding.UTF8.GetBytes(trackId))).ToLowerInvariant();
         return Enumerable.Range(0, 16)
@@ -104,7 +104,7 @@ internal sealed class DeezerDecryptedStream(
             .ToArray();
     }
 
-    private static void Decrypt(byte[] data, byte[] key)
+    internal static void Decrypt(byte[] data, byte[] key)
     {
         var cipher = new CbcBlockCipher(new BlowfishEngine());
         cipher.Init(false, new ParametersWithIV(new KeyParameter(key), Iv));

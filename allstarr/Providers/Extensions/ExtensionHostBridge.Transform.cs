@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Extensions;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Crypto.Engines;
 using Org.BouncyCastle.Crypto.Modes;
@@ -57,6 +58,7 @@ public partial class ExtensionHostBridge
                 throw new ArgumentException($"segmentSize must be between 1 and {MaximumTransformReadBytes} bytes");
             if (every <= 0) throw new ArgumentException("transformEvery must be greater than zero");
             if (offset < 0 || offset >= every) throw new ArgumentException("transformOffset must be between 0 and transformEvery - 1");
+            scope.Progressive?.CheckTransform(sourcePath, algorithm, mode, padding, operation, key, iv, segmentSize, every, offset, partial);
             bufferSize = Math.Clamp(bufferSize, segmentSize, MaximumTransformReadBytes);
             bufferSize -= bufferSize % segmentSize;
             IBlockCipher engine = algorithm switch
@@ -115,11 +117,15 @@ public partial class ExtensionHostBridge
                 }
             }
             scope.CancellationToken.ThrowIfCancellationRequested();
+            scope.Progressive?.ConfirmTransform(sourcePath, target, staged, scope.CancellationToken);
             File.Move(staged, target, overwrite: true);
             return new { success = true, path = output, bytes_processed = processed, segments_processed = segments, segments_transformed = transformed };
         }
         catch (Exception exception)
         {
+            var progressive = ExtensionArtifactInvocationScope.Current?.Progressive;
+            if (exception is OperationCanceledException) progressive?.Fail();
+            else progressive?.TransformFailed();
             return new
             {
                 success = false,

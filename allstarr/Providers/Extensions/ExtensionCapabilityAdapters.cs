@@ -249,7 +249,8 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
         DownloadAsync(context, request, prepareForStreaming: false, progress);
 
     internal Task<ProviderOutcome<ProviderDownloadedArtifact>> DownloadAsync(
-        ProviderExecutionContext context, ProviderDownloadRequest request, bool prepareForStreaming, IProgress<ProviderDownloadProgress>? progress = null)
+        ProviderExecutionContext context, ProviderDownloadRequest request, bool prepareForStreaming, IProgress<ProviderDownloadProgress>? progress = null,
+        ExtensionProgressiveTransfer? progressive = null)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         context.RequireIdempotencyKey();
@@ -267,13 +268,17 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
                 throw new JsonException("The extension artifact claim does not match the host-written artifact.");
             progress?.Report(new ProviderDownloadProgress(ProviderDownloadProgressStage.Completed, artifact.SizeBytes, artifact.SizeBytes));
             return artifact;
-        }, requireAccount: accountRequired, openInvocationScope: () => artifactScope = ExtensionArtifactInvocationScope.Open(
-            artifacts, request.Workspace, request.DurableJobId, ProviderId, maximumArtifactBytes,
-            context.CancellationToken));
+        }, requireAccount: accountRequired, openInvocationScope: () =>
+        {
+            artifactScope = ExtensionArtifactInvocationScope.Open(
+                artifacts, request.Workspace, request.DurableJobId, ProviderId, maximumArtifactBytes, context.CancellationToken);
+            artifactScope.SetProgressive(progressive);
+            return artifactScope;
+        });
     }
 }
 
-public sealed class ExtensionDownloadStreamingCapabilityAdapter :
+public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
     IProviderDownloadStreamingCapability
 {
     private readonly ExtensionDownloadCapabilityAdapter download;
@@ -289,6 +294,9 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
     {
         download = new ExtensionDownloadCapabilityAdapter(sandbox, manifest, secrets, artifacts, options);
         this.artifacts = artifacts;
+        clock = sandbox.Clock;
+        deezerSpeculation = sandbox.DeezerSpeculation;
+        allowsProgressive = sandbox.AllowsProgressiveDownload && manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker;
         // The compatibility shim prepares and resolves the track within its download hook.
         requiresPreparedContext = manifest.Compatibility != SpotiFlacExtensionCompatibility.Marker &&
             manifest.RequiredRuntimeFeatures?.Contains("preparedContext@1", StringComparer.Ordinal) == true;
@@ -312,9 +320,10 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         return download.ResolveRecordingAsync(context, recording, quality);
     }
 
-    public async Task<ProviderOutcome<ProviderStreamLease>> GetStreamLeaseAsync(
+    private async Task<ProviderOutcome<ProviderStreamLease>> PrepareStreamAsync(
         ProviderExecutionContext context,
-        ProviderStreamLeaseRequest request)
+        ProviderStreamLeaseRequest request,
+        DownloadSession session)
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         if (!context.Policy.AllowManagedDownloads)
@@ -340,6 +349,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
             context.Account?.AccountId,
             idempotencyKey));
 
+        session.CleanupWorkspace = () => artifacts.DeleteTransientWorkspace(workspace);
         try
         {
             var downloadContext = new ProviderExecutionContext(
@@ -354,10 +364,10 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
                 idempotencyKey);
             var outcome = await download.DownloadAsync(
                 downloadContext,
-                new ProviderDownloadRequest(request.TrackId, jobId, workspace.Reference, request.RequestedQuality), prepareForStreaming: true);
+                new ProviderDownloadRequest(request.TrackId, jobId, workspace.Reference, request.RequestedQuality),
+                prepareForStreaming: true, progressive: session.Transfer);
             if (!outcome.IsSuccess)
             {
-                artifacts.DeleteTransientWorkspace(workspace);
                 return ProviderOutcome<ProviderStreamLease>.Failure(outcome.Error!);
             }
 
@@ -371,49 +381,35 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
                 sampleRate: output.Media.SampleRate,
                 bitDepth: output.Media.BitDepth,
                 channels: output.Media.Channels);
-            var opened = 0;
             Task<HttpResponseMessage> OpenAsync(HttpRequestMessage message, CancellationToken cancellationToken)
             {
-                if (Interlocked.Exchange(ref opened, 1) != 0)
-                    throw new InvalidOperationException("A prepared extension stream lease can only be opened once.");
-                try
+                cancellationToken.ThrowIfCancellationRequested();
+                var range = message.Method == HttpMethod.Head ? null : message.Headers.Range;
+                long start = 0, end = artifact.Length - 1;
+                HttpResponseMessage response;
+                if (range != null && !StreamByteRanges.TryResolve(range, artifact.Length, out start, out end))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    var range = message.Method == HttpMethod.Head ? null : message.Headers.Range;
-                    long start = 0, end = artifact.Length - 1;
-                    HttpResponseMessage response;
-                    if (range != null && !StreamByteRanges.TryResolve(range, artifact.Length, out start, out end))
-                    {
-                        artifacts.DeleteTransientWorkspace(workspace);
-                        var validRange = StreamByteRanges.IsSingleByteRange(range);
-                        response = Response(validRange ? HttpStatusCode.RequestedRangeNotSatisfiable : HttpStatusCode.BadRequest,
-                            new ByteArrayContent([]), 0, media.MimeType);
-                        if (validRange) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(artifact.Length);
-                    }
-                    else if (message.Method == HttpMethod.Head)
-                    {
-                        artifacts.DeleteTransientWorkspace(workspace);
-                        response = Response(HttpStatusCode.OK, new ByteArrayContent([]), artifact.Length, media.MimeType);
-                    }
-                    else
-                    {
-                        var stream = new FileStream(artifact.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
-                            128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-                        stream.Position = start;
-                        var length = end - start + 1;
-                        response = Response(range == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent,
-                            new StreamContent(new CleanupStream(stream, length,
-                                () => artifacts.DeleteTransientWorkspace(workspace))), length, media.MimeType);
-                        if (range != null) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(start, end, artifact.Length);
-                    }
-                    response.Headers.AcceptRanges.Add("bytes");
-                    return Task.FromResult(response);
+                    var validRange = StreamByteRanges.IsSingleByteRange(range);
+                    response = Response(validRange ? HttpStatusCode.RequestedRangeNotSatisfiable : HttpStatusCode.BadRequest,
+                        new ByteArrayContent([]), 0, media.MimeType);
+                    if (validRange) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(artifact.Length);
                 }
-                catch
+                else if (message.Method == HttpMethod.Head)
                 {
-                    artifacts.DeleteTransientWorkspace(workspace);
-                    throw;
+                    response = Response(HttpStatusCode.OK, new ByteArrayContent([]), artifact.Length, media.MimeType);
                 }
+                else
+                {
+                    var stream = new FileStream(artifact.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read,
+                        128 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
+                    stream.Position = start;
+                    var length = end - start + 1;
+                    response = Response(range == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent,
+                        new StreamContent(new BoundedReadStream(stream, length)), length, media.MimeType);
+                    if (range != null) response.Content.Headers.ContentRange = new ContentRangeHeaderValue(start, end, artifact.Length);
+                }
+                response.Headers.AcceptRanges.Add("bytes");
+                return Task.FromResult(response);
             }
 
             return ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
@@ -429,12 +425,10 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         }
         catch (OperationCanceledException)
         {
-            artifacts.DeleteTransientWorkspace(workspace);
             return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
         }
         catch
         {
-            artifacts.DeleteTransientWorkspace(workspace);
             return Failure<ProviderStreamLease>(ProviderErrorKind.TransientFailure);
         }
     }
@@ -467,7 +461,7 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
         return new HttpResponseMessage(status) { Content = content };
     }
 
-    private sealed class CleanupStream(Stream inner, long length, Action cleanup) : Stream
+    private sealed class BoundedReadStream(Stream inner, long length) : Stream
     {
         private int disposed;
         private readonly long contentLength = length;
@@ -494,7 +488,6 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
             if (disposing && Interlocked.Exchange(ref disposed, 1) == 0)
             {
                 inner.Dispose();
-                cleanup();
             }
             base.Dispose(disposing);
         }
@@ -503,7 +496,6 @@ public sealed class ExtensionDownloadStreamingCapabilityAdapter :
             if (Interlocked.Exchange(ref disposed, 1) == 0)
             {
                 await inner.DisposeAsync();
-                cleanup();
             }
             GC.SuppressFinalize(this);
         }

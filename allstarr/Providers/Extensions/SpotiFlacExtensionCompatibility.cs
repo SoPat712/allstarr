@@ -802,12 +802,14 @@ public static class SpotiFlacExtensionCompatibility
             }
             var result;
             try {
+              host.PreparePatternedDownload(String(trackId));
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
               if (result && result.success === false) throw result;
             } catch (error) {
               if (!selection.fallback || _sfStopQualityFallback(error) || utils.getResolutionRemainingMs() < 30000)
                 throw _sfDownloadError(error);
               quality = selection.fallback;
+              host.PreparePatternedDownload(String(trackId));
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
             }
             if (!result || result.success === false) throw _sfDownloadError(result);

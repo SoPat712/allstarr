@@ -40,6 +40,10 @@ public sealed class ExtensionArtifactInvocationScope : IDisposable
         Ambient.Value = this;
     }
 
+    internal ExtensionProgressiveTransfer? Progressive { get; private set; }
+
+    internal void SetProgressive(ExtensionProgressiveTransfer? progressive) => Progressive = progressive;
+
     public static ExtensionArtifactInvocationScope? Current => Ambient.Value;
     public ProviderDownloadArtifactWriteResult? Result { get; private set; }
     public CancellationToken CancellationToken => ExtensionInvocationBudget.Current?.Token ?? cancellationToken;
@@ -96,7 +100,12 @@ public sealed class ExtensionArtifactInvocationScope : IDisposable
         if (disposed) return;
         disposed = true;
         Ambient.Value = prior;
-        try { if (Directory.Exists(temporaryRoot)) Directory.Delete(temporaryRoot, recursive: true); }
-        catch { }
+        void Remove()
+        {
+            try { if (Directory.Exists(temporaryRoot)) Directory.Delete(temporaryRoot, recursive: true); }
+            catch { }
+        }
+        if (Progressive?.Published == true) Progressive.RetainTemporaryFiles(Remove);
+        else Remove();
     }
 }

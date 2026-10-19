@@ -47,6 +47,7 @@ public sealed class RuntimeFileOwnershipContractTests
             ["Providers/Extensions/ExtensionHostBridge.Transform.cs"] = "invocation-scoped temporary audio",
             ["Providers/Extensions/ExtensionHostBridge.Segments.cs"] = "invocation-scoped temporary audio",
             ["Providers/Extensions/ExtensionHostBridge.Utilities.cs"] = "invocation-scoped temporary audio",
+            ["Providers/Extensions/ExtensionProgressiveTransfer.Deezer.cs"] = "invocation-scoped temporary audio",
             ["Services/Common/FileMediaApplicationCache.cs"] = "bounded media cache",
             ["Services/Common/ManagedTrackCacheService.cs"] = "managed audio cache",
             ["Services/Lyrics/KeptLyricsSidecarService.cs"] = "lyrics sidecar",
