@@ -107,13 +107,19 @@ public sealed partial class TrackIdentityService
                 item.ResourceKind == ProviderResourceKind.Track && item.CatalogNamespace == catalog &&
                 (item.Scope == ProviderIdentityScope.Catalog || account != null && item.ProviderAccountId == account.Id))
             .ToArrayAsync(cancellationToken);
-        var preferred = PreferAccountScope(candidates, account?.Id);
-        if (preferred.Count != 1) return null;
-        var identity = preferred[0];
-        if (identity.Verification is not (ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned) ||
-            identity.VerificationMethod is "automatic-suggestion" or
-                ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
-            return null;
+        // A recording often has several verified releases on one provider (single, album, deluxe);
+        // any of them plays the same recording, so pick the strongest rather than refusing the provider.
+        var identity = PreferAccountScope(candidates, account?.Id)
+            .Where(item => item.Verification is ProviderIdentityVerification.Verified or ProviderIdentityVerification.Pinned &&
+                item.VerificationMethod is not ("automatic-suggestion" or
+                    ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or
+                    ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod))
+            .OrderByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
+            .ThenByDescending(item => item.DecisionVersion)
+            .ThenByDescending(item => item.VerifiedAt)
+            .ThenBy(item => item.Id)
+            .FirstOrDefault();
+        if (identity == null) return null;
         return ToResolution(identity) with { PublicId = recording.PublicId };
     }
 
