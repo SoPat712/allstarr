@@ -10,7 +10,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
+public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "allstarr-progressive", Guid.NewGuid().ToString("N"));
     private readonly ManualTimeProvider clock = new(DateTimeOffset.UtcNow);
@@ -19,7 +19,27 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
     private ProviderDownloadWorkspaceOptions options = null!;
     private int requests;
     private ExtensionSandbox sandbox = null!;
+    private readonly List<ExtensionDownloadStreamingCapabilityAdapter> adapters = [];
     private readonly PlaybackLogger logger = new();
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Playback_DisposingAdapterStopsDownloadAndRemovesWorkspace(bool disposeBody)
+    {
+        var (adapter, context, track) = Setup(true);
+        var pending = adapter.GetStreamLeaseAsync(context, new(track));
+        source.Release(prefix);
+        var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        using var response = await lease.ProtectedResponseFactory!(request, default);
+        using var body = await response.Content.ReadAsStreamAsync();
+        if (disposeBody) body.Dispose();
+        await adapter.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10));
+        await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Empty(Directory.GetDirectories(options.RootPath));
+        await adapter.DisposeAsync();
+    }
 
     [Theory]
     [InlineData(true)]
@@ -30,7 +50,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
         var pending = adapter.GetStreamLeaseAsync(context, new(track));
         source.Release(prefix);
         var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
-        Assert.Equal(knownLength, lease.SupportsSeeking);
+        Assert.True(lease.SupportsSeeking);
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, default);
         Assert.Equal("audio/flac", response.Content.Headers.ContentType!.MediaType);
@@ -74,6 +94,37 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
         Assert.Equal(new byte[] { 1, 2, 3, 4 }, await reading.WaitAsync(TimeSpan.FromSeconds(10)));
         using var otherRequest = new HttpRequestMessage(HttpMethod.Head, leases[1].RequireValue().ProtectedSourceUri);
         using var other = await leases[1].RequireValue().ProtectedResponseFactory!(otherRequest, default);
+    }
+
+    [Fact]
+    public async Task Playback_SeekAfterClosingFirstResponseReusesPublishedDownload()
+    {
+        var (adapter, context, track) = Setup(true);
+        var pending = adapter.GetStreamLeaseAsync(context, new(track));
+        source.Release(prefix);
+        var first = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+        using var initial = new HttpRequestMessage(HttpMethod.Get, first.ProtectedSourceUri);
+        var response = await first.ProtectedResponseFactory!(initial, default);
+        response.Dispose();
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(5));
+        var policy = new ProviderExecutionPolicy(context.Policy.Quality, context.Policy.ExplicitContent,
+            context.Policy.AllowFallback, context.Policy.AllowSharedAccount, context.Policy.AllowManagedDownloads,
+            [context.ProviderId, "qobuz"]);
+        var resumedContext = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account, policy,
+            context.OperationId, context.CorrelationId, context.Deadline, context.CancellationToken, context.IdempotencyKey);
+        var second = (await adapter.GetStreamLeaseAsync(resumedContext, new(track)).WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+        using var seek = new HttpRequestMessage(HttpMethod.Get, second.ProtectedSourceUri);
+        seek.Headers.Range = new RangeHeaderValue(prefix.Length, null);
+        using var resumed = await second.ProtectedResponseFactory!(seek, default);
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.False(source.Canceled.Task.IsCompleted);
+        var reading = resumed.Content.ReadAsByteArrayAsync();
+        Assert.False(reading.IsCompleted);
+        source.Release([1, 2, 3, 4]);
+        source.Complete();
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, await reading.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(1, requests);
     }
 
     [Theory]
@@ -137,7 +188,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
     }
 
     [Fact]
-    public async Task Playback_UnknownLengthIgnoresRangeAndOmitsRangeHeaders()
+    public async Task Playback_UnknownLengthRangeWaitsForCompletedArtifact()
     {
         var (adapter, context, track) = Setup(false);
         var pending = adapter.GetStreamLeaseAsync(context, new(track));
@@ -145,13 +196,42 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
         var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         request.Headers.Range = new RangeHeaderValue(10, 20);
-        using var response = await lease.ProtectedResponseFactory!(request, default);
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Null(response.Content.Headers.ContentLength);
-        Assert.Null(response.Content.Headers.ContentRange);
-        Assert.Empty(response.Headers.AcceptRanges);
+        var opening = lease.ProtectedResponseFactory!(request, default);
+        Assert.False(opening.IsCompleted);
         source.Complete();
-        Assert.Equal(prefix, await response.Content.ReadAsByteArrayAsync());
+        using var response = await opening.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.Equal(11, response.Content.Headers.ContentLength);
+        Assert.Equal($"bytes 10-20/{prefix.Length}", response.Content.Headers.ContentRange!.ToString());
+        Assert.Contains("bytes", response.Headers.AcceptRanges);
+        Assert.Equal(prefix[10..21], await response.Content.ReadAsByteArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Playback_UnknownLengthSeekStopsOnCancellationOrDeadline(bool cancel)
+    {
+        var (adapter, context, track) = Setup(false);
+        var pending = adapter.GetStreamLeaseAsync(context, new(track));
+        source.Release(prefix);
+        var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
+        using var cancellation = new CancellationTokenSource();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        request.Headers.Range = new RangeHeaderValue(10, null);
+        var opening = lease.ProtectedResponseFactory!(request, cancellation.Token);
+        Assert.False(opening.IsCompleted);
+        if (cancel)
+        {
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening);
+        }
+        else
+        {
+            clock.Advance(TimeSpan.FromSeconds(60));
+            await Assert.ThrowsAsync<IOException>(() => opening.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        source.Complete();
     }
 
     [Theory]
@@ -195,7 +275,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
         var (adapter, context, track) = Setup(false, segmented: true);
         var pending = adapter.GetStreamLeaseAsync(context, new(track));
         var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
-        Assert.False(lease.SupportsSeeking);
+        Assert.True(lease.SupportsSeeking);
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, default);
         using var body = await response.Content.ReadAsStreamAsync();
@@ -426,11 +506,16 @@ public sealed partial class ExtensionProgressivePlaybackTests : IDisposable
             new ProviderExecutionPolicy(new ProviderQualityPolicy(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
                 ProviderExplicitContentPolicy.Allow, true, false, true, [manifest.Id]),
             "playback-test", "playback-test", DateTimeOffset.UtcNow.AddMinutes(1), default, "playback-test");
-        return (new(sandbox, manifest, null, resolver, options), context, new(manifest.Id, ProviderResourceKind.Track, deezer ? "deezer:123" : "track"));
+        var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+        adapters.Add(adapter);
+        return (adapter, context, new(manifest.Id, ProviderResourceKind.Track, deezer ? "deezer:123" : "track"));
     }
 
-    public void Dispose()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
+        foreach (var adapter in adapters) await adapter.DisposeAsync();
         source.Complete();
         if (Directory.Exists(root)) Directory.Delete(root, true);
     }

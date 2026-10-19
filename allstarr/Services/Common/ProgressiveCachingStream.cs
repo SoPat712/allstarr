@@ -19,6 +19,7 @@ public sealed class ProgressiveCachingStream : Stream
     private readonly Action? started;
     private readonly TimeSpan waitTimeout;
     private readonly TimeSpan initialWaitTimeout;
+    private readonly TimeSpan? maximumWaitTimeout;
     private readonly TimeProvider timeProvider;
     private long position;
     private int startedInvoked;
@@ -31,7 +32,8 @@ public sealed class ProgressiveCachingStream : Stream
         TimeSpan waitTimeout,
         Action? started = null,
         TimeSpan? initialWaitTimeout = null,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        TimeSpan? maximumWaitTimeout = null)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(state);
@@ -41,6 +43,9 @@ public sealed class ProgressiveCachingStream : Stream
         if (initialWaitTimeout is { } initial && (initial < TimeSpan.Zero || initial == Timeout.InfiniteTimeSpan))
             throw new ArgumentOutOfRangeException(nameof(initialWaitTimeout));
 
+        if (maximumWaitTimeout is { } maximum && (maximum <= TimeSpan.Zero || maximum == Timeout.InfiniteTimeSpan))
+            throw new ArgumentOutOfRangeException(nameof(maximumWaitTimeout));
+
         source = file;
         readState = state;
         this.closed = closed;
@@ -48,6 +53,7 @@ public sealed class ProgressiveCachingStream : Stream
         this.initialWaitTimeout = initialWaitTimeout ?? waitTimeout;
         this.started = started;
         this.timeProvider = timeProvider ?? TimeProvider.System;
+        this.maximumWaitTimeout = maximumWaitTimeout;
     }
 
     public override bool CanRead => Volatile.Read(ref disposed) == 0 && source.CanRead;
@@ -106,6 +112,7 @@ public sealed class ProgressiveCachingStream : Stream
         cancellationToken.ThrowIfCancellationRequested();
         InvokeStarted();
         var waitingSince = timeProvider.GetTimestamp();
+        var waitingStarted = waitingSince;
         long observedLength = 0;
         while (true)
         {
@@ -140,7 +147,36 @@ public sealed class ProgressiveCachingStream : Stream
                 return 0;
             }
             var timeout = observedLength == 0 ? initialWaitTimeout : waitTimeout;
-            await WaitForChangeAsync(snapshot.Changed, timeout - timeProvider.GetElapsedTime(waitingSince), cancellationToken);
+            var remaining = timeout - timeProvider.GetElapsedTime(waitingSince);
+            if (maximumWaitTimeout is { } maximum)
+            {
+                var budget = maximum - timeProvider.GetElapsedTime(waitingStarted);
+                if (budget < remaining) remaining = budget;
+            }
+            await WaitForChangeAsync(snapshot.Changed, remaining, cancellationToken);
+        }
+    }
+
+    internal async Task WaitForLengthAsync(CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        InvokeStarted();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60), timeProvider);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+        try
+        {
+            while (true)
+            {
+                var snapshot = readState();
+                if (snapshot.Failed) throw FailedTransfer();
+                if (snapshot.TotalLength.HasValue) return;
+                if (snapshot.Finished) throw FailedTransfer();
+                await snapshot.Changed.WaitAsync(linked.Token);
+            }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new IOException("The progressive media cache did not establish its length before the seek timeout.");
         }
     }
 

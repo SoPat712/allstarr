@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Mvc;
+using allstarr.Services.Common;
 
 namespace allstarr.Core.Protocols;
 
@@ -56,6 +57,8 @@ public sealed class ProtocolStreamingResponseAdapter
             return new EmptyResult();
         }
 
+        if (enableRangeProcessing && response.StatusCode == System.Net.HttpStatusCode.OK)
+            await ManagedTrackCacheService.WaitForRangeLengthAsync(response.Content, context.Request.Headers.Range, cancellationToken);
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return new FileStreamResult(
             new StartingResponseStream(stream, context.Response),

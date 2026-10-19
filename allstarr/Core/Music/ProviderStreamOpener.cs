@@ -57,8 +57,10 @@ public sealed class ProviderStreamOpener(
             if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
             if (cache != null)
                 await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
-            if (!headOnly && ManagedTrackCacheService.SeekRung(routed.Response.Content) is { } cacheRung) Selected(cacheRung);
-            return await responses.CreateAsync(http, routed.Response, http.RequestAborted, enableRangeProcessing: routed.IsCached);
+            var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
+            if (!headOnly && cacheRung != null) Selected(cacheRung);
+            return await responses.CreateAsync(http, routed.Response, http.RequestAborted,
+                enableRangeProcessing: routed.IsCached || cacheRung != null);
         }
         catch
         {
