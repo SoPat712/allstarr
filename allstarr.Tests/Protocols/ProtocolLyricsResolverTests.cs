@@ -39,21 +39,23 @@ public sealed class ProtocolLyricsResolverTests
             song.Title, It.IsAny<IReadOnlyList<string>>(), song.Album, song.Duration, song.Isrc), verified ? Times.Once() : Times.Never());
     }
 
-    [Fact]
-    public async Task LrcRedReceivesIsrcAndMetadataFromTheSong()
+    [Theory]
+    [InlineData("lrcred")]
+    [InlineData("paxsenix")]
+    public async Task PublicMetadataLyricsReceiveIsrcAndMetadataFromTheSong(string provider)
     {
         var context = LyricsContext();
         var song = LyricsSong();
         song.Isrc = "USABC1234567";
         var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrcred"]);
-        providers.Setup(item => item.GetLyricsAsync(context, "lrcred", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns([provider]);
+        providers.Setup(item => item.GetLyricsAsync(context, provider, It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
                 song.Title, It.IsAny<IReadOnlyList<string>>(), song.Album, song.Duration, song.Isrc))
-            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrcred",
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, provider,
                 ProviderLyricsFormat.LineTimed, "[00:01.000]Words"));
         var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
             .FindAsync(context, song, "resource");
-        Assert.Equal("lrcred", result?.Source);
+        Assert.Equal(provider, result?.Source);
         providers.VerifyAll();
     }
 

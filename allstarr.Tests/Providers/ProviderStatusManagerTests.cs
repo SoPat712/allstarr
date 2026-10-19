@@ -8,8 +8,10 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Operations;
 using allstarr.Core.Health;
+using allstarr.Core.Identity;
 using Moq;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -104,6 +106,54 @@ public sealed class ProviderStatusManagerTests
         var status = await manager.TestAccountFreeProviderCapabilityAsync(provider, "lyrics");
         Assert.Equal(ProviderHealthState.Healthy, status.Health);
         Assert.Equal(host, Assert.Single(handler.Requests).Host);
+    }
+
+    [Fact]
+    public async Task PaxsenixProbeUsesAllPublicSearchSourcesWithoutAnAccount()
+    {
+        var handler = new QueuedResponseHandler(
+            Json(HttpStatusCode.OK, "[]"),
+            Json(HttpStatusCode.OK, "[]"),
+            Json(HttpStatusCode.OK, "[]"));
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(handler));
+
+        Assert.True(manager.CanTestAccountFreeCapability("paxsenix", "lyrics"));
+        Assert.Equal(ProviderConfigurationState.NotRequired,
+            manager.GetAccountFreeStatus("paxsenix", "lyrics").Configuration);
+        Assert.Equal("paxsenix", manager.GetEnabledLyricsProviders().Last());
+        var status = await manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
+
+        Assert.Equal(ProviderHealthState.Healthy, status.Health);
+        Assert.Equal(new[] { "/qq/search", "/netease/search", "/kugou/search" },
+            handler.Requests.Select(request => request.AbsolutePath));
+        Assert.All(handler.Requests, request => Assert.Equal("lyrics.paxsenix.org", request.Host));
+    }
+
+    [Fact]
+    public async Task PublicLyricsSchemaIncludesPaxsenixWithoutAccountFields()
+    {
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var controller = new allstarr.Controllers.AdminUiController(new ConfigurationBuilder().Build(),
+            Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()),
+            Options.Create(new QobuzSettings()), Options.Create(new AppleDownloadSettings()),
+            Options.Create(new MusicBrainzSettings()), null!, CreateManager(new Dictionary<string, string?>()),
+            new ProviderAccountOptions(), null!)
+        {
+            ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext
+            {
+                HttpContext = new Microsoft.AspNetCore.Http.DefaultHttpContext { RequestServices = services }
+            }
+        };
+
+        var result = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await controller.GetSchema());
+        var schema = Assert.IsType<allstarr.Models.Admin.AdminUiSchemaResponse>(result.Value);
+        var provider = Assert.Single(schema.Providers, item => item.Id == "paxsenix");
+        Assert.Equal("Paxsenix", provider.Name);
+        Assert.Equal(new[] { "lyrics" }, provider.Categories);
+        Assert.Equal("built_in", provider.ConnectionKind);
+        Assert.Empty(provider.AccountSettings);
+        Assert.Empty(provider.ConfigSchema);
     }
 
     [Fact]

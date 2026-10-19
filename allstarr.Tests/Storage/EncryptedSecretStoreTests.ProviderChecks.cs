@@ -39,6 +39,7 @@ public sealed partial class EncryptedSecretStoreTests
             ["ProviderChecks:PauseMilliseconds"] = "0",
             ["MULTI_PROVIDER_DISABLED_PROVIDERS"] = "apple-musickit,spotify,deezer,qobuz,lrcred,unison,lrclib,lyricsplus,musixmatch,lastfm,multi-scrobbler,koito,audiomuse-ai"
         }).Build();
+        configuration["MULTI_PROVIDER_DISABLED_PROVIDERS"] += ",paxsenix";
         using var handler = new ProviderCheckCredentialHandler();
         var status = new ProviderStatusManager(configuration, new ProviderCheckHttpFactory(handler),
             NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),

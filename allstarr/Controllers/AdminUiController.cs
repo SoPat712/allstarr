@@ -1161,6 +1161,15 @@ public class AdminUiController : ControllerBase
         },
         new()
         {
+            Id = "paxsenix",
+            Name = "Paxsenix",
+            Icon = "lyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public QQ, NetEase and Kugou lyrics; no account required"]
+        },
+        new()
+        {
             Id = "lyricsplus",
             Name = "LyricsPlus",
             Icon = "lyrics",

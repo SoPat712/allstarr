@@ -320,7 +320,7 @@ public sealed class ProtocolLyricsResolver(
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
-        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "unison")
+        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "unison" or "paxsenix")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
         var sourceIsApple = sourceProvider is not null &&

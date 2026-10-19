@@ -52,6 +52,7 @@ public class ProviderStatusManager
         ("qobuz", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
         ("lrcred", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("unison", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
+        ("paxsenix", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
@@ -575,7 +576,7 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
 
-            ("lrcred" or "unison" or "lrclib" or "lyricsplus", ProviderCapabilities.Lyrics) =>
+            ("lrcred" or "unison" or "paxsenix" or "lrclib" or "lyricsplus", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
 
             _ => (ProviderConfigurationState.NeedsConfiguration, "unsupported_capability")
@@ -675,7 +676,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Playlist) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrcred" or "unison" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("lrcred" or "unison" or "paxsenix" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -693,7 +694,7 @@ public class ProviderStatusManager
             ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download) => true,
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) => true,
-            ("lrcred" or "unison" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
+            ("lrcred" or "unison" or "paxsenix" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => true,
             ("lastfm", ProviderCapabilities.Scrobbling) => true,
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => true,
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => true,
@@ -731,7 +732,7 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken)),
             ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
-            ("lrcred" or "unison" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
+            ("lrcred" or "unison" or "paxsenix" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(provider, accountSecrets, cancellationToken)),
             ("audiomuse-ai", ProviderCapabilities.Intelligence) => await TestAudioMuseAsync(accountSecrets, cancellationToken),
@@ -873,8 +874,9 @@ public class ProviderStatusManager
     private async Task<ProbeOutcome> TestMetadataLyricsAsync(string provider,
         IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
     {
+        var probeTimeout = provider == "paxsenix" ? TimeSpan.FromSeconds(18) : ProbeTimeout;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeout.CancelAfter(ProbeTimeout);
+        timeout.CancelAfter(probeTimeout);
         var request = new ProviderLyricsRequest(Guid.NewGuid(), new(provider, ProviderResourceKind.Track, "connection-probe"),
             availabilityOnly: true, trackTitle: "Never Gonna Give You Up", artistNames: ["Rick Astley"], durationSeconds: 215);
         ProviderOutcome<ProviderLyricsResult> result;
@@ -886,17 +888,23 @@ public class ProviderStatusManager
             result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
                 client, token!, request, timeout.Token);
         }
-        else if (provider is "lrcred" or "unison")
+        else if (provider is "lrcred" or "unison" or "paxsenix")
         {
-            using var client = _httpClientFactory.CreateClient(provider == "lrcred"
-                ? allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter.HttpClientName
-                : allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter.HttpClientName);
-            IProviderLyricsCapability adapter = provider == "lrcred"
-                ? new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null)
-                : new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null);
+            using var client = _httpClientFactory.CreateClient(provider switch
+            {
+                "lrcred" => allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter.HttpClientName,
+                "unison" => allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter.HttpClientName,
+                _ => allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.HttpClientName
+            });
+            IProviderLyricsCapability adapter = provider switch
+            {
+                "lrcred" => new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null),
+                "unison" => new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null),
+                _ => new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null)
+            };
             var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
                 new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
-                    true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(ProbeTimeout), timeout.Token);
+                    true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(probeTimeout), timeout.Token);
             result = await adapter.FetchLyricsAsync(context, request);
         }
         else
@@ -908,7 +916,7 @@ public class ProviderStatusManager
                     : _configuration["LyricsPlus:BaseUrl"] ?? string.Empty);
             var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
                 new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
-                    true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(ProbeTimeout), timeout.Token);
+                    true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(probeTimeout), timeout.Token);
             result = await adapter.FetchLyricsAsync(context, request);
         }
         return new(result.IsSuccess, result.Error?.Code);

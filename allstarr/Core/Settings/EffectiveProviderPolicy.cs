@@ -20,7 +20,7 @@ public static class ProviderOrderPolicyCatalog
         new(ProviderCapabilityKind.Download, "Providers:DownloadOrder", "MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz"),
         new(ProviderCapabilityKind.Streaming, "Providers:StreamingOrder", "MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz"),
         new(ProviderCapabilityKind.Playlist, "Providers:PlaylistOrder", "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,apple-download,deezer,qobuz"),
-        new(ProviderCapabilityKind.Lyrics, "Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison")
+        new(ProviderCapabilityKind.Lyrics, "Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix")
     ];
 
     public static ProviderOrderPolicyDefinition? Find(ProviderCapabilityKind capability) =>

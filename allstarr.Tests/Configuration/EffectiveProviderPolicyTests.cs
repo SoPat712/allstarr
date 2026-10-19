@@ -71,16 +71,16 @@ public sealed class EffectiveProviderPolicyTests
     }
 
     [Fact]
-    public void LyricsDefaultPlacesLrcRedAfterAppleAndSavedOrdersAppendIt()
+    public void LyricsDefaultPlacesPaxsenixLastAndSavedOrdersAppendAvailableSources()
     {
-        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison",
+        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix",
             RuntimeSettingCatalog.Require("Providers:LyricsOrder").DefaultValue);
         var snapshot = new EffectiveProviderPolicySnapshot(
             System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
                 .Add(ProviderCapabilityKind.Lyrics, ["lrclib", "lyricsplus"]),
             System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0);
-        Assert.Equal(new[] { "lrclib", "lyricsplus", "lrcred" },
-            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["lrcred", "lyricsplus", "lrclib"]));
+        Assert.Equal(new[] { "lrclib", "lyricsplus", "lrcred", "paxsenix" },
+            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["paxsenix", "lrcred", "lyricsplus", "lrclib"]));
     }
 
     private static EffectiveRuntimeSetting Setting(string key)
