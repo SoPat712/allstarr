@@ -679,9 +679,16 @@ public static class SpotiFlacExtensionCompatibility
           return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value), snapshotVersion: null };
         }
         function _sfSearch(request, filter, mapper) {
-          var search = _spotiflacExtension['search' + filter.charAt(0).toUpperCase() + filter.slice(1)] || _spotiflacExtension.customSearch;
-          if (typeof search !== 'function') return { items: [], isPartial: false };
-          var result = search.call(_spotiflacExtension, request.query || '', { limit: request.page && request.page.limit || 20, filter: filter.replace(/s$/, '') });
+          // As in SpotiFLAC-Mobile: typed search hooks take (query, limit) and return {tracks|albums|artists}; customSearch takes options.
+          var typed = _spotiflacExtension['search' + filter.charAt(0).toUpperCase() + filter.slice(1)];
+          var limit = request.page && request.page.limit || 20;
+          var result;
+          if (typeof typed === 'function') {
+            result = typed.call(_spotiflacExtension, request.query || '', limit);
+            if (result && !Array.isArray(result) && Array.isArray(result[filter])) result = result[filter];
+          } else if (typeof _spotiflacExtension.customSearch === 'function') {
+            result = _spotiflacExtension.customSearch(request.query || '', { limit: limit, filter: filter.replace(/s$/, '') });
+          } else return { items: [], isPartial: false };
           var items = _sfArray(result).filter(function(item) {
             var type = String(item.item_type || item.type || '').toLowerCase();
             return !type || type === filter || type === filter.replace(/s$/, '');

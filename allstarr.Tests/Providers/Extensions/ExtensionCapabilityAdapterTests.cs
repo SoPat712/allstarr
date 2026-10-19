@@ -870,8 +870,8 @@ public sealed class ExtensionCapabilityAdapterTests
             {"name":"fixture","version":"1.0.0","type":["metadata_provider"]}
             """;
         const string script = """
-            const extension = { searchTracks(query, options) {
-              return query === 'Song' && options.limit === 5 ? [{id:'123',name:'Song',artists:'Artist'}] : [];
+            const extension = { searchTracks(query, limit) {
+              return query === 'Song' && limit === 5 ? [{id:'123',name:'Song',artists:'Artist'}] : [];
             }};
             registerExtension(extension);
             """;
@@ -1024,6 +1024,32 @@ public sealed class ExtensionCapabilityAdapterTests
 
         var item = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
         Assert.Equal("result-1", item.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public void SpotiFlacRuntimeAdapter_CallsTypedSearchWithQueryAndNumericLimit()
+    {
+        const string sourceManifest = """
+            {"name":"demo","displayName":"Demo","version":"1.0.0","description":"Fixture",
+             "type":["metadata_provider"],"permissions":{}}
+            """;
+        const string script = """
+            registerExtension({
+              searchTracks:function(query, limit) {
+                if (query !== 'Song' || limit !== 10) return {tracks:[]};
+                return {tracks:[{id:'typed-1',name:'Song',artists:'Artist'}], total:1};
+              },
+              customSearch:function() { return [{id:'custom-1',name:'Wrong',artists:'Artist',item_type:'track'}]; }
+            });
+            """;
+        var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), manifest, script,
+            new HttpClientFactory(), NullLogger.Instance);
+
+        using var result = JsonDocument.Parse(sandbox.InvokeJson("searchTracks", """{"query":"Song","page":{"limit":10}}""")!);
+
+        var item = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
+        Assert.Equal("typed-1", item.GetProperty("id").GetString());
     }
 
     [Theory]
