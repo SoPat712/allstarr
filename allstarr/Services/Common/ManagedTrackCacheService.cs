@@ -17,6 +17,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     private readonly IOptions<SubsonicSettings> settings;
     private readonly ILocalLibraryService localLibrary;
     private readonly ILogger<ManagedTrackCacheService> logger;
+    private readonly TimeProvider clock;
     private readonly ConcurrentDictionary<string, Transfer> active = new(StringComparer.Ordinal);
     private readonly object lifecycle = new();
     private readonly CancellationTokenSource shutdown;
@@ -25,12 +26,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
 
     public ManagedTrackCacheService(IConfiguration configuration, IOptions<SubsonicSettings> settings,
         ILocalLibraryService localLibrary, ILogger<ManagedTrackCacheService> logger,
-        IHostApplicationLifetime? lifetime = null)
+        IHostApplicationLifetime? lifetime = null, TimeProvider? timeProvider = null)
     {
         this.configuration = configuration;
         this.settings = settings;
         this.localLibrary = localLibrary;
         this.logger = logger;
+        clock = timeProvider ?? TimeProvider.System;
         shutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? CancellationToken.None);
     }
 
@@ -43,7 +45,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             var reader = transfer.TryOpen();
             if (reader != null)
             {
-                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(reader) };
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ProgressiveContent(reader) };
                 response.Content.Headers.ContentType = new(transfer.Media.MimeType);
                 return new(response, CacheLease(transfer.Media, reader.CanSeek, progressive: true), track.ProviderId, track.Value,
                     scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
@@ -89,7 +91,9 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         string providerId, string externalId, bool headOnly, Func<Task<Song?>> metadataFactory,
         CancellationToken cancellationToken)
     {
-        if (stream.IsCached || !IsCacheMode() || headOnly || !IsCompleteResponse(stream.Response) || protocol.Actor == null) return;
+        var retain = IsCacheMode();
+        if (stream.IsCached || headOnly || !IsCompleteResponse(stream.Response) || protocol.Actor == null ||
+            !retain && stream.Lease.SupportsByteRanges) return;
         if (stream.ServingExternalId == null && stream.ServingProviderId != providerId) return;
         providerId = stream.ServingProviderId;
         externalId = stream.ServingExternalId ?? externalId;
@@ -122,7 +126,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 transfer = new(this, key, scope, providerId, externalId, stream.Lease.Media, cacheRoot,
                     partial, output, original, source,
                     stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
-                    metadataFactory, shutdown.Token);
+                    metadataFactory, retain, shutdown.Token);
                 active[key] = transfer;
                 transfer.StartWorker();
             }
@@ -168,9 +172,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     internal static string? SeekRung(HttpContent content) => content is ProgressiveContent progressive
         ? progressive.Reader.CanSeek ? "progressive-cache" : "sequential-cache" : null;
 
-    private sealed class ProgressiveContent(Stream reader) : StreamContent(reader)
+    internal static Task WaitForRangeLengthAsync(HttpContent content, string? rangeHeader, CancellationToken cancellationToken) =>
+        content is ProgressiveContent progressive && StreamByteRanges.Parse(rangeHeader) != null
+            ? progressive.Reader.WaitForLengthAsync(cancellationToken) : Task.CompletedTask;
+
+    private sealed class ProgressiveContent(ProgressiveCachingStream reader) : StreamContent(reader)
     {
-        public Stream Reader { get; } = reader;
+        public ProgressiveCachingStream Reader { get; } = reader;
     }
 
     private static ProviderStreamLease CacheLease(ProviderMediaFormat media, bool ranges, bool progressive = false) => new(
@@ -190,7 +198,9 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         private readonly HttpContent original;
         private readonly Stream source;
         private readonly Func<Task<Song?>> metadata;
+        private readonly bool retain;
         private readonly CancellationTokenSource cancel;
+        private readonly ITimer idleTimer;
         private readonly TaskCompletionSource ready = Signal();
         private readonly TaskCompletionSource complete = Signal();
         private readonly object gate = new();
@@ -207,18 +217,19 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
 
         public Transfer(ManagedTrackCacheService owner, string key, DownloadedSongMappingScope scope,
             string provider, string track, ProviderMediaFormat media, string cacheRoot, string path, FileStream output,
-            HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, CancellationToken stopping)
+            HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping)
         {
             this.owner = owner; this.key = key; this.scope = scope; this.provider = provider; this.track = track;
             Media = media; this.cacheRoot = cacheRoot; this.path = path; this.output = output;
-            this.original = original; this.source = source; this.total = total; this.metadata = metadata;
+            this.original = original; this.source = source; this.total = total; this.metadata = metadata; this.retain = retain;
             cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
+            idleTimer = owner.clock.CreateTimer(_ => StopIfIdle(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
 
         public void StartWorker() => Work = Task.Run(RunAsync);
         public void Stop() => cancel.Cancel();
 
-        public Stream? TryOpen()
+        public ProgressiveCachingStream? TryOpen()
         {
             lock (gate)
             {
@@ -228,9 +239,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 catch (IOException) { return null; }
                 catch (UnauthorizedAccessException) { return null; }
                 readers++;
-                cancel.CancelAfter(Timeout.InfiniteTimeSpan);
+                var signal = changed;
+                changed = Signal();
+                signal.TrySetResult();
+                idleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 return new ProgressiveCachingStream(file, Snapshot, Closed,
-                    TimeSpan.FromSeconds(3), () => ready.TrySetResult(), TimeSpan.FromSeconds(30));
+                    TimeSpan.FromSeconds(60), () => ready.TrySetResult(), TimeSpan.FromSeconds(60),
+                    timeProvider: owner.clock, maximumWaitTimeout: TimeSpan.FromSeconds(60));
             }
         }
 
@@ -257,8 +272,19 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         {
             lock (gate)
             {
-                if (--readers == 0 && !finished)
-                    cancel.CancelAfter(TimeSpan.FromSeconds(10));
+                if (--readers == 0 && !finished && !retired)
+                    idleTimer.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
+                var signal = changed;
+                changed = Signal();
+                signal.TrySetResult();
+            }
+        }
+
+        private void StopIfIdle()
+        {
+            lock (gate)
+            {
+                if (readers == 0 && !finished && !retired) cancel.Cancel();
             }
         }
 
@@ -271,7 +297,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             {
                 await ready.Task.WaitAsync(cancel.Token);
                 Task<Song?> metadataTask;
-                try { metadataTask = metadata(); }
+                try { metadataTask = retain ? metadata() : Task.FromResult<Song?>(null); }
                 catch { metadataTask = Task.FromResult<Song?>(null); }
                 // Observe a metadata failure even when the audio source fails first.
                 _ = metadataTask.ContinueWith(task => _ = task.Exception, CancellationToken.None,
@@ -295,7 +321,12 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 original.Dispose();
                 verified = true;
                 Advance(end: true);
-                published = await PublishAsync(metadataTask);
+                if (retain) published = await PublishAsync(metadataTask);
+                else
+                {
+                    complete.TrySetResult();
+                    await RetainForPlaybackAsync();
+                }
             }
             catch (Exception)
             {
@@ -311,7 +342,36 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 if (!published) TryDelete(path);
                 complete.TrySetResult();
                 owner.active.TryRemove(key, out _);
+                idleTimer.Dispose();
                 cancel.Dispose();
+            }
+        }
+
+        private async Task RetainForPlaybackAsync()
+        {
+            while (true)
+            {
+                Task wait;
+                bool idle;
+                lock (gate)
+                {
+                    idle = readers == 0;
+                    wait = changed.Task;
+                }
+                try
+                {
+                    if (idle) await wait.WaitAsync(TimeSpan.FromSeconds(10), owner.clock, cancel.Token);
+                    else await wait.WaitAsync(cancel.Token);
+                }
+                catch (TimeoutException)
+                {
+                    lock (gate)
+                    {
+                        if (readers != 0) continue;
+                        retired = true;
+                        return;
+                    }
+                }
             }
         }
 

@@ -10,6 +10,8 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
     private readonly ExtensionDeezerSpeculation? deezerSpeculation;
     private readonly object sessionsGate = new();
     private readonly Dictionary<SessionKey, DownloadSession> sessions = [];
+    private bool disposed;
+    private Task? disposal;
 
     private sealed record SessionKey(ProviderActorContext Actor, ProviderAccountContext? Account, string Policy,
         string Track, ProviderAudioQuality Quality);
@@ -21,18 +23,25 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         if (!context.Policy.AllowManagedDownloads || context.ProviderId != ProviderId || !context.Policy.AllowsProvider(ProviderId))
             return Failure<ProviderStreamLease>(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
-        if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<ProviderStreamLease>(ProviderErrorKind.CapabilityUnavailable);
-        var key = new SessionKey(context.Actor, context.Account, System.Text.Json.JsonSerializer.Serialize(context.Policy), request.TrackId.Value, request.RequestedQuality);
+        if (context.IsExpired(clock.GetUtcNow())) return Failure<ProviderStreamLease>(ProviderErrorKind.CapabilityUnavailable);
+        var sessionPolicy = new ProviderExecutionPolicy(context.Policy.Quality, context.Policy.ExplicitContent,
+            context.Policy.AllowFallback, context.Policy.AllowSharedAccount, context.Policy.AllowManagedDownloads, [ProviderId]);
+        var key = new SessionKey(context.Actor, context.Account, System.Text.Json.JsonSerializer.Serialize(sessionPolicy), request.TrackId.Value, request.RequestedQuality);
         DownloadSession session;
         Listener listener;
         lock (sessionsGate)
         {
+            ObjectDisposedException.ThrowIf(disposed, this);
             if (!sessions.TryGetValue(key, out session!))
             {
                 session = new DownloadSession(new ExtensionProgressiveTransfer(clock, allowsProgressive, deezerSpeculation),
                     context.Remaining(clock.GetUtcNow()), clock);
+                var created = session;
+                session.IdleTimer = clock.CreateTimer(_ => Abandon(key, created), null,
+                    Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 sessions.Add(key, session);
             }
+            session.IdleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
             session.Listeners++;
             listener = new Listener(() => Release(key, session));
             if (session.Completion == null)
@@ -49,14 +58,13 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
             ProviderStreamLease prepared;
             if (session.Transfer.Published && !session.Completion.IsCompleted)
             {
-                var total = session.Transfer.Total;
                 prepared = new ProviderStreamLease($"download-{Guid.CreateVersion7():N}",
                     new Uri("https://extension-download.invalid/progressive"), clock.GetUtcNow().AddMinutes(5),
-                    total.HasValue, total.HasValue,
+                    true, true,
                     new ProviderMediaFormat(session.Transfer.MimeType, session.Transfer.Container,
                         session.Transfer.Container is "flac" or "mp3" ? session.Transfer.Container : "unknown", bitrate: 1337),
                     ProviderStreamRetryBehavior.DoNotRetry,
-                    (message, token) => Task.FromResult(session.Transfer.Open(message, token)));
+                    (message, token) => session.Transfer.OpenAsync(message, token));
             }
             else
             {
@@ -126,16 +134,56 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         {
             if (--session.Listeners != 0) return;
             if (session.Finished) CleanupSession(key, session);
+            else if (session.Transfer.Published)
+                session.IdleTimer?.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
             else session.Cancellation.Cancel();
+        }
+    }
+
+    private void Abandon(SessionKey key, DownloadSession session)
+    {
+        lock (sessionsGate)
+        {
+            if (sessions.TryGetValue(key, out var current) && ReferenceEquals(current, session) &&
+                session.Listeners == 0 && !session.Finished)
+                session.Cancellation.Cancel();
         }
     }
 
     private void CleanupSession(SessionKey key, DownloadSession session)
     {
+        if (!sessions.TryGetValue(key, out var current) || !ReferenceEquals(current, session)) return;
         sessions.Remove(key);
         session.Transfer.Cleanup();
         session.CleanupWorkspace?.Invoke();
+        session.IdleTimer?.Dispose();
         session.Cancellation.Dispose();
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        lock (sessionsGate)
+        {
+            if (disposal == null)
+            {
+                disposed = true;
+                var active = sessions.Values.ToArray();
+                foreach (var session in active)
+                {
+                    session.IdleTimer?.Dispose();
+                    session.Cancellation.Cancel();
+                }
+                disposal = FinishDisposalAsync(active);
+            }
+            return new ValueTask(disposal);
+        }
+    }
+
+    private async Task FinishDisposalAsync(DownloadSession[] active)
+    {
+        await Task.WhenAll(active.Select(session => session.Completion!)).ConfigureAwait(false);
+        lock (sessionsGate)
+            foreach (var (key, session) in sessions.ToArray()) CleanupSession(key, session);
     }
 
     private sealed class DownloadSession(ExtensionProgressiveTransfer transfer, TimeSpan remaining, TimeProvider clock)
@@ -144,6 +192,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         public CancellationTokenSource Cancellation { get; } = new(remaining, clock);
         public Task<ProviderOutcome<ProviderStreamLease>>? Completion { get; set; }
         public Action? CleanupWorkspace { get; set; }
+        public ITimer? IdleTimer { get; set; }
         public int Listeners { get; set; }
         public bool Finished { get; set; }
     }

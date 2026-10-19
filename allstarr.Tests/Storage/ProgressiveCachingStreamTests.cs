@@ -205,6 +205,49 @@ public sealed class ProgressiveCachingStreamTests
         Assert.False(file.CanRead);
     }
 
+    [Fact]
+    public async Task SeekAheadWait_StopsAtOverallDeadlineEvenWhileEarlierBytesArrive()
+    {
+        await using var file = FixtureFile(new byte[100]);
+        var clock = new ManualTimeProvider();
+        var available = 0;
+        await using var reader = new ProgressiveCachingStream(file,
+            () =>
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                return new(++available, 100, false, false, Task.CompletedTask, Task.CompletedTask);
+            }, static () => { }, TimeSpan.FromSeconds(3), timeProvider: clock,
+            maximumWaitTimeout: TimeSpan.FromSeconds(5));
+        reader.Position = 90;
+        await Assert.ThrowsAsync<IOException>(() => reader.ReadAsync(new byte[1]).AsTask());
+        Assert.InRange(available, 5, 8);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task UnknownLengthSeekWait_StopsOnCancellationOrDeadline(bool cancel)
+    {
+        await using var file = FixtureFile([1, 2, 3]);
+        var clock = new ManualTimeProvider();
+        await using var reader = new ProgressiveCachingStream(file,
+            () => new(3, null, false, false, NeverCompletingTask(), NeverCompletingTask()),
+            static () => { }, TimeSpan.FromSeconds(60), timeProvider: clock);
+        using var cancellation = new CancellationTokenSource();
+        var waiting = reader.WaitForLengthAsync(cancellation.Token);
+        Assert.Equal(TimeSpan.FromSeconds(60), await clock.NextTimerAsync());
+        if (cancel)
+        {
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => waiting);
+        }
+        else
+        {
+            clock.Advance(TimeSpan.FromSeconds(60));
+            await Assert.ThrowsAsync<IOException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+    }
+
     private static FileStream FixtureFile(ReadOnlySpan<byte> payload)
     {
         var path = Path.Combine(Path.GetTempPath(), $"allstarr-progressive-{Guid.NewGuid():N}.tmp");

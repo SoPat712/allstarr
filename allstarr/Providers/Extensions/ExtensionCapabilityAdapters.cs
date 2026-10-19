@@ -279,7 +279,7 @@ public sealed class ExtensionDownloadCapabilityAdapter : ExtensionCapabilityAdap
 }
 
 public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
-    IProviderDownloadStreamingCapability
+    IProviderDownloadStreamingCapability, IAsyncDisposable
 {
     private readonly ExtensionDownloadCapabilityAdapter download;
     private readonly ProviderDownloadArtifactResolver artifacts;

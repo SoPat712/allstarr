@@ -195,6 +195,34 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
         if (predictedKey != null) CryptographicOperations.ZeroMemory(predictedKey);
     }
 
+    public async Task<HttpResponseMessage> OpenAsync(HttpRequestMessage request, CancellationToken token)
+    {
+        if (request.Method != HttpMethod.Head && request.Headers.Range != null)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60), timeProvider);
+            using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
+            try
+            {
+                while (true)
+                {
+                    Task wait;
+                    lock (gate)
+                    {
+                        if (failed) throw new IOException("The download failed.");
+                        if (Total.HasValue || finished) break;
+                        wait = changed.Task;
+                    }
+                    await wait.WaitAsync(linked.Token);
+                }
+            }
+            catch (OperationCanceledException) when (!token.IsCancellationRequested)
+            {
+                throw new IOException("The download did not establish its length before the seek timeout.");
+            }
+        }
+        return Open(request, token);
+    }
+
     public HttpResponseMessage Open(HttpRequestMessage request, CancellationToken token)
     {
         long? length;
@@ -259,6 +287,9 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
         {
             if (buffer.IsEmpty) return 0;
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, cancellationToken);
+            var waitingStarted = owner.timeProvider.GetTimestamp();
+            var waitingSince = waitingStarted;
+            long observedLength = 0;
             while (true)
             {
                 Task wait;
@@ -266,6 +297,11 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
                 lock (owner.gate)
                 {
                     if (owner.failed) throw new IOException("The download failed before verification completed.");
+                    if (owner.written > observedLength)
+                    {
+                        observedLength = owner.written;
+                        waitingSince = owner.timeProvider.GetTimestamp();
+                    }
                     // Even a finite range waits for verification before reporting its end.
                     if (owner.finished && (remaining == 0 || file.Position >= owner.written)) return 0;
                     count = (int)Math.Min(buffer.Length, Math.Min(remaining, Math.Max(0, owner.written - file.Position)));
@@ -280,8 +316,15 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
                     remaining -= read;
                     return read;
                 }
-                try { await wait.WaitAsync(TimeSpan.FromSeconds(30), owner.timeProvider, linked.Token); }
-                catch (TimeoutException error) { throw new IOException("The download did not produce data before the read deadline.", error); }
+                var remainingWait = TimeSpan.FromSeconds(60) - owner.timeProvider.GetElapsedTime(waitingStarted);
+                var stallWait = TimeSpan.FromSeconds(30) - owner.timeProvider.GetElapsedTime(waitingSince);
+                if (stallWait < remainingWait) remainingWait = stallWait;
+                if (remainingWait <= TimeSpan.Zero) throw new IOException("The download did not reach the requested offset before the read deadline.");
+                try { await wait.WaitAsync(remainingWait, owner.timeProvider, linked.Token); }
+                catch (TimeoutException)
+                {
+                    // Recheck published bytes and completion when a notification races the deadline.
+                }
             }
         }
         public override int Read(byte[] buffer, int offset, int count) => ReadAsync(buffer.AsMemory(offset, count)).AsTask().GetAwaiter().GetResult();

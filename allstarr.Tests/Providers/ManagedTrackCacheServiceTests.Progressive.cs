@@ -52,23 +52,161 @@ public sealed partial class ManagedTrackCacheServiceTests
     }
 
     [Fact]
-    public async Task ActiveUnknownLength_RangeRemainsFull200FromByteZeroWithoutRangeHeaders()
+    public async Task ActiveUnknownLength_RangeWaitsForCompletion()
     {
         await using var fixture = new ProgressiveFixture(knownLength: false);
         await fixture.StartAsync();
         await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         using var cached = (await fixture.OpenAsync())!.Response;
-        var firstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var execution = ExecuteAsync(cached, "bytes=10-", firstWrite);
-        await firstWrite.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var execution = ExecuteAsync(cached, "bytes=10-");
         Assert.False(execution.IsCompleted);
         fixture.Source.Release.TrySetResult();
         var (context, bytes) = await execution;
-        Assert.Equal(200, context.Response.StatusCode);
-        Assert.False(context.Response.Headers.ContainsKey("Content-Range"));
-        Assert.False(context.Response.Headers.ContainsKey("Accept-Ranges"));
-        Assert.Null(context.Response.ContentLength);
-        Assert.Equal(fixture.Bytes, bytes);
+        Assert.Equal(206, context.Response.StatusCode);
+        Assert.Equal("bytes 10-15/16", context.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes", context.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(6, context.Response.ContentLength);
+        Assert.Equal(fixture.Bytes[10..], bytes);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ActiveUnknownLength_RangePreparationHonorsCancellationAndClock(bool cancel)
+    {
+        var clock = new ManualTimeProvider();
+        await using var fixture = new ProgressiveFixture(knownLength: false, timeProvider: clock);
+        await fixture.StartAsync();
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var cached = (await fixture.OpenAsync())!.Response;
+        using var cancellation = new CancellationTokenSource();
+        var http = new DefaultHttpContext();
+        http.Request.Method = "GET";
+        http.Request.Headers.Range = "bytes=10-";
+        var opening = new ProtocolStreamingResponseAdapter().CreateAsync(http, cached, cancellation.Token, true);
+        Assert.False(opening.IsCompleted);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(60));
+        if (cancel)
+        {
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => opening.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+        else
+        {
+            clock.Advance(TimeSpan.FromSeconds(60));
+            await Assert.ThrowsAsync<IOException>(() => opening.WaitAsync(TimeSpan.FromSeconds(10)));
+        }
+    }
+
+    [Fact]
+    public async Task ActiveKnownLength_FutureRangeHonorsInjectedReadDeadline()
+    {
+        var clock = new ManualTimeProvider();
+        await using var fixture = new ProgressiveFixture(knownLength: true, timeProvider: clock);
+        await fixture.StartAsync();
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var cached = (await fixture.OpenAsync())!.Response;
+        var execution = ExecuteAsync(cached, "bytes=10-");
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(60));
+        clock.Advance(TimeSpan.FromSeconds(60));
+        await Assert.ThrowsAsync<IOException>(() => execution.WaitAsync(TimeSpan.FromSeconds(10)));
+    }
+
+    [Theory]
+    [InlineData("apple-musickit", false)]
+    [InlineData("deezer", true)]
+    public async Task SequentialPlayback_InitialRangeWaitsForCacheAndReturnsExactBytes(string provider, bool knownLength)
+    {
+        await using var fixture = new ProgressiveFixture(knownLength, provider: provider);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        var protocol = Context();
+        var sequential = new ProviderStreamLease("sequential", new Uri("https://media.example.test/audio"),
+            protocol.Deadline, false, false, provider == "deezer" ? new("audio/mpeg", "mp3", "mp3") : new("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry);
+        gateway.Setup(item => item.OpenStreamAsync(protocol, provider, "track-1", ProviderAudioQuality.Any, "bytes=10-", false))
+            .ReturnsAsync(new ProtocolProviderStream(fixture.Response, sequential, provider, "track-1"));
+        gateway.Setup(item => item.GetSongAsync(protocol, provider, "track-1")).ReturnsAsync((Song?)null);
+        using var services = new ServiceCollection().AddLogging().AddControllers().Services.BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices = services };
+        http.Request.Method = "GET";
+        http.Request.Headers.Range = "bytes=10-";
+        using var body = new MemoryStream();
+        http.Response.Body = body;
+        var opening = new allstarr.Core.Music.ProviderStreamOpener(gateway.Object,
+            new ProtocolStreamingResponseAdapter(), fixture.Service).OpenAsync(http, protocol, provider, "track-1", ProviderAudioQuality.Any);
+        if (!knownLength)
+        {
+            await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(opening.IsCompleted);
+        }
+        fixture.Source.Release.TrySetResult();
+        var result = await opening.WaitAsync(TimeSpan.FromSeconds(10));
+        await result.ExecuteResultAsync(new ActionContext(http, new(), new()));
+        Assert.Equal(206, http.Response.StatusCode);
+        Assert.Equal("bytes 10-15/16", http.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes", http.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(6, http.Response.ContentLength);
+        Assert.Equal(fixture.Bytes[10..], body.ToArray());
+    }
+
+    [Fact]
+    public async Task SequentialPlayback_PermanentStorageUsesTemporarySeekFileWithoutPublishing()
+    {
+        await using var fixture = new ProgressiveFixture(knownLength: true, mode: "Permanent");
+        var sequential = new ProviderStreamLease("sequential", new Uri("https://media.example.test/audio"),
+            DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry);
+        await fixture.Service.WrapAsync(new(fixture.Response, sequential, "deezer", "track-1",
+            fixture.Scope.ProviderAccountId, ServingAccountRevision: 4), Context(), "deezer", "track-1", false,
+            () => Task.FromResult<Song?>(null), CancellationToken.None);
+        var initial = await fixture.Response.Content.ReadAsStreamAsync();
+        Assert.Equal(0, initial.ReadByte());
+        await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        using var opened = (await fixture.OpenAsync())!.Response;
+        var execution = ExecuteAsync(opened, "bytes=10-");
+        Assert.False(execution.IsCompleted);
+        fixture.Source.Release.TrySetResult();
+        var (http, bytes) = await execution;
+        Assert.Equal(206, http.Response.StatusCode);
+        Assert.Equal(fixture.Bytes[10..], bytes);
+        await fixture.Service.DisposeAsync();
+        Assert.Null(fixture.PublishedPath);
+        Assert.Empty(Directory.GetFiles(fixture.Root, "*", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task CompletedTemporarySeekFile_RemainsAvailableWhilePlaybackIsOpen()
+    {
+        await using var fixture = new ProgressiveFixture(knownLength: true, mode: "Permanent");
+        var sequential = new ProviderStreamLease("sequential", new Uri("https://media.example.test/audio"),
+            DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry);
+        await fixture.Service.WrapAsync(new(fixture.Response, sequential, "deezer", "track-1",
+            fixture.Scope.ProviderAccountId, ServingAccountRevision: 4), Context(), "deezer", "track-1", false,
+            () => Task.FromResult<Song?>(null), CancellationToken.None);
+        fixture.Source.Release.TrySetResult();
+        Assert.Equal(fixture.Bytes, await fixture.Response.Content.ReadAsByteArrayAsync());
+        using var cached = (await fixture.OpenAsync())!.Response;
+        var (http, bytes) = await ExecuteAsync(cached, "bytes=10-");
+        Assert.Equal(206, http.Response.StatusCode);
+        Assert.Equal(fixture.Bytes[10..], bytes);
+        Assert.Null(fixture.PublishedPath);
+    }
+
+    [Theory]
+    [InlineData("apple-musickit")]
+    [InlineData("deezer")]
+    public async Task CompletedSequentialCache_ServesExactRanges(string provider)
+    {
+        await using var fixture = new ProgressiveFixture(knownLength: false, provider: provider);
+        await fixture.StartAsync();
+        fixture.Source.Release.TrySetResult();
+        Assert.Equal(fixture.Bytes, await fixture.Response.Content.ReadAsByteArrayAsync());
+        using var opened = (await fixture.OpenAsync())!.Response;
+        var (http, bytes) = await ExecuteAsync(opened, "bytes=10-");
+        Assert.Equal(206, http.Response.StatusCode);
+        Assert.Equal("bytes 10-15/16", http.Response.Headers.ContentRange.ToString());
+        Assert.Equal("bytes", http.Response.Headers.AcceptRanges.ToString());
+        Assert.Equal(6, http.Response.ContentLength);
+        Assert.Equal(fixture.Bytes[10..], bytes);
     }
 
     [Fact]
@@ -108,11 +246,16 @@ public sealed partial class ManagedTrackCacheServiceTests
     [Fact]
     public async Task ClosingOldRequest_AllowsSeekReattachmentWithoutCancelingProducer()
     {
-        await using var fixture = new ProgressiveFixture(knownLength: true);
+        var clock = new ManualTimeProvider();
+        await using var fixture = new ProgressiveFixture(knownLength: true, timeProvider: clock);
         await fixture.StartAsync();
         await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Response.Dispose();
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(5));
         using var cached = (await fixture.OpenAsync())!.Response;
+        clock.Advance(TimeSpan.FromSeconds(10));
+        Assert.False(fixture.Source.Closed);
         var reader = await cached.Content.ReadAsStreamAsync();
         reader.Position = 10;
         using var canceled = new CancellationTokenSource();
@@ -138,11 +281,16 @@ public sealed partial class ManagedTrackCacheServiceTests
     [Fact]
     public async Task LastReaderAbandoned_CancelsAfterSeekGraceWithoutPublishing()
     {
-        await using var fixture = new ProgressiveFixture(knownLength: true);
+        var clock = new ManualTimeProvider();
+        await using var fixture = new ProgressiveFixture(knownLength: true, timeProvider: clock);
         await fixture.StartAsync();
         await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(30));
         fixture.Response.Dispose();
-        await fixture.Source.ClosedSignal.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(9));
+        Assert.False(fixture.Source.Closed);
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await fixture.Source.ClosedSignal.Task.WaitAsync(TimeSpan.FromSeconds(10));
         await fixture.Service.DisposeAsync();
         Assert.Null(fixture.PublishedPath);
         Assert.Empty(Directory.GetFiles(fixture.Root, "*", SearchOption.AllDirectories));
@@ -328,39 +476,40 @@ public sealed partial class ManagedTrackCacheServiceTests
         public readonly string Root = CreateRoot();
         public readonly byte[] Bytes = Enumerable.Range(0, 16).Select(value => (byte)value).ToArray();
         public readonly DownloadedSongMappingScope Scope = new(Guid.NewGuid(), ProviderAudioQuality.Any);
-        public readonly ProviderExternalResourceId Track = new("deezer", ProviderResourceKind.Track, "track-1");
+        public readonly ProviderExternalResourceId Track;
         public readonly ControlledSource Source;
         public readonly HttpResponseMessage Response;
         public readonly ManagedTrackCacheService Service;
         public string? PublishedPath;
 
-        public ProgressiveFixture(bool knownLength, bool shortBody = false, bool fail = false, IHostApplicationLifetime? lifetime = null, bool registrationFails = false, int? declaredLength = null)
+        public ProgressiveFixture(bool knownLength, bool shortBody = false, bool fail = false, IHostApplicationLifetime? lifetime = null, bool registrationFails = false, int? declaredLength = null, string provider = "deezer", string mode = "Cache", TimeProvider? timeProvider = null)
         {
+            Track = new(provider, ProviderResourceKind.Track, "track-1");
             Source = new ControlledSource(Bytes, shortBody, fail);
             Response = new(HttpStatusCode.OK) { Content = new StreamContent(Source) };
             Response.Content.Headers.ContentType = new("audio/flac");
             if (knownLength) Response.Content.Headers.ContentLength = declaredLength ?? Bytes.Length;
             var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
-            local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "deezer", "track-1"))
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), provider, "track-1"))
                 .ReturnsAsync(() => PublishedPath);
             local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
                 .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => PublishedPath = path).Returns(Task.CompletedTask);
             if (registrationFails)
                 local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
                     .ThrowsAsync(new IOException("Registration unavailable"));
-            Service = CreateService(Root, "Cache", local.Object, lifetime);
+            Service = CreateService(Root, mode, local.Object, lifetime, timeProvider);
         }
 
         public async Task StartAsync()
         {
             await Service.WrapAsync(ProviderStream(Response) with
-            { ServingAccountId = Scope.ProviderAccountId, ServingAccountRevision = 4 }, Context(), "deezer", "track-1", false,
+            { ServingProviderId = Track.ProviderId, ServingAccountId = Scope.ProviderAccountId, ServingAccountRevision = 4 }, Context(), Track.ProviderId, "track-1", false,
                 () => Task.FromResult<Song?>(new Song { Title = "Song", Artist = "Artist", Album = "Album" }), CancellationToken.None);
-            var reader = await Response.Content.ReadAsStreamAsync();
+            using var startup = (await OpenAsync())!.Response;
+            var reader = await startup.Content.ReadAsStreamAsync();
             var first = new byte[1];
             Assert.Equal(1, await reader.ReadAsync(first));
             Assert.Equal(0, first[0]);
-            if (reader.CanSeek) reader.Position = 0;
         }
         public Task<ProtocolProviderStream?> OpenAsync() => Service.TryOpenAsync(Track, Scope, CancellationToken.None, 4);
         public async Task<ProtocolProviderStream?> OpenAndDisposeAsync()

@@ -32,7 +32,8 @@ public sealed partial class ExtensionProgressivePlaybackTests
         var pending = adapter.GetStreamLeaseAsync(context, new(track));
         source.Release(encrypted[..prefix.Length]);
         var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
-        Assert.Equal(knownLength, lease.SupportsSeeking);
+        Assert.True(lease.SupportsSeeking);
+        Assert.True(lease.SupportsByteRanges);
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, default);
         Assert.Equal("audio/flac", response.Content.Headers.ContentType!.MediaType);
@@ -66,16 +67,23 @@ public sealed partial class ExtensionProgressivePlaybackTests
         var lease = (await pending.WaitAsync(TimeSpan.FromSeconds(10))).RequireValue();
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         request.Headers.Range = new RangeHeaderValue(prefix.Length, prefix.Length + 3);
-        using var response = await lease.ProtectedResponseFactory!(request, default);
-        Assert.Equal(knownLength ? HttpStatusCode.PartialContent : HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(knownLength ? $"bytes {prefix.Length}-{prefix.Length + 3}/{encrypted.Length}" : null,
-            response.Content.Headers.ContentRange?.ToString());
-        var reading = response.Content.ReadAsByteArrayAsync();
+        var opening = lease.ProtectedResponseFactory!(request, default);
+        if (!knownLength) Assert.False(opening.IsCompleted);
+        async Task<byte[]> ReadAsync()
+        {
+            using var response = await opening;
+            Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+            Assert.Equal($"bytes {prefix.Length}-{prefix.Length + 3}/{encrypted.Length}",
+                response.Content.Headers.ContentRange?.ToString());
+            Assert.Equal(4, response.Content.Headers.ContentLength);
+            Assert.Contains("bytes", response.Headers.AcceptRanges);
+            return await response.Content.ReadAsByteArrayAsync();
+        }
+        var reading = ReadAsync();
         Assert.False(reading.IsCompleted);
         source.Release(encrypted[^4..]);
         source.Complete();
-        Assert.Equal(knownLength ? new byte[] { 1, 2, 3, 4 } : prefix.Concat(new byte[] { 1, 2, 3, 4 }).ToArray(),
-            await reading.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, await reading.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
     [Theory]
@@ -170,6 +178,8 @@ public sealed partial class ExtensionProgressivePlaybackTests
         source.Complete();
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(1));
         cancellation.Cancel();
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(10));
         // A subsequent hook acquires the same interpreter lock after the cancelled transform exits.
         await Task.Run(() => sandbox.InvokeJson("checkAvailability", "{}")).WaitAsync(TimeSpan.FromSeconds(10));
         Assert.True(sandbox.DeezerSpeculation!.Enabled);
@@ -219,6 +229,10 @@ public sealed partial class ExtensionProgressivePlaybackTests
         using var response = await lease.ProtectedResponseFactory!(request, default);
         var body = await response.Content.ReadAsStreamAsync();
         body.Dispose();
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(9));
+        Assert.False(source.Canceled.Task.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(1));
         await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
@@ -255,6 +269,8 @@ public sealed partial class ExtensionProgressivePlaybackTests
         using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
         using var response = await lease.ProtectedResponseFactory!(request, default);
         cancellation.Cancel();
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(10));
         await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
     }
 

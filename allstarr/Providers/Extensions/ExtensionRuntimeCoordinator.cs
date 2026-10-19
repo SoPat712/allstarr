@@ -10,7 +10,7 @@ using System.Text.Json;
 
 namespace allstarr.Core.Extensions;
 
-public sealed class ExtensionRuntimeCoordinator : IHostedService
+public sealed class ExtensionRuntimeCoordinator : IHostedService, IAsyncDisposable
 {
     private const long MaximumStorageBytesPerExtension = 4L * 1024 * 1024;
     private readonly IDbContextFactory<AllstarrDbContext> _factory;
@@ -88,10 +88,10 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             try
             {
                 var build = await BuildRegistrationAsync(package, cancellationToken);
-                await WithRuntimeGateAsync(() =>
+                await WithRuntimeGateAsync(async () =>
                 {
-                    RegisterRuntime(package, build);
-                    return Task.FromResult(true);
+                    await RegisterRuntimeAsync(package, build);
+                    return true;
                 }, cancellationToken);
             }
             catch (Exception exception)
@@ -103,7 +103,16 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         }
     }
 
-    public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+    public Task StopAsync(CancellationToken cancellationToken) => WithRuntimeGateAsync(async () =>
+    {
+        foreach (var sandbox in _sandboxes.Values)
+            if (_readRegistry.TryGetCapability<ExtensionDownloadStreamingCapabilityAdapter>(sandbox.Id,
+                    ProviderCapabilityKind.Streaming, out var streaming))
+                await streaming!.DisposeAsync();
+        return true;
+    }, cancellationToken);
+
+    public ValueTask DisposeAsync() => new(StopAsync(CancellationToken.None));
 
     public Task RefreshSignedSessionsAsync(CancellationToken cancellationToken = default)
     {
@@ -180,7 +189,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         return await WithRuntimeGateAsync(async () =>
         {
             var active = await _controlPlane.ActivateAsync(packageId, expectedRevision, cancellationToken);
-            RegisterRuntime(package, build);
+            await RegisterRuntimeAsync(package, build);
             return active;
         }, cancellationToken);
     }
@@ -190,7 +199,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         {
             var package = await GetPackageAsync(packageId, cancellationToken);
             await _controlPlane.DisableAsync(packageId, expectedRevision, cancellationToken);
-            RemoveRuntime(package);
+            await RemoveRuntimeAsync(package);
             return true;
         }, cancellationToken);
 
@@ -202,7 +211,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             var package = await GetPackageAsync(packageId, cancellationToken);
             var reset = await _controlPlane.ResetPermissionsForReviewAsync(
                 packageId, expectedRevision, cancellationToken);
-            RemoveRuntime(package);
+            await RemoveRuntimeAsync(package);
             return reset;
         }, cancellationToken);
 
@@ -212,7 +221,7 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
         {
             var package = await GetPackageAsync(packageId, cancellationToken);
             var uninstalled = await _controlPlane.UninstallAsync(packageId, expectedRevision, cancellationToken);
-            RemoveRuntime(package);
+            await RemoveRuntimeAsync(package);
             try
             {
                 var packagePath = ContainedPath(_packageRoot, package.PackagePath);
@@ -650,23 +659,31 @@ public sealed class ExtensionRuntimeCoordinator : IHostedService
             throw new ExtensionSdkValidationException("An extension cannot replace a built-in provider.");
     }
 
-    private void RegisterRuntime(ExtensionPackageRecord package, RuntimeBuild build)
+    private async Task RegisterRuntimeAsync(ExtensionPackageRecord package, RuntimeBuild build)
     {
+        ExtensionDownloadStreamingCapabilityAdapter? previous;
         lock (_runtimeMutationLock)
         {
             RejectBuiltInCollision(build.Registration.Descriptor.Id);
+            _readRegistry.TryGetCapability(package.ExtensionId, ProviderCapabilityKind.Streaming, out previous);
             _registry.RegisterOrReplaceExtension(build.Registration);
             StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
         }
+        if (previous != null) await previous.DisposeAsync();
     }
 
-    private void RemoveRuntime(ExtensionPackageRecord package)
+    private async Task RemoveRuntimeAsync(ExtensionPackageRecord package)
     {
+        ExtensionDownloadStreamingCapabilityAdapter? previous = null;
         lock (_runtimeMutationLock)
         {
             if (_sandboxes.TryRemove(package.Id, out _))
+            {
+                _readRegistry.TryGetCapability(package.ExtensionId, ProviderCapabilityKind.Streaming, out previous);
                 _registry.RemoveExtension(package.ExtensionId);
+            }
         }
+        if (previous != null) await previous.DisposeAsync();
     }
 
     private void StoreSandbox(

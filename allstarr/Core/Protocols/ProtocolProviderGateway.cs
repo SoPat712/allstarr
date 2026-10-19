@@ -1074,7 +1074,9 @@ public sealed partial class ProtocolProviderGateway(
             ProviderCapabilityKind.Streaming,
             "protocol-stream-open",
             providerOrder,
-            trackId,
+            resuming && previous != null
+                ? new ProviderExternalResourceId(previous.ProviderId, ProviderResourceKind.Track, previous.ExternalId)
+                : trackId,
             quality,
             allowFallback: true,
             allowManagedDownloads: true);
@@ -1187,7 +1189,7 @@ public sealed partial class ProtocolProviderGateway(
 
             var started = Stopwatch.GetTimestamp();
             var outcome = await OpenCandidateAsync(ResolveLeaseAsync, OpenLeaseAsync,
-                headOnly, parsedRange, protocol.CancellationToken);
+                headOnly, parsedRange, resuming && previous != null, protocol.CancellationToken);
             if (!leaseFailed && (!headOnly || !outcome.IsSuccess))
                 outcomes?.Observe(candidate.Context, ProviderCapabilityKind.Streaming,
                     outcome.Error, Stopwatch.GetElapsedTime(started));
@@ -1249,6 +1251,7 @@ public sealed partial class ProtocolProviderGateway(
         Func<ProviderStreamLease, Task<HttpResponseMessage>> open,
         bool headOnly,
         RangeHeaderValue? requestedRange,
+        bool resumePublishedSource,
         CancellationToken cancellationToken)
     {
         ProviderStreamLease? lease = null;
@@ -1281,9 +1284,11 @@ public sealed partial class ProtocolProviderGateway(
                     }
                     response.Content.Headers.ContentType ??= new MediaTypeHeaderValue(lease.Media.MimeType);
                     var mediaType = response.Content.Headers.ContentType?.MediaType;
+                    // A validated range of the published source can return headers before its bytes arrive.
                     if ((mediaType == null || mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) ||
                         mediaType is "application/octet-stream" or "video/mp4") &&
-                        (headOnly || await PrefetchedStream.PrepareAsync(response, cancellationToken)))
+                        (headOnly || resumePublishedSource && response.StatusCode == HttpStatusCode.PartialContent ||
+                         await PrefetchedStream.PrepareAsync(response, cancellationToken)))
                     {
                         transferred = true;
                         return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Success((response, lease));

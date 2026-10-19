@@ -264,7 +264,8 @@ public sealed partial class ManagedTrackCacheServiceTests
         string root,
         string storageMode,
         ILocalLibraryService local,
-        IHostApplicationLifetime? lifetime = null)
+        IHostApplicationLifetime? lifetime = null,
+        TimeProvider? timeProvider = null)
     {
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -279,7 +280,7 @@ public sealed partial class ManagedTrackCacheServiceTests
                 StorageMode = Enum.Parse<StorageMode>(storageMode)
             }),
             local,
-            NullLogger<ManagedTrackCacheService>.Instance, lifetime);
+            NullLogger<ManagedTrackCacheService>.Instance, lifetime, timeProvider);
     }
 
     private static HttpResponseMessage Response(HttpStatusCode status, byte[] bytes)

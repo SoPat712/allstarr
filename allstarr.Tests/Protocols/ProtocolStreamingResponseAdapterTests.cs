@@ -58,6 +58,25 @@ public sealed class ProtocolStreamingResponseAdapterTests
     }
 
     [Fact]
+    public async Task CreateAsync_OrdinaryResponseKeepsMvcRangeHandling()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Method = HttpMethods.Get;
+        context.Request.Headers.Range = "bytes=1-2,4-5";
+        using var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent([0, 1, 2, 3, 4, 5])
+        };
+
+        var result = await _adapter.CreateAsync(context, response, CancellationToken.None, true);
+
+        var file = Assert.IsType<FileStreamResult>(result);
+        Assert.True(file.EnableRangeProcessing);
+        Assert.Equal(0, file.FileStream.Position);
+        Assert.Equal(6, file.FileStream.Length);
+    }
+
+    [Fact]
     public async Task HeadPreservesKnownArtifactLengthWithoutReadingAnEmptyBody()
     {
         using var services = new ServiceCollection().AddLogging().AddControllers().Services.BuildServiceProvider();
