@@ -202,7 +202,9 @@ public sealed class AppleDownloadStreamingCapabilityAdapter : IProviderDownloadS
                 new JsonDocumentOptions { MaxDepth = 16 });
             return document.RootElement.ValueKind == JsonValueKind.Object &&
                 document.RootElement.TryGetProperty("detail", out var detail) &&
-                detail.ValueKind == JsonValueKind.String && detail.GetString() == "audio_artifact_missing";
+                detail.ValueKind == JsonValueKind.String &&
+                // gamdl reports artifact_missing when neither ALAC nor the AAC fallback produced audio.
+                detail.GetString() is "audio_artifact_missing" or "artifact_missing";
         }
         catch (Exception exception) when (exception is JsonException or HttpRequestException)
         {
