@@ -7164,7 +7164,7 @@ async function mockTry(page: Page, requests: Record<string, unknown>[] = []) {
   await page.route("**/api/admin/providers/try/media/**", (route) => route.fulfill({ status: 204 }));
 }
 
-test("Try panel searches one source and sends a result to lyrics, playback and download", async ({ page }) => {
+test("Source test panel searches one source and sends a result to lyrics, playback and download", async ({ page }) => {
   await mockApi(page);
   const requests: Record<string, unknown>[] = [];
   await mockTry(page, requests);
@@ -7172,9 +7172,9 @@ test("Try panel searches one source and sends a result to lyrics, playback and d
   await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
   const row = page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" });
   await expect(row.getByRole("button", { name: "Test", exact: true })).toBeVisible();
-  await row.getByRole("button", { name: "Try Metadata" }).click();
+  await row.getByRole("button", { name: "Open Metadata tests" }).click();
 
-  const dialog = page.getByRole("dialog", { name: "Try Lumen Audio" });
+  const dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
   await expect(dialog).toContainText("Uses Lumen account.");
   await expect(dialog.getByRole("tab", { name: "Search" })).toHaveAttribute("aria-selected", "true");
   await dialog.getByRole("searchbox", { name: "Search" }).fill("get lucky");
@@ -7206,7 +7206,7 @@ test("Try panel searches one source and sends a result to lyrics, playback and d
   await expect(dialog.locator(".try-media-facts")).toContainText("44.0 MB");
 });
 
-test("Sources without an account can be tested and tried", async ({ page }) => {
+test("Sources without an account can be tested in detail", async ({ page }) => {
   await mockApi(page);
   await page.route("**/api/admin/ui/schema", (route) => route.fulfill({ json: {
     ...schema, providers: [...schema.providers, { id: "lrclib", name: "LRCLIB", categories: ["lyrics"], runtimeCapabilities: [
@@ -7222,8 +7222,8 @@ test("Sources without an account can be tested and tried", async ({ page }) => {
   const row = page.locator(".service-check").filter({ hasText: "Lyrics" });
   await row.getByRole("button", { name: "Test", exact: true }).click();
   await expect.poll(() => tested).toBe(1);
-  await row.getByRole("button", { name: "Try Lyrics" }).click();
-  const dialog = page.getByRole("dialog", { name: "Try LRCLIB" });
+  await row.getByRole("button", { name: "Open Lyrics tests" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test LRCLIB" });
   await expect(dialog).toContainText("Runs on LRCLIB only");
   await expect(dialog.getByRole("tablist")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Get lyrics" })).toBeDisabled();

@@ -113,7 +113,7 @@
     if (cause instanceof ApiError) {
       const details = cause.details as { reasonCode?: string; retryAfterSeconds?: number } | null;
       if (cause.status === 409 && details?.reasonCode === "sign_in_needed") return `${name} needs a sign-in first. Sign in on this page, then try again.`;
-      if (cause.status === 429) return `Another try on ${name} is still running. Wait ${details?.retryAfterSeconds ?? 5} seconds, then try again.`;
+      if (cause.status === 429) return `Another test on ${name} is still running. Wait ${details?.retryAfterSeconds ?? 5} seconds, then try again.`;
       return cause.message;
     }
     return cause instanceof Error && cause.name !== "AbortError" ? cause.message : fallback;
@@ -293,7 +293,7 @@
     </form>
     {#if picking === target}<p class="try-status" role="status"><span class="try-spinner" aria-hidden="true"></span>Searching {name}…</p>{/if}
     {#if picks[target]?.length}
-      <ul class="try-list" aria-label="Songs to try">{#each picks[target]!.slice(0, 5) as track}{@render trackRow(track, [target])}{/each}</ul>
+      <ul class="try-list" aria-label="Songs to test">{#each picks[target]!.slice(0, 5) as track}{@render trackRow(track, [target])}{/each}</ul>
     {:else if picks[target] && !errors[target]}
       <p class="try-empty">{name} found no songs for that search.</p>
     {/if}
@@ -308,7 +308,7 @@
         <div class="try-heading">
           <span class="try-mark"><ProviderMark id={provider.id} definition={provider} /></span>
           <div>
-            <Dialog.Title>Try {name}</Dialog.Title>
+            <Dialog.Title>Test {name}</Dialog.Title>
             <Dialog.Description>{accountLine}</Dialog.Description>
           </div>
         </div>

@@ -541,7 +541,7 @@
     {#if (canTest && onTest) || onTry}
       <span class="service-check-actions">
         {#if canTest && onTest}<Button variant="secondary" size="sm" class={onTry ? "rounded-e-none" : ""} disabled={Boolean(action)} onclick={onTest}>{action && action === testKey ? "Testing…" : "Test"}</Button>{/if}
-        {#if onTry}<Button variant="secondary" size="sm" class={canTest && onTest ? "rounded-s-none px-1.5" : ""} aria-label={`Try ${label}`} title={`Try ${label}`} onclick={onTry}>{#if canTest && onTest}<ChevronRight aria-hidden="true" />{:else}Try<ChevronRight aria-hidden="true" />{/if}</Button>{/if}
+        {#if onTry}<Button variant="secondary" size="sm" class={canTest && onTest ? "rounded-s-none px-1.5" : ""} aria-label={`Open ${label} tests`} title={`Open ${label} tests`} onclick={onTry}>{#if canTest && onTest}<ChevronRight aria-hidden="true" />{:else}Test<ChevronRight aria-hidden="true" />{/if}</Button>{/if}
       </span>
     {:else}<span></span>{/if}
   </li>
