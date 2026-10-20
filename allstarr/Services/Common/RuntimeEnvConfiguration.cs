@@ -191,6 +191,7 @@ public static class RuntimeEnvConfiguration
         "Backend:Type", "Jellyfin:Url", "Subsonic:Url",
         "Storage:DataDirectory", "Storage:DatabaseFileName", "Storage:AutoMigrate", "Secrets:KeyRingPath",
         "Admin:BindAnyIp", "Admin:TrustedSubnets", "Admin:BasePath", "Admin:Containerized", "Admin:ContainerGateway",
+        "Extensions:SessionVerification:BaseUrl",
         "Library:DownloadPath", "Library:KeptPath"
     };
 

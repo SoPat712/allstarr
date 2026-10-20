@@ -1,5 +1,7 @@
+using allstarr.Core.Extensions;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Configuration;
+using Moq;
 
 namespace allstarr.Tests;
 
@@ -58,6 +60,32 @@ public sealed class BootstrapConfigurationTests : IDisposable
             settings.AddEnvironmentVariables(prefix);
             RuntimeEnvConfiguration.AddBootstrapOverrides(settings, Path.Combine(root, "missing.env"));
             Assert.Equal("14", settings["Cache:LyricsDays"]);
+        }
+        finally { Environment.SetEnvironmentVariable(variable, prior); }
+    }
+
+    [Theory]
+    [InlineData(null, null, null)]
+    [InlineData("http://mounted-verifier:8000", null, "http://mounted-verifier:8000")]
+    [InlineData("http://mounted-verifier:8000", "http://process-verifier:8000", "http://process-verifier:8000")]
+    public void Bootstrap_PreservesOptionalSessionVerifierTopology(string? mounted, string? process, string? expected)
+    {
+        const string variable = "Extensions__SessionVerification__BaseUrl";
+        var prior = Environment.GetEnvironmentVariable(variable);
+        try
+        {
+            Environment.SetEnvironmentVariable(variable, process);
+            Directory.CreateDirectory(root);
+            var path = Path.Combine(root, ".env");
+            File.WriteAllText(path, mounted == null ? "" : $"{variable}={mounted}\n");
+            var settings = new ConfigurationManager();
+            settings.AddEnvironmentVariables();
+
+            RuntimeEnvConfiguration.AddBootstrapOverrides(settings, path);
+
+            Assert.Equal(expected, settings["Extensions:SessionVerification:BaseUrl"]);
+            var verifier = new ExtensionSessionVerificationClient(Mock.Of<IHttpClientFactory>(), settings);
+            Assert.Equal(expected != null, verifier.Enabled);
         }
         finally { Environment.SetEnvironmentVariable(variable, prior); }
     }

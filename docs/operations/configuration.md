@@ -12,6 +12,7 @@ Allstarr separates deployment bootstrap, durable application settings, and encry
 | Public listeners | `PROXY_BIND_ADDRESS`, `PROXY_PORT`, `ADMIN_BIND_ADDRESS`, `ADMIN_PORT` |
 | Admin network policy | `ADMIN_BIND_ANY_IP`, `ADMIN_TRUSTED_SUBNETS`, `ADMIN_BASE_PATH` |
 | Legacy or temporary backend selection | `BACKEND_TYPE`, `JELLYFIN_URL`, `SUBSONIC_URL` |
+| Optional session verifier | `SESSION_VERIFIER_URL` (Compose), `Extensions__SessionVerification__BaseUrl` (Allstarr) |
 
 The default Compose file passes these bootstrap values to Allstarr. It does not mount `.env` into the container or import product settings from it. Changing a deployment value requires recreating the container. Existing v2 deployments can keep their mounted `.env` for the explicit upgrade review.
 
@@ -107,6 +108,8 @@ Use `allstarr.sh` rather than editing Compose fragments:
 ```bash
 ./allstarr.sh enable apple x86_64
 ```
+
+The optional [session verifier](../../sidecars/session-verifier/README.md) uses a deployment-owned service address. `./allstarr.sh enable sessions` configures it and recreates Allstarr; the address is read at startup and does not require a legacy settings import.
 
 See [deployment profiles](deployment-profiles.md), [Spotify lyrics](spotify-lyrics.md), and [Apple download](apple-download-provider.md).
 
