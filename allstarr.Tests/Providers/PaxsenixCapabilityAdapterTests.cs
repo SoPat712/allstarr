@@ -246,6 +246,19 @@ public sealed class PaxsenixCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task MainArtistMatchesWhenTheCatalogAlsoCreditsFeaturedArtists()
+    {
+        var apple = Catalog(_ => Response("{\"results\":{\"songs\":{\"data\":[" +
+            CatalogSong("4").Replace("\"歌手\"", "\"歌手, 客人 & 第三位\"") + "]}}}"));
+        var handler = new Handler((_, _) => Response(Lyrics));
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request(isrc: null));
+
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal("?id=4", Assert.Single(handler.Requests).Query);
+    }
+
+    [Fact]
     public async Task SearchPrefersEqualIsrcAndDeduplicatesEarlierCandidates()
     {
         var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
