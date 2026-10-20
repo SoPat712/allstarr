@@ -28,6 +28,24 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+[-–—]\s+([^\(\)\[\]]+?)(?=\s+[-–—]\s+|\s*[\(\[]|$)")]
     private static partial System.Text.RegularExpressions.Regex DashTitlePartRegex();
 
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:dj[\s-]+mix|mixed\s+by|continuous[\s-]+mix)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex ContinuousMixRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\bmixed\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex MixedRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\s+mixed$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex MixedSuffixRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(karaoke|instrumental|originally performed by|in the style of|backing track|sing[- ]?along)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex BackingRecordingRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:tribute|made famous by|covers?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex CoverRecordingRegex();
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:clean|edited|radio[\s-]+edit|censored)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    private static partial System.Text.RegularExpressions.Regex CleanRecordingRegex();
+
     [System.Text.RegularExpressions.GeneratedRegex(@"^\s*(?:feat(?:uring)?\.?|ft\.?|with)\s+", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex CreditPrefixRegex();
 
@@ -109,6 +127,25 @@ public static partial class FuzzyMatcher
     public static string NormalizeTitleForMatching(
         string title, string? creditedArtists, string? additionalArtists = null) =>
         NormalizeForMatching(StripDecorators(title, string.Join(", ", creditedArtists, additionalArtists)));
+
+    public static bool IsContinuousMixExcerpt(string? title, string? album = null) =>
+        ContinuousMixRegex().IsMatch(album ?? string.Empty) ||
+        ContinuousMixRegex().IsMatch(title ?? string.Empty) ||
+        MixedSuffixRegex().IsMatch(title ?? string.Empty) ||
+        BracketedTitlePartRegex().Matches(title ?? string.Empty)
+            .Concat(DashTitlePartRegex().Matches(title ?? string.Empty))
+            .Any(match => MixedRegex().IsMatch(match.Groups[1].Value));
+
+    public static IReadOnlySet<string> BackingRecordingTags(string? text) =>
+        BackingRecordingRegex().Matches(text ?? string.Empty)
+            .Select(match => NormalizeForMatching(match.Value))
+            .ToHashSet(StringComparer.Ordinal);
+
+    public static bool HasCoverRecordingLabel(string? text) =>
+        CoverRecordingRegex().IsMatch(text ?? string.Empty);
+
+    public static bool HasCleanRecordingLabel(string? title) =>
+        CleanRecordingRegex().IsMatch(title ?? string.Empty);
 
     public static bool TitleAnnotationsMatch(
         string sourceTitle, string? sourceArtist, string candidateTitle, string? candidateArtist)

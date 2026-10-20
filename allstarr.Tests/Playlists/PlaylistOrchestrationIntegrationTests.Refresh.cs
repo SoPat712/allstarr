@@ -211,6 +211,221 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         Assert.Equal(4, calls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Unchanged_refresh_keeps_accepted_decisions_and_identities(bool local)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = local
+            ? Snapshot("stable", Entry(0, "one", "source-1", "One"))
+            : Snapshot("stable", Entry(0, "pending", "new-source", "New Song"));
+        var (service, matches) = BackgroundMatching(MatchingGateway());
+        var queue = RematchQueue();
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            await service.RefreshAsync(Context(), _link);
+            var queued = await queue.ClaimNextAsync("refresh-worker");
+            var claim = queued ?? new DurableJobClaim(Guid.CreateVersion7(), 1, TrackRematchJobHandler.Type,
+                JsonSerializer.SerializeToElement(new PlaylistRematchJobPayload("", "", PlaylistLinkId: _link, RefreshPending: true)),
+                _user, null, null, JsonSerializer.SerializeToElement(new { }), "repeat-refresh");
+            var completion = await ExecuteRefreshRematch(service, matches, claim);
+            Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+            if (queued != null) await queue.CompleteAsync(claim, completion);
+            await using var db = await _factory.CreateDbContextAsync();
+            var decisions = await db.TrackMatches.ToArrayAsync();
+            Assert.Equal(local ? 1 : 2, decisions.Length);
+            Assert.Equal(local ? 1 : 2, decisions.Max(item => item.DecisionVersion));
+            Assert.Equal(TrackMatchState.Accepted, decisions.MaxBy(item => item.DecisionVersion)!.State);
+            Assert.Equal(local ? 2 : 4, await db.ProviderTrackIdentities.CountAsync());
+        }
+    }
+
+    [Fact]
+    public async Task Pending_playlist_rows_do_not_cause_accepted_neighbors_to_be_redecided()
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("mixed", Entry(0, "accepted", "new-source", "New Song"),
+            Entry(1, "pending", "missing-source", "Unrelated composition"));
+        var (service, matches) = BackgroundMatching(MatchingGateway());
+        var queue = RematchQueue();
+        Guid? acceptedSnapshotId = null;
+        for (var iteration = 0; iteration < 3; iteration++)
+        {
+            var refresh = await service.RefreshAsync(Context(), _link);
+            Assert.NotNull(refresh.JobId);
+            var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("refresh-worker"));
+            var completion = await ExecuteRefreshRematch(service, matches, claim);
+            Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
+            await queue.CompleteAsync(claim, completion);
+            await using var db = await _factory.CreateDbContextAsync();
+            acceptedSnapshotId ??= (await db.PlaylistSourceEntries.SingleAsync(item => item.SourcePosition == 0)).ExternalMetadataSnapshotId;
+            var decisions = await db.TrackMatches.Where(item => item.ExternalSnapshotId == acceptedSnapshotId).ToArrayAsync();
+            Assert.Equal(2, decisions.Length);
+            Assert.Equal(TrackMatchState.Accepted, decisions.MaxBy(item => item.DecisionVersion)!.State);
+            Assert.Equal(4, await db.ProviderTrackIdentities.CountAsync());
+        }
+    }
+
+    [Theory]
+    [InlineData("source")]
+    [InlineData("library")]
+    [InlineData("matcher")]
+    [InlineData("policy")]
+    public async Task Refresh_redecides_when_matching_inputs_change(string change)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("stable", Entry(0, "pending", "new-source", "New Song"));
+        var (service, matches) = BackgroundMatching(MatchingGateway());
+        var queue = RematchQueue();
+        await service.RefreshAsync(Context(), _link);
+        var first = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("refresh-worker"));
+        var completion = await ExecuteRefreshRematch(service, matches, first);
+        await queue.CompleteAsync(first, completion);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            if (change == "library") (await db.LibraryTracks.FirstAsync()).Title = "Changed title";
+            if (change == "matcher") (await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync()).MatcherVersion = "retired";
+            if (change == "policy") (await db.PlaylistLinks.SingleAsync()).PolicyVersion = "updated-policy";
+            await db.SaveChangesAsync();
+        }
+        if (change == "source")
+            _source.Snapshot = Snapshot("changed", Entry(0, "pending", "new-source", "New Song") with { Album = "Changed album" });
+        await service.RefreshAsync(Context(), _link);
+        var next = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("refresh-worker"));
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await ExecuteRefreshRematch(service, matches, next)).Kind);
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.True(await verify.TrackMatches.CountAsync() > 2);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Current_accepted_rows_only_need_publication_repair(bool generic)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("stable", Entry(0, "pending", "new-source", "New Song"));
+        var (service, matches) = BackgroundMatching(MatchingGateway());
+        var queue = RematchQueue();
+        await service.RefreshAsync(Context(), _link);
+        var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("refresh-worker"));
+        await queue.CompleteAsync(claim, await ExecuteRefreshRematch(service, matches, claim));
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            if (generic) (await db.ProviderTrackIdentities.SingleAsync(item => item.ProviderId == "deezer")).ProviderId = "external";
+            await db.SaveChangesAsync();
+        }
+        var rematches = new PlaylistRematchService(_factory,
+            new DurablePlaylistProjectionReader(_factory, new TestBackendLibraryAccess(_factory, "music")),
+            new TrackMatchDecisionEngine(), new TestBackendLibraryAccess(_factory, "music"));
+        var current = await rematches.PreviewAsync(_user, playlistLinkId: _link, includePending: true);
+        Assert.Equal(0, current.StaleRevisionRows);
+        Assert.Equal(generic ? 1 : 0, current.GenericExternalRows);
+        Assert.Empty(current.Targets);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            (await db.PlaylistSourceEntries.SingleAsync()).PublishedTrackMatchId = null;
+            await db.SaveChangesAsync();
+        }
+        var repair = await rematches.PreviewAsync(_user, playlistLinkId: _link, includePending: true);
+        Assert.False(Assert.Single(repair.Targets).RequiresDecision);
+        if (generic)
+            Assert.True(Assert.Single((await rematches.PreviewAsync(_user, playlistLinkId: _link)).Targets).RequiresDecision);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Rematch_retains_an_existing_verified_route_when_no_better_evidence_is_available(bool lookupFails)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("stable", Entry(0, "pending", "new-source", "New Song"));
+        var gateway = MatchingGateway();
+        var (service, matches) = BackgroundMatching(gateway);
+        var queue = RematchQueue();
+        await service.RefreshAsync(Context(), _link);
+        var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("refresh-worker"));
+        await queue.CompleteAsync(claim, await ExecuteRefreshRematch(service, matches, claim));
+        if (lookupFails)
+            gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "new-song"))
+                .ThrowsAsync(new HttpRequestException("Temporarily unavailable"));
+        else
+            gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "new-song"))
+                .ReturnsAsync(new Song
+                {
+                    ExternalProvider = "deezer",
+                    ExternalId = "new-song",
+                    Title = "New Song",
+                    Artist = "Artist",
+                    Album = "Album",
+                    Duration = 180
+                });
+        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "equivalent", Title = "New Song",
+                Artist = "Artist", Album = "Album", Duration = 180 }]);
+        await using var db = await _factory.CreateDbContextAsync();
+        var snapshot = await db.ExternalMetadataSnapshots.SingleAsync();
+        Assert.True((await matches.RematchSnapshotAsync(Context(), snapshot.Id, "retain", "updated-policy")).Succeeded);
+        var retained = Assert.Single(await db.ProviderTrackIdentities.Where(item => item.ProviderId == "deezer").ToArrayAsync());
+        Assert.Equal("new-song", retained.ExternalId);
+        Assert.Equal("automatic-match", retained.VerificationMethod);
+    }
+
+    [Theory]
+    [InlineData("automatic-match", false, false)]
+    [InlineData("automatic-suggestion", false, false)]
+    [InlineData("automatic-match", true, false)]
+    [InlineData("automatic-match", false, true)]
+    public async Task Rematch_keeps_one_active_identity_per_provider(string method, bool pinned, bool mismatchedMetadata)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("stable", Entry(0, "pending", "new-source", "New Song"));
+        var gateway = MatchingGateway();
+        var (service, matches) = BackgroundMatching(gateway);
+        var queue = RematchQueue();
+        await service.RefreshAsync(Context(), _link);
+        var claim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("refresh-worker"));
+        await queue.CompleteAsync(claim, await ExecuteRefreshRematch(service, matches, claim));
+        Guid snapshotId;
+        Guid previousId;
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            snapshotId = (await db.ExternalMetadataSnapshots.SingleAsync()).Id;
+            var previous = await db.ProviderTrackIdentities.SingleAsync(item => item.ProviderId == "deezer");
+            previousId = previous.Id;
+            previous.VerificationMethod = method;
+            if (pinned) previous.Verification = ProviderIdentityVerification.Pinned;
+            await db.SaveChangesAsync();
+        }
+        if (mismatchedMetadata)
+            gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "new-song"))
+                .ReturnsAsync(new Song
+                {
+                    ExternalProvider = "deezer",
+                    ExternalId = "new-song",
+                    Title = "Unrelated composition",
+                    Artist = "Different performer",
+                    Album = "Other collection",
+                    Duration = 300
+                });
+        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "replacement", Title = "New Song",
+                Artist = "Artist", Album = "Album", Duration = 180 }]);
+        Assert.True((await matches.RematchSnapshotAsync(Context(), snapshotId, "replace", "updated-policy")).Succeeded);
+        await using var verify = await _factory.CreateDbContextAsync();
+        var identities = await verify.ProviderTrackIdentities.Where(item => item.ProviderId == "deezer").ToArrayAsync();
+        var active = Assert.Single(identities, item => item.VerificationMethod != "superseded");
+        Assert.Equal(pinned ? "new-song" : "replacement", active.ExternalId);
+        if (pinned)
+        {
+            Assert.Equal(previousId, active.Id);
+            Assert.Equal(method, active.VerificationMethod);
+            Assert.Equal(ProviderIdentityVerification.Pinned, active.Verification);
+            Assert.Single(identities);
+        }
+        else Assert.Equal("superseded", identities.Single(item => item.Id == previousId).VerificationMethod);
+    }
+
     private static Mock<IProtocolProviderGateway> MatchingGateway()
     {
         var gateway = new Mock<IProtocolProviderGateway>();

@@ -244,6 +244,7 @@ public sealed partial class TrackIdentityServiceTests
     [Theory]
     [InlineData(ProviderIdentityVerification.Pinned, "manual")]
     [InlineData(ProviderIdentityVerification.Verified, "automatic-suggestion")]
+    [InlineData(ProviderIdentityVerification.Verified, "superseded")]
     public async Task CrossLinks_CannotPromoteUnprovenSourceAssociations(ProviderIdentityVerification verification, string method)
     {
         var source = await _service.CreateRecordingAsync(Actor(_userA), "source");

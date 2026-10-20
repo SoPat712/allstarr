@@ -145,7 +145,7 @@ public sealed class MusicSearchService(
         return new MusicSearchResult<TPayload>(
             Rank(query, native.Where(item => item.Kind == MusicItemKind.Song), songs.Select(song => (
                 new MusicSearchEntry<TPayload> { Song = song },
-                SearchRelevanceRanker.Score(query, song.Title, song.Artist)))),
+                SearchRelevanceRanker.Score(query, song.Title, song.Artist, song.Album)))),
             Rank(query, native.Where(item => item.Kind == MusicItemKind.Album), albums.Select(album => (
                     new MusicSearchEntry<TPayload> { Album = album },
                     SearchRelevanceRanker.Score(query, album.Title, album.Artist)))
@@ -166,7 +166,7 @@ public sealed class MusicSearchService(
             .OrderByDescending(entry => entry switch
             {
                 { Native: { } native } => SearchRelevanceRanker.Score(query, native.Name, native.ArtistText),
-                { Song: { } song } => SearchRelevanceRanker.Score(query, song.Title, song.Artist),
+                { Song: { } song } => SearchRelevanceRanker.Score(query, song.Title, song.Artist, song.Album),
                 { Album: { } album } => SearchRelevanceRanker.Score(query, album.Title, album.Artist),
                 { Artist: { } artist } => SearchRelevanceRanker.Score(query, artist.Name),
                 { Playlist: { } playlist } => SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName),

@@ -11,7 +11,7 @@ public static partial class SearchRelevanceRanker
     [System.Text.RegularExpressions.GeneratedRegex(@"\b(remix|live|acoustic|instrumental|karaoke|cover)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex RecordingVariantRegex();
 
-    public static double Score(string query, string name, string? artist = null)
+    public static double Score(string query, string name, string? artist = null, string? album = null)
     {
         if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(name)) return 0;
         var queryTokens = Tokens(query);
@@ -32,6 +32,9 @@ public static partial class SearchRelevanceRanker
         var requestedVariants = VariantTags(query, requireDecoration: false);
         var unrequested = VariantTags(name, requireDecoration: true).Except(requestedVariants).Count();
         score = Math.Max(0, score - Math.Min(30, unrequested * 15));
+        if (FuzzyMatcher.IsContinuousMixExcerpt(name, album) &&
+            !FuzzyMatcher.IsContinuousMixExcerpt(query) && !queryTokens.Contains("mixed"))
+            score = Math.Max(0, score - 15);
 
         // Small scoring differences are comparable; stable merges and provider priority resolve them.
         return Math.Round(score / 5, MidpointRounding.AwayFromZero) * 5;

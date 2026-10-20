@@ -51,7 +51,7 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var source = await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(item => item.Id == sourceId, cancellationToken);
         if (source == null || source.ResourceKind != ProviderResourceKind.Track ||
-            source.Verification != ProviderIdentityVerification.Verified || source.VerificationMethod is "automatic-suggestion" or
+            source.Verification != ProviderIdentityVerification.Verified || source.VerificationMethod is CatalogIdentityPolicy.SupersededVerificationMethod or "automatic-suggestion" or
                 ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
             return DurableJobCompletion.Success();
         if (!await db.Users.AnyAsync(item => item.Id == execution.Claim.OwnerUserId && item.Enabled, cancellationToken))
@@ -98,6 +98,7 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
             var known = await db.ProviderTrackIdentities.AsNoTracking().Where(item =>
                     item.CanonicalRecordingId == source.CanonicalRecordingId &&
                     item.Verification == ProviderIdentityVerification.Verified && item.VerificationMethod != "automatic-suggestion" &&
+                    item.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
                     item.VerificationMethod != ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod &&
                     item.VerificationMethod != ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod &&
                     (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id))

@@ -136,7 +136,7 @@ public sealed class PlaylistRematchService(
                  decision.MatcherVersion != TrackMatchDecisionEngine.AlgorithmVersion ||
                  decision.PolicyVersion != row.Link.PolicyVersion);
             if (stale) staleIds.Add(group.Key);
-            var genericProviderIdentity = group.Any(item =>
+            var genericProviderIdentity = !includePending && group.Any(item =>
                 item.Entry.RouteKind == "external" && !IsExactProvider(item.Entry.RouteProviderId));
             var publicationOutdated = decision != null && group.Any(item =>
                 !publishedByLink.TryGetValue((item.Link.Id, group.Key), out var published) ||

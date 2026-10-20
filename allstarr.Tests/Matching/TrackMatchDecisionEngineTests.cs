@@ -290,16 +290,16 @@ public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public void DurationDriftBeyondToleranceIsSuggestedInsteadOfAccepted()
+    public void DurationDriftBeyondToleranceIsRejected()
     {
         var scope = Scope();
         var candidate = Candidate(scope) with { DurationMilliseconds = 270_000 };
 
         var decision = new TrackMatchDecisionEngine().Decide(scope, Source(), [candidate]);
 
-        Assert.Equal(TrackMatchReviewState.Suggested, decision.State);
-        Assert.Equal(candidate.LibraryTrackId, decision.SelectedLibraryTrackId);
-        Assert.Contains("duration_exceeds_tolerance", decision.Candidates[0].Warnings);
+        Assert.Equal(TrackMatchReviewState.Unresolved, decision.State);
+        Assert.Null(decision.SelectedLibraryTrackId);
+        Assert.Contains("duration_mismatch", decision.Candidates[0].Reasons);
         Assert.True(decision.Candidates[0].Components!["duration"] < 0.5);
     }
 

@@ -34,6 +34,7 @@ public static class DurableProviderRouteSelector
                 item.ResourceKind == ProviderResourceKind.Track &&
                 (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id) &&
                 item.VerificationMethod != "source-snapshot-hash" &&
+                CatalogIdentityPolicy.IsActive(item) &&
                 item.Verification is ProviderIdentityVerification.Verified or
                     ProviderIdentityVerification.Pinned &&
                 priority.ContainsKey(AppleMusicClient.NormalizeProviderId(item.ProviderId)) &&
@@ -42,6 +43,7 @@ public static class DurableProviderRouteSelector
             .ThenByDescending(item => item.Verification == ProviderIdentityVerification.Pinned)
             .ThenByDescending(item => item.DecisionVersion)
             .ThenByDescending(item => item.VerifiedAt)
+            .ThenBy(item => item.Id)
             .DistinctBy(item => $"{AppleMusicClient.NormalizeProviderId(item.ProviderId)}:{item.ExternalId}", StringComparer.OrdinalIgnoreCase)
             .Select(item => new DurableProviderRoute(
                 item.ProviderId,

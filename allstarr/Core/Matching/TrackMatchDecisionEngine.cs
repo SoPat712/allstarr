@@ -135,7 +135,7 @@ public sealed class TrackMatchPolicy
 
 public sealed class TrackMatchDecisionEngine
 {
-    public const string AlgorithmVersion = "accepted-routing-v21";
+    public const string AlgorithmVersion = "accepted-routing-v22";
     private const double ScoreEpsilon = 0.0000001;
 
     private readonly TrackMatchPolicy _policy;
@@ -192,11 +192,36 @@ public sealed class TrackMatchDecisionEngine
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(candidates);
         ValidateSource(source);
-        var ranked = candidates
+        var scored = candidates
             .Select(candidate => new RankedCandidate(
                 candidate,
                 ScoreCandidate(source, candidate),
                 Priority(candidate, providerPriority)))
+            .ToArray();
+        if (source.IsExplicit == false && scored.Any(candidate =>
+                (candidate.Candidate.IsExplicit == false || FuzzyMatcher.HasCleanRecordingLabel(candidate.Candidate.Title)) &&
+                candidate.Score.Confidence >= _policy.SuggestThreshold &&
+                IsRecordingAllowed(candidate.Score) && HasStrongArtistEvidence(candidate.Score) &&
+                HasDurationWithinTolerance(candidate.Score) && HasSameSemanticVersion(candidate.Score) &&
+                HasSameTitleAnnotations(candidate.Score)))
+        {
+            scored = scored.Select(candidate => candidate.Candidate.IsExplicit == true
+                ? candidate with
+                {
+                    Score = candidate.Score with
+                    {
+                        Confidence = 0,
+                        Reasons = candidate.Score.Reasons.Append("clean_version_available").ToArray(),
+                        Components = new Dictionary<string, double>(candidate.Score.Components ?? new Dictionary<string, double>())
+                        {
+                            ["recordingAllowed"] = 0,
+                            ["explicitContent"] = 0
+                        }
+                    }
+                }
+                : candidate).ToArray();
+        }
+        var ranked = scored
             .OrderByDescending(candidate => candidate.Score.Confidence)
             .ThenBy(candidate => candidate.Score.LibraryTrackId)
             .ToArray();
@@ -204,9 +229,11 @@ public sealed class TrackMatchDecisionEngine
 
         var highestConfidence = ranked[0].Score.Confidence;
         var accepted = ranked.Where(candidate => IsAcceptanceQualified(candidate.Score)).ToArray();
+        var hasAllowedRecording = ranked.Any(candidate => IsRecordingAllowed(candidate.Score));
         var eligible = accepted.Length > 0 ? accepted : ranked
             .Where(candidate => candidate.Score.Confidence + candidate.Priority.Window + ScoreEpsilon >=
-                                highestConfidence);
+                                highestConfidence &&
+                                (IsRecordingAllowed(candidate.Score) || !hasAllowedRecording));
         var selected = eligible
             .OrderBy(candidate => candidate.Priority.Rank)
             .ThenByDescending(candidate => candidate.Score.Confidence)
@@ -284,11 +311,14 @@ public sealed class TrackMatchDecisionEngine
         decision.Candidates.FirstOrDefault() is { IsLocal: true };
 
     private bool IsAcceptanceQualified(TrackMatchCandidateScore score) =>
-        score.Confidence >= _policy.AcceptThreshold &&
+        IsRecordingAllowed(score) && score.Confidence >= _policy.AcceptThreshold &&
         HasStrongArtistEvidence(score) &&
         HasDurationWithinTolerance(score) &&
         HasSameSemanticVersion(score) &&
         HasSameTitleAnnotations(score);
+
+    private static bool IsRecordingAllowed(TrackMatchCandidateScore score) =>
+        score.Components?.GetValueOrDefault("recordingAllowed", 1) != 0;
 
     private static bool HasSameSemanticVersion(TrackMatchCandidateScore score) =>
         score.Components == null || !score.Components.TryGetValue("versionTags", out var match) || match > 0;
@@ -377,6 +407,7 @@ public sealed class TrackMatchDecisionEngine
         var selectedPriority = Priority(selected, providerPriority);
         var runnerUp = rankedScores.FirstOrDefault(score =>
             score.LibraryTrackId != best.LibraryTrackId &&
+            IsRecordingAllowed(score) &&
             (!IsAcceptanceQualified(best) || HasSameSemanticVersion(score)) &&
             Priority(
                 visible.Single(candidate => candidate.LibraryTrackId == score.LibraryTrackId),
@@ -402,7 +433,7 @@ public sealed class TrackMatchDecisionEngine
         var strongArtistEvidence = HasStrongArtistEvidence(best);
         var state = IsAcceptanceQualified(best)
             ? TrackMatchReviewState.Accepted
-            : decisionScore >= _policy.SuggestThreshold && strongArtistEvidence && HasSameSemanticVersion(best)
+            : IsRecordingAllowed(best) && decisionScore >= _policy.SuggestThreshold && strongArtistEvidence && HasSameSemanticVersion(best)
                 ? TrackMatchReviewState.Suggested
                 : TrackMatchReviewState.Unresolved;
         return Result(
@@ -460,6 +491,11 @@ public sealed class TrackMatchDecisionEngine
         LocalTrackMatchCandidate left,
         LocalTrackMatchCandidate right)
     {
+        if (FuzzyMatcher.IsContinuousMixExcerpt(left.Title, left.Album) !=
+            FuzzyMatcher.IsContinuousMixExcerpt(right.Title, right.Album) ||
+            left.IsExplicit.HasValue && right.IsExplicit.HasValue && left.IsExplicit != right.IsExplicit)
+            return false;
+
         if (left.CanonicalRecordingId.HasValue &&
             left.CanonicalRecordingId == right.CanonicalRecordingId)
             return true;

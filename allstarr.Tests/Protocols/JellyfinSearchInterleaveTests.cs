@@ -122,6 +122,18 @@ public class JellyfinSearchInterleaveTests
     }
 
     [Fact]
+    public void MixAlbumMetadataKeepsTheOriginalFirstWhenSearchResultsAreMerged()
+    {
+        var original = CreateTypedItem("Audio", "Espresso", "original");
+        var mix = CreateTypedItem("Audio", "Espresso", "mix");
+        mix["Album"] = "Barbie: Live from the Barbie Dream House (DJ Mix)";
+
+        var result = Rank([], [mix, original], "Espresso");
+
+        Assert.Equal(["original", "mix"], result.Select(GetId));
+    }
+
+    [Fact]
     public void CalculateItemRelevanceScore_AlbumUsesArtistContext()
     {
         var withArtist = CreateTypedItem("MusicAlbum", "folklore", "album-with-artist");

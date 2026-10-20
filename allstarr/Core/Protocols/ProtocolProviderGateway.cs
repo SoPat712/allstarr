@@ -399,7 +399,7 @@ public sealed partial class ProtocolProviderGateway(
         return new SearchResult
         {
             Songs = MergeSearch(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
-                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
+                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist, item.Album), providerOrder),
             Albums = MergeSearch(routed.Albums, albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
             Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
@@ -465,14 +465,15 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
-        foreach (var group in songs.Where(groupBySong.ContainsKey).GroupBy(song => groupBySong[song]))
+        foreach (var group in songs.Where(groupBySong.ContainsKey).GroupBy(song => (
+                     Identity: groupBySong[song], Mixed: FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album))))
         {
             var members = group.ToArray();
             var best = members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
-            var linked = group.Key.StartsWith("recording:", StringComparison.Ordinal);
+            var linked = group.Key.Identity.StartsWith("recording:", StringComparison.Ordinal);
             if (linked)
             {
-                var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key).Identity;
+                var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key.Identity).Identity;
                 if (!string.IsNullOrWhiteSpace(known?.PublicId))
                 {
                     best.Id = known.PublicId;

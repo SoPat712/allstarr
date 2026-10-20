@@ -14,6 +14,15 @@ public sealed class SearchRelevanceRankerTests
                         "Daft Punk - Get Lucky #nightcore #bassboosted", "999333"));
     }
 
+    [Theory]
+    [InlineData("Mixed")]
+    [InlineData("DJ Mix")]
+    public void MixQueriesKeepTheRequestedMixVisible(string label)
+    {
+        Assert.True(SearchRelevanceRanker.Score($"Espresso {label}", $"Espresso ({label})", "Sabrina Carpenter") >
+                    SearchRelevanceRanker.Score($"Espresso {label}", "Espresso", "Sabrina Carpenter"));
+    }
+
     [Fact]
     public void ArtistAndTitleAreMatchedTogetherRegardlessOfQueryOrder()
     {
