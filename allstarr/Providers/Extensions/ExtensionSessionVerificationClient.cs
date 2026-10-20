@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 
 namespace allstarr.Core.Extensions;
@@ -22,7 +22,7 @@ public sealed class ExtensionSessionVerificationClient(IHttpClientFactory client
         using var client = clients.CreateClient(HttpClientName);
         using var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
         {
-            Content = JsonContent.Create(new { verification_url = challenge.VerificationUrl })
+            Content = new StringContent(JsonSerializer.Serialize(new { verification_url = challenge.VerificationUrl }), Encoding.UTF8, "application/json")
         };
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength > 16 * 1024)
