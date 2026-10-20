@@ -75,7 +75,7 @@ services:
   apple-gateway:
     build:
       context: "./sidecars/apple-gateway"
-    image: "${APPLE_GATEWAY_IMAGE:-allstarr/apple-gateway:1.0.0}"
+    image: "${APPLE_GATEWAY_IMAGE:-allstarr/apple-gateway:1.1.0}"
     restart: unless-stopped
     depends_on:
       apple-wrapper:

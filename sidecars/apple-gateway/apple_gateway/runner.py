@@ -23,9 +23,11 @@ class ProcessResult:
 
 
 class ProcessFailure(RuntimeError):
-    def __init__(self, code: str):
+    def __init__(self, code: str, *, stderr: str = ""):
         super().__init__(code)
         self.code = code
+        self.stderr = stderr
+        self.quality: str | None = None
 
 
 class BoundedProcessRunner:
@@ -44,7 +46,7 @@ class BoundedProcessRunner:
                 start_new_session=True,
             )
             stdout_task = asyncio.create_task(self._read_limited(process.stdout))
-            stderr_task = asyncio.create_task(self._read_limited(process.stderr))
+            stderr_task = asyncio.create_task(self._read_limited(process.stderr, retain_tail=True))
             try:
                 await asyncio.wait_for(process.wait(), timeout=self._settings.subprocess_timeout_seconds)
             except (TimeoutError, asyncio.TimeoutError) as exc:
@@ -52,7 +54,7 @@ class BoundedProcessRunner:
                     os.killpg(process.pid, signal.SIGKILL)
                 await process.wait()
                 await asyncio.gather(stdout_task, stderr_task)
-                raise ProcessFailure("process_timeout") from exc
+                raise ProcessFailure("process_timeout", stderr=stderr_task.result()) from exc
             except asyncio.CancelledError:
                 if process.returncode is None:
                     os.killpg(process.pid, signal.SIGKILL)
@@ -62,14 +64,18 @@ class BoundedProcessRunner:
             stdout, stderr = await asyncio.gather(stdout_task, stderr_task)
             return ProcessResult(process.returncode or 0, stdout, stderr)
 
-    async def _read_limited(self, stream: asyncio.StreamReader | None) -> str:
+    async def _read_limited(self, stream: asyncio.StreamReader | None, *, retain_tail: bool = False) -> str:
         if stream is None:
             return ""
         retained = bytearray()
         while chunk := await stream.read(8192):
-            remaining = self._settings.max_process_output_bytes - len(retained)
-            if remaining > 0:
-                retained.extend(chunk[:remaining])
+            if retain_tail:
+                retained.extend(chunk)
+                del retained[:-self._settings.max_process_output_bytes]
+            else:
+                remaining = self._settings.max_process_output_bytes - len(retained)
+                if remaining > 0:
+                    retained.extend(chunk[:remaining])
         return retained.decode("utf-8", errors="replace")
 
     async def download(
@@ -125,16 +131,18 @@ class BoundedProcessRunner:
         finally:
             cookie_path.unlink(missing_ok=True)
         if result.return_code == 78:
-            raise ProcessFailure("account_mismatch")
+            raise ProcessFailure("account_mismatch", stderr=result.stderr)
         if result.return_code == 79:
-            raise ProcessFailure("account_unavailable")
+            raise ProcessFailure("account_unavailable", stderr=result.stderr)
         if result.return_code != 0:
-            raise ProcessFailure("gamdl_failed")
+            raise ProcessFailure("gamdl_failed", stderr=result.stderr)
         artifacts = safe_files(output, {".lrc"} if lyrics_only else {
             ".m4a", ".flac", ".mp4", ".m4v", ".lrc", ".srt", ".ttml", ".jpg", ".png"
         })
         if not artifacts:
-            raise ProcessFailure("artifact_missing")
+            raise ProcessFailure("artifact_missing", stderr=result.stderr)
+        if not lyrics_only and not any(path.suffix.lower() in {".m4a", ".flac"} for path in artifacts):
+            raise ProcessFailure("audio_artifact_missing", stderr=result.stderr)
         return artifacts
 
     async def to_flac(self, source: Path, target: Path) -> Path:
@@ -146,6 +154,34 @@ class BoundedProcessRunner:
             "-c:a", "flac", "-compression_level", "0", str(target),
         ], target.parent)
         if result.return_code != 0 or not target.is_file():
+            raise ProcessFailure("transcode_failed")
+        return target.resolve()
+
+    async def audio_codec(self, source: Path) -> str:
+        if source.suffix.lower() == ".flac":
+            return "flac"
+        result = await self.execute([
+            str(Path(self._settings.ffmpeg_path).with_name("ffprobe")),
+            "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=codec_name",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(source),
+        ], source.parent)
+        codec = result.stdout.strip()
+        if result.return_code != 0 or codec not in {"aac", "alac", "flac"}:
+            raise ProcessFailure("audio_artifact_missing")
+        return codec
+
+    async def seekable_flac(self, source: Path, target: Path) -> Path:
+        result = await self.execute([
+            self._settings.ffmpeg_path, "-nostdin", "-v", "error", "-y",
+            "-i", str(source), "-map", "0:a:0", "-map_metadata", "-1",
+            "-c:a", "flac", "-compression_level", "0", "-f", "flac", str(target),
+        ], target.parent)
+        if result.return_code != 0 or not target.is_file():
+            raise ProcessFailure("transcode_failed")
+        result = await self.execute([
+            "metaflac", "--add-seekpoint=0", "--add-seekpoint=10s", str(target),
+        ], target.parent)
+        if result.return_code != 0:
             raise ProcessFailure("transcode_failed")
         return target.resolve()
 
@@ -171,7 +207,7 @@ class BoundedProcessRunner:
                 stderr=asyncio.subprocess.PIPE,
                 start_new_session=True,
             )
-            stderr_task = asyncio.create_task(self._read_limited(process.stderr))
+            stderr_task = asyncio.create_task(self._read_limited(process.stderr, retain_tail=True))
             deadline = asyncio.get_running_loop().time() + self._settings.subprocess_timeout_seconds
             try:
                 if process.stdout is None:

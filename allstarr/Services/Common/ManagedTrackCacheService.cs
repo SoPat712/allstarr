@@ -115,6 +115,9 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             return;
         }
         var original = stream.Response.Content;
+        var media = original.Headers.ContentType?.MediaType?.Equals("audio/mp4", StringComparison.OrdinalIgnoreCase) == true &&
+            !stream.Lease.Media.MimeType.Equals("audio/mp4", StringComparison.OrdinalIgnoreCase)
+            ? new ProviderMediaFormat("audio/mp4", "mp4", "unknown") : stream.Lease.Media;
         Stream source;
         try { source = await original.ReadAsStreamAsync(cancellationToken); }
         catch { await output.DisposeAsync(); TryDelete(partial); throw; }
@@ -123,7 +126,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         {
             if (!disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
             {
-                transfer = new(this, key, scope, providerId, externalId, stream.Lease.Media, cacheRoot,
+                transfer = new(this, key, scope, providerId, externalId, media, cacheRoot,
                     partial, output, original, source,
                     stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
                     metadataFactory, retain, shutdown.Token);

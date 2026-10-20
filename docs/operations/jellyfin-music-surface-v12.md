@@ -116,21 +116,18 @@ release is available.
 
 ## Apple Music cold playback
 
-For an uncached `apple-download` track, Allstarr opens the compatible sidecar's
-`api/stream/{id}` response with `ResponseHeadersRead`. The sidecar first emits an
-empty 10-byte ID3v2.4 tag, then streams FFmpeg's FLAC stdout after Apple
-fetch/decryption. For transcoded sources it stamps the source duration into the
-FLAC stream header. The prefix helps clients with short response deadlines
-without inserting audio or switching providers. Allstarr relays the progressive
-bytes immediately while teeing them to a temporary file. Metadata resolution
-is concurrent and is used only when the completed cache file is published. On
-publication, the cache removes the ID3 guidance tag; older prefixed cache files
-are retired on access and fetched again. A partial artifact is never registered.
-Completed cache files have exact lengths and support byte ranges and seeks.
-Cold progressive responses cannot advertise an exact encoded length or ranges.
-A `HEAD` request returns
-only the known FLAC media type and disposition through the sidecar's dedicated
-metadata-only route; it does not fetch, decrypt, transcode, or stream Apple media.
+For an uncached `apple-download` track, Allstarr prefers `api/audio/{id}` when the sidecar advertises
+`audio-file`. Preparation completes before the response starts: GAMDL fetches the source, then lossless
+sources become a regular FLAC file with total samples and a seek table. AAC sources remain MP4. The
+cached file response supplies its real length and supports byte ranges, so GET and HEAD can describe a
+complete, seekable file on the first request. Concurrent requests share preparation and conversion.
+Allstarr uses the existing download-backed opening deadline while waiting. Missing audio fails before
+headers, allowing provider fallback; account mismatch remains an account error.
+
+Older sidecars continue using `api/stream/{id}` with an empty 10-byte ID3v2.4 tag followed by FFmpeg's
+FLAC stdout. Allstarr removes that prelude and can add duration guidance lazily. Sequential responses
+become seekable after the managed cache finishes; legacy HEAD only reports known media headers.
+The `api/download/{id}` complete FLAC contract remains available for managed downloads.
 
 `applemusic` and `apple-download` are canonical aliases on this path. An Apple ID
 therefore never incurs an Apple-to-Apple Odesli translation.

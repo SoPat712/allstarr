@@ -20,6 +20,14 @@ def sanitize_json(value: Any) -> Any:
     return value
 
 
+def diagnostic_tail(value: str, token: str) -> str:
+    value = value.replace(token, "[redacted]") if token else value
+    value = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", value)
+    value = re.sub(r"(?im)^.*(?:cookie|music-user-token|media-user-token).*$", "[redacted]", value)
+    value = re.sub(r"https?://[^\s]+", "[redacted]", value, flags=re.IGNORECASE)
+    return "\n".join(value.splitlines()[-3:])
+
+
 def song_url(storefront: str, song_id: str) -> str:
     if not STOREFRONT.fullmatch(storefront) or not APPLE_ID.fullmatch(song_id):
         raise ValueError("invalid_song_id")
