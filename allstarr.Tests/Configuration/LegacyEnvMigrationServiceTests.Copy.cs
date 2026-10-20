@@ -441,6 +441,8 @@ public sealed partial class LegacyEnvMigrationServiceTests
             Assert.Contains("requires_backup_restore", downgrade.Message, StringComparison.Ordinal);
             Assert.Single(await db.Set<ManagedStorageIdentityRecord>().ToArrayAsync());
             Assert.Single(await db.Set<LegacyMediaAdoptionRecord>().ToArrayAsync());
+            await db.Database.MigrateAsync();
+            Assert.Empty(await db.Database.GetPendingMigrationsAsync());
         }
         await media.Queue.CompleteAsync(claim, DurableJobCompletion.Cancelled());
         System.IO.File.Copy(_keyRingPath, Path.Combine(data, "keyring.json"));

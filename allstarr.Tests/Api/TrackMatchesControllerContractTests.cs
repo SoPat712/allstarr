@@ -64,7 +64,7 @@ public sealed class TrackMatchesControllerContractTests
                 { Id = Guid.NewGuid(), CanonicalRecordingId = canonicalId, ProviderId = "spotify", ExternalId = "source", ResourceKind = ProviderResourceKind.Track },
                 new Dictionary<Guid, LibraryTrackRecord> { [localId] = local },
                 new Dictionary<Guid, ProviderTrackIdentityRecord[]> { [canonicalId] = [identity] },
-                new[] { "qobuz", "deezer" }, Guid.NewGuid(), false])!;
+                new[] { "qobuz", "deezer" }, Guid.NewGuid(), false, null])!;
         var value = JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row));
         var candidate = Assert.Single(value.GetProperty("candidates").EnumerateArray());
         Assert.True(candidate.GetProperty("isCurrent").GetBoolean());

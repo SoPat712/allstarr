@@ -182,7 +182,8 @@ public sealed partial class TrackMatchCommandService
                 (await LoadCrossLinksAsync(db, [source.CanonicalRecordingId], cancellationToken))
                     .GetValueOrDefault(source.CanonicalRecordingId)
         };
-        var localCandidates = decisionEngine.PrepareCandidates(candidates.Select(ToLocalCandidate));
+        var automaticSource = await AutomaticSourceAsync(snapshot.OwnerUserId, sourceTrack.ProviderId, cancellationToken);
+        var localCandidates = decisionEngine.PrepareCandidates(automaticSource ? candidates.Select(ToLocalCandidate) : []);
         var libraryIndexRevision = localCandidates.Revision;
         var scope = new TrackMatchScope(
 
@@ -211,7 +212,7 @@ public sealed partial class TrackMatchCommandService
         PlayableTrackMatch? playable = null;
         var unavailableIdentities = new HashSet<Guid>();
         if (excludedProviderIdentityId.HasValue) unavailableIdentities.Add(excludedProviderIdentityId.Value);
-        if (execution != null &&
+        if (automaticSource && execution != null &&
             playableSearch != null &&
             manual?.Decision is not ManualOverrideDecision.Pin &&
             !(manual?.Decision == ManualOverrideDecision.Reject && !manual.LibraryTrackId.HasValue) &&

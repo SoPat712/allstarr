@@ -367,6 +367,8 @@ public sealed class DurablePlaylistProjectionReader(
                 .ToListAsync(cancellationToken);
         var providerOrder = await ResolveProviderOrderAsync(
             link.SourceProviderId, identities, overrides.Values, ownerUserId, access, cancellationToken);
+        var providerPolicy = effectivePolicies == null ? null :
+            await effectivePolicies.ResolveForUserAsync(ownerUserId, cancellationToken);
         var libraryIds = matches.Values.Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
             .Concat(overrides.Values.Select(item => item.Effective?.LibraryTrackId)
@@ -418,7 +420,7 @@ public sealed class DurablePlaylistProjectionReader(
                 : new Dictionary<Guid, ProviderTrackIdentityRecord> { [row.External.Id] = sourceIdentity };
             projected[row.Entry.Id] = ProjectEntry(row.Entry, row.External, sourceMap,
                 entryIdentities, providerOrder, match,
-                new Dictionary<Guid, ManualTrackOverrideLayers> { [row.External.Id] = layers }, entryLibrary);
+                new Dictionary<Guid, ManualTrackOverrideLayers> { [row.External.Id] = layers }, entryLibrary, providerPolicy);
         }
         return projected;
     }
@@ -628,6 +630,8 @@ public sealed class DurablePlaylistProjectionReader(
         }
         var providerOrder = await ResolveProviderOrderAsync(
             link.SourceProviderId, identities, overrides.Values, viewerUserId, access, cancellationToken);
+        var providerPolicy = effectivePolicies == null ? null :
+            await effectivePolicies.ResolveForUserAsync(viewerUserId, cancellationToken);
         var libraryIds = publishedMatches.Values
             .Where(item => item.LibraryTrackId.HasValue)
             .Select(item => item.LibraryTrackId!.Value)
@@ -720,7 +724,7 @@ public sealed class DurablePlaylistProjectionReader(
                     ? publishedMatches.GetValueOrDefault(matchId)
                     : null,
                 overrides,
-                library))
+                library, providerPolicy))
             .ToArray();
 
         return new(
@@ -890,12 +894,13 @@ public sealed class DurablePlaylistProjectionReader(
         IReadOnlyList<string> providerOrder,
         TrackMatchRecord? match,
         IReadOnlyDictionary<Guid, ManualTrackOverrideLayers> overrides,
-        IReadOnlyDictionary<Guid, LibraryTrackRecord> library)
+        IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
+        EffectiveProviderPolicySnapshot? providerPolicy = null)
     {
         var manual = overrides.GetValueOrDefault(external.Id)?.Effective;
         var identity = sourceIdentities.GetValueOrDefault(external.Id);
         var route = TrackRouteProjector.Project(
-            external, match, manual, identity, library.Values, identities, providerOrder);
+            external, match, manual, identity, library.Values, identities, providerOrder, providerPolicy);
         var classification = route.Classification;
         var local = route.LibraryTrack;
         var backendItemId = local?.BackendItemId;

@@ -33,7 +33,8 @@ public sealed class DurationProjectionContractTests
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
             new HashSet<string>(),
             Guid.CreateVersion7(),
-            false
+            false,
+            null
         ])!);
         Assert.Equal("spotify", source.GetProperty("providerId").GetString());
         Assert.Equal(196_456, source.GetProperty("durationMilliseconds").GetInt64());
@@ -63,7 +64,8 @@ public sealed class DurationProjectionContractTests
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
             new HashSet<string>(),
             Guid.CreateVersion7(),
-            false
+            false,
+            null
         ])!);
         Assert.Equal(200_000, target.GetProperty("durationMilliseconds").GetInt64());
         Assert.Equal("jellyfin", target.GetProperty("durationProvenance").GetString());
@@ -108,7 +110,8 @@ public sealed class DurationProjectionContractTests
             new Dictionary<Guid, ProviderTrackIdentityRecord[]>(),
             new HashSet<string>(),
             Guid.CreateVersion7(),
-            false
+            false,
+            null
         ])!;
 
         Assert.Single(Value(row).GetProperty("candidates").EnumerateArray());

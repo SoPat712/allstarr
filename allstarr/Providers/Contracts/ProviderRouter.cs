@@ -2,6 +2,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 
 namespace allstarr.Core.Routing;
 
@@ -23,7 +24,8 @@ public sealed class ProviderRouter(
     IProviderRouteHealthSource health,
     IProviderRouteSidecarSource sidecars,
     ITrackIdentityService identities,
-    IProviderOutcomeObserver? observer = null) : IProviderRouter
+    IProviderOutcomeObserver? observer = null,
+    IEffectiveProviderPolicyResolver? effectivePolicies = null) : IProviderRouter
 {
     private static readonly IReadOnlyDictionary<ProviderCapabilityKind, Type> CapabilityContracts =
         new Dictionary<ProviderCapabilityKind, Type>
@@ -60,6 +62,14 @@ public sealed class ProviderRouter(
             throw new TimeoutException("The provider route deadline has expired.");
         }
 
+        var usePolicy = effectivePolicies == null ? null : request.Actor.EffectiveUserId is { } userId
+            ? await effectivePolicies.ResolveForUserAsync(userId, request.CancellationToken)
+            : await effectivePolicies.ResolveAsync(request.CancellationToken);
+        ProviderUseMode UseMode(ProviderDescriptor provider) => ProviderUsePolicy.Restrict(provider,
+            usePolicy?.GetProviderMode(provider.Id) ?? ProviderUsePolicy.DefaultMode(provider));
+        var sourceManual = request.SourceTrackId is { ProviderId: not "allstarr" } source &&
+            registry.TryGet(source.ProviderId, out var sourceDescriptor) && UseMode(sourceDescriptor!) != ProviderUseMode.Automatic;
+
         var orderedProviders = registry
             .FindByCapability(request.Capability, includeNonOperational: true)
             .OrderBy(provider => ExplicitPriority(request, provider.Id))
@@ -89,6 +99,20 @@ public sealed class ProviderRouter(
             if (!request.Policy.AllowsProvider(provider.Id))
             {
                 Reject("provider-not-allowed");
+                continue;
+            }
+
+            var useMode = UseMode(provider);
+            var exactSource = request.SourceTrackId?.ProviderId == provider.Id;
+            if (useMode == ProviderUseMode.Off)
+            {
+                Reject("provider-disabled");
+                continue;
+            }
+            if (sourceManual && !exactSource || useMode == ProviderUseMode.ManualOnly &&
+                !exactSource && (request.Purpose != ProviderRoutePurpose.ManualSelection || request.SourceTrackId != null))
+            {
+                Reject("manual-selection-required");
                 continue;
             }
 
@@ -404,7 +428,7 @@ public sealed class ProviderRouter(
                 state.TrackCatalog, state.IsExplicit, state.RateLimitBudgetAvailable, state.StorageCapacityAvailable,
                 state.ProviderTermsAllowed, state.AllowedAccountScopes)),
             request.SourceTrackId is { } source ? new(Resolve(source.ProviderId), source.ResourceKind, source.Value) : null,
-            request.IdempotencyKey, request.CancellationToken);
+            request.IdempotencyKey, request.CancellationToken, request.Purpose);
     }
 
     private async Task<ProviderExecutionContext?> CreateSourceContextAsync(ProviderRouteRequest request)

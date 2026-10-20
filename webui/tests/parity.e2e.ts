@@ -545,6 +545,13 @@ async function mockApi(page: Page, options: {
       return;
     }
     let body = responses[`${url.pathname}${url.search}`] ?? responses[url.pathname];
+    if (url.pathname === "/api/admin/providers/use") body = {
+      personalRevision: "source-use-personal", householdRevision: "source-use-household",
+      providers: (responses["/api/admin/ui/schema"] as { providers: { id: string }[] }).providers.map(provider => ({
+        providerId: provider.id, mode: "automatic", householdMode: "automatic",
+        supportsAutomaticMatching: true, householdDisabled: false,
+      })),
+    };
     if (url.pathname === "/api/admin/jobs" && body === undefined) {
       const fixture = structuredClone(responses["/api/admin/jobs?limit=100"]) as { jobs: Array<{ state: string }>; progress: unknown[] };
       const history = url.searchParams.get("view") === "history";
@@ -4246,7 +4253,7 @@ test("Integrations keep primary actions visible and report scoped degradation", 
     return value;
   });
   await expect(metadataCapability.locator('[data-slot="badge"]')).toHaveCSS("color", successColor);
-  await expect(metadataCapability.getByRole("button", { name: "Test" })).toHaveAttribute("data-slot", "button");
+  await expect(metadataCapability.getByRole("button", { name: "Test", exact: true })).toHaveAttribute("data-slot", "button");
 
   const listener = await context.newPage();
   await mockApi(listener);

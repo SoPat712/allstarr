@@ -61,6 +61,8 @@ public interface IDurableRuntimeSettings
     Task<PersonalListeningPreferences> UpdatePreferencesAsync(
         Guid userId, ListeningPreferences? overrides, string expectedRevision,
         CancellationToken cancellationToken = default);
+    Task UpdateProviderModeAsync(Guid? ownerUserId, string providerId, string? mode,
+        string expectedRevision, Guid actorUserId, CancellationToken cancellationToken = default);
 }
 
 public interface IRuntimeSettingsChangeSignal
@@ -160,6 +162,8 @@ public static class RuntimeSettingCatalog
         items.Add(new("Providers:EnabledSearch", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_ENABLED_SEARCH"));
         items.Add(new("Providers:EnabledPlaylist", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_ENABLED_PLAYLIST"));
         items.Add(new("Providers:Disabled", RuntimeSettingValueType.StringList, "MULTI_PROVIDER_DISABLED_PROVIDERS"));
+        items.Add(new(ProviderUsePolicy.SettingKey, RuntimeSettingValueType.String,
+            ProviderUsePolicy.SettingKey, MaximumLength: 32768, DefaultValue: "{}"));
         Bool("Library:EnableExternalPlaylists", "Jellyfin:EnableExternalPlaylists");
         Int("Matching:LocalPreferencePercent", 0, 20);
         items.Add(new("Library:PlaylistsDirectory", RuntimeSettingValueType.String, "Jellyfin:PlaylistsDirectory"));
@@ -458,6 +462,11 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
             if (overrides.LyricsOrder != null)
                 writes.Add(new(ListeningPreferenceKeys.LyricsOrder, overrides.LyricsOrder,
                     existingRevisions.GetValueOrDefault(ListeningPreferenceKeys.LyricsOrder)));
+            if (overrides.ProviderModes != null)
+                writes.Add(new(ProviderUsePolicy.SettingKey,
+                    ProviderUsePolicy.SerializeModes(overrides.ProviderModes.Select(item =>
+                        new KeyValuePair<string, ProviderUseMode>(item.Key, ProviderUsePolicy.ParseMode(item.Value)))),
+                    existingRevisions.GetValueOrDefault(ProviderUsePolicy.SettingKey)));
             _ = await StageScopedBatchAsync(db, userId, writes, "personal-preferences", userId,
                 cancellationToken);
         }
@@ -489,6 +498,69 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         { throw new RuntimeSettingConflictException("Listening preferences changed during the update.", ex); }
         _signal.Publish();
         return updated;
+    }
+
+    public async Task UpdateProviderModeAsync(Guid? ownerUserId, string providerId, string? mode,
+        string expectedRevision, Guid actorUserId, CancellationToken cancellationToken = default)
+    {
+        providerId = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(
+            ProviderContractValidation.ProviderId(providerId, nameof(providerId)));
+        if (mode != null) _ = ProviderUsePolicy.ParseMode(mode);
+        if (string.IsNullOrWhiteSpace(expectedRevision))
+            throw new ArgumentException("An expected preferences revision is required.");
+        await using var db = await _factory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await RequirePreferenceScopeAsync(db, actorUserId, cancellationToken);
+        await RequirePreferenceScopeAsync(db, ownerUserId, cancellationToken);
+        if (ownerUserId != actorUserId && (ownerUserId.HasValue ||
+            !await db.Users.AsNoTracking().AnyAsync(item => item.Id == actorUserId && item.IsAdmin && item.Enabled, cancellationToken)))
+            throw new UnauthorizedAccessException("Only an administrator may change household source use.");
+        var current = await ReadPreferencesAsync(db, ownerUserId, cancellationToken);
+        if (current.Revision != expectedRevision)
+            throw new RuntimeSettingConflictException("Source preferences changed during the update.");
+        var row = await db.RuntimeSettings.SingleOrDefaultAsync(item =>
+            item.OwnerUserId == ownerUserId && item.Key == ProviderUsePolicy.SettingKey, cancellationToken);
+        var raw = row == null ? "{}" : (string)FromRecord(row,
+            RuntimeSettingCatalog.Require(ProviderUsePolicy.SettingKey)).Value;
+        var modes = ProviderUsePolicy.ParseModes(raw).ToBuilder();
+        if (mode == null) modes.Remove(providerId);
+        else modes[providerId] = ProviderUsePolicy.ParseMode(mode);
+        var writes = new List<RuntimeSettingWrite>();
+        if (ownerUserId.HasValue && modes.Count == 0)
+        {
+            if (row != null) db.RuntimeSettings.Remove(row);
+        }
+        else writes.Add(new(ProviderUsePolicy.SettingKey, ProviderUsePolicy.SerializeModes(modes), row?.Revision));
+        if (ownerUserId == null && mode is not (null or "off"))
+        {
+            var disabledRow = await db.RuntimeSettings.SingleOrDefaultAsync(item =>
+                item.OwnerUserId == null && item.Key == "Providers:Disabled", cancellationToken);
+            var definition = RuntimeSettingCatalog.Require("Providers:Disabled");
+            var disabled = (string[])(disabledRow == null ? FromBootstrap(definition) : FromRecord(disabledRow, definition)).Value;
+            writes.Add(new("Providers:Disabled", string.Join(',', disabled.Where(item =>
+                allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(item) != providerId)), disabledRow?.Revision));
+        }
+        if (writes.Count > 0)
+            _ = await StageScopedBatchAsync(db, ownerUserId, writes, "source-use", actorUserId, cancellationToken);
+        db.AuditEvents.Add(new AuditEventRecord
+        {
+            Id = Guid.CreateVersion7(),
+            ActorUserId = actorUserId,
+            Category = "runtime-settings",
+            Action = "runtime-settings.source-use",
+            Outcome = "succeeded",
+            CorrelationId = $"runtime-settings:{Guid.NewGuid():N}",
+            CreatedAt = _clock.UtcNow,
+            DetailsJson = JsonSerializer.Serialize(new { providerId, scope = ownerUserId.HasValue ? "personal" : "household", mode }, JsonOptions)
+        });
+        try
+        {
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (Exception exception) when (IsWriteConflict(exception))
+        { throw new RuntimeSettingConflictException("Source preferences changed during the update.", exception); }
+        _signal.Publish();
     }
 
     private static async Task RequirePreferenceScopeAsync(
@@ -524,16 +596,29 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                 : householdSettings[key],
             StringComparer.OrdinalIgnoreCase);
         var effective = ToListeningPreferences(effectiveSettings);
+        if (personalRows.ContainsKey(ProviderUsePolicy.SettingKey))
+            effective = effective with
+            {
+                ProviderModes = (household.ProviderModes ?? new Dictionary<string, string>())
+                    .Concat(effective.ProviderModes ?? new Dictionary<string, string>())
+                    .GroupBy(item => item.Key, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)
+            };
         return new(effective, household, personalRows.Count == 0,
             ComputePreferencesRevision(userId, householdSettings, personalRows));
     }
 
     private static ListeningPreferences ToListeningPreferences(
-        IReadOnlyDictionary<string, EffectiveRuntimeSetting> settings) => new(
-        (string)settings[ListeningPreferenceKeys.ExplicitFilter].Value,
-        (bool)settings[ListeningPreferenceKeys.ShowExternalLabel].Value,
-        (bool)settings[ListeningPreferenceKeys.ShowExplicitLabel].Value,
-        settings[ListeningPreferenceKeys.LyricsOrder].NormalizedValue);
+        IReadOnlyDictionary<string, EffectiveRuntimeSetting> settings)
+    {
+        var modes = ProviderUsePolicy.ParseModes((string)settings[ProviderUsePolicy.SettingKey].Value);
+        return new((string)settings[ListeningPreferenceKeys.ExplicitFilter].Value,
+            (bool)settings[ListeningPreferenceKeys.ShowExternalLabel].Value,
+            (bool)settings[ListeningPreferenceKeys.ShowExplicitLabel].Value,
+            settings[ListeningPreferenceKeys.LyricsOrder].NormalizedValue,
+            modes.Count == 0 ? null : modes.ToDictionary(item => item.Key,
+                item => ProviderUsePolicy.Name(item.Value), StringComparer.Ordinal));
+    }
 
     private static string ComputePreferencesRevision(
         Guid? userId,
@@ -618,6 +703,11 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
     private static (object Value, string Display, string Json) NormalizeString(RuntimeSettingDefinition definition, string raw)
     {
         var value = raw.Trim();
+        if (definition.Key == ProviderUsePolicy.SettingKey)
+        {
+            if (value.Length > definition.MaximumLength) throw new ArgumentException("Too many source use modes.");
+            value = ProviderUsePolicy.SerializeModes(ProviderUsePolicy.ParseModes(value));
+        }
         OperatorSettingPolicy.Validate(definition.Key, value);
         if (value.Length == 0 && definition.AllowEmpty)
             return (string.Empty, string.Empty, JsonSerializer.Serialize(string.Empty, JsonOptions));

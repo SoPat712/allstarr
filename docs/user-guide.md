@@ -133,6 +133,12 @@ Settings owns deployment behavior rather than provider credentials: playback qua
 
 Sensitive values are never returned to the browser after saving. Leaving a secret field blank while editing keeps the saved secret unless the form explicitly says otherwise.
 
+Each source's **Use source** controls choose Automatic, Manual only, or Off for you. Administrators can also set the household default. Personal choices affect only your listener account; **Use household default** removes that source's personal override. An administrator's deployment-wide disabled-source restriction still applies.
+
+Manual-only sources stay out of normal search, automatic playlist matching, canonical identity linking and fallback. In a match dialog, choose **Search another source**, enter an artist and title, and search to pin an exact result. Refreshes and rematches retain that choice. Turning the source off retains the pin but makes it unavailable; any previously verified normal routes can still play.
+
+**ArtistGrid** is a built-in, account-free source that defaults to Manual only and can be turned off per listener. Its catalog contains individual tracker versions rather than streaming-service identities, so Automatic is unavailable. Search with the artist's name and an optional song title. Supported Pillows, Pixeldrain and Google Drive audio links appear as selectable songs. Each pin identifies its exact source link; moving spreadsheet rows or reordering links does not select a different version. A removed link becomes unavailable until you choose a replacement. ArtistGrid currently supplies streaming rather than permanent downloads.
+
 ## Import listening history
 
 Open **Intelligence → Import** and choose or drop one or more supported files. Allstarr accepts:

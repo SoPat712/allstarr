@@ -17,6 +17,36 @@ namespace allstarr.Tests;
 public sealed class TrackMatchPlayableSearchTests
 {
     [Fact]
+    public async Task AutomaticMatchingFiltersManualOnlyCandidatesUsingTheListenersPolicy()
+    {
+        var user = Guid.CreateVersion7();
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("manual", ProviderUseMode.ManualOnly) };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["manual", "deezer"]);
+        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync([
+                new Song { ExternalProvider = "manual", ExternalId = "demo", Title = "Song", Artist = "Artist", Duration = 180 },
+                new Song { ExternalProvider = "deezer", ExternalId = "released", Title = "Song", Artist = "Artist", Duration = 180 }
+            ]);
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(),
+            NullLogger<TrackMatchPlayableSearch>.Instance, policies.Object);
+        var source = new ExternalTrackMatchSnapshot("source", "spotify", "source", "Song", "Artist", null, null, 180000, null, null, null);
+        var scope = new TrackMatchScope(user, "main", Guid.NewGuid(), 2, 1, new HashSet<string>());
+        var result = await service.MatchAsync(Context(user), source, scope, [], null, CancellationToken.None);
+        Assert.Equal("deezer", result.SelectedExternal!.ExternalProvider);
+        Assert.DoesNotContain(result.ExternalCandidates.Values, item => item.ExternalProvider == "manual");
+        gateway.Invocations.Clear();
+        var manualResult = await service.MatchAsync(Context(user), source with { ProviderId = "manual" },
+            scope, [], null, CancellationToken.None);
+        Assert.Null(manualResult.SelectedExternal);
+        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+    }
+    [Fact]
     public void Provider_eligibility_comes_from_streaming_routes()
     {
         var gateway = new Mock<IProtocolProviderGateway>();

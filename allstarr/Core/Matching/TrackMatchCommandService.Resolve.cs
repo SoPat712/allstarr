@@ -142,6 +142,9 @@ public sealed partial class TrackMatchCommandService
             if (string.IsNullOrWhiteSpace(providerId) || providerId.Length > 100 ||
                 string.IsNullOrWhiteSpace(externalId) || externalId.Length > 500)
                 return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "ExternalProvider and ExternalId are required for a provider match");
+            if (effectivePolicies != null &&
+                !(await effectivePolicies.ResolveForUserAsync(actor.UserId, cancellationToken)).IsEnabled(providerId))
+                return TrackMatchCommandResult.Fail(TrackMatchCommandFailure.Invalid, "That source is disabled for this listener");
             var access = playableSearch == null ? null : await libraryAccess.ResolveUserAsync(actor.UserId, cancellationToken);
             if (!ExternalTrackPlaybackPolicy.CanUseForPlayback(providerId, externalId) ||
                 playableSearch != null && (access?.Context?.Actor is not { } viewer ||

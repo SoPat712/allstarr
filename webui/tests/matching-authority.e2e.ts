@@ -2,6 +2,7 @@ import { expect, test, type Page, type Request, type Route } from "@playwright/t
 
 type AuthorityOptions = {
   administrator: boolean;
+  providers?: Record<string, unknown>[];
   match?: Record<string, unknown>;
   resolve?: (route: Route) => Promise<void>;
   authorityAction?: (route: Route) => Promise<void>;
@@ -91,7 +92,7 @@ async function mockMatching(page: Page, options: AuthorityOptions) {
     });
     if (url.pathname === "/api/admin/ui/schema") return json(route, {
       activeBackend: "Jellyfin",
-      providers: [
+      providers: options.providers ?? [
         { id: "spotify", name: "Spotify", categories: ["metadata"] },
         { id: "qobuz", name: "Qobuz", categories: ["streaming"] },
       ],
@@ -123,6 +124,63 @@ test("match dialog shows field scores at 320px in dark mode", async ({ page }) =
   const dialog = page.getByRole("dialog", { name: "Layered song" });
   await expect(dialog.locator(".score-components")).toContainText("title");
   await expect(dialog.locator(".score-components")).toContainText("duration");
+});
+
+for (const [width, colorScheme] of [[320, "light"], [1280, "dark"]] as const) {
+  test(`manual source requires explicit selection and saves an exact pin at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    const queries: URL[] = [];
+    const writes: Record<string, unknown>[] = [];
+    await mockMatching(page, { administrator: false,
+      providers: [{ id: "artistgrid", name: "ArtistGrid", useMode: "manualOnly", categories: ["metadata", "streaming"] }],
+      match: { title: "Communicate (v3)", artist: "Ariana Grande", manualAuthorities: [], candidates: [] },
+      resolve: async route => { writes.push(route.request().postDataJSON()); await json(route, { success: true }); },
+    });
+    await page.route("**/api/admin/track-matches/targets/*?*", async route => {
+      const url = new URL(route.request().url()); queries.push(url);
+      await json(route, { tracks: url.searchParams.get("provider") === "artistgrid"
+        ? [{ id: "exact-v3", externalId: "exact-v3", externalProvider: "artistgrid", title: "Communicate (v3)", artist: "Ariana Grande" }] : [], providers: ["artistgrid"] });
+    });
+    await page.goto("#/library/mappings");
+    await page.getByRole("button", { name: "Interactive search" }).click();
+    const dialog = page.getByRole("dialog", { name: "Communicate (v3)" });
+    await expect(dialog.getByRole("button", { name: "Search another source" })).toBeVisible();
+    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await expect.poll(() => queries.length).toBeGreaterThan(0);
+    expect(queries.some(url => url.searchParams.has("provider"))).toBe(false);
+    await dialog.getByRole("button", { name: "Search another source" }).press("Enter");
+    await page.getByRole("option", { name: "ArtistGrid · Manual only" }).click();
+    await expect(dialog.getByPlaceholder("Artist and title")).toHaveValue("Ariana Grande Communicate (v3)");
+    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    await expect.poll(() => queries.some(url => url.searchParams.get("provider") === "artistgrid")).toBe(true);
+    await expect(dialog.locator(".target-results")).toContainText("Communicate (v3)");
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await dialog.locator(".target-results button.match-row").click();
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toMatchObject({ targetType: "provider", externalProvider: "artistgrid", externalId: "exact-v3", authorityScope: "personal" });
+  });
+}
+
+test("listener changes source use without household controls", async ({ page }) => {
+  await mockMatching(page, { administrator: false,
+    providers: [{ id: "artistgrid", name: "ArtistGrid", useMode: "manualOnly", categories: ["metadata", "streaming"], connectionKind: "built_in" }],
+  });
+  const writes: Record<string, unknown>[] = [];
+  await page.route("**/api/admin/provider-accounts", route => json(route, { accounts: [], audienceUsers: [] }));
+  await page.route("**/api/admin/providers/use**", async route => {
+    if (route.request().method() === "PUT") writes.push(route.request().postDataJSON());
+    await json(route, { personalRevision: "listener-revision", householdRevision: "household-revision",
+      providers: [{ providerId: "artistgrid", mode: writes.length ? "off" : "manualOnly", householdMode: "manualOnly", supportsAutomaticMatching: false, householdDisabled: false }] });
+  });
+  await page.goto("#/integrations/services/artistgrid");
+  const use = page.getByRole("region", { name: "Source use", exact: true });
+  await use.getByRole("button", { name: "Use source for you" }).click();
+  await expect(page.getByRole("option", { name: "Automatic", exact: true })).toHaveCount(0);
+  await page.getByRole("option", { name: "Off", exact: true }).click();
+  await expect.poll(() => writes.length).toBe(1);
+  expect(writes[0]).toEqual({ mode: "off", scope: "personal", expectedRevision: "listener-revision" });
+  await expect(use.getByRole("button", { name: "Household source use" })).toHaveCount(0);
 });
 
 test("MatchDialog prefills the full title despite a legacy search query", async ({ page }) => {

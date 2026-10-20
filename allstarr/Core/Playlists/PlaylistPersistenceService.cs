@@ -5,6 +5,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Playlists;
@@ -128,6 +129,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
     private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly IProtocolProviderGateway? _providerGateway;
     private readonly IProviderRegistry? _registry;
+    private readonly IEffectiveProviderPolicyResolver? _providerPolicies;
     private readonly allstarr.Core.ManagedFiles.RecordingKeptFiles? _kept;
     public PlaylistPersistenceService(
         IDbContextFactory<AllstarrDbContext> factory,
@@ -137,9 +139,10 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
         IBackendLibraryAccessResolver libraryAccess,
         PlaylistMaterializationPlanner? planner = null,
         IProtocolProviderGateway? providerGateway = null, IProviderRegistry? registry = null,
-        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null) =>
-        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway, _registry, _kept) =
-        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway, registry, kept);
+        allstarr.Core.ManagedFiles.RecordingKeptFiles? kept = null,
+        IEffectiveProviderPolicyResolver? providerPolicies = null) =>
+        (_factory, _accounts, _clock, _trackMatches, _planner, _libraryAccess, _providerGateway, _registry, _kept, _providerPolicies) =
+        (factory, accounts, clock, trackMatches, planner ?? new PlaylistMaterializationPlanner(), libraryAccess, providerGateway, registry, kept, providerPolicies);
 
     public async Task<PlaylistLinkRecord> CreateLinkAsync(ProtocolExecutionContext context, PlaylistLinkInput input, CancellationToken cancellationToken = default)
     {
@@ -432,6 +435,8 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             .GroupBy(item => item.CanonicalRecordingId)
             .ToDictionary(group => group.Key, group => group.ToArray());
         var viewerUserId = actor.EffectiveUserId ?? link.OwnerUserId;
+        var providerPolicy = _providerPolicies == null ? context.Policy :
+            await _providerPolicies.ResolveForUserAsync(viewerUserId, cancellationToken);
         var manualOverrides = ManualTrackOverrides.Index(
             snapshots.Values, resolution.ActiveOverrides, viewerUserId);
         var latestMatches = resolution.LatestDecisions.ToDictionary(item => item.ExternalSnapshotId);
@@ -496,7 +501,7 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
                 ? canonicalIdentities
                 : [];
             var projection = TrackRouteProjector.Project(external, match, manual, sourceIdentity,
-                libraryTracks.Values, routeIdentities, providerPriority);
+                libraryTracks.Values, routeIdentities, providerPriority, providerPolicy);
             var classification = projection.Classification;
             var library = projection.LibraryTrack;
             var route = classification.RouteKind switch

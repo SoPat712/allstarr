@@ -16,8 +16,9 @@ public sealed partial class TrackIdentityService
     {
         EnsureStorageReady();
         ThrowIfUnavailable(execution, cancellationToken);
-        publicId = ValidatePublicId(publicId);
-        var normalizedIsrc = NormalizeIsrc(isrc);
+        var automatic = await CanAutomaticallyLinkAsync(execution.Actor, externalId.ProviderId, cancellationToken);
+        publicId = ValidatePublicId(automatic ? publicId : $"ext-{externalId.ProviderId}-song-{externalId.Value}");
+        var normalizedIsrc = automatic ? NormalizeIsrc(isrc) : null;
         var request = new TrackIdentityLinkRequest(Guid.CreateVersion7(), externalId, scope,
             ProviderIdentityVerification.Verified, "source-use", 1);
         ValidateLinkRequest(execution, request);

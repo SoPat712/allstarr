@@ -564,6 +564,8 @@ public sealed partial class ProtocolProviderGateway(
             protocol, actor, configuredProviderOrder);
         if (!string.IsNullOrWhiteSpace(providerId))
             providerOrder = providerOrder.Where(item => item == NormalizeProvider(providerId)).ToArray();
+        else
+            providerOrder = providerOrder.Where(item => IsAutomaticProvider(item, effectivePolicy)).ToArray();
         if (providerOrder.Count == 0) return [];
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
             protocol,
@@ -571,7 +573,8 @@ public sealed partial class ProtocolProviderGateway(
             ProviderCapabilityKind.Metadata,
             "protocol-playable-track-search",
             providerIds: providerOrder,
-            sourceTrackId: null));
+            sourceTrackId: null,
+            purpose: string.IsNullOrWhiteSpace(providerId) ? ProviderRoutePurpose.Automatic : ProviderRoutePurpose.ManualSelection));
         var snapshots = await SearchPlayableProvidersWithinBudgetAsync(
             plan.Candidates, query, limit, protocol.CancellationToken);
         var songs = snapshots.SelectMany(snapshot => snapshot.Result.Songs)
@@ -616,7 +619,8 @@ public sealed partial class ProtocolProviderGateway(
             sourceTrackId: null,
             correlationId: correlationId,
             deadline: deadline,
-            cancellationToken: cancellationToken));
+            cancellationToken: cancellationToken,
+            purpose: ProviderRoutePurpose.ManualSelection));
         var allowed = streaming.Candidates.Select(item => item.Provider.Id)
             .Select(NormalizeProvider)
             .ToHashSet(StringComparer.Ordinal);
@@ -1050,7 +1054,7 @@ public sealed partial class ProtocolProviderGateway(
 
         var availabilityOrder = StoredStreamingOrder(effectivePolicy);
         var providerOrder = ResolveProviderOrder(ProviderCapabilityKind.Streaming, effectivePolicy);
-        if (effectivePolicy?.DisabledProviders.Contains(providerId) != true)
+        if (effectivePolicy?.IsEnabled(providerId) != false)
         {
             providerOrder = providerOrder.Append(providerId).Distinct(StringComparer.Ordinal).ToArray();
         }
@@ -1085,7 +1089,8 @@ public sealed partial class ProtocolProviderGateway(
         var availabilityAttempted = false;
         async Task<bool> ResolveAvailabilityAsync()
         {
-            if (availabilityAttempted || resuming || !hasPlaybackIdentity && providerId != "allstarr") return false;
+            if (availabilityAttempted || resuming || !hasPlaybackIdentity && providerId != "allstarr" ||
+                providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy)) return false;
             availabilityAttempted = true;
             var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
                 exactRouteMissKey, effectivePolicy, quality);
@@ -1437,7 +1442,8 @@ public sealed partial class ProtocolProviderGateway(
             operationId,
             [providerId],
             sourceTrackId,
-            quality, allowedAccountScopes: allowedAccountScopes));
+            quality, allowedAccountScopes: allowedAccountScopes,
+            purpose: ProviderRoutePurpose.ManualSelection));
         var candidate = plan.Candidates.SingleOrDefault();
         if (candidate == null && plan.Decision.Candidates.Any(item =>
                 item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
@@ -1465,6 +1471,12 @@ public sealed partial class ProtocolProviderGateway(
                                descriptor.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Streaming)
                                    .AccountRequirement == ProviderAccountRequirement.None);
     }
+
+    private bool IsAutomaticProvider(string providerId, EffectiveProviderPolicySnapshot? policy) =>
+        policy?.IsAutomatic(providerId) != false &&
+        (!registry.TryGet(providerId, out var provider) ||
+         provider!.MatchingMode == ProviderMatchingMode.Automatic &&
+         (policy != null || provider.DefaultUseMode == ProviderUseMode.Automatic));
 
     private IReadOnlyList<string> ResolveProviderOrder(
         ProviderCapabilityKind capability,
@@ -1513,7 +1525,8 @@ public sealed partial class ProtocolProviderGateway(
         bool allowFallback = false,
         bool allowManagedDownloads = false,
         string? idempotencyKey = null,
-        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null) => Request(
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null,
+        ProviderRoutePurpose purpose = ProviderRoutePurpose.Automatic) => Request(
         actor,
         capability,
         operationId,
@@ -1526,7 +1539,8 @@ public sealed partial class ProtocolProviderGateway(
         protocol.CorrelationId,
         protocol.Deadline,
         protocol.CancellationToken,
-        allowedAccountScopes);
+        allowedAccountScopes,
+        purpose);
 
     private static ProviderRouteRequest Request(
         ProviderActorContext actor,
@@ -1541,7 +1555,8 @@ public sealed partial class ProtocolProviderGateway(
         string correlationId = "provider-route",
         DateTimeOffset deadline = default,
         CancellationToken cancellationToken = default,
-        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null) => new(
+        IReadOnlyList<ProviderAccountScope>? allowedAccountScopes = null,
+        ProviderRoutePurpose purpose = ProviderRoutePurpose.Automatic) => new(
         capability,
         actor,
         new ProviderExecutionPolicy(
@@ -1569,7 +1584,8 @@ public sealed partial class ProtocolProviderGateway(
             ], allowedAccountScopes: allowedAccountScopes)),
         sourceTrackId: sourceTrackId,
         idempotencyKey: idempotencyKey,
-        cancellationToken: cancellationToken);
+        cancellationToken: cancellationToken,
+        purpose: purpose);
 
     private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection)
     {

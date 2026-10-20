@@ -50,6 +50,23 @@ public sealed record EffectiveProviderPolicySnapshot(
     public Guid? UserId { get; init; }
     public ListeningPreferences Preferences { get; init; } = new();
     public string PreferenceRevision { get; init; } = string.Empty;
+    public ImmutableDictionary<string, ProviderUseMode> ProviderModes { get; init; } =
+        ImmutableDictionary<string, ProviderUseMode>.Empty;
+
+    public ProviderUseMode GetProviderMode(string providerId)
+    {
+        var id = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(providerId);
+        return DisabledProviders.Contains(id) ? ProviderUseMode.Off :
+            ProviderModes.GetValueOrDefault(id, ProviderUseMode.Automatic);
+    }
+
+    public bool IsEnabled(string providerId) => GetProviderMode(providerId) != ProviderUseMode.Off;
+
+    public bool IsAutomatic(string providerId) => GetProviderMode(providerId) == ProviderUseMode.Automatic;
+
+    public IReadOnlyList<string> ApplyAutomaticProviderAvailability(
+        ProviderCapabilityKind capability, IEnumerable<string> availableProviders) =>
+        ApplyProviderAvailability(capability, availableProviders).Where(IsAutomatic).ToArray();
 
     public bool Includes(Song song) => song.IsLocal || Includes(song.ExplicitContentLyrics);
 
@@ -66,7 +83,7 @@ public sealed record EffectiveProviderPolicySnapshot(
         var available = availableProviders
             .Where(item => !string.IsNullOrWhiteSpace(item))
             .Select(item => allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(item))
-            .Where(item => !DisabledProviders.Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).Contains(item))
+            .Where(IsEnabled)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         var availableSet = available.ToHashSet(StringComparer.Ordinal);
@@ -87,7 +104,7 @@ public interface IEffectiveProviderPolicyResolver
         Guid userId, CancellationToken cancellationToken = default);
 }
 
-public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings settings)
+public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings settings, IProviderRegistry? registry = null)
     : IEffectiveProviderPolicyResolver
 {
     private static readonly string[] Keys =
@@ -133,7 +150,22 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         {
             UserId = userId,
             Preferences = preferences.Values,
-            PreferenceRevision = preferences.Revision
+            PreferenceRevision = preferences.Revision,
+            ProviderModes = ResolveModes(preferences.Values.ProviderModes)
         };
+    }
+
+    private ImmutableDictionary<string, ProviderUseMode> ResolveModes(IReadOnlyDictionary<string, string>? configured)
+    {
+        var modes = (registry?.Providers ?? []).ToImmutableDictionary(
+            provider => provider.Id, ProviderUsePolicy.DefaultMode, StringComparer.Ordinal).ToBuilder();
+        foreach (var entry in configured ?? new Dictionary<string, string>())
+        {
+            var id = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(entry.Key);
+            var mode = ProviderUsePolicy.ParseMode(entry.Value);
+            modes[id] = registry?.TryGet(id, out var provider) == true
+                ? ProviderUsePolicy.Restrict(provider!, mode) : mode;
+        }
+        return modes.ToImmutable();
     }
 }

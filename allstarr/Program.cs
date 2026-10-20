@@ -1,6 +1,7 @@
 using allstarr.Models.Settings;
 using allstarr.Services;
 using allstarr.Core.Providers.Qobuz;
+using allstarr.Core.Providers.ArtistGrid;
 using allstarr.Services.AppleMusic;
 using allstarr.Services.Local;
 using allstarr.Services.Validation;
@@ -417,6 +418,7 @@ else
 builder.Services.AddSingleton<IAppleDownloadEndpointDiscovery, AppleDownloadEndpointDiscovery>();
 builder.Services.AddDeezerProvider();
 builder.Services.AddQobuzProvider();
+builder.Services.AddArtistGridProvider();
 builder.Services.AddSpotifyPlaylistCapability();
 builder.Services.AddAppleMusicProvider();
 builder.Services.AddBuiltInLyricsCapabilities();

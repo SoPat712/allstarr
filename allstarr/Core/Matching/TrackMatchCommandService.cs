@@ -280,6 +280,14 @@ public sealed partial class TrackMatchCommandService(
     ILibraryIndexService? libraryIndex = null) : ITrackMatchRepository
 {
     private const int ConcurrentWriteRetries = 3;
+
+    private async Task<bool> AutomaticSourceAsync(Guid userId, string providerId, CancellationToken cancellationToken)
+    {
+        if (registry?.TryGet(providerId, out var provider) == true &&
+            provider!.MatchingMode == ProviderMatchingMode.ManualOnly) return false;
+        return effectivePolicies == null ||
+            (await effectivePolicies.ResolveForUserAsync(userId, cancellationToken)).IsAutomatic(providerId);
+    }
     private readonly ConcurrentDictionary<
         (Guid UserId, bool IsAdministrator, Guid SnapshotId),
         Lazy<Task<TrackRematchCommandResult>>> _rematches = [];

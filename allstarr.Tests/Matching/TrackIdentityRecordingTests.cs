@@ -2,6 +2,8 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Intelligence;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 using Microsoft.EntityFrameworkCore;
 using Moq;
 
@@ -9,6 +11,32 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Fact]
+    public async Task ManualSourceRetainsItsOwnIdWithoutIsrcMergesOrCrossProviderAliases()
+    {
+        var actor = Actor(_userA);
+        const string isrc = "USAAA2600001";
+        var released = await _service.RememberSourceAsync(Context(actor, "deezer"), Track("deezer", "released"),
+            "ext-deezer-song-released", ProviderIdentityScope.Catalog, isrc);
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("manual", ProviderUseMode.ManualOnly) };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(_userA, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        var service = new TrackIdentityService(_factory, _storageState, _clock, providerPolicies: policies.Object);
+        var context = Context(actor, "manual");
+        var track = Track("manual", "version-3");
+        var demo = await service.RememberSourceAsync(context, track, "ext-deezer-song-released",
+            ProviderIdentityScope.Catalog, isrc);
+        Assert.NotEqual(released, demo);
+        Assert.Equal(0, await service.AddExactAliasesAsync(context, track, [Track("deezer", "released")]));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.LinkAsync(context,
+            new(released, track, ProviderIdentityScope.Catalog, ProviderIdentityVerification.Verified, "availability", 1)));
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Empty(await db.RecordingIdentifiers.Where(item => item.RecordingId == demo).ToArrayAsync());
+        Assert.Equal("ext-manual-song-version-3", (await db.CanonicalRecordings.SingleAsync(item => item.Id == demo)).PublicId);
+    }
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
