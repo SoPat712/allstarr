@@ -209,6 +209,8 @@ public sealed partial class TrackMatchCommandService
         var effectiveEngine = await DecisionEngineAsync(cancellationToken);
         var decision = effectiveEngine.Decide(scope, sourceTrack, localCandidates, rejectedOverride);
         PlayableTrackMatch? playable = null;
+        var unavailableIdentities = new HashSet<Guid>();
+        if (excludedProviderIdentityId.HasValue) unavailableIdentities.Add(excludedProviderIdentityId.Value);
         if (execution != null &&
             playableSearch != null &&
             manual?.Decision is not ManualOverrideDecision.Pin &&
@@ -225,6 +227,7 @@ public sealed partial class TrackMatchCommandService
                         item.Id != excludedProviderIdentityId &&
                         item.ResourceKind == ProviderResourceKind.Track &&
                         item.VerificationMethod != "source-snapshot-hash" &&
+                        item.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
                         (item.Verification == ProviderIdentityVerification.Verified ||
                          item.Verification == ProviderIdentityVerification.Pinned))
                     .ToArrayAsync(cancellationToken);
@@ -232,7 +235,7 @@ public sealed partial class TrackMatchCommandService
                 ? null
                 : await playableSearch.ReuseAsync(
                     execution, sourceTrack, scope, cachedRoutes,
-                    localCandidates.Select(sourceTrack), rejectedOverride, cancellationToken);
+                    localCandidates.Select(sourceTrack), rejectedOverride, cancellationToken, unavailableIdentities);
             playable ??= await playableSearch.MatchAsync(
                 execution,
                 sourceTrack,
@@ -269,6 +272,7 @@ public sealed partial class TrackMatchCommandService
                     source,
                     selectedExternal,
                     playable!.RoutableExternalCandidates,
+                    unavailableIdentities,
                     decision.State,
                     latestVersion + 1,
                     clock.UtcNow,
@@ -452,6 +456,7 @@ public sealed partial class TrackMatchCommandService
         ProviderTrackIdentityRecord source,
         Song selected,
         IReadOnlyList<Song> routable,
+        IReadOnlySet<Guid> unavailableIdentities,
         TrackMatchReviewState state,
         int decisionVersion,
         DateTimeOffset now,
@@ -462,7 +467,7 @@ public sealed partial class TrackMatchCommandService
             : "automatic-match";
         var canonicalRecordingId = await LinkExternalIdentityAsync(
             db, actor, source, selected, source.CanonicalRecordingId, true, verificationMethod,
-            decisionVersion, now, cancellationToken);
+            decisionVersion, now, unavailableIdentities, cancellationToken);
         if (!canonicalRecordingId.HasValue)
             return null;
         foreach (var alternate in routable.Where(song =>
@@ -471,7 +476,7 @@ public sealed partial class TrackMatchCommandService
         {
             await LinkExternalIdentityAsync(
                 db, actor, source, alternate, canonicalRecordingId.Value, false, verificationMethod,
-                decisionVersion, now, cancellationToken);
+                decisionVersion, now, unavailableIdentities, cancellationToken);
         }
         return canonicalRecordingId;
     }
@@ -486,6 +491,7 @@ public sealed partial class TrackMatchCommandService
         string verificationMethod,
         int decisionVersion,
         DateTimeOffset now,
+        IReadOnlySet<Guid> unavailableIdentities,
         CancellationToken cancellationToken)
     {
         var providerId = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(
@@ -499,22 +505,53 @@ public sealed partial class TrackMatchCommandService
             item.Scope == ProviderIdentityScope.Catalog &&
             item.ExternalIdHash == externalHash,
             cancellationToken);
+        if (identity != null && primary)
+        {
+            canonicalRecordingId = identity.CanonicalRecordingId;
+            var mergedId = await TryMergeProvisionalIdentityAsync(
+                db, source, canonicalRecordingId, actor, "match-source-merge", now, cancellationToken);
+            if (!mergedId.HasValue) return null;
+            canonicalRecordingId = mergedId.Value;
+        }
+        if (identity != null && identity.CanonicalRecordingId != canonicalRecordingId)
+            return canonicalRecordingId;
+
+        var recording = db.CanonicalRecordings.Local.FirstOrDefault(item => item.Id == canonicalRecordingId)
+            ?? await db.CanonicalRecordings.SingleAsync(item => item.Id == canonicalRecordingId, cancellationToken);
+        await db.ProviderTrackIdentities.Where(item =>
+            item.CanonicalRecordingId == canonicalRecordingId && item.ProviderId == providerId &&
+            item.ResourceKind == ProviderResourceKind.Track && item.CatalogNamespace == "default" &&
+            item.Scope == ProviderIdentityScope.Catalog).LoadAsync(cancellationToken);
+        var active = CatalogIdentityPolicy.OrderForPlayback(db.ProviderTrackIdentities.Local.Where(item =>
+            item.CanonicalRecordingId == canonicalRecordingId && item.ProviderId == providerId &&
+            item.ResourceKind == ProviderResourceKind.Track && item.CatalogNamespace == "default" &&
+            item.Scope == ProviderIdentityScope.Catalog && CatalogIdentityPolicy.IsActive(item))).ToArray();
+        var current = active.FirstOrDefault(item => item.Verification == ProviderIdentityVerification.Pinned)
+            ?? active.FirstOrDefault(CatalogIdentityPolicy.IsPlaybackEligible)
+            ?? active.FirstOrDefault();
+        if (current != null && current.Id != identity?.Id)
+        {
+            var strictlyBetter = verificationMethod == "automatic-match" &&
+                (current.VerificationMethod == "automatic-suggestion" || unavailableIdentities.Contains(current.Id));
+            if (current.Verification == ProviderIdentityVerification.Pinned || !strictlyBetter)
+            {
+                foreach (var duplicate in active.Where(item => item.Id != current.Id))
+                    CatalogIdentityPolicy.Supersede(duplicate, now);
+                return canonicalRecordingId;
+            }
+        }
+        // Fence competing provider choices through the recording's existing concurrency token.
+        recording.Revision++;
+        recording.UpdatedAt = now;
+        foreach (var previous in active.Where(item => item.Id != identity?.Id))
+            CatalogIdentityPolicy.Supersede(previous, now);
         if (identity != null)
         {
-            if (primary)
-                canonicalRecordingId = identity.CanonicalRecordingId;
-            if (primary)
+            if (identity.Verification != ProviderIdentityVerification.Pinned &&
+                (identity.VerificationMethod == CatalogIdentityPolicy.SupersededVerificationMethod ||
+                 identity.VerificationMethod == ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod ||
+                 verificationMethod == "automatic-match" && identity.VerificationMethod == "automatic-suggestion"))
             {
-                var mergedId = await TryMergeProvisionalIdentityAsync(
-                    db, source, canonicalRecordingId, actor, "match-source-merge", now, cancellationToken);
-                if (!mergedId.HasValue) return null;
-                canonicalRecordingId = mergedId.Value;
-            }
-            if (identity.VerificationMethod == ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod ||
-                verificationMethod == "automatic-match" &&
-                identity.VerificationMethod == "automatic-suggestion")
-            {
-                identity.Verification = ProviderIdentityVerification.Verified;
                 identity.VerificationMethod = verificationMethod;
                 identity.DecisionVersion = decisionVersion;
                 identity.VerifiedAt = now;

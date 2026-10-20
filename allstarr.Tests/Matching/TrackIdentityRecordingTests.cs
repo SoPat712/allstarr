@@ -9,6 +9,86 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Duplicate_cleanup_preserves_playback_choice_and_resumes_idempotently(bool pinned)
+    {
+        var actor = Actor(_userA);
+        var recording = (await _service.CreateRecordingAsync(actor, "duplicates")).Recording;
+        var execution = Context(actor, "deezer");
+        for (var index = 0; index < 4; index++)
+            await _service.LinkAsync(execution, new(recording.Id, Track("deezer", $"release-{index}"),
+                ProviderIdentityScope.Catalog,
+                pinned && index == 0 ? ProviderIdentityVerification.Pinned : ProviderIdentityVerification.Verified,
+                "automatic-match", index + 1));
+        var account = await SeedUserAccount("deezer", _userA);
+        await Link(recording.Id, Context(actor, "deezer", account), "personal", ProviderIdentityScope.Account);
+        var before = (await _service.ResolveTargetAsync(execution, recording.Id, new("deezer")))!;
+        Assert.Equal(pinned ? "release-0" : "release-3", before.ExternalId.Value);
+        await SeedAvailabilitySnapshot(before.ExternalId.Value);
+        var cleanup = new CatalogIdentityMaintenance(_factory, _clock);
+        Assert.Equal(1, await cleanup.RepairBatchAsync(1));
+        var restarted = new CatalogIdentityMaintenance(_factory, _clock);
+        Assert.Equal(2, await restarted.RepairBatchAsync());
+        Assert.Equal(0, await restarted.RepairBatchAsync());
+        var after = await _service.ResolveTargetAsync(execution, recording.Id, new("deezer"));
+        Assert.Equal(before, after);
+        await using var db = await _factory.CreateDbContextAsync();
+        var links = await db.ProviderTrackIdentities.ToArrayAsync();
+        Assert.Equal(3, links.Count(item => item.VerificationMethod == "superseded"));
+        var route = Assert.Single(DurableProviderRouteSelector.Select(links.Single(item => item.Id == before.LinkId), links, ["deezer"]));
+        Assert.Equal(before.ExternalId.Value, route.ExternalId);
+        if (!pinned)
+            Assert.Equal(before.ExternalId.Value,
+                (await _service.GetRecordingAvailabilityAsync(execution, recording.PublicId))!.ProviderIds["deezer"]);
+        Assert.Equal("personal", (await _service.ResolveTargetAsync(Context(actor, "deezer", account), recording.Id, new("deezer")))!.ExternalId.Value);
+        if (pinned)
+        {
+            var retained = links.Single(item => item.Id == before.LinkId);
+            Assert.Equal(0, retained.Revision);
+            Assert.Equal("automatic-match", retained.VerificationMethod);
+        }
+    }
+
+    [Fact]
+    public async Task Duplicate_cleanup_records_completion_once_across_restart()
+    {
+        var actor = Actor(_userA);
+        var recording = (await _service.CreateRecordingAsync(actor, "duplicates")).Recording;
+        await Link(recording.Id, Context(actor, "deezer"), "first");
+        await Link(recording.Id, Context(actor, "deezer"), "second");
+        await new CatalogIdentityMaintenance(_factory, _clock).RunAsync(default);
+        await using var before = await _factory.CreateDbContextAsync();
+        var links = await before.ProviderTrackIdentities.OrderBy(item => item.Id)
+            .Select(item => new { item.Id, item.VerificationMethod, item.Revision, item.UpdatedAt }).ToArrayAsync();
+        var audits = await before.AuditEvents.CountAsync();
+        await new CatalogIdentityMaintenance(_factory, _clock).RunAsync(default);
+        await using var after = await _factory.CreateDbContextAsync();
+        Assert.Equal(links, await after.ProviderTrackIdentities.OrderBy(item => item.Id)
+            .Select(item => new { item.Id, item.VerificationMethod, item.Revision, item.UpdatedAt }).ToArrayAsync());
+        Assert.Equal(audits, await after.AuditEvents.CountAsync());
+        Assert.Single(await after.AuditEvents.Where(item => item.Category == "catalog-identity-maintenance").ToArrayAsync());
+    }
+
+    [Fact]
+    public async Task Duplicate_cleanup_keeps_every_pinned_identity_unchanged()
+    {
+        var actor = Actor(_userA);
+        var recording = (await _service.CreateRecordingAsync(actor, "pins")).Recording;
+        for (var index = 0; index < 2; index++)
+            await _service.LinkAsync(Context(actor, "deezer"), new(recording.Id, Track("deezer", $"pin-{index}"),
+                ProviderIdentityScope.Catalog, ProviderIdentityVerification.Pinned, "manual", 1));
+        Assert.Equal(0, await new CatalogIdentityMaintenance(_factory, _clock).RepairBatchAsync());
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(await db.ProviderTrackIdentities.ToArrayAsync(), item =>
+        {
+            Assert.Equal(ProviderIdentityVerification.Pinned, item.Verification);
+            Assert.Equal("manual", item.VerificationMethod);
+            Assert.Equal(0, item.Revision);
+        });
+    }
+
     [Fact]
     public async Task RememberSource_MergesPriorPublicIdWithVerifiedIsrcAndKeepsEarliestId()
     {

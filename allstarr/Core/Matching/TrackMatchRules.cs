@@ -36,8 +36,18 @@ internal static class TrackMatchRuleSet
         new(TrackMatchRuleDisposition.Accept, confidence, reasonCode, reason,
             [reasonCode], [], new Dictionary<string, double> { [component] = 1 });
 
+    internal static TrackMatchRuleOutcome Reject(string reasonCode, string reason, string component,
+        double score = 0, IReadOnlyList<string>? warnings = null) =>
+        new(TrackMatchRuleDisposition.Reject, 0, reasonCode, reason,
+            [reasonCode], warnings ?? [], new Dictionary<string, double> { [component] = score, ["recordingAllowed"] = 0 });
+
     public static IReadOnlyList<ITrackMatchRule> Default { get; } =
     [
+        new ContinuousMixRule(),
+        new BackingRecordingRule(),
+        new CoverArtistRule(),
+        new ExplicitRecordingRule(),
+        new RecordingDurationRule(),
         new CanonicalRecordingExactRule(),
         new MusicBrainzExactRule(),
         new IsrcExactRule(),
@@ -61,6 +71,89 @@ internal static class TrackMatchRuleSet
 
         return FieldScoreRule.Score(source, candidate, policy);
     }
+}
+
+internal sealed class ContinuousMixRule : ITrackMatchRule
+{
+    public string Id => "continuous-mix";
+
+    public TrackMatchRuleOutcome? Evaluate(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy) =>
+        !FuzzyMatcher.IsContinuousMixExcerpt(source.Title) &&
+        FuzzyMatcher.IsContinuousMixExcerpt(candidate.Title, candidate.Album)
+            ? TrackMatchRuleSet.Reject("continuous_mix_excerpt",
+                "The candidate is an excerpt from a DJ or continuous mix that the source did not request.", "continuousMix")
+            : null;
+}
+
+internal sealed class BackingRecordingRule : ITrackMatchRule
+{
+    public string Id => "backing-recording";
+
+    public TrackMatchRuleOutcome? Evaluate(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy) =>
+        FuzzyMatcher.BackingRecordingTags(string.Join(" ", candidate.Title, candidate.Artist, candidate.Album))
+            .Except(FuzzyMatcher.BackingRecordingTags(source.Title)).Any()
+            ? TrackMatchRuleSet.Reject("backing_recording_mismatch",
+                "The candidate is a karaoke, instrumental, or backing recording that the source did not request.",
+                "backingRecording", warnings: ["semantic_version_mismatch"])
+            : null;
+}
+
+internal sealed class CoverArtistRule : ITrackMatchRule
+{
+    public string Id => "cover-artist";
+
+    public TrackMatchRuleOutcome? Evaluate(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy)
+    {
+        if (!FuzzyMatcher.HasCoverRecordingLabel(string.Join(" ", candidate.Title, candidate.Artist, candidate.Album)))
+            return null;
+        var sourceArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(source.Artist).FirstOrDefault() ?? "");
+        var candidateArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(candidate.Artist).FirstOrDefault() ?? "");
+        return sourceArtist.Length > 0 && sourceArtist == candidateArtist
+            ? null
+            : TrackMatchRuleSet.Reject("cover_artist_mismatch",
+                "The candidate is a cover or tribute credited to a different main artist.", "primaryArtist");
+    }
+}
+
+internal sealed class ExplicitRecordingRule : ITrackMatchRule
+{
+    public string Id => "explicit-recording";
+
+    public TrackMatchRuleOutcome? Evaluate(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy) =>
+        source.IsExplicit == true &&
+        (candidate.IsExplicit == false || FuzzyMatcher.HasCleanRecordingLabel(candidate.Title))
+            ? TrackMatchRuleSet.Reject("clean_edit_of_explicit",
+                "The candidate is a clean or edited version of an explicit source recording.", "explicitContent")
+            : null;
+}
+
+internal sealed class RecordingDurationRule : ITrackMatchRule
+{
+    public string Id => "recording-duration";
+
+    public TrackMatchRuleOutcome? Evaluate(
+        ExternalTrackMatchSnapshot source,
+        LocalTrackMatchCandidate candidate,
+        TrackMatchPolicy policy) =>
+        source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0 &&
+        Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value) > policy.DurationToleranceSeconds * 1000L
+            ? TrackMatchRuleSet.Reject("duration_mismatch",
+                "The candidate duration differs from the source by more than the allowed tolerance.", "duration",
+                TrackMatchSignals.DurationScore(source.DurationMilliseconds.Value, candidate.DurationMilliseconds.Value,
+                    policy.DurationToleranceSeconds), ["duration_exceeds_tolerance"])
+            : null;
 }
 
 internal sealed class CanonicalRecordingExactRule : ITrackMatchRule
@@ -179,7 +272,7 @@ internal sealed class FieldScoreRule : ITrackMatchRule
         var artist = TrackMatchSignals.ArtistSimilarity(source.Artist, candidate.Artist);
         var album = TrackMatchSignals.ComparableSimilarity(source.Album, candidate.Album);
         var albumArtist = TrackMatchSignals.ComparableSimilarity(source.AlbumArtist, candidate.AlbumArtist);
-        var duration = source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
+        var duration = source.DurationMilliseconds is > 0 && candidate.DurationMilliseconds is > 0
             ? TrackMatchSignals.DurationScore(
                 source.DurationMilliseconds.Value, candidate.DurationMilliseconds.Value,
                 policy.DurationToleranceSeconds)
@@ -238,14 +331,6 @@ internal sealed class FieldScoreRule : ITrackMatchRule
             warnings.Add("semantic_version_mismatch");
         }
         if (!titleAnnotationsMatch) warnings.Add("title_annotation_mismatch");
-        if (source.IsExplicit.HasValue &&
-            candidate.IsExplicit.HasValue &&
-            source.IsExplicit != candidate.IsExplicit)
-        {
-            confidence = Math.Max(0, confidence - 0.12);
-            warnings.Add("explicit_flag_mismatch");
-        }
-
         return new TrackMatchRuleOutcome(
             TrackMatchRuleDisposition.Score,
             Math.Round(confidence, 4),

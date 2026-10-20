@@ -56,6 +56,51 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(2, result.Songs.Count);
     }
 
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, "Espresso (Mixed)", null)]
+    [InlineData(ProtocolKind.Subsonic, "Espresso [Mixed]", null)]
+    [InlineData(ProtocolKind.Jellyfin, "Espresso", "Summer DJ Mix")]
+    [InlineData(ProtocolKind.Subsonic, "Espresso", "Mixed by Someone")]
+    [InlineData(ProtocolKind.Jellyfin, "Espresso", "Continuous Mix")]
+    public async Task SearchRanksContinuousMixExcerptsAfterTheOriginalWithoutHidingThem(
+        ProtocolKind protocol, string title, string? album)
+    {
+        var mixes = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        mixes.SetupGet(item => item.ProviderId).Returns("qobuz");
+        mixes.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        mixes.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("qobuz",
+                [new(new("qobuz", ProviderResourceKind.Track, "mix"), title,
+                    [new("Sabrina Carpenter")], albumTitle: album)])));
+        var originals = SearchRankingCapability("deezer", ("original", "Espresso", "Sabrina Carpenter"));
+        var (gateway, _) = SearchRankingGateway("qobuz,deezer", "qobuz,deezer", mixes.Object, originals);
+
+        var result = await gateway.SearchAsync(SearchRankingContext(protocol), "Espresso", 2, 0, 0);
+
+        Assert.Equal(new[] { "original", "mix" }, result.Songs.Select(song => song.ExternalId));
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SharedIsrcDoesNotCollapseAMixOverTheOriginal(ProtocolKind protocol)
+    {
+        var capabilities = new[] { "qobuz", "deezer" }.Select(provider =>
+        {
+            var capability = Mock.Get(SearchRankingCapability(provider));
+            capability.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new(provider,
+                    [new(new(provider, ProviderResourceKind.Track, provider), "Espresso", [new("Sabrina Carpenter")],
+                        albumTitle: provider == "qobuz" ? "DJ Mix" : null, isrc: "USUM72403305")])));
+            return capability.Object;
+        }).ToArray();
+        var (gateway, _) = SearchRankingGateway("qobuz,deezer", "qobuz,deezer", capabilities);
+
+        var result = await gateway.SearchAsync(SearchRankingContext(protocol), "Espresso", 2, 0, 0);
+
+        Assert.Equal(new[] { "deezer", "qobuz" }, result.Songs.Select(song => song.ExternalProvider));
+    }
+
     private static IProviderMetadataCapability SearchRankingCapability(
         string provider, params (string Id, string Title, string Artist)[] tracks)
     {

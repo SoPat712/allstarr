@@ -578,6 +578,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         var candidates = await context.ProviderTrackIdentities.AsNoTracking()
             .Where(item =>
                 item.CanonicalRecordingId == source.CanonicalRecordingId &&
+                item.VerificationMethod != CatalogIdentityPolicy.SupersededVerificationMethod &&
                 item.ProviderId == target.ProviderId &&
                 item.ResourceKind == target.ResourceKind &&
                 item.CatalogNamespace == catalog &&

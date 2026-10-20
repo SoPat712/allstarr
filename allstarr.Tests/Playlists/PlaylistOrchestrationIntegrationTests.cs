@@ -611,9 +611,9 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         {
             var suggestedCandidate = Local(suggestedId, "suggested", "unused-1", "Suggestion");
             suggestedCandidate.ProviderIdsJson = "{}";
-            suggestedCandidate.Title = "Suggestion Song";
+            suggestedCandidate.Title = "Suggestion (Alternate Title)";
             suggestedCandidate.Album = null;
-            suggestedCandidate.DurationMilliseconds = 999_000;
+            suggestedCandidate.DurationMilliseconds = 180_000;
             var ambiguousOne = Local(ambiguousOneId, "ambiguous-1", "unused-2", "Ambiguous");
             var ambiguousTwo = Local(ambiguousTwoId, "ambiguous-2", "unused-3", "Ambiguous");
             ambiguousOne.ProviderIdsJson = ambiguousTwo.ProviderIdsJson = "{}";
@@ -2037,7 +2037,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         }
         _source.Snapshot = Snapshot(
             "revision-projection",
-            Entry(0, "entry-projection-1", "source-1", "One"),
+            Entry(0, "entry-projection-1", "source-1", "One") with { DurationMilliseconds = 200_000 },
             Entry(1, "entry-projection-2", "source-2", "Two"));
         await _service.RunAsync(Context(), new(_link, 73));
 

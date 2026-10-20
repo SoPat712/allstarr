@@ -961,7 +961,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             })
             .ToArray();
         var candidateSet = _matcher.PrepareCandidates(mappedCandidates);
-        var libraryIndexRevision = candidateSet.Revision;
+        var libraryIndexRevision = TrackMatchDecisionEngine.LibraryIndexRevision(candidates.Select(ToCandidate));
         var candidateById = candidates.ToDictionary(item => item.Id);
 
         var actor = execution.RequireActor();

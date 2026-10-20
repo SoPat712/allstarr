@@ -740,7 +740,8 @@ public partial class JellyfinController
     }
 
     internal static double CalculateItemRelevanceScore(string query, Dictionary<string, object?> item) =>
-        SearchRelevanceRanker.Score(query, GetItemName(item), SearchArtistText(item));
+        SearchRelevanceRanker.Score(query, GetItemName(item), SearchArtistText(item),
+            GetItemType(item) == "Audio" ? GetItemStringValue(item, "Album") : null);
 
     private static string? SearchArtistText(Dictionary<string, object?> item) => GetItemType(item) switch
     {

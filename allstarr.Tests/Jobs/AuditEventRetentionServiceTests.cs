@@ -73,6 +73,28 @@ public sealed class AuditEventRetentionServiceTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PruneNowAsync_PreservesCatalogRepairCompletionThroughExpiryAndOverflow()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var completed = Event(now.AddDays(-60), "duplicates.complete", "catalog-identity-maintenance");
+        await using (var scope = provider.CreateAsyncScope())
+        {
+            var database = scope.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+            database.AuditEvents.Add(completed);
+            database.AuditEvents.Add(Event(now.AddDays(-60), "detail", "catalog-identity-maintenance"));
+            database.AuditEvents.AddRange(Enumerable.Range(0, 1001)
+                .Select(index => Event(now.AddSeconds(index), $"recent-{index}")));
+            await database.SaveChangesAsync();
+        }
+        await Worker(retentionDays: 30, maximumRows: 1000).PruneNowAsync();
+        await using var verification = provider.CreateAsyncScope();
+        var db = verification.ServiceProvider.GetRequiredService<AllstarrDbContext>();
+        Assert.True(await db.AuditEvents.AnyAsync(item => item.Id == completed.Id));
+        Assert.Equal(1000, await db.AuditEvents.CountAsync());
+        Assert.Single(await db.AuditEvents.Where(item => item.Category == "catalog-identity-maintenance").ToArrayAsync());
+    }
+
+    [Fact]
     public async Task PruneNowAsync_RemovesOnlyExpiredFinishedPlaybackJobs()
     {
         var now = DateTimeOffset.UtcNow;

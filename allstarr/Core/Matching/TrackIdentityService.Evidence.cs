@@ -20,7 +20,7 @@ public sealed partial class TrackIdentityService
         var account = await ValidateExecutionContextAsync(db, execution, cancellationToken);
         var identity = await ResolveCoreAsync(db, source, account?.Id, cancellationToken);
         if (identity?.Verification != ProviderIdentityVerification.Verified ||
-            identity.VerificationMethod is "automatic-suggestion" or
+            identity.VerificationMethod is CatalogIdentityPolicy.SupersededVerificationMethod or "automatic-suggestion" or
                 ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)
             return 0;
         var added = 0;

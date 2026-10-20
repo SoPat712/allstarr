@@ -35,12 +35,9 @@
     "case": "blinding-lights/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.4885,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -82,14 +79,9 @@
     "case": "blinding-lights/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7138,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -97,14 +89,9 @@
     "case": "blinding-lights/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6934,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -112,14 +99,9 @@
     "case": "blinding-lights/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -167,23 +149,13 @@
   },
   {
     "case": "blinding-lights/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9047,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "blinding-lights/case-and-diacritics",
@@ -297,12 +269,10 @@
     "case": "bohemian-rhapsody/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.5164,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict",
+      "local_priority_window_selected"
     ],
     "selectedReasons": []
   },
@@ -344,14 +314,9 @@
     "case": "bohemian-rhapsody/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.716,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -359,14 +324,9 @@
     "case": "bohemian-rhapsody/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7045,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -374,14 +334,9 @@
     "case": "bohemian-rhapsody/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "backing_recording_mismatch"
     ],
     "selectedReasons": []
   },
@@ -429,23 +384,13 @@
   },
   {
     "case": "bohemian-rhapsody/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9108,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "bohemian-rhapsody/case-and-diacritics",
@@ -606,14 +551,12 @@
     "case": "halo/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.715,
+    "confidence": 0.592,
     "decisionReasons": [
       "album_artist_exact",
-      "album_strong",
       "artist_exact",
       "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -621,14 +564,9 @@
     "case": "halo/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6994,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -636,14 +574,12 @@
     "case": "halo/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0.592,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "duration_partial",
+      "title_fuzzy"
     ],
     "selectedReasons": []
   },
@@ -691,23 +627,16 @@
   },
   {
     "case": "halo/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9079,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0.592,
     "decisionReasons": [
       "album_artist_exact",
-      "album_exact",
       "artist_exact",
       "duration_partial",
-      "title_exact"
+      "title_fuzzy"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "halo/case-and-diacritics",
@@ -821,12 +750,9 @@
     "case": "dreams/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.5004,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -868,14 +794,9 @@
     "case": "dreams/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7149,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -883,14 +804,9 @@
     "case": "dreams/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6991,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -898,14 +814,9 @@
     "case": "dreams/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -953,23 +864,13 @@
   },
   {
     "case": "dreams/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9078,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "dreams/case-and-diacritics",
@@ -1083,12 +984,9 @@
     "case": "levitating/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.5343,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -1130,14 +1028,9 @@
     "case": "levitating/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7139,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1145,14 +1038,9 @@
     "case": "levitating/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6938,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1160,14 +1048,9 @@
     "case": "levitating/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "backing_recording_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1215,23 +1098,13 @@
   },
   {
     "case": "levitating/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9049,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "levitating/case-and-diacritics",
@@ -1345,12 +1218,10 @@
     "case": "rolling-in-the-deep/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.4716,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict",
+      "local_priority_window_selected"
     ],
     "selectedReasons": []
   },
@@ -1392,14 +1263,9 @@
     "case": "rolling-in-the-deep/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7144,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1407,14 +1273,9 @@
     "case": "rolling-in-the-deep/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6966,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1422,14 +1283,9 @@
     "case": "rolling-in-the-deep/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "backing_recording_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1477,23 +1333,13 @@
   },
   {
     "case": "rolling-in-the-deep/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9064,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "rolling-in-the-deep/case-and-diacritics",
@@ -1607,12 +1453,10 @@
     "case": "get-lucky/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.487,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict",
+      "local_priority_window_selected"
     ],
     "selectedReasons": []
   },
@@ -1654,14 +1498,9 @@
     "case": "get-lucky/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7161,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1669,14 +1508,9 @@
     "case": "get-lucky/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7051,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1684,14 +1518,9 @@
     "case": "get-lucky/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "backing_recording_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1739,23 +1568,13 @@
   },
   {
     "case": "get-lucky/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9112,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "get-lucky/case-and-diacritics",
@@ -1869,12 +1688,9 @@
     "case": "sanguine-paradise/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.4749,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -1916,14 +1732,9 @@
     "case": "sanguine-paradise/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7148,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1931,14 +1742,9 @@
     "case": "sanguine-paradise/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6988,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -1946,14 +1752,9 @@
     "case": "sanguine-paradise/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2001,23 +1802,13 @@
   },
   {
     "case": "sanguine-paradise/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9076,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "sanguine-paradise/case-and-diacritics",
@@ -2131,12 +1922,9 @@
     "case": "cheek-to-cheek/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.4929,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -2178,14 +1966,9 @@
     "case": "cheek-to-cheek/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.716,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2193,14 +1976,9 @@
     "case": "cheek-to-cheek/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7046,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2208,14 +1986,9 @@
     "case": "cheek-to-cheek/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "backing_recording_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2263,23 +2036,13 @@
   },
   {
     "case": "cheek-to-cheek/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9109,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "cheek-to-cheek/case-and-diacritics",
@@ -2393,12 +2156,9 @@
     "case": "gurenge/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.4993,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -2440,14 +2200,9 @@
     "case": "gurenge/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7146,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2455,14 +2210,9 @@
     "case": "gurenge/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6975,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2470,14 +2220,9 @@
     "case": "gurenge/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2525,23 +2270,13 @@
   },
   {
     "case": "gurenge/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9069,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "gurenge/case-and-diacritics",
@@ -2655,12 +2390,9 @@
     "case": "despacito/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.5206,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -2702,14 +2434,9 @@
     "case": "despacito/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7144,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2717,14 +2444,9 @@
     "case": "despacito/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.6966,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2732,14 +2454,9 @@
     "case": "despacito/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2787,23 +2504,13 @@
   },
   {
     "case": "despacito/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9064,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "despacito/case-and-diacritics",
@@ -2917,12 +2624,9 @@
     "case": "smells-like-teen-spirit/isrc-conflicts",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.5052,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy"
+      "isrc_conflict"
     ],
     "selectedReasons": []
   },
@@ -2964,14 +2668,9 @@
     "case": "smells-like-teen-spirit/live-version",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.7155,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_strong",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2979,14 +2678,9 @@
     "case": "smells-like-teen-spirit/radio-edit-source",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.702,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_fuzzy",
-      "title_strong"
+      "duration_mismatch"
     ],
     "selectedReasons": []
   },
@@ -2994,14 +2688,9 @@
     "case": "smells-like-teen-spirit/instrumental",
     "state": "Unresolved",
     "selected": null,
-    "confidence": 0.799,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_close",
-      "title_fuzzy",
-      "title_strong"
+      "backing_recording_mismatch"
     ],
     "selectedReasons": []
   },
@@ -3049,23 +2738,13 @@
   },
   {
     "case": "smells-like-teen-spirit/duration-drift-30s",
-    "state": "Suggested",
-    "selected": "match",
-    "confidence": 0.9094,
+    "state": "Unresolved",
+    "selected": null,
+    "confidence": 0,
     "decisionReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
+      "duration_mismatch"
     ],
-    "selectedReasons": [
-      "album_artist_exact",
-      "album_exact",
-      "artist_exact",
-      "duration_partial",
-      "title_exact"
-    ]
+    "selectedReasons": []
   },
   {
     "case": "smells-like-teen-spirit/case-and-diacritics",

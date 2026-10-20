@@ -1,3 +1,4 @@
+using allstarr.Core.Matching;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
@@ -188,5 +189,6 @@ public sealed class AuditEventRetentionService(
 
     private static IQueryable<AuditEventRecord> Deletable(AllstarrDbContext database) =>
         database.AuditEvents.Where(audit =>
+            (audit.Category != CatalogIdentityMaintenance.Category || audit.Action != CatalogIdentityMaintenance.CompletionAction) &&
             !database.LegacyEnvImports.Any(importRecord => importRecord.AuditEventId == audit.Id));
 }

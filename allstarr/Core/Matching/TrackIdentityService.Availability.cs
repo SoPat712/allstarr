@@ -27,7 +27,7 @@ public sealed partial class TrackIdentityService
             (item.ProviderAccountId == null || account != null && item.ProviderAccountId == account.Id))
             .OrderByDescending(item => item.RetrievedAt).ToArrayAsync(cancellationToken);
         var verified = links.Where(item => item.Verification == ProviderIdentityVerification.Verified &&
-            item.VerificationMethod != "automatic-suggestion").ToArray();
+            CatalogIdentityPolicy.IsPlaybackEligible(item)).ToArray();
         var verifiedIds = verified.Select(item => item.Id).ToHashSet();
         var providerIds = verified.Where(item => execution.Policy.AllowsProvider(item.ProviderId) || item.Scope == ProviderIdentityScope.Catalog)
             .GroupBy(item => item.ProviderId).Where(group => group.Count() == 1)

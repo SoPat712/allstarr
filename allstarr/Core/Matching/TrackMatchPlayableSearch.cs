@@ -45,7 +45,8 @@ public sealed class TrackMatchPlayableSearch(
         var primarySongs = queries.Length == 0 ? [] : await SearchAsync(queries[0]);
         var primaryMatch = DecideMatch(
             source, scope, primarySongs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
-        if (primaryMatch.Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned)
+        if (primaryMatch.Decision.State == TrackMatchReviewState.Pinned ||
+            primaryMatch.Decision.State == TrackMatchReviewState.Accepted && !IsExplicitFallback(source, primaryMatch, localCandidates))
             return primaryMatch;
 
         var songs = primarySongs.Concat((await Task.WhenAll(queries.Skip(1).Select(SearchAsync)))
@@ -75,12 +76,13 @@ public sealed class TrackMatchPlayableSearch(
         IEnumerable<ProviderTrackIdentityRecord> identities,
         IReadOnlyList<LocalTrackMatchCandidate> localCandidates,
         ScopedTrackMatchOverride? manualOverride,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ISet<Guid>? unavailableIdentities = null)
     {
         var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(cancellationToken);
         var order = ProviderRanks(providerOrder);
         var cachedRoutes = identities
-            .Where(identity => identity.VerificationMethod != "automatic-suggestion")
+            .Where(CatalogIdentityPolicy.IsPlaybackEligible)
             .Where(identity => order.ContainsKey(
                 ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)))
             .OrderBy(identity => order[ExternalTrackPlaybackPolicy.Normalize(identity.ProviderId)])
@@ -107,15 +109,30 @@ public sealed class TrackMatchPlayableSearch(
                     cached.ExternalId);
                 continue;
             }
-            if (song == null || !IsPlayable(song, providerOrder) || string.IsNullOrWhiteSpace(song.ExternalId)) continue;
+            if (song == null || !IsPlayable(song, providerOrder) || string.IsNullOrWhiteSpace(song.ExternalId))
+            {
+                unavailableIdentities?.Add(cached.Id);
+                continue;
+            }
 
             var match = DecideMatch(
                 source, scope, [song], localCandidates, manualOverride, providerOrder, effectiveMatcher);
-            if (match.Decision.State is TrackMatchReviewState.Accepted or TrackMatchReviewState.Pinned)
+            if (match.Decision.State == TrackMatchReviewState.Pinned ||
+                match.Decision.State == TrackMatchReviewState.Accepted && !IsExplicitFallback(source, match, localCandidates))
                 return match;
+            unavailableIdentities?.Add(cached.Id);
         }
         return null;
     }
+
+    private static bool IsExplicitFallback(
+        ExternalTrackMatchSnapshot source,
+        PlayableTrackMatch match,
+        IReadOnlyList<LocalTrackMatchCandidate> localCandidates) =>
+        source.IsExplicit == false &&
+        (match.SelectedExternal?.ExplicitContentLyrics == 1 ||
+         localCandidates.Any(candidate => candidate.LibraryTrackId == match.Decision.SelectedLibraryTrackId &&
+                                          candidate.IsExplicit == true));
 
     private PlayableTrackMatch DecideMatch(
         ExternalTrackMatchSnapshot source,
