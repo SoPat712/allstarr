@@ -404,7 +404,11 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
             branding,
             entryPoint: manifest.EntryPoint,
             healthProbe: manifest.Capabilities.Any(item => item.Kind == ProviderCapabilityKind.Health && item.Hooks.Count > 0))
-        { UsesSignedSession = manifest.SignedSession != null };
+        {
+            UsesSignedSession = manifest.SignedSession != null,
+            MatchingMode = manifest.MatchingMode,
+            DefaultUseMode = manifest.DefaultUseMode
+        };
         return new RuntimeBuild(
             new ProviderRegistration(descriptor, implementations),
             sandbox);

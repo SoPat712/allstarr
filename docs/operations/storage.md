@@ -101,6 +101,8 @@ If a kept file is missing, damaged or replaced, a new heart, Keep or retained-pl
 
 A database that has retained superseded download artifacts cannot be migrated back to the earlier single-artifact schema without losing publication or reservation history. That downgrade is rejected before changing the schema. To return to an earlier version, restore a backup made before the upgrade using the normal recovery procedure.
 
+Personal source use modes extend the existing runtime settings allowlist and preserve older settings during upgrade. An in-place downgrade is rejected while personal source modes are saved, so returning to an older version requires the matching pre-upgrade backup and image.
+
 ## Imported original media
 
 A version 2 upgrade can retain its original kept and permanent-download files in place. New managed files use an `Allstarr` subfolder within each existing persistent media mount, so a backend library already watching the kept mount continues to see newly kept songs. The original directories and files are not renamed. Import previews exclude exact files already owned by the new managed-file store rather than excluding a folder by name. SQLite records the exact root, path, filesystem identity, size and checksum, together with the administrator's import receipt. These originals have permanent protected references. Playback, lyrics and downloads read them; cleanup, Remove and Release Keep do not delete or retarget them. Existing lyrics sidecars are preserved, and Allstarr does not create sidecars beside an imported original.

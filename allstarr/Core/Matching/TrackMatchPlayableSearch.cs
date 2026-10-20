@@ -41,7 +41,9 @@ public sealed class TrackMatchPlayableSearch(
             .Select(query => query!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(cancellationToken);
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
+        if (!await CanAutomaticallyMatchAsync(context, source.ProviderId, cancellationToken))
+            return DecideMatch(source, scope, [], [], manualOverride, providerOrder, effectiveMatcher);
         var primarySongs = queries.Length == 0 ? [] : await SearchAsync(queries[0]);
         var primaryMatch = DecideMatch(
             source, scope, primarySongs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
@@ -79,7 +81,8 @@ public sealed class TrackMatchPlayableSearch(
         CancellationToken cancellationToken,
         ISet<Guid>? unavailableIdentities = null)
     {
-        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(cancellationToken);
+        var (providerOrder, effectiveMatcher) = await MatchingPolicyAsync(context, cancellationToken);
+        if (!await CanAutomaticallyMatchAsync(context, source.ProviderId, cancellationToken)) return null;
         var order = ProviderRanks(providerOrder);
         var cachedRoutes = identities
             .Where(CatalogIdentityPolicy.IsPlaybackEligible)
@@ -265,17 +268,25 @@ public sealed class TrackMatchPlayableSearch(
                 gateway.GetProviderOrder(ProviderCapabilityKind.Streaming));
 
     private async Task<(IReadOnlyList<string> ProviderOrder, TrackMatchDecisionEngine Matcher)> MatchingPolicyAsync(
-        CancellationToken cancellationToken)
+        ProtocolExecutionContext context, CancellationToken cancellationToken)
     {
         if (effectivePolicies == null)
             return (gateway.GetProviderOrder(ProviderCapabilityKind.Streaming), matcher);
-        var policy = await effectivePolicies.ResolveAsync(cancellationToken);
+        var policy = context.Actor?.EffectiveUserId is { } userId
+            ? await effectivePolicies.ResolveForUserAsync(userId, cancellationToken)
+            : await effectivePolicies.ResolveAsync(cancellationToken);
         return (
-            policy.ApplyProviderAvailability(
+            policy.ApplyAutomaticProviderAvailability(
                 ProviderCapabilityKind.Streaming,
                 gateway.GetProviderOrder(ProviderCapabilityKind.Streaming)),
             matcher.WithLocalPriorityWindow(policy.LocalPreferenceWindow));
     }
+
+    private async Task<bool> CanAutomaticallyMatchAsync(ProtocolExecutionContext context, string providerId,
+        CancellationToken cancellationToken) => effectivePolicies == null ||
+        (context.Actor?.EffectiveUserId is { } userId
+            ? await effectivePolicies.ResolveForUserAsync(userId, cancellationToken)
+            : await effectivePolicies.ResolveAsync(cancellationToken)).IsAutomatic(providerId);
 
 
 }

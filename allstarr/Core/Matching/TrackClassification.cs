@@ -1,4 +1,5 @@
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Services.Spotify;
 
 namespace allstarr.Core.Matching;
@@ -51,7 +52,8 @@ public static class TrackRouteProjector
         ProviderTrackIdentityRecord? sourceIdentity,
         IEnumerable<LibraryTrackRecord> accessibleLibraryTracks,
         IEnumerable<ProviderTrackIdentityRecord> providerIdentities,
-        IReadOnlyCollection<string>? providerPriority = null)
+        IReadOnlyCollection<string>? providerPriority = null,
+        EffectiveProviderPolicySnapshot? providerPolicy = null)
     {
         var canonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
         var identities = canonicalId.HasValue
@@ -74,7 +76,7 @@ public static class TrackRouteProjector
             sourceIdentity,
             identities,
             providerOrder,
-            libraryById.Keys.ToHashSet());
+            libraryById.Keys.ToHashSet(), providerPolicy);
         libraryById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
         canonicalId ??= local?.CanonicalRecordingId;
         if (local == null &&
@@ -109,7 +111,8 @@ public static class TrackClassifier
         ProviderTrackIdentityRecord? sourceIdentity = null,
         IEnumerable<ProviderTrackIdentityRecord>? providerIdentities = null,
         IReadOnlyList<string>? providerPriority = null,
-        IReadOnlySet<Guid>? playableLibraryTrackIds = null)
+        IReadOnlySet<Guid>? playableLibraryTrackIds = null,
+        EffectiveProviderPolicySnapshot? providerPolicy = null)
     {
         var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision);
         var providerRoutes = manual?.Decision == ManualOverrideDecision.Reject &&
@@ -120,7 +123,7 @@ public static class TrackClassifier
                 providerIdentities ?? [],
                 providerPriority ?? [],
                 manual,
-                decision?.CanonicalRecordingId);
+                decision?.CanonicalRecordingId, providerPolicy);
         var hasManualProviderRoute = providerRoutes.FirstOrDefault()?.IsManual == true;
         var hasManualLibraryRoute = manual?.Decision == ManualOverrideDecision.Pin &&
                                     manual.LibraryTrackId.HasValue &&

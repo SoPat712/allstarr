@@ -261,6 +261,8 @@ export type ProviderRuntimeCapability = {
 };
 
 export type ProviderDefinition = {
+  useMode?: ProviderUseMode;
+  supportsAutomaticMatching?: boolean;
   id: string;
   name: string;
   icon?: string | null;
@@ -1805,6 +1807,20 @@ export const recordingLyrics = {
     }),
 };
 
+export type ProviderUseMode = "automatic" | "manualOnly" | "off";
+export type ProviderUseSettings = {
+  personalRevision: string;
+  householdRevision: string;
+  providers: { providerId: string; mode: ProviderUseMode; householdMode: ProviderUseMode; supportsAutomaticMatching: boolean; householdDisabled: boolean }[];
+};
+export const providerUse = {
+  get: () => json<ProviderUseSettings>("/api/admin/providers/use"),
+  save: (providerId: string, mode: ProviderUseMode | null, scope: "personal" | "household", expectedRevision: string) =>
+    json<ProviderUseSettings>(`/api/admin/providers/use/${encodeURIComponent(providerId)}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode, scope, expectedRevision }),
+    }),
+};
+
 export const listeningPreferences = {
   get: () => json<PersonalListeningPreferences>("/api/admin/preferences"),
   save: (values: {
@@ -2196,8 +2212,9 @@ export const matchReview = {
     json<{ tracks: MatchTarget[] }>(
       `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&backendLibraryId=${encodeURIComponent(backendLibraryId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
     ),
-  searchProviders: (query: string, externalSnapshotId: string) => {
+  searchProviders: (query: string, externalSnapshotId: string, provider?: string) => {
     const params = new URLSearchParams({ query, externalSnapshotId, limit: "50" });
+    if (provider) params.set("provider", provider);
     return json<{ tracks: MatchTarget[]; providers: string[] }>(
       `/api/admin/track-matches/targets/provider?${params}`,
     );

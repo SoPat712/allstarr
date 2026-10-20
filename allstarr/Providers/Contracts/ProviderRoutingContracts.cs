@@ -127,6 +127,8 @@ public sealed record ProviderRouteProviderState
     public IReadOnlyList<ProviderAccountScope>? AllowedAccountScopes { get; }
 }
 
+public enum ProviderRoutePurpose { Automatic, ManualSelection }
+
 public sealed record ProviderRouteRequest
 {
     public ProviderRouteRequest(
@@ -140,7 +142,8 @@ public sealed record ProviderRouteRequest
         IEnumerable<ProviderRouteProviderState>? providerStates = null,
         ProviderExternalResourceId? sourceTrackId = null,
         string? idempotencyKey = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        ProviderRoutePurpose purpose = ProviderRoutePurpose.Automatic)
     {
         if (!Enum.IsDefined(capability))
         {
@@ -180,6 +183,8 @@ public sealed record ProviderRouteRequest
         SourceTrackId = sourceTrackId;
         IdempotencyKey = ProviderContractValidation.OptionalText(idempotencyKey, nameof(idempotencyKey), 300);
         CancellationToken = cancellationToken;
+        if (!Enum.IsDefined(purpose)) throw new ArgumentOutOfRangeException(nameof(purpose));
+        Purpose = purpose;
     }
 
     public ProviderCapabilityKind Capability { get; }
@@ -203,6 +208,8 @@ public sealed record ProviderRouteRequest
     public string? IdempotencyKey { get; }
 
     public CancellationToken CancellationToken { get; }
+
+    public ProviderRoutePurpose Purpose { get; }
 }
 
 public enum ProviderRouteDecisionStatus

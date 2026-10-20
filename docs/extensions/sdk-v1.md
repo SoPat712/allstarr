@@ -9,11 +9,15 @@ An extension package declares a stable ID, version, runtime, entry point, capabi
 ```json
 {
   "id": "example-provider",
+  "displayName": "Example provider",
   "version": "1.2.3",
-  "runtime": "javascript",
+  "sdkVersion": "1",
   "entryPoint": "index.js",
-  "capabilities": ["metadata", "playlist", "lyrics"],
-  "permissions": ["network"],
+  "capabilities": [
+    { "kind": "metadata", "hooks": ["searchTracks", "getTrack"], "accountScopes": [], "accountRequired": false },
+    { "kind": "streaming", "hooks": ["getStreamLease"], "accountScopes": [], "accountRequired": false }
+  ],
+  "permissions": [{ "kind": "network", "value": "https://api.example.test/", "required": true }],
   "settings": []
 }
 ```
@@ -45,6 +49,14 @@ return the same typed page shape as `searchAlbums` or `searchTracks`. This lets 
 open an extension-backed artist and browse its complete virtual discography.
 
 Allstarr selects the initiating user, Personal or Shared provider account, capability, deadline, and effective policy before invocation. Credential access is bound to that account's current owner, revision, and purpose. Extension code cannot select a different account or impersonate another user. Backend library permissions are checked separately when resolving local items.
+
+### Source use and matching
+
+Every built-in and extension source supports **Automatic**, **Manual only**, and **Off** use preferences in Integrations → Services. Household defaults and personal overrides use the same policy owner. Existing manifests default to automatic use.
+
+A manifest may declare `"matchingMode": "manualOnly"` for a catalog of distinct demos, live recordings, or other versions that must never participate in automatic matching or canonical cross-provider linking. It can still implement `searchTracks`, `getTrack`, and streaming or download hooks. Such a source offers Manual only and Off; a preference cannot enable automatic matching. The optional `defaultUseMode` accepts `automatic`, `manualOnly`, or `off`, subject to that restriction. If omitted, it follows `matchingMode`.
+
+Manual-only sources are searched only after a listener explicitly picks that source. Exact selections remain user-scoped manual routes through refreshes and rematches. Automatic search, playlist matching, identity enrichment, and playback fallback exclude them. Source-specific internal recording IDs remain available for playlists, playback and history without requiring an ISRC or MusicBrainz identifier. Turning a source off prevents its use without deleting the saved pin; only previously verified normal routes remain eligible as alternatives.
 
 ## Accounts and settings
 

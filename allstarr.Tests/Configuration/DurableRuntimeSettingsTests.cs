@@ -38,6 +38,57 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    [Fact]
+    public async Task SourceModesMergeHouseholdDefaultsWithoutChangingOtherPreferencesOrUsers()
+    {
+        var service = CreateService([]);
+        var household = await service.GetPreferencesAsync(null);
+        await service.UpdateProviderModeAsync(null, "manual", "manualOnly", household.Revision, _userId);
+        var beforeA = await service.GetPreferencesAsync(_userId);
+        await service.UpdateProviderModeAsync(_userId, "manual", "off", beforeA.Revision, _userId);
+        var afterA = await service.GetPreferencesAsync(_userId);
+        var other = await service.GetPreferencesAsync(_userB);
+        Assert.Equal("off", afterA.Values.ProviderModes!["manual"]);
+        Assert.Equal("manualOnly", other.Values.ProviderModes!["manual"]);
+        Assert.Equal(beforeA.Values.ExplicitFilter, afterA.Values.ExplicitFilter);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.All(await db.RuntimeSettings.Where(item => item.OwnerUserId == _userId).ToArrayAsync(),
+            item => Assert.Equal(ProviderUsePolicy.SettingKey, item.Key));
+        await Assert.ThrowsAsync<RuntimeSettingConflictException>(() =>
+            service.UpdateProviderModeAsync(_userId, "manual", "automatic", beforeA.Revision, _userId));
+        await service.UpdateProviderModeAsync(_userId, "manual", null, afterA.Revision, _userId);
+        var inherited = await service.GetPreferencesAsync(_userId);
+        Assert.Equal("manualOnly", inherited.Values.ProviderModes!["manual"]);
+        Assert.True(inherited.UsesHouseholdDefaults);
+        Assert.Equal("manualOnly", (await CreateService([]).GetPreferencesAsync(_userB)).Values.ProviderModes!["manual"]);
+    }
+
+    [Fact]
+    public async Task ListenersCannotChangeHouseholdOrAnotherUsersSourceUse()
+    {
+        var service = CreateService([]);
+        var household = await service.GetPreferencesAsync(null);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.UpdateProviderModeAsync(null, "manual", "off", household.Revision, _userB));
+        var other = await service.GetPreferencesAsync(_userId);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.UpdateProviderModeAsync(_userId, "manual", "off", other.Revision, _userB));
+        Assert.Null((await service.GetPreferencesAsync(_userId)).Values.ProviderModes);
+    }
+
+    [Fact]
+    public async Task PersonalSourceModesRetainNewDefaultsForOtherSources()
+    {
+        var service = CreateService([]);
+        var personal = await service.GetPreferencesAsync(_userB);
+        await service.UpdateProviderModeAsync(_userB, "first", "off", personal.Revision, _userB);
+        var household = await service.GetPreferencesAsync(null);
+        await service.UpdateProviderModeAsync(null, "second", "manualOnly", household.Revision, _userId);
+        var result = await service.GetPreferencesAsync(_userB);
+        Assert.Equal("off", result.Values.ProviderModes!["first"]);
+        Assert.Equal("manualOnly", result.Values.ProviderModes!["second"]);
+    }
+
     [Theory]
     [InlineData("MusicBrainz:BaseUrl", "https://musicbrainz.org")]
     [InlineData("MusicBrainz:SourceId", "household-metadata")]

@@ -978,6 +978,8 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
         var allManualOverrides = ManualTrackOverrides.Index(
             externals.Values, resolution.ActiveOverrides, viewerUserId);
         IReadOnlyList<string> providerOrder = await PlayableProviderOrderAsync();
+        var providerPolicy = _effectivePolicies == null ? null :
+            await _effectivePolicies.ResolveForUserAsync(viewerUserId, cancellationToken);
 
         async Task<IReadOnlyList<string>> PlayableProviderOrderAsync() => _providerGateway == null
             ? new[] { link.SourceProviderId }
@@ -1093,7 +1095,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 sourceIdentity,
                 routeIdentities,
                 providerOrder,
-                playableLibraryTrackIds: candidateIds);
+                playableLibraryTrackIds: candidateIds, providerPolicy: providerPolicy);
             var effectiveLibraryTrackId = classification.LibraryTrackId;
             var effectiveState = ToReviewState(classification.State);
 

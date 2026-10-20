@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.AppleMusicKit;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Services.Spotify;
 
 namespace allstarr.Core.Matching;
@@ -12,7 +13,8 @@ public static class DurableProviderRouteSelector
         IEnumerable<ProviderTrackIdentityRecord> identities,
         IReadOnlyList<string> providerPriority,
         ManualTrackOverrideRecord? manual = null,
-        Guid? canonicalRecordingId = null)
+        Guid? canonicalRecordingId = null,
+        EffectiveProviderPolicySnapshot? providerPolicy = null)
     {
         var priority = providerPriority
             .Select((providerId, index) => (providerId: AppleMusicClient.NormalizeProviderId(providerId), index))
@@ -22,6 +24,7 @@ public static class DurableProviderRouteSelector
                           !string.IsNullOrWhiteSpace(manual.TargetProviderId) &&
                           !string.IsNullOrWhiteSpace(manual.TargetExternalId) &&
                           priority.ContainsKey(AppleMusicClient.NormalizeProviderId(manual.TargetProviderId)) &&
+                          providerPolicy?.IsEnabled(manual.TargetProviderId) != false &&
                           ExternalTrackPlaybackPolicy.CanUseForPlayback(
                               manual.TargetProviderId, manual.TargetExternalId)
             ? new DurableProviderRoute(manual.TargetProviderId, manual.TargetExternalId, true)
@@ -31,6 +34,7 @@ public static class DurableProviderRouteSelector
         var automatic = identities
             .Where(item =>
                 item.CanonicalRecordingId == canonicalId &&
+                providerPolicy?.IsAutomatic(item.ProviderId) != false &&
                 item.ResourceKind == ProviderResourceKind.Track &&
                 (item.Scope == ProviderIdentityScope.Catalog || item.Id == source.Id) &&
                 item.VerificationMethod != "source-snapshot-hash" &&

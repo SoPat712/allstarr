@@ -73,6 +73,7 @@ Intelligence is deferred from the first release and hidden from navigation. Its 
 - Matches one recording to a local item and multiple provider identities with reviewable evidence.
 - Imports personal provider playlists once or keeps them linked, with per-user credentials and an explicit option to retain every resolved downloadable song in owner-scoped kept storage.
 - Routes streaming, download, lyrics, and artwork through typed, account-aware capabilities.
+- Supports personal Automatic, Manual only and Off source preferences, including a built-in manual-only ArtistGrid catalog for explicitly selected versions.
 - Runs imports, matching, downloads, playlist changes, scrobbling, and other long work as durable inspectable jobs.
 - Installs verified third-party provider extensions through an explicit registry, permission review, staged activation.
 

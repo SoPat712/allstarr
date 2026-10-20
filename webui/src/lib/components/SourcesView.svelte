@@ -1,5 +1,6 @@
 <script lang="ts">
   import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
+  import ProviderUseControl from "$lib/components/ProviderUseControl.svelte";
   import { diagnosticFailureMessage, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
@@ -602,6 +603,8 @@
         {/if}
       </div>
     </header>
+
+    <ProviderUseControl providerId={source.id} {administrator} onSaved={refresh} />
 
     <section class="settings-card service-overview" aria-label="Overview">
       <dl>

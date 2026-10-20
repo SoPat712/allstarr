@@ -4,7 +4,8 @@ public sealed record ListeningPreferences(
     string ExplicitFilter = "All",
     bool ShowExternalLabel = true,
     bool ShowExplicitLabel = true,
-    string? LyricsOrder = null);
+    string? LyricsOrder = null,
+    IReadOnlyDictionary<string, string>? ProviderModes = null);
 
 public sealed record PersonalListeningPreferences(
     ListeningPreferences Values,
@@ -20,5 +21,5 @@ internal static class ListeningPreferenceKeys
     internal const string LyricsOrder = "Providers:LyricsOrder";
 
     internal static readonly string[] All =
-        [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder];
+        [ExplicitFilter, ShowExternalLabel, ShowExplicitLabel, LyricsOrder, ProviderUsePolicy.SettingKey];
 }

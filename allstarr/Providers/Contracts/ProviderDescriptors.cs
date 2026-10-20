@@ -34,6 +34,10 @@ public enum ProviderOrigin
     Extension
 }
 
+public enum ProviderMatchingMode { Automatic, ManualOnly }
+
+public enum ProviderUseMode { Automatic, ManualOnly, Off }
+
 public enum ProviderSettingValueKind
 {
     Text,
@@ -371,4 +375,8 @@ public sealed record ProviderDescriptor
     public bool HealthProbe { get; }
 
     public bool UsesSignedSession { get; init; }
+
+    public ProviderMatchingMode MatchingMode { get; init; } = ProviderMatchingMode.Automatic;
+
+    public ProviderUseMode DefaultUseMode { get; init; } = ProviderUseMode.Automatic;
 }

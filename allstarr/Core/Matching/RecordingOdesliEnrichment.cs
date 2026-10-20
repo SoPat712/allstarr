@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 
@@ -37,7 +38,7 @@ public sealed class RecordingOdesliEnrichmentQueue(
 public sealed class RecordingOdesliEnrichmentJobHandler(
     IDbContextFactory<AllstarrDbContext> factory, ICrossProviderLinkResolver links,
     ITrackIdentityService identities, IPlatformClock clock,
-    DurableJobQueue jobs) : IDurableJobHandler
+    DurableJobQueue jobs, IEffectiveProviderPolicyResolver? providerPolicies = null) : IDurableJobHandler
 {
     public string JobType => RecordingOdesliEnrichmentQueue.JobType;
 
@@ -50,6 +51,9 @@ public sealed class RecordingOdesliEnrichmentJobHandler(
             return DurableJobCompletion.Failure("cross_links_invalid", "The saved cross-provider request is invalid.");
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var source = await db.ProviderTrackIdentities.AsNoTracking().SingleOrDefaultAsync(item => item.Id == sourceId, cancellationToken);
+        if (source != null && providerPolicies != null &&
+            !(await providerPolicies.ResolveForUserAsync(execution.Claim.OwnerUserId.Value, cancellationToken)).IsAutomatic(source.ProviderId))
+            return DurableJobCompletion.Success();
         if (source == null || source.ResourceKind != ProviderResourceKind.Track ||
             source.Verification != ProviderIdentityVerification.Verified || source.VerificationMethod is CatalogIdentityPolicy.SupersededVerificationMethod or "automatic-suggestion" or
                 ManualTrackAuthorityPolicy.ReleasedProviderVerificationMethod or ManualTrackAuthorityPolicy.ReplacedProviderVerificationMethod)

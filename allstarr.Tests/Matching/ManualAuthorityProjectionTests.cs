@@ -67,7 +67,7 @@ public sealed class ManualAuthorityProjectionTests
     {
         var row = typeof(TrackMatchesController).GetMethod("Row", BindingFlags.Static | BindingFlags.NonPublic)!
             .Invoke(null, [snapshot, null, layers, null, new Dictionary<Guid, LibraryTrackRecord>(),
-                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), new[] { "deezer" }, viewer, administrator])!;
+                new Dictionary<Guid, ProviderTrackIdentityRecord[]>(), new[] { "deezer" }, viewer, administrator, null])!;
         return JsonSerializer.SerializeToElement(row.GetType().GetProperty("Value")!.GetValue(row),
             new JsonSerializerOptions(JsonSerializerDefaults.Web));
     }

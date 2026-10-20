@@ -44,6 +44,8 @@ Jellyfin or Subsonic protocol controller
 
 The public protocol controllers preserve client compatibility. Provider metadata and streams pass through the required `IProtocolProviderGateway`; controllers and playback metadata do not select legacy provider services. Public activity metadata and unlinked-principal catalog reads use the same typed router with a public-read actor and cannot resolve account credentials. Only executable typed streaming routes make a provider eligible for playable search. New application behavior belongs in the typed core, not in protocol-specific controller branches.
 
+`EffectiveProviderPolicyResolver` owns Automatic, Manual only and Off source use, combining descriptor defaults, household settings and personal overrides. `ProviderRouter` rechecks it for each operation. A manual-only source can serve an exact user selection but cannot enter automatic search, matching, canonical translation or fallback. Manual provider overrides retain their source ID and external track ID independently of canonical equivalence. Source-use bookkeeping may create an isolated internal recording without importing its ISRC or adding cross-provider aliases. Built-ins and extensions follow the same boundary; a descriptor with manual-only matching cannot be promoted by a preference.
+
 ## Shared music core
 
 `allstarr/Core/Music` holds the music behavior both protocols offer, written once against the provider gateway:

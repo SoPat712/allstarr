@@ -84,8 +84,11 @@ public sealed partial class TrackMatchCommandService
         }
         var ownerLibraries = new Dictionary<Guid, LibraryTrackRecord[]>();
         var ownerProviderOrders = new Dictionary<Guid, IReadOnlyList<string>>();
+        var ownerPolicies = new Dictionary<Guid, EffectiveProviderPolicySnapshot?>();
         foreach (var owner in snapshots.Select(item => item.OwnerUserId).Distinct())
         {
+            ownerPolicies[owner] = effectivePolicies == null ? null :
+                await effectivePolicies.ResolveForUserAsync(owner, cancellationToken);
             var access = await libraryAccess.ResolveUserAsync(owner, cancellationToken);
             ownerLibraries[owner] = await LibraryTrackAccess.Query(db, access).ToArrayAsync(cancellationToken);
             ownerProviderOrders[owner] = providerGateway == null
@@ -144,7 +147,7 @@ public sealed partial class TrackMatchCommandService
                     identity,
                     identities,
                     ownerProviderOrders[snapshot.OwnerUserId],
-                    playableLibraryTrackIds: library.PlayableIds);
+                    playableLibraryTrackIds: library.PlayableIds, providerPolicy: ownerPolicies[snapshot.OwnerUserId]);
                 var protectedLocal = classification.LibraryTrackId is { } protectedId
                     ? library.ById.GetValueOrDefault(protectedId)
                     : null;
@@ -156,6 +159,11 @@ public sealed partial class TrackMatchCommandService
                 continue;
             }
 
+            if (!await AutomaticSourceAsync(snapshot.OwnerUserId, identity.ProviderId, cancellationToken))
+            {
+                results.Add(ToAutomatedResult(seed, TrackMatchReviewState.Unresolved, null, 0));
+                continue;
+            }
             var candidates = library.Candidates;
             var libraryIndexRevision = candidates.Revision;
             var scope = new TrackMatchScope(
@@ -219,7 +227,7 @@ public sealed partial class TrackMatchCommandService
                     latest.State == TrackMatchState.Accepted && !latest.LibraryTrackId.HasValue &&
                     latest.Confidence >= latest.Threshold &&
                     DurableProviderRouteSelector.Select(identity, providerIdentities, providerOrder,
-                        canonicalRecordingId: latest.CanonicalRecordingId).Count > 0;
+                        canonicalRecordingId: latest.CanonicalRecordingId, providerPolicy: ownerPolicies[snapshot.OwnerUserId]).Count > 0;
                 if (keepProviderDecision)
                 {
                     selected = null;

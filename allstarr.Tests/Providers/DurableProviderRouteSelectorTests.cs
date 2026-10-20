@@ -1,11 +1,37 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 
 namespace allstarr.Tests;
 
 public sealed class DurableProviderRouteSelectorTests
 {
+    [Fact]
+    public void ManualOnlyIdentityRequiresAnExplicitPinAndOffPreservesNormalAlternatives()
+    {
+        var recording = Guid.CreateVersion7();
+        var source = Identity(recording, "spotify", "source");
+        var manualIdentity = Identity(recording, "manual", "demo-v3");
+        var normal = Identity(recording, "deezer", "released");
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("manual", ProviderUseMode.ManualOnly) };
+        var order = new[] { "manual", "deezer" };
+        Assert.Equal("deezer", Assert.Single(DurableProviderRouteSelector.Select(source,
+            [manualIdentity, normal], order, providerPolicy: policy)).ProviderId);
+        var pin = new ManualTrackOverrideRecord
+        { Decision = ManualOverrideDecision.Pin, TargetProviderId = "manual", TargetExternalId = "demo-v3" };
+        var pinned = DurableProviderRouteSelector.Select(source, [manualIdentity, normal], order, pin, providerPolicy: policy);
+        Assert.True(pinned[0].IsManual);
+        Assert.Equal("demo-v3", pinned[0].ExternalId);
+        var off = policy with { ProviderModes = policy.ProviderModes.SetItem("manual", ProviderUseMode.Off) };
+        Assert.Equal("deezer", Assert.Single(DurableProviderRouteSelector.Select(source,
+            [manualIdentity, normal], order, pin, providerPolicy: off)).ProviderId);
+        Assert.Empty(DurableProviderRouteSelector.Select(null, [], ["manual"], pin, providerPolicy: off));
+    }
     [Theory]
     [InlineData("apple-download")]
     [InlineData("applemusic")]

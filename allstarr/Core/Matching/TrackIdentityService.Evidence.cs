@@ -15,6 +15,7 @@ public sealed partial class TrackIdentityService
         ThrowIfUnavailable(execution, cancellationToken);
         source.RequireOwner(execution.ProviderId, ProviderResourceKind.Track);
         if (aliases.Count > 32) throw new ArgumentException("Too many provider aliases.");
+        if (!await CanAutomaticallyLinkAsync(execution.Actor, source.ProviderId, cancellationToken)) return 0;
         await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
         var account = await ValidateExecutionContextAsync(db, execution, cancellationToken);
@@ -28,6 +29,7 @@ public sealed partial class TrackIdentityService
         {
             RequireTrack(alias);
             if (alias.ProviderId == source.ProviderId) continue;
+            if (!await CanAutomaticallyLinkAsync(execution.Actor, alias.ProviderId, cancellationToken)) continue;
             // Existing associations, including manual choices and conflicting recordings, retain authority.
             if (await FindExactLinkAsync(db, ExactKey(alias), ProviderIdentityScope.Catalog, null, true, cancellationToken) != null)
                 continue;

@@ -200,7 +200,8 @@ public sealed class TrackMatchesController(
                     item.ExternalIdHash == latestSnapshot.ExternalIdHash).Select(item => item.Id).ToHashSet();
             var decision = decisions.FirstOrDefault(item => sourceSnapshotIds.Contains(item.ExternalSnapshotId));
             var projection = TrackRouteProjector.Project(latestSnapshot, decision, manual,
-                sourceIdentity, localTracks, identities, playableProviders);
+                sourceIdentity, localTracks, identities, playableProviders,
+                effectivePolicies == null ? null : await effectivePolicies.ResolveForUserAsync(userId, cancellationToken));
             target = TrackMatchTargetResolver.Create(projection, decision);
             if (target != null)
                 await new TrackMatchTargetResolver(contextFactory, applicationCache, enrichment).EnrichAsync(
@@ -347,6 +348,8 @@ public sealed class TrackMatchesController(
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
         var playableProviders = await providerGateway.GetPlayableProviderOrderAsync(execution.RequireActor(), cancellationToken);
+        var providerPolicy = effectivePolicies == null ? execution.Policy :
+            await effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
 
         var allRows = review.Snapshots
             .GroupBy(snapshot => new
@@ -379,7 +382,7 @@ public sealed class TrackMatchesController(
                     library,
                     identities,
                     playableProviders,
-                    userId, session.IsAdministrator);
+                    userId, session.IsAdministrator, providerPolicy);
             })
             .ToArray();
         var filteredRows = allRows.Where(row => state?.ToLowerInvariant() switch
@@ -838,7 +841,8 @@ public sealed class TrackMatchesController(
         ManualTrackOverrideLayers layers, ProviderTrackIdentityRecord? sourceIdentity,
         IReadOnlyDictionary<Guid, LibraryTrackRecord> library,
         IReadOnlyDictionary<Guid, ProviderTrackIdentityRecord[]> identities,
-        IReadOnlyCollection<string> playableProviders, Guid viewerUserId, bool isAdministrator)
+        IReadOnlyCollection<string> playableProviders, Guid viewerUserId, bool isAdministrator,
+        EffectiveProviderPolicySnapshot? providerPolicy = null)
     {
         var manual = layers.Effective;
         var routeCanonicalId = decision?.CanonicalRecordingId ?? sourceIdentity?.CanonicalRecordingId;
@@ -853,7 +857,7 @@ public sealed class TrackMatchesController(
             sourceIdentity,
             library.Values,
             routeIdentities,
-            playableProviders);
+            playableProviders, providerPolicy);
         var playableProviderSet = playableProviders.ToHashSet(StringComparer.Ordinal);
         var indexedLibraryTrackIds = library.Keys.ToHashSet();
         var state = projection.ReviewState;

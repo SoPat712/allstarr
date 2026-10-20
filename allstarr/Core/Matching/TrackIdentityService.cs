@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -176,17 +177,33 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
     private readonly DurableStorageState _storageState;
     private readonly IPlatformClock _clock;
     private readonly IProviderRegistry? _registry;
+    private readonly IEffectiveProviderPolicyResolver? _providerPolicies;
 
     public TrackIdentityService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
         DurableStorageState storageState,
         IPlatformClock clock,
-        IProviderRegistry? registry = null)
+        IProviderRegistry? registry = null,
+        IEffectiveProviderPolicyResolver? providerPolicies = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
         _clock = clock;
         _registry = registry;
+        _providerPolicies = providerPolicies;
+    }
+
+    private async Task<bool> CanAutomaticallyLinkAsync(ProviderActorContext actor, string providerId,
+        CancellationToken cancellationToken)
+    {
+        if (_registry?.TryGet(providerId, out var descriptor) == true &&
+            (descriptor!.MatchingMode == ProviderMatchingMode.ManualOnly ||
+             _providerPolicies == null && descriptor.DefaultUseMode != ProviderUseMode.Automatic)) return false;
+        if (_providerPolicies == null) return true;
+        var policy = actor.EffectiveUserId is { } userId
+            ? await _providerPolicies.ResolveForUserAsync(userId, cancellationToken)
+            : await _providerPolicies.ResolveAsync(cancellationToken);
+        return policy.IsAutomatic(providerId);
     }
 
     public Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
@@ -299,6 +316,9 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         EnsureStorageReady();
         ValidateLinkRequest(executionContext, request);
         ThrowIfUnavailable(executionContext, cancellationToken);
+
+        if (!await CanAutomaticallyLinkAsync(executionContext.Actor, request.ExternalId.ProviderId, cancellationToken))
+            throw new InvalidOperationException("This source does not participate in canonical identity linking.");
 
         await using var context = await _contextFactory.CreateDbContextAsync(cancellationToken);
         await using var availabilityTransaction = request.VerificationMethod == "availability"

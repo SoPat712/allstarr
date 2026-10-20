@@ -85,7 +85,7 @@ public class AdminUiController : ControllerBase
             {
                 ActiveBackend = activeBackend,
                 ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
-                Providers = BuildProviders(disabledProviders, originNames).Select(item => new AdminUiProvider
+                Providers = BuildProviders(disabledProviders, originNames, policy).Select(item => new AdminUiProvider
                 {
                     Id = item.Id,
                     Name = item.Name,
@@ -93,6 +93,8 @@ public class AdminUiController : ControllerBase
                     Icon = item.Icon,
                     LogoUrl = item.LogoUrl,
                     Status = item.Status,
+                    UseMode = item.UseMode,
+                    SupportsAutomaticMatching = item.SupportsAutomaticMatching,
                     Categories = item.Categories,
                     Notes = item.Notes,
                     AccountSettings = item.AccountSettings,
@@ -124,7 +126,7 @@ public class AdminUiController : ControllerBase
             ListenersCanConnectOwnAccounts = _providerAccountOptions.ListenersCanConnectOwnAccounts,
             Routes = BuildRoutes(),
             Backends = BuildBackends(),
-            Providers = BuildProviders(disabledProviders, originNames),
+            Providers = BuildProviders(disabledProviders, originNames, policy),
             ProviderSupportMatrix = CurrentProviderSupportCatalog.All.ToList(),
             MultiProviderCategories = ["metadata", "streaming", "download", "playlist", "lyrics", "enrichment"],
             PriorityGroups = BuildPriorityGroups(policy),
@@ -177,11 +179,11 @@ public class AdminUiController : ControllerBase
     {
         if (_effectivePolicies == null ||
             !HttpContext.Items.TryGetValue(AdminAuthSessionService.HttpContextSessionItemKey, out var value) ||
-            value is not AdminAuthSession { AllstarrUserId: not null })
+            value is not AdminAuthSession { AllstarrUserId: { } userId })
             return null;
         try
         {
-            return await _effectivePolicies.ResolveAsync(cancellationToken);
+            return await _effectivePolicies.ResolveForUserAsync(userId, cancellationToken);
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -1046,7 +1048,8 @@ public class AdminUiController : ControllerBase
     }
 
     private List<AdminUiProvider> BuildProviders(IReadOnlySet<string>? disabledProviders = null,
-        IReadOnlyDictionary<string, string>? originNames = null)
+        IReadOnlyDictionary<string, string>? originNames = null,
+        EffectiveProviderPolicySnapshot? usePolicy = null)
     {
         List<AdminUiProvider> providers =
         [
@@ -1309,6 +1312,12 @@ public class AdminUiController : ControllerBase
         }
         foreach (var provider in providers)
         {
+            var registered = _providerRegistry?.TryGet(provider.Id, out var useDescriptor) == true
+                ? useDescriptor : null;
+            var useMode = usePolicy?.GetProviderMode(provider.Id) ?? (registered == null
+                ? ProviderUseMode.Automatic : ProviderUsePolicy.DefaultMode(registered));
+            provider.UseMode = ProviderUsePolicy.Name(useMode);
+            provider.SupportsAutomaticMatching = registered?.MatchingMode != ProviderMatchingMode.ManualOnly;
             provider.SupportedAudiences = allstarr.Core.Identity.ProviderAccountAudiences.Supported(_providerRegistry, provider.Id)
                 .Select(scope => scope.ToString()).ToList();
             provider.SharingDescription = allstarr.Core.Identity.ProviderAccountAudiences.Description(_providerRegistry, provider.Id);
@@ -1328,7 +1337,7 @@ public class AdminUiController : ControllerBase
             {
                 provider.Status = "needs_config";
             }
-            if (disabledProviders?.Contains(provider.Id) == true)
+            if (disabledProviders?.Contains(provider.Id) == true || useMode == ProviderUseMode.Off)
                 provider.Status = "disabled";
         }
 
