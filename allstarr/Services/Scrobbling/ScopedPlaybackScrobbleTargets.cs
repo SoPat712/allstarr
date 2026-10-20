@@ -303,11 +303,13 @@ public class ListenBrainzScopedPlaybackScrobbleTarget(HttpClient http, IScopedRe
         if (JsonSerializer.SerializeToUtf8Bytes(listen).Length > MaximumListenBytes)
             return ScopedPlaybackScrobbleResult.Ignored("listen-too-large",
                 "The listen was skipped because its metadata exceeds the service size limit.", "{\"reason\":\"listen-too-large\"}");
-        request.Content = JsonContent.Create(new Dictionary<string, object>
+        // A buffered body carries Content-Length; ListenBrainz reads a chunked body as an empty document.
+        request.Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object>
         {
             ["listen_type"] = playing ? "playing_now" : "single",
             ["payload"] = new[] { listen }
-        });
+        }));
+        request.Content.Headers.ContentType = new("application/json") { CharSet = "utf-8" };
         using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
         var reason = response.IsSuccessStatusCode ? null : ScrobbleResponseDiagnostics.Reason(
             await ScrobbleResponseDiagnostics.ReadBodyAsync(response.Content, 2048, ct), secret);

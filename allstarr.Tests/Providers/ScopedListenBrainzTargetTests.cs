@@ -22,6 +22,8 @@ public sealed class ScopedListenBrainzTargetTests
         var listen = Assert.Single(document.RootElement.GetProperty("payload").EnumerateArray());
         Assert.Equal("playing_now", document.RootElement.GetProperty("listen_type").GetString());
         Assert.False(listen.TryGetProperty("listened_at", out _));
+        // ListenBrainz reads a chunked body as empty ("zero-length, empty document"); the length must be sent.
+        Assert.Equal(System.Text.Encoding.UTF8.GetByteCount(handler.Body!), handler.ContentLength);
     }
 
     [Fact]
@@ -238,9 +240,12 @@ public sealed class ScopedListenBrainzTargetTests
         public string? AuthorizationParameter { get; private set; }
         public int Calls { get; private set; }
 
+        public long? ContentLength { get; private set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
+            ContentLength = request.Content!.Headers.ContentLength;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
             RequestUri = request.RequestUri?.AbsoluteUri;
             AuthorizationScheme = request.Headers.Authorization?.Scheme;
