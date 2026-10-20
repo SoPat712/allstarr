@@ -152,11 +152,17 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
         Assert.Equal(1, _handler.Bootstraps);
     }
 
-    [Fact]
-    public async Task GatewayInvalidationRetainsRenewalIntentAcrossRestartButSignOutRemovesIt()
+    [Theory]
+    [InlineData(HttpStatusCode.Unauthorized, "SESSION_INVALID", "bootstrap_session")]
+    [InlineData(HttpStatusCode.PreconditionRequired, "VERIFY_REQUIRED", "verify")]
+    public async Task GatewayInvalidationRetainsRenewalIntentAcrossRestartButSignOutRemovesIt(
+        HttpStatusCode status, string code, string action)
     {
         var client = await ExpiredClientAsync(expire: false);
         _handler.RejectCatalog = true;
+        _handler.CatalogStatus = status;
+        _handler.CatalogCode = code;
+        _handler.CatalogAction = action;
         client.SignedFetch("GET", "/catalog", null, null);
         var restarted = Client();
 
@@ -213,6 +219,9 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
         public Action? BeforeExchangeResponse { get; set; }
         public Action? BeforeBootstrapResponse { get; set; }
         public bool RejectCatalog { get; set; }
+        public HttpStatusCode CatalogStatus { get; set; } = HttpStatusCode.Unauthorized;
+        public string CatalogCode { get; set; } = "SESSION_INVALID";
+        public string CatalogAction { get; set; } = "bootstrap_session";
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -224,9 +233,9 @@ public sealed class ExtensionAutomaticVerificationTests : IDisposable
                 BeforeBootstrapResponse?.Invoke();
             }
             else if (RejectCatalog && request.RequestUri.AbsolutePath.EndsWith("/catalog", StringComparison.Ordinal))
-                return new(HttpStatusCode.Unauthorized)
+                return new(CatalogStatus)
                 {
-                    Content = new StringContent("{\"origin\":\"gateway\",\"code\":\"SESSION_INVALID\",\"action\":\"bootstrap_session\"}", Encoding.UTF8, "application/json"),
+                    Content = new StringContent(JsonSerializer.Serialize(new { origin = "gateway", code = CatalogCode, action = CatalogAction }), Encoding.UTF8, "application/json"),
                     RequestMessage = request
                 };
             else if (request.RequestUri.AbsolutePath.EndsWith("/refresh", StringComparison.Ordinal))
