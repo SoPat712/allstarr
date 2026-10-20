@@ -17,6 +17,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Theory]
     [InlineData(HttpStatusCode.BadGateway, "audio_artifact_missing", ProviderErrorKind.NotFound, 1)]
+    [InlineData(HttpStatusCode.BadGateway, "artifact_missing", ProviderErrorKind.NotFound, 1)]
     [InlineData(HttpStatusCode.GatewayTimeout, "audio_prepare_timeout", ProviderErrorKind.TransientFailure, 2)]
     [InlineData(HttpStatusCode.Forbidden, "account_mismatch", ProviderErrorKind.Forbidden, 1)]
     public async Task OpenStream_MapsAppleAudioFileErrorsBeforeServingMedia(
