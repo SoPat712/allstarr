@@ -34,11 +34,15 @@ public sealed record ProviderHealthObservation(
     long? LatencyMilliseconds,
     string? ReasonCode,
     int ConsecutiveFailures,
-    DateTimeOffset? RetryAfter);
+    DateTimeOffset? RetryAfter)
+{
+    internal ProviderHealthState? HealthBeforeProbe { get; init; }
+}
 
 /// <summary>Volatile observations only. Reading status never contacts a provider or writes storage.</summary>
 public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
 {
+    private const int MaximumObservations = 4096;
     private readonly object _sync = new();
     private readonly Dictionary<ProviderRuntimeStatusKey, ProviderHealthObservation> _observations = [];
     private readonly Dictionary<string, SidecarStatus> _sidecars = new(StringComparer.OrdinalIgnoreCase);
@@ -83,15 +87,19 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
         if (error?.Kind is ProviderErrorKind.Canceled or ProviderErrorKind.NotFound or
             ProviderErrorKind.NotSupported or ProviderErrorKind.IncompatibleMedia or ProviderErrorKind.Forbidden)
             return;
-        Record(Key(context.ProviderId, context.Account?.AccountId, capability.ToString()),
+        RecordCore(Key(context.ProviderId, context.Account?.AccountId, capability.ToString()),
             context.Account?.Revision, error == null, (long)Math.Max(0, elapsed.TotalMilliseconds),
             error?.Code, error?.Kind is ProviderErrorKind.Unauthorized or
                 ProviderErrorKind.AccountNeedsReauthentication or ProviderErrorKind.AccountNeedsConfiguration,
-            error?.RetryAfter);
+            error?.RetryAfter, passive: true);
     }
 
     public void Record(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
-        string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null)
+        string? reason, bool authenticationFailure = false, TimeSpan? retryAfter = null) =>
+        RecordCore(key, revision, success, latency, reason, authenticationFailure, retryAfter, passive: false);
+
+    private void RecordCore(ProviderRuntimeStatusKey key, long? revision, bool success, long? latency,
+        string? reason, bool authenticationFailure, TimeSpan? retryAfter, bool passive)
     {
         lock (_sync)
         {
@@ -103,7 +111,11 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
             var opens = !success && (authenticationFailure || retryAfter.HasValue || failures >= _options.FailureThreshold);
             var cooldown = TimeSpan.FromSeconds(_options.CircuitOpenSeconds);
             if (retryAfter > cooldown) cooldown = TimeSpan.FromSeconds(Math.Min(retryAfter.Value.TotalSeconds, 86400));
-            _observations[key] = new(revision, success ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+            var health = success ? ProviderHealthState.Healthy : !passive || opens ? ProviderHealthState.Degraded :
+                previous != null && previous.AccountRevision == revision
+                    ? previous.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown;
+            MakeRoom(key);
+            _observations[key] = new(revision, health,
                 now, latency, SafeReason(reason), failures, opens ? now.Add(cooldown) : null);
         }
     }
@@ -112,6 +124,13 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     {
         lock (_sync)
             return _observations.TryGetValue(key, out var value) && IsFresh(value) &&
+                (!revision.HasValue || value.AccountRevision == revision) ? value : null;
+    }
+
+    public ProviderHealthObservation? GetForDisplay(ProviderRuntimeStatusKey key, long? revision = null)
+    {
+        lock (_sync)
+            return _observations.TryGetValue(key, out var value) &&
                 (!revision.HasValue || value.AccountRevision == revision) ? value : null;
     }
 
@@ -147,7 +166,12 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
             if (previous?.AccountRevision > revision) return null;
             var current = new ProviderHealthObservation(revision, ProviderHealthState.Testing, _clock.UtcNow,
                 null, null, previous != null && previous.AccountRevision == revision ? previous.ConsecutiveFailures : 0,
-                previous != null && previous.AccountRevision == revision ? previous.RetryAfter : null);
+                previous != null && previous.AccountRevision == revision ? previous.RetryAfter : null)
+            {
+                HealthBeforeProbe = previous != null && previous.AccountRevision == revision
+                    ? previous.HealthBeforeProbe ?? previous.Health : ProviderHealthState.Unknown
+            };
+            MakeRoom(key);
             _observations[key] = current;
             return new(key, current, previous);
         }
@@ -182,6 +206,12 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
     private bool IsFresh(ProviderHealthObservation observation) =>
         observation.ObservedAt.AddSeconds(_options.SampleTtlSeconds) > _clock.UtcNow ||
         observation.RetryAfter > _clock.UtcNow;
+
+    private void MakeRoom(ProviderRuntimeStatusKey key)
+    {
+        if (_observations.Count < MaximumObservations || _observations.ContainsKey(key)) return;
+        _observations.Remove(_observations.MinBy(item => item.Value.ObservedAt).Key);
+    }
 
     private static ProviderRuntimeStatusKey Key(string provider, Guid? account, string capability) =>
         account.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, account.Value) :

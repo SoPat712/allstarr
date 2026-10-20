@@ -19,6 +19,127 @@ namespace allstarr.Tests;
 
 public sealed class ProviderStatusManagerTests
 {
+    [Fact]
+    public void RecordedCheckWinsTimestampTieWithPassiveObservation()
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", ProviderCapabilities.Metadata);
+        health.Record(key, null, true, 7, null);
+        clock.UtcNow += TimeSpan.FromSeconds(1);
+        var context = new ProviderExecutionContext(
+            new ProviderActorContext(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "fixture", "admin")),
+            "deezer", null,
+            new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true),
+                ProviderExplicitContentPolicy.Allow, true, true, true, ["deezer"]),
+            "test", "status-test", clock.UtcNow.AddMinutes(1), default);
+        health.Observe(context, ProviderCapabilityKind.Metadata, new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.Equal(ProviderHealthState.Healthy, health.Get(key)!.Health);
+        manager.RestoreCheckResult(key, null, manager.GetAccountFreeStatus("deezer", "metadata") with
+        {
+            Health = ProviderHealthState.Degraded,
+            ReasonCode = "timeout",
+            TestedAt = clock.UtcNow
+        });
+
+        var status = manager.GetAccountFreeStatus("deezer", "metadata");
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal("timeout", status.ReasonCode);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public void StatusUsesNewestEvidenceAfterRoutingSampleExpires(bool observationIsNewer, bool observationHealthy)
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", ProviderCapabilities.Metadata);
+        var baseline = manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Metadata);
+        var older = clock.UtcNow;
+        var newer = older.AddMinutes(1);
+        var recorded = baseline with
+        {
+            Health = observationHealthy ? ProviderHealthState.Degraded : ProviderHealthState.Healthy,
+            TestedAt = observationIsNewer ? older : newer,
+            LatencyMilliseconds = 20,
+            ReasonCode = observationHealthy ? "timeout" : null
+        };
+        manager.RestoreCheckResult(key, null, recorded);
+        clock.UtcNow = observationIsNewer ? newer : older;
+        health.Record(key, null, observationHealthy, 10, observationHealthy ? null : "transient-failure");
+        clock.UtcNow = newer.AddMinutes(6);
+
+        var status = manager.GetAccountFreeStatus("deezer", ProviderCapabilities.Metadata);
+
+        Assert.Null(health.Get(key));
+        Assert.Equal(observationIsNewer == observationHealthy ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+            status.Health);
+        Assert.Equal(newer, status.TestedAt);
+        Assert.Equal(observationIsNewer ? 10 : 20, status.LatencyMilliseconds);
+        Assert.Equal(observationIsNewer ? observationHealthy ? null : "transient-failure" : recorded.ReasonCode, status.ReasonCode);
+        Assert.False(status.CircuitOpen);
+        Assert.Equal(allstarr.Core.Routing.ProviderRouteHealthState.Unknown,
+            health.GetRouteStatus("deezer", null, ProviderCapabilityKind.Metadata).State);
+    }
+
+    [Theory]
+    [InlineData("not_found")]
+    [InlineData("NotFound")]
+    [InlineData("no_results")]
+    [InlineData("incompatible-media")]
+    [InlineData("IncompatibleMedia")]
+    [InlineData("INCOMPATIBLE_MEDIA")]
+    [InlineData("not-supported")]
+    [InlineData("NotSupported")]
+    [InlineData("canceled")]
+    [InlineData("cancelled")]
+    [InlineData("busy")]
+    [InlineData("temporary_storage_full")]
+    [InlineData("TemporaryStorageFull")]
+    [InlineData("invalid_input")]
+    public void TryResourceAndLocalOutcomesDoNotRecordHealth(string reason)
+    {
+        var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
+        var health = new ProviderRuntimeHealth(clock: clock);
+        var manager = CreateManager(new Dictionary<string, string?>(), clock: clock, health: health);
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("deezer", ProviderCapabilities.Metadata);
+        manager.RecordTryResult("deezer", "metadata", null, null, false, 10, reason);
+        Assert.Null(health.Get(key));
+        manager.RecordTryResult("deezer", "metadata", null, null, true, 7, null);
+        var success = health.Get(key);
+        manager.RestoreCheckResult(key, null, manager.GetAccountFreeStatus("deezer", "metadata"));
+        clock.UtcNow += TimeSpan.FromSeconds(1);
+        manager.RecordTryResult("deezer", "metadata", null, null, false, 10, reason);
+        Assert.Same(success, health.Get(key));
+        Assert.Equal(ProviderHealthState.Healthy, manager.GetAccountFreeStatus("deezer", "metadata").Health);
+        Assert.Equal(success!.ObservedAt, manager.GetAccountFreeStatus("deezer", "metadata").TestedAt);
+    }
+
+    [Theory]
+    [InlineData("transient-failure", "transient-failure")]
+    [InlineData("TransientFailure", "transient-failure")]
+    [InlineData("permanent_failure", "permanent-failure")]
+    [InlineData("timeout", "timeout")]
+    [InlineData("Unauthorized", "unauthorized")]
+    [InlineData("RateLimited", "rate-limited")]
+    [InlineData("provider-contract-changed", "provider-contract-changed")]
+    public void TryProviderFailureRecordsImmediateDegradedHealth(string reason, string normalized)
+    {
+        var health = new ProviderRuntimeHealth();
+        var manager = CreateManager(new Dictionary<string, string?>(), health: health);
+        manager.RecordTryResult("deezer", "metadata", null, null, true, 7, null);
+        manager.RecordTryResult("deezer", "metadata", null, null, false, 10, reason);
+        var status = manager.GetAccountFreeStatus("deezer", "metadata");
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal(normalized, status.ReasonCode);
+        Assert.Equal(10, status.LatencyMilliseconds);
+    }
+
     [Theory]
     [InlineData("metadata")]
     [InlineData("playlist")]
@@ -717,7 +838,7 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public async Task ExpiredAccountFreeFailure_AllowsRetryWithoutBackgroundProbes()
+    public async Task ExpiredAccountFreeFailure_RemainsVisibleWithoutBlockingRetry()
     {
         var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
         var discovery = new Mock<IAppleDownloadEndpointDiscovery>();
@@ -748,7 +869,7 @@ public sealed class ProviderStatusManagerTests
 
         Assert.Equal(ProviderHealthState.Degraded, failed.Health);
         Assert.Equal(["apple-musickit", "deezer"], manager.GetEnabledSearchProviders());
-        Assert.Equal(ProviderHealthState.Unknown,
+        Assert.Equal(ProviderHealthState.Degraded,
             manager.GetAccountFreeStatus("apple-download", ProviderCapabilities.Metadata).Health);
     }
 
