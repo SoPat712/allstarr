@@ -22,7 +22,7 @@ namespace allstarr.Services.Common;
 /// <summary>
 /// Current status for built-in providers. Reads are side-effect free. Explicit
 /// probes and normal activity share account, revision and capability observations.
-/// Recorded checks remain visible after volatile routing samples expire.
+/// The latest evidence remains visible after volatile routing samples expire.
 /// </summary>
 public class ProviderStatusManager
 {
@@ -310,9 +310,11 @@ public class ProviderStatusManager
             key.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist &&
             _services?.GetService<AppleWebTokenProvider>() is { FailureCode: not null } tokens)
             return baseline with { Health = ProviderHealthState.Degraded, ReasonCode = tokens.FailureCode, TestedAt = tokens.ObservedAt };
-        var observation = _health.Get(key, accountRevision);
+        // Display the newest evidence, with explicit checks winning completed ties; routing TTL cannot revive older checks.
+        var observation = _health.GetForDisplay(key, accountRevision);
         if (_recordedChecks.TryGetValue(key, out var recorded) && recorded.Revision == accountRevision &&
-            (observation == null || observation.Health != ProviderHealthState.Testing && recorded.Status.TestedAt > observation.ObservedAt))
+            (observation == null || recorded.Status.TestedAt > observation.ObservedAt ||
+                observation.Health != ProviderHealthState.Testing && recorded.Status.TestedAt == observation.ObservedAt))
             return baseline with
             {
                 Health = recorded.Status.Health,
@@ -669,6 +671,9 @@ public class ProviderStatusManager
     public void RecordTryResult(string provider, string capability, Guid? accountId, long? revision,
         bool succeeded, long elapsedMilliseconds, string? reasonCode)
     {
+        reasonCode = NormalizeTryReason(reasonCode);
+        if (!succeeded && reasonCode is "not-found" or "incompatible-media" or "not-supported" or
+            "canceled" or "busy" or "temporary-storage-full" or "invalid-input") return;
         var key = accountId.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, accountId.Value) :
             ProviderRuntimeStatusKey.CreateAccountFree(provider, capability);
         _health.Record(key, revision, succeeded, elapsedMilliseconds, reasonCode);
@@ -681,6 +686,31 @@ public class ProviderStatusManager
                 ReasonCode = reasonCode
             });
     }
+
+    private static string? NormalizeTryReason(string? reason) =>
+        new string((reason ?? "").Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()) switch
+        {
+            "" => null,
+            "notfound" or "noresults" => "not-found",
+            "incompatiblemedia" => "incompatible-media",
+            "notsupported" => "not-supported",
+            "canceled" or "cancelled" => "canceled",
+            "busy" => "busy",
+            "temporarystoragefull" => "temporary-storage-full",
+            "invalidinput" => "invalid-input",
+            "transientfailure" => "transient-failure",
+            "permanentfailure" => "permanent-failure",
+            "timeout" => "timeout",
+            "unauthorized" or "providerunauthorized" => "unauthorized",
+            "accountneedsreauthentication" => "account-needs-reauthentication",
+            "accountneedsconfiguration" => "account-needs-configuration",
+            "ratelimited" => "rate-limited",
+            "providercontractchanged" => "provider-contract-changed",
+            "capabilityunavailable" => "capability-unavailable",
+            "applewebtokenunavailable" => "apple-web-token-unavailable",
+            "unreachable" => "unreachable",
+            _ => "probe_failed"
+        };
 
     private bool IsCapabilitySupported(string provider, string capability)
     {

@@ -97,6 +97,112 @@ public sealed class ProviderRuntimeHealthTests
         Assert.Null(store.Get(Key()));
     }
 
+    [Fact]
+    public void PassiveFailuresPreserveHealthUntilThresholdAndSuccessResetsFailures()
+    {
+        var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.FromMilliseconds(7));
+        for (var failure = 1; failure <= 3; failure++)
+        {
+            _clock.UtcNow += TimeSpan.FromSeconds(1);
+            store.Observe(Context(), ProviderCapabilityKind.Streaming,
+                new(ProviderErrorKind.TransientFailure), TimeSpan.FromMilliseconds(12));
+            var observation = store.Get(Key(), 4)!;
+            Assert.Equal(failure < 3 ? HealthState.Healthy : HealthState.Degraded, observation.Health);
+            Assert.Equal(failure, observation.ConsecutiveFailures);
+            Assert.Equal("transient-failure", observation.ReasonCode);
+            Assert.Equal(_clock.UtcNow, observation.ObservedAt);
+            Assert.Equal(failure == 3, store.IsCircuitOpen(observation));
+        }
+
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.Zero);
+        Assert.Equal(HealthState.Healthy, store.Get(Key(), 4)!.Health);
+        Assert.Equal(0, store.Get(Key(), 4)!.ConsecutiveFailures);
+        Assert.Null(store.Get(Key(), 4)!.ReasonCode);
+        Assert.Null(store.Get(Key(), 4)!.RetryAfter);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.Equal(HealthState.Healthy, store.Get(Key(), 4)!.Health);
+        Assert.Equal(1, store.Get(Key(), 4)!.ConsecutiveFailures);
+    }
+
+    [Fact]
+    public void PassiveFailureWithoutPreviousEvidenceRemainsUnknown()
+    {
+        var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.Equal(HealthState.Unknown, store.Get(Key(), 4)!.Health);
+    }
+
+    [Fact]
+    public void ExpiredFailuresDoNotCountTowardThePassiveThreshold()
+    {
+        var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.Zero);
+        for (var failure = 0; failure < 2; failure++)
+            store.Observe(Context(), ProviderCapabilityKind.Streaming,
+                new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.Equal(1, store.Get(Key(), 4)!.ConsecutiveFailures);
+        Assert.Equal(HealthState.Healthy, store.Get(Key(), 4)!.Health);
+        Assert.False(store.IsCircuitOpen(store.Get(Key(), 4)!));
+    }
+
+    [Fact]
+    public void PassiveFailuresUseConfiguredThresholdAndDoNotBorrowAnotherRevisionHealth()
+    {
+        var store = new ProviderRuntimeHealth(new() { FailureThreshold = 2 }, _clock);
+        store.Record(Key(), 3, true, 1, null);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.Equal(HealthState.Unknown, store.Get(Key(), 4)!.Health);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        Assert.Equal(HealthState.Degraded, store.Get(Key(), 4)!.Health);
+        Assert.True(store.IsCircuitOpen(store.Get(Key(), 4)!));
+    }
+
+    [Fact]
+    public void DisplayRetainsExpiredEvidenceOnlyForTheMatchingRevision()
+    {
+        var store = Store();
+        store.Record(Key(), 4, true, 7, null);
+        var observation = store.Get(Key(), 4);
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+        Assert.Null(store.Get(Key(), 4));
+        Assert.Same(observation, store.GetForDisplay(Key(), 4));
+        Assert.Null(store.GetForDisplay(Key(), 5));
+    }
+
+    [Fact]
+    public void DisplayRetentionEvictsOldestKeysAtCapacity()
+    {
+        var store = Store();
+        store.Record(Key(), 4, true, 7, null);
+        _clock.UtcNow += TimeSpan.FromSeconds(1);
+        var lastKey = Key();
+        for (var index = 0; index < 4096; index++)
+        {
+            lastKey = Key(account: Guid.NewGuid());
+            store.Record(lastKey, 4, true, 7, null);
+        }
+        Assert.Null(store.GetForDisplay(Key(), 4));
+        Assert.NotNull(store.GetForDisplay(lastKey, 4));
+    }
+
+    [Fact]
+    public void ExplicitFailureDegradesImmediately()
+    {
+        var store = Store();
+        store.Record(Key(), 4, true, 1, null);
+        store.Record(Key(), 4, false, 1, "timeout");
+        Assert.Equal(HealthState.Degraded, store.Get(Key(), 4)!.Health);
+        Assert.Equal(1, store.Get(Key(), 4)!.ConsecutiveFailures);
+    }
+
     [Theory]
     [InlineData(ProviderErrorKind.Unauthorized)]
     [InlineData(ProviderErrorKind.AccountNeedsReauthentication)]
@@ -104,7 +210,9 @@ public sealed class ProviderRuntimeHealthTests
     public void CredentialsFailureImmediatelyOpensExactRevisionCircuit(ProviderErrorKind kind)
     {
         var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.Zero);
         store.Observe(Context(), ProviderCapabilityKind.Streaming, new(kind), TimeSpan.FromMilliseconds(2));
+        Assert.Equal(HealthState.Degraded, store.Get(Key(), 4)!.Health);
         var route = store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming);
         Assert.True(route.CircuitOpen);
         Assert.Equal(4, route.AccountRevision);
@@ -114,7 +222,9 @@ public sealed class ProviderRuntimeHealthTests
     public void RateLimitHonorsRetryAfterAndRestartHasNoHydratedState()
     {
         var store = Store();
+        store.Observe(Context(), ProviderCapabilityKind.Streaming, null, TimeSpan.Zero);
         store.Observe(Context(), ProviderCapabilityKind.Streaming, new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(10)), TimeSpan.Zero);
+        Assert.Equal(HealthState.Degraded, store.Get(Key(), 4)!.Health);
         _clock.UtcNow += TimeSpan.FromMinutes(9);
         Assert.True(store.GetRouteStatus("deezer", _account, ProviderCapabilityKind.Streaming).CircuitOpen);
         Assert.Null(Store().Get(Key()));
@@ -133,6 +243,22 @@ public sealed class ProviderRuntimeHealthTests
         store.CancelProbe(probe);
         Assert.Equal(HealthState.Healthy, store.Get(Key(), 5)!.Health);
         Assert.Null(store.BeginProbe(Key(), 4));
+    }
+
+    [Fact]
+    public void PassiveFailureDuringCanceledProbeDoesNotLeaveDisplayTesting()
+    {
+        var store = Store();
+        store.Record(Key(), 4, true, 7, null);
+        var probe = store.BeginProbe(Key(), 4);
+        store.Observe(Context(), ProviderCapabilityKind.Streaming,
+            new(ProviderErrorKind.TransientFailure), TimeSpan.Zero);
+        store.CancelProbe(probe);
+        _clock.UtcNow += TimeSpan.FromMinutes(6);
+        var observation = store.GetForDisplay(Key(), 4)!;
+        Assert.Equal(HealthState.Healthy, observation.Health);
+        Assert.Equal("transient-failure", observation.ReasonCode);
+        Assert.Equal(1, observation.ConsecutiveFailures);
     }
 
     [Fact]

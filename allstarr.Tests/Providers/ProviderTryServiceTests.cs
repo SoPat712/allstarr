@@ -110,11 +110,12 @@ public sealed class ProviderTryServiceTests
                     })));
             });
         var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
-        { Capability = "streaming", Operation = "stream", TrackId = "track", Quality = "lossless" }, "stream", CancellationToken.None);
+        { Capability = "streaming", Operation = "stream", TrackId = "track", Quality = "high-resolution" }, "stream", CancellationToken.None);
         Assert.True(result.Result!.Succeeded);
         var json = JsonSerializer.SerializeToElement(result.Result);
         var media = json.GetProperty("media");
         Assert.Equal("stream", media.GetProperty("kind").GetString());
+        Assert.Equal("lossless", media.GetProperty("quality").GetString());
         Assert.Equal(100000, media.GetProperty("sizeBytes").GetInt64());
         Assert.Equal("byte-range", media.GetProperty("seekMode").GetString());
         Assert.True(media.GetProperty("startMs").GetDouble() >= 0);
@@ -140,7 +141,9 @@ public sealed class ProviderTryServiceTests
         var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
         { Capability = "streaming", Operation = "stream", TrackId = "track", Quality = "lossless" }, "stream", CancellationToken.None);
         Assert.True(result.Result!.Succeeded);
-        var url = JsonSerializer.SerializeToElement(result.Result).GetProperty("media").GetProperty("url").GetString()!;
+        var media = JsonSerializer.SerializeToElement(result.Result).GetProperty("media");
+        Assert.Equal("lossy", media.GetProperty("quality").GetString());
+        var url = media.GetProperty("url").GetString()!;
         ranges.Clear();
         var entry = fixture.Tickets.Find(fixture.Actor.UserId!.Value, url[(url.LastIndexOf('/') + 1)..]);
         using var opened = await entry!.OpenAsync("bytes=1000-1999", CancellationToken.None);
@@ -148,8 +151,19 @@ public sealed class ProviderTryServiceTests
         Assert.Equal([null], ranges);
     }
 
-    [Fact]
-    public async Task Download_UsesTransientArtifactAndDeletesWorkspaceAtTicketExpiry()
+    [Theory]
+    [InlineData("mp3", 44100, null, "lossy")]
+    [InlineData("aac", 96000, 24, "lossy")]
+    [InlineData("opus", 48000, null, "lossy")]
+    [InlineData("vorbis", 44100, null, "lossy")]
+    [InlineData("flac", 44100, 16, "lossless")]
+    [InlineData("alac", 48000, 16, "lossless")]
+    [InlineData("flac", 44100, 24, "high-resolution")]
+    [InlineData("alac", 96000, 16, "high-resolution")]
+    [InlineData("pcm_s24le", 48000, 24, "high-resolution")]
+    [InlineData("unknown", 96000, 24, "unknown")]
+    public async Task Download_UsesDeliveredQualityAndDeletesWorkspaceAtTicketExpiry(
+        string codec, int sampleRate, int? bitDepth, string expectedQuality)
     {
         await using var fixture = await Fixture.CreateAsync();
         fixture.Download.Setup(item => item.DownloadAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderDownloadRequest>(), null))
@@ -159,17 +173,18 @@ public sealed class ProviderTryServiceTests
                 var write = await fixture.Artifacts.WriteAsync(new(request.Workspace, request.DurableJobId, "fixture", "song.flac",
                     new MemoryStream([1, 2, 3, 4]), 1024));
                 return ProviderOutcome<ProviderDownloadedArtifact>.Success(new(write.ArtifactId, write.Sha256, write.SizeBytes,
-                    new("audio/flac", "flac", "flac", 1411000, 44100, 16), true));
+                    new("audio/flac", "flac", codec, 1411000, sampleRate, bitDepth), true));
             });
         fixture.Metadata.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()))
             .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(Fixture.Track()));
         var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
-        { Capability = "download", Operation = "download", TrackId = "track", Quality = "lossless" }, "download", CancellationToken.None);
+        { Capability = "download", Operation = "download", TrackId = "track", Quality = "high-resolution" }, "download", CancellationToken.None);
         Assert.True(result.Result!.Succeeded);
         var media = JsonSerializer.SerializeToElement(result.Result).GetProperty("media");
         Assert.Equal("Artist - Song.flac", media.GetProperty("fileName").GetString());
         Assert.Equal(4, media.GetProperty("sizeBytes").GetInt64());
         Assert.Equal(1411, media.GetProperty("bitrateKbps").GetDouble());
+        Assert.Equal(expectedQuality, media.GetProperty("quality").GetString());
         Assert.Single(Directory.EnumerateDirectories(fixture.WorkspaceRoot));
         fixture.DeleteTickets();
         Assert.Empty(Directory.EnumerateDirectories(fixture.WorkspaceRoot));
@@ -215,8 +230,10 @@ public sealed class ProviderTryServiceTests
     [Theory]
     [InlineData("download", ProviderErrorKind.NotFound, "not_found")]
     [InlineData("download", ProviderErrorKind.TransientFailure, "transient-failure")]
+    [InlineData("download", ProviderErrorKind.IncompatibleMedia, "incompatible-media")]
     [InlineData("streaming", ProviderErrorKind.NotFound, "not_found")]
     [InlineData("streaming", ProviderErrorKind.TransientFailure, "TransientFailure")]
+    [InlineData("streaming", ProviderErrorKind.IncompatibleMedia, "IncompatibleMedia")]
     public async Task MediaFailures_AreProviderOutcomes(string capability, ProviderErrorKind kind, string reason)
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -230,6 +247,8 @@ public sealed class ProviderTryServiceTests
         Assert.False(result.Result!.Succeeded);
         Assert.Equal(reason, result.Result.ReasonCode);
         Assert.Null(result.Result.Media);
+        Assert.Equal(kind == ProviderErrorKind.TransientFailure ? ProviderHealthState.Degraded : ProviderHealthState.Unknown,
+            fixture.Status.GetAccountFreeStatus("fixture", capability).Health);
     }
 
     [Fact]

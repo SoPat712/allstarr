@@ -121,7 +121,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
         {
             Succeeded = true,
             Media = Media("stream", ticket, null, length, media,
-            quality, measured.SeekRung, measured.ClickToStreamMilliseconds, null)
+            measured.SeekRung, measured.ClickToStreamMilliseconds, null)
         };
     }
 
@@ -174,7 +174,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             {
                 Succeeded = true,
                 Media = Media("download", ticket, name, artifact.Length, artifact.Media,
-                quality, null, null, metadata?.Duration?.TotalSeconds)
+                null, null, metadata?.Duration?.TotalSeconds)
             };
         }
         finally
@@ -220,7 +220,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
     }
 
     private static object Media(string kind, ProviderTryMediaTicket ticket, string? fileName, long? size,
-        ProviderMediaFormat format, ProviderAudioQuality quality, string? seekMode, double? startMs, double? duration) => new
+        ProviderMediaFormat format, string? seekMode, double? startMs, double? duration) => new
         {
             kind,
             url = ticket.Url,
@@ -233,10 +233,21 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             bitDepth = format.BitDepth,
             bitrateKbps = format.Bitrate / 1000d,
             durationSeconds = duration,
-            quality = quality switch { ProviderAudioQuality.HighResolution => "high-resolution", _ => quality.ToString().ToLowerInvariant() },
+            quality = DeliveredQuality(format),
             seekMode,
             startMs
         };
+
+    private static string DeliveredQuality(ProviderMediaFormat format) => format.Codec.ToLowerInvariant() switch
+    {
+        "mp3" or "aac" or "opus" or "vorbis" or "mp2" or "wma" => "lossy",
+        "flac" or "alac" or "pcm" or "lpcm" or "wav" or "aiff" or "ape" or "wavpack" =>
+            format.BitDepth > 16 || format.SampleRate > 48000 ? "high-resolution" : "lossless",
+        var codec when codec.StartsWith("pcm_", StringComparison.Ordinal) =>
+            format.BitDepth > 16 || format.SampleRate > 48000 ? "high-resolution" : "lossless",
+        _ => "unknown"
+    };
+
     private static string SafeFileName(string name) => new string(name.Select(character =>
         char.IsControl(character) || character is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' ? '_' : character).ToArray())[..Math.Min(200, name.Length)];
     private static readonly HttpClient StreamClient = new(new SocketsHttpHandler { AllowAutoRedirect = false, UseCookies = false })
