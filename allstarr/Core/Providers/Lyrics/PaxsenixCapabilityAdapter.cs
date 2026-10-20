@@ -75,7 +75,8 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             var response = await GetResponseAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(id)}"), token);
             if (response.Error != null)
             {
-                if (response.StatusCode is >= HttpStatusCode.InternalServerError)
+                // Busy songs answer 5xx or hang until the request timeout (no status); try the next copy.
+                if (response.StatusCode is null or >= HttpStatusCode.InternalServerError)
                     transient = response.Error;
                 else return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);
             }

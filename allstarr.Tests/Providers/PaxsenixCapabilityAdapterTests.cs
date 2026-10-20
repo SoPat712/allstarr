@@ -148,6 +148,20 @@ public sealed class PaxsenixCapabilityAdapterTests
         Assert.Equal(["?id=1", "?id=2"], handler.Requests.Select(uri => uri.Query));
     }
 
+    [Fact]
+    public async Task CandidateWithoutAnAnswerFallsThroughToStrictSearch()
+    {
+        var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+            ? "{\"results\":{\"songs\":{\"data\":[" + CatalogSong("2") + "]}}}"
+            : "{\"data\":[" + CatalogSong("1", true) + "]}"));
+        var handler = new Handler((_, attempt) => attempt == 1 ? throw new HttpRequestException("timed out") : Response(Lyrics));
+
+        var result = await Adapter(handler, apple: apple).FetchLyricsAsync(Context(), Request());
+
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+        Assert.Equal(["?id=1", "?id=2"], handler.Requests.Select(uri => uri.Query));
+    }
+
     [Theory]
     [InlineData(2, ProviderLyricsAvailabilityState.Available)]
     [InlineData(20, null)]
