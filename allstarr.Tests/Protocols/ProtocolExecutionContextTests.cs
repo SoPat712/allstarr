@@ -236,6 +236,40 @@ public sealed class ProtocolExecutionContextTests
             StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("api_key=player-token", null)]
+    [InlineData("api_key=player-token&deviceId=desktop-3", "desktop-3")]
+    public async Task Filter_GivesQueryCredentialPlayersAStableDeviceIdentity(string query, string? expected)
+    {
+        async Task<string?> DeviceAsync()
+        {
+            var http = new DefaultHttpContext { TraceIdentifier = "protocol-request" };
+            http.Items[JellyfinAuthFilter.BackendPrincipalIdItemKey] = "verified-listener";
+            http.Request.QueryString = new QueryString("?" + query);
+            var actionContext = ActionExecuting(http);
+            var filter = new ProtocolExecutionContextFilter(
+                new ProtocolExecutionContextFactory(
+                    new ProtocolExecutionOptions(),
+                    new FakeClock(new DateTimeOffset(2026, 7, 11, 19, 0, 0, TimeSpan.Zero)),
+                    new IdentityOptions { BackendInstanceId = "primary" }),
+                NullLogger<ProtocolExecutionContextFilter>.Instance,
+                Moq.Mock.Of<allstarr.Core.Settings.IEffectiveProviderPolicyResolver>(Moq.MockBehavior.Strict));
+            await filter.OnActionExecutionAsync(actionContext, () => Task.FromResult(new ActionExecutedContext(
+                new ActionContext(actionContext.HttpContext, actionContext.RouteData, actionContext.ActionDescriptor,
+                    actionContext.ModelState), actionContext.Filters, actionContext.Controller)));
+            var projected = Assert.IsType<ProtocolExecutionContext>(http.Items[ProtocolExecutionContextFactory.HttpContextItemKey]);
+            Assert.DoesNotContain("player-token", System.Text.Json.JsonSerializer.Serialize(projected), StringComparison.Ordinal);
+            return projected.Client.DeviceId;
+        }
+
+        var first = await DeviceAsync();
+        var second = await DeviceAsync();
+
+        Assert.False(string.IsNullOrWhiteSpace(first));
+        Assert.Equal(first, second);
+        if (expected != null) Assert.Equal(expected, first);
+    }
+
     [Fact]
     public async Task Filter_RejectsConflictingVerifiedProtocolPrincipals()
     {

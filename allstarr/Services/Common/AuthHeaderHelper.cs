@@ -43,6 +43,24 @@ public static class AuthHeaderHelper
     public static string? ExtractDeviceId(IHeaderDictionary headers) =>
         MediaBrowserAuthorization(headers) is { } value ? ExtractDeviceIdFromAuthString(value) : null;
 
+    /// <summary>
+    /// Players that fetch audio by URL (Feishin's player, mpv) send only a query credential, so a device ID falls
+    /// back to the query's deviceId and then to a hash of the access token, keeping the opening and later range
+    /// requests of one playback on the same identity without exposing the token.
+    /// </summary>
+    public static string? ExtractDeviceId(HttpRequest request)
+    {
+        if (ExtractDeviceId(request.Headers) is { Length: > 0 } header) return header;
+        foreach (var name in new[] { "deviceId", "DeviceId" })
+            if (request.Query.TryGetValue(name, out var values) && values.FirstOrDefault() is { Length: > 0 and <= 200 } device)
+                return device;
+        foreach (var name in new[] { "api_key", "access_token", "ApiKey" })
+            if (request.Query.TryGetValue(name, out var values) && values.FirstOrDefault() is { Length: > 0 } token)
+                return "token-" + Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token)))[..24];
+        return null;
+    }
+
     public static string? ExtractUserId(IHeaderDictionary headers)
     {
         foreach (var name in new[] { "X-Emby-Authorization", "Authorization" })

@@ -57,7 +57,7 @@ public sealed class ProtocolExecutionContextFilter : IAsyncActionFilter
                 jellyfinPrincipal,
                 client: new ProtocolClientDescriptor(
                     AuthHeaderHelper.ExtractClientName(context.HttpContext.Request.Headers),
-                    AuthHeaderHelper.ExtractDeviceId(context.HttpContext.Request.Headers)));
+                    AuthHeaderHelper.ExtractDeviceId(context.HttpContext.Request)));
         }
         else if (subsonicPrincipal != null)
         {
