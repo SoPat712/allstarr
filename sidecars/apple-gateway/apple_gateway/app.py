@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import importlib.metadata
+import logging
 import shutil
 import time
 import uuid
@@ -18,12 +19,13 @@ from starlette.background import BackgroundTask
 from .config import Settings
 from .models import Login2faRequest, LoginRequest, MediaAccount
 from .runner import BoundedProcessRunner, ProcessFailure
-from .security import media_account, song_url
+from .security import diagnostic_tail, media_account, song_url
 from .wrapper import WrapperClient, WrapperResponse
 
-API_VERSION = "2.0.0"
+API_VERSION = "2.1.0"
 CAPABILITIES = (
     "stream-audio-song",
+    "audio-file",
     "download-audio-song",
     "synced-lyrics-artifact",
     "codec-alac",
@@ -31,6 +33,7 @@ CAPABILITIES = (
 )
 PREPARED_CACHE_TTL_SECONDS = 6 * 60 * 60
 PREPARED_CACHE_MAX_TRACKS = 32
+logger = logging.getLogger("uvicorn.error")
 FLAC_GUIDANCE_PREFIX = b"ID3\x04\x00\x00\x00\x00\x00\x00"
 
 
@@ -212,17 +215,19 @@ def create_app(
         song_id: str,
         quality: str,
         fallback_quality: str | None,
-    ) -> tuple[Path, Path]:
+    ) -> tuple[Path, Path, str]:
         url = _song_request(account, song_id, quality)
         root = config.data_root / "artifacts" / uuid.uuid4().hex
+        used_quality = quality
         try:
             try:
                 artifacts = await process_runner.download(
                     url, _codec(quality), root / "output", root / "temporary", media_user_token=account.token
                 )
             except ProcessFailure as exc:
-                if fallback_quality is None or exc.code not in {"artifact_missing", "gamdl_failed"}:
+                if fallback_quality is None or exc.code not in {"artifact_missing", "audio_artifact_missing", "gamdl_failed"}:
                     raise
+                used_quality = fallback_quality
                 artifacts = await process_runner.download(
                     url, _codec(fallback_quality), root / "output-fallback", root / "temporary-fallback",
                     media_user_token=account.token,
@@ -233,37 +238,39 @@ def create_app(
             audio = [artifact for artifact in artifacts if artifact.suffix.lower() in {".m4a", ".flac"}]
             if not audio:
                 raise ProcessFailure("audio_artifact_missing")
-            return root, audio[0]
+            return root, audio[0], used_quality
         except asyncio.CancelledError:
             shutil.rmtree(root, ignore_errors=True)
             raise
         except ProcessFailure as exc:
+            exc.quality = used_quality
             shutil.rmtree(root, ignore_errors=True)
             status = 504 if exc.code == "process_timeout" else 403 if exc.code == "account_mismatch" else 502
             raise HTTPException(status_code=status, detail=exc.code,
-                headers={"X-Allstarr-Failure-Code": "account_mismatch"} if exc.code == "account_mismatch" else None) from None
+                headers={"X-Allstarr-Failure-Code": "account_mismatch"} if exc.code == "account_mismatch" else None) from exc
         except Exception:
             shutil.rmtree(root, ignore_errors=True)
             raise HTTPException(status_code=502, detail="download_failed") from None
 
-    def cached_source(key: str) -> Path | None:
+    def cached_source(key: str, *, audio_file: bool = False) -> Path | None:
         cache_root = config.data_root / "prepared"
         now = time.time()
-        candidates = sorted(
-            (path for path in cache_root.glob("*")
-             if not path.is_symlink() and path.is_file() and not path.name.endswith(".partial")),
-            key=lambda path: path.stat().st_mtime,
-            reverse=True,
-        ) if cache_root.exists() else []
-        for stale in candidates[PREPARED_CACHE_MAX_TRACKS:]:
-            stale.unlink(missing_ok=True)
-        for candidate in candidates[:PREPARED_CACHE_MAX_TRACKS]:
-            if now - candidate.stat().st_mtime > PREPARED_CACHE_TTL_SECONDS:
-                candidate.unlink(missing_ok=True)
-            elif candidate.stem == key:
-                candidate.touch()
-                return candidate
-        return None
+        tracks: dict[str, list[Path]] = {}
+        for path in cache_root.glob("*"):
+            if not path.is_symlink() and path.is_file() and not path.name.endswith(".partial"):
+                tracks.setdefault(path.name.split(".")[0], []).append(path)
+        ordered = sorted(tracks.values(), key=lambda paths: max(path.stat().st_mtime for path in paths), reverse=True)
+        found = None
+        for index, paths in enumerate(ordered):
+            if index >= PREPARED_CACHE_MAX_TRACKS or now - max(path.stat().st_mtime for path in paths) > PREPARED_CACHE_TTL_SECONDS:
+                for path in paths:
+                    path.unlink(missing_ok=True)
+            elif paths[0].name.split(".")[0] == key:
+                for path in paths:
+                    path.touch()
+                    if (".audio." in path.name) == audio_file:
+                        found = path
+        return found
 
     async def prepare_song(
         account: MediaAccount, song_id: str, quality: str, fallback_quality: str | None = None
@@ -275,11 +282,11 @@ def create_app(
         async def prepare_and_cache() -> Path:
             if cached := cached_source(key):
                 return cached
-            root, source = await download_song_source(account, song_id, quality, fallback_quality)
+            root, source, used_quality = await download_song_source(account, song_id, quality, fallback_quality)
             try:
                 cache_root = config.data_root / "prepared"
                 cache_root.mkdir(parents=True, exist_ok=True, mode=0o750)
-                target = cache_root / f"{key}{source.suffix.lower()}"
+                target = cache_root / f"{key}.{used_quality.lower()}{source.suffix.lower()}"
                 partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
                 try:
                     shutil.copyfile(source, partial)
@@ -287,11 +294,76 @@ def create_app(
                 finally:
                     partial.unlink(missing_ok=True)
                 target.touch()
+                cached_source(key)
                 return target
             finally:
                 shutil.rmtree(root, ignore_errors=True)
 
         return await coalesce("audio:" + key, prepare_and_cache)
+
+    @application.api_route("/api/audio/{song_id}", methods=["GET", "HEAD"])
+    async def audio_song(
+        song_id: str, quality: str = "alac-16-44", account: MediaAccount = Depends(_account)
+    ) -> FileResponse:
+        _song_request(account, song_id, quality)
+        key = _cache_key(account, song_id, quality)
+
+        async def prepare_audio() -> Path:
+            if cached := cached_source(key, audio_file=True):
+                return cached
+            gamdl_seconds = conversion_seconds = 0.0
+            used_quality = quality
+            started = time.monotonic()
+            partial = None
+            try:
+                source = await prepare_song(account, song_id, quality, "aac-web")
+                gamdl_seconds = time.monotonic() - started
+                started = time.monotonic()
+                used_quality = source.name.split(".")[1] if source.name.count(".") == 2 else quality
+                codec = await process_runner.audio_codec(source)
+                suffix = ".m4a" if codec == "aac" else ".flac"
+                target = source.parent / f"{key}.audio{suffix}"
+                partial = target.with_name(f"{target.name}.{uuid.uuid4().hex}.partial")
+                if codec == "aac":
+                    shutil.copyfile(source, partial)
+                else:
+                    await process_runner.seekable_flac(source, partial)
+                partial.replace(target)
+                cached_source(key, audio_file=True)
+                conversion_seconds = time.monotonic() - started
+                logger.info("Audio prepare song=%s quality=%s gamdl_seconds=%.3f conversion_seconds=%.3f bytes=%d",
+                    song_id, used_quality, gamdl_seconds, conversion_seconds, target.stat().st_size)
+                return target
+            except (HTTPException, ProcessFailure) as exc:
+                if isinstance(exc, HTTPException):
+                    code = str(exc.detail)
+                    failure = exc.__cause__
+                    gamdl_seconds = time.monotonic() - started
+                else:
+                    code = exc.code
+                    failure = exc
+                    conversion_seconds = time.monotonic() - started
+                used_quality = getattr(failure, "quality", None) or used_quality
+                tail = diagnostic_tail(getattr(failure, "stderr", ""), account.token).replace("\n", " | ")
+                logger.warning("Audio prepare song=%s quality=%s gamdl_seconds=%.3f conversion_seconds=%.3f bytes=0 failure=%s stderr=%s",
+                    song_id, used_quality, gamdl_seconds, conversion_seconds, code, tail)
+                if isinstance(exc, HTTPException):
+                    raise
+                status = 504 if code == "process_timeout" else 403 if code == "account_mismatch" else 502
+                raise HTTPException(status_code=status, detail=code,
+                    headers={"X-Allstarr-Failure-Code": code} if code == "account_mismatch" else None) from None
+            except Exception:
+                logger.warning("Audio prepare song=%s quality=%s gamdl_seconds=%.3f conversion_seconds=%.3f bytes=0 failure=download_failed",
+                    song_id, used_quality, gamdl_seconds, time.monotonic() - started)
+                raise HTTPException(status_code=502, detail="download_failed") from None
+            finally:
+                if partial is not None:
+                    partial.unlink(missing_ok=True)
+
+        artifact = cached_source(key, audio_file=True) or await coalesce("file:" + key, prepare_audio)
+        is_aac = artifact.suffix == ".m4a"
+        return FileResponse(artifact, media_type="audio/mp4" if is_aac else "audio/flac",
+            filename=f"{song_id}{artifact.suffix}", content_disposition_type="inline")
 
     @application.get("/api/download/{song_id}")
     async def download_song(

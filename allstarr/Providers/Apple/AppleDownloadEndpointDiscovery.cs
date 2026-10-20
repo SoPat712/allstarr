@@ -54,19 +54,19 @@ public sealed class AppleDownloadEndpointDiscovery(
     private static readonly IReadOnlyDictionary<string, string[]> RequiredRoutes =
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            [ProviderCapabilities.Streaming] = ["stream-audio-song"],
+            [ProviderCapabilities.Streaming] = ["audio-file", "stream-audio-song"],
             [ProviderCapabilities.Download] = ["download-audio-song"],
             [ProviderCapabilities.Lyrics] = ["synced-lyrics-artifact"]
         };
     private static readonly string[] GranularFeatureIds =
     [
-        "stream-audio-song", "download-audio-song", "download-album", "download-playlist",
+        "audio-file", "stream-audio-song", "download-audio-song", "download-album", "download-playlist",
         "library-read", "stream-music-video", "synced-lyrics-artifact",
         "tagging-artwork", "codec-alac", "codec-aac"
     ];
     private static readonly HashSet<string> ImplementedFeatureIds = new(
     [
-        "stream-audio-song", "download-audio-song",
+        "audio-file", "stream-audio-song", "download-audio-song",
         "synced-lyrics-artifact"
     ], StringComparer.OrdinalIgnoreCase);
 
@@ -114,13 +114,13 @@ public sealed class AppleDownloadEndpointDiscovery(
             var advertised = ReadSupportedCapabilities(manifestRoot);
             var capabilityStatuses = RequiredRoutes.Select(pair =>
             {
-                var missing = pair.Value.Where(id => !advertised.Contains(id)).ToArray();
+                var supported = pair.Value.Any(advertised.Contains);
                 return new AppleDownloadCapabilityStatus(
                     pair.Key,
-                    missing.Length == 0
+                    supported
                         ? AppleDownloadCapabilityState.Available
                         : AppleDownloadCapabilityState.Unsupported,
-                    missing.Length == 0 ? null : "required_routes_not_advertised");
+                    supported ? null : "required_routes_not_advertised");
             }).Concat(GranularFeatureIds.Select(id =>
             {
                 var isAdvertised = advertised.Contains(id);

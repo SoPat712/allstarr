@@ -4,12 +4,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import importlib
-import os
+import io
 import sys
 from pathlib import Path
 from typing import Any
 
 from gamdl.api import AppleMusicApi
+
+from .security import diagnostic_tail
 
 ACCOUNT_MISMATCH_EXIT = 78
 ACCOUNT_UNAVAILABLE_EXIT = 79
@@ -67,6 +69,21 @@ def account_api_type(cookie_path: Path, failures: list[str]) -> type[AppleMusicA
     return AccountAppleMusicApi
 
 
+class _DiagnosticBuffer(io.TextIOBase):
+    def __init__(self):
+        self.text = ""
+        self.truncated = False
+
+    def write(self, value: str) -> int:
+        text = self.text + value
+        self.truncated = self.truncated or len(text) > 32768
+        self.text = text[-32768:]
+        return len(value)
+
+    def tail(self) -> str:
+        return self.text.partition("\n")[2] if self.truncated else self.text
+
+
 def run(argv: list[str]) -> int:
     failures: list[str] = []
     try:
@@ -84,21 +101,26 @@ def run(argv: list[str]) -> int:
     # This replacement happens only in the short-lived command process, never
     # when this module is imported by the ASGI gateway.
     cli.AppleMusicApi = account_api_type(cookie_path, failures)
+    diagnostics = _DiagnosticBuffer()
+    result = 0
     try:
-        with open(os.devnull, "w", encoding="utf-8") as quiet:
-            with contextlib.redirect_stdout(quiet), contextlib.redirect_stderr(quiet):
-                # GAMDL's writer captures sys.stdout in a default argument at
-                # import time; supply the quiet stream explicitly as well.
-                cli.CustomOutputWriter = lambda: original_writer(streams=[quiet])
-                cli.main.main(args=argv, standalone_mode=False)
+        with contextlib.redirect_stdout(diagnostics), contextlib.redirect_stderr(diagnostics):
+            # Supply the bounded stream to the writer's captured stdout as well.
+            cli.CustomOutputWriter = lambda: original_writer(streams=[diagnostics])
+            cli.main.main(args=argv, standalone_mode=False)
     except Exception:
-        return ACCOUNT_MISMATCH_EXIT if "account_mismatch" in failures else ACCOUNT_UNAVAILABLE_EXIT
+        result = ACCOUNT_UNAVAILABLE_EXIT
     finally:
         cli.AppleMusicApi = original
         cli.CustomOutputWriter = original_writer
     if failures:
         return ACCOUNT_MISMATCH_EXIT if "account_mismatch" in failures else ACCOUNT_UNAVAILABLE_EXIT
-    return 0
+    token = next((line.split("\t")[-1] for line in cookie_path.read_text().splitlines()
+        if "\tmedia-user-token\t" in line), "")
+    tail = diagnostic_tail(diagnostics.tail(), token)
+    if tail:
+        sys.stderr.write(tail + "\n")
+    return result
 
 
 if __name__ == "__main__":

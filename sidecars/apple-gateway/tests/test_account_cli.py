@@ -181,3 +181,27 @@ def test_account_cli_rejects_missing_cookie_path_before_upstream_call(monkeypatc
     cli = importlib.import_module("gamdl.cli.cli")
     monkeypatch.setattr(cli.main, "main", lambda *args, **kwargs: pytest.fail("must not call GAMDL"))
     assert run(["--use-wrapper", "--no-config-file"]) == ACCOUNT_UNAVAILABLE_EXIT
+
+
+def test_cli_retains_only_redacted_diagnostic_tail(monkeypatch, tmp_path, capsys):
+    import sys
+    cli = importlib.import_module("gamdl.cli.cli")
+    arguments = argv(tmp_path)
+    cookie = tmp_path / "account.cookies"
+    cookie.write_text(".music.apple.com\tTRUE\t/\tTRUE\t0\tmedia-user-token\tprivate-fixture-token\n")
+
+    def main(*args, **kwargs):
+        print("discarded diagnostic")
+        print("audio unavailable")
+        print("private-fixture-token https://private.example/audio", file=sys.stderr)
+        print("Cookie: private-session", file=sys.stderr)
+
+    monkeypatch.setattr(cli.main, "main", main)
+    assert run(arguments) == 0
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "audio unavailable" in output.err
+    assert "discarded diagnostic" not in output.err
+    assert "private-fixture-token" not in output.err
+    assert "private.example" not in output.err
+    assert "private-session" not in output.err

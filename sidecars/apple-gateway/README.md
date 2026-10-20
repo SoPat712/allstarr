@@ -30,13 +30,15 @@ described below.
 
 ## Runtime contract
 
-The media-only sidecar API is version `2.0.0`. Catalog metadata is owned by Allstarr's MusicKit client.
+The media-only sidecar API is version `2.1.0`. Catalog metadata is owned by Allstarr's MusicKit client.
 
 - `GET /api/capabilities`
 - `GET /api/health`
 - `GET /api/me`
 - `POST /api/login`
 - `POST /api/login/2fa`
+- `GET /api/audio/{songId}?quality=...` — complete, cached FLAC for lossless sources, or the original AAC MP4 file
+- `HEAD /api/audio/{songId}?quality=...` — prepares the same file and returns its real length and type
 - `GET /api/download/{songId}?quality=...` — complete managed FLAC artifact
 - `GET /api/stream/{songId}?quality=...` — immediate headers and an empty ID3 prelude,
   followed by FLAC after account-scoped source preparation. Allstarr strips the prelude
@@ -46,7 +48,25 @@ The media-only sidecar API is version `2.0.0`. Catalog metadata is owned by Alls
 - `HEAD /api/stream/{songId}?quality=...` and `HEAD /api/download/{songId}?quality=...` — FLAC type/disposition only
 - `HEAD /api/lyrics/{songId}?quality=...` — JSON type only; no media preparation
 
-Song downloads return a FLAC artifact because that is the current Allstarr managed-song contract. The old catalog
+The `audio-file` capability tells current Allstarr versions to use `/api/audio` for playback. The first request
+waits for GAMDL to finish, then converts lossless audio to a regular FLAC file with compression level 0.
+A metadata pass with `metaflac` adds seek points every ten seconds; the finished file has its real total sample
+count. If lossless preparation fails with a missing artifact or download failure, the gateway tries `aac-web`.
+AAC sources stay in their original `.m4a` container and are served as `audio/mp4`.
+
+GET and HEAD return `Content-Length`, `Content-Type`, and `Accept-Ranges: bytes`. Byte ranges receive 206;
+unsatisfiable ranges receive 416 through the file response handler. HEAD prepares an uncached song before
+returning headers. Requests for the same account, storefront, song, and quality share both source preparation
+and conversion. Finished files are published with an atomic rename and share the prepared cache's six-hour
+idle expiry and 32-track limit with their source files. Cache hits avoid downloading and converting again.
+Preparation errors reach the caller before any media headers or bytes: account mismatch is 403 with
+`X-Allstarr-Failure-Code: account_mismatch`, process timeout is 504, and other failures are 502. The JSON
+`detail` contains the failure code. Each preparation logs the song, quality used, download and conversion
+seconds, and byte count. Failures include the code and the last three retained GAMDL error lines with tokens,
+cookies, and URLs removed.
+
+Older Allstarr versions can continue using `/api/stream` with its existing prelude and sequential FLAC body.
+The `/api/download` route keeps its complete FLAC artifact contract. The old catalog
 and generic download-job endpoints are removed. Durable download jobs are owned by Allstarr; existing sidecar
 job output is left untouched.
 
@@ -69,7 +89,7 @@ entrypoint instead builds its Apple API from the request cookie file and compare
 wrapper account before allowing media operations. Missing or differing identities fail with `account_mismatch`;
 the gateway never switches wrapper accounts automatically. The selected API remains responsible for catalog,
 private library, and web playback calls. Wrapper playback/decryption is allowed only after the account match,
-and upstream process output is suppressed to keep account details out of logs.
+and account identity failures suppress upstream output. Other diagnostics retain only a bounded, redacted tail.
 
 ## Configuration
 
@@ -97,3 +117,26 @@ Allstarr's SQLite state, existing media, gateway state, or wrapper login session
 Media URLs are constructed from the validated storefront and numeric catalog song ID. The gateway passes
 arguments as an exec array, never through a shell. It rejects unsafe artifact paths, symlinks, redirects from
 wrapper-v2, and unbounded process output.
+
+## Test and build
+
+Run the offline fixtures with the project's locked dependencies:
+
+```bash
+cd sidecars/apple-gateway
+uv sync --frozen --extra test
+uv run --frozen --extra test pytest
+```
+
+The short FLAC metadata check uses local `ffmpeg` and `metaflac` executables. The gateway image installs both
+through the Debian `ffmpeg` and `flac` packages.
+
+Build the updated gateway image from the repository root:
+
+```bash
+docker build -t allstarr/apple-gateway:1.1.0 sidecars/apple-gateway
+```
+
+For an existing saved Apple profile, `./allstarr.sh up` rebuilds the gateway and starts the profile with its
+existing volumes. Deploy the matching Allstarr build to enable file playback; older builds keep using the
+legacy routes. No new sign-in is needed for this update.

@@ -136,6 +136,24 @@ public sealed class AppleDownloadEndpointDiscoveryTests
     }
 
     [Fact]
+    public async Task AudioFileRoute_AdvertisesStreamingWithoutTheLegacyRoute()
+    {
+        const string manifest = """
+            {"sidecarApiVersion":"2.1","capabilities":[
+              {"id":"audio-file","state":"supported"}
+            ]}
+            """;
+
+        var snapshot = await Create("http://apple-provider.lan", HealthyHandler(manifest)).DiscoverAsync();
+
+        Assert.Equal(AppleDownloadEndpointState.Available, snapshot.State);
+        Assert.Equal(AppleDownloadCapabilityState.Available,
+            snapshot.Capability(ProviderCapabilities.Streaming).State);
+        Assert.Equal(AppleDownloadCapabilityState.Available, snapshot.Capability("audio-file").State);
+        Assert.Equal(AppleDownloadCapabilityState.Unsupported, snapshot.Capability("stream-audio-song").State);
+    }
+
+    [Fact]
     public async Task AdvertisedButUnimplementedFeatures_RemainUnsupported()
     {
         const string manifest = """

@@ -54,8 +54,9 @@ Allstarr first requests `GET /api/capabilities`. A compatible version 2 response
 
 ```json
 {
-  "sidecarApiVersion": "2.0.0",
+  "sidecarApiVersion": "2.1.0",
   "capabilities": [
+    { "id": "audio-file", "state": "supported" },
     { "id": "stream-audio-song", "state": "supported" },
     { "id": "download-audio-song", "state": "supported" },
     { "id": "synced-lyrics-artifact", "state": "supported" }
@@ -79,8 +80,18 @@ The current typed lanes use these routes:
 | Account status | `GET /api/me` |
 | Login and 2FA | `POST /api/login`, `POST /api/login/2fa` |
 | Managed track artifact | `GET /api/download/{id}?quality={quality}` |
-| Progressive playback | `GET /api/stream/{id}?quality={quality}` |
+| Complete file playback | `GET /api/audio/{id}?quality={quality}` |
+| File headers, preparing if needed | `HEAD /api/audio/{id}?quality={quality}` |
+| Legacy progressive playback | `GET /api/stream/{id}?quality={quality}` |
 | Synced lyrics artifact | `GET /api/lyrics/{id}` |
+
+When the gateway advertises `audio-file`, playback waits for a complete cached file before responding.
+Lossless sources become FLAC with a total sample count and seek table; AAC sources remain MP4.
+The file response includes its length and byte-range support, including 206 and 416 responses. Preparation
+and conversion are shared across concurrent requests and cached for six idle hours, up to 32 tracks per
+gateway. A missing audio artifact returns a structured 502 before any bytes, allowing Allstarr to try the
+next provider. Account mismatch returns 403, and process timeout returns 504. Older gateways continue to
+use `/api/stream`; managed downloads keep using `/api/download`.
 
 Health must report the gateway, GAMDL runtime, and wrapper dependency truthfully. A raw wrapper-v2 `/health`
 response is not enough. Allstarr refuses redirects during discovery and login so credentials cannot be forwarded to

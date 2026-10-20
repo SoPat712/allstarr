@@ -145,6 +145,50 @@ public sealed partial class ManagedTrackCacheServiceTests
         }
     }
 
+    [Fact]
+    public async Task CompletedAacFallback_UsesResponseMediaForCacheAndReplay()
+    {
+        var root = CreateRoot();
+        try
+        {
+            string? registeredPath = null;
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), "apple-download", "song-1"))
+                .ReturnsAsync(() => registeredPath);
+            local.Setup(item => item.RegisterDownloadedSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => registeredPath = path)
+                .Returns(Task.CompletedTask);
+            await using var service = CreateService(root, "Cache", local.Object);
+            var bytes = "complete-mp4"u8.ToArray();
+            using var response = Response(HttpStatusCode.OK, bytes);
+            response.Content.Headers.ContentType = new("audio/mp4");
+            await service.WrapAsync(ProviderStream(response) with
+            {
+                ServingProviderId = "apple-download",
+                ServingExternalId = "song-1"
+            }, Context(), "apple-download", "song-1", false,
+                () => Task.FromResult<Song?>(new Song { Title = "Song", Artist = "Artist", Album = "Album" }),
+                CancellationToken.None);
+
+            Assert.Equal(bytes, await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(".m4a", Path.GetExtension(registeredPath));
+            var cached = await service.TryOpenAsync(
+                new ProviderExternalResourceId("apple-download", ProviderResourceKind.Track, "song-1"),
+                new DownloadedSongMappingScope(null, ProviderAudioQuality.Any), CancellationToken.None);
+            Assert.NotNull(cached);
+            using var replay = cached.Response;
+            Assert.Equal("audio/mp4", replay.Content.Headers.ContentType!.MediaType);
+            Assert.Equal(bytes, await replay.Content.ReadAsByteArrayAsync());
+            local.VerifyAll();
+        }
+        finally
+        {
+            DeleteRoot(root);
+        }
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
