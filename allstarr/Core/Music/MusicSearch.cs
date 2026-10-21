@@ -22,7 +22,12 @@ public sealed record NativeMusicItem<TPayload>(
     string Id,
     string Name,
     string? ArtistText,
-    TPayload Payload);
+    TPayload Payload)
+{
+    public string? AlbumText { get; init; }
+    public string? AlbumArtistText { get; init; }
+    public double? DurationSeconds { get; init; }
+}
 
 /// <summary>One merged search row: a native backend payload or a typed provider item.</summary>
 public sealed record MusicSearchEntry<TPayload>
@@ -143,9 +148,9 @@ public sealed class MusicSearchService(
             ? nativeArtists.Select(item => item.Name).ToHashSet(StringComparer.OrdinalIgnoreCase)
             : [];
         return new MusicSearchResult<TPayload>(
-            Rank(query, native.Where(item => item.Kind == MusicItemKind.Song), songs.Select(song => (
-                new MusicSearchEntry<TPayload> { Song = song },
-                SearchRelevanceRanker.Score(query, song.Title, song.Artist, song.Album)))),
+            RankSongs(query, native.Where(item => item.Kind == MusicItemKind.Song)
+                .Select(item => new MusicSearchEntry<TPayload> { Native = item })
+                .Concat(songs.Select(song => new MusicSearchEntry<TPayload> { Song = song }))),
             Rank(query, native.Where(item => item.Kind == MusicItemKind.Album), albums.Select(album => (
                     new MusicSearchEntry<TPayload> { Album = album },
                     SearchRelevanceRanker.Score(query, album.Title, album.Artist)))
@@ -161,18 +166,50 @@ public sealed class MusicSearchService(
 
     /// <summary>Ranks all kinds together for clients with one combined result limit.</summary>
     public static IEnumerable<MusicSearchEntry<TPayload>> RankTogether<TPayload>(
-        string query, MusicSearchResult<TPayload> result) =>
-        result.Artists.Concat(result.Albums).Concat(result.Songs)
+        string query, MusicSearchResult<TPayload> result)
+    {
+        var knownDurationTitles = KnownDurationTitles(result.Songs);
+        return result.Artists.Concat(result.Albums).Concat(result.Songs)
             .OrderByDescending(entry => entry switch
             {
+                { Native.Kind: MusicItemKind.Song } or { Song: not null } => SongScore(query, entry, knownDurationTitles),
                 { Native: { } native } => SearchRelevanceRanker.Score(query, native.Name, native.ArtistText),
-                { Song: { } song } => SearchRelevanceRanker.Score(query, song.Title, song.Artist, song.Album),
                 { Album: { } album } => SearchRelevanceRanker.Score(query, album.Title, album.Artist),
                 { Artist: { } artist } => SearchRelevanceRanker.Score(query, artist.Name),
                 { Playlist: { } playlist } => SearchRelevanceRanker.Score(query, playlist.Name, playlist.CuratorName),
                 _ => 0
             })
             .ThenBy(entry => entry.Native == null);
+    }
+
+    private static List<MusicSearchEntry<TPayload>> RankSongs<TPayload>(
+        string query, IEnumerable<MusicSearchEntry<TPayload>> entries)
+    {
+        var rows = entries.ToList();
+        var knownDurationTitles = KnownDurationTitles(rows);
+        return rows.OrderByDescending(entry => SongScore(query, entry, knownDurationTitles))
+            .ThenBy(entry => entry.Native == null).ToList();
+    }
+
+    private static HashSet<string> KnownDurationTitles<TPayload>(IEnumerable<MusicSearchEntry<TPayload>> entries) =>
+        entries.Where(entry => entry.Native?.DurationSeconds is > 0 || entry.Song?.Duration is > 0)
+            .Select(entry => RecordingTitle(entry))
+            .ToHashSet(StringComparer.Ordinal);
+
+    private static string RecordingTitle<TPayload>(MusicSearchEntry<TPayload> entry) =>
+        SearchRelevanceRanker.RecordingTitle(entry.Native?.Name ?? entry.Song!.Title,
+            entry.Native?.ArtistText ?? entry.Song?.Artist, entry.Native?.AlbumArtistText ?? entry.Song?.AlbumArtist);
+
+    private static double SongScore<TPayload>(string query, MusicSearchEntry<TPayload> entry,
+        IReadOnlySet<string> knownDurationTitles)
+    {
+        var knownDuration = knownDurationTitles.Contains(RecordingTitle(entry));
+        return entry.Native is { } native
+            ? SearchRelevanceRanker.ScoreSong(query, native.Name, native.ArtistText, native.AlbumText,
+                native.AlbumArtistText, native.DurationSeconds, provenRecording: true,
+                hasKnownDurationVersion: knownDuration)
+            : SearchRelevanceRanker.ScoreSong(query, entry.Song!, knownDuration);
+    }
 
     /// <summary>Projects a provider mix through the same accessible native recording choices as search.</summary>
     public async Task<IReadOnlyList<MusicSearchEntry<TPayload>>> ProjectSongsAsync<TPayload>(

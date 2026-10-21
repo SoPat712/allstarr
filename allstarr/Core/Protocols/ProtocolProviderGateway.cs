@@ -396,10 +396,14 @@ public sealed partial class ProtocolProviderGateway(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
             trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
             playableOrder, protocol.CancellationToken);
+        var knownDurationTitles = songs.Where(song => song.Duration is > 0)
+            .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist))
+            .ToHashSet(StringComparer.Ordinal);
         return new SearchResult
         {
             Songs = MergeSearch(songs, songLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
-                item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist, item.Album), providerOrder),
+                item => item.ExternalProvider, item => SearchRelevanceRanker.ScoreSong(query, item,
+                    knownDurationTitles.Contains(SearchRelevanceRanker.RecordingTitle(item.Title, item.Artist, item.AlbumArtist))), providerOrder),
             Albums = MergeSearch(routed.Albums, albumLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),
                 item => item.ExternalProvider, item => SearchRelevanceRanker.Score(query, item.Title, item.Artist), providerOrder),
             Artists = MergeSearch(routed.Artists, artistLimit, item => Key(item.ExternalProvider, item.ExternalId, item.Id),

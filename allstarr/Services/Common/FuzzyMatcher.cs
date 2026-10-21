@@ -37,10 +37,10 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s+mixed$", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex MixedSuffixRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(karaoke|instrumental|originally performed by|in the style of|backing track|sing[- ]?along)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(karaoke|instrumental|originally (?:performed )?by|in the style of|backing track|sing[- ]?along)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex BackingRecordingRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:tribute|made famous by|covers?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:tribute|made famous by|covers?|lullaby|music[ -]+box|bossa[ -]+nova[ -]+version|8[ -]?bit(?:[ -]+version)?)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex CoverRecordingRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\b(?:clean|edited|radio[\s-]+edit|censored)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
