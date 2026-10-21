@@ -39,6 +39,8 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
 
     private const string SubsonicNamespace = "http://subsonic.org/restapi";
     private const string SubsonicVersion = "1.16.1";
+    // The playback source is selected later; catalog metadata may have no known container.
+    internal const string UnknownSongContentType = "application/octet-stream";
 
     public IActionResult CreateOkResponse(string format) => CreateResponse(format, null, new { });
 
@@ -425,6 +427,10 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
             result["suffix"] = suffix;
             result["contentType"] = contentType;
         }
+        else if (!song.IsLocal)
+        {
+            result["contentType"] = UnknownSongContentType;
+        }
 
         return result;
     }
@@ -539,6 +545,10 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
         {
             element.Add(new XAttribute("suffix", suffix));
             element.Add(new XAttribute("contentType", contentType));
+        }
+        else if (!song.IsLocal)
+        {
+            element.Add(new XAttribute("contentType", UnknownSongContentType));
         }
 
         return element;

@@ -183,6 +183,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             ["isDir"] = false,
             ["type"] = "music"
         };
+        if (track.RouteKind != TrackRouteKind.Local)
+            result["contentType"] = SubsonicResponseBuilder.UnknownSongContentType;
         if (track.Album != null) result["album"] = track.Album;
         if (track.AlbumArtist != null) result["albumArtist"] = track.AlbumArtist;
         if (track.DurationMilliseconds.HasValue)
@@ -216,6 +218,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         yield return new XAttribute("track", track.SourcePosition + 1);
         yield return new XAttribute("isDir", false);
         yield return new XAttribute("type", "music");
+        if (track.RouteKind != TrackRouteKind.Local)
+            yield return new XAttribute("contentType", SubsonicResponseBuilder.UnknownSongContentType);
         if (track.CoverArtReference != null) yield return new XAttribute("coverArt", track.CoverArtReference);
         if (track.SourceIdentity is { } identity)
         {
