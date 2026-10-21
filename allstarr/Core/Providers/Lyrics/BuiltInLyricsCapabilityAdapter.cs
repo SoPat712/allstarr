@@ -135,6 +135,28 @@ public static class BuiltInLyricsCapabilityRegistration
             "lrclib",
             "LRCLib",
             CreateLrclib(provider.GetRequiredService<LrclibService>())));
+        services.AddHttpClient(BiniLyricsCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new BiniLyricsCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(BiniLyricsCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL,
+            provider.GetRequiredService<ILogger<BiniLyricsCapabilityAdapter>>()));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "binilyrics", "BiniLyrics", "Public identity-checked TTML lyrics; no account required.",
+            provider.GetRequiredService<BiniLyricsCapabilityAdapter>()));
+        services.AddHttpClient(GeniusCapabilityAdapter.HttpClientName)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
+        services.AddSingleton(provider => new GeniusCapabilityAdapter(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(GeniusCapabilityAdapter.HttpClientName),
+            provider.GetRequiredService<IApplicationCache>(),
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL,
+            provider.GetRequiredService<ILogger<GeniusCapabilityAdapter>>()));
+        services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
+            "genius", "Genius", "Public plain lyrics through the Genius worker; no account required.",
+            provider.GetRequiredService<GeniusCapabilityAdapter>()));
         return services;
     }
 

@@ -233,6 +233,8 @@ public sealed class ProviderStatusManagerTests
 
     [Theory]
     [InlineData("lrcred", "{\"hits\":[]}", "lrc.red")]
+    [InlineData("binilyrics", "{\"results\":[]}", "lyrics-api.binimum.org")]
+    [InlineData("genius", "{\"lyrics\":\"\"}", "fetch-genius.samidy.workers.dev")]
     [InlineData("unison", "{\"success\":false,\"code\":\"NOT_FOUND\"}", "unison.boidu.dev")]
     public async Task PublicTimedLyricsProbeNeedsNoAccount(string provider, string body, string host)
     {
@@ -329,8 +331,11 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal("apple-web-token-unavailable", status.ReasonCode);
     }
 
-    [Fact]
-    public async Task PublicLyricsSchemaIncludesPaxsenixWithoutAccountFields()
+    [Theory]
+    [InlineData("paxsenix", "Paxsenix", "lyrics")]
+    [InlineData("binilyrics", "BiniLyrics", "binilyrics")]
+    [InlineData("genius", "Genius", "genius")]
+    public async Task PublicLyricsSchemaIncludesSourcesWithoutAccountFields(string id, string name, string icon)
     {
         using var services = new ServiceCollection().BuildServiceProvider();
         var controller = new allstarr.Controllers.AdminUiController(new ConfigurationBuilder().Build(),
@@ -347,8 +352,9 @@ public sealed class ProviderStatusManagerTests
 
         var result = Assert.IsType<Microsoft.AspNetCore.Mvc.OkObjectResult>(await controller.GetSchema());
         var schema = Assert.IsType<allstarr.Models.Admin.AdminUiSchemaResponse>(result.Value);
-        var provider = Assert.Single(schema.Providers, item => item.Id == "paxsenix");
-        Assert.Equal("Paxsenix", provider.Name);
+        var provider = Assert.Single(schema.Providers, item => item.Id == id);
+        Assert.Equal(name, provider.Name);
+        Assert.Equal(icon, provider.Icon);
         Assert.Equal(new[] { "lyrics" }, provider.Categories);
         Assert.Equal("built_in", provider.ConnectionKind);
         Assert.Empty(provider.AccountSettings);
