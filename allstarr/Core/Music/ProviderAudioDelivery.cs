@@ -55,18 +55,21 @@ public sealed record ProviderAudioDeliveryRequest
             Formats != null && !Formats.Any(profile => Matches(profile, media!)))) reason = "The source codec or container is not supported by this audio profile.";
         if (reason == null && (!Within(media!.Bitrate, MaxBitrate) || !Within(media.SampleRate, MaxSampleRate) ||
             !Within(media.Channels, MaxChannels) || !Within(media.BitDepth, MaxBitDepth) ||
-            SampleRate.HasValue && media.SampleRate != SampleRate || Channels.HasValue && media.Channels != Channels))
-            reason = "The requested audio limits cannot be guaranteed; transcoding is unavailable.";
-        if (reason == null && !Conditions.All(condition => Matches(condition, media!))) reason = "The source has no verified support for the audio codec conditions.";
+            SampleRate.HasValue && media.SampleRate.HasValue && media.SampleRate != SampleRate ||
+            Channels.HasValue && media.Channels.HasValue && media.Channels != Channels))
+            reason = "The source does not meet the requested audio limits; transcoding is unavailable.";
+        if (reason == null && !Conditions.All(condition => Matches(condition, media!))) reason = "The source violates the audio codec conditions.";
         return new(media, reason == null && EnableDirectPlay, reason == null && EnableDirectStream, reason) { Size = size };
     }
 
-    private static bool Within(long? actual, long? limit) => !limit.HasValue || actual.HasValue && actual > 0 && actual <= limit;
+    private static bool Within(long? actual, long? limit) => !limit.HasValue || !actual.HasValue || actual <= limit;
+
+    private static bool Unknown(string value) => value.Equals("unknown", StringComparison.OrdinalIgnoreCase);
 
     private static bool Matches(ProviderAudioProfile profile, ProviderMediaFormat media) =>
-        (profile.Containers.Length == 0 || profile.Containers.Any(value => Container(value) == Container(media.Container) &&
-            (!value.Equals("opus", StringComparison.OrdinalIgnoreCase) || media.Codec.Equals("opus", StringComparison.OrdinalIgnoreCase)))) &&
-        (profile.Codecs.Length == 0 || profile.Codecs.Any(value => value.Equals(media.Codec, StringComparison.OrdinalIgnoreCase))) &&
+        (profile.Containers.Length == 0 || profile.Containers.Any(value => (Unknown(media.Container) || Container(value) == Container(media.Container)) &&
+            (!value.Equals("opus", StringComparison.OrdinalIgnoreCase) || Unknown(media.Codec) || media.Codec.Equals("opus", StringComparison.OrdinalIgnoreCase)))) &&
+        (profile.Codecs.Length == 0 || Unknown(media.Codec) || profile.Codecs.Any(value => value.Equals(media.Codec, StringComparison.OrdinalIgnoreCase))) &&
         (profile.Protocols.Length == 0 || profile.Protocols.Contains("http", StringComparer.OrdinalIgnoreCase)) &&
         Within(media.Channels, profile.MaxChannels);
 
@@ -88,7 +91,7 @@ public sealed record ProviderAudioDeliveryRequest
             "audiobitdepth" => media.BitDepth,
             _ => null
         };
-        if (!actual.HasValue) return !condition.Required;
+        if (!actual.HasValue) return true;
         var values = condition.Comparison.Equals("NotEquals", StringComparison.OrdinalIgnoreCase)
             ? condition.Values : condition.Comparison.Equals("Equals", StringComparison.OrdinalIgnoreCase)
                 ? condition.Values : condition.Values.Take(1);

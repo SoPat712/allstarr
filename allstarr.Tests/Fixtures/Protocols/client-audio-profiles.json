@@ -1,0 +1,309 @@
+{
+  "web": {
+    "sources": [
+      "https://github.com/jellyfin/jellyfin-web/blob/614fa468a803e6f0c90ebc7f549d882e62ab3b4d/src/scripts/browserDeviceProfile.js#L524-L529",
+      "https://github.com/jellyfin/jellyfin-web/blob/614fa468a803e6f0c90ebc7f549d882e62ab3b4d/src/scripts/browserDeviceProfile.js#L809-L920",
+      "https://github.com/jellyfin/jellyfin-web/blob/614fa468a803e6f0c90ebc7f549d882e62ab3b4d/src/scripts/browserDeviceProfile.js#L988-L1062"
+    ],
+    "configuration": "Audio subset with FLAC, MP3 and AAC probes supported, remux disabled, stereo output, HLS disabled and MP3 in HLS unsupported.",
+    "deviceProfile": {
+      "MaxStreamingBitrate": 140000000,
+      "MaxStaticBitrate": 100000000,
+      "MusicStreamingTranscodingBitrate": 384000,
+      "DirectPlayProfiles": [
+        {
+          "Container": "ts",
+          "AudioCodec": "mp3",
+          "Type": "Audio"
+        },
+        {
+          "Container": "mp3",
+          "Type": "Audio"
+        },
+        {
+          "Container": "aac",
+          "Type": "Audio"
+        },
+        {
+          "Container": "m4a",
+          "AudioCodec": "aac",
+          "Type": "Audio"
+        },
+        {
+          "Container": "m4b",
+          "AudioCodec": "aac",
+          "Type": "Audio"
+        },
+        {
+          "Container": "flac",
+          "Type": "Audio"
+        }
+      ],
+      "TranscodingProfiles": [
+        {
+          "Container": "aac",
+          "Type": "Audio",
+          "AudioCodec": "aac",
+          "Context": "Streaming",
+          "Protocol": "http",
+          "MaxAudioChannels": "2"
+        },
+        {
+          "Container": "mp3",
+          "Type": "Audio",
+          "AudioCodec": "mp3",
+          "Context": "Streaming",
+          "Protocol": "http",
+          "MaxAudioChannels": "2"
+        },
+        {
+          "Container": "mp3",
+          "Type": "Audio",
+          "AudioCodec": "mp3",
+          "Context": "Static",
+          "Protocol": "http",
+          "MaxAudioChannels": "2"
+        },
+        {
+          "Container": "aac",
+          "Type": "Audio",
+          "AudioCodec": "aac",
+          "Context": "Static",
+          "Protocol": "http",
+          "MaxAudioChannels": "2"
+        }
+      ],
+      "CodecProfiles": [
+        {
+          "Type": "VideoAudio",
+          "Codec": "aac",
+          "Conditions": [
+            {
+              "Condition": "NotEquals",
+              "Property": "AudioProfile",
+              "Value": "HE-AAC"
+            },
+            {
+              "Condition": "Equals",
+              "Property": "IsSecondaryAudio",
+              "Value": "false",
+              "IsRequired": false
+            }
+          ]
+        },
+        {
+          "Type": "Audio",
+          "Conditions": [
+            {
+              "Condition": "LessThanEqual",
+              "Property": "AudioChannels",
+              "Value": "2",
+              "IsRequired": false
+            }
+          ]
+        },
+        {
+          "Type": "VideoAudio",
+          "Conditions": [
+            {
+              "Condition": "LessThanEqual",
+              "Property": "AudioChannels",
+              "Value": "2",
+              "IsRequired": false
+            },
+            {
+              "Condition": "Equals",
+              "Property": "IsSecondaryAudio",
+              "Value": "false",
+              "IsRequired": false
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "finamp": {
+    "sources": [
+      "https://github.com/jmshrv/finamp/blob/2e58f89ab6e91245c02fb826eb6cbe930d151804/lib/services/jellyfin_api_helper.dart#L726-L742",
+      "https://github.com/jmshrv/finamp/blob/2e58f89ab6e91245c02fb826eb6cbe930d151804/lib/services/jellyfin_api.dart#L278-L287",
+      "https://github.com/jmshrv/finamp/blob/2e58f89ab6e91245c02fb826eb6cbe930d151804/lib/services/music_player_background_task.dart#L1394-L1455"
+    ],
+    "configuration": "PlaybackInfo GET supplies userId without a device profile. Original playback uses Items/{id}/File.",
+    "query": "UserId=fixture-user",
+    "originalRoute": "/Items/{id}/File"
+  },
+  "feishinJellyfin": {
+    "sources": [
+      "https://github.com/jeffvli/feishin/blob/7d6ad318c79802e226996cfc39acba6b05bb22e8/src/renderer/api/jellyfin/jellyfin-controller.ts#L1569-L1664"
+    ],
+    "configuration": "Original playback uses Download without a profile. Universal format selection below copies the source query for FLAC, MP3 or AAC with a 140000 kbps setting.",
+    "originalRoute": "/Items/{id}/Download",
+    "universalQuery": "userId=fixture-user&deviceId=&audioCodec={codec}&playSessionId=feishin-{id}-{codec}-0-0&container={codec}&transcodingProtocol=http&transcodingContainer={codec}&maxStreamingBitrate=140000000"
+  },
+  "default": {
+    "sources": [
+      "https://github.com/jellyfin/jellyfin/blob/877251bcaec3780d44b7657c54684dc28646b1c3/Jellyfin.Api/Controllers/MediaInfoController.cs#L137-L163"
+    ],
+    "configuration": "No supplied or stored device profile; omitted enable flags default to true.",
+    "body": {
+      "IsPlayback": true,
+      "MaxStreamingBitrate": 140000000
+    }
+  },
+  "feishinSubsonic": {
+    "sources": [
+      "https://github.com/jeffvli/feishin/blob/7d6ad318c79802e226996cfc39acba6b05bb22e8/src/renderer/features/player/components/audio-players.tsx#L54-L116",
+      "https://github.com/jeffvli/feishin/blob/7d6ad318c79802e226996cfc39acba6b05bb22e8/src/renderer/api/subsonic/subsonic-controller.ts#L1990-L2016",
+      "https://github.com/jeffvli/feishin/blob/7d6ad318c79802e226996cfc39acba6b05bb22e8/src/shared/api/subsonic/subsonic-types.ts#L26-L63"
+    ],
+    "configuration": "ClientInfo emitted when all listed browser probes succeed; platform is a fixture string.",
+    "clientInfo": {
+      "codecProfiles": [],
+      "directPlayProfiles": [
+        {
+          "audioCodecs": [
+            "mp3"
+          ],
+          "containers": [
+            "mp3"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "aac"
+          ],
+          "containers": [
+            "mp4"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "aac"
+          ],
+          "containers": [
+            "aac"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "aac"
+          ],
+          "containers": [
+            "mp4"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "opus"
+          ],
+          "containers": [
+            "ogg"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "opus"
+          ],
+          "containers": [
+            "webm"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "vorbis"
+          ],
+          "containers": [
+            "ogg"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "vorbis"
+          ],
+          "containers": [
+            "webm"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "flac"
+          ],
+          "containers": [
+            "flac"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "pcm",
+            "wav"
+          ],
+          "containers": [
+            "wav"
+          ],
+          "protocols": [
+            "http"
+          ]
+        },
+        {
+          "audioCodecs": [
+            "alac"
+          ],
+          "containers": [
+            "mp4"
+          ],
+          "protocols": [
+            "http"
+          ]
+        }
+      ],
+      "maxAudioBitrate": 0,
+      "maxTranscodingAudioBitrate": 0,
+      "name": "Feishin",
+      "platform": "Firefox",
+      "transcodingProfiles": [
+        {
+          "audioCodec": "flac",
+          "container": "flac",
+          "protocol": "http"
+        },
+        {
+          "audioCodec": "opus",
+          "container": "ogg",
+          "protocol": "http"
+        },
+        {
+          "audioCodec": "mp3",
+          "container": "mp3",
+          "protocol": "http"
+        }
+      ]
+    }
+  }
+}
