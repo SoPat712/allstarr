@@ -100,7 +100,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
             {
                 solution = await SolveAsync(baseUri!, configured, original.RequestUri, diagnostic, token);
                 state.Current = solution;
-                if (BodyResponse(original, solution) is { } body)
+                if (BodyResponse(original, solution, diagnostic) is { } body)
                 {
                     state.RetryAfter = default;
                     diagnostic.DeliveryPath = "solver-body";
@@ -110,11 +110,12 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
                 {
                     using var retry = Copy(original, solution, configured.Url);
                     response = await send(retry, token);
-                    diagnostic.CookieRetryChallenged = await IsChallengeAsync(response, token);
-                    if (diagnostic.CookieRetryChallenged == false)
+                    diagnostic.RetryRechallenged = await IsChallengeAsync(response, token);
+                    if (diagnostic.RetryRechallenged == false)
                     {
                         state.RetryAfter = default;
                         diagnostic.DeliveryPath = "cookies";
+                        diagnostic.DeliveryFailureReason = "not-attempted";
                         return response;
                     }
                     response.Dispose();
@@ -131,9 +132,9 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
             }
             finally
             {
-                logger?.LogInformation("Challenge solve host={Host} solverHttpStatus={SolverHttpStatus} solutionStatus={SolutionStatus} contentKind={ContentKind} cookieCount={CookieCount} cookieRetryChallenged={CookieRetryChallenged} deliveryPath={DeliveryPath} elapsedMs={ElapsedMs}",
+                logger?.LogInformation("Challenge solve host={Host} solverHttpStatus={SolverHttpStatus} solutionStatus={SolutionStatus} contentKind={ContentKind} clearanceCount={ClearanceCount} retryRechallenged={RetryRechallenged} deliveryPath={DeliveryPath} deliveryFailureReason={DeliveryFailureReason} elapsedMs={ElapsedMs}",
                     original.RequestUri.IdnHost, diagnostic.HttpStatus, diagnostic.SolutionStatus, diagnostic.ContentKind,
-                    diagnostic.CookieCount, diagnostic.CookieRetryChallenged?.ToString() ?? "not-attempted", diagnostic.DeliveryPath,
+                    diagnostic.ClearanceCount, diagnostic.RetryRechallenged?.ToString() ?? "not-attempted", diagnostic.DeliveryPath, diagnostic.DeliveryFailureReason,
                     (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
         }
@@ -157,10 +158,17 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
     private bool IsCurrent(Solution solution, ChallengeSolverOptions configured) =>
         solution.Expires > clock.GetUtcNow() && solution.SolverUrl == configured.Url;
 
-    private static HttpResponseMessage? BodyResponse(HttpRequestMessage original, Solution solution)
+    private static HttpResponseMessage? BodyResponse(HttpRequestMessage original, Solution solution, SolveDiagnostic? diagnostic = null)
     {
-        if (original.Method != HttpMethod.Get || solution.Target != original.RequestUri || solution.Status != 200 ||
-            !TryReadBody(original, solution, out var body, out var type)) return null;
+        var reason = original.Method != HttpMethod.Get ? "not-attempted" : solution.Target != original.RequestUri ? "url-mismatch" :
+            solution.Status != 200 ? "unexpected-content" : null;
+        var body = "";
+        var type = "";
+        if (reason != null || !TryReadBody(original, solution, out body, out type, out reason))
+        {
+            if (diagnostic != null) diagnostic.DeliveryFailureReason = reason!;
+            return null;
+        }
         return new(HttpStatusCode.OK) { RequestMessage = original, Content = new StringContent(body, Encoding.UTF8, type) };
     }
 
@@ -203,10 +211,17 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
         diagnostic.ContentKind = ContentKind(body);
         if (!Uri.TryCreate(result.GetProperty("url").GetString(), UriKind.Absolute, out var actual) ||
             actual.Scheme != target.Scheme || actual.IdnHost != target.IdnHost || actual.Port != target.Port || actual.UserInfo.Length != 0)
+        {
+            diagnostic.DeliveryFailureReason = "url-mismatch";
             throw new CloudflareChallengeException();
+        }
         var userAgent = result.GetProperty("userAgent").GetString() ?? "";
         if (userAgent.Length is 0 or > 2048 || userAgent.Any(char.IsControl)) throw new CloudflareChallengeException();
-        if (Encoding.UTF8.GetByteCount(body) > MaximumBytes) throw new CloudflareChallengeException();
+        if (Encoding.UTF8.GetByteCount(body) > MaximumBytes)
+        {
+            diagnostic.DeliveryFailureReason = "oversize";
+            throw new CloudflareChallengeException();
+        }
         var contentType = "text/plain";
         if (result.TryGetProperty("headers", out var headers))
             foreach (var header in headers.EnumerateObject())
@@ -233,7 +248,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
             if (expires <= now) continue;
             cookies.Add(new(name, value, path, expires, item.TryGetProperty("secure", out var secure) && secure.ValueKind == JsonValueKind.True));
         }
-        diagnostic.CookieCount = cookies.Count;
+        diagnostic.ClearanceCount = cookies.Count;
         return new(target, diagnostic.SolutionStatus.Value, body, contentType, userAgent, cookies,
             cookies.Count == 0 ? now.AddMinutes(1) : cookies.Min(cookie => cookie.Expires), configured.Url);
     }
@@ -272,18 +287,29 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
         body.Contains("cf-turnstile-response", StringComparison.OrdinalIgnoreCase) ||
         body.Trim().Equals("error code: 1020", StringComparison.OrdinalIgnoreCase);
 
-    private static bool TryReadBody(HttpRequestMessage request, Solution solution, out string body, out string type)
+    private static bool TryReadBody(HttpRequestMessage request, Solution solution, out string body, out string type, out string reason)
     {
         body = solution.Body;
         type = solution.ContentType.Split(';')[0].Trim().ToLowerInvariant();
-        if (!(type.StartsWith("text/", StringComparison.Ordinal) || type is "application/json" or "application/ttml+xml" or "application/xml") ||
-            HasChallengeMarkers(body)) return false;
-        var accepted = request.Headers.Accept.Select(value => value.MediaType).ToArray();
-        if (accepted.Length == 1 && accepted[0] is "application/json" or "application/ttml+xml" or "application/xml" or "text/plain") type = accepted[0]!;
+        reason = "still-challenge";
+        if (HasChallengeMarkers(body)) return false;
         if (!IsJson(body) && !IsXml(body)) body = Unwrap(body);
-        if (HasChallengeMarkers(body) || Encoding.UTF8.GetByteCount(body) > MaximumBytes) return false;
+        if (HasChallengeMarkers(body)) return false;
+        reason = "oversize";
+        if (Encoding.UTF8.GetByteCount(body) > MaximumBytes) return false;
+        reason = "empty-body";
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        reason = "unexpected-content";
+        var accepted = request.Headers.Accept.Select(value => value.MediaType).ToArray();
+        if (accepted.Length == 1 && accepted[0] is "application/json" or "application/ttml+xml" or "application/xml") type = accepted[0]!;
+        else
+        {
+            if (!(type.StartsWith("text/", StringComparison.Ordinal) || type is "application/json" or "application/ttml+xml" or "application/xml")) return false;
+            if (accepted.Length == 1 && accepted[0] == "text/plain") type = "text/plain";
+        }
         if (type == "application/json") return IsJson(body);
         if (type is "application/xml" or "application/ttml+xml") return IsXml(body, type == "application/ttml+xml");
+        if (!type.StartsWith("text/", StringComparison.Ordinal)) return false;
         if (IsJson(body)) { type = "application/json"; return true; }
         if (IsXml(body)) { type = "application/xml"; return true; }
         if (body.TrimStart().StartsWith('<')) return false;
@@ -363,9 +389,10 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
         public int? HttpStatus;
         public int? SolutionStatus;
         public string? ContentKind;
-        public int CookieCount;
-        public bool? CookieRetryChallenged;
+        public int ClearanceCount;
+        public bool? RetryRechallenged;
         public string DeliveryPath = "none";
+        public string DeliveryFailureReason = "not-attempted";
     }
 }
 
