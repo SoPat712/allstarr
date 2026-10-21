@@ -118,9 +118,9 @@ public sealed class EffectiveProviderPolicyTests
     }
 
     [Fact]
-    public void LyricsDefaultPlacesPaxsenixLastAndSavedOrdersAppendAvailableSources()
+    public void LyricsDefaultAppendsPublicSourcesAndSavedOrdersAppendAvailableSources()
     {
-        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix",
+        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix,binilyrics,genius",
             RuntimeSettingCatalog.Require("Providers:LyricsOrder").DefaultValue);
         var snapshot = new EffectiveProviderPolicySnapshot(
             System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty

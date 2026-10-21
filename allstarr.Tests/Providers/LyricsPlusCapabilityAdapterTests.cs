@@ -48,6 +48,15 @@ public sealed class LyricsPlusCapabilityAdapterTests
         """;
 
     [Fact]
+    public async Task PublicMirrorOrderMatchesTheReference()
+    {
+        var handler = new Handler((_, _) => Response(HttpStatusCode.ServiceUnavailable));
+        await Adapter(handler).FetchLyricsAsync(Context(), Request());
+        Assert.Equal(new[] { "lyricsplus.binimum.org", "lyricsplus-seven.vercel.app", "lyricsplus.prjktla.workers.dev", "lyrics-plus-backend.vercel.app" },
+            handler.Requests.Select(uri => uri.Host));
+    }
+
+    [Fact]
     public async Task PublicInstancesFallBackAndCacheFullContentBeforeAvailabilityProjection()
     {
         var handler = new Handler((_, index) => index == 1 ? Response(HttpStatusCode.ServiceUnavailable) : Response(HttpStatusCode.OK, Timed));

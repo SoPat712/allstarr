@@ -17,7 +17,8 @@ public sealed class LyricsPlusCapabilityAdapter(
     public const string HttpClientName = "LyricsPlus";
     private const int MaximumBytes = 2_000_000;
     private static readonly string[] PublicEndpoints =
-        ["https://lyricsplus.binimum.org/", "https://lyricsplus.prjktla.workers.dev/"];
+        ["https://lyricsplus.binimum.org/", "https://lyricsplus-seven.vercel.app/",
+         "https://lyricsplus.prjktla.workers.dev/", "https://lyrics-plus-backend.vercel.app/"];
     public string ProviderId => "lyricsplus";
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 

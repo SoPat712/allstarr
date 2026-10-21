@@ -1191,6 +1191,24 @@ public class AdminUiController : ControllerBase
             Icon = "lyrics",
             Status = "available",
             Categories = ["lyrics"]
+        },
+        new()
+        {
+            Id = "binilyrics",
+            Name = "BiniLyrics",
+            Icon = "binilyrics",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public word-synced TTML; no account required"]
+        },
+        new()
+        {
+            Id = "genius",
+            Name = "Genius",
+            Icon = "genius",
+            Status = "available",
+            Categories = ["lyrics"],
+            Notes = ["Public plain lyrics; no account required"]
         }
         ];
 

@@ -91,7 +91,7 @@ public sealed class ProtocolLyricsResolver(
         var lookupKey = preference.RecordingId?.ToString("N") ?? resourceKey;
         LyricsInfo? plainFallback = null;
         await foreach (var candidate in ReadCandidatesAsync(protocol, song, lookupKey,
-            sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId, skipPaxsenixAfterPlainLyrics: true))
+            sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId, skipPaxsenixAfterPlainLyrics: true, automaticLookup: true))
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
@@ -145,7 +145,8 @@ public sealed class ProtocolLyricsResolver(
         ProtocolLyricsSources? sources,
         string? preferredSourceId = null,
         Guid? canonicalRecordingId = null,
-        bool skipPaxsenixAfterPlainLyrics = false)
+        bool skipPaxsenixAfterPlainLyrics = false,
+        bool automaticLookup = false)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         ArgumentNullException.ThrowIfNull(song);
@@ -216,14 +217,14 @@ public sealed class ProtocolLyricsResolver(
             });
         IReadOnlyList<string> order = providers.GetProviderOrder(ProviderCapabilityKind.Lyrics).Concat(localSources.Keys)
             .Distinct(StringComparer.Ordinal).ToArray();
-        if (effectivePolicies != null && (householdOnly || protocol.Actor?.EffectiveUserId != null))
+        if (effectivePolicies != null)
         {
-            var effectivePolicy = householdOnly
+            var effectivePolicy = householdOnly || protocol.Actor?.EffectiveUserId == null
                 ? await effectivePolicies.ResolveAsync(protocol.CancellationToken)
                 : await effectivePolicies.ResolveForUserAsync(protocol.Actor!.EffectiveUserId!.Value, protocol.CancellationToken);
-            order = effectivePolicy.ApplyProviderAvailability(
-                ProviderCapabilityKind.Lyrics,
-                order);
+            order = automaticLookup && sources?.OnlySourceId == null
+                ? effectivePolicy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, order)
+                : effectivePolicy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, order);
         }
         IReadOnlyList<CrossProviderLinkCandidate>? resolvedLinks = null;
 
@@ -325,7 +326,7 @@ public sealed class ProtocolLyricsResolver(
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(sourceExternalId))
             return sourceExternalId;
         if (providerId == "spotify") return string.IsNullOrWhiteSpace(spotifyTrackId) ? null : spotifyTrackId;
-        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "unison" or "paxsenix")
+        if (providerId is "lrclib" or "lyricsplus" or "musixmatch" or "lrcred" or "unison" or "paxsenix" or "binilyrics" or "genius")
             return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(resourceKey))).ToLowerInvariant();
         if (providerId.Equals(sourceProvider, StringComparison.OrdinalIgnoreCase)) return sourceExternalId;
         var sourceIsApple = sourceProvider is not null &&

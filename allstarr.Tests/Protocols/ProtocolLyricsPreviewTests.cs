@@ -78,6 +78,51 @@ public sealed class ProtocolLyricsPreviewTests
             It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }
 
+    [Theory]
+    [InlineData("binilyrics", ProviderUseMode.Automatic, false, false, 1)]
+    [InlineData("binilyrics", ProviderUseMode.ManualOnly, false, false, 0)]
+    [InlineData("binilyrics", ProviderUseMode.ManualOnly, true, false, 1)]
+    [InlineData("binilyrics", ProviderUseMode.Off, true, false, 0)]
+    [InlineData("genius", ProviderUseMode.Automatic, false, false, 1)]
+    [InlineData("genius", ProviderUseMode.ManualOnly, false, false, 0)]
+    [InlineData("genius", ProviderUseMode.ManualOnly, true, false, 1)]
+    [InlineData("genius", ProviderUseMode.Off, true, false, 0)]
+    [InlineData("binilyrics", ProviderUseMode.Automatic, false, true, 1)]
+    [InlineData("binilyrics", ProviderUseMode.ManualOnly, false, true, 0)]
+    [InlineData("binilyrics", ProviderUseMode.ManualOnly, true, true, 1)]
+    [InlineData("binilyrics", ProviderUseMode.Off, true, true, 0)]
+    [InlineData("genius", ProviderUseMode.Automatic, false, true, 1)]
+    [InlineData("genius", ProviderUseMode.ManualOnly, false, true, 0)]
+    [InlineData("genius", ProviderUseMode.ManualOnly, true, true, 1)]
+    [InlineData("genius", ProviderUseMode.Off, true, true, 0)]
+    public async Task PublicSourcesRespectModesInAutomaticLookupAndReview(string source, ProviderUseMode mode, bool review, bool household, int expected)
+    {
+        var context = Context();
+        var calls = 0;
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns([source]);
+        providers.Setup(item => item.GetLyricsAsync(context, source, It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
+            .Callback(() => calls++).ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
+                source, ProviderLyricsFormat.PlainText, "Synthetic words"));
+        providers.Setup(item => item.GetHouseholdLyricsAsync(context, source, It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), It.IsAny<string>(), It.IsAny<int?>(), null))
+            .Callback(() => calls++).ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
+                source, ProviderLyricsFormat.PlainText, "Synthetic words"));
+        var policy = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        var snapshot = new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Lyrics, [source]),
+                ImmutableHashSet<string>.Empty, "lossless", 0)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add(source, mode) };
+        if (household) policy.Setup(item => item.ResolveAsync(context.CancellationToken)).ReturnsAsync(snapshot);
+        else policy.Setup(item => item.ResolveForUserAsync(context.Principal!.UserId, context.CancellationToken)).ReturnsAsync(snapshot);
+        var resolver = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance, effectivePolicies: policy.Object);
+        var song = new Song { Title = "Fixture", Artist = "Artist" };
+        if (review) await resolver.FindAllAsync(context, song, "recording", new ProtocolLyricsSources(HouseholdOnly: household));
+        else await resolver.FindAsync(context, song, "recording", new ProtocolLyricsSources(HouseholdOnly: household));
+        Assert.Equal(expected, calls);
+    }
+
     private static ProtocolLyricsResolver Resolver(Mock<IProtocolProviderGateway> providers) =>
         new(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance);
 
