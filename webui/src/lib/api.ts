@@ -262,7 +262,6 @@ export type ProviderRuntimeCapability = {
 
 export type ProviderDefinition = {
   useMode?: ProviderUseMode;
-  supportsAutomaticMatching?: boolean;
   id: string;
   name: string;
   icon?: string | null;
@@ -1811,7 +1810,7 @@ export type ProviderUseMode = "automatic" | "manualOnly" | "off";
 export type ProviderUseSettings = {
   personalRevision: string;
   householdRevision: string;
-  providers: { providerId: string; mode: ProviderUseMode; householdMode: ProviderUseMode; supportsAutomaticMatching: boolean; householdDisabled: boolean }[];
+  providers: { providerId: string; householdMode: ProviderUseMode; personalMode: ProviderUseMode | null; effectiveMode: ProviderUseMode; canChoosePersonal: boolean }[];
 };
 export const providerUse = {
   get: () => json<ProviderUseSettings>("/api/admin/providers/use"),
@@ -2212,9 +2211,8 @@ export const matchReview = {
     json<{ tracks: MatchTarget[] }>(
       `/api/admin/track-matches/targets/local?query=${encodeURIComponent(query)}&backendLibraryId=${encodeURIComponent(backendLibraryId)}&externalSnapshotId=${encodeURIComponent(externalSnapshotId)}`,
     ),
-  searchProviders: (query: string, externalSnapshotId: string, provider?: string) => {
+  searchProviders: (query: string, externalSnapshotId: string) => {
     const params = new URLSearchParams({ query, externalSnapshotId, limit: "50" });
-    if (provider) params.set("provider", provider);
     return json<{ tracks: MatchTarget[]; providers: string[] }>(
       `/api/admin/track-matches/targets/provider?${params}`,
     );

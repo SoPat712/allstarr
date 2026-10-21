@@ -1,7 +1,9 @@
+using System.Collections.Immutable;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Settings;
 using allstarr.Services.MusicBrainz;
 using Microsoft.EntityFrameworkCore;
@@ -12,6 +14,67 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly)]
+    [InlineData(ProviderUseMode.Off)]
+    public async Task RecordingEvidenceJob_SkipsRestrictedSourceWithoutLookupOrWrites(ProviderUseMode mode)
+    {
+        var recording = await _service.CreateRecordingAsync(Actor(_userA), "restricted-source", "USRC17607839");
+        await Link(recording.Recording.Id, Context(Actor(_userA), "spotify"), "restricted-source");
+        var settings = Options.Create(new MusicBrainzSettings { Enabled = true });
+        var client = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
+        client.SetupGet(item => item.ConfiguredSourceRevision).Returns("fixture:ws2");
+        var policies = PolicyResolver(_userA, ("spotify", mode));
+        var options = new DurableJobOptions();
+        var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
+        var queue = new RecordingMusicBrainzEnrichmentQueue(_factory, jobs, settings, client.Object, _clock);
+        Assert.Equal(1, await queue.EnqueuePendingAsync(default));
+        var claim = await jobs.ClaimNextAsync("recording-worker", [RecordingMusicBrainzEnrichmentQueue.JobType]);
+        var handler = new RecordingMusicBrainzEnrichmentJobHandler(
+            _factory, client.Object, settings, _service, policies.Object);
+
+        var result = await handler.ExecuteAsync(new(claim!, Mock.Of<IServiceProvider>()), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        client.Verify(item => item.LookupByIsrcAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        var service = new TrackIdentityService(_factory, _storageState, _clock, providerPolicies: policies.Object);
+        var unchanged = await service.EnrichRecordingAsync(Actor(_userA), recording.Recording.Id,
+            "USRC17607839", "31e68c1d-31f9-432c-a3a4-13aef4a53833", ["USRC17607839"], "restricted-source");
+        Assert.Null(unchanged.MusicBrainzRecordingId);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Single(await db.RecordingIdentifiers.ToListAsync());
+        Assert.Empty(await db.AuditEvents.Where(item => item.Outcome == "enriched").ToArrayAsync());
+    }
+
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly, false)]
+    [InlineData(ProviderUseMode.Off, false)]
+    [InlineData(ProviderUseMode.ManualOnly, true)]
+    [InlineData(ProviderUseMode.Off, true)]
+    public async Task RecordingEvidence_DoesNotMergeRestrictedTarget(ProviderUseMode mode, bool targetHasMbid)
+    {
+        const string mbid = "31e68c1d-31f9-432c-a3a4-13aef4a53833";
+        var source = await _service.CreateRecordingAsync(Actor(_userA), "eligible-source", "USRC17607839");
+        var target = await _service.CreateRecordingAsync(Actor(_userA), "restricted-target", "GBAYE0601498", targetHasMbid ? mbid : null);
+        await Link(source.Recording.Id, Context(Actor(_userA), "spotify"), "source-track");
+        await Link(target.Recording.Id, Context(Actor(_userA), "qobuz"), "target-track");
+        var policies = PolicyResolver(_userA, ("qobuz", mode));
+        var service = new TrackIdentityService(_factory, _storageState, _clock,
+            providerPolicies: policies.Object);
+
+        var result = await service.EnrichRecordingAsync(Actor(_userA), source.Recording.Id,
+            "USRC17607839", mbid, ["USRC17607839", "GBAYE0601498"], "restricted-target");
+
+        Assert.Equal(source.Recording.Id, result.Id);
+        Assert.Equal(targetHasMbid ? null : mbid, result.MusicBrainzRecordingId);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.False(await db.RecordingIdentifiers.AnyAsync(item => item.RecordingId == source.Recording.Id && item.Value == "GBAYE0601498"));
+        Assert.Null(await db.CanonicalRecordings.Where(item => item.Id == target.Recording.Id)
+            .Select(item => item.MergedIntoId).SingleAsync());
+        Assert.Equal(target.Recording.Id, (await db.ProviderTrackIdentities
+            .SingleAsync(item => item.ProviderId == "qobuz")).CanonicalRecordingId);
+    }
+
     [Fact]
     public async Task RecordingEvidence_MergesMultipleIsrcsIntoTheEarliestPublicIdAtomically()
     {
@@ -108,5 +171,26 @@ public sealed partial class TrackIdentityServiceTests
         canceled.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             handler.ExecuteAsync(new(claim!, Mock.Of<IServiceProvider>()), canceled.Token));
+    }
+
+    private static Mock<IEffectiveProviderPolicyResolver> PolicyResolver(
+        Guid userId, params (string ProviderId, ProviderUseMode Mode)[] modes)
+    {
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty,
+            "lossless",
+            0)
+        {
+            UserId = userId,
+            ProviderModes = modes.ToImmutableDictionary(
+                item => item.ProviderId, item => item.Mode, StringComparer.OrdinalIgnoreCase)
+        };
+        var resolver = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        resolver.Setup(item => item.ResolveForUserAsync(userId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(policy);
+        resolver.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(policy);
+        return resolver;
     }
 }

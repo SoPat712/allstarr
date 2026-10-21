@@ -1,4 +1,6 @@
 using System.Net;
+using System.Collections.Immutable;
+using allstarr.Core.Settings;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
@@ -11,6 +13,53 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin, true)]
+    [InlineData(ProtocolKind.Subsonic, true)]
+    [InlineData(ProtocolKind.Jellyfin, false)]
+    [InlineData(ProtocolKind.Subsonic, false)]
+    public async Task ManualOnlyMetadataPreservesTheProviderItemWithoutCanonicalTranslation(ProtocolKind protocol, bool found)
+    {
+        var user = Guid.CreateVersion7();
+        var context = new ProtocolExecutionContext(protocol, "backend", "listener",
+            new AllstarrPrincipal(user, protocol.ToString().ToLowerInvariant(), "backend", "listener", "Listener", false),
+            "chosen-metadata", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        context = context with
+        {
+            Policy = new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "High", 0.07)
+            {
+                UserId = context.RequireActor().EffectiveUserId,
+                ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("deezer", ProviderUseMode.ManualOnly)
+            }
+        };
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.SetupGet(item => item.ProviderId).Returns("deezer");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        metadata.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()))
+            .ReturnsAsync(found ? ProviderOutcome<ProviderTrackMetadata>.Success(
+                new(new("deezer", ProviderResourceKind.Track, "chosen"), "Song", [new("Artist")])) :
+                ProviderOutcome<ProviderTrackMetadata>.Failure(new(ProviderErrorKind.NotFound)));
+        var registry = MetadataRegistry(metadata.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => MetadataPlan(request, registry, metadata.Object));
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), identities: identities.Object);
+
+        var song = await gateway.GetSongAsync(context, "deezer", "chosen");
+
+        if (found)
+        {
+            Assert.NotNull(song);
+            Assert.Equal("ext-deezer-song-chosen", song.Id);
+            Assert.Equal("deezer", song.ExternalProvider);
+        }
+        else Assert.Null(song);
+        identities.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData(ProtocolKind.Jellyfin, false, false)]
     [InlineData(ProtocolKind.Jellyfin, false, true)]

@@ -398,10 +398,11 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [InlineData(ProviderIdentityVerification.Pinned, "manual", 3, null, null)]
     [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 2, "deezer", null, "CleanOnly")]
     [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 3, "apple-download", null, null, true)]
+    [InlineData(ProviderIdentityVerification.Verified, "automatic-match", 3, null, null, null, false, true)]
     public async Task Search_CollapsesVerifiedRoutesOnlyForMetadata(
         ProviderIdentityVerification verification, string method,
         int expectedCount, string? preferredProvider, string? streamingOrder, string? explicitFilter = null,
-        bool playableSearch = false)
+        bool playableSearch = false, bool manual = false)
     {
         var providerIds = new[] { "apple-musickit", "deezer", "qobuz" };
         var metadata = providerIds.Select(providerId =>
@@ -473,11 +474,30 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                     System.Collections.Immutable.ImmutableHashSet<string>.Empty, AudioQualityPolicy.DefaultStep, 0.07)
                 { UserId = context.RequireActor().EffectiveUserId, Preferences = new(explicitFilter) }
             };
+        if (manual)
+            context = context with
+            {
+                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                    System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                    System.Collections.Immutable.ImmutableHashSet<string>.Empty, "High", 0.07)
+                {
+                    UserId = context.RequireActor().EffectiveUserId,
+                    ProviderModes = System.Collections.Immutable.ImmutableDictionary<string, ProviderUseMode>.Empty
+                        .Add("deezer", ProviderUseMode.ManualOnly)
+                }
+            };
         var songs = playableSearch
             ? await gateway.SearchPlayableSongsAsync(context, "Shared title", 10)
             : (await gateway.SearchAsync(context, "Shared title", 10, 0, 0)).Songs;
 
         Assert.Equal(expectedCount, songs.Count);
+        if (manual)
+        {
+            Assert.StartsWith("ext-deezer-", Assert.Single(songs, song => song.ExternalProvider == "deezer").Id);
+            identities.Verify(item => item.ResolveManyAsync(
+                It.Is<IReadOnlyList<TrackIdentityLookup>>(lookups => lookups.Any(lookup => lookup.ExternalId.ProviderId == "deezer")),
+                It.IsAny<CancellationToken>()), Times.Never);
+        }
         Assert.Contains(songs, song => song.ExternalProvider == "qobuz");
         if (preferredProvider != null)
         {
@@ -493,8 +513,10 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             identities.VerifyAll();
     }
 
-    [Fact]
-    public async Task MetadataSearch_GroupsTheSameIsrcAcrossProvidersWithoutLookups()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MetadataSearch_GroupsTheSameIsrcAcrossAutomaticProvidersWithoutLookups(bool manual)
     {
         var providerIds = new[] { "deezer", "qobuz", "apple-musickit" };
         var tracks = new Dictionary<string, ProviderTrackMetadata[]>
@@ -538,13 +560,30 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         // No identity service: grouping must come only from the ISRCs already in the search payloads.
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
 
-        var songs = (await gateway.SearchAsync(Context(), "Song", 10, 0, 0)).Songs;
+        var context = Context();
+        if (manual)
+            context = context with
+            {
+                Policy = new allstarr.Core.Settings.EffectiveProviderPolicySnapshot(
+                    System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty,
+                    System.Collections.Immutable.ImmutableHashSet<string>.Empty, "High", 0.07)
+                {
+                    UserId = context.RequireActor().EffectiveUserId,
+                    ProviderModes = System.Collections.Immutable.ImmutableDictionary<string, ProviderUseMode>.Empty
+                        .Add("deezer", ProviderUseMode.ManualOnly)
+                }
+            };
+        var songs = (await gateway.SearchAsync(context, "Song", 10, 0, 0)).Songs;
 
-        Assert.Equal(["a-1", "q-1"], songs.Select(song => song.ExternalId!).Order().ToArray());
+        Assert.Equal(manual ? ["a-1", "d-1", "d-2", "q-1"] : ["a-1", "q-1"],
+            songs.Select(song => song.ExternalId!).Order().ToArray());
+        if (manual)
+            Assert.All(songs.Where(song => song.ExternalProvider == "deezer"), song =>
+                Assert.StartsWith("ext-deezer-", song.Id));
     }
 
     [Fact]
-    public async Task PlayableSearch_RestrictsProviderBeforeGroupingSameRecording()
+    public async Task PlayableSearchPreservesEveryProviderRowForManualSelection()
     {
         var providerIds = new[] { "deezer", "qobuz", "apple-musickit" };
         var tracks = new Dictionary<string, ProviderTrackMetadata[]>
@@ -588,14 +627,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         // No identity service: grouping must come only from the ISRCs already in the search payloads.
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), configuration);
 
-        var songs = await gateway.SearchPlayableSongsAsync(Context(), "Song", 10, "apple-musickit");
+        var songs = await gateway.SearchPlayableSongsAsync(Context(), "Song", 10);
 
-        Assert.Equal("a-1", Assert.Single(songs).ExternalId);
-        songs = await gateway.SearchPlayableSongsAsync(Context(), "Song", 10, "deezer");
-        Assert.Equal(["d-1", "d-2"], songs.Select(song => song.ExternalId!).Order().ToArray());
-        Assert.Empty(await gateway.SearchPlayableSongsAsync(Context(), "Song", 10, "unavailable"));
-        router.Verify(item => item.PlanAsync<IProviderMetadataCapability>(
-            It.Is<ProviderRouteRequest>(request => request.ProviderPriority.Count != 1)), Times.Never);
+        Assert.Equal(["a-1", "d-1", "d-2", "q-1"], songs.Select(song => song.ExternalId!).Order().ToArray());
     }
 
     [Fact]

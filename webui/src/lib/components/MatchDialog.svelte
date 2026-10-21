@@ -14,7 +14,6 @@
   import ArtworkSimilarity from "$lib/shelved/ArtworkSimilarity.svelte";
   import MediaArtwork from "$lib/components/MediaArtwork.svelte";
   import ProviderMark from "$lib/components/ProviderMark.svelte";
-  import SelectField from "$lib/components/SelectField.svelte";
   import {
     candidateResolution,
     percent,
@@ -55,7 +54,6 @@
   let preparedId = $state("");
   let targetQuery = $state("");
   let providerFilter = $state("");
-  let searchProvider = $state("");
   let results = $state<MatchTarget[]>([]);
   let searched = $state(false);
   let loading = $state(false);
@@ -65,11 +63,6 @@
   let authorityScope = $state<MatchAuthorityScope>("personal");
 
   const playbackProviders = $derived(playableProviderIds(providers));
-  const searchSources = $derived([
-    { value: "", label: "Normal sources" },
-    ...providers.filter(item => playbackProviders.has(item.id.toLowerCase()) && item.useMode !== "off")
-      .map(item => ({ value: item.id, label: `${item.name}${item.useMode === "manualOnly" ? " · Manual only" : ""}` })),
-  ]);
   const eligibleCandidates = $derived(
     match?.candidates.filter((candidate) =>
       candidateResolution(candidate, match.providerId, playbackProviders)) ?? [],
@@ -97,7 +90,6 @@
     showLyrics = false;
     targetQuery = match.title || "";
     providerFilter = "";
-    searchProvider = "";
     results = [];
     searched = false;
     error = "";
@@ -176,14 +168,13 @@
     error = "";
     try {
       const [local, external] = await Promise.allSettled([
-        searchProvider ? Promise.resolve({ tracks: [] }) : matchReview.searchLocal(
+        matchReview.searchLocal(
           targetQuery.trim(),
           match.externalSnapshotId,
         ),
         matchReview.searchProviders(
           targetQuery.trim(),
           match.externalSnapshotId,
-          searchProvider || undefined,
         ),
       ]);
       results = rankedTargets([
@@ -373,14 +364,6 @@
         <section class="match-section match-search" aria-labelledby="find-match-heading">
           <div class="match-section-heading">
             <h3 id="find-match-heading">Find a different match</h3>
-          </div>
-          <div class="field">
-            <span>Search another source</span>
-            <SelectField label="Search another source" value={searchProvider} options={searchSources} disabled={loading || saving} onchange={value => {
-              searchProvider = value; providerFilter = ""; results = []; searched = false;
-              if (value && match?.artist && !targetQuery.toLowerCase().includes(match.artist.toLowerCase()))
-                targetQuery = `${match.artist} ${targetQuery}`;
-            }} />
           </div>
           <form class="target-search" onsubmit={(event) => { event.preventDefault(); void search(); }}>
             <label class="field grow">

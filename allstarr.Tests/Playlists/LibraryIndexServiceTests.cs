@@ -1,4 +1,6 @@
 using System.Net;
+using System.Collections.Immutable;
+using allstarr.Core.Settings;
 using System.Text.Json;
 using allstarr.Core.Jobs;
 using allstarr.Models.Settings;
@@ -170,6 +172,27 @@ public sealed class LibraryIndexServiceTests : IAsyncLifetime
         Assert.Equal("music", details.RootElement.GetProperty("BackendLibraryId").GetString());
         Assert.Equal(1, details.RootElement.GetProperty("Seen").GetInt32());
         Assert.Equal(1, await db.LibraryTracks.CountAsync());
+    }
+
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly)]
+    [InlineData(ProviderUseMode.Off)]
+    public async Task RestrictedProviderResultKeepsItsSourceInsteadOfSubstitutingAnOwnedRecording(ProviderUseMode mode)
+    {
+        var viewer = Context(_userA, "principal-a");
+        await _service.UpsertAsync(viewer, Input());
+        viewer = viewer with
+        {
+            Policy = new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "High", 0.07)
+            {
+                UserId = _userA,
+                ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("deezer", mode)
+            }
+        };
+        Assert.Empty(await _service.FindKnownRecordingTracksAsync(viewer,
+            [new("ext-deezer-song-remote", null, "USRC17607839", "deezer", "remote")]));
     }
 
     [Fact]

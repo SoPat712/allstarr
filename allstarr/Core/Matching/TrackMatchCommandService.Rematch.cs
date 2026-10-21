@@ -176,13 +176,20 @@ public sealed partial class TrackMatchCommandService
             ReadDurationMilliseconds(snapshot.PayloadJson),
             payload.Isrc,
             null,
-            null)
+            null);
+        var ownerPolicy = effectivePolicies == null ? null :
+            await effectivePolicies.ResolveForUserAsync(snapshot.OwnerUserId, cancellationToken);
+        var automaticSource = ownerPolicy?.IsAutomatic(sourceTrack.ProviderId) ??
+            await AutomaticSourceAsync(snapshot.OwnerUserId, sourceTrack.ProviderId, cancellationToken);
+        if (automaticSource && source != null)
         {
-            ExactProviderAliases = source == null ? null :
-                (await LoadCrossLinksAsync(db, [source.CanonicalRecordingId], cancellationToken))
-                    .GetValueOrDefault(source.CanonicalRecordingId)
-        };
-        var automaticSource = await AutomaticSourceAsync(snapshot.OwnerUserId, sourceTrack.ProviderId, cancellationToken);
+            var aliases = (await LoadCrossLinksAsync(db, [source.CanonicalRecordingId], cancellationToken))
+                .GetValueOrDefault(source.CanonicalRecordingId);
+            sourceTrack = sourceTrack with
+            {
+                ExactProviderAliases = FilterAutomaticCrossLinks(aliases, ownerPolicy)
+            };
+        }
         var localCandidates = decisionEngine.PrepareCandidates(automaticSource ? candidates.Select(ToLocalCandidate) : []);
         var libraryIndexRevision = localCandidates.Revision;
         var scope = new TrackMatchScope(

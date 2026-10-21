@@ -6,6 +6,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Settings;
+using allstarr.Core.Storage;
 using Microsoft.Extensions.Configuration;
 using Moq;
 
@@ -14,7 +15,14 @@ namespace allstarr.Tests;
 public sealed class ProviderUseRoutingTests
 {
     [Fact]
-    public async Task NonMatchingProviderIsExcludedFromAutomaticSearch()
+    public async Task OnAllowsAutomaticUseOfASourceWithAManualDefault()
+    {
+        var plan = await Router(ProviderUseMode.Automatic).PlanAsync<IProviderMetadataCapability>(Request());
+        Assert.Equal("manual", Assert.Single(plan.Candidates).Provider.Id);
+    }
+
+    [Fact]
+    public async Task ManualOnlyProviderIsExcludedFromAutomaticSearch()
     {
         var plan = await Router().PlanAsync<IProviderMetadataCapability>(Request());
         Assert.Empty(plan.Candidates);
@@ -22,14 +30,14 @@ public sealed class ProviderUseRoutingTests
     }
 
     [Fact]
-    public async Task ExplicitManualSearchCanUseNonMatchingProvider()
+    public async Task PersonSearchCanUseManualOnlyProvider()
     {
         var plan = await Router().PlanAsync<IProviderMetadataCapability>(Request(ProviderRoutePurpose.ManualSelection));
         Assert.Equal("manual", Assert.Single(plan.Candidates).Provider.Id);
     }
 
     [Fact]
-    public async Task ExactNonMatchingTrackCanBeOpenedWithoutCanonicalTranslation()
+    public async Task ExactManualOnlyTrackCanBeOpenedWithoutCanonicalTranslation()
     {
         var source = new ProviderExternalResourceId("manual", ProviderResourceKind.Track, "version-3");
         var plan = await Router().PlanAsync<IProviderMetadataCapability>(Request(source: source));
@@ -37,7 +45,7 @@ public sealed class ProviderUseRoutingTests
     }
 
     [Fact]
-    public async Task CanonicalRecordingNeverSelectsNonMatchingProvider()
+    public async Task CanonicalRecordingNeverSelectsManualOnlyProvider()
     {
         var source = new ProviderExternalResourceId("allstarr", ProviderResourceKind.Track, Guid.NewGuid().ToString());
         var plan = await Router().PlanAsync<IProviderMetadataCapability>(Request(source: source));
@@ -45,9 +53,11 @@ public sealed class ProviderUseRoutingTests
     }
 
     [Theory]
-    [InlineData(ProtocolKind.Jellyfin)]
-    [InlineData(ProtocolKind.Subsonic)]
-    public async Task ExplicitManualSongPlaysAndSeeksUntilListenerTurnsSourceOff(ProtocolKind protocolKind)
+    [InlineData(ProtocolKind.Jellyfin, false)]
+    [InlineData(ProtocolKind.Subsonic, false)]
+    [InlineData(ProtocolKind.Jellyfin, true)]
+    [InlineData(ProtocolKind.Subsonic, true)]
+    public async Task ExplicitManualSongPlaysAndSeeksUntilListenerTurnsSourceOff(ProtocolKind protocolKind, bool pinned)
     {
         var userId = Guid.CreateVersion7();
         var policy = new EffectiveProviderPolicySnapshot(
@@ -75,7 +85,7 @@ public sealed class ProviderUseRoutingTests
         var descriptor = new ProviderDescriptor("manual", "Manual", "Manual recordings", ProviderOrigin.BuiltIn,
             "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
                 ProviderAccountRequirement.None, "1", ["getStreamLease"])], new())
-        { MatchingMode = ProviderMatchingMode.ManualOnly, DefaultUseMode = ProviderUseMode.ManualOnly };
+        { DefaultUseMode = ProviderUseMode.ManualOnly };
         var registry = new ProviderRegistry([new(descriptor, [streaming.Object])]);
         var health = new Mock<IProviderRouteHealthSource>();
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
@@ -89,9 +99,22 @@ public sealed class ProviderUseRoutingTests
             new AllstarrPrincipal(userId, protocolKind.ToString().ToLowerInvariant(), "fixture", "listener", "Listener", false),
             "manual-stream", DateTimeOffset.UtcNow.AddMinutes(1), default, new("client", "device"));
 
+        var chosenProvider = "manual";
+        var chosenTrack = "version-3";
+        if (pinned)
+        {
+            var pin = new ManualTrackOverrideRecord
+            { Decision = ManualOverrideDecision.Pin, TargetProviderId = "manual", TargetExternalId = "version-3" };
+            var selected = Assert.Single(DurableProviderRouteSelector.Select(
+                new ProviderTrackIdentityRecord { ProviderId = "spotify", ExternalId = "original" },
+                [], ["manual"], pin, providerPolicy: policy));
+            Assert.True(selected.IsManual);
+            chosenProvider = selected.ProviderId;
+            chosenTrack = selected.ExternalId;
+        }
         foreach (var range in new[] { null, "bytes=4-7" })
         {
-            var opened = await gateway.OpenStreamAsync(protocol, "manual", "version-3", ProviderAudioQuality.Any, range);
+            var opened = await gateway.OpenStreamAsync(protocol, chosenProvider, chosenTrack, ProviderAudioQuality.Any, range);
             Assert.NotNull(opened);
             Assert.Equal("manual", opened.ServingProviderId);
             Assert.Equal(range == null ? HttpStatusCode.OK : HttpStatusCode.PartialContent, opened.Response.StatusCode);
@@ -99,12 +122,22 @@ public sealed class ProviderUseRoutingTests
         }
         policy = policy with { ProviderModes = policy.ProviderModes.SetItem("manual", ProviderUseMode.Off) };
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            gateway.OpenStreamAsync(protocol, "manual", "version-3", ProviderAudioQuality.Any, null));
+            gateway.OpenStreamAsync(protocol, chosenProvider, chosenTrack, ProviderAudioQuality.Any, null));
         streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.IsAny<ProviderStreamLeaseRequest>()), Times.Exactly(2));
     }
 
-    private static ProviderRouter Router()
+    [Fact]
+    public async Task ManualSourceCannotBeFallbackForAnotherSource()
+    {
+        var plan = await Router().PlanAsync<IProviderMetadataCapability>(Request(
+            ProviderRoutePurpose.ManualSelection,
+            new ProviderExternalResourceId("other", ProviderResourceKind.Track, "track")));
+        Assert.Empty(plan.Candidates);
+        Assert.Contains(plan.Decision.Candidates, item => item.ReasonCode == "manual-selection-required");
+    }
+
+    private static ProviderRouter Router(ProviderUseMode? mode = null)
     {
         var capability = new Mock<IProviderMetadataCapability>();
         capability.SetupGet(item => item.ProviderId).Returns("manual");
@@ -112,13 +145,21 @@ public sealed class ProviderUseRoutingTests
         var descriptor = new ProviderDescriptor("manual", "Manual", "Manual recordings", ProviderOrigin.BuiltIn,
             "1", "1", [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
                 ProviderAccountRequirement.None, "1", ["searchTracks", "getTrack"])], new())
-        { MatchingMode = ProviderMatchingMode.ManualOnly, DefaultUseMode = ProviderUseMode.ManualOnly };
+        { DefaultUseMode = ProviderUseMode.ManualOnly };
         var health = new Mock<IProviderRouteHealthSource>();
         health.Setup(item => item.Get(It.IsAny<string>(), It.IsAny<Guid?>(), It.IsAny<ProviderCapabilityKind>()))
             .Returns(new ProviderRouteHealthSnapshot(ProviderRouteHealthState.Healthy, false));
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        if (mode.HasValue)
+            policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(
+                new EffectiveProviderPolicySnapshot(
+                    ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                    ImmutableHashSet<string>.Empty, "High", 0.07)
+                { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("manual", mode.Value) });
         return new(new ProviderRegistry([new(descriptor, [capability.Object])]),
             Mock.Of<IProviderRouteAccountResolver>(), health.Object,
-            Mock.Of<IProviderRouteSidecarSource>(), new Mock<ITrackIdentityService>(MockBehavior.Strict).Object);
+            Mock.Of<IProviderRouteSidecarSource>(), new Mock<ITrackIdentityService>(MockBehavior.Strict).Object,
+            effectivePolicies: mode.HasValue ? policies.Object : null);
     }
 
     private static ProviderRouteRequest Request(ProviderRoutePurpose purpose = ProviderRoutePurpose.Automatic,

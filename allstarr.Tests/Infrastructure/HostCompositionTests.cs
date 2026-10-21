@@ -258,6 +258,28 @@ public sealed class HostCompositionTests
     }
 
     [Theory]
+    [InlineData(false, ProviderUseMode.ManualOnly)]
+    [InlineData(true, ProviderUseMode.Off)]
+    public async Task SchemaSourceModeReflectsTheViewer(bool administrator, ProviderUseMode mode)
+    {
+        using var factory = new AllstarrFactory("Jellyfin");
+        using var scope = factory.Services.CreateScope();
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        var user = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+        policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "High", 0.07)
+            { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("artistgrid", mode) });
+        var controller = ActivatorUtilities.CreateInstance<AdminUiController>(scope.ServiceProvider, policies.Object);
+        controller.ControllerContext = Context(administrator);
+        var schema = Assert.IsType<AdminUiSchemaResponse>(
+            Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
+        Assert.Equal(ProviderUsePolicy.Name(mode), Assert.Single(schema.Providers, item => item.Id == "artistgrid").UseMode);
+        policies.VerifyAll();
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task AccountProviders_PublishTheirProperNamesInEveryUiSchema(bool administrator)

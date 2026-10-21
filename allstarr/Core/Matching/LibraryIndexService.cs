@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Operations;
 using allstarr.Core.Protocols;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
@@ -114,6 +115,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
     private readonly IBackendLibraryAccessResolver _libraryAccess;
     private readonly IProviderRegistry? _registry;
     private readonly ILogger<LibraryIndexService>? _logger;
+    private readonly IEffectiveProviderPolicyResolver? _effectivePolicies;
 
     public LibraryIndexService(
         IDbContextFactory<AllstarrDbContext> contextFactory,
@@ -122,7 +124,8 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         ITrackIdentityService identities,
         IBackendLibraryAccessResolver libraryAccess,
         IProviderRegistry? registry = null,
-        ILogger<LibraryIndexService>? logger = null)
+        ILogger<LibraryIndexService>? logger = null,
+        IEffectiveProviderPolicyResolver? effectivePolicies = null)
     {
         _contextFactory = contextFactory;
         _storageState = storageState;
@@ -131,6 +134,7 @@ public sealed partial class LibraryIndexService : ILibraryIndexService
         _libraryAccess = libraryAccess;
         _registry = registry;
         _logger = logger;
+        _effectivePolicies = effectivePolicies;
     }
 
     public async Task<IndexedLibraryTrack> UpsertAsync(

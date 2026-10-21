@@ -1177,7 +1177,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([
                 new Song { ExternalProvider = "deezer", ExternalId = "new-song", Title = "New Song",
@@ -1204,14 +1204,14 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             .ExecuteAsync(new DurableJobExecutionContext(claim, EmptyServices.Instance), default);
 
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
         await queue.CompleteAsync(claim, completion);
         var rematchClaim = Assert.IsType<DurableJobClaim>(await queue.ClaimNextAsync("scheduled-rematch-worker"));
         Assert.Equal(DurableJobCompletionKind.Succeeded,
             (await ExecuteRefreshRematch(service, matches, rematchClaim)).Kind);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "New Song Artist", 15), Times.Once);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Later Song Artist", 15), Times.Once);
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "New Song Artist", 15), Times.Once);
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Later Song Artist", 15), Times.Once);
         var projection = await new DurablePlaylistProjectionReader(_factory,
             new TestBackendLibraryAccess(_factory, "music"), gateway.Object).ReadByLinkIdAsync(_user, _link);
         Assert.NotNull(projection);
@@ -1251,7 +1251,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             .ReturnsAsync(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Feels", 15))
             .ReturnsAsync(
             [
@@ -1335,7 +1335,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([new Song
             {
@@ -1424,7 +1424,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests(ITestOutputHel
             if (Volatile.Read(ref entered) >= snapshotIds.Length && Volatile.Read(ref joined) == rematches)
                 release.TrySetResult();
         }
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Concurrent external", 15))
             .Returns(async () =>
             {

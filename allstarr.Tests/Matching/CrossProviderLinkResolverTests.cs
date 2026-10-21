@@ -62,6 +62,20 @@ public sealed class CrossProviderLinkResolverTests
         metadata.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData("tidal", ProviderUseMode.ManualOnly)]
+    [InlineData("tidal", ProviderUseMode.Off)]
+    [InlineData("deezer", ProviderUseMode.ManualOnly)]
+    [InlineData("deezer", ProviderUseMode.Off)]
+    public async Task RestrictedSourcesAndTargetsNeverEnrichIdentity(string provider, ProviderUseMode mode)
+    {
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        var resolver = Create(metadata.Object, ["deezer"], modes:
+            ImmutableDictionary<string, ProviderUseMode>.Empty.Add(provider, mode));
+        Assert.Empty(await resolver.ResolveAsync(Source("USRC17607839"), [], Actor(), "fixture", default));
+        metadata.VerifyNoOtherCalls();
+    }
+
     [Fact]
     public async Task SuccessfulLookup_IsCachedAndKnownIdentitiesAreNotSearched()
     {
@@ -161,7 +175,8 @@ public sealed class CrossProviderLinkResolverTests
     internal static CrossProviderLinkResolver Create(Mock<IProviderMetadataCapability> metadata, string[] order, string[]? disabled = null)
         => Create(metadata.Object, order, disabled);
 
-    internal static CrossProviderLinkResolver Create(IProviderMetadataCapability metadata, string[] order, string[]? disabled = null, OdesliService? odesli = null)
+    internal static CrossProviderLinkResolver Create(IProviderMetadataCapability metadata, string[] order, string[]? disabled = null, OdesliService? odesli = null,
+        ImmutableDictionary<string, ProviderUseMode>? modes = null)
     {
         IProviderMetadataCapability? registered = metadata;
         var registry = new Mock<IProviderRegistry>();
@@ -173,7 +188,8 @@ public sealed class CrossProviderLinkResolverTests
         var policy = new Mock<IEffectiveProviderPolicyResolver>();
         var snapshot = new EffectiveProviderPolicySnapshot(
             ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Metadata, [.. order]),
-            (disabled ?? []).ToImmutableHashSet(), "Any", 0.07);
+            (disabled ?? []).ToImmutableHashSet(), "Any", 0.07)
+        { ProviderModes = modes ?? ImmutableDictionary<string, ProviderUseMode>.Empty };
         policy.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(snapshot);
         return new(registry.Object, policy.Object, new TrackMatchDecisionEngine(), new TestMemoryApplicationCache(),
             Options.Create(new OdesliSettings { Enabled = true }), new SystemPlatformClock(), odesli);

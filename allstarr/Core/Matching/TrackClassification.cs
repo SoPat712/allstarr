@@ -76,7 +76,7 @@ public static class TrackRouteProjector
             sourceIdentity,
             identities,
             providerOrder,
-            libraryById.Keys.ToHashSet(), providerPolicy);
+            libraryById.Keys.ToHashSet(), providerPolicy, snapshot.ProviderId);
         libraryById.TryGetValue(classification.LibraryTrackId ?? Guid.Empty, out var local);
         canonicalId ??= local?.CanonicalRecordingId;
         if (local == null &&
@@ -112,8 +112,11 @@ public static class TrackClassifier
         IEnumerable<ProviderTrackIdentityRecord>? providerIdentities = null,
         IReadOnlyList<string>? providerPriority = null,
         IReadOnlySet<Guid>? playableLibraryTrackIds = null,
-        EffectiveProviderPolicySnapshot? providerPolicy = null)
+        EffectiveProviderPolicySnapshot? providerPolicy = null,
+        string? sourceProviderId = null)
     {
+        var automaticSource = (sourceIdentity?.ProviderId ?? sourceProviderId) is not { } sourceProvider ||
+                              providerPolicy?.IsAutomatic(sourceProvider) != false;
         var rejected = TrackMatchOverridePolicy.IsEffectiveRejection(manual, decision);
         var providerRoutes = manual?.Decision == ManualOverrideDecision.Reject &&
                              !manual.LibraryTrackId.HasValue
@@ -124,6 +127,7 @@ public static class TrackClassifier
                 providerPriority ?? [],
                 manual,
                 decision?.CanonicalRecordingId, providerPolicy);
+        if (!automaticSource) providerRoutes = providerRoutes.Where(item => item.IsManual).ToArray();
         var hasManualProviderRoute = providerRoutes.FirstOrDefault()?.IsManual == true;
         var hasManualLibraryRoute = manual?.Decision == ManualOverrideDecision.Pin &&
                                     manual.LibraryTrackId.HasValue &&
@@ -134,6 +138,7 @@ public static class TrackClassifier
         {
             ManualOverrideDecision.Pin when hasEligibleManualPin => TrackMatchState.Pinned,
             ManualOverrideDecision.Reject when rejected => TrackMatchState.Rejected,
+            _ when !automaticSource => TrackMatchState.Unresolved,
             _ when decision?.State == TrackMatchState.Accepted &&
                    decision.Confidence < decision.Threshold => TrackMatchState.Unresolved,
             _ => decision?.State ?? TrackMatchState.Unresolved
@@ -142,7 +147,7 @@ public static class TrackClassifier
             ? manual!.LibraryTrackId
             : hasManualProviderRoute
                 ? null
-                : rejected
+                : rejected || !automaticSource
                     ? null
                     : decision?.State switch
                     {

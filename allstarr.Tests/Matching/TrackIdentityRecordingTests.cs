@@ -11,8 +11,10 @@ namespace allstarr.Tests;
 
 public sealed partial class TrackIdentityServiceTests
 {
-    [Fact]
-    public async Task ManualSourceRetainsItsOwnIdWithoutIsrcMergesOrCrossProviderAliases()
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly)]
+    [InlineData(ProviderUseMode.Off)]
+    public async Task RestrictedSourceRetainsItsOwnIdWithoutIsrcMergesOrCrossProviderAliases(ProviderUseMode mode)
     {
         var actor = Actor(_userA);
         const string isrc = "USAAA2600001";
@@ -21,7 +23,7 @@ public sealed partial class TrackIdentityServiceTests
         var policy = new EffectiveProviderPolicySnapshot(
             ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
             ImmutableHashSet<string>.Empty, "lossless", 0)
-        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("manual", ProviderUseMode.ManualOnly) };
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("manual", mode) };
         var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
         policies.Setup(item => item.ResolveForUserAsync(_userA, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
         var service = new TrackIdentityService(_factory, _storageState, _clock, providerPolicies: policies.Object);

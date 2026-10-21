@@ -197,8 +197,7 @@ public sealed partial class TrackIdentityService : ITrackIdentityService
         CancellationToken cancellationToken)
     {
         if (_registry?.TryGet(providerId, out var descriptor) == true &&
-            (descriptor!.MatchingMode == ProviderMatchingMode.ManualOnly ||
-             _providerPolicies == null && descriptor.DefaultUseMode != ProviderUseMode.Automatic)) return false;
+            _providerPolicies == null && descriptor!.DefaultUseMode != ProviderUseMode.Automatic) return false;
         if (_providerPolicies == null) return true;
         var policy = actor.EffectiveUserId is { } userId
             ? await _providerPolicies.ResolveForUserAsync(userId, cancellationToken)

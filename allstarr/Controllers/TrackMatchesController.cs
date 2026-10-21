@@ -479,16 +479,13 @@ public sealed class TrackMatchesController(
     [HttpGet("targets/provider")]
     public async Task<IActionResult> SearchProviderTargets(
         [FromQuery] string query,
-        [FromQuery] string? provider = null,
         [FromQuery] Guid? externalSnapshotId = null,
         [FromQuery] int limit = 20,
         CancellationToken cancellationToken = default)
     {
         if (!TrySession(out var session, out var error)) return error!;
         query = query?.Trim() ?? string.Empty;
-        provider = provider?.Trim() ?? string.Empty;
         if (query.Length < 2) return BadRequest(new { error = "Enter at least two characters" });
-        if (provider.Length > 128) return BadRequest(new { error = "The playback provider is invalid" });
         limit = Math.Clamp(limit, 1, 50);
 
         var userId = session!.AllstarrUserId!.Value;
@@ -500,9 +497,6 @@ public sealed class TrackMatchesController(
             .Concat(downloadOrder)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if (provider.Length > 0 &&
-            !playableProviders.Any(item => SameProvider(item, provider)))
-            return BadRequest(new { error = "The selected provider is not an installed playback provider" });
         if (playableProviders.Length == 0)
             return Ok(new { tracks = Array.Empty<object>(), providers = playableProviders });
 
@@ -516,8 +510,9 @@ public sealed class TrackMatchesController(
         {
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
-        var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, limit, provider))
-            .Where(song => IsSelectedPlayableProvider(song.ExternalProvider, playableProviders, provider))
+        var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, limit))
+            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+                playableProviders.Any(item => SameProvider(item, song.ExternalProvider)))
             .Take(limit)
             .ToArray();
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
@@ -554,14 +549,14 @@ public sealed class TrackMatchesController(
                 {
                     id = song.ExternalId,
                     externalId = song.ExternalId,
-                    externalProvider = song.ExternalProvider ?? provider,
+                    externalProvider = song.ExternalProvider,
                     title = song.Title,
                     artist = song.Artist,
                     album = song.Album,
                     artworkUrl = string.IsNullOrWhiteSpace(song.CoverArtUrl) ||
                                  string.IsNullOrWhiteSpace(song.ExternalId)
                         ? null
-                        : ExternalArtworkUrl(song.ExternalProvider ?? provider, song.ExternalId!),
+                        : ExternalArtworkUrl(song.ExternalProvider!, song.ExternalId!),
                     durationMilliseconds = song.Duration * 1000,
                     isrc = song.Isrc,
                     confidence = item.Confidence,
@@ -1283,14 +1278,6 @@ public sealed class TrackMatchesController(
         root.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? value.GetBoolean()
             : null;
-
-    internal static bool IsSelectedPlayableProvider(
-        string? resultProvider,
-        IReadOnlyCollection<string> playableProviders,
-        string selectedProvider) =>
-        !string.IsNullOrWhiteSpace(resultProvider) &&
-        playableProviders.Any(item => SameProvider(item, resultProvider)) &&
-        (selectedProvider.Length == 0 || SameProvider(selectedProvider, resultProvider));
 
     private static bool SameProvider(string left, string right) =>
         ExternalTrackPlaybackPolicy.Normalize(left) == ExternalTrackPlaybackPolicy.Normalize(right);

@@ -605,7 +605,14 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
                     .ToDictionary(group => group.Key, group => group.Last().Value, StringComparer.Ordinal)
             };
         return new(effective, household, personalRows.Count == 0,
-            ComputePreferencesRevision(userId, householdSettings, personalRows));
+            ComputePreferencesRevision(userId, householdSettings, personalRows))
+        {
+            ProviderModeOverrides = personalRows.TryGetValue(ProviderUsePolicy.SettingKey, out var modeRow)
+                ? ProviderUsePolicy.ParseModes((string)FromRecord(modeRow,
+                    RuntimeSettingCatalog.Require(ProviderUsePolicy.SettingKey)).Value).ToDictionary(item => item.Key,
+                    item => ProviderUsePolicy.Name(item.Value), StringComparer.Ordinal)
+                : null
+        };
     }
 
     private static ListeningPreferences ToListeningPreferences(

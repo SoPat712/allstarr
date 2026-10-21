@@ -1,11 +1,38 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
+using System.Collections.Immutable;
 
 namespace allstarr.Tests;
 
 public sealed class TrackClassifierTests
 {
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly)]
+    [InlineData(ProviderUseMode.Off)]
+    public void SourcePolicyChangeSuppressesStoredAutomaticMatchesButRetainsExplicitPins(ProviderUseMode mode)
+    {
+        var canonical = Guid.CreateVersion7();
+        var local = Guid.CreateVersion7();
+        var source = Identity(canonical, "source", "original");
+        var target = Identity(canonical, "target", "alternative");
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "High", 0.07)
+        { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("source", mode) };
+        var decision = Decision(local, TrackMatchState.Accepted, .99, .88);
+        var automatic = TrackClassifier.Classify(null, decision, source, [source, target], ["source", "target"],
+            new HashSet<Guid> { local }, policy);
+        Assert.Equal(TrackMatchState.Unresolved, automatic.State);
+        Assert.Equal(TrackRouteKind.Unresolved, automatic.RouteKind);
+        var pin = new ManualTrackOverrideRecord { Decision = ManualOverrideDecision.Pin, LibraryTrackId = local };
+        var explicitLocal = TrackClassifier.Classify(pin, decision, source, [source, target], ["source", "target"],
+            new HashSet<Guid> { local }, policy);
+        Assert.Equal(TrackMatchState.Pinned, explicitLocal.State);
+        Assert.Equal(local, explicitLocal.LibraryTrackId);
+    }
+
     [Fact]
     public void Classify_UsesOneThresholdOverrideAndFallbackPolicy()
     {

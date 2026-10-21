@@ -1,61 +1,173 @@
 <script lang="ts">
   import { providerUse, type ProviderUseMode, type ProviderUseSettings } from "$lib/api";
-  import SelectField from "$lib/components/SelectField.svelte";
+  import SourceUseSwitch from "$lib/components/SourceUseSwitch.svelte";
   import { Button } from "$lib/components/ui/button";
+  import { toast } from "$lib/toasts";
 
   let { providerId, administrator, onSaved }: { providerId: string; administrator: boolean; onSaved: () => void | Promise<void> } = $props();
   let data = $state<ProviderUseSettings | null>(null);
-  let busy = $state(false), error = $state(""), saved = $state(false);
+  let busy = $state(false), failed = $state(false);
   const source = $derived(data?.providers?.find(item => item.providerId === providerId));
-  const options = $derived([
-    ...(source?.supportsAutomaticMatching ? [{ value: "automatic", label: "Automatic" }] : []),
-    { value: "manualOnly", label: "Manual only" }, { value: "off", label: "Off" },
-  ]);
+  const meaning: Record<ProviderUseMode, string> = {
+    automatic: "used for matching, playlists, search and playback.",
+    manualOnly: "shows up in search and when you fix a match, but is never picked automatically.",
+    off: "not used or shown anywhere.",
+  };
+  const names: Record<ProviderUseMode, string> = { automatic: "On", manualOnly: "Manual only", off: "Off" };
+
   $effect(() => {
     const id = providerId;
     let current = true;
-    data = null; error = ""; saved = false;
+    data = null; failed = false;
     providerUse.get().then(result => { if (current && providerId === id) data = result; })
-      .catch(() => { if (current) error = "Source use preferences could not be loaded."; });
+      .catch(() => { if (current) failed = true; });
     return () => { current = false; };
   });
-  async function save(mode: string | null, scope: "personal" | "household") {
+  async function save(mode: ProviderUseMode | null, scope: "personal" | "household") {
     if (!data || busy) return;
-    busy = true; error = ""; saved = false;
+    busy = true;
     try {
-      data = await providerUse.save(providerId, mode as ProviderUseMode | null, scope,
-        scope === "household" ? data.householdRevision : data.personalRevision);
-      saved = true;
+      data = await providerUse.save(providerId, mode, scope, scope === "household" ? data.householdRevision : data.personalRevision);
       await onSaved();
-    } catch (cause) { error = cause instanceof Error ? cause.message : "Source use preferences could not be saved."; }
-    finally { busy = false; }
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "The source setting could not be saved. Refresh and try again.");
+      try { data = await providerUse.get(); } catch { /* keep the last known state */ }
+    } finally { busy = false; }
   }
   async function reload() {
-    busy = true; error = "";
-    try { data = await providerUse.get(); }
-    catch { error = "Source use preferences could not be loaded."; }
-    finally { busy = false; }
+    busy = true; failed = false;
+    try { data = await providerUse.get(); } catch { failed = true; } finally { busy = false; }
   }
 </script>
 
-{#if source || !data || error}
-<section class="settings-card p-5 space-y-4" aria-label="Source use">
-  <h3 class="font-semibold">Use source</h3>
-  <p>Manual only keeps this source out of automatic matching, identity linking and fallback. Search it explicitly to choose an exact song.</p>
-  {#if source}
-    <div class="field"><span>For you</span>
-      <SelectField label="Use source for you" value={source.mode} {options} disabled={busy || source.householdDisabled} onchange={value => void save(value, "personal")} />
-      <Button variant="ghost" disabled={busy} onclick={() => void save(null, "personal")}>Use household default</Button>
+{#if source || !data}
+<section class="settings-card source-use" aria-labelledby="source-use-title">
+  <header>
+    <div>
+      <h3 id="source-use-title">Use this source</h3>
+      {#if source}<small>{names[source.effectiveMode]}: {meaning[source.effectiveMode]}</small>{/if}
     </div>
+  </header>
+  {#if source}
     {#if administrator}
-      <div class="field"><span>Household default</span>
-        <SelectField label="Household source use" value={source.householdMode} {options} disabled={busy} onchange={value => void save(value, "household")} />
+      <div class="source-use-row">
+        <div class="source-use-copy"><strong>Everyone</strong><small>The default for every listener.</small></div>
+        <SourceUseSwitch label="Use this source for everyone" value={source.householdMode} disabled={busy} onchange={mode => void save(mode, "household")} />
       </div>
     {/if}
-    {#if !source.supportsAutomaticMatching}<p>This source supplies manual selections only.</p>{/if}
-    {#if source.householdDisabled}<p>An administrator has disabled this source for the household.</p>{/if}
-    {#if saved}<p role="status">Source use saved.</p>{/if}
-  {:else if !error}<p role="status">Loading source use…</p>{/if}
-  {#if error}<p class="notice-error" role="alert">{error}</p><Button variant="secondary" disabled={busy} onclick={() => void reload()}>Reload source use</Button>{/if}
+    <div class="source-use-row">
+      <div class="source-use-copy">
+        <strong>{administrator ? "Just you" : "For you"}</strong>
+        {#if !source.canChoosePersonal}
+          <small>An administrator turned this source off for everyone.</small>
+        {:else if source.personalMode === null}
+          <small>Follows {administrator ? "the setting for everyone" : `the household setting (${names[source.householdMode]})`}.</small>
+        {:else}
+          <small>Your own setting. <button type="button" class="source-use-reset" disabled={busy} onclick={() => void save(null, "personal")}>Follow {administrator ? "everyone" : "the household"} instead</button></small>
+        {/if}
+      </div>
+      <SourceUseSwitch label="Use this source for you" value={source.canChoosePersonal ? source.effectiveMode : "off"} disabled={busy || !source.canChoosePersonal} onchange={mode => void save(mode, "personal")} />
+    </div>
+  {:else if failed}
+    <div class="source-use-row">
+      <div class="source-use-copy"><small role="alert">This setting could not be loaded.</small></div>
+      <Button variant="secondary" disabled={busy} onclick={() => void reload()}>Try again</Button>
+    </div>
+  {:else}
+    <div class="source-use-row" aria-busy="true">
+      <div class="source-use-copy"><small role="status">Loading…</small></div>
+      <span class="source-use-placeholder" aria-hidden="true"></span>
+    </div>
+  {/if}
 </section>
 {/if}
+
+<style>
+  .source-use-row {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3) var(--space-6);
+    padding: var(--space-3) var(--space-6);
+  }
+
+  .source-use-row:last-child {
+    padding-bottom: var(--space-5);
+  }
+
+  .source-use-row + .source-use-row {
+    position: relative;
+    padding-top: var(--space-4);
+  }
+
+  .source-use-row + .source-use-row::before {
+    position: absolute;
+    top: 0;
+    right: var(--space-6);
+    left: var(--space-6);
+    border-top: 1px solid var(--color-edge);
+    content: "";
+  }
+
+  .source-use-copy {
+    display: grid;
+    min-width: 0;
+    gap: 0.125rem;
+  }
+
+  .source-use-copy strong {
+    color: var(--color-ink);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.25rem;
+  }
+
+  .source-use-copy small {
+    color: var(--color-ink-muted);
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+  }
+
+  .source-use-reset {
+    display: inline;
+    min-width: 0;
+    min-height: 0;
+    border: 0;
+    background: none;
+    padding: 0;
+    color: var(--color-signal-text);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .source-use-reset:hover {
+    text-decoration: underline;
+  }
+
+  .source-use-reset:focus-visible {
+    border-radius: 2px;
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  .source-use-placeholder {
+    width: 23rem;
+    max-width: 100%;
+    height: var(--control-md);
+    border-radius: 999px;
+    background: var(--color-surface-raised);
+  }
+
+  @media (max-width: 40rem) {
+    .source-use-row {
+      flex-direction: column;
+      align-items: stretch;
+    }
+
+    .source-use-placeholder {
+      width: 100%;
+    }
+  }
+</style>

@@ -29,7 +29,8 @@ public static class DurableProviderRouteSelector
                               manual.TargetProviderId, manual.TargetExternalId)
             ? new DurableProviderRoute(manual.TargetProviderId, manual.TargetExternalId, true)
             : null;
-        if (source == null) return manualRoute == null ? [] : [manualRoute];
+        if (source == null || providerPolicy?.IsAutomatic(source.ProviderId) == false)
+            return manualRoute == null ? [] : [manualRoute];
         var canonicalId = canonicalRecordingId ?? source.CanonicalRecordingId;
         var automatic = identities
             .Where(item =>

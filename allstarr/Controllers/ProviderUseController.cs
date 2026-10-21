@@ -27,10 +27,10 @@ public sealed class ProviderUseController(
             providers = registry.Providers.Select(provider => new
             {
                 providerId = provider.Id,
-                mode = ProviderUsePolicy.Name(policy.GetProviderMode(provider.Id)),
                 householdMode = ProviderUsePolicy.Name(defaults.GetProviderMode(provider.Id)),
-                supportsAutomaticMatching = provider.MatchingMode == ProviderMatchingMode.Automatic,
-                householdDisabled = policy.DisabledProviders.Contains(provider.Id)
+                personalMode = personal.ProviderModeOverrides?.GetValueOrDefault(provider.Id),
+                effectiveMode = ProviderUsePolicy.Name(policy.GetProviderMode(provider.Id)),
+                canChoosePersonal = defaults.GetProviderMode(provider.Id) != ProviderUseMode.Off
             })
         });
     }
@@ -45,8 +45,6 @@ public sealed class ProviderUseController(
         try
         {
             if (!registry.TryGet(providerId, out var provider)) return NotFound();
-            if (request.Mode == "automatic" && provider!.MatchingMode == ProviderMatchingMode.ManualOnly)
-                return BadRequest(new { error = "This source supports manual selections only." });
             await settings.UpdateProviderModeAsync(request.Scope == "household" ? null : userId,
                 provider!.Id, request.Mode, request.ExpectedRevision, userId, cancellationToken);
             return await Get(cancellationToken);

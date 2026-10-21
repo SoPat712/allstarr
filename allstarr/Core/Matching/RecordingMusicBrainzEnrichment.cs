@@ -3,6 +3,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Settings;
 using allstarr.Services.MusicBrainz;
 using Microsoft.EntityFrameworkCore;
@@ -87,7 +88,8 @@ public sealed class RecordingMusicBrainzEnrichmentJobHandler(
     IDbContextFactory<AllstarrDbContext> factory,
     IMusicBrainzCatalogClient musicBrainz,
     IOptions<MusicBrainzSettings> settings,
-    ITrackIdentityService identities) : IDurableJobHandler
+    ITrackIdentityService identities,
+    IEffectiveProviderPolicyResolver? providerPolicies = null) : IDurableJobHandler
 {
     public string JobType => RecordingMusicBrainzEnrichmentQueue.JobType;
 
@@ -107,6 +109,19 @@ public sealed class RecordingMusicBrainzEnrichmentJobHandler(
         if (recording == null || recording.MergedIntoId != null ||
             recording.Identifiers.Any(item => item.Kind == RecordingIdentifierKinds.MusicBrainz))
             return DurableJobCompletion.Success();
+        if (providerPolicies != null)
+        {
+            var policy = await providerPolicies.ResolveForUserAsync(
+                execution.Claim.OwnerUserId.Value, cancellationToken);
+            var providers = await db.ProviderTrackIdentities.AsNoTracking()
+                .Where(item => item.CanonicalRecordingId == recording.Id &&
+                               item.ResourceKind == ProviderResourceKind.Track)
+                .Select(item => item.ProviderId)
+                .Distinct()
+                .ToArrayAsync(cancellationToken);
+            if (providers.Length > 0 && !providers.Any(policy.IsAutomatic))
+                return DurableJobCompletion.Success();
+        }
         var isrc = recording.Identifiers.Where(item => item.Kind == RecordingIdentifierKinds.Isrc)
             .Select(item => item.Value).Order(StringComparer.Ordinal).FirstOrDefault();
         if (isrc == null) return DurableJobCompletion.Success();

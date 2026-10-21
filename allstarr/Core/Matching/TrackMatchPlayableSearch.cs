@@ -58,7 +58,7 @@ public sealed class TrackMatchPlayableSearch(
         return DecideMatch(source, scope, songs, localCandidates, manualOverride, providerOrder, effectiveMatcher);
 
         async Task<Song[]> SearchAsync(string query) =>
-            ((await gateway.SearchPlayableSongsAsync(context, query, 15)) ?? [])
+            ((await gateway.SearchAutomaticSongsAsync(context, query, 15)) ?? [])
             .Where(song => IsPlayable(song, providerOrder))
             .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
                            !string.IsNullOrWhiteSpace(song.ExternalId))

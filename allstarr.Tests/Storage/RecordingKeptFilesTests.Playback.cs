@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using System.Net;
 using System.Net.Http;
 using allstarr.Core.Capabilities;
@@ -5,6 +6,7 @@ using allstarr.Core.Identity;
 using allstarr.Core.ManagedFiles;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
@@ -193,6 +195,55 @@ public sealed partial class RecordingKeptFilesTests
             It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Exactly(2));
     }
 
+    [Theory]
+    [InlineData(ProviderUseMode.Automatic, true, false)]
+    [InlineData(ProviderUseMode.ManualOnly, false, true)]
+    [InlineData(ProviderUseMode.Off, false, false)]
+    public async Task ExplicitSourceUsesKeptPlaybackOnlyWhenAutomatic(
+        ProviderUseMode mode, bool expectedKept, bool expectedProviderPlan)
+    {
+        var published = await Service().PublishAsync(Request());
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        if (expectedProviderPlan)
+        {
+            router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+                .ReturnsAsync((ProviderRouteRequest request) => EmptyStreamingPlan(request));
+            router.Setup(item => item.PlanAsync<IProviderMetadataCapability>(It.IsAny<ProviderRouteRequest>()))
+                .ReturnsAsync((ProviderRouteRequest request) => new ProviderRoutePlan<IProviderMetadataCapability>(
+                    request, [], new(request.CorrelationId, request.Capability, null, null, [])));
+        }
+        var policies = PlaybackPolicy("deezer", mode);
+        var gateway = KeptGateway(router.Object, effectivePolicies: policies.Object);
+        var context = PlaybackContext(ProtocolKind.Jellyfin, other, "ext-deezer-song-source-track");
+
+        if (mode == ProviderUseMode.Off)
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.OpenStreamAsync(
+                context, "deezer", "source-track", ProviderAudioQuality.Any, null));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => gateway.GetSongAsync(context, "deezer", "source-track"));
+            router.VerifyNoOtherCalls();
+            return;
+        }
+        var metadata = await gateway.GetSongAsync(context, "deezer", "source-track");
+        Assert.Equal(expectedKept, metadata != null);
+        var stream = await gateway.OpenStreamAsync(context, "deezer", "source-track",
+            ProviderAudioQuality.Any, null);
+
+        if (expectedKept)
+        {
+            Assert.NotNull(stream);
+            Assert.Equal("allstarr", stream.ServingProviderId);
+            Assert.Equal(published.ManagedFileId, stream.ServingManagedFileId);
+            stream.Response.Dispose();
+        }
+        else
+        {
+            Assert.Null(stream);
+        }
+        router.Verify(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()),
+            expectedProviderPlan ? Times.Once() : Times.Never());
+    }
+
     [Fact]
     public async Task LegacyProviderPlaybackWithoutDeviceKeepsOneEncodingAcrossRanges()
     {
@@ -249,9 +300,32 @@ public sealed partial class RecordingKeptFilesTests
     private ProtocolProviderGateway KeptGateway(
         IProviderRouter router,
         IApplicationCache? cache = null,
-        PlaybackDeliveryActivityStore? playbackActivity = null) =>
+        PlaybackDeliveryActivityStore? playbackActivity = null,
+        IEffectiveProviderPolicyResolver? effectivePolicies = null) =>
         new(router, new ProviderRegistry([]), new ThrowingHttpClientFactory(),
-            applicationCache: cache, playbackActivity: playbackActivity, identities: identities, keptFiles: Service());
+            applicationCache: cache, playbackActivity: playbackActivity, effectivePolicies: effectivePolicies,
+            identities: identities, keptFiles: Service());
+
+    private static Mock<IEffectiveProviderPolicyResolver> PlaybackPolicy(
+        string providerId, ProviderUseMode mode)
+    {
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty,
+            AudioQualityPolicy.DefaultStep,
+            0.07)
+        {
+            ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add(providerId, mode)
+        };
+        policies.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(policy);
+        return policies;
+    }
+
+    private static ProviderRoutePlan<IProviderStreamingCapability> EmptyStreamingPlan(
+        ProviderRouteRequest request) => new(request, [],
+        new(request.CorrelationId, request.Capability, null, null, []));
 
     private ProtocolExecutionContext PlaybackContext(ProtocolKind protocol, Guid userId, string itemId)
     {

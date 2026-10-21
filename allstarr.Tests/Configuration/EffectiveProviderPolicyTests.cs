@@ -6,6 +6,53 @@ namespace allstarr.Tests;
 
 public sealed class EffectiveProviderPolicyTests
 {
+    [Theory]
+    [InlineData("automatic", "manualOnly", ProviderUseMode.ManualOnly)]
+    [InlineData("manualOnly", "automatic", ProviderUseMode.Automatic)]
+    [InlineData("off", "automatic", ProviderUseMode.Off)]
+    [InlineData("off", "manualOnly", ProviderUseMode.Off)]
+    public async Task PersonalModesOverrideHouseholdUnlessHouseholdIsOff(
+        string household, string personal, ProviderUseMode expected)
+    {
+        var user = Guid.CreateVersion7();
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        settings.Setup(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<string> keys, CancellationToken _) =>
+                keys.ToDictionary(key => key, Setting, StringComparer.OrdinalIgnoreCase));
+        settings.Setup(item => item.GetPreferencesAsync(user, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(
+                new(ProviderModes: new Dictionary<string, string> { ["source"] = personal }),
+                new(ProviderModes: new Dictionary<string, string> { ["source"] = household }), false, "revision"));
+        var policy = await new EffectiveProviderPolicyResolver(settings.Object).ResolveForUserAsync(user);
+        Assert.Equal(expected, policy.GetProviderMode("source"));
+    }
+
+    [Theory]
+    [InlineData(null, ProviderUseMode.ManualOnly)]
+    [InlineData("automatic", ProviderUseMode.Automatic)]
+    [InlineData("off", ProviderUseMode.Off)]
+    public async Task ArtistGridDefaultAndSavedHouseholdModesRemainSelectable(string? mode, ProviderUseMode expected)
+    {
+        var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
+        settings.Setup(item => item.GetManyAsync(It.IsAny<IEnumerable<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IEnumerable<string> keys, CancellationToken _) =>
+                keys.ToDictionary(key => key, Setting, StringComparer.OrdinalIgnoreCase));
+        var configured = new Dictionary<string, string> { ["soundcloud"] = "manualOnly" };
+        if (mode != null) configured["artistgrid"] = mode;
+        var preferences = new ListeningPreferences(ProviderModes: configured);
+        settings.Setup(item => item.GetPreferencesAsync(null, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(preferences, preferences, true, "revision"));
+        var registry = new Mock<IProviderRegistry>();
+        registry.SetupGet(item => item.Providers).Returns([
+            new("artistgrid", "ArtistGrid", "Source", ProviderOrigin.BuiltIn, "1", "1", [], new())
+            { DefaultUseMode = ProviderUseMode.ManualOnly },
+            new("soundcloud", "SoundCloud", "Source", ProviderOrigin.BuiltIn, "1", "1", [], new())
+        ]);
+        var policy = await new EffectiveProviderPolicyResolver(settings.Object, registry.Object).ResolveAsync();
+        Assert.Equal(expected, policy.GetProviderMode("artistgrid"));
+        Assert.Equal(ProviderUseMode.ManualOnly, policy.GetProviderMode("soundcloud"));
+    }
+
     [Fact]
     public async Task Resolve_BuildsOneImmutableHouseholdSnapshot()
     {

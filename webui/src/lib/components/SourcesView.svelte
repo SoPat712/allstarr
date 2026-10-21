@@ -814,7 +814,7 @@
             <a class="source-row-main" href={servicePath(item.id)}>
               <ProviderArtwork id={item.id} definition={item} />
               <span class="source-row-copy">
-                <span class="source-name"><strong>{item.name}</strong><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(item)}</Badge></span>
+                <span class="source-name"><strong>{item.name}</strong><Badge tone="neutral" class="origin-badge">{sourceOriginLabel(item)}</Badge>{#if item.useMode === "manualOnly"}<Badge tone="neutral" class="origin-badge">Manual only</Badge>{:else if item.useMode === "off"}<Badge tone="neutral" class="origin-badge">Off</Badge>{/if}</span>
                 <small>{sourcePurpose(item)}</small>
                 {#if appleReadiness}<small class="source-row-warning" role="status">{providerReadinessLabel(appleReadiness)}</small>{/if}
               </span>

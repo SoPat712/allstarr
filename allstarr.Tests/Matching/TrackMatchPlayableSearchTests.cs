@@ -28,7 +28,7 @@ public sealed class TrackMatchPlayableSearchTests
         policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["manual", "deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([
                 new Song { ExternalProvider = "manual", ExternalId = "demo", Title = "Song", Artist = "Artist", Duration = 180 },
                 new Song { ExternalProvider = "deezer", ExternalId = "released", Title = "Song", Artist = "Artist", Duration = 180 }
@@ -44,7 +44,7 @@ public sealed class TrackMatchPlayableSearchTests
         var manualResult = await service.MatchAsync(Context(user), source with { ProviderId = "manual" },
             scope, [], null, CancellationToken.None);
         Assert.Null(manualResult.SelectedExternal);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
     [Fact]
     public void Provider_eligibility_comes_from_streaming_routes()
@@ -100,7 +100,7 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["apple-download", "deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 15))
             .ReturnsAsync(
                 [
@@ -154,7 +154,7 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-download", "deezer", "qobuz", "fourth"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync(
             [
@@ -205,7 +205,7 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-musickit", "deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync(
             [
@@ -257,7 +257,7 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["jellyfin"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns([]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Link Up Metro Boomin", 15))
             .ReturnsAsync(
             [
@@ -303,7 +303,7 @@ public sealed class TrackMatchPlayableSearchTests
         Assert.Contains(
             "semantic_version_mismatch",
             Assert.Single(result.Decision.Candidates).Warnings);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "Link Up Metro Boomin", 15), Times.Once);
     }
 
@@ -375,7 +375,7 @@ public sealed class TrackMatchPlayableSearchTests
             It.IsAny<ProtocolExecutionContext>(), "applemusic", "cached-track"), Times.Once);
         gateway.Verify(item => item.GetSongAsync(
             It.IsAny<ProtocolExecutionContext>(), "deezer", "fallback-track"), Times.Once);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
     }
 
@@ -529,7 +529,7 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["apple-download"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "Feels Calvin Harris", 15))
             .ReturnsAsync(
                 [
@@ -584,7 +584,7 @@ public sealed class TrackMatchPlayableSearchTests
             .Returns(["deezer"]);
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Download))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(),
                 "Serenade No. 13 in G Major Wiener Philharmoniker",
                 15))
@@ -648,7 +648,7 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming))
             .Returns(["apple-download"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([new Song
             {
@@ -669,9 +669,9 @@ public sealed class TrackMatchPlayableSearchTests
 
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
         Assert.Equal("1440638659", result.SelectedExternal!.ExternalId);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "Crush Selena Gomez & The Scene", 15), Times.Once);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Once);
         Assert.Single(result.Decision.Candidates);
     }
@@ -683,7 +683,7 @@ public sealed class TrackMatchPlayableSearchTests
         var pinnedId = Guid.CreateVersion7();
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([]);
         var service = new TrackMatchPlayableSearch(
@@ -700,9 +700,9 @@ public sealed class TrackMatchPlayableSearchTests
 
         Assert.Equal(TrackMatchReviewState.Pinned, result.Decision.State);
         Assert.Equal(pinnedId, result.Decision.SelectedLibraryTrackId);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), "Crush Selena Gomez & The Scene", 15), Times.Once);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Once);
     }
 
@@ -713,7 +713,7 @@ public sealed class TrackMatchPlayableSearchTests
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         var queries = new List<string>();
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .Returns((ProtocolExecutionContext _, string query, int _) =>
             {
