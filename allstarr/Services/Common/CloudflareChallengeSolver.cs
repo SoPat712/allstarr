@@ -138,8 +138,8 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
             }
             finally
             {
-                logger?.LogInformation("Challenge solve host={Host} solverHttpStatus={SolverHttpStatus} solutionStatus={SolutionStatus} contentKind={ContentKind} clearanceCount={ClearanceCount} retryRechallenged={RetryRechallenged} deliveryPath={DeliveryPath} deliveryFailureReason={DeliveryFailureReason} elapsedMs={ElapsedMs}",
-                    original.RequestUri.IdnHost, diagnostic.HttpStatus, diagnostic.SolutionStatus, diagnostic.ContentKind,
+                logger?.LogInformation("Challenge solve host={Host} solverHttpStatus={SolverHttpStatus} solutionStatus={SolutionStatus} solutionOrigin={SolutionOrigin} solutionPath={SolutionPath} contentKind={ContentKind} clearanceCount={ClearanceCount} retryRechallenged={RetryRechallenged} deliveryPath={DeliveryPath} deliveryFailureReason={DeliveryFailureReason} elapsedMs={ElapsedMs}",
+                    original.RequestUri.IdnHost, diagnostic.HttpStatus, diagnostic.SolutionStatus, diagnostic.SolutionOrigin, diagnostic.SolutionPath, diagnostic.ContentKind,
                     diagnostic.ClearanceCount, diagnostic.RetryRechallenged?.ToString() ?? "not-attempted", diagnostic.DeliveryPath, diagnostic.DeliveryFailureReason,
                     (long)Stopwatch.GetElapsedTime(started).TotalMilliseconds);
             }
@@ -215,8 +215,12 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
         diagnostic.SolutionStatus = result.GetProperty("status").GetInt32();
         var body = result.GetProperty("response").GetString() ?? "";
         diagnostic.ContentKind = ContentKind(body);
-        if (!Uri.TryCreate(result.GetProperty("url").GetString(), UriKind.Absolute, out var actual) ||
-            actual.Scheme != target.Scheme || actual.IdnHost != target.IdnHost || actual.Port != target.Port || actual.UserInfo.Length != 0)
+        if (Uri.TryCreate(result.GetProperty("url").GetString(), UriKind.Absolute, out var actual))
+        {
+            diagnostic.SolutionOrigin = actual.GetComponents(UriComponents.SchemeAndServer, UriFormat.UriEscaped);
+            diagnostic.SolutionPath = actual.AbsolutePath;
+        }
+        if (actual == null || !SolutionUrlMatches(target, actual))
         {
             diagnostic.DeliveryFailureReason = "url-mismatch";
             throw new CloudflareChallengeException();
@@ -378,6 +382,22 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
 
     private static bool PathMatches(string requestPath, string cookiePath) => requestPath == cookiePath ||
         requestPath.StartsWith(cookiePath, StringComparison.Ordinal) && (cookiePath.EndsWith('/') || requestPath[cookiePath.Length] == '/');
+
+    private static bool SolutionUrlMatches(Uri target, Uri actual) =>
+        target.Scheme == "https" && target.IsDefaultPort && actual.Scheme is "http" or "https" && actual.IsDefaultPort &&
+        target.IdnHost.Equals(actual.IdnHost, StringComparison.OrdinalIgnoreCase) && actual.UserInfo.Length == 0 &&
+        !actual.AbsolutePath.StartsWith("/cdn-cgi/", StringComparison.OrdinalIgnoreCase) &&
+        !actual.AbsolutePath.Equals("/cdn-cgi", StringComparison.OrdinalIgnoreCase) &&
+        target.AbsolutePath.TrimEnd('/').Equals(actual.AbsolutePath.TrimEnd('/'), StringComparison.Ordinal) &&
+        NormalizedQuery(target).SequenceEqual(NormalizedQuery(actual));
+
+    private static IEnumerable<KeyValuePair<string, string>> NormalizedQuery(Uri uri) =>
+        uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(part => part.Split('=', 2))
+            .Select(parts => new KeyValuePair<string, string>(WebUtility.UrlDecode(parts[0]), parts.Length == 2 ? WebUtility.UrlDecode(parts[1]) : ""))
+            .Where(pair => !pair.Key.StartsWith("__cf_chl", StringComparison.Ordinal))
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal).ThenBy(pair => pair.Value, StringComparer.Ordinal);
+
     private sealed class HostState
     {
         public SemaphoreSlim Gate { get; } = new(1, 1);
@@ -394,6 +414,8 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
     {
         public int? HttpStatus;
         public int? SolutionStatus;
+        public string? SolutionOrigin;
+        public string? SolutionPath;
         public string? ContentKind;
         public int ClearanceCount;
         public bool? RetryRechallenged;
