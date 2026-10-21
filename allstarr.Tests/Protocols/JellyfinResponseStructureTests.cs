@@ -103,10 +103,8 @@ public class JellyfinResponseStructureTests
         var mediaStreams = mediaSource!["MediaStreams"] as object[];
 
         Assert.NotNull(mediaStreams);
-        Assert.Single(mediaStreams);
-
-        var audioStream = mediaStreams[0] as Dictionary<string, object?>;
-        Assert.NotNull(audioStream);
+        var audioStream = Assert.Single(mediaStreams.OfType<Dictionary<string, object?>>(),
+            stream => Equals(stream["Type"], "Audio"));
 
         Assert.DoesNotContain("Codec", audioStream.Keys);
         Assert.Contains("Type", audioStream.Keys);

@@ -67,6 +67,7 @@ public partial class JellyfinController : ControllerBase
     private readonly MusicFavorites _favorites;
     private readonly FavoriteViewReader? _favoriteViews;
     private readonly MusicPlaybackObservations _playbackObservations;
+    private readonly UpcomingSongPreparation? _upcomingSongs;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly IAudioMuseRecommendationClient? _audioMuse;
     private readonly IBackendLibraryAccessResolver? _libraryAccess;
@@ -104,11 +105,13 @@ public partial class JellyfinController : ControllerBase
         IIntelligencePolicyService? intelligencePolicies = null,
         IBackendLibraryAccessResolver? libraryAccess = null,
         ILibraryIndexService? libraryIndex = null,
-        FavoriteViewReader? favoriteViews = null)
+        FavoriteViewReader? favoriteViews = null,
+        UpcomingSongPreparation? upcomingSongs = null)
     {
         _settings = settings.Value;
         _libraryIndex = libraryIndex;
         _favoriteViews = favoriteViews;
+        _upcomingSongs = upcomingSongs;
         _libraryAccess = libraryAccess;
         _spotifySettings = spotifySettings.Value;
         _scrobblingSettings = scrobblingSettings.Value;
@@ -607,6 +610,10 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] int limit = 50,
         [FromQuery] int startIndex = 0)
     {
+        if (IsFavoritesOnlyRequest())
+            return await ReadFavoriteItemsAsync(searchTerm, "MusicArtist", startIndex, limit, null,
+                Request.Path.Value?.TrimStart('/'));
+
         _logger.LogDebug("GetArtists called: searchTerm={SearchTerm}, limit={Limit}", searchTerm, limit);
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
