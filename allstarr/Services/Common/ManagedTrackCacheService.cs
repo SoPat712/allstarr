@@ -22,7 +22,10 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     private readonly ConcurrentDictionary<string, Transfer> active = new(StringComparer.Ordinal);
     private readonly MemoryCache completedMedia = new(new MemoryCacheOptions { SizeLimit = 1024 });
     private readonly object lifecycle = new();
+    private readonly Dictionary<string, OpenGate> openings = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, DateTimeOffset> clientOpens = new(StringComparer.Ordinal);
     private readonly CancellationTokenSource shutdown;
+    private long preparationReserved;
     private bool disposed;
     private Task? disposal;
 
@@ -38,20 +41,85 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         shutdown = CancellationTokenSource.CreateLinkedTokenSource(lifetime?.ApplicationStopping ?? CancellationToken.None);
     }
 
+    internal async Task<IDisposable?> BeginOpenAsync(ProviderExternalResourceId track,
+        DownloadedSongMappingScope scope, long? revision, bool preparation, CancellationToken cancellationToken)
+    {
+        var key = Key(scope, revision, track.ProviderId, track.Value);
+        var item = $"{track.ProviderId}\n{track.Value}";
+        OpenGate opening;
+        lock (lifecycle)
+        {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            var now = clock.GetUtcNow();
+            foreach (var expired in clientOpens.Where(pair => now - pair.Value >= TimeSpan.FromHours(1)).ToArray())
+                clientOpens.Remove(expired.Key);
+            if (preparation && (clientOpens.ContainsKey(item) || active.ContainsKey(key))) return null;
+            if (!preparation)
+            {
+                if (clientOpens.Count >= 4096) clientOpens.Remove(clientOpens.MinBy(pair => pair.Value).Key);
+                clientOpens[item] = now;
+            }
+            if (!openings.TryGetValue(key, out opening!)) openings[key] = opening = new();
+            opening.Users++;
+        }
+        var acquired = false;
+        try
+        {
+            await opening.Semaphore.WaitAsync(cancellationToken);
+            acquired = true;
+            lock (lifecycle)
+            {
+                if (preparation && clientOpens.ContainsKey(item))
+                {
+                    ReleaseOpen(key, opening, true);
+                    return null;
+                }
+            }
+            return new OpenHandle(() => ReleaseOpen(key, opening, true));
+        }
+        catch { ReleaseOpen(key, opening, acquired); throw; }
+    }
+
+    private void ReleaseOpen(string key, OpenGate opening, bool acquired)
+    {
+        lock (lifecycle)
+        {
+            if (acquired) opening.Semaphore.Release();
+            if (--opening.Users == 0)
+            {
+                openings.Remove(key);
+                opening.Semaphore.Dispose();
+            }
+        }
+    }
+
+    private sealed class OpenGate
+    {
+        public readonly SemaphoreSlim Semaphore = new(1, 1);
+        public int Users;
+    }
+
+    private sealed class OpenHandle(Action release) : IDisposable
+    {
+        private Action? remaining = release;
+        public void Dispose() => Interlocked.Exchange(ref remaining, null)?.Invoke();
+    }
+
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
-        DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null)
+        DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null, bool preparation = false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value), out var transfer))
         {
-            var reader = transfer.TryOpen();
+            var reader = transfer.TryOpen(!preparation);
             if (reader != null)
             {
-                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ProgressiveContent(reader) };
+                var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ProgressiveContent(reader, transfer.PlaybackStarted) };
                 response.Content.Headers.ContentType = new(transfer.Media.MimeType);
                 return new(response, CacheLease(transfer.Media, reader.CanSeek, progressive: true), track.ProviderId, track.Value,
                     scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
-                    SelectionReason: "progressive-cache", ServingAccountRevision: accountRevision);
+                    SelectionReason: "progressive-cache", ServingAccountRevision: accountRevision)
+                { FileFacts = transfer.FileFacts };
             }
         }
         var path = await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
@@ -90,12 +158,17 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         catch (UnauthorizedAccessException) { return null; }
     }
 
+    public bool CanPrepare(ProtocolExecutionContext context) => IsCacheMode() &&
+        context.Actor != null && context.Policy?.AudioQuality != "DataSaver" &&
+        context.PreparationQuality != ProviderAudioQuality.DataSaver;
+
     public async Task WrapAsync(ProtocolProviderStream stream, ProtocolExecutionContext protocol,
         string providerId, string externalId, bool headOnly, Func<Task<Song?>> metadataFactory,
         CancellationToken cancellationToken)
     {
+        if (protocol.IsPreparation && !CanPrepare(protocol)) return;
         var retain = IsCacheMode();
-        if (stream.IsCached || headOnly || !IsCompleteResponse(stream.Response) || protocol.Actor == null ||
+        if (stream.IsCached || stream.Response.Content is ProgressiveContent || headOnly || !IsCompleteResponse(stream.Response) || protocol.Actor == null ||
             !retain && stream.Lease.SupportsByteRanges) return;
         if (stream.ServingExternalId == null && stream.ServingProviderId != providerId) return;
         providerId = stream.ServingProviderId;
@@ -114,7 +187,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            logger.LogWarning("Could not open the managed track cache for {ProviderId}", providerId);
+            if (!protocol.IsPreparation) logger.LogWarning("Could not open the managed track cache for {ProviderId}", providerId);
             return;
         }
         var original = stream.Response.Content;
@@ -126,14 +199,22 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         try { source = await original.ReadAsStreamAsync(cancellationToken); }
         catch { await output.DisposeAsync(); TryDelete(partial); throw; }
         Transfer? transfer = null;
+        var capacity = protocol.IsPreparation ? PreparationCapacity(cacheRoot) : long.MaxValue;
         lock (lifecycle)
         {
-            if (!disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
+            var remaining = Math.Max(0, capacity - preparationReserved);
+            var length = original.Headers.ContentLength;
+            var limit = protocol.IsPreparation
+                ? length is > 0 ? length <= remaining ? length.Value : 0 : remaining / 2
+                : long.MaxValue;
+            if (limit > 0 && !disposed && !shutdown.IsCancellationRequested && !active.ContainsKey(key))
             {
                 transfer = new(this, key, scope, providerId, externalId, media, cacheRoot,
                     partial, output, original, source,
                     stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
-                    metadataFactory, retain, shutdown.Token, stream.FileFacts);
+                    metadataFactory, retain, shutdown.Token, stream.FileFacts,
+                    protocol.IsPreparation ? cancellationToken : CancellationToken.None, protocol.IsPreparation, limit);
+                if (protocol.IsPreparation) preparationReserved += limit;
                 active[key] = transfer;
                 transfer.StartWorker();
             }
@@ -144,13 +225,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             TryDelete(partial);
             return;
         }
-        var reader = transfer.TryOpen();
+        var reader = transfer.TryOpen(!protocol.IsPreparation);
         if (reader == null)
         {
             transfer.Stop();
             throw new IOException("The progressive media cache could not open a reader.");
         }
-        var replacement = new ProgressiveContent(reader);
+        var replacement = new ProgressiveContent(reader, transfer.PlaybackStarted);
         foreach (var header in original.Headers) replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         stream.Response.Content = replacement;
     }
@@ -204,9 +285,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         content is ProgressiveContent progressive && StreamByteRanges.Parse(rangeHeader) != null
             ? progressive.Reader.WaitForLengthAsync(cancellationToken) : Task.CompletedTask;
 
-    private sealed class ProgressiveContent(ProgressiveCachingStream reader) : StreamContent(reader)
+    internal static CancellationToken PlaybackStarted(HttpContent content) =>
+        content is ProgressiveContent progressive ? progressive.PlaybackStarted : CancellationToken.None;
+
+    private sealed class ProgressiveContent(ProgressiveCachingStream reader, CancellationToken playbackStarted) : StreamContent(reader)
     {
         public ProgressiveCachingStream Reader { get; } = reader;
+        public CancellationToken PlaybackStarted { get; } = playbackStarted;
     }
 
     private static ProviderStreamLease CacheLease(ProviderMediaFormat media, bool ranges, bool progressive = false) => new(
@@ -227,7 +312,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         private readonly Stream source;
         private readonly Func<Task<Song?>> metadata;
         private readonly bool retain;
-        private readonly PlaybackFileFacts fileFacts;
+        public PlaybackFileFacts FileFacts { get; }
+        private readonly bool preparation;
+        private readonly long maximumBytes;
+        private readonly CancellationTokenRegistration preparationCancellation;
+        private volatile bool playbackOwned;
+        private readonly CancellationTokenSource playbackStarted = new();
+        public CancellationToken PlaybackStarted { get; }
         private readonly CancellationTokenSource cancel;
         private readonly ITimer idleTimer;
         private readonly TaskCompletionSource ready = Signal();
@@ -246,20 +337,28 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
 
         public Transfer(ManagedTrackCacheService owner, string key, DownloadedSongMappingScope scope,
             string provider, string track, ProviderMediaFormat media, string cacheRoot, string path, FileStream output,
-            HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping, PlaybackFileFacts fileFacts)
+            HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping,
+            PlaybackFileFacts fileFacts, CancellationToken preparationToken, bool preparation, long maximumBytes)
         {
             this.owner = owner; this.key = key; this.scope = scope; this.provider = provider; this.track = track;
-            this.fileFacts = fileFacts;
+            FileFacts = fileFacts;
             Media = media; this.cacheRoot = cacheRoot; this.path = path; this.output = output;
             this.original = original; this.source = source; this.total = total; this.metadata = metadata; this.retain = retain;
+            this.preparation = preparation;
+            this.maximumBytes = maximumBytes;
+            PlaybackStarted = playbackStarted.Token;
             cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
             idleTimer = owner.clock.CreateTimer(_ => StopIfIdle(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            preparationCancellation = preparationToken.Register(() =>
+            {
+                lock (gate) { if (!playbackOwned && !retired) cancel.Cancel(); }
+            });
         }
 
         public void StartWorker() => Work = Task.Run(RunAsync);
         public void Stop() => cancel.Cancel();
 
-        public ProgressiveCachingStream? TryOpen()
+        public ProgressiveCachingStream? TryOpen(bool playback)
         {
             lock (gate)
             {
@@ -268,6 +367,11 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 try { file = new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 81920, FileOptions.Asynchronous); }
                 catch (IOException) { return null; }
                 catch (UnauthorizedAccessException) { return null; }
+                if (playback)
+                {
+                    playbackOwned = true;
+                    playbackStarted.Cancel();
+                }
                 readers++;
                 var signal = changed;
                 changed = Signal();
@@ -338,6 +442,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                     var read = await source.ReadAsync(buffer, cancel.Token);
                     lock (gate) total ??= StreamDurationGuidance.DeclaredLength(original);
                     if (read == 0) break;
+                    if (!playbackOwned && read > maximumBytes - available)
+                        throw new IOException("The prepared media exceeds the cache budget.");
                     if (total is { } expected && read > expected - available)
                         throw new IOException("The media source exceeded its declared length.");
                     await output.WriteAsync(buffer.AsMemory(0, read), cancel.Token);
@@ -350,7 +456,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 await output.DisposeAsync();
                 original.Dispose();
                 verified = true;
-                fileFacts.Size = available;
+                FileFacts.Size = available;
                 Advance(end: true);
                 if (retain) published = await PublishAsync(metadataTask);
                 else
@@ -362,17 +468,19 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             catch (Exception)
             {
                 if (!verified) Advance(end: true, failure: true);
-                if (!cancel.IsCancellationRequested)
+                if (!cancel.IsCancellationRequested && !preparation)
                     owner.logger.LogWarning("The managed media transfer could not complete for {ProviderId}", provider);
             }
             finally
             {
                 try { await output.DisposeAsync(); } catch (IOException) { }
                 try { original.Dispose(); } catch (IOException) { }
-                lock (gate) retired = true;
+                lock (gate) { retired = true; playbackStarted.Dispose(); }
                 if (!published) TryDelete(path);
                 complete.TrySetResult();
                 owner.active.TryRemove(key, out _);
+                if (preparation) { lock (owner.lifecycle) owner.preparationReserved -= maximumBytes; }
+                preparationCancellation.Dispose();
                 idleTimer.Dispose();
                 cancel.Dispose();
             }
@@ -428,13 +536,31 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             }
             song.LocalPath = final;
             Media = owner.ReadFileMedia(final, Media.MimeType, Media.Container, Media);
-            fileFacts.Media = Media;
+            FileFacts.Media = Media;
             await owner.localLibrary.RegisterDownloadedSongAsync(scope, song, final);
-            owner.logger.LogInformation("Published completed provider stream to the managed track cache for {ProviderId}", provider);
+            if (!preparation)
+                owner.logger.LogInformation("Published completed provider stream to the managed track cache for {ProviderId}", provider);
             return true;
         }
 
         private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    private long PreparationCapacity(string root)
+    {
+        var maximum = configuration.GetValue<long?>("Cache:MediaMaximumBytes") ??
+            (configuration.GetValue<long?>("Cache:MediaMaximumMegabytes") ?? 512) * 1024 * 1024;
+        var entry = configuration.GetValue<long?>("Cache:MediaMaximumEntryBytes") ??
+            configuration.GetValue<long?>("Cache:MediaMaximumEntryMegabytes") * 1024 * 1024 ?? maximum;
+        try
+        {
+            var used = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                .Where(path => !path.Contains(Path.DirectorySeparatorChar + ".incoming" + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                .Sum(path => new FileInfo(path).Length) : 0;
+            return Math.Min(entry, Math.Max(0, maximum - used));
+        }
+        catch (IOException) { return 0; }
+        catch (UnauthorizedAccessException) { return 0; }
     }
 
     private bool IsCacheMode() => settings.Value.StorageMode == StorageMode.Cache;

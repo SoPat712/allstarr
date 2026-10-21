@@ -48,6 +48,7 @@ public interface IPlaybackMetadataResolver
 public interface IPlaybackDeliveryActivitySource
 {
     bool WasDelivered(Guid? userId, string itemId, string deviceId);
+    bool WasStreamOpened(string itemId) => false;
     PlaybackStreamSource? StreamFor(Guid? userId, string? deviceId, string itemId) => null;
 }
 
@@ -67,6 +68,7 @@ public sealed record PlaybackStreamSource(
     public long? Size { get => FileFacts != null ? FileFacts.Size : size; init => size = value; }
     public ProviderMediaFormat? Media { get => FileFacts != null ? FileFacts.Media : media; init => media = value; }
     public long? AccountRevision { get; init; }
+    public ProviderAudioQuality EffectiveQuality { get; init; } = ProviderAudioQuality.Any;
     public Guid? ManagedFileId { get; init; }
     public string SeekRung { get; init; } = "sequential";
     internal object? ObservationToken { get; init; }
@@ -105,15 +107,24 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         userId is { } user &&
         _delivered.TryGetValue((user, deviceId, StreamItemKey(itemId), "delivered"), out _);
 
+    public bool WasStreamOpened(string itemId) => _delivered.TryGetValue((StreamItemKey(itemId), "opened"), out _);
+
     public void StreamOpened(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality, ProtocolProviderStream stream)
     {
+        if (context.IsPreparation || context.Actor?.EffectiveUserId == null || stream.ServingExternalId == null) return;
+        _delivered.Set((StreamItemKey(itemId), "opened"), true, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = Retention,
+            Size = 1
+        });
+        var deviceId = StreamDeviceId(context);
         if (context.Actor?.EffectiveUserId is not { } userId ||
-            string.IsNullOrWhiteSpace(context.Client.DeviceId) || stream.ServingExternalId == null) return;
-        stream.FileFacts.Size = stream.Response.StatusCode == System.Net.HttpStatusCode.PartialContent
+            string.IsNullOrWhiteSpace(deviceId) || stream.ServingExternalId == null) return;
+        stream.FileFacts.Size ??= stream.Response.StatusCode == System.Net.HttpStatusCode.PartialContent
             ? stream.Response.Content.Headers.ContentRange?.Length
             : stream.Response.Content.Headers.ContentLength;
-        stream.FileFacts.Media = stream.Lease.Media;
+        stream.FileFacts.Media ??= stream.Lease.Media;
         var source = new PlaybackStreamSource(stream.ServingProviderId, stream.ServingExternalId,
             stream.ServingAccountId, context.Protocol.ToString().ToLowerInvariant(),
             context.BackendInstanceId, stream.IsCached, DateTimeOffset.UtcNow,
@@ -121,6 +132,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         {
             FileFacts = stream.FileFacts,
             AccountRevision = stream.ServingAccountRevision,
+            EffectiveQuality = quality,
             ManagedFileId = stream.ServingManagedFileId,
             ObservationToken = stream.ObservationToken,
             SeekRung = stream.IsCached
@@ -132,7 +144,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
                     StreamByteRanges.HasValidContentRange(actual, stream.Response.Content.Headers.ContentLength)
                         ? "byte-range" : "sequential"
         };
-        var key = (userId, context.Client.DeviceId, StreamItemKey(itemId));
+        var key = (userId, deviceId, StreamItemKey(itemId));
         lock (sourceGate)
         {
             Set(key, source);
@@ -143,8 +155,9 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
     public void SeekRungSelected(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality, ProtocolProviderStream stream, string rung)
     {
-        if (context.Actor?.EffectiveUserId is not { } userId || string.IsNullOrWhiteSpace(context.Client.DeviceId)) return;
-        var key = (userId, context.Client.DeviceId, StreamItemKey(itemId));
+        if (context.IsPreparation || context.Actor?.EffectiveUserId is not { } userId ||
+            string.IsNullOrWhiteSpace(StreamDeviceId(context))) return;
+        var key = (userId, StreamDeviceId(context), StreamItemKey(itemId));
         var exactKey = (key, context.Protocol, context.BackendInstanceId, quality);
         lock (sourceGate)
         {
@@ -163,7 +176,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
 
     public PlaybackStreamSource? StreamFor(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality) => context.Actor?.EffectiveUserId is { } userId
-        ? _delivered.Get<PlaybackStreamSource>(((userId, context.Client.DeviceId, StreamItemKey(itemId)),
+        ? _delivered.Get<PlaybackStreamSource>(((userId, StreamDeviceId(context), StreamItemKey(itemId)),
             context.Protocol, context.BackendInstanceId, quality))
         : null;
 
@@ -171,6 +184,9 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         userId is { } user && !string.IsNullOrWhiteSpace(deviceId)
             ? _delivered.Get<PlaybackStreamSource>((user, deviceId, StreamItemKey(itemId)))
             : null;
+
+    private static string? StreamDeviceId(ProtocolExecutionContext context) =>
+        context.Client.DeviceId ?? (context.Protocol == ProtocolKind.Subsonic ? context.Client.ClientId : null);
 
     private static string StreamItemKey(string itemId)
     {

@@ -4,6 +4,7 @@ using System.Text.Json.Nodes;
 using System.Xml;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
+using allstarr.Core.Playback;
 using allstarr.Core.Playlists;
 using allstarr.Core.Playlists.Targets;
 using allstarr.Core.Storage;
@@ -79,7 +80,8 @@ public sealed class SubsonicPlaylistMutationResolver(
 
 public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     IPlaylistVirtualizationService playlists,
-    ISubsonicPlaylistMutationResolver mutationResolver)
+    ISubsonicPlaylistMutationResolver mutationResolver,
+    UpcomingSongPreparation? upcomingSongs = null)
 {
     private const string Version = "1.16.1";
     private const string Namespace = "http://subsonic.org/restapi";
@@ -121,6 +123,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         if (playlist == null) return null;
         playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
         var tracks = playlist.Tracks.ToArray();
+        upcomingSongs?.RememberPlaylist(context, tracks.Select(track => track.BackendItemId));
         if (format.Equals("json", StringComparison.OrdinalIgnoreCase))
         {
             var result = new Dictionary<string, object?>

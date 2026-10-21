@@ -77,6 +77,42 @@ public sealed class PlaybackDeliveryActivityStoreTests
         Assert.Same(stream.Lease.Media, source.Media);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void SubsonicClientIdentityPreservesFileFactsAndPreparationSuppression(bool partial, bool preparation)
+    {
+        using var store = new PlaybackDeliveryActivityStore();
+        using var response = new HttpResponseMessage(partial ? HttpStatusCode.PartialContent : HttpStatusCode.OK)
+        { Content = new ByteArrayContent(new byte[100]) };
+        if (partial) response.Content.Headers.ContentRange = new(100, 199, 1000);
+        var context = new ProtocolExecutionContext(ProtocolKind.Subsonic, "backend", "principal",
+            new AllstarrPrincipal(UserId, "subsonic", "backend", "principal", "User", false),
+            "request", DateTimeOffset.UtcNow.AddMinutes(1), default, new ProtocolClientDescriptor("client"))
+        { IsPreparation = preparation };
+        var stream = Stream(response, false, "lease", false);
+        const string itemId = "ext-apple-download-song-42";
+        store.StreamOpened(context, itemId, ProviderAudioQuality.Any, stream);
+        store.SeekRungSelected(context, itemId, ProviderAudioQuality.Any, stream, "flac-duration");
+        Assert.Equal(!preparation, store.WasStreamOpened(itemId));
+        var source = store.StreamFor(context, itemId, ProviderAudioQuality.Any);
+        if (preparation)
+        {
+            Assert.Null(source);
+            Assert.Null(store.StreamFor(context.Actor!.EffectiveUserId, "client", itemId));
+        }
+        else
+        {
+            Assert.NotNull(source);
+            Assert.Same(source, store.StreamFor(context.Actor!.EffectiveUserId, "client", itemId));
+            Assert.Equal(partial ? 1000 : 100, source.Size);
+            Assert.Same(stream.Lease.Media, source.Media);
+            Assert.Equal(partial ? "byte-range" : "flac-duration", source.SeekRung);
+        }
+    }
+
     private static readonly Guid UserId = Guid.CreateVersion7();
     private static readonly Guid AccountId = Guid.CreateVersion7();
     private static ProtocolExecutionContext Context(string correlation) => new(

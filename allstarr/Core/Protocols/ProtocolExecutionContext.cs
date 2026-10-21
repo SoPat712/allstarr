@@ -121,6 +121,10 @@ public sealed record ProtocolExecutionContext
 
     public string? RequestedItemId { get; init; }
 
+    public bool IsPreparation { get; init; }
+
+    public ProviderAudioQuality PreparationQuality { get; init; } = ProviderAudioQuality.Any;
+
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(
         "The verified backend principal is not linked to an Allstarr user.");
 

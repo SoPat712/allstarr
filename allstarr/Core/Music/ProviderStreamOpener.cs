@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using allstarr.Core.Capabilities;
+using allstarr.Services.Local;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Mvc;
@@ -14,8 +16,51 @@ public sealed class ProviderStreamOpener(
     IProtocolProviderGateway providers,
     ProtocolStreamingResponseAdapter responses,
     ManagedTrackCacheService? cache = null,
-    PlaybackDeliveryActivityStore? activity = null)
+    PlaybackDeliveryActivityStore? activity = null,
+    ILogger<ProviderStreamOpener>? logger = null)
 {
+    internal static readonly IReadOnlySet<string> PreparationProviders = new HashSet<string>(StringComparer.Ordinal)
+    { "apple-musickit", "apple-download" };
+
+    public async Task PrepareAsync(ProtocolExecutionContext context, string itemId)
+    {
+        if (!context.IsPreparation || cache?.CanPrepare(context) != true) return;
+        var (external, provider, kind, id) = LocalLibraryService.ParseExternalResource(itemId);
+        if (!external || kind != "song" || provider == null || id == null) return;
+        var started = Stopwatch.GetTimestamp();
+        var outcome = "skipped";
+        long bytes = 0;
+        var selected = PreparationProviders.Contains(provider) ? provider : "unknown";
+        try
+        {
+            var routed = await providers.OpenStreamAsync(context, provider, id, context.PreparationQuality, null);
+            if (routed == null) return;
+            using var response = routed.Response;
+            selected = routed.ServingProviderId;
+            if (routed.IsCached || !PreparationProviders.Contains(selected) || !response.IsSuccessStatusCode) return;
+            var servingId = routed.ServingExternalId ?? id;
+            Task<allstarr.Models.Domain.Song?>? metadata = null;
+            Task<allstarr.Models.Domain.Song?> Metadata() => metadata ??= providers.GetSongAsync(context, selected, servingId);
+            StreamDurationGuidance.Attach(routed, Metadata);
+            await cache.WrapAsync(routed, context, selected, servingId, false, Metadata, context.CancellationToken);
+            if (ManagedTrackCacheService.SeekRung(response.Content) == null) return;
+            using var reading = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken,
+                ManagedTrackCacheService.PlaybackStarted(response.Content));
+            var stream = await response.Content.ReadAsStreamAsync(reading.Token);
+            var buffer = new byte[81920];
+            int read;
+            while ((read = await stream.ReadAsync(buffer, reading.Token)) != 0) bytes += read;
+            outcome = "completed";
+        }
+        catch (OperationCanceledException) { outcome = "cancelled"; }
+        catch { outcome = context.CancellationToken.IsCancellationRequested ? "cancelled" : "failed"; }
+        finally
+        {
+            logger?.LogInformation("Upcoming song preparation {Provider} {Outcome} in {ElapsedMilliseconds} ms ({Bytes} bytes)",
+                selected, outcome, Stopwatch.GetElapsedTime(started).TotalMilliseconds, bytes);
+        }
+    }
+
     public async Task<IActionResult> OpenAsync(
         HttpContext http,
         ProtocolExecutionContext context,

@@ -31,6 +31,8 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     }
 
     [Theory]
+    [InlineData("PLAYBACK_PREPARE_UPCOMING_SONGS", "Playback:PrepareUpcomingSongs")]
+    [InlineData("PLAYBACK_PREPARE_UPCOMING_COUNT", "Playback:PrepareUpcomingCount")]
     [InlineData("PLAYBACK_LASTFM_SIMILAR_ENABLED", "Playback:LastFmSimilarEnabled")]
     [InlineData("PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED", "Playback:ListenBrainzSimilarEnabled")]
     public void MapEnvVarToConfiguration_MapsSimilarFallbackSettings(

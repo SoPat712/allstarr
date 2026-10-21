@@ -1597,6 +1597,11 @@ public class AdminUiController : ControllerBase
                 helpText: "Only used when no candidate qualifies for automatic acceptance. Accepted matches always use local first, then Streaming priority. This window never raises confidence. Default: 7 points.",
                 min: 0,
                 max: 20),
+            Field("PLAYBACK_PREPARE_UPCOMING_SONGS", "Prepare upcoming songs", "toggle",
+                "playback.prepareUpcomingSongs",
+                helpText: "Off by default. Turn on only if your player waits until a song ends before requesting the next one."),
+            Field("PLAYBACK_PREPARE_UPCOMING_COUNT", "Upcoming songs to prepare", "number",
+                "playback.prepareUpcomingCount", helpText: "Number of songs to prepare when enabled. Default: 1.", min: 1, max: 2),
             Field(
                 "PLAYBACK_LASTFM_SIMILAR_ENABLED",
                 "Last.fm similar-song fallback",

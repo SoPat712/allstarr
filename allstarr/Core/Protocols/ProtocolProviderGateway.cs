@@ -1,6 +1,7 @@
 using System.Net;
 using System.Diagnostics;
 using allstarr.Core.Health;
+using allstarr.Core.Music;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -170,7 +171,7 @@ public sealed record ProtocolProviderStream(
     long? ServingAccountRevision = null)
 {
     internal object ObservationToken { get; } = new();
-    internal PlaybackFileFacts FileFacts { get; } = new();
+    internal PlaybackFileFacts FileFacts { get; init; } = new();
     public Guid? ServingManagedFileId { get; init; }
 }
 
@@ -1073,6 +1074,7 @@ public sealed partial class ProtocolProviderGateway(
 
         protocol.CancellationToken.ThrowIfCancellationRequested();
         var clock = timeProvider ?? TimeProvider.System;
+        var streamCancellation = protocol.CancellationToken;
         var streamOpeningStartedAt = clock.GetUtcNow();
         var protocolDeadline = protocol.Deadline;
         if (protocolDeadline <= streamOpeningStartedAt)
@@ -1082,7 +1084,12 @@ public sealed partial class ProtocolProviderGateway(
         protocol = new ProtocolExecutionContext(protocol.Protocol, protocol.BackendInstanceId,
             protocol.VerifiedBackendPrincipalId, protocol.Principal, protocol.CorrelationId,
             protocolDeadline, opening.Token, protocol.Client)
-        { Policy = protocol.Policy, RequestedItemId = protocol.RequestedItemId };
+        {
+            Policy = protocol.Policy,
+            RequestedItemId = protocol.RequestedItemId,
+            IsPreparation = protocol.IsPreparation,
+            PreparationQuality = protocol.PreparationQuality
+        };
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
@@ -1092,11 +1099,14 @@ public sealed partial class ProtocolProviderGateway(
         {
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
         }
+        if (protocol.IsPreparation && (managedTrackCache?.CanPrepare(protocol) != true ||
+            quality == ProviderAudioQuality.DataSaver || effectivePolicy?.AudioQuality == "DataSaver")) return null;
         var parsedRange = headOnly ? null : StreamByteRanges.Parse(rangeHeader);
         var rangeStart = parsedRange?.Ranges.Single().From;
         var trackId = new ProviderExternalResourceId(
             providerId, ProviderResourceKind.Track, externalId);
         var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
+        if (protocol.IsPreparation && playbackActivity?.WasStreamOpened(itemId) == true) return null;
         var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
         var resuming = parsedRange != null && rangeStart != 0;
         var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
@@ -1110,7 +1120,11 @@ public sealed partial class ProtocolProviderGateway(
         {
             var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, previous?.ManagedFileId,
                 resuming, headOnly);
-            if (kept != null) return await OpenedAsync(kept, null, null);
+            if (kept != null)
+            {
+                if (protocol.IsPreparation) { kept.Response.Dispose(); return null; }
+                return await OpenedAsync(kept, null, null);
+            }
             if (resuming && previous?.ManagedFileId != null)
                 throw new HttpRequestException("The previous kept playback source is no longer available. Restart playback.",
                     null, HttpStatusCode.Conflict);
@@ -1181,7 +1195,7 @@ public sealed partial class ProtocolProviderGateway(
                     item.ProviderId.Equals(providerId, StringComparison.Ordinal) &&
                     item.ReasonCode is not ("capability-unavailable" or "verified-identity-required")))
             {
-                ThrowRejectedRoute(plan.Decision.Candidates.First(item => item.ProviderId == providerId));
+                ThrowRejectedRoute(plan.Decision.Candidates.First(item => item.ProviderId == providerId), protocol.IsPreparation);
             }
 
             var isTranslationMiss = plan.Decision.Candidates.Any(item =>
@@ -1204,6 +1218,7 @@ public sealed partial class ProtocolProviderGateway(
         {
             protocol.CancellationToken.ThrowIfCancellationRequested();
             var candidate = plan.Candidates[candidateIndex];
+            if (protocol.IsPreparation && !ProviderStreamOpener.PreparationProviders.Contains(candidate.Provider.Id)) return null;
             var servingTrack = candidate.TrackId ?? trackId;
             if (!attemptedRoutes.Add((candidate.Provider.Id, candidate.Context.Account?.AccountId, servingTrack.Value))) continue;
             if (resuming && previous != null &&
@@ -1217,10 +1232,18 @@ public sealed partial class ProtocolProviderGateway(
             var cacheScope = new DownloadedSongMappingScope(
                     candidate.Context.Account?.AccountId,
                     quality);
+            var coordinate = !headOnly && managedTrackCache != null &&
+                ProviderStreamOpener.PreparationProviders.Contains(candidate.Provider.Id);
+            using var cacheOpening = coordinate ? await managedTrackCache!.BeginOpenAsync(
+                servingTrack, cacheScope, candidate.Context.Account?.Revision, protocol.IsPreparation, protocol.CancellationToken) : null;
+            if (coordinate && cacheOpening == null) return null;
             var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
-                servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision);
+                servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision, protocol.IsPreparation);
             if (cached != null)
+            {
+                if (protocol.IsPreparation) { cached.Response.Dispose(); return null; }
                 return await OpenedAsync(cached with { SelectionReason = $"{routeReason}:managed-cache" }, candidate.Context, servingTrack);
+            }
             var candidateDeadline = protocolDeadline;
             if (candidate.Implementation is IProviderDownloadStreamingCapability)
             {
@@ -1288,8 +1311,9 @@ public sealed partial class ProtocolProviderGateway(
             var fallback = resuming ? null : router.EvaluateFallback(plan, candidateIndex, outcome.Error!);
             if (fallback?.Disposition == ProviderFallbackDisposition.Advance)
             {
-                logger?.LogInformation("Playback advanced from {Provider} after {FailureCode}",
-                    candidate.Provider.Id, outcome.Error!.Code);
+                if (!protocol.IsPreparation)
+                    logger?.LogInformation("Playback advanced from {Provider} after {FailureCode}",
+                        candidate.Provider.Id, outcome.Error!.Code);
                 fallbackReason = fallback.ReasonCode.StartsWith("fallback-", StringComparison.Ordinal)
                     ? fallback.ReasonCode
                     : $"fallback-{fallback.ReasonCode}";
@@ -1309,7 +1333,20 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
-            if (!headOnly && execution != null && servingTrack != null)
+            if (!headOnly && managedTrackCache != null && !stream.IsCached &&
+                ProviderStreamOpener.PreparationProviders.Contains(stream.ServingProviderId))
+            {
+                Task<Song?>? metadata = null;
+                Task<Song?> Metadata() => metadata ??= GetSongAsync(protocol, stream.ServingProviderId, stream.ServingExternalId!);
+                try
+                {
+                    StreamDurationGuidance.Attach(stream, Metadata);
+                    await managedTrackCache.WrapAsync(stream, protocol, stream.ServingProviderId, stream.ServingExternalId!,
+                        false, Metadata, streamCancellation);
+                }
+                catch { stream.Response.Dispose(); throw; }
+            }
+            if (!headOnly && !protocol.IsPreparation && execution != null && servingTrack != null)
                 await RememberPlayedTrackAsync(execution, servingTrack, itemId);
             if (!headOnly && stream.ServingProviderId == "monochrome" && !stream.Lease.SupportsByteRanges &&
                 execution != null && identities != null)
@@ -1333,9 +1370,10 @@ public sealed partial class ProtocolProviderGateway(
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
             stream.Response.Headers.Remove("X-Allstarr-Route-Reason");
             stream.Response.Headers.Add("X-Allstarr-Route-Reason", stream.SelectionReason);
-            if (!headOnly) playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
-            logger?.LogInformation("Opened external playback from {Provider} (cached: {Cached})",
-                stream.ServingProviderId, stream.IsCached);
+            if (!headOnly && !protocol.IsPreparation) playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
+            if (!protocol.IsPreparation)
+                logger?.LogInformation("Opened external playback from {Provider} (cached: {Cached})",
+                    stream.ServingProviderId, stream.IsCached);
             return stream;
         }
     }
@@ -1685,20 +1723,20 @@ public sealed partial class ProtocolProviderGateway(
         cancellationToken: cancellationToken,
         purpose: purpose);
 
-    private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection)
+    private void ThrowRejectedRoute(ProviderRouteCandidateDecision rejection, bool quiet = false)
     {
         if (rejection.ProviderId == "apple-musickit" &&
             rejection.ReasonCode is "account-personal-to-another-listener" or "account-scope-denied")
             throw new ProtocolProviderAccountAccessException();
         if (rejection.ReasonCode == ProviderError.AppleDownloadGatewayUpdateRequired().Code)
         {
-            logger?.LogWarning("Apple download gateway needs an update ({Provider})", rejection.ProviderId);
+            if (!quiet) logger?.LogWarning("Apple download gateway needs an update ({Provider})", rejection.ProviderId);
             throw new ProtocolProviderUnavailableException(ProviderError.AppleDownloadGatewayUpdateRequired());
         }
         if (rejection.ReasonCode == ProviderError.AppleDownloadSignInRequired().Code ||
             rejection.ProviderId == "apple-musickit" && rejection.ReasonCode == "account-required")
         {
-            logger?.LogWarning("Apple download needs sign-in ({Provider})", rejection.ProviderId);
+            if (!quiet) logger?.LogWarning("Apple download needs sign-in ({Provider})", rejection.ProviderId);
             throw new ProtocolProviderUnavailableException(ProviderError.AppleDownloadSignInRequired());
         }
         if (rejection.ReasonCode is "health-degraded" or "health-unavailable" or "health-unauthorized" or

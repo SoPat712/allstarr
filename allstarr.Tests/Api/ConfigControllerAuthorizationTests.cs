@@ -108,6 +108,18 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task UpcomingPreparationSettingsUseTheExistingHouseholdSettingsApi()
+    {
+        var controller = CreateController(CreateHttpContextWithSession(true));
+        Assert.IsType<OkObjectResult>(await controller.UpdateConfig(new()
+        { Updates = new() { ["PLAYBACK_PREPARE_UPCOMING_SONGS"] = "false", ["PLAYBACK_PREPARE_UPCOMING_COUNT"] = "1" } }));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.GetConfig()).Value));
+        var playback = json.RootElement.GetProperty("playback");
+        Assert.False(playback.GetProperty("prepareUpcomingSongs").GetBoolean());
+        Assert.Equal(1, playback.GetProperty("prepareUpcomingCount").GetInt32());
+    }
+
+    [Fact]
     public async Task OperatorSettingApiPersistsValidatedPolicyAndReportsRestart()
     {
         var controller = CreateController(CreateHttpContextWithSession(true));

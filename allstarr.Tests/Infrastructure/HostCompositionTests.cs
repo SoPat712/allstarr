@@ -367,9 +367,20 @@ public sealed class HostCompositionTests
         var schema = Assert.IsType<AdminUiSchemaResponse>(
             Assert.IsType<OkObjectResult>(await controller.GetSchema()).Value);
         var general = Assert.Single(schema.ConfigSections, item => item.Id == "general");
+        var prepare = Assert.Single(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_SONGS");
+        Assert.Equal("toggle", prepare.Type);
+        Assert.Equal("Prepare upcoming songs", prepare.Label);
+        Assert.Equal("Off by default. Turn on only if your player waits until a song ends before requesting the next one.", prepare.HelpText);
+        Assert.Equal("playback.prepareUpcomingSongs", prepare.ValuePath);
+        var count = Assert.Single(general.Fields, item => item.Key == "PLAYBACK_PREPARE_UPCOMING_COUNT");
+        Assert.Equal("number", count.Type);
+        Assert.Equal("playback.prepareUpcomingCount", count.ValuePath);
+        Assert.Equal(1, count.Min);
+        Assert.Equal(2, count.Max);
+
 
         Assert.Collection(
-            general.Fields.Where(item => item.Key.StartsWith("PLAYBACK_", StringComparison.Ordinal)),
+            general.Fields.Where(item => item.Key is "PLAYBACK_LASTFM_SIMILAR_ENABLED" or "PLAYBACK_LISTENBRAINZ_SIMILAR_ENABLED"),
             lastFm =>
             {
                 Assert.Equal("PLAYBACK_LASTFM_SIMILAR_ENABLED", lastFm.Key);

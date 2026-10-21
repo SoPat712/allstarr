@@ -14,7 +14,8 @@ internal static class StreamDurationGuidance
 
     public static void Attach(ProtocolProviderStream routed, Func<Task<Song?>> metadata, Action<string>? selected = null)
     {
-        if (routed.IsCached || routed.Lease.SupportsByteRanges || routed.Response.StatusCode != HttpStatusCode.OK)
+        if (routed.IsCached || ManagedTrackCacheService.SeekRung(routed.Response.Content) != null ||
+            routed.Lease.SupportsByteRanges || routed.Response.StatusCode != HttpStatusCode.OK)
             return;
         var container = routed.Lease.Media.Container.ToLowerInvariant();
         if (container is not ("flac" or "mp3" or "mp4" or "m4a")) return;
