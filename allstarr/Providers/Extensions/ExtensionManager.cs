@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Jint;
 using Jint.Native;
+using Jint.Runtime;
 using allstarr.Core.Extensions;
 using allstarr.Core.Capabilities;
 using Microsoft.Extensions.Configuration;
@@ -634,6 +635,7 @@ internal sealed record ExtensionBoundedHttpPayload(
 public class ExtensionSandbox
 {
     private const int MaximumHookResultCharacters = 4 * 1024 * 1024;
+    private static readonly object InvocationLimitLogged = new();
     public string Id { get; }
     public string Name { get; }
     public string DisplayName { get; }
@@ -644,6 +646,7 @@ public class ExtensionSandbox
     private readonly Engine _engine;
     private readonly JsValue _extensionObj;
     private readonly ILogger _logger;
+    private readonly Action<string, string>? _logSink;
     private readonly object _engineLock = new();
     private readonly ExtensionHostBridge _hostBridge;
     private readonly TimeSpan _hookTimeout;
@@ -669,6 +672,7 @@ public class ExtensionSandbox
         ExtensionExecutionOptions? executionOptions = null)
     {
         _logger = logger;
+        _logSink = permissions?.LogSink;
         _hookTimeout = hookTimeout ?? TimeSpan.FromSeconds(12);
         _downloadTimeout = downloadTimeout ?? TimeSpan.FromMinutes(5);
         _timeProvider = timeProvider ?? TimeProvider.System;
@@ -716,7 +720,7 @@ public class ExtensionSandbox
             // Jint counts every byte allocated on the thread during an invocation, host work included,
             // not live heap. A download script can allocate far more over its run than it ever holds.
             options.LimitMemory(512L * 1024 * 1024);
-            options.MaxStatements(1_000_000);
+            // Bound execution by the invocation deadline; large catalog traversals can exceed a statement quota.
             options.Constraints.Constraints.Add(new ExtensionInvocationBudget.ExecutionConstraint());
         });
 
@@ -851,7 +855,8 @@ public class ExtensionSandbox
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "JS customSearch invocation failed on extension {Id}", Id);
+            if (!LogInvocationLimit(ex, "customSearch"))
+                _logger.LogError(ex, "JS customSearch invocation failed on extension {Id}", Id);
             return new SearchResult();
         }
     }
@@ -886,7 +891,8 @@ public class ExtensionSandbox
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "JS getTrack failed on extension {Id}", Id);
+            if (!LogInvocationLimit(ex, "getTrack"))
+                _logger.LogError(ex, "JS getTrack failed on extension {Id}", Id);
             return null;
         }
     }
@@ -919,13 +925,40 @@ public class ExtensionSandbox
             }
             catch (OperationCanceledException) when (budget.Token.IsCancellationRequested && !callerToken.IsCancellationRequested)
             {
-                throw new TimeoutException("Extension hook exceeded its time budget.");
+                var exception = new TimeoutException("Extension hook exceeded its time budget.");
+                LogInvocationLimit(exception, hook);
+                throw exception;
+            }
+            catch (Exception exception)
+            {
+                LogInvocationLimit(exception, hook);
+                throw;
             }
         }
     }
 
-    internal void LogDownloadFailure(Exception exception) =>
+    private bool LogInvocationLimit(Exception exception, string operation)
+    {
+        var limit = exception switch
+        {
+            StatementsCountOverflowException => "statements",
+            MemoryLimitExceededException => "memory",
+            RecursionDepthOverflowException => "recursion",
+            TimeoutException => "time",
+            _ => null
+        };
+        if (limit == null) return false;
+        exception.Data[InvocationLimitLogged] = true;
+        _logger.LogWarning("Extension {ExtensionId} operation {Operation} stopped by {Limit} limit", Id, operation, limit);
+        _logSink?.Invoke("warn", $"Extension {Id} operation {operation} stopped by {limit} limit");
+        return true;
+    }
+
+    internal void LogDownloadFailure(Exception exception)
+    {
+        if (exception.Data.Contains(InvocationLimitLogged)) return;
         _logger.LogWarning(exception, "Extension download failed for {ProviderId}: {Reason}", Id, SafeFailureReason(exception.Message));
+    }
 
     // Extension errors are provider text: keep the reason readable but drop links (which can carry tokens) and bound it.
     internal static string SafeFailureReason(string? message)
@@ -1056,7 +1089,8 @@ public class ExtensionSandbox
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "JS getAlbum failed on extension {Id}", Id);
+            if (!LogInvocationLimit(ex, "getAlbum"))
+                _logger.LogError(ex, "JS getAlbum failed on extension {Id}", Id);
             return null;
         }
     }
@@ -1082,7 +1116,8 @@ public class ExtensionSandbox
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "JS getArtist failed on extension {Id}", Id);
+            if (!LogInvocationLimit(ex, "getArtist"))
+                _logger.LogError(ex, "JS getArtist failed on extension {Id}", Id);
             return null;
         }
     }
