@@ -662,14 +662,29 @@ public sealed class ArtistGridCatalog
         if (string.IsNullOrWhiteSpace(rawUrl) ||
             !Uri.TryCreate(rawUrl.Trim(), UriKind.Absolute, out var uri) ||
             !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) ||
-            uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 ||
-            uri.Query.Length != 0 && !uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase) ||
+            uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || uri.Port != 443 || rawUrl.Length > 4096 ||
             !OutboundRequestGuard.TryCreateSafeHttpUri(uri.AbsoluteUri, out var safeUri, out _)) return false;
 
-        var segments = safeUri!.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        if (safeUri!.HostNameType != UriHostNameType.Dns || !safeUri.Host.Contains('.')) return false;
+        if (TryParseHostedSource(safeUri, out source)) return true;
+        var extension = Path.GetExtension(safeUri.AbsolutePath).ToLowerInvariant();
+        if (extension is ".mp3" or ".m4a" or ".flac" or ".wav" or ".ogg" or ".aac")
+        {
+            source = new ArtistGridSource(safeUri.AbsoluteUri, safeUri, "direct", safeUri.AbsolutePath);
+            return true;
+        }
+        return false;
+    }
+
+    private static bool TryParseHostedSource(Uri uri, out ArtistGridSource source)
+    {
+        source = null!;
+        if (uri.Query.Length != 0 && !uri.Host.Equals("drive.google.com", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var segments = uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
             .Select(Uri.UnescapeDataString).ToArray();
         if (segments.Any(segment => string.IsNullOrWhiteSpace(segment) || !IsSafeSourceSegment(segment))) return false;
-        var host = safeUri.Host.ToLowerInvariant();
+        var host = uri.Host.ToLowerInvariant();
         string kind;
         string sourceId;
         Uri endpoint;
@@ -694,9 +709,17 @@ public sealed class ArtistGridCatalog
             sourceId = segments[2];
             endpoint = new Uri($"https://fuck-unvaulted.artistgrid.cx/gd/{Uri.EscapeDataString(sourceId)}");
         }
+        else if (host == "music.froste.lol" && segments.Length is 2 or 3 &&
+                 segments[0] == "song" && (segments.Length == 2 || segments[2] == "download") &&
+                 segments[1].Length <= 128 && segments[1].All(character => character is >= 'a' and <= 'f' or >= '0' and <= '9'))
+        {
+            kind = "froste";
+            sourceId = segments[1];
+            endpoint = new Uri($"https://music.froste.lol/song/{sourceId}/download");
+        }
         else return false;
 
-        source = new ArtistGridSource(safeUri.AbsoluteUri, endpoint, kind, sourceId);
+        source = new ArtistGridSource(uri.AbsoluteUri, endpoint, kind, sourceId);
         return true;
     }
 
