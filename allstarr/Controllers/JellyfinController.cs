@@ -1183,6 +1183,11 @@ public partial class JellyfinController : ControllerBase
             });
         }
 
+        var deletedPlaylist = await TryDeleteWritablePlaylistAsync(path);
+        if (deletedPlaylist != null) return deletedPlaylist;
+        var writablePlaylist = await TryWritablePlaylistAsync(path);
+        if (writablePlaylist != null) return writablePlaylist;
+
         var playlistItemsRequestId = GetExactPlaylistItemsRequestId(path);
         if (HttpMethods.IsGet(Request.Method) && !string.IsNullOrEmpty(playlistItemsRequestId))
         {

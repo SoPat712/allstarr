@@ -89,6 +89,12 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
 
+    public async Task<string?> GetTargetPlaylistIdAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+    {
+        var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        return playlist?.Mode is PlaylistLinkMode.Materialized or PlaylistLinkMode.Hybrid ? playlist.TargetPlaylistId : null;
+    }
+
     public Task<SubsonicPlaylistMutationRoute?> ResolveMutationAsync(
         ProtocolExecutionContext context,
         string id,
@@ -130,8 +136,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
             {
                 ["id"] = playlist.ProtocolId,
                 ["name"] = playlist.Name,
-                ["owner"] = "allstarr",
-                ["public"] = false,
+                ["owner"] = playlist.BackendOwner ?? "allstarr",
+                ["public"] = playlist.BackendPublic ?? false,
                 ["songCount"] = tracks.Length,
                 ["entry"] = tracks.Select(track => ToJsonEntry(track, context.Policy?.Preferences)).ToList()
             };
@@ -152,7 +158,7 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         var ns = XNamespace.Get(Namespace);
         var element = new XElement(ns + "playlist",
             new XAttribute("id", playlist.ProtocolId), new XAttribute("name", playlist.Name),
-            new XAttribute("owner", "allstarr"), new XAttribute("public", false),
+            new XAttribute("owner", playlist.BackendOwner ?? "allstarr"), new XAttribute("public", playlist.BackendPublic ?? false),
             new XAttribute("songCount", tracks.Length));
         if (TryGetDurationSeconds(playlist, out var xmlDuration))
             element.Add(new XAttribute("duration", xmlDuration));
@@ -388,8 +394,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         {
             ["id"] = playlist.ProtocolId,
             ["name"] = playlist.Name,
-            ["owner"] = "allstarr",
-            ["public"] = false,
+            ["owner"] = playlist.BackendOwner ?? "allstarr",
+            ["public"] = playlist.BackendPublic ?? false,
             ["songCount"] = playlist.Tracks.Count
         };
         AddOptionalPlaylistFields(result, playlist);
@@ -401,8 +407,8 @@ public sealed class SubsonicVirtualPlaylistProtocolAdapter(
         var result = new XElement(ns + "playlist",
             new XAttribute("id", playlist.ProtocolId),
             new XAttribute("name", playlist.Name),
-            new XAttribute("owner", "allstarr"),
-            new XAttribute("public", "false"),
+            new XAttribute("owner", playlist.BackendOwner ?? "allstarr"),
+            new XAttribute("public", playlist.BackendPublic ?? false),
             new XAttribute("songCount", playlist.Tracks.Count));
         if (playlist.Description != null)
             result.Add(new XAttribute("comment", playlist.Description));

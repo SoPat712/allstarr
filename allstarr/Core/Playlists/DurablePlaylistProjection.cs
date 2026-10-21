@@ -28,6 +28,7 @@ public sealed record DurablePlaylistEntryProjection(
     string? RouteProviderId,
     IReadOnlyList<DurableProviderRoute> ProviderRoutes)
 {
+    public Guid? SourceEntryId { get; init; }
     internal Guid? CanonicalRecordingId { get; init; }
 }
 
@@ -35,7 +36,10 @@ public sealed record DurablePlaylistSourceEntryProjection(
     int Position,
     Guid ExternalSnapshotId,
     PlaylistSourceIdentity Identity,
-    PlaylistSourceMetadata Metadata);
+    PlaylistSourceMetadata Metadata)
+{
+    public Guid? SourceEntryId { get; init; }
+}
 
 public sealed record DurablePlaylistReconciliation(
     int ProviderAdvertisedRows,
@@ -883,7 +887,8 @@ public sealed class DurablePlaylistProjectionReader(
                 external.ProviderRevision,
                 external.SnapshotVersion,
                 sourceExternalId),
-            ReadSourceMetadata(external.PayloadJson));
+            ReadSourceMetadata(external.PayloadJson))
+        { SourceEntryId = entry.Id };
     }
 
     private static DurablePlaylistEntryProjection ProjectEntry(
@@ -936,7 +941,7 @@ public sealed class DurablePlaylistProjectionReader(
             routeKind,
             routeKind == "local" ? local!.Protocol : primaryRoute?.ProviderId,
             classification.ProviderRoutes)
-        { CanonicalRecordingId = route.CanonicalRecordingId };
+        { SourceEntryId = entry.Id, CanonicalRecordingId = route.CanonicalRecordingId };
     }
 
     private static EntryMetadata ReadMetadata(string payload)

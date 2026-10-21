@@ -702,6 +702,13 @@ public partial class SubsonicController : ControllerBase
 
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(id))
         {
+            var targetId = await _virtualPlaylistProtocolAdapter.GetTargetPlaylistIdAsync(CurrentProtocolContext, id, HttpContext.RequestAborted);
+            var membership = targetId == null ? null : await WritablePlaylists.ReadAsync(CurrentProtocolContext, targetId, HttpContext.RequestAborted);
+            if (membership != null)
+            {
+                var native = await ReadWritableNativePlaylistAsync(targetId!, parameters);
+                return _relayProtocolAdapter.CreateResult(MergeWritablePlaylist(native, membership), $"application/{format}");
+            }
             return await _virtualPlaylistProtocolAdapter.ReadAsync(
                        CurrentProtocolContext, id, format, HttpContext.RequestAborted)
                    ?? _responseBuilder.CreateError(format, 70, "Playlist not found");
@@ -851,6 +858,13 @@ public partial class SubsonicController : ControllerBase
         var format = parameters.GetValueOrDefault("f", "xml");
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(id))
         {
+            var targetId = await _virtualPlaylistProtocolAdapter.GetTargetPlaylistIdAsync(CurrentProtocolContext, id, HttpContext.RequestAborted);
+            var membership = targetId == null ? null : await WritablePlaylists.ReadAsync(CurrentProtocolContext, targetId, HttpContext.RequestAborted);
+            if (membership != null)
+            {
+                var native = await ReadWritableNativePlaylistAsync(targetId!, parameters);
+                return _relayProtocolAdapter.CreateResult(MergeWritablePlaylist(native, membership), $"application/{format}");
+            }
             return await _virtualPlaylistProtocolAdapter.ReadAsync(
                        CurrentProtocolContext, id, format, HttpContext.RequestAborted)
                    ?? _responseBuilder.CreateError(format, 70, "Playlist not found");
@@ -859,6 +873,8 @@ public partial class SubsonicController : ControllerBase
         var endpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getPlaylist";
         var result = await _proxyService.RelayRawAsync(
             endpoint, parameters, HttpContext.RequestAborted, Request.Headers);
+        var saved = await WritablePlaylists.ReadAsync(CurrentProtocolContext, id, HttpContext.RequestAborted);
+        if (saved != null) result = MergeWritablePlaylist(result, saved);
         return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
     }
 
@@ -1159,6 +1175,8 @@ public partial class SubsonicController : ControllerBase
     {
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
+        var writable = await TryWritablePlaylistMutationAsync("updatePlaylist", parameters);
+        if (writable != null) return writable;
         var playlistId = parameters.GetValueOrDefault("playlistId", "");
         if (!_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
         {
@@ -1251,6 +1269,9 @@ public partial class SubsonicController : ControllerBase
             }
             return denied;
         }
+
+        var writable = await TryWritablePlaylistMutationAsync(SubsonicMusicEndpointPolicy.MethodName(endpoint), parameters);
+        if (writable != null) return writable;
 
         try
         {

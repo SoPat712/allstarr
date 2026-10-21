@@ -24,7 +24,8 @@ public sealed record VirtualPlaylistTrack(
     PlaylistSourceIdentity? SourceIdentity = null,
     PlaylistSourceMetadata? SourceMetadata = null,
     string? NativePlaylistEntryId = null,
-    string? NativeEntryJson = null);
+    string? NativeEntryJson = null,
+    Guid? SourceEntryId = null);
 
 public sealed record VirtualPlaylistReadModel(
     string ProtocolId,
@@ -39,7 +40,11 @@ public sealed record VirtualPlaylistReadModel(
     PlaylistLinkMode Mode,
     IReadOnlyList<VirtualPlaylistTrack> Tracks,
     PlaylistProjectionMode ProjectionMode = PlaylistProjectionMode.Resolved,
-    string? TargetPlaylistId = null);
+    string? TargetPlaylistId = null)
+{
+    public string? BackendOwner { get; init; }
+    public bool? BackendPublic { get; init; }
+}
 
 public interface IPlaylistVirtualizationService
 {
@@ -257,7 +262,11 @@ public sealed class PlaylistVirtualizationService(
         return new VirtualPlaylistReadModel(CreateProtocolId(link.Id), link.Id, projection.SnapshotId,
             name, description, artwork, link.SourceProviderId,
             link.SourcePlaylistId, snapshot.ProviderRevision, link.Mode, tracks, selectedMode,
-            link.TargetPlaylistId);
+            link.TargetPlaylistId)
+        {
+            BackendOwner = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.Owner,
+            BackendPublic = link.Mode == PlaylistLinkMode.Virtual ? null : authorizedTarget?.IsPublic
+        };
     }
 
     public async Task<VirtualPlaylistReadModel?> ReadBySourceAsync(
@@ -321,7 +330,8 @@ public sealed class PlaylistVirtualizationService(
                 local.CoverArtReference, entry.MatchState ?? TrackMatchState.Unresolved,
                 sourceProviderId, null, TrackRouteKind.Local,
                 SourceMetadata: sourceMetadata,
-                NativeEntryJson: nativeItems?.GetValueOrDefault(local.BackendItemId)?.NativeEntryJson);
+                NativeEntryJson: nativeItems?.GetValueOrDefault(local.BackendItemId)?.NativeEntryJson,
+                SourceEntryId: entry.SourceEntryId);
         var artist = entry.Artists.FirstOrDefault();
         if (entry.RouteKind == "external" && entry.RouteProviderId != null)
         {
@@ -331,14 +341,14 @@ public sealed class PlaylistVirtualizationService(
                 entry.DurationMilliseconds, null,
                 entry.MatchState ?? TrackMatchState.Unresolved,
                 entry.RouteProviderId, entry.ExternalId, TrackRouteKind.External,
-                entry.RouteProviderId, entry.ExternalId, SourceMetadata: sourceMetadata);
+                entry.RouteProviderId, entry.ExternalId, SourceMetadata: sourceMetadata, SourceEntryId: entry.SourceEntryId);
         }
 
         return new(entry.Position, $"{UnresolvedItemPrefix}{entry.ExternalId}",
             entry.Title, string.IsNullOrWhiteSpace(artist) ? "Unknown Artist" : artist,
             entry.Album, null,
             entry.DurationMilliseconds, null, entry.MatchState ?? TrackMatchState.Unresolved,
-            sourceProviderId, null, TrackRouteKind.Unresolved, SourceMetadata: sourceMetadata);
+            sourceProviderId, null, TrackRouteKind.Unresolved, SourceMetadata: sourceMetadata, SourceEntryId: entry.SourceEntryId);
     }
 
     internal static IReadOnlyList<VirtualPlaylistTrack> ToTargetVirtualTracks(
@@ -392,6 +402,7 @@ public sealed class PlaylistVirtualizationService(
             routeKind == TrackRouteKind.External ? resolved!.RouteProviderId : null,
             routeKind == TrackRouteKind.External ? resolved!.RouteExternalId : null,
             identity,
-            metadata);
+            metadata,
+            SourceEntryId: source.SourceEntryId);
     }
 }

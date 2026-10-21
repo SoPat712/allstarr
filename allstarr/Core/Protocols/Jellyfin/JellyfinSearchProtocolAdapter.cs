@@ -7,7 +7,8 @@ public interface IJellyfinSearchProtocolAdapter
     JellyfinProtocolResponse ShapeItemsResponse(
         IReadOnlyList<Dictionary<string, object?>> items,
         int startIndex,
-        int limit);
+        int limit,
+        int? totalRecordCount = null);
 }
 
 public sealed record JellyfinProtocolResponse(
@@ -26,13 +27,14 @@ public sealed class JellyfinSearchProtocolAdapter : IJellyfinSearchProtocolAdapt
     public JellyfinProtocolResponse ShapeItemsResponse(
         IReadOnlyList<Dictionary<string, object?>> items,
         int startIndex,
-        int limit)
+        int limit,
+        int? totalRecordCount = null)
     {
         ArgumentNullException.ThrowIfNull(items);
 
         var response = new JellyfinSearchItemsResponse(
             items.Skip(startIndex).Take(limit).ToList(),
-            items.Count,
+            totalRecordCount ?? items.Count,
             startIndex);
 
         return new JellyfinProtocolResponse(

@@ -110,6 +110,10 @@ public static class JellyfinMusicEndpointPolicy
             return Music("The route is explicitly music-scoped.");
         }
 
+        if (HttpMethods.IsDelete(method) && segments.Length == 2 &&
+            segments[0].Equals("items", StringComparison.OrdinalIgnoreCase) && IsSynthesizedPlaylistId(segments[1]))
+            return Music("Playlist deletion is authorized through the scoped target resolver.");
+
         if (IsPlaylistItemRoute(method, path))
         {
             return RequiresPlaylist("Updating or deleting a library item is permitted only when it is a playlist.");
@@ -201,7 +205,7 @@ public static class JellyfinMusicEndpointPolicy
 
         if (segments[0].Equals("items", StringComparison.OrdinalIgnoreCase))
         {
-            if (segments.Length == 2) return isRead;
+            if (segments.Length == 2) return isRead || HttpMethods.IsDelete(method) && IsSynthesizedPlaylistId(itemId);
             if (segments[2].Equals("images", StringComparison.OrdinalIgnoreCase))
                 return isRead && SupportsSynthesizedImageRoute(segments);
             if (segments[2].Equals("download", StringComparison.OrdinalIgnoreCase) ||
