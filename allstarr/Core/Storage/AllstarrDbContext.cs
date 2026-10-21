@@ -85,6 +85,7 @@ public sealed partial class AllstarrDbContext(DbContextOptions<AllstarrDbContext
         modelBuilder.ConfigurePlaybackDeliveryCheckpoints();
         ConfigureOperations(modelBuilder);
         ConfigureRuntimeSettings(modelBuilder);
+        ConfigureSubsonicQueues(modelBuilder);
         modelBuilder.ConfigureManualLyricsMappings();
         ConfigureLyricsChoices(modelBuilder);
         ConfigurePortableDateTimeOffsets(modelBuilder);
