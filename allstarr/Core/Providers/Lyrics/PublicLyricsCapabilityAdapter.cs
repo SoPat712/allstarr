@@ -80,20 +80,20 @@ public abstract class PublicLyricsCapabilityAdapter(
         ProviderExecutionContext context, ProviderLyricsRequest request, CancellationToken token) => ReadAsync(request, token);
     protected virtual Task BeforeRequestAsync(CancellationToken token) => Task.CompletedTask;
 
-    protected async Task<(string? Content, ProviderError? Error)> GetAsync(Uri endpoint, CancellationToken token)
+    protected async Task<(string? Content, ProviderError? Error)> GetAsync(Uri endpoint, CancellationToken token, string? accept = null)
     {
-        var response = await GetResponseAsync(endpoint, token);
+        var response = await GetResponseAsync(endpoint, token, accept);
         return (response.Content, response.Error);
     }
 
     protected async Task<(string? Content, ProviderError? Error, HttpStatusCode? StatusCode)> GetResponseAsync(
-        Uri endpoint, CancellationToken token)
+        Uri endpoint, CancellationToken token, string? accept = null)
     {
         await BeforeRequestAsync(token);
         using var timeout = new CancellationTokenSource(await ResolveRequestTimeoutAsync(token), Clock);
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
         using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
-        outbound.Headers.Accept.ParseAdd("application/ttml+xml, application/json, text/plain");
+        outbound.Headers.Accept.ParseAdd(accept ?? "application/ttml+xml, application/json, text/plain");
         outbound.Headers.UserAgent.ParseAdd(AppIdentity.UserAgent);
         try
         {

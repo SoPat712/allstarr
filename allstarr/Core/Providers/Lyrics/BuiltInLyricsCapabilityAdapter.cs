@@ -114,7 +114,8 @@ public static class BuiltInLyricsCapabilityRegistration
             { UseCookies = false, AllowAutoRedirect = false, UseDefaultCredentials = false });
         services.AddSingleton(provider => new CloudflareChallengeSolver(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(CloudflareChallengeSolver.HttpClientName),
-            token => CloudflareChallengeSolver.ReadOptionsAsync(provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>(), token)));
+            token => CloudflareChallengeSolver.ReadOptionsAsync(provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>(), token),
+            logger: provider.GetRequiredService<ILogger<CloudflareChallengeSolver>>()));
         services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
             .RemoveAllLoggers()
             .AddHttpMessageHandler(provider => new CloudflareChallengeHandler(provider.GetRequiredService<CloudflareChallengeSolver>(), ["lyricsplus.binimum.org"]))

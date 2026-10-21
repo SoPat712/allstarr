@@ -35,7 +35,7 @@ public sealed class BiniLyricsCapabilityAdapter : MetadataLyricsCapabilityAdapte
         if (!string.IsNullOrWhiteSpace(request.TrackTitle) && request.ArtistNames.Count > 0) queries.Add(MetadataQuery(request, "track"));
         foreach (var query in queries)
         {
-            var response = await GetAsync(new("https://lyrics-api.binimum.org/?" + query), token);
+            var response = await GetAsync(new("https://lyrics-api.binimum.org/?" + query), token, "application/json");
             if (response.Error != null) return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);
             if (string.IsNullOrWhiteSpace(response.Content)) continue;
             using var document = JsonDocument.Parse(response.Content, new JsonDocumentOptions { MaxDepth = 16 });
@@ -64,7 +64,7 @@ public sealed class BiniLyricsCapabilityAdapter : MetadataLyricsCapabilityAdapte
             if (!Uri.TryCreate(String(first, "lyricsUrl"), UriKind.Absolute, out var endpoint) ||
                 endpoint.Scheme != "https" || endpoint.Host != "lyrics-storage.binimum.org" || !endpoint.IsDefaultPort ||
                 endpoint.UserInfo.Length != 0) return ContractFailure();
-            var lyrics = await GetAsync(endpoint, token);
+            var lyrics = await GetAsync(endpoint, token, "application/ttml+xml");
             return lyrics.Error != null ? ProviderOutcome<ProviderLyricsResult>.Failure(lyrics.Error)
                 : string.IsNullOrWhiteSpace(lyrics.Content) ? Unavailable() : ParseTtml(lyrics.Content);
         }

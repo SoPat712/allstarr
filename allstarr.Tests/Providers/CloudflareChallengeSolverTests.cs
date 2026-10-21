@@ -20,7 +20,8 @@ public sealed class CloudflareChallengeSolverTests
     [InlineData(307, "", "", "/cdn-cgi/challenge-platform/check", "", true)]
     [InlineData(403, "cloudflare", "", "ordinary denial", "", false)]
     [InlineData(429, "", "", "rate limit", "", false)]
-    [InlineData(200, "cloudflare", "challenge", "", "", false)]
+    [InlineData(200, "cloudflare", "challenge", "", "", true)]
+    [InlineData(200, "cloudflare", "", "<title>Just a moment...</title>", "", true)]
     public async Task DetectsChallengesWithoutMistakingOrdinaryFailures(int status, string server, string mitigated,
         string body, string location, bool expected)
     {
@@ -76,7 +77,10 @@ public sealed class CloudflareChallengeSolverTests
 
     [Theory]
     [InlineData("https://other.test/")]
-    [InlineData("https://lyrics-api.binimum.org/?isrc=other")]
+    [InlineData("http://lyrics-api.binimum.org/")]
+    [InlineData("https://lyrics-api.binimum.org:8443/")]
+    [InlineData("https://user:secret@lyrics-api.binimum.org/")]
+    [InlineData("https://lyrics-storage.binimum.org/fixture.ttml")]
     public async Task RejectsSolverSolutionForDifferentTarget(string returnedUrl)
     {
         var solver = Solver(new Handler(_ => Task.FromResult(Solution(url: returnedUrl))));
@@ -176,7 +180,7 @@ public sealed class CloudflareChallengeSolverTests
     {
         var enabled = true;
         var calls = 0;
-        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => { calls++; return Task.FromResult(Solution()); })),
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => { calls++; return Task.FromResult(Solution("{\"results\":[]}")); })),
             _ => Task.FromResult(new ChallengeSolverOptions(enabled ? "http://solver:8191" : "", 60)), _clock);
         using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org", "lyrics-storage.binimum.org"])
         {
@@ -187,7 +191,7 @@ public sealed class CloudflareChallengeSolverTests
                 return Task.FromResult(request.RequestUri.Host == "lyrics-storage.binimum.org" ? Reply("storage") : Challenge());
             })
         });
-        Assert.Equal("words", await client.GetStringAsync(Target));
+        Assert.Equal("{\"results\":[]}", await client.GetStringAsync(Target));
         Assert.Equal("storage", await client.GetStringAsync("https://lyrics-storage.binimum.org/fixture.ttml"));
         enabled = false;
         await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
@@ -257,6 +261,142 @@ public sealed class CloudflareChallengeSolverTests
         await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
     }
 
+    public static IEnumerable<object[]> RenderedBodies() =>
+        JsonSerializer.Deserialize<string[][]>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "ChallengeSolver", "rendered-responses.json")))!.Select(row => row.Cast<object>().ToArray());
+
+    [Theory]
+    [MemberData(nameof(RenderedBodies))]
+    public async Task ValidSolverBodyDeliversExpectedContentBeforeCookieRetry(string body, string contentType, string expected, string accept)
+    {
+        var normal = 0;
+        using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution(body, contentType: contentType)))), _ => { normal++; return Challenge(); });
+        client.DefaultRequestHeaders.Accept.ParseAdd(accept);
+        using var response = await client.GetAsync(Target);
+        Assert.Equal(expected, await response.Content.ReadAsStringAsync());
+        Assert.Equal(accept, response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(1, normal);
+    }
+
+    [Theory]
+    [InlineData("<html><head></head><body><pre>{invalid}</pre></body></html>", "application/json")]
+    [InlineData("<html><head></head><body><pre>not xml</pre></body></html>", "application/ttml+xml")]
+    [InlineData("<html><body>ordinary page</body></html>", "text/plain")]
+    [InlineData("<tt><body></tt>", "application/ttml+xml")]
+    [InlineData("<root/>", "application/ttml+xml")]
+    [InlineData("<!DOCTYPE tt [<!ENTITY secret SYSTEM 'file:///private-fixture'>]><tt>&secret;</tt>", "application/ttml+xml")]
+    [InlineData("<html><head><title>Just a moment...</title></head><body><pre>{\"results\":[]}</pre></body></html>", "application/json")]
+    [InlineData("<html><body><script src='/cdn-cgi/challenge-platform/check'></script></body></html>", "text/plain")]
+    [InlineData("<html><body><div id='cf-challenge-running'></div></body></html>", "text/plain")]
+    public async Task InvalidOrStillChallengedBodyStartsBackoff(string body, string accept)
+    {
+        var calls = 0;
+        using var client = Client(Solver(new Handler(_ => { calls++; return Task.FromResult(Solution(body)); })), _ => Challenge());
+        client.DefaultRequestHeaders.Accept.ParseAdd(accept);
+        await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task SameHostRedirectedSolutionIsAccepted()
+    {
+        using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution("{\"results\":[]}", "https://lyrics-api.binimum.org/match?isrc=private-query")))), _ => Challenge());
+        Assert.Equal("{\"results\":[]}", await client.GetStringAsync(Target));
+    }
+
+    [Fact]
+    public async Task BodyForOneRequestIsNeverDeliveredForAnotherRequest()
+    {
+        var calls = 0;
+        using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution("{\"value\":" + ++calls + "}")))), _ => Challenge());
+        Assert.Equal("{\"value\":1}", await client.GetStringAsync(Target));
+        Assert.Equal("{\"value\":2}", await client.GetStringAsync("https://lyrics-api.binimum.org/?isrc=another"));
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task FailedCookieReuseIsAttemptedOnlyOncePerSolve()
+    {
+        var calls = 0;
+        var cookieRetries = 0;
+        using var client = Client(Solver(new Handler(_ => { calls++; return Task.FromResult(Solution("{\"results\":[]}")); })), request =>
+        {
+            if (request.Headers.Contains("Cookie")) cookieRetries++;
+            return Challenge();
+        });
+        for (var i = 0; i < 4; i++) Assert.Equal("{\"results\":[]}", await client.GetStringAsync(Target));
+        Assert.Equal(1, cookieRetries);
+        Assert.Equal(1, calls);
+    }
+
+    [Theory]
+    [InlineData("http://other-solver:8191", 60)]
+    [InlineData("http://solver:8191", 90)]
+    public async Task SettingsChangeClearsFailureBackoff(string url, int timeout)
+    {
+        var configured = new ChallengeSolverOptions("http://solver:8191", 60);
+        var calls = 0;
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ =>
+        {
+            if (++calls == 1) throw new HttpRequestException();
+            return Task.FromResult(Solution("{\"results\":[]}"));
+        })), _ => Task.FromResult(configured), _clock);
+        using var client = Client(solver, _ => Challenge());
+        await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        configured = new(url, timeout);
+        Assert.Equal("{\"results\":[]}", await client.GetStringAsync(Target));
+        Assert.Equal(2, calls);
+    }
+
+    [Theory]
+    [InlineData("{\"results\":[]}", 200, "solver-body", "json", null)]
+    [InlineData("invalid json", 200, "cookies", "text", false)]
+    [InlineData("<title>Just a moment...</title>", 200, "none", "challenge", true)]
+    [InlineData("{\"results\":[]}", 503, "none", "json", true)]
+    public async Task EachSolveLogsOnlySafeSummary(string body, int status, string path, string kind, bool? challenged)
+    {
+        var logs = new List<string>();
+        using var logging = LoggerFactory.Create(builder => builder.AddProvider(new LogProvider(logs)));
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => Task.FromResult(Solution(body, status: status)))),
+            _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)), _clock, logging.CreateLogger<CloudflareChallengeSolver>());
+        using var client = Client(solver, request => path == "cookies" && request.Headers.Contains("Cookie") ? Reply("words") : Challenge());
+        if (path == "none") await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        else await client.GetAsync(Target);
+        if (path == "none") await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        else await client.GetAsync(Target);
+        var log = Assert.Single(logs);
+        Assert.Contains("host=lyrics-api.binimum.org", log);
+        Assert.Contains("solverHttpStatus=200", log);
+        Assert.Contains("solutionStatus=" + status, log);
+        Assert.Contains("contentKind=" + kind, log);
+        Assert.Contains("cookieCount=1", log);
+        Assert.Contains("cookieRetryChallenged=" + (challenged?.ToString() ?? "not-attempted"), log);
+        Assert.Contains("deliveryPath=" + path, log);
+        Assert.Contains("elapsedMs=", log);
+        Assert.DoesNotContain("private-query", log);
+        Assert.DoesNotContain("clearance-secret", log);
+        Assert.DoesNotContain("FixtureBrowser", log);
+        Assert.DoesNotContain("results", log);
+    }
+
+    [Fact]
+    public async Task TransportFailureLogsOneSafeSummaryAndBacksOff()
+    {
+        var logs = new List<string>();
+        using var logging = LoggerFactory.Create(builder => builder.AddProvider(new LogProvider(logs)));
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => Task.FromResult(Reply("private-body", 503)))),
+            _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)), _clock, logging.CreateLogger<CloudflareChallengeSolver>());
+        using var client = Client(solver, _ => Challenge());
+        for (var i = 0; i < 2; i++) await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        var log = Assert.Single(logs);
+        Assert.Contains("solverHttpStatus=503", log);
+        Assert.Contains("contentKind=(null)", log);
+        Assert.Contains("deliveryPath=none", log);
+        Assert.DoesNotContain("private-body", log);
+        Assert.DoesNotContain("private-query", log);
+    }
+
     private sealed class WaitingHandler(Action started) : HttpMessageHandler
     {
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
@@ -271,15 +411,15 @@ public sealed class CloudflareChallengeSolverTests
         _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)), _clock);
     private static HttpClient Client(CloudflareChallengeSolver solver, Func<HttpRequestMessage, HttpResponseMessage> send) =>
         new(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org"]) { InnerHandler = new Handler(request => Task.FromResult(send(request))) });
-    private HttpResponseMessage Solution(string body = "words", string url = Target) => Reply(JsonSerializer.Serialize(new
+    private HttpResponseMessage Solution(string body = "words", string url = Target, string contentType = "application/json", int status = 200) => Reply(JsonSerializer.Serialize(new
     {
         status = "ok",
         solution = new
         {
             url,
-            status = 200,
+            status,
             response = body,
-            headers = new Dictionary<string, string> { ["content-type"] = "application/json" },
+            headers = new Dictionary<string, string> { ["content-type"] = contentType },
             userAgent = "FixtureBrowser/1.0",
             cookies = new[] { new { name = "cf_clearance", value = "clearance-secret", domain = ".binimum.org", path = "/", expires = _clock.Now.AddMinutes(1).ToUnixTimeSeconds(), secure = true } }
         }
