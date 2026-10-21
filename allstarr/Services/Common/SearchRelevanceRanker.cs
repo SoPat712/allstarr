@@ -4,14 +4,8 @@ namespace allstarr.Services.Common;
 
 public static partial class SearchRelevanceRanker
 {
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(nightcore|bass\s*boosted|sped\s*up|slowed|reverb|8d|tribute|karaoke)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
-    private static partial System.Text.RegularExpressions.Regex UploadVariantRegex();
-
     [System.Text.RegularExpressions.GeneratedRegex(@"(?:[#(\[]|\s[-–—:]\s)([^)\]]+)")]
     private static partial System.Text.RegularExpressions.Regex VersionSegmentRegex();
-
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(remix|live|acoustic|instrumental|karaoke|cover)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
-    private static partial System.Text.RegularExpressions.Regex RecordingVariantRegex();
 
     public static double Score(string query, string name, string? artist = null, string? album = null,
         string? albumArtist = null)
@@ -46,8 +40,13 @@ public static partial class SearchRelevanceRanker
 
         var requestedVariants = VariantTags(query, requireDecoration: false);
         var variants = VariantTags(name, requireDecoration: true);
+        if (!FuzzyMatcher.HasOtherRemixer(name, artist, albumArtist)) variants.Remove("remix");
         var unrequested = variants.Except(requestedVariants).Count();
         score = Math.Max(0, score - Math.Min(30, unrequested * 15));
+        var special = FuzzyMatcher.SpecialEditionTags(name).Where(tag =>
+            !tag.StartsWith("remix:", StringComparison.Ordinal) &&
+            (tag != "remix" || FuzzyMatcher.HasOtherRemixer(name, artist, albumArtist)));
+        if (special.Select(Compact).Where(variants.Contains).Except(requestedVariants).Any()) score = Math.Max(0, score - 15);
         score += Math.Min(15, variants.Intersect(requestedVariants).Count() * 10);
         var recordingText = string.Join(" ", name, artist, albumArtist, album);
         if (FuzzyMatcher.BackingRecordingTags(recordingText).Except(FuzzyMatcher.BackingRecordingTags(query)).Any() ||
@@ -100,17 +99,16 @@ public static partial class SearchRelevanceRanker
 
     private static HashSet<string> VariantTags(string text, bool requireDecoration)
     {
-        var tags = UploadVariantRegex().Matches(text)
-            .Select(match => Compact(match.Value)).ToHashSet(StringComparer.Ordinal);
+        var tags = FuzzyMatcher.SpecialEditionTags(text)
+            .Where(tag => tag is not ("remix" or "cover") && !tag.StartsWith("remix:", StringComparison.Ordinal))
+            .Select(Compact).ToHashSet(StringComparer.Ordinal);
         var segments = requireDecoration
             ? VersionSegmentRegex().Matches(text).Select(match => match.Groups[1].Value)
             : [text];
         foreach (var segment in segments)
         {
             tags.UnionWith(FuzzyMatcher.SemanticVersionTags(segment)
-                .Where(tag => tag != "original mix").Select(Compact));
-            foreach (System.Text.RegularExpressions.Match match in RecordingVariantRegex().Matches(segment))
-                tags.Add(Compact(match.Value));
+                .Where(tag => tag != "original mix" && !tag.StartsWith("remix:", StringComparison.Ordinal)).Select(Compact));
         }
         return tags;
     }

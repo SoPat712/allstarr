@@ -2,6 +2,8 @@ using System.Collections.Concurrent;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Routing;
+using allstarr.Core.Settings;
+using allstarr.Models.Domain;
 using allstarr.Models.Search;
 using allstarr.Models.Settings;
 using allstarr.Services.Common;
@@ -203,6 +205,82 @@ public sealed partial class ProtocolProviderGateway
             }
         }
     }
+
+    private IReadOnlyList<Song> CollapseMetadataSearchTracks(IReadOnlyList<Song> songs,
+        IReadOnlyList<string> providerOrder, EffectiveProviderPolicySnapshot? policy, ProtocolExecutionContext protocol,
+        IReadOnlyDictionary<Song, IReadOnlyList<Song>> evidence)
+    {
+        var eligible = songs.Where(song => IsAutomaticProvider(NormalizeProvider(song.ExternalProvider), policy) &&
+            SearchDuration(song) is > 0 &&
+            !FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album) &&
+            !FuzzyMatcher.HasCoverRecordingLabel(string.Join(" ", song.Title, song.Artist, song.Album)) &&
+            FuzzyMatcher.BackingRecordingTags(string.Join(" ", song.Title, song.Artist, song.Album)).Count == 0 &&
+            FuzzyMatcher.SpecialEditionTags(string.Join(" ", song.Title, song.Album)).Count == 0);
+        var replacements = new Dictionary<Song, Song>(ReferenceEqualityComparer.Instance);
+        var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
+        foreach (var group in PartitionSearchTracks(eligible, (left, right) =>
+                     MetadataSearchTracksMatch(left, right) &&
+                     evidence.GetValueOrDefault(left, [left]).All(first =>
+                         evidence.GetValueOrDefault(right, [right]).All(second =>
+                             SearchDuration(first) is > 0 && SearchDuration(second) is > 0 &&
+                             SearchDurationsCompatible(first, second)))).Where(group => group.Count > 1))
+        {
+            var chosen = ChooseDisplaySource(protocol, group, providerOrder);
+            var first = group.FirstOrDefault(song => song.CanonicalRecordingId != null) ?? group[0];
+            chosen.Id = first.Id;
+            chosen.CanonicalRecordingId = first.CanonicalRecordingId;
+            chosen.SearchRoutes = SearchRoutes(group);
+            replacements[group[0]] = chosen;
+            foreach (var song in group.Skip(1)) hidden.Add(song);
+        }
+        return songs.Where(song => !hidden.Contains(song))
+            .Select(song => replacements.GetValueOrDefault(song, song)).ToArray();
+    }
+
+    private static List<List<Song>> PartitionSearchTracks(IEnumerable<Song> songs, Func<Song, Song, bool> compatible)
+    {
+        var groups = new List<List<Song>>();
+        foreach (var song in songs)
+        {
+            var group = groups.FirstOrDefault(members => members.All(member => compatible(member, song)));
+            if (group == null) groups.Add([song]);
+            else group.Add(song);
+        }
+        return groups;
+    }
+
+    private static bool MetadataSearchTracksMatch(Song left, Song right)
+    {
+        if (NormalizeProvider(left.ExternalProvider) == NormalizeProvider(right.ExternalProvider) ||
+            !SearchDurationsCompatible(left, right) || SearchVersionKey(left) != SearchVersionKey(right)) return false;
+        if (left.CanonicalRecordingId is { } leftRecording && right.CanonicalRecordingId is { } rightRecording &&
+            leftRecording != rightRecording) return false;
+        if (NormalizeIsrc(left.Isrc) is { } leftIsrc && NormalizeIsrc(right.Isrc) is { } rightIsrc &&
+            leftIsrc != rightIsrc) return false;
+        var artist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(left.Artist).FirstOrDefault() ?? "");
+        var otherArtist = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(right.Artist).FirstOrDefault() ?? "");
+        var title = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(left.Title));
+        var otherTitle = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.StripDecorators(right.Title));
+        if (artist.Length == 0 || title.Length == 0 || artist != otherArtist || title != otherTitle) return false;
+        var album = FuzzyMatcher.NormalizeForMatching(left.Album);
+        var otherAlbum = FuzzyMatcher.NormalizeForMatching(right.Album);
+        return album.Length == 0 || otherAlbum.Length == 0 || album == otherAlbum;
+    }
+
+    private static double? SearchDuration(Song song) => song.PreciseDuration?.TotalSeconds ?? song.Duration;
+
+    private static bool SearchDurationsCompatible(Song left, Song right) =>
+        SearchDuration(left) is not > 0 || SearchDuration(right) is not > 0 ||
+        Math.Abs(SearchDuration(left)!.Value - SearchDuration(right)!.Value) <= 2;
+
+    private static string SearchVersionKey(Song song) =>
+        string.Join("|", FuzzyMatcher.SemanticVersionTags(string.Join(" ", song.Title, song.Album)).Order(StringComparer.Ordinal));
+
+    private static List<ProviderExternalResourceId> SearchRoutes(IEnumerable<Song> songs) =>
+        songs.SelectMany(song => song.SearchRoutes.Concat(
+                string.IsNullOrWhiteSpace(song.ExternalProvider) || string.IsNullOrWhiteSpace(song.ExternalId)
+                    ? [] : new[] { new ProviderExternalResourceId(NormalizeProvider(song.ExternalProvider), ProviderResourceKind.Track, song.ExternalId) }))
+            .Distinct().ToList();
 
     private static bool SearchFailed<T>(bool enabled, ProviderOutcome<ProviderPage<T>>? outcome) =>
         enabled && (outcome == null || !outcome.IsSuccess &&

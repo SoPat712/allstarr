@@ -31,6 +31,40 @@ public sealed class SearchRelevanceRankerTests
         Assert.True(FuzzyMatcher.HasCoverRecordingLabel(label) || FuzzyMatcher.BackingRecordingTags(label).Count > 0);
     }
 
+    [Theory]
+    [InlineData("Drumless Edition")]
+    [InlineData("Instrumental")]
+    [InlineData("Acapella")]
+    [InlineData("A cappella")]
+    [InlineData("Karaoke")]
+    [InlineData("Sped Up")]
+    [InlineData("Slowed + Reverb")]
+    [InlineData("8D")]
+    [InlineData("Nightcore")]
+    [InlineData("Extended Mix")]
+    [InlineData("Extended Version")]
+    [InlineData("Club Mix")]
+    [InlineData("Other Artist Remix")]
+    public void SpecialEditionsRankBelowGenuineVersionsUnlessRequested(string label)
+    {
+        var title = $"Get Lucky ({label}) (feat. Pharrell Williams and Nile Rodgers)";
+        Assert.NotEmpty(FuzzyMatcher.SemanticVersionTags(title));
+        Assert.True(SearchRelevanceRanker.Score("Get Lucky Daft Punk", "Get Lucky (Radio Edit)", "Daft Punk") >
+                    SearchRelevanceRanker.Score("Get Lucky Daft Punk", title, "Daft Punk"));
+        Assert.True(SearchRelevanceRanker.Score($"Get Lucky Daft Punk {label}", title, "Daft Punk") >
+                    SearchRelevanceRanker.Score($"Get Lucky Daft Punk {label}", "Get Lucky", "Daft Punk"));
+    }
+
+    [Theory]
+    [InlineData("Remastered")]
+    [InlineData("2013 Remaster")]
+    [InlineData("Daft Punk Remix")]
+    public void GenuineAnnotationsDoNotReceiveSpecialEditionPenalties(string label)
+    {
+        Assert.Equal(SearchRelevanceRanker.Score("Get Lucky Daft Punk", "Get Lucky", "Daft Punk"),
+            SearchRelevanceRanker.Score("Get Lucky Daft Punk", $"Get Lucky ({label})", "Daft Punk"));
+    }
+
     [Fact]
     public void OriginalAlbumVersionOutranksRadioEditUnlessRequested()
     {

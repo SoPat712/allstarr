@@ -488,35 +488,41 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
+        var evidence = new Dictionary<Song, IReadOnlyList<Song>>(ReferenceEqualityComparer.Instance);
+        foreach (var song in songs) song.SearchRoutes = SearchRoutes([song]);
         foreach (var group in automaticSongs.Where(groupBySong.ContainsKey).GroupBy(song => (
-                     Identity: groupBySong[song], Mixed: FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album))))
-        {
-            var members = group.ToArray();
-            var linked = group.Key.Identity.StartsWith("recording:", StringComparison.Ordinal);
-            var best = linked && members.Any(song => !string.IsNullOrWhiteSpace(song.AlbumId))
-                ? ChooseDisplaySource(protocol, members, providerOrder) :
-                members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
-            if (linked)
+                     Identity: groupBySong[song], Version: SearchVersionKey(song),
+                     Mixed: FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album))))
+            foreach (var members in PartitionSearchTracks(group, (left, right) => SearchDurationsCompatible(left, right)))
             {
-                var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key.Identity).Identity;
-                if (!string.IsNullOrWhiteSpace(known?.PublicId))
+                var linked = group.Key.Identity.StartsWith("recording:", StringComparison.Ordinal);
+                var best = linked && members.Any(song => !string.IsNullOrWhiteSpace(song.AlbumId))
+                    ? ChooseDisplaySource(protocol, members, providerOrder) :
+                    members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
+                if (linked)
                 {
-                    best.Id = known.PublicId;
-                    best.CanonicalRecordingId = known.CanonicalRecordingId;
+                    var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key.Identity).Identity;
+                    if (!string.IsNullOrWhiteSpace(known?.PublicId))
+                    {
+                        best.Id = known.PublicId;
+                        best.CanonicalRecordingId = known.CanonicalRecordingId;
+                    }
+                }
+                // An ISRC alone only merges across providers; same-provider duplicates (album and single,
+                // for example) stay separate rows unless an accepted link already proves they're one recording.
+                if (!linked && members.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
+                    continue;
+                best.SearchRoutes = SearchRoutes(members);
+                evidence[best] = members;
+                foreach (var song in members)
+                {
+                    if (ReferenceEquals(song, best)) continue;
+                    if (linked || NormalizeProvider(song.ExternalProvider) != NormalizeProvider(best.ExternalProvider))
+                        hidden.Add(song);
                 }
             }
-            // An ISRC alone only merges across providers; same-provider duplicates (album and single,
-            // for example) stay separate rows unless an accepted link already proves they're one recording.
-            if (!linked && members.Select(song => NormalizeProvider(song.ExternalProvider)).Distinct().Count() < 2)
-                continue;
-            foreach (var song in members)
-            {
-                if (ReferenceEquals(song, best)) continue;
-                if (linked || NormalizeProvider(song.ExternalProvider) != NormalizeProvider(best.ExternalProvider))
-                    hidden.Add(song);
-            }
-        }
-        return songs.Where(song => !hidden.Contains(song)).ToArray();
+        return CollapseMetadataSearchTracks(songs.Where(song => !hidden.Contains(song)).ToArray(),
+            providerOrder, policy, protocol, evidence);
     }
 
     private static string? NormalizeIsrc(string? isrc)
