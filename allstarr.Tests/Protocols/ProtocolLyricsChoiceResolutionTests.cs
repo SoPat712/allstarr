@@ -13,6 +13,29 @@ namespace allstarr.Tests;
 
 public sealed class ProtocolLyricsChoiceResolutionTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task SavedManualOnlyChoiceIsUsedDuringPlayback(bool personal)
+    {
+        var context = Context();
+        var recording = Guid.CreateVersion7();
+        var provider = Providers(context, true);
+        var preference = new RecordingLyricsChoice(Guid.CreateVersion7(), recording,
+            personal ? context.Principal!.UserId : null, "lrclib", 2);
+        var choices = Choices(context, recording, new(personal ? preference : null, personal ? null : preference));
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(context.Principal!.UserId, context.CancellationToken))
+            .ReturnsAsync(new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty.Add(ProviderCapabilityKind.Lyrics, ["spotify", "lrclib"]),
+                ImmutableHashSet<string>.Empty, "lossless", .07)
+            { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("lrclib", ProviderUseMode.ManualOnly) });
+        var result = await new ProtocolLyricsResolver(provider.Object, NullLogger<ProtocolLyricsResolver>.Instance,
+            effectivePolicies: policies.Object, choices: choices.Object).FindAsync(context, Song(recording), "source", "spotify", "exact");
+        Assert.Equal("lrclib", result?.Source);
+        Assert.Equal("Chosen plain words", result?.PlainLyrics);
+    }
+
     [Fact]
     public async Task HouseholdPublicationUsesHouseholdPreferenceAndPolicyWithoutPersonalNativeContent()
     {

@@ -17,11 +17,42 @@ using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using Moq;
 
 namespace allstarr.Tests;
 
 public sealed partial class PlaybackSignalPipelineTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task ScrobbleRecovery_RetriesCompletedListenAfterMetadataReturns(bool throws, bool savedJobOnly)
+    {
+        var target = new RecoveryTarget(await AddScrobbleAccountAsync());
+        await new PlaybackSignalPipeline(jobs, scrobbleAcceptance: new(factory, jobs, [target]))
+            .RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(100).Ticks));
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            (await db.Jobs.SingleAsync()).State = DurableJobState.Failed;
+            if (savedJobOnly) (await db.PlaybackDeliveryCheckpoints.SingleAsync()).SignalPayloadJson = null;
+            await db.SaveChangesAsync();
+        }
+        var unavailable = new Moq.Mock<IPlaybackTrackResolver>();
+        var lookup = unavailable.Setup(item => item.ResolveAsync(Moq.It.IsAny<PlaybackSignalPayload>(), Moq.It.IsAny<CancellationToken>()));
+        if (throws) lookup.ThrowsAsync(new HttpRequestException());
+        else lookup.ReturnsAsync((PlaybackTrackSnapshot?)null);
+        await new PlaybackScrobbleRepair(factory, jobs, unavailable.Object).RecoverPendingAsync(default);
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            Assert.Equal(ScopedPlaybackScrobbleOutcome.Retrying, (await db.PlaybackDeliveryCheckpoints.SingleAsync()).State);
+            Assert.Empty(await db.Jobs.Where(x => x.State == DurableJobState.Pending).ToArrayAsync());
+        }
+        await new PlaybackScrobbleRepair(factory, jobs, playbackTracks).RecoverPendingAsync(default);
+        await AssertRecoveredDestinationAsync(target);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -617,7 +648,7 @@ public sealed partial class PlaybackSignalPipelineTests
         await using var verify = await factory.CreateDbContextAsync();
         var queued = Assert.Single(await verify.Jobs.Where(x => x.State == DurableJobState.Pending).ToArrayAsync());
         Assert.Equal("saved", JsonSerializer.Deserialize<PlaybackSignalPayload>(queued.PayloadJson)!.PlaySessionId);
-        Assert.Contains(await verify.PlaybackDeliveryCheckpoints.ToArrayAsync(), x => x.ProviderCode == "listen-incomplete");
+        Assert.Contains(await verify.PlaybackDeliveryCheckpoints.ToArrayAsync(), x => x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.ProviderCode == "metadata-unavailable");
     }
 
     private async Task AssertRecoveredDestinationAsync(RecoveryTarget target)

@@ -284,7 +284,8 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         }
         catch (OperationCanceledException)
         {
-            return Failure<ProviderLyricsResult>(ProviderErrorKind.Canceled);
+            return Failure<ProviderLyricsResult>(cancellationToken.IsCancellationRequested
+                ? ProviderErrorKind.Canceled : ProviderErrorKind.TransientFailure);
         }
         catch (JsonException)
         {

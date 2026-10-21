@@ -39,7 +39,7 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
             .ConfigureAwait(false);
         if (!resolved.IsSuccess) return ProviderOutcome<ProviderStreamLease>.Failure(resolved.Error!);
         var value = resolved.RequireValue();
-        var media = MediaFor(value.Track.Quality);
+        var media = MediaFor(value.Source, value.Track.Quality);
         var source = value.Source;
         return ProviderOutcome<ProviderStreamLease>.Success(new(
             $"artistgrid-stream-{source.Hash}",
@@ -80,7 +80,7 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
             return ProviderOutcome<ProviderStreamProbeResult>.Success(new(
                 true,
                 _clock.GetUtcNow(),
-                MediaFor(value.Track.Quality)));
+                MediaFor(value.Source, value.Track.Quality)));
         }
         catch (OperationCanceledException) when (context.CancellationToken.IsCancellationRequested)
         {
@@ -174,8 +174,22 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
         left.AbsolutePath.Equals(right.AbsolutePath, StringComparison.Ordinal) &&
         left.Query.Equals(right.Query, StringComparison.Ordinal);
 
-    private static ProviderMediaFormat MediaFor(string? quality)
+    private static ProviderMediaFormat MediaFor(ArtistGridSource source, string? quality)
     {
+        if (source.Kind == "direct")
+        {
+            var direct = Path.GetExtension(source.Endpoint.AbsolutePath).ToLowerInvariant() switch
+            {
+                ".flac" => new ProviderMediaFormat("audio/flac", "flac", "flac"),
+                ".ogg" => new ProviderMediaFormat("audio/ogg", "ogg", "unknown"),
+                ".wav" => new ProviderMediaFormat("audio/wav", "wav", "unknown"),
+                ".aac" => new ProviderMediaFormat("audio/aac", "aac", "aac"),
+                ".m4a" or ".mp4" => new ProviderMediaFormat("audio/mp4", "mp4", "aac"),
+                ".mp3" => new ProviderMediaFormat("audio/mpeg", "mp3", "mp3"),
+                _ => null
+            };
+            if (direct != null) return direct;
+        }
         var normalized = quality?.ToLowerInvariant() ?? string.Empty;
         if (normalized.Contains("flac", StringComparison.Ordinal) ||
             normalized.Contains("lossless", StringComparison.Ordinal))

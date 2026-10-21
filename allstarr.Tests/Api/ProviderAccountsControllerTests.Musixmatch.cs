@@ -11,6 +11,28 @@ namespace allstarr.Tests;
 
 public sealed partial class ProviderAccountsControllerTests
 {
+    [Theory]
+    [InlineData("{}", "10.0.0")]
+    [InlineData("{\"userToken\":\"\"}", "10.0.0")]
+    [InlineData("{\"appVersion\":\"10.1.1\"}", "10.1.1")]
+    public async Task Musixmatch_ReplacementRetainsOmittedTokenAndAppFields(string replacement, string version)
+    {
+        var controller = Controller(Session(_userId));
+        using var initial = JsonDocument.Parse("{\"userToken\":\"saved-fixture-token\",\"appVersion\":\"10.0.0\",\"appBuild\":\"2025120901\"}");
+        Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
+        { ProviderId = "musixmatch", Secret = initial.RootElement }));
+        await using var db = await _factory.CreateDbContextAsync();
+        var account = await db.ProviderAccounts.AsNoTracking().SingleAsync();
+        using var input = JsonDocument.Parse(replacement);
+        Assert.IsType<OkObjectResult>(await controller.ReplaceSecret(account.Id, new() { Secret = input.RootElement }));
+        using var lease = await _secretStore.OpenAsync(account.SecretReferenceId!.Value,
+            new SecretAccessContext(_userId, $"provider-account:musixmatch:{account.Id:N}"));
+        using var saved = JsonDocument.Parse(lease.Value);
+        Assert.Equal("saved-fixture-token", saved.RootElement.GetProperty("userToken").GetString());
+        Assert.Equal(version, saved.RootElement.GetProperty("appVersion").GetString());
+        Assert.Equal("2025120901", saved.RootElement.GetProperty("appBuild").GetString());
+    }
+
     [Fact]
     public async Task Musixmatch_CreateEncryptsOnlyNormalizedFields()
     {

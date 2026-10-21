@@ -30,58 +30,63 @@ public sealed partial class ProtocolProviderGateway
         EffectiveProviderPolicySnapshot? effectivePolicy, ProviderAudioQuality quality)
     {
         if (identities == null || !plan.Request.Policy.AllowFallback || !plan.Request.Policy.AllowManagedDownloads) return false;
-        var provider = storedOrder.Concat(plan.Request.ProviderPriority.Where(id => id == "monochrome")).Distinct(StringComparer.Ordinal).FirstOrDefault(id => plan.Request.ProviderPriority.Contains(id, StringComparer.Ordinal) &&
+        var resolvingProviders = storedOrder.Concat(plan.Request.ProviderPriority.Where(id => id == "monochrome")).Distinct(StringComparer.Ordinal).Where(id => plan.Request.ProviderPriority.Contains(id, StringComparer.Ordinal) &&
             plan.Decision.Candidates.Any(item => item.ProviderId == id && item.ReasonCode == "verified-identity-required") &&
             registry.TryGetCapability<IProviderStreamingCapability>(id, ProviderCapabilityKind.Streaming, out var implementation) &&
             implementation is IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true });
-        if (provider == null) return false;
         var request = plan.Request;
         var policy = request.Policy;
-        var authorization = await router.PlanAsync<IProviderStreamingCapability>(new(
-            request.Capability, request.Actor,
-            new(policy.Quality, policy.ExplicitContent, policy.AllowFallback, policy.AllowSharedAccount,
-                policy.AllowManagedDownloads, [provider]),
-            request.OperationId, request.CorrelationId, request.Deadline, [provider], request.ProviderStates.Values,
-            sourceTrackId: null, idempotencyKey: request.IdempotencyKey, cancellationToken: request.CancellationToken));
-        var candidate = authorization.Candidates.SingleOrDefault();
-        if (candidate?.Implementation is not IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true }) return false;
-        var evidence = await identities.GetRecordingAvailabilityAsync(candidate.Context, ProtocolItemId(source), request.CancellationToken);
-        if (evidence == null || effectivePolicy?.Includes(evidence.ExplicitContentLyrics) == false ||
-            !Guid.TryParse(evidence.SampleId, out var recordingId)) return false;
-        var keyMaterial = JsonSerializer.Serialize(new
+        var clock = timeProvider ?? TimeProvider.System;
+        var deadline = clock.GetUtcNow().AddSeconds(10);
+        if (request.Deadline < deadline) deadline = request.Deadline;
+        foreach (var provider in resolvingProviders)
         {
-            request.Actor,
-            recordingId,
-            provider,
-            quality,
-            candidate.Context.Account?.AccountId,
-            candidate.Context.Account?.Revision,
-            policy,
-            States = request.ProviderStates.Values,
-            Order = request.ProviderPriority,
-            effectivePolicy?.PreferenceRevision,
-            effectivePolicy?.Preferences,
-            effectivePolicy?.AudioQuality
-        });
-        var key = "playback:availability:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyMaterial)));
-        var pending = availabilityLookups.GetOrAdd(key, _ => new(() => ResolveAndLinkAsync(candidate, evidence, recordingId, key)));
-        var task = pending.Value;
-        _ = task.ContinueWith(_ => availabilityLookups.TryRemove(new KeyValuePair<string, Lazy<Task<bool>>>(key, pending)),
-            CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        var resolved = await task.WaitAsync(request.CancellationToken);
-        if (resolved && applicationCache?.IsEnabled == true) await applicationCache.DeleteAsync(exactMissKey);
-        return resolved;
+            request.CancellationToken.ThrowIfCancellationRequested();
+            if (clock.GetUtcNow() >= deadline) break;
+            var authorization = await router.PlanAsync<IProviderStreamingCapability>(new(
+                request.Capability, request.Actor,
+                new(policy.Quality, policy.ExplicitContent, policy.AllowFallback, policy.AllowSharedAccount,
+                    policy.AllowManagedDownloads, [provider]),
+                request.OperationId, request.CorrelationId, request.Deadline, [provider], request.ProviderStates.Values,
+                sourceTrackId: null, idempotencyKey: request.IdempotencyKey, cancellationToken: request.CancellationToken));
+            var candidate = authorization.Candidates.SingleOrDefault();
+            if (candidate?.Implementation is not IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true }) continue;
+            var evidence = await identities.GetRecordingAvailabilityAsync(candidate.Context, ProtocolItemId(source), request.CancellationToken);
+            if (evidence == null || effectivePolicy?.Includes(evidence.ExplicitContentLyrics) == false ||
+                !Guid.TryParse(evidence.SampleId, out var recordingId)) continue;
+            var keyMaterial = JsonSerializer.Serialize(new
+            {
+                request.Actor,
+                recordingId,
+                provider,
+                quality,
+                candidate.Context.Account?.AccountId,
+                candidate.Context.Account?.Revision,
+                policy,
+                States = request.ProviderStates.Values,
+                Order = request.ProviderPriority,
+                effectivePolicy?.PreferenceRevision,
+                effectivePolicy?.Preferences,
+                effectivePolicy?.AudioQuality
+            });
+            var key = "playback:availability:" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(keyMaterial)));
+            var pending = availabilityLookups.GetOrAdd(key, _ => new(() => ResolveAndLinkAsync(candidate, evidence, recordingId, provider, key)));
+            var task = pending.Value;
+            _ = task.ContinueWith(_ => availabilityLookups.TryRemove(new KeyValuePair<string, Lazy<Task<bool>>>(key, pending)),
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            var resolved = await task.WaitAsync(request.CancellationToken);
+            if (resolved && applicationCache?.IsEnabled == true) await applicationCache.DeleteAsync(exactMissKey);
+            if (resolved) return true;
+        }
+        return false;
 
         async Task<bool> ResolveAndLinkAsync(ProviderRouteCandidate<IProviderStreamingCapability> authorized,
-            ProviderRecordingAvailabilityRequest recording, Guid id, string missKey)
+            ProviderRecordingAvailabilityRequest recording, Guid id, string provider, string missKey)
         {
             var context = authorized.Context;
             var target = new ProviderTrackIdentityTarget(provider, catalog: request.ProviderStates.GetValueOrDefault(provider)?.TrackCatalog);
             if (await identities.ResolveTargetAsync(context, id, target, context.CancellationToken) != null) return true;
             if (applicationCache?.IsEnabled == true && await applicationCache.ExistsAsync(missKey)) return false;
-            var clock = timeProvider ?? TimeProvider.System;
-            var deadline = clock.GetUtcNow().AddSeconds(10);
-            if (context.Deadline < deadline) deadline = context.Deadline;
             var remaining = deadline - clock.GetUtcNow();
             if (remaining <= TimeSpan.Zero) return false;
             using var timeout = new CancellationTokenSource(remaining, clock);

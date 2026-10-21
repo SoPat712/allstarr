@@ -747,7 +747,8 @@ public class ExtensionSandbox
         var settingsJson = isSpotiFlac ? SpotiFlacExtensionCompatibility.SettingsJson(manifestJson) : "{}";
         _engine.SetValue("_allstarrSettingsJson", settingsJson);
         _engine.SetValue("_allstarrSettingKeysJson", JsonSerializer.Serialize(
-            manifest?.Settings?.Select(item => item.Key) ?? []));
+            manifest?.Settings?.Where(item => permissions?.SettingKeys?.Contains(item.Key) == true)
+                .Select(item => item.Key) ?? []));
         _engine.Execute("var _allstarrDefaultSettings = JSON.parse(_allstarrSettingsJson); var _allstarrSettingKeys = JSON.parse(_allstarrSettingKeysJson);");
 
         _engine.Execute("var _registeredExtension = null; function registerExtension(obj) { _registeredExtension = obj; }");
@@ -899,7 +900,7 @@ public class ExtensionSandbox
     }
 
     /// <summary>Invokes an SDK v1 hook through a JSON-only boundary.</summary>
-    public string? InvokeJson(string hook, string requestJson, CancellationToken cancellationToken = default)
+    public string? InvokeJson(string hook, string requestJson, CancellationToken cancellationToken = default, string? cacheContext = null)
     {
         if (string.IsNullOrWhiteSpace(hook)) throw new ArgumentException("A hook name is required.", nameof(hook));
         if (requestJson.Length > 1024 * 1024) throw new InvalidOperationException("Extension request is too large.");
@@ -913,7 +914,7 @@ public class ExtensionSandbox
                 if (!function.IsCallable()) return null;
 
                 var prepare = _engine.GetValue("_allstarrPrepareInvocation");
-                if (hook != "cleanup" && prepare.IsCallable()) _engine.Invoke(prepare);
+                if (hook != "cleanup" && prepare.IsCallable()) _engine.Invoke(prepare, cacheContext);
 
                 var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
                 var result = _engine.Invoke(function, request);

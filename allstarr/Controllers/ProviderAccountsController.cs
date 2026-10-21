@@ -302,13 +302,13 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return NotFound();
         }
 
-        byte[] bytes;
+        var bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
         if (account.ProviderId.Equals("musixmatch", StringComparison.OrdinalIgnoreCase))
         {
-            if (!TryNormalizeProviderSecret(account.ProviderId, request.Secret, out bytes))
+            using var replacement = JsonDocument.Parse(bytes);
+            if (!TryNormalizeProviderSecret(account.ProviderId, replacement.RootElement, out bytes))
                 return BadRequest(new { error = "Enter a Musixmatch user token or Debug Info containing a valid [UserToken]." });
         }
-        else bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
         using var merged = JsonDocument.Parse(bytes);
         if (ValidateScrobbleAddress(account.ProviderId, merged.RootElement) is { } addressError)
             return BadRequest(new { error = addressError });
@@ -777,6 +777,22 @@ public sealed partial class ProviderAccountsController : ControllerBase
         JsonElement replacement,
         CancellationToken cancellationToken)
     {
+        if (account.ProviderId.Equals("musixmatch", StringComparison.OrdinalIgnoreCase) &&
+            replacement.ValueKind == JsonValueKind.Object && account.SecretReferenceId.HasValue &&
+            (!TryGetSettingValue(replacement, "userToken", ProviderOrigin.BuiltIn, out var token) || !HasValue(token)))
+        {
+            using var saved = await _secretStore.OpenAsync(account.SecretReferenceId.Value, SecretAccess(account), cancellationToken);
+            using var currentSecret = JsonDocument.Parse(saved.Value);
+            var retained = new Dictionary<string, JsonElement>(StringComparer.OrdinalIgnoreCase);
+            foreach (var field in new[] { "userToken", "appVersion", "appBuild" })
+            {
+                if (field != "userToken" && TryGetSettingValue(replacement, field, ProviderOrigin.BuiltIn, out var supplied))
+                    retained[field] = supplied.Clone();
+                else if (TryGetSettingValue(currentSecret.RootElement, field, ProviderOrigin.BuiltIn, out var existing))
+                    retained[field] = existing.Clone();
+            }
+            return JsonSerializer.SerializeToUtf8Bytes(retained);
+        }
         var (fields, origin) = AccountFields(account.ProviderId);
         if (replacement.ValueKind != JsonValueKind.Object || !account.SecretReferenceId.HasValue || fields.Count == 0)
             return Encoding.UTF8.GetBytes(replacement.GetRawText());
