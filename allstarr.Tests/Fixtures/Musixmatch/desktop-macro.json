@@ -1,0 +1,64 @@
+{
+  "message": {
+    "header": {
+      "status_code": 200
+    },
+    "body": {
+      "macro_calls": {
+        "matcher.track.get": {
+          "message": {
+            "header": {
+              "status_code": 200
+            },
+            "body": {
+              "track": {
+                "track_id": 42,
+                "track_name": "Fixture track",
+                "artist_name": "Fixture artist"
+              }
+            }
+          }
+        },
+        "track.subtitles.get": {
+          "message": {
+            "header": {
+              "status_code": 200
+            },
+            "body": {
+              "subtitle_list": [
+                {
+                  "subtitle": {
+                    "subtitle_body": "[{\"text\":\"First\",\"time\":{\"minutes\":0,\"seconds\":1,\"hundredths\":23,\"total\":1.234}},{\"text\":\"Second\",\"time\":{\"minutes\":0,\"seconds\":2,\"hundredths\":50,\"total\":2.5}}]",
+                    "subtitle_language": "en"
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "track.lyrics.get": {
+          "message": {
+            "header": {
+              "status_code": 200
+            },
+            "body": {
+              "lyrics": {
+                "lyrics_body": "Plain fallback",
+                "restricted": 0,
+                "lyrics_dmca": 0
+              }
+            }
+          }
+        },
+        "track.richsync.get": {
+          "message": {
+            "header": {
+              "status_code": 404
+            },
+            "body": []
+          }
+        }
+      }
+    }
+  }
+}

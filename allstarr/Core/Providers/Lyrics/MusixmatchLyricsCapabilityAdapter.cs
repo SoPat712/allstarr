@@ -6,6 +6,8 @@ using allstarr.Core.Music;
 using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Storage;
 using allstarr.Services.Common;
+using allstarr.Services.MusicBrainz;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace allstarr.Core.Providers.Lyrics;
 
@@ -26,6 +28,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly IApplicationCache _cache;
+    private readonly ILogger _logger;
 
     private readonly record struct RichsyncLyrics(
         string Content,
@@ -39,11 +42,13 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     public MusixmatchLyricsCapabilityAdapter(
         HttpClient http,
         IProviderAccountSecretAccessor secrets,
-        IApplicationCache cache)
+        IApplicationCache cache,
+        ILogger<MusixmatchLyricsCapabilityAdapter>? logger = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
         _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
+        _logger = logger ?? NullLogger<MusixmatchLyricsCapabilityAdapter>.Instance;
     }
 
     public string ProviderId => StableProviderId;
@@ -54,13 +59,15 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         HttpClient http,
         string userToken,
         ProviderLyricsRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ILogger? logger = null)
     {
         var result = await ReadLyricsFromTokenCoreAsync(
             http ?? throw new ArgumentNullException(nameof(http)),
             userToken,
             request ?? throw new ArgumentNullException(nameof(request)),
-            cancellationToken);
+            cancellationToken,
+            logger ?? NullLogger.Instance);
         return result.IsSuccess
             ? Project(result.RequireValue(), request)
             : result;
@@ -117,7 +124,8 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                             _http,
                             userToken,
                             request,
-                            operation.Token)
+                            operation.Token,
+                            _logger)
                         : Task.FromResult(Failure<ProviderLyricsResult>(
                             ProviderErrorKind.AccountNeedsConfiguration));
                 },
@@ -240,8 +248,12 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         HttpClient http,
         string userToken,
         ProviderLyricsRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        ILogger logger)
     {
+        int? httpStatus = null;
+        var diagnostics = new LookupDiagnostics();
+        var sent = false;
         try
         {
             if (request.ProviderTrackId.ProviderId != StableProviderId ||
@@ -257,16 +269,18 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 BuildEndpoint(request, userToken));
             httpRequest.Headers.TryAddWithoutValidation("User-Agent", DesktopUserAgent);
             httpRequest.Headers.TryAddWithoutValidation("Accept-Language", "en");
-            httpRequest.Headers.TryAddWithoutValidation("Cookie", "AWSELBCORS=0; AWSELB=0");
+            httpRequest.Headers.TryAddWithoutValidation("Cookie", "x-mxm-token-guid=");
+            httpRequest.Headers.TryAddWithoutValidation("authority", DesktopEndpoint.Host);
             httpRequest.Headers.Accept.ParseAdd("application/json");
+            sent = true;
             using var response = await http.SendAsync(
                 httpRequest,
                 HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
-            var httpStatus = (int)response.StatusCode;
+            httpStatus = (int)response.StatusCode;
             if (httpStatus == 404)
                 return Unavailable();
-            var httpError = ErrorForStatus(httpStatus, RetryAfter(response));
+            var httpError = ErrorForStatus(httpStatus.Value, RetryAfter(response));
             if (httpError != null)
                 return Failure<ProviderLyricsResult>(httpError);
 
@@ -274,7 +288,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             if (body == null)
                 return Failure<ProviderLyricsResult>(
                     ProviderError.CompatibilityContractChanged());
-            return ParseMacro(body, request);
+            return ParseMacro(body, request, diagnostics);
         }
         catch (OperationCanceledException)
         {
@@ -298,6 +312,14 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         {
             return Failure<ProviderLyricsResult>(ProviderErrorKind.TransientFailure);
         }
+        finally
+        {
+            if (sent)
+                logger.LogInformation(
+                    "Musixmatch lookup {Path}: HTTP {HttpStatus}; envelope {Envelope}; matcher.track.get {Matcher}; track.lyrics.get {Lyrics}; track.subtitles.get {Subtitles}; track.richsync.get {Richsync}",
+                    DesktopEndpoint.GetLeftPart(UriPartial.Path), httpStatus,
+                    diagnostics.Envelope, diagnostics.Matcher, diagnostics.Lyrics, diagnostics.Subtitles, diagnostics.Richsync);
+        }
     }
 
     private static Uri BuildEndpoint(
@@ -310,10 +332,12 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         {
             new("app_id", "web-desktop-app-v1.0"),
             new("format", "json"),
-            new("namespace", "lyrics_richsynced"),
+            new("namespace", "lyrics_richsynched"),
             new("optional_calls", "track.richsync"),
-            new("subtitle_format", "lrc"),
+            new("subtitle_format", "mxm"),
             new("q_artist", artist),
+            new("q_artists", artist),
+            new("q_album", request.AlbumTitle ?? string.Empty),
             new("q_track", track),
             new("usertoken", userToken),
             new("t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(
@@ -322,11 +346,15 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         if (request.DurationSeconds is > 0)
         {
             var duration = request.DurationSeconds.Value;
+            values.Add(new("q_duration", duration.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             values.Add(new(
                 "f_subtitle_length",
                 duration.ToString(System.Globalization.CultureInfo.InvariantCulture)));
             values.Add(new("f_subtitle_length_max_deviation", "3"));
         }
+
+        if (MusicBrainzService.NormalizeIsrc(request.Isrc) is { } isrc)
+            values.Add(new("q_track_isrc", isrc));
 
         var query = string.Join(
             "&",
@@ -360,16 +388,20 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     private static ProviderOutcome<ProviderLyricsResult> ParseMacro(
         string json,
-        ProviderLyricsRequest request)
+        ProviderLyricsRequest request,
+        LookupDiagnostics diagnostics)
     {
         using var document = JsonDocument.Parse(
             json,
             new JsonDocumentOptions { MaxDepth = 64 });
         var root = document.RootElement;
+        diagnostics.Read(root);
         if (!TryGetObject(root, "message", out var envelope) ||
             !TryGetStatus(envelope, out var outerStatus))
             return ContractFailure();
 
+        if (NeedsReauthentication(envelope))
+            return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsReauthentication);
         if (outerStatus == 404)
             return Unavailable();
         var outerError = ErrorForStatus(outerStatus, retryAfter: null);
@@ -378,6 +410,11 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         if (!TryGetObject(envelope, "body", out var body) ||
             !TryGetObject(body, "macro_calls", out var calls))
             return ContractFailure();
+        foreach (var call in calls.EnumerateObject())
+        {
+            if (TryGetObject(call.Value, "message", out var message) && NeedsReauthentication(message))
+                return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsReauthentication);
+        }
         if (!calls.TryGetProperty("matcher.track.get", out var matcherCall))
             return Unavailable();
 
@@ -388,6 +425,10 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         if (!TryReadTrack(matcherBody, out var metadata) ||
             !Matches(request, metadata))
             return Unavailable();
+
+        if (HasRestrictedContent(calls))
+            return ProviderOutcome<ProviderLyricsResult>.Success(new(
+                ProviderLyricsAvailabilityState.Restricted, StableProviderId));
 
         ProviderError? deferredError = null;
         var timed = ReadRichsync(calls, "track.richsync.get", out var timedError);
@@ -607,13 +648,129 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 TryGetString(subtitle, "subtitle_body", out var value) &&
                 !string.IsNullOrWhiteSpace(value))
             {
-                var lines = MusicLyrics.ParseSyncedLines(value);
-                if (lines.Count > 0 && lines.All(line => line.StartMilliseconds <= MaximumTimestampMilliseconds))
-                    return value;
+                var start = value.AsSpan().TrimStart();
+                if (start.StartsWith("[", StringComparison.Ordinal) &&
+                    start[1..].TrimStart().StartsWith("{", StringComparison.Ordinal))
+                {
+                    var rendered = ReadMxmSubtitle(value);
+                    if (rendered != null) return rendered;
+                }
+                else
+                {
+                    var lines = MusicLyrics.ParseSyncedLines(value);
+                    if (lines.Count > 0 && lines.All(line => line.StartMilliseconds <= MaximumTimestampMilliseconds))
+                        return value;
+                }
                 error = ProviderError.CompatibilityContractChanged();
             }
         }
         return null;
+    }
+
+    private static string? ReadMxmSubtitle(string value)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(value, new JsonDocumentOptions { MaxDepth = 16 });
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return null;
+            var rendered = new List<string>();
+            foreach (var line in document.RootElement.EnumerateArray())
+            {
+                if (!TryGetString(line, "text", out var text) ||
+                    text == null || text.Contains('\r') || text.Contains('\n') ||
+                    !TryGetObject(line, "time", out var time) ||
+                    !time.TryGetProperty("total", out var total) ||
+                    !TryReadSeconds(total, out var seconds))
+                    return null;
+                rendered.Add(FormatTimestamp(seconds, text));
+            }
+            return rendered.Count > 0 ? string.Join('\n', rendered) : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static bool NeedsReauthentication(JsonElement message)
+    {
+        if (TryGetStatus(message, out var status) && status is 401 or 402)
+            return true;
+        if (!TryGetObject(message, "header", out var header))
+            return false;
+        var hint = ReadString(header, "hint")?.Trim();
+        return string.Equals(hint, "renew", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(hint, "captcha", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasRestrictedContent(JsonElement calls)
+    {
+        foreach (var call in calls.EnumerateObject())
+        {
+            if (!TryGetObject(call.Value, "message", out var message) ||
+                !TryGetObject(message, "body", out var body))
+                continue;
+            if (IsRestricted(body)) return true;
+        }
+        return false;
+    }
+
+    private static bool IsRestricted(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.Array)
+            return value.EnumerateArray().Any(IsRestricted);
+        if (value.ValueKind != JsonValueKind.Object)
+            return false;
+        foreach (var property in value.EnumerateObject())
+        {
+            if (property.Name is "restricted" or "lyrics_dmca" or "subtitle_dmca" or "richsync_dmca" &&
+                (property.Value.ValueKind == JsonValueKind.True ||
+                 property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out var flag) && flag != 0))
+                return true;
+            if (IsRestricted(property.Value)) return true;
+        }
+        return false;
+    }
+
+    private sealed class LookupDiagnostics
+    {
+        public string Envelope { get; private set; } = "missing/none";
+        public string Matcher { get; private set; } = "missing/none";
+        public string Lyrics { get; private set; } = "missing/none";
+        public string Subtitles { get; private set; } = "missing/none";
+        public string Richsync { get; private set; } = "missing/none";
+
+        public void Read(JsonElement root)
+        {
+            if (!TryGetObject(root, "message", out var envelope)) return;
+            Envelope = Describe(envelope);
+            if (!TryGetObject(envelope, "body", out var body) ||
+                !TryGetObject(body, "macro_calls", out var calls)) return;
+            Matcher = DescribeCall(calls, "matcher.track.get");
+            Lyrics = DescribeCall(calls, "track.lyrics.get");
+            Subtitles = DescribeCall(calls, "track.subtitles.get");
+            Richsync = DescribeCall(calls, "track.richsync.get");
+        }
+
+        private static string DescribeCall(JsonElement calls, string name) =>
+            TryGetObject(calls, name, out var call) && TryGetObject(call, "message", out var message)
+                ? Describe(message) : "missing/none";
+
+        private static string Describe(JsonElement message)
+        {
+            var status = TryGetStatus(message, out var code)
+                ? code.ToString(System.Globalization.CultureInfo.InvariantCulture) : "missing";
+            var hint = TryGetObject(message, "header", out var header) ? ReadString(header, "hint")?.Trim() : null;
+            var safeHint = hint?.ToLowerInvariant() switch
+            {
+                null or "" => "none",
+                "renew" => "renew",
+                "captcha" => "captcha",
+                _ => "other"
+            };
+            return $"{status}/{safeHint}";
+        }
     }
 
     private static string? ReadPlain(
@@ -812,7 +969,8 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 string.Join("\u001f", request.ArtistNames),
                 request.AlbumTitle ?? string.Empty,
                 request.DurationSeconds?.ToString(
-                    System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty
+                    System.Globalization.CultureInfo.InvariantCulture) ?? string.Empty,
+                MusicBrainzService.NormalizeIsrc(request.Isrc) ?? string.Empty
             ]);
         var fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(metadata))).ToLowerInvariant();
@@ -887,8 +1045,8 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     {
         if (status is 200 or 404)
             return null;
-        if (status == 401)
-            return new(ProviderErrorKind.Unauthorized);
+        if (status is 401 or 402)
+            return new(ProviderErrorKind.AccountNeedsReauthentication);
         if (status == 403)
             return new(ProviderErrorKind.Forbidden);
         if (status == 429)
