@@ -74,7 +74,7 @@ public static class ApplicationCachePolicyRegistry
                 "negative:playback:route:v1:",
                 "negative:musicbrainz:"))
             category = ApplicationCacheCategory.NegativeResult;
-        if (key.StartsWith("playback:signal:dedupe:v1:", StringComparison.Ordinal))
+        if (StartsWithAny(key, "playback:signal:dedupe:v1:", "playback:signal:dedupe:v2:"))
             category = ApplicationCacheCategory.Coordination;
         if (StartsWithAny(
                 key,

@@ -40,6 +40,7 @@ public partial class SubsonicController : ControllerBase
     private readonly SubsonicRelayProtocolAdapter _relayProtocolAdapter;
     private readonly SubsonicSearchProtocolAdapter _searchProtocolAdapter;
     private readonly SubsonicScrobbleProtocolAdapter _scrobbleProtocolAdapter;
+    private readonly SubsonicPlaybackSessions _playbackSessions;
     private readonly SubsonicVirtualPlaylistProtocolAdapter _virtualPlaylistProtocolAdapter;
     private readonly IApplicationCache _cache;
     private readonly IMediaAssetResolver _mediaAssets;
@@ -86,7 +87,8 @@ public partial class SubsonicController : ControllerBase
         ILibraryIndexService? libraryIndex = null,
         FavoriteViewReader? favoriteViews = null,
         SubsonicPlayQueueStore? playQueues = null,
-        UpcomingSongPreparation? upcomingSongs = null)
+        UpcomingSongPreparation? upcomingSongs = null,
+        SubsonicPlaybackSessions? playbackSessions = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _libraryIndex = libraryIndex;
@@ -102,6 +104,7 @@ public partial class SubsonicController : ControllerBase
         _relayProtocolAdapter = relayProtocolAdapter;
         _searchProtocolAdapter = searchProtocolAdapter;
         _scrobbleProtocolAdapter = scrobbleProtocolAdapter;
+        _playbackSessions = playbackSessions ?? new SubsonicPlaybackSessions();
         _virtualPlaylistProtocolAdapter = virtualPlaylistProtocolAdapter;
         _cache = cache;
         _mediaAssets = mediaAssets;
@@ -1184,33 +1187,8 @@ public partial class SubsonicController : ControllerBase
     [HttpGet, HttpPost]
     [Route("rest/scrobble")]
     [Route("rest/scrobble.view")]
-    public async Task<IActionResult> Scrobble()
-    {
-        var parameters = await ExtractAllParameters();
-        var format = parameters.GetValueOrDefault("f", "xml");
-        var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/scrobble";
-        try
-        {
-            var result = await _proxyService.RelayRawAsync(
-                relayEndpoint,
-                parameters,
-                HttpContext.RequestAborted,
-                Request.Headers);
-            if ((int)result.StatusCode is >= 200 and < 300)
-            {
-                await RecordScrobbleSignalsSafelyAsync(parameters);
-            }
-            return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
-        }
-        catch (HttpRequestException ex)
-        {
-            _logger.LogError(
-                "Error connecting to Subsonic server for {Endpoint} ({ExceptionType})",
-                relayEndpoint,
-                ex.GetType().Name);
-            return _responseBuilder.CreateError(format, 0, "Error connecting to Subsonic server");
-        }
-    }
+    public async Task<IActionResult> Scrobble() =>
+        await ScrobblePlaybackAsync(await ExtractAllParameters());
 
     private async Task<IActionResult> RelayMutation(string endpoint)
     {
@@ -1252,22 +1230,6 @@ public partial class SubsonicController : ControllerBase
                      .Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.Ordinal))
         {
             await RecordFavoriteEventSafelyAsync(itemId, operation);
-        }
-    }
-
-    private async Task RecordScrobbleSignalsSafelyAsync(SubsonicRequestParameters parameters)
-    {
-        var context = CurrentProtocolContext;
-        foreach (var signal in _scrobbleProtocolAdapter.Parse(parameters, DateTimeOffset.UtcNow))
-        {
-            _upcomingSongs?.Observe(context, signal.Transition, signal.ItemId,
-                context.Client.DeviceId ?? context.Client.ClientId, null, null);
-            if (!await _playbackObservations.RecordAsync(
-                    _scrobbleProtocolAdapter.ToSignalRequest(context, signal),
-                    HttpContext.RequestAborted))
-            {
-                return;
-            }
         }
     }
 

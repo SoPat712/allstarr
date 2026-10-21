@@ -11,7 +11,7 @@ using allstarr.Services.Jellyfin;
 
 namespace allstarr.Tests;
 
-public class JellyfinSessionManagerTests
+public partial class JellyfinSessionManagerTests
 {
     [Fact]
     public async Task MarkSessionPotentiallyEnded_DoesNotAutoRemoveSession()

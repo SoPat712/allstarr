@@ -8,7 +8,8 @@ public sealed record SubsonicScrobbleSignal(
     PlaybackTransition Transition,
     DateTimeOffset ObservedAt,
     string EventKey,
-    int Index);
+    int Index,
+    bool HasSuppliedTime = false);
 
 public sealed class SubsonicScrobbleProtocolAdapter
 {
@@ -37,7 +38,8 @@ public sealed class SubsonicScrobbleProtocolAdapter
                     : PlaybackTransition.Start,
                 observedAt,
                 eventKey,
-                index));
+                index,
+                suppliedTime.HasValue));
         }
 
         return signals;

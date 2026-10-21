@@ -15,7 +15,7 @@ public readonly record struct JellyfinSessionKey(string BackendInstanceId, strin
     public override string ToString() => DeviceId;
 }
 
-public class JellyfinSessionManager : IDisposable
+public partial class JellyfinSessionManager : IDisposable
 {
     private readonly JellyfinProxyService _proxyService;
     private readonly JellyfinSettings _settings;
@@ -243,9 +243,13 @@ public class JellyfinSessionManager : IDisposable
     {
         if (_sessions.TryGetValue(key, out var session))
         {
-            session.LastPlayingItemId = itemId;
-            session.LastPlayingPositionTicks = positionTicks;
-            session.LastActivity = DateTime.UtcNow;
+            lock (session.SyncRoot)
+            {
+                if (itemId != null && itemId != session.LastPlayingItemId) session.ExternalReport = null;
+                session.LastPlayingItemId = itemId;
+                session.LastPlayingPositionTicks = positionTicks;
+                session.LastActivity = DateTime.UtcNow;
+            }
             _logger.LogDebug("🎵 SESSION: Updated playing item for {DeviceId}: {ItemId} at {Position}",
                 key, itemId, positionTicks);
         }
@@ -430,7 +434,9 @@ public class JellyfinSessionManager : IDisposable
                         ItemId = session.LastPlayingItemId,
                         PositionTicks = session.LastPlayingPositionTicks ?? 0
                     };
-                    var stopJson = JsonSerializer.Serialize(stopPayload);
+                    var stopJson = session.ExternalReport != null
+                        ? JellyfinExternalPlaybackReport.SerializeUpstream(session.ExternalReport)
+                        : JsonSerializer.Serialize(stopPayload);
                     await _proxyService.PostJsonAsync("Sessions/Playing/Stopped", stopJson, session.Headers);
                     _logger.LogInformation("🛑 SESSION: Reported playback stopped for {DeviceId} (ItemId: {ItemId}, Position: {Position})",
                         key, session.LastPlayingItemId, session.LastPlayingPositionTicks);
@@ -726,6 +732,7 @@ public class JellyfinSessionManager : IDisposable
         public DateTime LastActivity { get; set; }
         public required IHeaderDictionary Headers { get; init; }
         public ClientWebSocket? WebSocket { get; set; }
+        public System.Text.Json.Nodes.JsonObject? ExternalReport { get; set; }
         public string? LastPlayingItemId { get; set; }
         public long? LastPlayingPositionTicks { get; set; }
         public string? ClientIp { get; set; }
