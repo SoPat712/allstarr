@@ -3205,7 +3205,7 @@ public sealed partial class ProtocolRouteFixtureTests
         foreach (var response in new[] { playlist.RootElement, parentItems.RootElement })
             Assert.All(response.GetProperty("Items").EnumerateArray().Skip(1), item =>
                 Assert.EndsWith(" [A]", item.GetProperty("Name").GetString(), StringComparison.Ordinal));
-        Assert.Equal(nativeId, first.GetProperty("ParentId").GetString());
+        Assert.False(first.TryGetProperty("ParentId", out _));
         Assert.Equal("source-a", first.GetProperty("MediaSources")[0].GetProperty("Id").GetString());
         Assert.Equal(
             "every-field",
@@ -3362,18 +3362,16 @@ public sealed partial class ProtocolRouteFixtureTests
         var actual = JsonNode.Parse(
             tracks.RootElement.GetProperty("Items")[0].GetRawText())!.AsObject();
         var expected = JsonNode.Parse(originalItem)!.AsObject();
-        expected["ProviderIds"]!["AllstarrSource"] = "spotify";
-        expected["ParentId"] = virtualId;
-        expected["PlaylistItemId"] = "local-song-a";
+        expected["PlaylistItemId"] = $"{virtualId}-entry-0";
 
         Assert.True(
             JsonNode.DeepEquals(expected, actual),
             $"Expected full source DTO with playlist overlays.\nExpected: {expected}\nActual: {actual}");
         Assert.Equal("Original Track", actual["Name"]!.GetValue<string>());
-        Assert.Equal(virtualId, actual["ParentId"]!.GetValue<string>());
-        Assert.Equal("spotify", actual["ProviderIds"]!["AllstarrSource"]!.GetValue<string>());
+        Assert.Equal("original-parent", actual["ParentId"]!.GetValue<string>());
+        Assert.False(actual["ProviderIds"]!.AsObject().ContainsKey("AllstarrSource"));
         Assert.Equal("local-song-a", actual["Id"]!.GetValue<string>());
-        Assert.Equal("local-song-a", actual["PlaylistItemId"]!.GetValue<string>());
+        Assert.Equal($"{virtualId}-entry-0", actual["PlaylistItemId"]!.GetValue<string>());
         Assert.Equal("album-original", actual["AlbumId"]!.GetValue<string>());
         Assert.Equal("media-original", actual["MediaSources"]![0]!["Id"]!.GetValue<string>());
         Assert.Equal("artist-original", actual["ArtistItems"]![0]!["Id"]!.GetValue<string>());
@@ -3436,6 +3434,14 @@ public sealed partial class ProtocolRouteFixtureTests
             },
             services =>
             {
+                var virtualization = new Mock<IPlaylistVirtualizationService>();
+                virtualization.Setup(service => service.ReadAsync(It.IsAny<ProtocolExecutionContext>(),
+                        "allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0", It.IsAny<CancellationToken>()))
+                    .ReturnsAsync(new VirtualPlaylistReadModel("allstarr-vpl-0198a537719c7ea89e5a17e1f2f963f0",
+                        Guid.NewGuid(), Guid.NewGuid(), "Playlist", null, null, "spotify", "source", "revision",
+                        PlaylistLinkMode.Materialized, [], TargetPlaylistId: "backend-target"));
+                services.RemoveAll<IPlaylistVirtualizationService>();
+                services.AddSingleton(virtualization.Object);
                 services.RemoveAll<IJellyfinPlaylistMutationResolver>();
                 services.AddSingleton<IJellyfinPlaylistMutationResolver>(
                     new FixedJellyfinPlaylistMutationResolver(

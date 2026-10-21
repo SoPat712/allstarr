@@ -414,6 +414,8 @@ public sealed class VirtualPlaylistProtocolAdapterTests
                     NativeEntryJson: "{\"id\":\"native-a\",\"title\":\"Native A\",\"artistId\":\"artist-a\",\"albumId\":\"album-a\",\"coverArt\":\"cover-a\",\"provider\":\"navidrome\",\"unknownField\":\"kept-a\"}")
             ]
         };
+        typeof(VirtualPlaylistReadModel).GetProperty("BackendOwner")?.SetValue(target, "owner");
+        typeof(VirtualPlaylistReadModel).GetProperty("BackendPublic")?.SetValue(target, true);
         var adapter = new SubsonicVirtualPlaylistProtocolAdapter(
             new StubVirtualizationService(target),
             new StubMutationResolver(null));
@@ -428,7 +430,10 @@ public sealed class VirtualPlaylistProtocolAdapterTests
         var jsonResult = Assert.IsType<JsonResult>(await adapter.ReadAsync(
             Context(ProtocolKind.Subsonic), ProtocolId, "json", CancellationToken.None));
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(jsonResult.Value));
-        var entries = json.RootElement.GetProperty("subsonic-response").GetProperty("playlist").GetProperty("entry");
+        var playlist = json.RootElement.GetProperty("subsonic-response").GetProperty("playlist");
+        Assert.Equal("owner", playlist.GetProperty("owner").GetString());
+        Assert.True(playlist.GetProperty("public").GetBoolean());
+        var entries = playlist.GetProperty("entry");
         Assert.Equal(["native-b", "native-a"], entries.EnumerateArray().Select(item => item.GetProperty("id").GetString()));
         Assert.Equal("artist-b", entries[0].GetProperty("artistId").GetString());
         Assert.Equal("album-b", entries[0].GetProperty("albumId").GetString());
@@ -440,6 +445,9 @@ public sealed class VirtualPlaylistProtocolAdapterTests
             Context(ProtocolKind.Subsonic), ProtocolId, "xml", CancellationToken.None));
         var document = XDocument.Parse(xmlResult.Content!);
         var ns = document.Root!.Name.Namespace;
+        var xmlPlaylist = Assert.Single(document.Descendants(ns + "playlist"));
+        Assert.Equal("owner", xmlPlaylist.Attribute("owner")!.Value);
+        Assert.Equal("true", xmlPlaylist.Attribute("public")!.Value);
         var xmlEntries = document.Descendants(ns + "entry").ToArray();
         Assert.Equal(["native-b", "native-a"], xmlEntries.Select(item => item.Attribute("id")!.Value));
         Assert.Equal("artist-b", xmlEntries[0].Attribute("artistId")!.Value);

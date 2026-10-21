@@ -51,8 +51,9 @@ public partial class JellyfinController
         }
     }
 
-    private async Task<IActionResult> ShapeProviderQueryAsync(IEnumerable<Dictionary<string, object?>> rows,
-        string? defaultSort = null, bool deduplicate = true, bool nativeAlreadyFiltered = false, int defaultLimit = int.MaxValue)
+    private async Task<ContentResult> ShapeProviderQueryAsync(IEnumerable<Dictionary<string, object?>> rows,
+        string? defaultSort = null, bool deduplicate = true, bool nativeAlreadyFiltered = false, int defaultLimit = int.MaxValue,
+        int? totalRecordCount = null)
     {
         var items = rows.ToList();
         var context = HttpContext.RequireProtocolExecutionContext();
@@ -71,7 +72,7 @@ public partial class JellyfinController
         Func<IEnumerable<Dictionary<string, object?>>, IEnumerable<Dictionary<string, object?>>>? reconcile = deduplicate ? ReconcileQueryRows : null;
         var ordered = query.FilterAndSort(items, defaultSort, deduplicate, nativeAlreadyFiltered, reconcile);
         foreach (var item in ordered.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(item);
-        var response = _searchProtocolAdapter.ShapeItemsResponse(ordered, query.StartIndex, query.Limit);
+        var response = _searchProtocolAdapter.ShapeItemsResponse(ordered, query.StartIndex, query.Limit, totalRecordCount);
         return new ContentResult
         {
             Content = PreserveNativeQueryRows(response.Body),

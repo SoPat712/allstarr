@@ -1,3 +1,6 @@
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using allstarr.Core.Protocols;
 using allstarr.Services.Common;
 using allstarr.Services.Jellyfin;
@@ -12,6 +15,8 @@ public partial class JellyfinController
     [HttpGet("Playlists/{playlistId}", Order = 1)]
     public async Task<IActionResult> GetPlaylistDefinition(string playlistId)
     {
+        var writable = await ReadWritablePlaylistDefinitionAsync(playlistId);
+        if (writable != null) return writable;
         if (_virtualPlaylistProtocolAdapter.IsVirtualPlaylistId(playlistId))
         {
             return await _virtualPlaylistProtocolAdapter.ReadDefinitionAsync(
@@ -44,6 +49,7 @@ public partial class JellyfinController
             return new JsonResult(new
             {
                 OpenAccess = false,
+                CanEdit = false,
                 Shares = Array.Empty<object>(),
                 ItemIds = tracks.Select(track => track.Id).ToArray()
             });
@@ -123,19 +129,25 @@ public partial class JellyfinController
                 var tracks = await _providerGateway.GetPlaylistTracksAsync(
                     HttpContext.RequireProtocolExecutionContext(), provider, externalId);
 
-                // Jellyfin must see every playlist track under one synthetic album parent.
+                var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+                var fields = new JellyfinItemFields(Request.Query);
+                // Provider rows have no entry token; repeated copies use their ordinal within the same track.
                 var items = tracks.Select(track =>
                 {
+                    var ordinal = occurrences.GetValueOrDefault(track.Id);
+                    occurrences[track.Id] = ordinal + 1;
+                    var identity = JsonSerializer.Serialize(new object[] { playlistId, track.Id, ordinal });
+                    var entryId = "allstarr-entry-" + Convert.ToHexStringLower(
+                        SHA256.HashData(Encoding.UTF8.GetBytes(identity)));
                     var item = QuerySong(track);
-                    if (new JellyfinItemFields(Request.Query).Includes("ParentId"))
-                        item["ParentId"] = playlistId;
-                    item["PlaylistItemId"] = track.Id;
+                    if (fields.Includes("ParentId")) item["ParentId"] = playlistId;
+                    item["PlaylistItemId"] = entryId;
                     item["AlbumId"] = playlistId;
                     item["AlbumPrimaryImageTag"] = playlistId;
                     return item;
                 }).ToList();
 
-                return await ShapeProviderQueryAsync(items, deduplicate: false);
+                return await ShapeProviderQueryAsync(items, deduplicate: false, totalRecordCount: tracks.Count);
             }
 
             var endpoint = $"Playlists/{playlistId}/Items";

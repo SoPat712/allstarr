@@ -98,6 +98,12 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     public bool IsVirtualPlaylistId(string? value) =>
         PlaylistVirtualizationService.TryParseProtocolId(value, out _);
 
+    public async Task<string?> GetTargetPlaylistIdAsync(ProtocolExecutionContext context, string id, CancellationToken cancellationToken)
+    {
+        var playlist = await playlists.ReadAsync(context, id, cancellationToken);
+        return playlist?.Mode is PlaylistLinkMode.Materialized or PlaylistLinkMode.Hybrid ? playlist.TargetPlaylistId : null;
+    }
+
     public Task<JellyfinPlaylistMutationRoute?> ResolveMutationAsync(
         ProtocolExecutionContext context,
         string id,
@@ -145,14 +151,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
     {
         var playlist = await playlists.ReadAsync(context, id, cancellationToken);
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
-        return playlist == null
-            ? null
-            : new JsonResult(new
-            {
-                OpenAccess = false,
-                Shares = Array.Empty<object>(),
-                ItemIds = playlist.Tracks.Select(track => track.BackendItemId).ToArray()
-            });
+        return playlist == null ? null : await DefinitionAsync(context, playlist, cancellationToken);
     }
 
     public async Task<IActionResult?> ReadDefinitionBySourceAsync(
@@ -164,14 +163,27 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var playlist = await playlists.ReadBySourceAsync(
             context, sourceProviderId, sourcePlaylistId, cancellationToken);
         if (playlist != null) playlist = ExternalTrackPresentation.ApplyPreferences(playlist, context.Policy);
-        return playlist == null
-            ? null
-            : new JsonResult(new
+        return playlist == null ? null : await DefinitionAsync(context, playlist, cancellationToken);
+    }
+
+    private async Task<IActionResult> DefinitionAsync(ProtocolExecutionContext context, VirtualPlaylistReadModel playlist,
+        CancellationToken cancellationToken)
+    {
+        JsonObject definition = new() { ["OpenAccess"] = false, ["Shares"] = new JsonArray() };
+        if (playlist.Mode is PlaylistLinkMode.Materialized or PlaylistLinkMode.Hybrid &&
+            playlist.TargetPlaylistId != null && proxyService != null)
+        {
+            var (native, status) = await proxyService.GetJsonAsync($"Playlists/{Uri.EscapeDataString(playlist.TargetPlaylistId)}",
+                clientHeaders: httpContexts?.HttpContext?.Request.Headers, cancellationToken: cancellationToken);
+            using (native)
             {
-                OpenAccess = false,
-                Shares = Array.Empty<object>(),
-                ItemIds = playlist.Tracks.Select(track => track.BackendItemId).ToArray()
-            });
+                if (status is < 200 or >= 300) return new StatusCodeResult(status);
+                if (native != null && JsonNode.Parse(native.RootElement.GetRawText()) is JsonObject body && body["Shares"] is JsonArray)
+                    definition = body;
+            }
+        }
+        definition["ItemIds"] = new JsonArray(playlist.Tracks.Select(track => (JsonNode?)JsonValue.Create(track.BackendItemId)).ToArray());
+        return new JsonResult(definition);
     }
 
     public async Task<string?> GetImageSourceIdAsync(
@@ -265,7 +277,7 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         var startIndex = QueryInt(clientQuery, "StartIndex", 0);
         var limit = QueryInt(clientQuery, "Limit", int.MaxValue);
         var tracks = playlist.Tracks.Skip(startIndex).Take(limit).ToArray();
-        var originals = playlist.ProjectionMode is not (PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target) || proxyService == null
+        var originals = playlist.ProjectionMode is not (PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target)
             ? null
             : await ReadOriginalItemsAsync(context, tracks, clientHeaders, clientQuery);
         IReadOnlyDictionary<string, Song> externalSongs = responseBuilder == null
@@ -285,9 +297,13 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             JsonObject item;
             var native = false;
             if (playlist.ProjectionMode is PlaylistProjectionMode.Resolved or PlaylistProjectionMode.Target &&
-                track.RouteKind == TrackRouteKind.Local && originals != null)
+                track.RouteKind == TrackRouteKind.Local && originals != null &&
+                (proxyService != null || track.NativeEntryJson != null))
             {
-                if (!originals.TryGetValue(track.BackendItemId, out var original))
+                var original = track.NativeEntryJson == null
+                    ? originals.GetValueOrDefault(track.BackendItemId)
+                    : JsonNode.Parse(track.NativeEntryJson) as JsonObject;
+                if (original == null)
                 {
                     logger?.LogWarning(
                         "Jellyfin no longer returns matched playlist item {BackendItemId}; serving it as unresolved",
@@ -359,20 +375,22 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
                 }
             }
 
-            if (track.RouteKind == TrackRouteKind.Local &&
+            if (!native && track.RouteKind == TrackRouteKind.Local &&
                 !string.IsNullOrWhiteSpace(track.SourceProviderId))
             {
                 var providerIds = item["ProviderIds"] as JsonObject ?? [];
                 item["ProviderIds"] = providerIds;
                 providerIds["AllstarrSource"] = track.SourceProviderId;
             }
-            item["ParentId"] = responsePlaylistId;
             if (!native)
             {
+                item["ParentId"] = responsePlaylistId;
                 if (serverId != null) item["ServerId"] = serverId;
                 new JellyfinItemFields(clientQuery).Apply(item);
             }
-            item["PlaylistItemId"] = track.NativePlaylistEntryId ?? track.BackendItemId;
+            item["PlaylistItemId"] = track.NativePlaylistEntryId ??
+                (track.SourceEntryId is { } sourceEntryId ? $"allstarr-entry-{sourceEntryId:N}" :
+                    $"{playlist.ProtocolId}-entry-{track.SourcePosition}");
             return item;
         }).ToArray();
         logger?.LogInformation(
@@ -435,12 +453,16 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
         IHeaderDictionary? clientHeaders,
         IQueryCollection? clientQuery)
     {
+        var originals = new Dictionary<string, JsonObject>(StringComparer.Ordinal);
+        foreach (var track in tracks.Where(track => track.RouteKind == TrackRouteKind.Local && track.NativeEntryJson != null))
+            if (JsonNode.Parse(track.NativeEntryJson!) is JsonObject item)
+                originals.TryAdd(track.BackendItemId, item);
         var ids = tracks
-            .Where(track => track.RouteKind == TrackRouteKind.Local)
+            .Where(track => track.RouteKind == TrackRouteKind.Local && !originals.ContainsKey(track.BackendItemId))
             .Select(track => track.BackendItemId)
             .Distinct(StringComparer.Ordinal)
             .ToArray();
-        if (ids.Length == 0) return new Dictionary<string, JsonObject>();
+        if (ids.Length == 0 || proxyService == null) return originals;
 
         var batches = await Task.WhenAll(ids.Chunk(100).Select(async batch =>
         {
@@ -471,9 +493,9 @@ public sealed class JellyfinVirtualPlaylistProtocolAdapter(
             }
         }));
 
-        return batches.SelectMany(batch => batch)
-            .Where(item => item["Id"] is JsonValue)
-            .ToDictionary(item => item["Id"]!.GetValue<string>(), StringComparer.Ordinal);
+        foreach (var item in batches.SelectMany(batch => batch).Where(item => item["Id"] is JsonValue))
+            originals[item["Id"]!.GetValue<string>()] = item;
+        return originals;
     }
 
     private static void AddSourceLabels(JsonObject item, VirtualPlaylistTrack track, string? provider, ListeningPreferences? preferences)

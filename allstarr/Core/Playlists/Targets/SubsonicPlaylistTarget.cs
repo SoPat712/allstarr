@@ -167,7 +167,12 @@ public sealed class SubsonicPlaylistTarget : IBackendPlaylistTarget
         var fingerprint = BackendPlaylistSnapshot.ComputeFingerprint(id, name, members, description, artwork);
         return new(BackendPlaylistTargetStatus.Success,
             new(id, name, members, fingerprint, revision, description, artwork,
-                reportedCount, duration),
+                reportedCount, duration)
+            {
+                Owner = playlist.StringOrNull("owner"),
+                IsPublic = playlist.GetPropertyOrDefault("public").ValueKind is JsonValueKind.True or JsonValueKind.False
+                    ? playlist.GetProperty("public").GetBoolean() : null
+            },
             response.Status);
     }
 

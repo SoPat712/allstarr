@@ -121,6 +121,9 @@ public sealed record BackendPlaylistSnapshot(
     int? ReportedTrackCount = null,
     long? DurationMilliseconds = null)
 {
+    public string? Owner { get; init; }
+    public bool? IsPublic { get; init; }
+
     public static string ComputeFingerprint(
         string playlistId,
         string name,
