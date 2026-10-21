@@ -18,6 +18,26 @@ public sealed partial class RecordingKeptFilesTests
     [Theory]
     [InlineData(ProtocolKind.Jellyfin)]
     [InlineData(ProtocolKind.Subsonic)]
+    public async Task KeptDisplayMetadata_IsAlsoAvailableToStoredSongLookups(ProtocolKind protocol)
+    {
+        await Service().PublishAsync(Request() with
+        { Metadata = new KeptRecordingMetadata("Household title", ["Household artist"], "Household album", 91_234) });
+        await SetListenerBackendAsync(protocol);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        var gateway = KeptGateway(router.Object);
+        var context = PlaybackContext(protocol, other, CanonicalItemId());
+        var stored = await gateway.GetStoredSongAsync(context, "allstarr", recordingId.ToString("D"));
+        var detail = await gateway.GetSongAsync(context, "allstarr", recordingId.ToString("D"));
+        Assert.NotNull(stored);
+        Assert.Equal(detail!.Id, stored.Id);
+        Assert.Equal(detail.Title, stored.Title);
+        Assert.Equal(detail.Album, stored.Album);
+        router.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
     public async Task AccountScopedLegacySourceUsesKeptAfterSourceAccountRetirement(ProtocolKind protocol)
     {
         await using (var db = new AllstarrDbContext(database.Options))

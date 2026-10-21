@@ -63,7 +63,7 @@ public static class ApplicationCachePolicyRegistry
         if (CacheKeyBuilder.IsMediaAssetPayloadKey(key) ||
             StartsWithAny(key, "media:descriptor:v4:", "playlist:artwork-descriptor:v1:"))
             category = ApplicationCacheCategory.Artwork;
-        if (StartsWithAny(key, "lyrics:v2:", "lyrics:v3:", "lyrics:id:v2:", "lrclib:automatic:v2:"))
+        if (StartsWithAny(key, "lyrics:v2:", "lyrics:v3:", "lyrics:v4:", "lyrics:id:v2:", "lrclib:automatic:v2:"))
             category = ApplicationCacheCategory.Lyrics;
         if (StartsWithAny(
                 key,
@@ -92,6 +92,7 @@ public static class ApplicationCachePolicyRegistry
                 "odesli:url-to-spotify:v2:",
                 "odesli:translate:v2:",
                 "cross-links:v1:",
+                "protocol:metadata:v1:",
                 "jellyfin:item-type:v1:",
                 "jellyfin:item-type:v2:",
                 "backend:libraries:v1:"))

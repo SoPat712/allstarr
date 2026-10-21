@@ -71,6 +71,8 @@ public sealed partial class ProtocolProviderGateway
         var snapshot = JsonSerializer.Deserialize<SearchSnapshot>(serialized)!;
         for (var index = 0; index < snapshot.Result.Songs.Count; index++)
             snapshot.Result.Songs[index].PreciseDuration = snapshot.Durations[index];
+        await CacheSongsAsync(context, snapshot.Result.Songs);
+        await CacheResourcesAsync(context, snapshot.Result.Albums, snapshot.Result.Artists);
         return snapshot;
 
         async Task<string?> SearchAsync()
