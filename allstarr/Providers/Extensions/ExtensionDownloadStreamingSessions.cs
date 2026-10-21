@@ -62,7 +62,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
                     new Uri("https://extension-download.invalid/progressive"), clock.GetUtcNow().AddMinutes(5),
                     true, true,
                     new ProviderMediaFormat(session.Transfer.MimeType, session.Transfer.Container,
-                        session.Transfer.Container is "flac" or "mp3" ? session.Transfer.Container : "unknown", bitrate: 1337),
+                        session.Transfer.Container is "flac" or "mp3" ? session.Transfer.Container : "unknown"),
                     ProviderStreamRetryBehavior.DoNotRetry,
                     (message, token) => session.Transfer.OpenAsync(message, token));
             }

@@ -40,8 +40,18 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
         var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), config,
             managedTrackCache: cache, playbackActivity: activity, identities: identities.Object);
-        var context = Context() with { IsOriginalDownload = true, RequestedItemId = $"ext-{provider}-song-next" };
-        var result = await gateway.OpenStreamAsync(context, provider, "next", ProviderAudioQuality.Any, null);
+        var context = Context() with
+        {
+            IsOriginalDownload = true,
+            RequestedItemId = $"ext-{provider}-song-next",
+            AudioDelivery = new ProviderAudioDeliveryRequest
+            {
+                Profiles = [new(["mp3"], ["mp3"], ["http"])],
+                MaxBitrate = 64000,
+                StartTimeTicks = TimeSpan.FromSeconds(30).Ticks
+            }
+        };
+        var result = await gateway.OpenStreamAsync(context, provider, "next", context.AudioDelivery.Quality, null);
         Assert.NotNull(result);
         using var response = result.Response;
         Assert.Equal(4L, response.Content.Headers.ContentLength);
@@ -51,11 +61,68 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.False(Directory.Exists(root));
         Assert.Null(activity.StreamFor(context.Actor!.EffectiveUserId, "device", context.RequestedItemId));
         apple.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
-            It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
+            It.Is<ProviderStreamLeaseRequest>(request => request.RequestedQuality == ProviderAudioQuality.Any)), Times.Once);
         library.VerifyNoOtherCalls();
         identities.VerifyNoOtherCalls();
         router.VerifyAll();
         router.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SourceInspectionBypassesManagedPlaybackCache(bool headOnly)
+    {
+        var apple = Streaming("apple-musickit", (_, _) => Task.FromResult(AudioResponse()));
+        var registry = Registry(apple.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, apple.Object));
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Library:DownloadPath"] = root }).Build();
+        var library = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+        await using var cache = new ManagedTrackCacheService(config,
+            Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
+            library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+        using var activity = new PlaybackDeliveryActivityStore();
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), config,
+            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object);
+        var context = Context() with { IsReadOnly = true, RequestedItemId = "ext-apple-musickit-song-next" };
+
+        var result = await gateway.OpenStreamAsync(context, "apple-musickit", "next", ProviderAudioQuality.Any, null, headOnly);
+
+        Assert.NotNull(result);
+        using var response = result.Response;
+        Assert.Null(ManagedTrackCacheService.SeekRung(response.Content));
+        Assert.False(Directory.Exists(root));
+        Assert.Null(activity.StreamFor(context.Actor!.EffectiveUserId, "device", context.RequestedItemId));
+        library.VerifyNoOtherCalls();
+        identities.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AudioDeliveryRejectsIncompatibleAppleSourceBeforeCachingOrRecordingPlayback(bool preparing)
+    {
+        await using var fixture = new PreparationStreamFixture();
+        fixture.OpenResponse.TrySetResult();
+        var context = Context() with
+        {
+            IsPreparation = preparing,
+            PreparationQuality = ProviderAudioQuality.Lossy,
+            AudioDelivery = new ProviderAudioDeliveryRequest { Formats = [new(["mp3"], ["mp3"], ["http"])] }
+        };
+
+        await Assert.ThrowsAsync<ProviderAudioProfileException>(() => fixture.Gateway.OpenStreamAsync(
+            context, "apple-musickit", "next", ProviderAudioQuality.Lossy, null));
+
+        Assert.Equal(1, fixture.Fetches);
+        Assert.True(fixture.Source.Closed.Task.IsCompletedSuccessfully);
+        Assert.False(fixture.Source.Waiting.Task.IsCompleted);
+        Assert.False(Directory.Exists(fixture.Root));
     }
 
     [Theory]
@@ -147,6 +214,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     private sealed class PreparationStreamFixture : IAsyncDisposable
     {
         private readonly string root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        public string Root => root;
         public readonly TaskCompletionSource Opening = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly TaskCompletionSource OpenResponse = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public readonly PreparationSource Source = new();

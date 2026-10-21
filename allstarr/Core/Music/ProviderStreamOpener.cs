@@ -33,10 +33,15 @@ public sealed class ProviderStreamOpener(
         var selected = PreparationProviders.Contains(provider) ? provider : "unknown";
         try
         {
-            var routed = await providers.OpenStreamAsync(context, provider, id, context.PreparationQuality, null);
+            if (context.AudioDelivery?.RequestError is { } invalid) throw new ProviderAudioProfileException(invalid);
+            var quality = context.AudioDelivery?.Quality is { } requested && requested != ProviderAudioQuality.Any
+                ? requested : context.PreparationQuality;
+            var routed = await providers.OpenStreamAsync(context, provider, id, quality, null);
             if (routed == null) return;
             using var response = routed.Response;
             selected = routed.ServingProviderId;
+            if (context.AudioDelivery?.Evaluate(routed.Lease.Media) is { Supported: false } rejected)
+                throw new ProviderAudioProfileException(rejected.Error!);
             if (routed.IsCached || !PreparationProviders.Contains(selected) || !response.IsSuccessStatusCode) return;
             var servingId = routed.ServingExternalId ?? id;
             Task<allstarr.Models.Domain.Song?>? metadata = null;
@@ -61,15 +66,40 @@ public sealed class ProviderStreamOpener(
         }
     }
 
+    public async Task<ProviderAudioDeliveryDecision> InspectAsync(
+        ProtocolExecutionContext context,
+        string providerId,
+        string externalId,
+        ProviderAudioDeliveryRequest request)
+    {
+        var routed = await providers.OpenStreamAsync(context with { IsReadOnly = true, AudioDelivery = null },
+            providerId, externalId, request.Quality, null, true);
+        if (routed == null) return request.Evaluate(null);
+        using var response = routed.Response;
+        return response.IsSuccessStatusCode
+            ? request.Evaluate(routed.Lease.Media, response.Content.Headers.ContentLength)
+            : request.Evaluate(null);
+    }
+
     public async Task<IActionResult> OpenAsync(
         HttpContext http,
         ProtocolExecutionContext context,
         string providerId,
         string externalId,
-        ProviderAudioQuality quality)
+        ProviderAudioQuality quality,
+        ProviderAudioDeliveryRequest? delivery = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(context);
+        if (context.IsOriginalDownload)
+        {
+            delivery = null;
+            quality = ProviderAudioQuality.Any;
+            context = context with { AudioDelivery = null };
+        }
+        else delivery ??= context.AudioDelivery;
+        if (delivery?.RequestError is { } invalid) throw new ProviderAudioProfileException(invalid);
+        if (delivery != null) context = context with { AudioDelivery = delivery };
         var headOnly = HttpMethods.IsHead(http.Request.Method);
         var routed = await providers.OpenStreamAsync(
             context,
@@ -90,6 +120,12 @@ public sealed class ProviderStreamOpener(
             var status = (int)routed.Response.StatusCode;
             routed.Response.Dispose();
             return new StatusCodeResult(status);
+        }
+
+        if (delivery?.Evaluate(routed.Lease.Media) is { Supported: false } rejected)
+        {
+            routed.Response.Dispose();
+            throw new ProviderAudioProfileException(rejected.Error!);
         }
 
         var servingId = routed.ServingExternalId ?? externalId;

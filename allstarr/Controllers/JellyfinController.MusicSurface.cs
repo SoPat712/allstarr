@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
 using allstarr.Services.Jellyfin;
+using allstarr.Core.Protocols;
 
 namespace allstarr.Controllers;
 
@@ -133,12 +134,15 @@ public partial class JellyfinController
         // Preserve a new alias until playback records it; known recordings keep their saved ID.
         if (!song.CanonicalRecordingId.HasValue) song.Id = itemId;
 
-        var mediaSources = _responseBuilder.CreatePlaybackMediaSources(song);
+        var deliveryRequest = await ReadAudioDeliveryRequestAsync();
+        var delivery = await _streamOpener.InspectAsync(
+            HttpContext.RequireProtocolExecutionContext() with { RequestedItemId = itemId }, provider, externalId, deliveryRequest);
+        var mediaSources = _responseBuilder.CreatePlaybackMediaSources(song, delivery);
         return new JsonResult(new
         {
             MediaSources = mediaSources ?? Array.Empty<object>(),
             PlaySessionId = Guid.NewGuid().ToString("N"),
-            ErrorCode = (string?)null
+            ErrorCode = delivery.Supported ? null : "NoCompatibleStream"
         });
     }
 

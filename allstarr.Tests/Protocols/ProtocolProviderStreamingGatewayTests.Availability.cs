@@ -16,6 +16,32 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Fact]
+    public async Task PlaybackSourceInspection_DoesNotDiscoverOrPersistNewRoutes()
+    {
+        var fixture = new AvailabilityFixture("pandora");
+        Assert.Null(await fixture.Open(headOnly: true));
+        fixture.VerifyLookups(0);
+        Assert.Empty(fixture.Links);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PlaybackSourceInspection_UsesKnownDownloadMediaWithoutPreparingAnArtifact(bool known)
+    {
+        var fixture = new AvailabilityFixture("pandora") { Linked = true, ProbeMediaKnown = known };
+        var opened = await fixture.Open(headOnly: true);
+        Assert.Equal(known, opened != null);
+        if (opened != null)
+        {
+            using var response = opened.Response;
+            Assert.Equal("flac", opened.Lease.Media.Codec);
+        }
+        fixture.VerifyInspection();
+        Assert.Empty(fixture.Links);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -397,6 +423,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         public Guid RecordingId { get; } = Guid.CreateVersion7();
         public List<TrackIdentityLinkRequest> Links { get; } = [];
         public bool Linked { get; set; }
+        public bool ProbeMediaKnown { get; set; } = true;
         public long AccountRevision { get; set; } = 3;
         public int MonochromeLookups { get; private set; }
         public Func<ProviderExecutionContext, Task<ProviderOutcome<ProviderRecordingAvailability>>> MonochromeResolve { get; set; } =
@@ -426,6 +453,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(AudioResponse()));
             download.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
                 .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+            download.Setup(item => item.ProbeStreamAsync(It.Is<ProviderExecutionContext>(context => context.IsReadOnly), It.IsAny<ProviderStreamLeaseRequest>()))
+                .ReturnsAsync(() => ProviderOutcome<ProviderStreamProbeResult>.Success(new(true, DateTimeOffset.UtcNow,
+                    ProbeMediaKnown ? new("audio/flac", "flac", "flac") : null)));
             var first = Capability("qobuz", firstError is { } error
                 ? ProviderOutcome<ProviderStreamLease>.Failure(new(error)) : ProviderOutcome<ProviderStreamLease>.Success(lease));
             var streaming = new List<IProviderStreamingCapability> { first.Object, implementation ?? download.Object };
@@ -515,12 +545,18 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         }
 
         public Task<ProtocolProviderStream?> Open(string? range = null, CancellationToken cancellation = default,
-            TimeSpan? remaining = null, ProviderAudioQuality requestedQuality = ProviderAudioQuality.Lossless) =>
+            TimeSpan? remaining = null, ProviderAudioQuality requestedQuality = ProviderAudioQuality.Lossless, bool headOnly = false) =>
             gateway.OpenStreamAsync(new(protocol.Protocol, protocol.BackendInstanceId, protocol.VerifiedBackendPrincipalId,
                 protocol.Principal, protocol.CorrelationId, remaining == null ? protocol.Deadline : DateTimeOffset.UtcNow + remaining.Value,
                 cancellation, protocol.Client)
-            { Policy = protocol.Policy },
-                "allstarr", RecordingId.ToString("D"), requestedQuality, range);
+            { Policy = protocol.Policy, IsReadOnly = headOnly },
+                "allstarr", RecordingId.ToString("D"), requestedQuality, range, headOnly);
+
+        public void VerifyInspection()
+        {
+            download.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Never);
+            download.Verify(item => item.ProbeStreamAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
+        }
 
         public void VerifyLookups(int count) => download.Verify(item => item.ResolveRecordingAsync(
             It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderRecordingAvailabilityRequest>(), It.IsAny<ProviderAudioQuality>()), Times.Exactly(count));

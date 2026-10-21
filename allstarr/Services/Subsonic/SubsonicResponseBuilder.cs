@@ -4,6 +4,7 @@ using System.Text.Json;
 using allstarr.Models.Domain;
 using allstarr.Models.Subsonic;
 using allstarr.Core.Protocols;
+using allstarr.Core.Music;
 
 namespace allstarr.Services.Subsonic;
 
@@ -88,33 +89,39 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
         return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
     }
 
-    /// <summary>
-    /// OpenSubsonic transcode decision for a provider song: it always streams as-is.
-    /// The container is only known once a source is opened, so no stream details are claimed.
-    /// </summary>
-    public IActionResult CreateDirectPlayDecisionResponse(string format)
+    public IActionResult CreateTranscodeDecisionResponse(string format, ProviderAudioDeliveryDecision delivery)
     {
-        if (format == "json")
+        var decision = new Dictionary<string, object?>
         {
-            return CreateJsonResponse(new
-            {
-                status = "ok",
-                version = SubsonicVersion,
-                openSubsonic = true,
-                transcodeDecision = new { canDirectPlay = true, canTranscode = false }
-            });
+            ["canDirectPlay"] = delivery.SupportsDirectPlay,
+            ["canTranscode"] = delivery.SupportsTranscoding
+        };
+        if (delivery.Error != null) decision["errorReason"] = delivery.Error;
+        var source = new Dictionary<string, object?> { ["protocol"] = "http" };
+        if (delivery.Media is { } media)
+        {
+            source["container"] = media.Container;
+            source["codec"] = media.Codec;
+            void Fact(string key, int? value) { if (value is > 0) source[key] = value.Value; }
+            Fact("audioBitrate", media.Bitrate);
+            Fact("audioSamplerate", media.SampleRate);
+            Fact("audioBitdepth", media.BitDepth);
+            Fact("audioChannels", media.Channels);
+            decision["sourceStream"] = source;
         }
-
+        if (format == "json")
+            return CreateJsonResponse(new { status = "ok", version = SubsonicVersion, openSubsonic = true, transcodeDecision = decision });
         var ns = XNamespace.Get(SubsonicNamespace);
-        var doc = new XDocument(
-            new XElement(ns + "subsonic-response",
-                new XAttribute("status", "ok"),
-                new XAttribute("version", SubsonicVersion),
-                new XAttribute("openSubsonic", "true"),
-                new XElement(ns + "transcodeDecision",
-                    new XAttribute("canDirectPlay", "true"),
-                    new XAttribute("canTranscode", "false"))));
-        return new ContentResult { Content = doc.ToString(), ContentType = "application/xml" };
+        var element = new XElement(ns + "transcodeDecision",
+            decision.Where(pair => pair.Key != "sourceStream").Select(pair => new XAttribute(pair.Key,
+                pair.Value is bool flag ? flag ? "true" : "false" : pair.Value!)));
+        if (delivery.Media != null) element.Add(new XElement(ns + "sourceStream", source.Select(pair => new XAttribute(pair.Key, pair.Value!))));
+        return new ContentResult
+        {
+            Content = new XDocument(new XElement(ns + "subsonic-response", new XAttribute("status", "ok"),
+                new XAttribute("version", SubsonicVersion), new XAttribute("openSubsonic", "true"), element)).ToString(),
+            ContentType = "application/xml"
+        };
     }
 
     public IActionResult CreateSongResponse(string format, Song song)

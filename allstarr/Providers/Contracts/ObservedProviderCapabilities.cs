@@ -72,6 +72,7 @@ public static class ObservedProviderCapabilities
         private void Observe(ProviderExecutionContext context, ProviderError? error, long started,
             ProviderCapabilityKind? observedCapability)
         {
+            if (context.IsReadOnly) return;
             try
             {
                 observer.Observe(context, observedCapability ?? Capability, error, Stopwatch.GetElapsedTime(started));

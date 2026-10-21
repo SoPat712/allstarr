@@ -1405,7 +1405,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData(true, "GET", "")]
     [InlineData(false, "POST", "&Fields=Genres")]
     [InlineData(true, "POST", "&Fields=Genres")]
-    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateStreamWithUnknownContainer(bool knownRecording, string method, string fields)
+    public async Task JellyfinApplePlaybackInfo_AdvertisesInspectedSourceWithoutTranscoding(bool knownRecording, string method, string fields)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetSongAsync(
@@ -1425,6 +1425,11 @@ public sealed partial class ProtocolRouteFixtureTests
                 Duration = 180,
                 IsLocal = false
             });
+        gateway.Setup(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "applemusic", "6768469976",
+                ProviderAudioQuality.Any, null, true))
+            .ReturnsAsync(() => new ProtocolProviderStream(new HttpResponseMessage(HttpStatusCode.OK),
+                new ProviderStreamLease("fixture", new Uri("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
+                    true, true, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry), "applemusic", "6768469976"));
         using var factory = new ProtocolFactory(
             "Jellyfin",
             request => request.RequestUri!.AbsolutePath == "/Users/Me"
@@ -1445,13 +1450,12 @@ public sealed partial class ProtocolRouteFixtureTests
         using var document = JsonDocument.Parse(responseBody);
         var source = document.RootElement.GetProperty("MediaSources")[0];
 
-        Assert.True(!source.TryGetProperty("Container", out var container) || container.ValueKind == JsonValueKind.Null);
+        Assert.Equal("flac", source.GetProperty("Container").GetString());
         Assert.Equal(
-            knownRecording ? "/Audio/ext-deezer-first/stream?static=true" : "/Audio/ext-applemusic-song-6768469976/stream?static=true",
+            knownRecording ? "/Audio/ext-deezer-first/stream.flac?static=true&AudioCodec=flac" : "/Audio/ext-applemusic-song-6768469976/stream.flac?static=true&AudioCodec=flac",
             source.GetProperty("DirectStreamUrl").GetString());
-        Assert.Equal(
-            knownRecording ? "/Audio/ext-deezer-first/universal?container=flac&audioCodec=flac" : "/Audio/ext-applemusic-song-6768469976/universal?container=flac&audioCodec=flac",
-            source.GetProperty("TranscodingUrl").GetString());
+        Assert.False(source.TryGetProperty("TranscodingUrl", out _));
+        Assert.False(source.GetProperty("SupportsTranscoding").GetBoolean());
         Assert.False(source.GetProperty("RequiresOpening").GetBoolean());
         Assert.True(source.GetProperty("SupportsDirectStream").GetBoolean());
         gateway.VerifyAll();

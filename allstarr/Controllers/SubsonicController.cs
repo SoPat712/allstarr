@@ -244,8 +244,7 @@ public partial class SubsonicController : ControllerBase
             return await _proxyService.RelayStreamAsync(parameters, HttpContext.RequestAborted);
         }
 
-        var requestedQuality = StreamQualityHelper.FromSubsonicMaxBitRate(
-            parameters.GetValueOrDefault("maxBitRate"));
+        var delivery = ProviderAudioDeliveryRequests.Subsonic(parameters);
         try
         {
             return await _streamOpener.OpenAsync(
@@ -253,7 +252,12 @@ public partial class SubsonicController : ControllerBase
                 CurrentProtocolContext with { RequestedItemId = id },
                 provider!,
                 externalId!,
-                requestedQuality);
+                delivery.Quality,
+                delivery);
+        }
+        catch (ProviderAudioProfileException ex)
+        {
+            return _responseBuilder.CreateError(format, 0, ex.Message);
         }
         catch (Exception ex)
         {
@@ -545,7 +549,7 @@ public partial class SubsonicController : ControllerBase
         var parameters = await ExtractAllParameters();
         var format = parameters.GetValueOrDefault("f", "xml");
         var mediaId = parameters.GetValueOrDefault("mediaId", "");
-        var (isExternal, _, _) = _localLibraryService.ParseSongId(mediaId);
+        var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(mediaId);
         if (isExternal && _libraryIndex != null &&
             await _libraryIndex.ResolveKnownTrackAsync(CurrentProtocolContext, mediaId, HttpContext.RequestAborted) is { } nativeId)
         {
@@ -555,7 +559,9 @@ public partial class SubsonicController : ControllerBase
 
         if (isExternal)
         {
-            return _responseBuilder.CreateDirectPlayDecisionResponse(format);
+            var delivery = await _streamOpener.InspectAsync(CurrentProtocolContext with { RequestedItemId = mediaId },
+                provider!, externalId!, ProviderAudioDeliveryRequests.Subsonic(parameters, decision: true));
+            return _responseBuilder.CreateTranscodeDecisionResponse(format, delivery);
         }
 
         var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getTranscodeDecision";

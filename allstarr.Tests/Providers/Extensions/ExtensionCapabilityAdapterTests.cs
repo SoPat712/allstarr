@@ -2214,7 +2214,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var lease = outcome.RequireValue();
             Assert.True(lease.SupportsByteRanges);
             Assert.True(lease.SupportsSeeking);
-            Assert.Equal(1337, lease.Media.Bitrate);
+            Assert.Null(lease.Media.Bitrate);
             using (var request = new HttpRequestMessage(head ? HttpMethod.Head : HttpMethod.Get, lease.ProtectedSourceUri))
             {
                 if (range != null) request.Headers.Range = System.Net.Http.Headers.RangeHeaderValue.Parse(range);

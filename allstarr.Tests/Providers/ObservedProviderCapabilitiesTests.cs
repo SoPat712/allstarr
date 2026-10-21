@@ -22,6 +22,24 @@ public sealed class ObservedProviderCapabilitiesTests
         Assert.Equal(downloadBacked, wrapped is IProviderDownloadStreamingCapability);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadOnlyStreamInspection_DoesNotPersistHealthObservations(bool available)
+    {
+        var context = Context() with { IsReadOnly = true };
+        var request = new ProviderStreamLeaseRequest(TrackId());
+        var capability = Capability<IProviderStreamingCapability>(ProviderCapabilityKind.Streaming);
+        capability.Setup(item => item.ProbeStreamAsync(context, request))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamProbeResult>.Success(new(available, DateTimeOffset.UtcNow)));
+        var observer = new RecordingObserver();
+        var wrapped = ObservedProviderCapabilities.Wrap(capability.Object, observer);
+
+        Assert.Equal(available, (await wrapped.ProbeStreamAsync(context, request)).RequireValue().Available);
+        Assert.Empty(observer.Observations);
+        capability.Verify(item => item.ProbeStreamAsync(context, request), Times.Once);
+    }
+
     [Fact]
     public async Task Metadata_ForwardsExactArgumentsAndReturnsOriginalOutcome()
     {

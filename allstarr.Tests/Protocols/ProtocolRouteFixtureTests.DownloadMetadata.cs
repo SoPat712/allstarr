@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
 using allstarr.Services.Jellyfin;
@@ -19,8 +20,16 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         var tracks = new[] { DownloadTrack("42", 1), DownloadTrack("43", 2), DownloadTrack("44", 2) };
         foreach (var song in tracks)
+        {
             gateway.Setup(item => item.GetSongAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", song.ExternalId!))
                 .ReturnsAsync(song);
+            if (surface == "playback")
+                gateway.Setup(item => item.OpenStreamAsync(It.Is<ProtocolExecutionContext>(context => context.IsReadOnly),
+                        "deezer", song.ExternalId!, ProviderAudioQuality.Any, null, true))
+                    .ReturnsAsync(() => new ProtocolProviderStream(new HttpResponseMessage(HttpStatusCode.OK),
+                        new ProviderStreamLease("fixture", new Uri("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
+                            true, true, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry), "deezer", song.ExternalId));
+        }
         using var factory = DownloadFactory("Jellyfin", gateway.Object);
         using var client = factory.CreateClient();
         var paths = new List<string>();
@@ -41,9 +50,10 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("Default", source.Type);
             Assert.Equal(song.Id, source.Id);
             Assert.False(string.IsNullOrWhiteSpace(source.Name));
-            Assert.Null(source.Container);
+            Assert.Equal(surface == "playback" ? "flac" : null, source.Container);
             Assert.False(string.IsNullOrWhiteSpace(source.Path));
-            Assert.DoesNotContain(".flac", source.Path, StringComparison.OrdinalIgnoreCase);
+            if (surface == "playback") Assert.Contains($"/Audio/{song.Id}/stream.flac", source.Path);
+            else Assert.DoesNotContain(".flac", source.Path, StringComparison.OrdinalIgnoreCase);
             Assert.Contains("Same", source.Name);
             // Finamp chooses the default source name and appends only the first eight ID characters.
             var fileName = Regex.Replace(source.Name!, "[/\\\\?<>:*|.\"]", "_") + "_" + song.Id[..8];

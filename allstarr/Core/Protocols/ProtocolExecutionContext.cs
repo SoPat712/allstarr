@@ -127,6 +127,10 @@ public sealed record ProtocolExecutionContext
 
     public bool IsOriginalDownload { get; init; }
 
+    public bool IsReadOnly { get; init; }
+
+    public allstarr.Core.Music.ProviderAudioDeliveryRequest? AudioDelivery { get; init; }
+
     public ProviderActorContext RequireActor() => Actor ?? throw new UnauthorizedAccessException(
         "The verified backend principal is not linked to an Allstarr user.");
 
