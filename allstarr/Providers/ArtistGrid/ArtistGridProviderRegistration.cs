@@ -12,12 +12,7 @@ public static class ArtistGridProviderRegistration
                 client.Timeout = TimeSpan.FromSeconds(30);
             })
             .RemoveAllLoggers()
-            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
-            {
-                AllowAutoRedirect = false,
-                UseCookies = false,
-                UseDefaultCredentials = false
-            });
+            .ConfigurePrimaryHttpMessageHandler(ArtistGridHttpTransport.CreateHandler);
         services.TryAddSingleton<ArtistGridCatalog>(provider => new(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(ArtistGridConstants.HttpClientName)));
         services.TryAddSingleton<ArtistGridMetadataCapabilityAdapter>();
@@ -65,6 +60,7 @@ public static class ArtistGridProviderRegistration
                     new Uri("https://api.pillows.su/"),
                     new Uri("https://pixeldrain.com/"),
                     new Uri("https://drive.google.com/"),
+                    new Uri("https://music.froste.lol/"),
                     new Uri("https://fuck-unvaulted.artistgrid.cx/")
                 ],
                 cache: true))

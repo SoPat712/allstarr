@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Providers.ArtistGrid;
 
@@ -8,6 +9,217 @@ namespace allstarr.Tests.Providers;
 
 public sealed class ArtistGridProviderTests
 {
+    [Theory]
+    [InlineData("https://pillows.su/f/song.mp3", "https://api.pillows.su/api/download/song.mp3")]
+    [InlineData("https://drive.google.com/file/d/song.mp3", "https://fuck-unvaulted.artistgrid.cx/gd/song.mp3")]
+    [InlineData("https://music.froste.lol/song/abc012", "https://music.froste.lol/song/abc012/download")]
+    [InlineData("https://music.froste.lol/song/abc012/download", "https://music.froste.lol/song/abc012/download")]
+    [InlineData("https://files.example/song.flac", "https://files.example/song.flac")]
+    [InlineData("https://files.example/song.MP3?token=fixture", "https://files.example/song.MP3?token=fixture")]
+    [InlineData("https://files.example/song.m4a", "https://files.example/song.m4a")]
+    [InlineData("https://files.example/song.aac", "https://files.example/song.aac")]
+    [InlineData("https://files.example/song.wav", "https://files.example/song.wav")]
+    [InlineData("https://files.example/song.ogg", "https://files.example/song.ogg")]
+    public async Task StreamFactory_ResolvesAudioLinksAndPreservesRangesAndHeadFallback(string url, string endpoint)
+    {
+        var requests = new List<(HttpMethod Method, string? Range)>();
+        using var client = SourceClient(url, request =>
+        {
+            Assert.Equal(endpoint, request.RequestUri!.AbsoluteUri);
+            Assert.Null(request.Headers.Authorization);
+            Assert.Null(request.Headers.Referrer);
+            Assert.False(request.Headers.Contains("Cookie"));
+            requests.Add((request.Method, request.Headers.Range?.ToString()));
+            if (request.Method == HttpMethod.Head) return new(HttpStatusCode.MethodNotAllowed);
+            var response = Response("audio", null, "audio/flac");
+            response.StatusCode = HttpStatusCode.PartialContent;
+            return response;
+        });
+        var streaming = new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client);
+        var lease = (await streaming.GetStreamLeaseAsync(Context(), new(SourceId(url)))).RequireValue();
+        Assert.Equal(endpoint, lease.ProtectedSourceUri!.AbsoluteUri);
+        using var outbound = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        outbound.Headers.Range = new RangeHeaderValue(0, 3);
+        outbound.Headers.Authorization = new AuthenticationHeaderValue("Bearer", "fixture");
+        outbound.Headers.Add("Cookie", "fixture=value");
+        using var response = await lease.ProtectedResponseFactory!(outbound, CancellationToken.None);
+        Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
+        Assert.True((await streaming.ProbeStreamAsync(Context(), new(SourceId(url)))).RequireValue().Available);
+        Assert.Equal(new[] { (HttpMethod.Get, (string?)"bytes=0-3"), (HttpMethod.Head, (string?)null),
+            (HttpMethod.Get, (string?)null) }, requests);
+    }
+
+    [Theory]
+    [InlineData("http://files.example/song.mp3")]
+    [InlineData("https://127.0.0.1/song.mp3")]
+    [InlineData("https://8.8.8.8/song.mp3")]
+    [InlineData("https://[::1]/song.mp3")]
+    [InlineData("https://100.64.0.1/song.mp3")]
+    [InlineData("https://localhost/song.mp3")]
+    [InlineData("https://music.local/song.mp3")]
+    [InlineData("https://intranet/song.mp3")]
+    [InlineData("https://files.example:8443/song.mp3")]
+    [InlineData("https://user@files.example/song.mp3")]
+    [InlineData("https://files.example/song.mp4")]
+    [InlineData("https://files.example/song.opus")]
+    [InlineData("https://files.example/song.mp3.html")]
+    [InlineData("https://files.example/page?name=song.mp3")]
+    [InlineData("https://files.example/page")]
+    [InlineData("https://music.froste.lol.evil.example/song/abc012")]
+    [InlineData("https://music.froste.lol:8443/song/abc012")]
+    [InlineData("https://user@music.froste.lol/song/abc012")]
+    [InlineData("https://music.froste.lol/song/not-hex")]
+    [InlineData("https://music.froste.lol/song/ABC012")]
+    [InlineData("https://music.froste.lol/song/abc012/other")]
+    public async Task Search_RejectsUnsafeOrUnsupportedAudioLinks(string url)
+    {
+        using var client = SourceClient(url, _ => throw new InvalidOperationException("Unexpected media request."));
+        var result = await Metadata(client).SearchTracksAsync(Context(), new("Artist Song", new(20)));
+        Assert.Empty(result.RequireValue().Items);
+        var lease = await new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client)
+            .GetStreamLeaseAsync(Context(), new(SourceId(url)));
+        Assert.False(lease.IsSuccess);
+        Assert.Equal(ProviderErrorKind.NotFound, lease.Error!.Kind);
+    }
+
+    [Theory]
+    [InlineData("https://music.froste.lol/song/abc012", "/media/song.flac", true)]
+    [InlineData("https://files.example/song.mp3", "/media/song.mp3?fixture=1", true)]
+    [InlineData("https://music.froste.lol/song/abc012", "https://files.example/song.mp3", false)]
+    [InlineData("https://music.froste.lol/song/abc012", "https://music.froste.lol.evil.example/file", false)]
+    [InlineData("https://music.froste.lol/song/abc012", "http://music.froste.lol/file", false)]
+    [InlineData("https://music.froste.lol/song/abc012", "https://music.froste.lol:8443/file", false)]
+    [InlineData("https://music.froste.lol/song/abc012", "https://user@music.froste.lol/file", false)]
+    [InlineData("https://files.example/song.mp3", "https://other.example/song.mp3", false)]
+    [InlineData("https://files.example/song.mp3", "https://127.0.0.1/song.mp3", false)]
+    public async Task StreamFactory_RestrictsAudioRedirectsToTheOriginalHost(string url, string target, bool allowed)
+    {
+        var calls = 0;
+        using var client = SourceClient(url, request =>
+        {
+            calls++;
+            Assert.Equal(new Uri(url).Host, request.RequestUri!.Host);
+            Assert.Equal("bytes=1-3", request.Headers.Range?.ToString());
+            if (calls > 1) return Response("audio", null, "application/octet-stream");
+            var redirect = new HttpResponseMessage(HttpStatusCode.Redirect);
+            redirect.Headers.Location = new Uri(target, UriKind.RelativeOrAbsolute);
+            return redirect;
+        });
+        var lease = (await new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client)
+            .GetStreamLeaseAsync(Context(), new(SourceId(url)))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        request.Headers.Range = new RangeHeaderValue(1, 3);
+        if (allowed)
+        {
+            using var response = await lease.ProtectedResponseFactory!(request, CancellationToken.None);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(2, calls);
+        }
+        else
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(() => lease.ProtectedResponseFactory!(request, CancellationToken.None));
+            Assert.Equal(1, calls);
+        }
+    }
+
+    [Theory]
+    [InlineData("text/html")]
+    [InlineData("application/xhtml+xml")]
+    [InlineData("application/json")]
+    [InlineData(null)]
+    public async Task StreamFactory_RejectsNonAudioContent(string? mediaType)
+    {
+        using var client = SourceClient("https://files.example/song.mp3", _ =>
+        {
+            var response = Response("<html>fixture</html>", null, "text/html");
+            response.Content.Headers.ContentType = mediaType == null ? null : new(mediaType);
+            return response;
+        });
+        var streaming = new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client);
+        var id = SourceId("https://files.example/song.mp3");
+        var lease = (await streaming.GetStreamLeaseAsync(Context(), new(id))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        await Assert.ThrowsAsync<HttpRequestException>(() => lease.ProtectedResponseFactory!(request, CancellationToken.None));
+        Assert.False((await streaming.ProbeStreamAsync(Context(), new(id))).IsSuccess);
+    }
+
+    [Fact]
+    public async Task StreamFactory_RejectsOversizedAudio()
+    {
+        const string url = "https://music.froste.lol/song/abc012";
+        using var client = SourceClient(url, _ =>
+        {
+            var response = Response("audio", null, "audio/mpeg");
+            response.Content.Headers.ContentLength = 2L * 1024 * 1024 * 1024;
+            return response;
+        });
+        var lease = (await new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client)
+            .GetStreamLeaseAsync(Context(), new(SourceId(url)))).RequireValue();
+        using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
+        await Assert.ThrowsAsync<HttpRequestException>(() => lease.ProtectedResponseFactory!(request, CancellationToken.None));
+    }
+
+    [Theory]
+    [InlineData("10.0.0.1")]
+    [InlineData("127.0.0.1")]
+    [InlineData("169.254.169.254")]
+    [InlineData("172.16.0.1")]
+    [InlineData("192.168.0.1")]
+    [InlineData("100.64.0.1")]
+    [InlineData("::1")]
+    [InlineData("fc00::1")]
+    [InlineData("fe80::1")]
+    [InlineData("::ffff:10.0.0.1")]
+    public async Task Transport_RejectsPrivateDnsAnswersBeforeConnecting(string address)
+    {
+        var connected = false;
+        await Assert.ThrowsAsync<HttpRequestException>(async () => await ArtistGridHttpTransport.ConnectAsync(
+            "files.example", 443, CancellationToken.None,
+            (_, _) => Task.FromResult(new[] { IPAddress.Parse("8.8.8.8"), IPAddress.Parse(address) }),
+            (_, _, _) => { connected = true; return ValueTask.FromResult<Stream>(new MemoryStream()); }));
+        Assert.False(connected);
+    }
+
+    [Fact]
+    public async Task Transport_ConnectsToValidatedDnsAnswerWithoutResolvingAgain()
+    {
+        var resolutions = 0;
+        using var stream = await ArtistGridHttpTransport.ConnectAsync("files.example", 443, CancellationToken.None,
+            (host, _) =>
+            {
+                Assert.Equal("files.example", host);
+                resolutions++;
+                return Task.FromResult(new[] { IPAddress.Parse("8.8.8.8") });
+            },
+            (address, port, _) =>
+            {
+                Assert.Equal(IPAddress.Parse("8.8.8.8"), address);
+                Assert.Equal(443, port);
+                return ValueTask.FromResult<Stream>(new MemoryStream());
+            });
+        Assert.Equal(1, resolutions);
+    }
+
+    [Fact]
+    public async Task AudioContent_BoundsUnknownLengthBodiesAndDisposesTheSource()
+    {
+        var stream = new MemoryStream(Encoding.UTF8.GetBytes("12345"));
+        using (var content = new ArtistGridAudioContent(new UnknownLengthContent(stream), 4))
+        {
+            await Assert.ThrowsAsync<HttpRequestException>(() => content.ReadAsByteArrayAsync());
+        }
+        Assert.False(stream.CanRead);
+    }
+
+    [Fact]
+    public async Task Transport_RejectsEmptyDnsAnswers()
+    {
+        await Assert.ThrowsAsync<HttpRequestException>(async () => await ArtistGridHttpTransport.ConnectAsync(
+            "files.example", 443, CancellationToken.None,
+            (_, _) => Task.FromResult(Array.Empty<IPAddress>()),
+            (_, _, _) => throw new InvalidOperationException("Unexpected connection.")));
+    }
+
     [Fact]
     public async Task SearchPreservesVersionLabelsAndUsesTheTrackerArtistRatherThanMaintainerCredits()
     {
@@ -250,6 +462,22 @@ public sealed class ArtistGridProviderTests
             Assert.Equal(ProviderAccountRequirement.None, capability.AccountRequirement));
     }
 
+    private static ProviderExternalResourceId SourceId(string url) => new("artistgrid", ProviderResourceKind.Track,
+        ArtistGridConstantsForTests.TrackId("artist", "g-1", url));
+
+    private static HttpClient SourceClient(string url, Func<HttpRequestMessage, HttpResponseMessage> media) =>
+        Client(request => request.RequestUri!.Host switch
+        {
+            "artists.artistgrid.cx" => Response(Csv("Artist", "artist"), null, "text/csv"),
+            "trackerapi.artistgrid.cx" => Response(JsonSerializer.Serialize(new
+            {
+                name = "Artist",
+                tab = new { name = "Album", gid = "g-1" },
+                tracks = new[] { new { name = new { title = "Song" }, available_length = "Full", links = new[] { new { url } } } }
+            }), null, "application/json"),
+            _ => media(request)
+        });
+
     private static ArtistGridMetadataCapabilityAdapter Metadata(HttpClient client, TimeProvider? clock = null)
     {
         var catalog = new ArtistGridCatalog(client, clock);
@@ -311,6 +539,18 @@ public sealed class ArtistGridProviderTests
         };
         if (reverseLinks) Array.Reverse(links);
         return $"{{\"name\":{{\"raw\":\"{title}\",\"title\":\"{title}\",\"credits\":[\"Artist\"]}},\"track_length\":\"3:43\",\"available_length\":\"Full\",\"links\":[{string.Join(',', links)}],\"quality\":\"mp3\"}}";
+    }
+
+    private sealed class UnknownLengthContent(Stream stream) : HttpContent
+    {
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override Task SerializeToStreamAsync(Stream target, TransportContext? context) => stream.CopyToAsync(target);
+        protected override Task<Stream> CreateContentReadStreamAsync() => Task.FromResult(stream);
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) stream.Dispose();
+            base.Dispose(disposing);
+        }
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) : HttpMessageHandler

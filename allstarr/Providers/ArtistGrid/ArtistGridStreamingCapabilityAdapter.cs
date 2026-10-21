@@ -107,6 +107,8 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
             original.Method != HttpMethod.Get && original.Method != HttpMethod.Head)
             throw new HttpRequestException("The provider stream request is invalid.");
 
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var method = original.Method;
         var range = original.Headers.Range;
         var current = source.Endpoint;
@@ -120,7 +122,7 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
             using var request = new HttpRequestMessage(method, safeUri);
             if (method == HttpMethod.Get && range != null) request.Headers.Range = range;
             var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken).ConfigureAwait(false);
+                timeout.Token).ConfigureAwait(false);
             if (IsRedirect(response.StatusCode))
             {
                 if (redirect >= MaximumRedirectHops || response.Headers.Location == null)
@@ -147,6 +149,20 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
                 continue;
             }
 
+            if (response.IsSuccessStatusCode && source.Kind is "froste" or "direct")
+            {
+                var mediaType = response.Content.Headers.ContentType?.MediaType;
+                if (mediaType == null ||
+                    !mediaType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase) &&
+                    !mediaType.Equals("application/octet-stream", StringComparison.OrdinalIgnoreCase) ||
+                    response.Content.Headers.ContentLength > ArtistGridAudioContent.MaximumBytes ||
+                    response.Content.Headers.ContentRange?.Length > ArtistGridAudioContent.MaximumBytes)
+                {
+                    response.Dispose();
+                    throw new HttpRequestException("The provider did not return a supported audio file.");
+                }
+                if (method == HttpMethod.Get) response.Content = new ArtistGridAudioContent(response.Content);
+            }
             return response;
         }
     }
