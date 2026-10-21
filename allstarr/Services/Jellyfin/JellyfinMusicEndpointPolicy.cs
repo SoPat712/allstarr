@@ -221,11 +221,19 @@ public static class JellyfinMusicEndpointPolicy
                     segments[2].Equals("lyrics", StringComparison.OrdinalIgnoreCase));
         }
 
+        if (segments[0].Equals("audio", StringComparison.OrdinalIgnoreCase) && segments.Length == 5 &&
+            segments[2].Equals("hls", StringComparison.OrdinalIgnoreCase))
+        {
+            return isSong && isRead && segments[3].Length == 32 && segments[3].All(Uri.IsHexDigit) &&
+                   segments[4] is "init.mp4" or "0.mp4";
+        }
+
         if (segments[0].Equals("audio", StringComparison.OrdinalIgnoreCase) && segments.Length == 3)
         {
             return isSong && (segments[2].StartsWith("stream", StringComparison.OrdinalIgnoreCase)
                 ? isRead
-                : segments[2].Equals("universal", StringComparison.OrdinalIgnoreCase)
+                : segments[2].Equals("universal", StringComparison.OrdinalIgnoreCase) ||
+                  segments[2].Equals("main.m3u8", StringComparison.OrdinalIgnoreCase)
                     ? isRead
                     : segments[2].Equals("lyrics", StringComparison.OrdinalIgnoreCase) && isGet);
         }

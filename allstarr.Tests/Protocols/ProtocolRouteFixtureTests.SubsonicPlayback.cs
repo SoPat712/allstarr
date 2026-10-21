@@ -299,6 +299,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var response = await client.GetAsync(SubsonicPlaybackUrl("getNowPlaying", format));
         var body = await response.Content.ReadAsStringAsync();
         Assert.Contains("ext-deezer-song-42", body);
+        var entry = Assert.Single(ReadSongCollection(body, format, "nowPlaying", "entry"));
+        SubsonicSongMediaContractTests.AssertSparseMedia(entry);
         if (format == "json")
         {
             using var document = System.Text.Json.JsonDocument.Parse(body);

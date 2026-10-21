@@ -313,6 +313,9 @@ public sealed class ProtocolSupportMatrixTests
                 .EnumerateArray().Select(value => value.GetString()!).Order().ToArray(),
             onlyIn12);
 
+        var synthesizedSupported = qualification.RootElement.GetProperty("synthesizedSupportedOperations")
+            .EnumerateArray().Select(value => value.GetString()!).ToHashSet(StringComparer.Ordinal);
+        Assert.All(synthesizedSupported, operationId => Assert.Contains(operationId, onlyIn10));
         foreach (var operation in operations10)
         {
             var context = new DefaultHttpContext();
@@ -332,8 +335,8 @@ public sealed class ProtocolSupportMatrixTests
             var synthesizedContext = new DefaultHttpContext();
             synthesizedContext.Request.Method = operation.Method;
             synthesizedContext.Request.Path = SynthesizedOperationPath(operation.Path, synthesizedId);
-            Assert.False(JellyfinMusicEndpointPolicy.SupportsSynthesizedItemRoute(
-                synthesizedContext.Request, synthesizedId));
+            Assert.Equal(synthesizedSupported.Contains(operation.Id),
+                JellyfinMusicEndpointPolicy.SupportsSynthesizedItemRoute(synthesizedContext.Request, synthesizedId));
         }
 
         Assert.Equal(

@@ -467,6 +467,14 @@ public sealed partial class ProtocolRouteFixtureTests
         ReadQueue(string response, string format, string name)
     {
         AssertQueueOk(response, format);
+        foreach (var song in ReadSongCollection(response, format, name, "entry")
+            .Where(song => song["id"]?.StartsWith("ext-", StringComparison.Ordinal) == true))
+        {
+            Assert.Equal("audio/flac", song["contentType"]);
+            Assert.Equal("flac", song["suffix"]);
+            Assert.False(song.ContainsKey("bitRate"));
+            Assert.False(song.ContainsKey("size"));
+        }
         var currentName = name == "playQueue" ? "current" : "currentIndex";
         if (format == "json")
         {

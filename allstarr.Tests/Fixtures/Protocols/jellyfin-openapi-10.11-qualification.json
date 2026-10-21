@@ -6,6 +6,7 @@
     "defaultAccess": "Denied",
     "baseline": "jellyfin-openapi-qualification.json"
   },
+  "synthesizedSupportedOperations": ["GetVariantHlsAudioPlaylist"],
   "versionOnlyOperations": {
     "allowed": {
       "Music": [
@@ -58,6 +59,7 @@
     "The complete 10.11.11 operation set is evaluated against the same deny-by-default music policy as 12.0.0.",
     "Deprecated PlayingItems reports are accepted only after the referenced native item is verified as music; synthesized IDs remain denied.",
     "Legacy local audio HLS routes are type-checked and relayed. Video HLS and active-encoding control remain denied.",
+    "External audio main playlists and their scoped snapshot segments are implemented; other synthesized HLS routes remain denied.",
     "Playlist create, definition, update, membership, reorder, sharing, instant-mix, and item deletion route shapes are the same in 10.11.11 and 12.0.0."
   ],
   "liveEvidence": {
