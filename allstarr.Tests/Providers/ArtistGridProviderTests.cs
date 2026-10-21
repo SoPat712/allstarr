@@ -10,6 +10,24 @@ namespace allstarr.Tests.Providers;
 public sealed class ArtistGridProviderTests
 {
     [Theory]
+    [InlineData("ogg", "audio/ogg", "ogg", "unknown")]
+    [InlineData("flac", "audio/flac", "flac", "flac")]
+    [InlineData("wav", "audio/wav", "wav", "unknown")]
+    [InlineData("aac", "audio/aac", "aac", "aac")]
+    [InlineData("m4a", "audio/mp4", "mp4", "aac")]
+    [InlineData("MP3", "audio/mpeg", "mp3", "mp3")]
+    public async Task DirectAudioWithoutQualityPreservesMediaFormat(string extension, string mime, string container, string codec)
+    {
+        var url = $"https://files.example/song.{extension}?fixture=1";
+        using var client = SourceClient(url, _ => Response("audio", null, mime));
+        var streaming = new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client);
+        var lease = (await streaming.GetStreamLeaseAsync(Context(), new(SourceId(url)))).RequireValue();
+        Assert.Equal(new ProviderMediaFormat(mime, container, codec), lease.Media);
+        var probe = (await streaming.ProbeStreamAsync(Context(), new(SourceId(url)))).RequireValue();
+        Assert.Equal(lease.Media, probe.Media);
+    }
+
+    [Theory]
     [InlineData("https://pillows.su/f/song.mp3", "https://api.pillows.su/api/download/song.mp3")]
     [InlineData("https://drive.google.com/file/d/song.mp3", "https://fuck-unvaulted.artistgrid.cx/gd/song.mp3")]
     [InlineData("https://music.froste.lol/song/abc012", "https://music.froste.lol/song/abc012/download")]

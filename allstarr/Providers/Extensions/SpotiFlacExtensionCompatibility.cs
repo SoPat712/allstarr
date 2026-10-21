@@ -577,8 +577,8 @@ public static class SpotiFlacExtensionCompatibility
           _allstarrInitializedSettings = fingerprint;
           return result;
         }
-        function _allstarrPrepareInvocation() {
-          if (!_spotiflacExtension || typeof _spotiflacExtension.initialize !== 'function') return;
+        var _sfTrackContext = null;
+        function _allstarrPrepareInvocation(accountContext) {
           var settings = {};
           var defaults = _allstarrDefaultSettings || {};
           for (var defaultKey in defaults) if (Object.prototype.hasOwnProperty.call(defaults, defaultKey)) settings[defaultKey] = defaults[defaultKey];
@@ -589,7 +589,14 @@ public static class SpotiFlacExtensionCompatibility
             try { settings[keys[i]] = JSON.parse(String(value)); }
             catch (_) { settings[keys[i]] = String(value); }
           }
-          _allstarrInitialize(settings);
+          var context = JSON.stringify([accountContext, settings]);
+          if (context !== _sfTrackContext) {
+            _sfTrackCache = Object.create(null); _sfRawTrackCache = Object.create(null);
+            _sfEnrichedTracks = Object.create(null); _sfTrackCacheOrder = [];
+            if (_sfTrackContext !== null || accountContext != null) _allstarrInitializedSettings = null;
+            _sfTrackContext = context;
+          }
+          if (_spotiflacExtension && typeof _spotiflacExtension.initialize === 'function') _allstarrInitialize(settings);
         }
         function _sfArray(value) {
           if (Array.isArray(value)) return value;

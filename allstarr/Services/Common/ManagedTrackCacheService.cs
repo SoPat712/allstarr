@@ -74,6 +74,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 "aac" => "audio/aac",
                 "opus" => "audio/opus",
                 "ogg" => "audio/ogg",
+                "wav" => "audio/wav",
                 _ => "audio/mpeg"
             };
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(file) };
@@ -470,6 +471,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             "flac" => ".flac",
             "m4a" or "mp4" or "alac" => ".m4a",
             "aac" => ".aac",
+            "wav" => ".wav",
             "opus" => ".opus",
             "ogg" or "vorbis" => ".ogg",
             _ => media.MimeType.Contains("flac", StringComparison.OrdinalIgnoreCase) ? ".flac" : ".mp3"

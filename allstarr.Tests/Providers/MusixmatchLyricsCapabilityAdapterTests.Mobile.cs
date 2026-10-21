@@ -10,6 +10,24 @@ namespace allstarr.Tests;
 
 public sealed partial class MusixmatchLyricsCapabilityAdapterTests
 {
+    [Fact]
+    public async Task RequestTimeoutWithLiveCallerReturnsTransientFailure()
+    {
+        using var http = new HttpClient(new SlowLookupHandler());
+        var adapter = new MusixmatchLyricsCapabilityAdapter(http, new FixtureSecretAccessor(), new TestMemoryApplicationCache());
+        var result = await adapter.FetchLyricsAsync(Context(deadline: DateTimeOffset.UtcNow.AddMinutes(1)), LyricsRequest());
+        Assert.Equal(ProviderErrorKind.TransientFailure, result.Error?.Kind);
+    }
+
+    private sealed class SlowLookupHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            throw new InvalidOperationException();
+        }
+    }
+
     private const string TokenPayload = """{"message":{"header":{"status_code":200},"body":{"user_token":"automatic-fixture-token"}}}""";
 
     [Fact]

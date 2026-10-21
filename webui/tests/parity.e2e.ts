@@ -7213,6 +7213,63 @@ async function mockTry(page: Page, requests: Record<string, unknown>[] = []) {
   await page.route("**/api/admin/providers/try/media/**", (route) => route.fulfill({ status: 204 }));
 }
 
+test("Source test panel Find chips support keyboard selection and one tab stop", async ({ page }) => {
+  await mockApi(page);
+  const requests: Record<string, unknown>[] = [];
+  await mockTry(page, requests);
+  await page.goto("#/integrations/accounts");
+  await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+  await page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" })
+    .getByRole("button", { name: "Open Metadata tests" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
+  const group = dialog.getByRole("radiogroup", { name: "Find" });
+  const songs = group.getByRole("radio", { name: "Songs", exact: true });
+  await expect(songs).toHaveAttribute("tabindex", "0");
+  await expect(group.locator('[role="radio"][tabindex="0"]')).toHaveCount(1);
+  await songs.focus();
+  for (const [key, label] of [
+    ["ArrowRight", "Albums"], ["ArrowDown", "Artists"], ["ArrowLeft", "Albums"],
+    ["ArrowUp", "Songs"], ["ArrowUp", "ISRC"], ["ArrowDown", "Songs"],
+    ["End", "ISRC"], ["Home", "Songs"], ["End", "ISRC"], ["ArrowLeft", "Song ID"],
+  ]) {
+    await page.keyboard.press(key);
+    const selected = group.getByRole("radio", { name: label, exact: true });
+    await expect(selected).toBeFocused();
+    await expect(selected).toHaveAttribute("aria-checked", "true");
+    await expect(selected).toHaveAttribute("tabindex", "0");
+    await expect(group.locator('[role="radio"][tabindex="0"]')).toHaveCount(1);
+    await expect(group.locator('[role="radio"][aria-checked="true"]')).toHaveCount(1);
+  }
+  await dialog.getByRole("searchbox", { name: "Lumen Audio song ID" }).fill("fixture-track");
+  await dialog.getByRole("button", { name: "Look up", exact: true }).click();
+  await expect.poll(() => requests.at(-1)).toMatchObject({ operation: "track", id: "fixture-track" });
+});
+
+for (const choice of ["track", "isrc", "albums"]) {
+  test(`Source test panel selects its only Find operation: ${choice}`, async ({ page }) => {
+    await mockApi(page);
+    const requests: Record<string, unknown>[] = [];
+    await mockTry(page, requests);
+    await page.route("**/api/admin/providers/lumen-audio/try**", route => {
+      if (route.request().method() !== "GET") return route.fallback();
+      return route.fulfill({ json: { ...tryCatalog, capabilities: [{ capability: "metadata", accountRequirement: "required",
+        operations: choice === "albums" ? [{ id: "search", kinds: ["albums"], inputs: ["query", "kind"] }] : [{ id: choice, inputs: [choice === "track" ? "id" : "isrc"] }],
+      }] } });
+    });
+    await page.goto("#/integrations/accounts");
+    await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+    await page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" })
+      .getByRole("button", { name: "Open Metadata tests" }).click();
+    const dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
+    await expect(dialog.getByRole("radiogroup", { name: "Find" })).toHaveCount(0);
+    await dialog.getByRole("searchbox").fill("fixture");
+    await dialog.getByRole("searchbox").press("Enter");
+    await expect.poll(() => requests.at(-1)).toMatchObject(choice === "albums"
+      ? { operation: "search", query: "fixture", kind: "albums" }
+      : choice === "track" ? { operation: "track", id: "fixture" } : { operation: "isrc", isrc: "FIXTURE" });
+  });
+}
+
 test("Source test panel searches one source and sends a result to lyrics, playback and download", async ({ page }) => {
   await mockApi(page);
   const requests: Record<string, unknown>[] = [];

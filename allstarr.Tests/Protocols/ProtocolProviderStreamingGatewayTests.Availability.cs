@@ -19,6 +19,63 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task RecordingAvailability_EarlierMissDoesNotStarveMonochrome(bool transient)
+    {
+        var fixture = new AvailabilityFixture("pandora,monochrome", includeMonochrome: true);
+        fixture.Resolve = _ => Task.FromResult(transient
+            ? ProviderOutcome<ProviderRecordingAvailability>.Failure(new(ProviderErrorKind.TransientFailure))
+            : ProviderOutcome<ProviderRecordingAvailability>.Success(new(null)));
+        fixture.MonochromeResolve = _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Failure(new(ProviderErrorKind.TransientFailure)));
+        Assert.Null(await fixture.Open());
+        Assert.Equal(1, fixture.MonochromeLookups);
+        fixture.MonochromeResolve = _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(
+            new(new("monochrome", ProviderResourceKind.Track, "target-track"))));
+        var stream = await fixture.Open();
+        Assert.NotNull(stream);
+        Assert.Equal("monochrome", stream.ServingProviderId);
+        stream.Response.Dispose();
+        fixture.VerifyLookups(1);
+        Assert.Equal(2, fixture.MonochromeLookups);
+    }
+
+    [Fact]
+    public async Task RecordingAvailability_EarlierFailureReachesWorkingMonochrome()
+    {
+        var fixture = new AvailabilityFixture("pandora,monochrome", includeMonochrome: true);
+        fixture.Resolve = _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Failure(new(ProviderErrorKind.TransientFailure)));
+        var stream = await fixture.Open();
+        Assert.NotNull(stream);
+        Assert.Equal("monochrome", stream.ServingProviderId);
+        stream.Response.Dispose();
+        fixture.VerifyLookups(1);
+        Assert.Equal(1, fixture.MonochromeLookups);
+    }
+
+    [Fact]
+    public async Task RecordingAvailability_MultipleSourcesShareOneLookupDeadline()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var fixture = new AvailabilityFixture("pandora,monochrome", clock: clock, includeMonochrome: true);
+        DateTimeOffset? deadline = null;
+        fixture.Resolve = context =>
+        {
+            deadline = context.Deadline;
+            clock.Advance(TimeSpan.FromSeconds(4));
+            return Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(null)));
+        };
+        fixture.MonochromeResolve = context =>
+        {
+            Assert.Equal(deadline, context.Deadline);
+            Assert.Equal(TimeSpan.FromSeconds(6), context.Deadline - clock.GetUtcNow());
+            return Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(null)));
+        };
+        Assert.Null(await fixture.Open());
+        Assert.Equal(1, fixture.MonochromeLookups);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task RecordingAvailability_SearchExtensionResolvesOnlyWithinStreamingOrder(bool inOrder)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-playback-availability", Guid.NewGuid().ToString("N"));
@@ -341,12 +398,15 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         public List<TrackIdentityLinkRequest> Links { get; } = [];
         public bool Linked { get; set; }
         public long AccountRevision { get; set; } = 3;
+        public int MonochromeLookups { get; private set; }
+        public Func<ProviderExecutionContext, Task<ProviderOutcome<ProviderRecordingAvailability>>> MonochromeResolve { get; set; } =
+            _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(new("monochrome", ProviderResourceKind.Track, "target-track"))));
         public Func<ProviderExecutionContext, Task<ProviderOutcome<ProviderRecordingAvailability>>> Resolve { get; set; } =
             _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(new("pandora", ProviderResourceKind.Track, "target-track"))));
 
         public AvailabilityFixture(string order, bool verifiedFirst = false, bool accountBound = false,
             string? restriction = null, bool conflict = false, ProviderErrorKind? firstError = null, bool explicitDenied = false, string? effectiveOrder = null, TimeProvider? clock = null,
-            IProviderDownloadStreamingCapability? implementation = null, string providerId = "pandora")
+            IProviderDownloadStreamingCapability? implementation = null, string providerId = "pandora", bool includeMonochrome = false)
         {
             var provider = implementation?.ProviderId ?? providerId;
             download.SetupGet(item => item.ProviderId).Returns(provider);
@@ -368,7 +428,25 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
                 .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
             var first = Capability("qobuz", firstError is { } error
                 ? ProviderOutcome<ProviderStreamLease>.Failure(new(error)) : ProviderOutcome<ProviderStreamLease>.Success(lease));
-            var registry = new ProviderRegistry(new IProviderStreamingCapability[] { first.Object, implementation ?? download.Object }.Select(capability =>
+            var streaming = new List<IProviderStreamingCapability> { first.Object, implementation ?? download.Object };
+            if (includeMonochrome)
+            {
+                var monochrome = new Mock<IProviderDownloadStreamingCapability>();
+                monochrome.SetupGet(item => item.ProviderId).Returns("monochrome");
+                monochrome.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+                monochrome.SetupGet(item => item.SupportsRecordingAvailability).Returns(true);
+                monochrome.Setup(item => item.ResolveRecordingAsync(It.IsAny<ProviderExecutionContext>(),
+                        It.IsAny<ProviderRecordingAvailabilityRequest>(), It.IsAny<ProviderAudioQuality>()))
+                    .Returns((ProviderExecutionContext context, ProviderRecordingAvailabilityRequest _, ProviderAudioQuality _) =>
+                    {
+                        MonochromeLookups++;
+                        return MonochromeResolve(context);
+                    });
+                monochrome.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+                    .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+                streaming.Add(monochrome.Object);
+            }
+            var registry = new ProviderRegistry(streaming.Select(capability =>
                 new ProviderRegistration(new ProviderDescriptor(capability.ProviderId, capability.ProviderId, "Test provider",
                     ProviderOrigin.BuiltIn, "1", "1",
                     [new ProviderCapabilityDescriptor(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
@@ -380,7 +458,8 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             identities.Setup(item => item.ResolveTargetAsync(It.IsAny<ProviderExecutionContext>(), RecordingId,
                     It.IsAny<ProviderTrackIdentityTarget>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync((ProviderExecutionContext context, Guid _, ProviderTrackIdentityTarget target, CancellationToken _) =>
-                    target.ProviderId == provider && Linked || target.ProviderId == "qobuz" && verifiedFirst
+                    (target.ProviderId == provider && Linked && (!includeMonochrome || Links.Any(x => x.ExternalId.ProviderId == provider))) ||
+                    target.ProviderId == "monochrome" && Links.Any(x => x.ExternalId.ProviderId == "monochrome") || target.ProviderId == "qobuz" && verifiedFirst
                         ? new(RecordingId, Guid.CreateVersion7(), new(target.ProviderId, ProviderResourceKind.Track, "target-track"),
                             context.Account == null ? ProviderIdentityScope.Catalog : ProviderIdentityScope.Account,
                             context.Account?.AccountId, ProviderIdentityVerification.Verified, "availability", 1) : null);

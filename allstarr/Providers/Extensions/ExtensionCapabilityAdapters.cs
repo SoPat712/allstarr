@@ -59,7 +59,8 @@ public abstract class ExtensionCapabilityAdapterBase
                 using var invocationScope = openInvocationScope?.Invoke();
                 context.CancellationToken.ThrowIfCancellationRequested();
                 if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure<T>(ProviderErrorKind.CapabilityUnavailable);
-                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken);
+                var cacheContext = context.Account == null ? null : JsonSerializer.Serialize(new { context.Account.AccountId, context.Account.Revision });
+                var json = _sandbox.InvokeJson(hook, JsonSerializer.Serialize(request, JsonOptions), context.CancellationToken, cacheContext);
                 if (json == null) return Failure<T>(ProviderErrorKind.NotSupported);
                 using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 32 });
                 return ProviderOutcome<T>.Success(map(document.RootElement));

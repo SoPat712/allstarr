@@ -60,6 +60,12 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
              body.Trim().Equals("error code: 1020", StringComparison.OrdinalIgnoreCase));
     }
 
+    private static async Task<bool> InspectOwnedResponseAsync(HttpResponseMessage response, CancellationToken token)
+    {
+        try { return await IsChallengeAsync(response, token); }
+        catch { response.Dispose(); throw; }
+    }
+
     internal async Task<HttpResponseMessage> SendAsync(HttpRequestMessage original,
         Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> send, CancellationToken token)
     {
@@ -71,7 +77,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
             BodyResponse(original, previous) is { } cached) return cached;
         using var first = Copy(original, previous, configured.Url);
         var response = await send(first, token);
-        if (!await IsChallengeAsync(response, token)) return response;
+        if (!await InspectOwnedResponseAsync(response, token)) return response;
         response.Dispose();
         if (previous != null && first.Headers.Contains("Cookie")) previous.CookiesRejected = true;
         if (!enabled) throw new CloudflareChallengeException();
@@ -87,7 +93,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
                 {
                     using var sharedRetry = Copy(original, solution, configured.Url);
                     response = await send(sharedRetry, token);
-                    if (!await IsChallengeAsync(response, token)) return response;
+                    if (!await InspectOwnedResponseAsync(response, token)) return response;
                     response.Dispose();
                     solution.CookiesRejected = true;
                 }
@@ -110,7 +116,7 @@ public sealed class CloudflareChallengeSolver(HttpClient http,
                 {
                     using var retry = Copy(original, solution, configured.Url);
                     response = await send(retry, token);
-                    diagnostic.RetryRechallenged = await IsChallengeAsync(response, token);
+                    diagnostic.RetryRechallenged = await InspectOwnedResponseAsync(response, token);
                     if (diagnostic.RetryRechallenged == false)
                     {
                         state.RetryAfter = default;

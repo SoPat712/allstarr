@@ -3,6 +3,7 @@ using System.Text.Json;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
 using allstarr.Core.Extensions;
+using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -169,6 +170,106 @@ public sealed partial class ExtensionCapabilityAdapterTests
     }
 
     [Theory]
+    [InlineData("account", false)]
+    [InlineData("account", true)]
+    [InlineData("revision", false)]
+    [InlineData("revision", true)]
+    [InlineData("anonymous", false)]
+    [InlineData("anonymous", true)]
+    [InlineData("selected", false)]
+    [InlineData("selected", true)]
+    public async Task TrackEnrichment_InvalidatesCachedTracksWhenAccountContextChanges(string change, bool enrichFirst)
+    {
+        const string script = """
+            var reads = 0, enrichments = 0;
+            function track() { reads++; return {id:'track-1',name:'Song '+reads,artists:'Artist'}; }
+            registerExtension({
+              searchTracks:function(){return {tracks:[track()]};},
+              getTrack:function(){return track();},
+              enrichTrack:function(value){enrichments++;return Object.assign({},value,{label:'Pass '+enrichments});}
+            });
+            """;
+        var (sandbox, manifest) = CompatibilitySandbox(script);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+        var original = Context(manifest.Id);
+        var account = new ProviderAccountContext(Guid.CreateVersion7(), manifest.Id, ProviderAccountScope.Personal, 1,
+            ownerUserId: original.Actor.EffectiveUserId);
+        ProviderExecutionContext WithAccount(ProviderAccountContext? selected) => new(original.Actor, manifest.Id, selected,
+            original.Policy, "metadata", "fixture", original.Deadline, default);
+        var first = WithAccount(change == "selected" ? null : account);
+        var next = WithAccount(change switch
+        {
+            "account" => new ProviderAccountContext(Guid.CreateVersion7(), manifest.Id, ProviderAccountScope.Personal, 1,
+                ownerUserId: original.Actor.EffectiveUserId),
+            "revision" => new ProviderAccountContext(account.AccountId, manifest.Id, ProviderAccountScope.Personal, 2,
+                ownerUserId: original.Actor.EffectiveUserId),
+            "anonymous" => null,
+            _ => account
+        });
+        var request = new ProviderTrackLookupRequest(new(manifest.Id, ProviderResourceKind.Track, "track-1"));
+        Assert.Equal("Song 1", Assert.Single((await adapter.SearchTracksAsync(first, new("Song", new()))).RequireValue().Items).Title);
+        if (enrichFirst)
+        {
+            Assert.Equal("Pass 1", (await adapter.GetTrackAsync(first, request)).RequireValue().Label);
+            Assert.Equal("Pass 1", (await adapter.GetTrackAsync(first, request)).RequireValue().Label);
+        }
+
+        var detail = (await adapter.GetTrackAsync(next, request)).RequireValue();
+
+        Assert.Equal("Song 2", detail.Title);
+        Assert.Equal(enrichFirst ? "Pass 2" : "Pass 1", detail.Label);
+        var repeated = Assert.Single((await adapter.SearchTracksAsync(next, new("Song", new()))).RequireValue().Items);
+        Assert.Equal(detail.Title, repeated.Title);
+        Assert.Equal(detail.Label, repeated.Label);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task TrackEnrichment_InvalidatesCachedTracksWhenSettingsChange(bool initialize, bool enrichFirst)
+    {
+        const string source = """
+            {"name":"fixture","version":"1.0.0","type":["metadata_provider"],
+             "settings":[{"key":"region","type":"string","default":"first"}]}
+            """;
+        var initializeHook = initialize ? "initialize:function(settings){region=settings.region;}," : "";
+        var regionValue = initialize ? "region" : "host.SettingGet('region')";
+        var script = $$"""
+            var region = '', reads = 0;
+            function selectedRegion() { return {{regionValue}}; }
+            function track() { reads++; return {id:'track-1',name:selectedRegion()+' '+reads,artists:'Artist'}; }
+            registerExtension({
+              {{initializeHook}}
+              searchTracks:function(){return {tracks:[track()]};},
+              getTrack:function(){return track();},
+              enrichTrack:function(value){return Object.assign({},value,{label:selectedRegion()});}
+            });
+            """;
+        var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+        var manifest = ExtensionSdkV1.ParseManifest(normalized);
+        var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script, new HttpClientFactory(), NullLogger.Instance,
+            ExtensionRuntimePermissionSet.None with { SettingKeys = new HashSet<string>(["region"]) });
+        var settings = new CompatibilitySettingsAccessor();
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest, settings);
+        var context = Context(manifest.Id, includeAccount: true);
+        var request = new ProviderTrackLookupRequest(new(manifest.Id, ProviderResourceKind.Track, "track-1"));
+        Assert.Equal("first 1", Assert.Single((await adapter.SearchTracksAsync(context, new("Song", new()))).RequireValue().Items).Title);
+        if (enrichFirst)
+            Assert.Equal("first", (await adapter.GetTrackAsync(context, request)).RequireValue().Label);
+        settings.Region = "second";
+
+        var detail = (await adapter.GetTrackAsync(context, request)).RequireValue();
+
+        Assert.Equal("second 2", detail.Title);
+        Assert.Equal("second", detail.Label);
+        var repeated = Assert.Single((await adapter.SearchTracksAsync(context, new("Song", new()))).RequireValue().Items);
+        Assert.Equal(detail.Title, repeated.Title);
+        Assert.Equal(detail.Label, repeated.Label);
+    }
+
+    [Theory]
     [InlineData("throw new Error('unavailable');")]
     [InlineData("return null;")]
     [InlineData("return {id:'other-track',name:'Wrong',artists:'Other'};")]
@@ -239,5 +340,13 @@ public sealed partial class ExtensionCapabilityAdapterTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("metadata unavailable") });
+    }
+
+    private sealed class CompatibilitySettingsAccessor : allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor
+    {
+        public string Region { get; set; } = "first";
+
+        public Task<T> UseAsync<T>(ProviderAccountContext account, Func<ReadOnlyMemory<byte>, Task<T>> operation,
+            CancellationToken cancellationToken) => operation(JsonSerializer.SerializeToUtf8Bytes(new { region = Region }));
     }
 }

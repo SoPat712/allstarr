@@ -22,6 +22,47 @@ namespace allstarr.Tests;
 public sealed partial class ManagedTrackCacheServiceTests
 {
     [Theory]
+    [InlineData("audio/ogg", "ogg", "unknown", ".ogg")]
+    [InlineData("audio/flac", "flac", "flac", ".flac")]
+    [InlineData("audio/wav", "wav", "unknown", ".wav")]
+    [InlineData("audio/aac", "aac", "aac", ".aac")]
+    public async Task CompletedDirectAudio_PreservesCacheMediaAndExtension(string mime, string container, string codec, string extension)
+    {
+        var root = CreateRoot();
+        try
+        {
+            string? registeredPath = null;
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(item => item.GetLocalPathForExternalSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), "artistgrid", "track-1"))
+                .ReturnsAsync(() => registeredPath);
+            local.Setup(item => item.RegisterDownloadedSongAsync(
+                    It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => registeredPath = path)
+                .Returns(Task.CompletedTask);
+            await using var service = CreateService(root, "Cache", local.Object);
+            var bytes = "fixture-audio"u8.ToArray();
+            using var response = Response(HttpStatusCode.OK, bytes);
+            response.Content.Headers.ContentType = new(mime);
+            var media = new ProviderMediaFormat(mime, container, codec);
+            var stream = new ProtocolProviderStream(response,
+                new("direct", new Uri("https://media.example.test/track"), DateTimeOffset.UtcNow.AddMinutes(1),
+                    true, true, media, ProviderStreamRetryBehavior.DoNotRetry), "artistgrid", "track-1");
+            await service.WrapAsync(stream, Context(), "artistgrid", "track-1", false,
+                () => Task.FromResult<Song?>(new Song { Title = "Track", Artist = "Artist" }), CancellationToken.None);
+            Assert.Equal(bytes, await response.Content.ReadAsByteArrayAsync());
+            Assert.Equal(extension, Path.GetExtension(registeredPath));
+            var cached = await service.TryOpenAsync(new("artistgrid", ProviderResourceKind.Track, "track-1"),
+                new DownloadedSongMappingScope(null, ProviderAudioQuality.Any), CancellationToken.None);
+            Assert.NotNull(cached);
+            using var replay = cached.Response;
+            Assert.Equal(mime, replay.Content.Headers.ContentType?.MediaType);
+            Assert.Equal(bytes, await replay.Content.ReadAsByteArrayAsync());
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task CompletedCache_ReplaysKnownMediaFactsAndActualLength(bool declared)

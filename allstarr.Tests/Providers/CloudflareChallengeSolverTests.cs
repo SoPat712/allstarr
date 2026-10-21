@@ -15,6 +15,60 @@ public sealed class CloudflareChallengeSolverTests
     private readonly Clock _clock = new();
 
     [Theory]
+    [InlineData("initial", "read")]
+    [InlineData("initial", "cancel")]
+    [InlineData("initial", "oversized")]
+    [InlineData("fresh", "read")]
+    [InlineData("fresh", "cancel")]
+    [InlineData("fresh", "oversized")]
+    [InlineData("shared", "read")]
+    [InlineData("shared", "cancel")]
+    [InlineData("shared", "oversized")]
+    public async Task FailedBodyInspectionDisposesResponse(string path, string failure)
+    {
+        var content = new FailedInspectionContent(failure);
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var solver = Solver(new Handler(async _ =>
+        {
+            started.SetResult();
+            if (path == "shared") await release.Task;
+            return Solution();
+        }));
+        var retries = 0;
+        using var client = Client(solver, request =>
+        {
+            if (path != "initial" && !request.Headers.Contains("Cookie")) return Challenge();
+            if (path == "shared" && ++retries == 1) return Reply("words");
+            return new(HttpStatusCode.OK) { Content = content };
+        });
+        var first = client.GetAsync(Target, HttpCompletionOption.ResponseHeadersRead);
+        if (path == "shared")
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var second = client.GetAsync(Target, HttpCompletionOption.ResponseHeadersRead);
+            release.SetResult();
+            using var response = await first;
+            await Assert.ThrowsAnyAsync<Exception>(() => second);
+        }
+        else await Assert.ThrowsAnyAsync<Exception>(() => first);
+        Assert.True(content.Disposed);
+    }
+
+    private sealed class FailedInspectionContent(string failure) : HttpContent
+    {
+        public bool Disposed { get; private set; }
+        protected override bool TryComputeLength(out long length) { length = 0; return false; }
+        protected override async Task SerializeToStreamAsync(Stream stream, TransportContext? context)
+        {
+            if (failure == "cancel") throw new OperationCanceledException();
+            if (failure == "read") throw new IOException("Interrupted response body.");
+            await stream.WriteAsync(new byte[CloudflareChallengeSolver.MaximumBytes + 1]);
+        }
+        protected override void Dispose(bool disposing) { Disposed = true; base.Dispose(disposing); }
+    }
+
+    [Theory]
     [InlineData(403, "cloudflare", "", "<title>Just a moment...</title>", "", true)]
     [InlineData(503, "cloudflare-nginx", "", "<title>Attention Required! | Cloudflare</title>", "", true)]
     [InlineData(429, "cloudflare", "challenge", "", "", true)]

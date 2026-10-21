@@ -167,9 +167,22 @@
     ...(operation("metadata", "isrc") ? [{ id: "isrc", label: "ISRC" }] : []),
   ]);
   const find = $derived(lookup === "search" ? kind : lookup);
+  let findButtons: HTMLButtonElement[] = [];
+  $effect(() => {
+    if (finds.length && !finds.some((item) => item.id === find)) choose(finds[0].id);
+  });
   function choose(id: string) {
     if (id === "track" || id === "isrc") lookup = id;
     else { lookup = "search"; kind = id as ProviderTrySearchKind; }
+  }
+  function findKey(event: KeyboardEvent, current: number) {
+    if (running) return;
+    const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
+    if (!step && event.key !== "Home" && event.key !== "End") return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? finds.length - 1 : (current + step + finds.length) % finds.length;
+    findButtons[next]?.focus();
+    choose(finds[next].id);
   }
 
   function submitMetadata(event: SubmitEvent) {
@@ -374,7 +387,8 @@
                 <div class="try-chips" role="radiogroup" aria-label="Find">
                   {#each finds as item, index (item.id)}
                     {#if index > 0 && (item.id === "track" || item.id === "isrc") && !["track", "isrc"].includes(finds[index - 1].id)}<span class="try-chip-divider" aria-hidden="true"></span>{/if}
-                    <button type="button" role="radio" class="try-chip" aria-checked={find === item.id} disabled={Boolean(running)} onclick={() => choose(item.id)}>
+                    <button bind:this={findButtons[index]} type="button" role="radio" class="try-chip" aria-checked={find === item.id}
+                      tabindex={find === item.id ? 0 : -1} disabled={Boolean(running)} onclick={() => choose(item.id)} onkeydown={event => findKey(event, index)}>
                       {#if find === item.id}<Check size={16} strokeWidth={2.5} aria-hidden="true" />{/if}{item.label}
                     </button>
                   {/each}

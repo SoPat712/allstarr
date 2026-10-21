@@ -222,9 +222,12 @@ public sealed class ProtocolLyricsResolver(
             var effectivePolicy = householdOnly || protocol.Actor?.EffectiveUserId == null
                 ? await effectivePolicies.ResolveAsync(protocol.CancellationToken)
                 : await effectivePolicies.ResolveForUserAsync(protocol.Actor!.EffectiveUserId!.Value, protocol.CancellationToken);
+            var enabled = effectivePolicy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, order);
             order = automaticLookup && sources?.OnlySourceId == null
                 ? effectivePolicy.ApplyAutomaticProviderAvailability(ProviderCapabilityKind.Lyrics, order)
-                : effectivePolicy.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, order);
+                : enabled;
+            if (preferredSourceId != null && enabled.Contains(preferredSourceId, StringComparer.Ordinal))
+                order = new[] { preferredSourceId }.Concat(order).Distinct(StringComparer.Ordinal).ToArray();
         }
         IReadOnlyList<CrossProviderLinkCandidate>? resolvedLinks = null;
 
