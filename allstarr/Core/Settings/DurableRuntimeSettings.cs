@@ -361,6 +361,9 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
 
         var definitions = writes.ToDictionary(item => RuntimeSettingCatalog.Require(item.Key).Key,
             item => (Write: item, Definition: RuntimeSettingCatalog.Require(item.Key)), StringComparer.OrdinalIgnoreCase);
+        if (actorUserId is { } solverActor && definitions.Keys.Any(key => key.StartsWith("ChallengeSolver:", StringComparison.Ordinal)) &&
+            !await db.Users.AnyAsync(item => item.Id == solverActor && item.Enabled && item.IsAdmin, cancellationToken))
+            throw new UnauthorizedAccessException("Administrator permissions required.");
         var normalizedWrites = definitions.ToDictionary(item => item.Key,
             item => Normalize(item.Value.Definition, item.Value.Write.RawValue), StringComparer.OrdinalIgnoreCase);
         if (ownerUserId.HasValue && definitions.Keys.Any(key => !ListeningPreferenceKeys.All.Contains(key)))

@@ -65,6 +65,8 @@ public static class LegacyEnvParser
             ["MUSICBRAINZ_BASE_URL"] = "MusicBrainz:BaseUrl",
             ["MUSICBRAINZ_RATE_LIMIT_MS"] = "MusicBrainz:RateLimitMs",
             ["MUSICBRAINZ_AUTHORIZED_USER_AGENT_OVERRIDE"] = "MusicBrainz:AuthorizedUserAgentOverride",
+            ["CHALLENGE_SOLVER_URL"] = "ChallengeSolver:Url",
+            ["CHALLENGE_SOLVER_TIMEOUT_SECONDS"] = "ChallengeSolver:TimeoutSeconds",
             ["ODESLI_ENABLED"] = "Odesli:Enabled",
             ["ODESLI_RATE_LIMIT_MS"] = "Odesli:RateLimitMs",
             ["EXTENSIONS_ALLOW_REMOTE_INSTALL"] = "Extensions:AllowRemoteInstall",

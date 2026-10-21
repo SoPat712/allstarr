@@ -1699,6 +1699,12 @@ export type StorageBackup = {
 
 export const settings = {
   config: () => json<Record<string, unknown>>("/api/admin/config"),
+  testChallengeSolver: (url: string) =>
+    json<{ ok: boolean; message: string; version?: string }>("/api/admin/challenge-solver/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, timeoutSeconds: 60 }),
+    }),
   save: (updates: Record<string, string>) =>
     json<{ message: string; updatedKeys: string[]; requiresRestart?: boolean }>("/api/admin/config", {
       method: "POST",

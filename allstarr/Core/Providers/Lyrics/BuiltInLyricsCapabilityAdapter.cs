@@ -108,14 +108,24 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
             "paxsenix", "Paxsenix", "Apple Music lyrics through Paxsenix; no account required.",
             provider.GetRequiredService<PaxsenixCapabilityAdapter>()));
-        services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName)
+        services.AddHttpClient(CloudflareChallengeSolver.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .RemoveAllLoggers()
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            { UseCookies = false, AllowAutoRedirect = false, UseDefaultCredentials = false });
+        services.AddSingleton(provider => new CloudflareChallengeSolver(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient(CloudflareChallengeSolver.HttpClientName),
+            token => CloudflareChallengeSolver.ReadOptionsAsync(provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>(), token)));
+        services.AddHttpClient(LyricsPlusCapabilityAdapter.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .RemoveAllLoggers()
+            .AddHttpMessageHandler(provider => new CloudflareChallengeHandler(provider.GetRequiredService<CloudflareChallengeSolver>(), ["lyricsplus.binimum.org"]))
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
         services.AddSingleton(provider => new LyricsPlusCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(LyricsPlusCapabilityAdapter.HttpClientName),
             provider.GetRequiredService<IApplicationCache>(),
             async token => (string)(await provider.GetRequiredService<allstarr.Core.Settings.IDurableRuntimeSettings>()
                 .GetAsync("LyricsPlus:BaseUrl", token)).Value,
-            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL));
+            () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL,
+            provider.GetRequiredService<CloudflareChallengeSolver>()));
         services.AddSingleton<ProviderRegistration>(provider => new ProviderRegistration(
             new ProviderDescriptor("lyricsplus", "LyricsPlus", "Public lyrics with instance fallback or a self-hosted endpoint.",
                 ProviderOrigin.BuiltIn, "1", "lyricsplus-v2",
@@ -135,14 +145,17 @@ public static class BuiltInLyricsCapabilityRegistration
             "lrclib",
             "LRCLib",
             CreateLrclib(provider.GetRequiredService<LrclibService>())));
-        services.AddHttpClient(BiniLyricsCapabilityAdapter.HttpClientName)
+        services.AddHttpClient(BiniLyricsCapabilityAdapter.HttpClientName, client => client.Timeout = Timeout.InfiniteTimeSpan)
+            .AddHttpMessageHandler(provider => new CloudflareChallengeHandler(provider.GetRequiredService<CloudflareChallengeSolver>(),
+                ["lyrics-api.binimum.org", "lyrics-storage.binimum.org"]))
             .RemoveAllLoggers()
             .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false });
         services.AddSingleton(provider => new BiniLyricsCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(BiniLyricsCapabilityAdapter.HttpClientName),
             provider.GetRequiredService<IApplicationCache>(),
             () => provider.GetRequiredService<Microsoft.Extensions.Options.IOptions<allstarr.Models.Settings.CacheSettings>>().Value.LyricsTTL,
-            provider.GetRequiredService<ILogger<BiniLyricsCapabilityAdapter>>()));
+            provider.GetRequiredService<ILogger<BiniLyricsCapabilityAdapter>>(),
+            provider.GetRequiredService<CloudflareChallengeSolver>()));
         services.AddSingleton<ProviderRegistration>(provider => PublicRegistration(
             "binilyrics", "BiniLyrics", "Public identity-checked TTML lyrics; no account required.",
             provider.GetRequiredService<BiniLyricsCapabilityAdapter>()));

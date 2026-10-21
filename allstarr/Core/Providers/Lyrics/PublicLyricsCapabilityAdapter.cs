@@ -17,6 +17,8 @@ public abstract class PublicLyricsCapabilityAdapter(
     protected virtual TimeSpan LookupBudget => TimeSpan.FromSeconds(3);
     protected virtual TimeSpan RequestTimeout => Timeout.InfiniteTimeSpan;
     protected virtual ProviderError LookupTimeoutError => new(ProviderErrorKind.TransientFailure);
+    protected virtual Task<TimeSpan> ResolveLookupBudgetAsync(CancellationToken token) => Task.FromResult(LookupBudget);
+    protected virtual Task<TimeSpan> ResolveRequestTimeoutAsync(CancellationToken token) => Task.FromResult(RequestTimeout);
     public abstract string ProviderId { get; }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 
@@ -30,7 +32,7 @@ public abstract class PublicLyricsCapabilityAdapter(
         if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure(ProviderErrorKind.CapabilityUnavailable);
         using var deadlineTimer = new CancellationTokenSource(context.Remaining(DateTimeOffset.UtcNow), Clock);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, deadlineTimer.Token);
-        using var budgetTimer = new CancellationTokenSource(LookupBudget, Clock);
+        using var budgetTimer = new CancellationTokenSource(await ResolveLookupBudgetAsync(deadline.Token), Clock);
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, budgetTimer.Token);
         var token = budget.Token;
         try
@@ -88,7 +90,7 @@ public abstract class PublicLyricsCapabilityAdapter(
         Uri endpoint, CancellationToken token)
     {
         await BeforeRequestAsync(token);
-        using var timeout = new CancellationTokenSource(RequestTimeout, Clock);
+        using var timeout = new CancellationTokenSource(await ResolveRequestTimeoutAsync(token), Clock);
         using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token, timeout.Token);
         using var outbound = new HttpRequestMessage(HttpMethod.Get, endpoint);
         outbound.Headers.Accept.ParseAdd("application/ttml+xml, application/json, text/plain");
@@ -113,6 +115,7 @@ public abstract class PublicLyricsCapabilityAdapter(
             catch (HttpRequestException) { return (null, ProviderError.CompatibilityContractChanged(), response.StatusCode); }
             return (await response.Content.ReadAsStringAsync(attempt.Token), null, response.StatusCode);
         }
+        catch (CloudflareChallengeException) { return (null, ProviderError.BlockedByChallenge(), null); }
         catch (Exception exception) when (exception is HttpRequestException or IOException ||
             exception is OperationCanceledException && !token.IsCancellationRequested)
         {

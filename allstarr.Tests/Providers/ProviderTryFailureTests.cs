@@ -6,6 +6,20 @@ namespace allstarr.Tests;
 
 public sealed class ProviderTryFailureTests
 {
+    [Fact]
+    public async Task LyricsChallengeKeepsSafeGuidanceInTestResults()
+    {
+        var lyrics = new Mock<IProviderLyricsCapability>();
+        lyrics.Setup(item => item.FetchLyricsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderLyricsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.BlockedByChallenge()));
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.GetRequiredCapability<IProviderLyricsCapability>("fixture", ProviderCapabilityKind.Lyrics)).Returns(lyrics.Object);
+        var result = await new ProviderTryOperations(registry.Object).ExecuteAsync(ProviderTryOperationsTests.Context(),
+            new() { Capability = "lyrics", Operation = "lyrics", Title = "Fixture", Artist = "Artist" });
+        Assert.Equal("blocked-by-challenge", result.ReasonCode);
+        Assert.Equal(ProviderError.BlockedByChallenge().SafeMessage, result.Message);
+    }
+
     public static IEnumerable<object[]> Cases()
     {
         foreach (var operation in new[] { "tracks", "albums", "artists", "track", "isrc", "lyrics", "playlist", "mine" })

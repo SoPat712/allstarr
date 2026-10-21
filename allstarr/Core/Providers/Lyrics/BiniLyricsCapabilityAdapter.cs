@@ -8,11 +8,21 @@ public sealed class BiniLyricsCapabilityAdapter : MetadataLyricsCapabilityAdapte
 {
     public const string HttpClientName = "BiniLyrics";
     private static readonly MetadataLyricsFailureCache Failures = new(TimeProvider.System);
+    private readonly CloudflareChallengeSolver? _solver;
     public override string ProviderId => "binilyrics";
 
     public BiniLyricsCapabilityAdapter(HttpClient http, IApplicationCache? cache, Func<TimeSpan>? lyricsTtl = null,
-        ILogger<BiniLyricsCapabilityAdapter>? logger = null)
-        : this(http, cache, TimeProvider.System, Failures, logger, lyricsTtl) { }
+        ILogger<BiniLyricsCapabilityAdapter>? logger = null, CloudflareChallengeSolver? solver = null)
+        : this(http, cache, TimeProvider.System, Failures, logger, lyricsTtl) { _solver = solver; }
+
+    protected override async Task<TimeSpan> ResolveLookupBudgetAsync(CancellationToken token) =>
+        await SolverTimeoutAsync(token) is { } timeout ? timeout * 2 + OverallLookupBudget : OverallLookupBudget;
+
+    protected override async Task<TimeSpan> ResolveRequestTimeoutAsync(CancellationToken token) =>
+        await SolverTimeoutAsync(token) is { } timeout ? timeout + PerRequestTimeout : PerRequestTimeout;
+
+    private Task<TimeSpan?> SolverTimeoutAsync(CancellationToken token) =>
+        _solver?.ConfiguredTimeoutAsync(token) ?? Task.FromResult<TimeSpan?>(null);
 
     internal BiniLyricsCapabilityAdapter(HttpClient http, IApplicationCache? cache, TimeProvider clock,
         MetadataLyricsFailureCache failures, ILogger? logger = null, Func<TimeSpan>? lyricsTtl = null)

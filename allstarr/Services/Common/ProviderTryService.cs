@@ -15,7 +15,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
     ProviderTryOperations operations, ProviderStatusManager status, ProviderTryMediaStore tickets,
     ProviderCtsDiagnosticRunner cts, ProviderDownloadArtifactResolver artifacts,
     IDbContextFactory<AllstarrDbContext> database, EncryptedSecretStore secrets,
-    ProtocolExecutionOptions? executionOptions = null, TimeProvider? timeProvider = null)
+    ProtocolExecutionOptions? executionOptions = null, TimeProvider? timeProvider = null, CloudflareChallengeSolver? challengeSolver = null)
 {
     private readonly BoundedOperationGate overall = new(3);
     private readonly ConcurrentDictionary<string, BoundedOperationGate> providerGates = new(StringComparer.Ordinal);
@@ -35,6 +35,9 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             providers.TryGetCapability<IProviderStreamingCapability>(provider, ProviderCapabilityKind.Streaming, out var streaming) &&
             streaming is IProviderDownloadStreamingCapability
             ? (executionOptions ?? new ProtocolExecutionOptions()).GetDownloadDiagnosticTimeout() : TimeSpan.FromSeconds(30);
+        if (request.Capability == "lyrics" && provider is "binilyrics" or "lyricsplus" && challengeSolver != null &&
+            await challengeSolver.ConfiguredTimeoutAsync(token) is { } solveTimeout)
+            timeout += solveTimeout * (provider == "binilyrics" ? 2 : 1);
         using var deadline = new CancellationTokenSource(timeout, clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
         ProviderExecutionContext? execution = null;

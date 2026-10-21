@@ -40,6 +40,10 @@ const checkGuides: Record<string, CheckGuide> = {
     label: "Playback didn't start",
     step: "The service found the song but sent no audio in time. This is usually on the service's side; it is checked again every 6 hours.",
   },
+  "blocked-by-challenge": {
+    label: "Blocked by a Cloudflare check",
+    step: "This source is behind a Cloudflare check. Add a FlareSolverr or Byparr URL in Settings to use it.",
+  },
   service_unavailable: { label: "Service unavailable", step: "The service's download server is failing right now. Try again later; nothing to change in Allstarr." },
   "lyrics-upstream-busy-or-timed-out": { label: "Lyrics upstream busy or timed out", step: "The lyrics upstream is busy or timed out. Try another lyrics source." },
   timeout: { label: "Timed out", step: "The service took too long to answer. It is checked again every 6 hours." },

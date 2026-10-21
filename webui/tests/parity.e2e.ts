@@ -7364,3 +7364,47 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
   await expect(dialog.getByRole("tab", { name: /stream|download/i })).toHaveCount(0);
   await expect(dialog.locator("audio")).toHaveCount(0);
 });
+
+for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const) {
+  test(`Challenge solver network setting tests the current address at ${width}px ${scheme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), scheme);
+    await page.route("**/*", route => new URL(route.request().url()).hostname === "127.0.0.1" ? route.continue() : route.abort());
+    await mockApi(page);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema,
+      configSections: [{ id: "operator", label: "Service settings", fields: [
+        { key: "CHALLENGE_SOLVER_URL", label: "Challenge solver URL", type: "text", valuePath: "operatorSettings.ChallengeSolver:Url",
+          placeholder: "http://flaresolverr:8191", helpText: "Optional. Your FlareSolverr or Byparr address, for example http://flaresolverr:8191. Used only for sources that sit behind Cloudflare checks." },
+        { key: "CHALLENGE_SOLVER_TIMEOUT_SECONDS", label: "Challenge solver timeout (seconds)", type: "number", valuePath: "operatorSettings.ChallengeSolver:TimeoutSeconds" },
+      ] }],
+    } }));
+    await page.route("**/api/admin/config", route => route.fulfill({ json: {
+      ...(responses["/api/admin/config"] as Record<string, unknown>),
+      operatorSettings: { "ChallengeSolver:Url": "http://saved-solver:8191", "ChallengeSolver:TimeoutSeconds": 60 },
+    } }));
+    const requests: unknown[] = [];
+    await page.route("**/api/admin/challenge-solver/test", route => {
+      expect(route.request().method()).toBe("POST");
+      requests.push(route.request().postDataJSON());
+      return route.fulfill({ json: { ok: true, message: "Solver reachable", version: "3.3.0" } });
+    });
+    await page.goto("#/settings/general");
+    await expect(page.getByRole("heading", { name: "General", level: 2 })).toBeVisible();
+    await expect(page.getByLabel(/^Challenge solver URL/)).toHaveCount(0);
+    await page.locator(`a[href="#/settings/network"]:visible`).first().click();
+    await expect(page.getByRole("heading", { name: "Network", level: 2 })).toBeVisible();
+    const url = page.getByRole("textbox", { name: /^Challenge solver URL/ });
+    await expect(url).toHaveValue("http://saved-solver:8191");
+    await expect(url).toHaveAttribute("placeholder", "http://flaresolverr:8191");
+    await expect(page.getByLabel(/^Challenge solver timeout/)).toHaveValue("60");
+    await url.fill("http://flaresolverr:8191");
+    await page.getByRole("button", { name: "Test", exact: true }).click();
+    await expect(page.getByRole("status").filter({ hasText: "Solver reachable" })).toBeVisible();
+    expect(requests).toEqual([{ url: "http://flaresolverr:8191", timeoutSeconds: 60 }]);
+    await expect(url).toHaveValue("http://flaresolverr:8191");
+    await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+    await expectContainedMobileGeometry(page);
+    await page.screenshot({ path: `test-results/solver-${width}-${scheme}.png`, fullPage: true });
+  });
+}
