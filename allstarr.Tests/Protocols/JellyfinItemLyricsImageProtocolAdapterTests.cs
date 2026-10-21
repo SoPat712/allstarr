@@ -17,7 +17,7 @@ public sealed class JellyfinItemLyricsImageProtocolAdapterTests
             new Dictionary<string, object?> { ["Id"] = "mix-1" }
         ]);
 
-        Assert.Equal("{\"IsFavorite\":true,\"ItemId\":\"fixture-item\",\"Key\":\"fixture-item\"}", favorite.Body);
+        Assert.Equal("""{"IsFavorite":true,"ItemId":"fixture-item","Key":"fixture-item","PlaybackPositionTicks":0,"PlayCount":0,"Played":false}""", favorite.Body);
         Assert.Equal(StatusCodes.Status204NoContent, adapter.ShapeCapabilitiesStatus(StatusCodes.Status200OK));
         Assert.Equal(StatusCodes.Status401Unauthorized, adapter.ShapeCapabilitiesStatus(StatusCodes.Status401Unauthorized));
         Assert.Equal(

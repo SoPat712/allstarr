@@ -33,6 +33,10 @@ public partial class JellyfinController
         [FromQuery] bool recursive = true,
         string? userId = null)
     {
+        if (IsFavoritesOnlyRequest())
+            return await ReadFavoriteItemsAsync(GetEffectiveSearchTerm(searchTerm, Request.QueryString.Value),
+                includeItemTypes, startIndex, limit, userId);
+
         if (Request.Query.TryGetValue("Ids", out var requestedIds))
             return await ReadItemsByIdsAsync(requestedIds.ToString(), startIndex,
                 Request.Query.ContainsKey("Limit") ? limit : int.MaxValue, userId);

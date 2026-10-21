@@ -5,8 +5,15 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
 
+[TypeFilter(typeof(allstarr.Filters.SubsonicFavoriteResponseFilter))]
 public partial class SubsonicController
 {
+    [HttpGet("rest/getArtists")]
+    [HttpPost("rest/getArtists")]
+    [HttpGet("rest/getArtists.view")]
+    [HttpPost("rest/getArtists.view")]
+    public Task<IActionResult> GetArtists() => ReadStarredAsync("artists");
+
     [HttpGet("rest/getStarred")]
     [HttpPost("rest/getStarred")]
     [HttpGet("rest/getStarred.view")]
@@ -29,8 +36,9 @@ public partial class SubsonicController
         {
             try
             {
-                saved = (await _favoriteViews.ReadAsync(CurrentProtocolContext, HttpContext.RequestAborted))
-                    .Where(item => item.Resource.ResourceKind != ProviderResourceKind.Playlist).ToArray();
+                saved = (await _favoriteViews.ReadForRequestAsync(HttpContext))
+                    .Where(item => container == "artists" ? item.Resource.ResourceKind == ProviderResourceKind.Artist
+                        : item.Resource.ResourceKind != ProviderResourceKind.Playlist).ToArray();
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             { _logger.LogWarning("Saved favorites are unavailable ({ExceptionType})", exception.GetType().Name); }
@@ -45,7 +53,9 @@ public partial class SubsonicController
         {
             var native = await _proxyService.RelayRawAsync(Request.Path.Value!.TrimStart('/'), parameters,
                 HttpContext.RequestAborted, headers);
-            var merged = SubsonicFavoriteProtocolAdapter.Merge(native, saved, container, format, _responseBuilder);
+            var merged = container == "artists"
+                ? SubsonicFavoriteProtocolAdapter.MergeArtists(native, saved, format, _responseBuilder)
+                : SubsonicFavoriteProtocolAdapter.Merge(native, saved, container, format, _responseBuilder);
             if (!ReferenceEquals(native, merged)) Response.Headers.CacheControl = "no-store";
             return _relayProtocolAdapter.CreateResult(merged, $"application/{format}");
         }

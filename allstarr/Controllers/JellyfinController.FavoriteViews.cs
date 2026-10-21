@@ -10,29 +10,23 @@ namespace allstarr.Controllers;
 public partial class JellyfinController
 {
     private async Task<IActionResult> ReadFavoriteItemsAsync(string? searchTerm, string? includeItemTypes,
-        int startIndex, int limit, string? userId)
+        int startIndex, int limit, string? userId, string? nativeEndpoint = null)
     {
         var context = HttpContext.RequireProtocolExecutionContext();
         IReadOnlyList<FavoriteViewItem> saved = [];
         if (_favoriteViews != null && (userId == null || userId == context.VerifiedBackendPrincipalId))
         {
-            try { saved = await _favoriteViews.ReadAsync(context, HttpContext.RequestAborted); }
+            try { saved = await _favoriteViews.ReadForRequestAsync(HttpContext); }
             catch (Exception exception) when (exception is not OperationCanceledException)
             { _logger.LogWarning("Saved favorites are unavailable ({ExceptionType})", exception.GetType().Name); }
         }
-        string[] scopedFilters = ["ArtistIds", "AlbumArtistIds", "ContributingArtistIds", "AlbumIds", "Genres", "GenreIds",
-            "Tags", "Years", "IsPlayed", "IsUnplayed", "MinCommunityRating", "MinPremiereDate", "MaxPremiereDate"];
-        if (Request.Query["Filters"].ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-                .Any(filter => !filter.Equals("IsFavorite", StringComparison.OrdinalIgnoreCase)) ||
-            scopedFilters.Any(key => !string.IsNullOrWhiteSpace(Request.Query[key])) ||
-            (!string.IsNullOrWhiteSpace(Request.Query["ParentId"]) && Request.Query["ParentId"] != _settings.LibraryId))
-            saved = [];
         var types = (includeItemTypes ?? JellyfinMusicEndpointPolicy.DefaultMusicItemTypes)
             .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var ids = Request.Query["Ids"].ToString().Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
             .ToHashSet(StringComparer.Ordinal);
         var favorites = saved.Where(item => ids.Count == 0 || ids.Contains(item.ItemId))
+            .Where(item => JellyfinFavoriteScope.Matches(item, Request.Query, _settings.LibraryId))
             .Where(item => string.IsNullOrWhiteSpace(searchTerm) || item.Display.Title.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
                 item.Display.Artists.Any(artist => artist.Contains(searchTerm, StringComparison.OrdinalIgnoreCase)) ||
                 item.Display.Album?.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) == true)
@@ -53,8 +47,10 @@ public partial class JellyfinController
                     !header.Key.Equals("If-Modified-Since", StringComparison.OrdinalIgnoreCase))
                 .ToDictionary(header => header.Key, header => header.Value, StringComparer.OrdinalIgnoreCase));
         }
-        var endpoint = userId == null ? "Items" : $"Users/{Uri.EscapeDataString(userId)}/Items";
-        var (native, status) = await _proxyService.GetJsonAsync(endpoint, query, headers);
+        var endpoint = nativeEndpoint ?? (userId == null ? "Items" : $"Users/{Uri.EscapeDataString(userId)}/Items");
+        var (native, status) = JellyfinFavoriteScope.RestrictNativeQuery(query)
+            ? (System.Text.Json.JsonSerializer.SerializeToDocument(new { Items = Array.Empty<object>(), TotalRecordCount = 0, StartIndex = start }), 200)
+            : await _proxyService.GetJsonAsync(endpoint, query, headers);
         if (native == null || status != 200 || favorites.Length == 0) return HandleProxyResponse(native, status);
         var root = JellyfinFavoriteProtocolAdapter.Merge(native, favorites, start, size,
             Request.Query["SortBy"].ToString(), Request.Query["SortOrder"].ToString());
@@ -62,6 +58,11 @@ public partial class JellyfinController
         Response.Headers.CacheControl = "no-store";
         Response.Headers.Remove("ETag");
         Response.Headers.Remove("Last-Modified");
-        return new ContentResult { Content = root.ToJsonString(), ContentType = "application/json", StatusCode = status };
+        return new ContentResult
+        {
+            Content = NativeItemText.PreserveJson(native.RootElement.GetRawText(), root.ToJsonString(), "Id"),
+            ContentType = "application/json",
+            StatusCode = status
+        };
     }
 }

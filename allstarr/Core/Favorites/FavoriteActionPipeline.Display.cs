@@ -48,7 +48,12 @@ public sealed partial class FavoriteActionPipeline
                     var album = await metadata.GetAlbumAsync(lookup, resource.ProviderId, resource.Value).WaitAsync(timeout.Token);
                     if (album != null && SameResource(resource, album.Id))
                         display = new(1, itemId, "album", album.Title, Names([album.Artist]), Year: album.Year,
-                            Count: album.SongCount);
+                            Count: album.SongCount)
+                        {
+                            ArtistIds = Names([album.ArtistId ?? ""]),
+                            AlbumArtistIds = Names([album.ArtistId ?? ""]),
+                            Genres = Names([album.Genre ?? ""])
+                        };
                     break;
                 case ProviderResourceKind.Artist:
                     var artist = await metadata.GetArtistAsync(lookup, resource.ProviderId, resource.Value).WaitAsync(timeout.Token);
@@ -91,7 +96,17 @@ public sealed partial class FavoriteActionPipeline
         return new(1, itemId, "song", song.Title,
             Names(song.Artists is { Count: > 0 } ? song.Artists : [song.Artist]),
             FavoriteDisplaySnapshot.Text(song.Album) ? song.Album : null,
-            duration is >= 0 and <= 86_400_000 ? (long)Math.Round(duration.Value) : null);
+            duration is >= 0 and <= 86_400_000 ? (long)Math.Round(duration.Value) : null, song.Year)
+        {
+            ArtistIds = Names(song.ArtistIds.Prepend(song.ArtistId ?? "")),
+            AlbumArtistIds = Names(string.IsNullOrWhiteSpace(song.AlbumArtist) ||
+                string.Equals(song.AlbumArtist, song.Artist, StringComparison.OrdinalIgnoreCase)
+                ? [song.ArtistId ?? ""]
+                : song.Artists.Select((name, index) => string.Equals(name, song.AlbumArtist, StringComparison.OrdinalIgnoreCase) &&
+                    index < song.ArtistIds.Count ? song.ArtistIds[index] : "")),
+            AlbumId = FavoriteDisplaySnapshot.Text(song.AlbumId) ? song.AlbumId : null,
+            Genres = Names([song.Genre ?? ""])
+        };
     }
 
     private static string? SerializeDisplay(FavoriteDisplaySnapshot display)
