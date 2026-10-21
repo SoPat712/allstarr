@@ -16,7 +16,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class MusixmatchLyricsCapabilityAdapterTests
+public sealed partial class MusixmatchLyricsCapabilityAdapterTests
 {
     private static readonly Guid RecordingId =
         Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
@@ -103,171 +103,35 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
     private const string MissingMacroPayload =
         """{"message":{"header":{"status_code":200},"body":{"macro_calls":{}}}}""";
 
-    private const string SearchPayload = """
-        {"message":{"header":{"status_code":200},"body":{"track_list":[
-          {"track":{"track_id":11,"track_name":"Unrelated recording","artist_name":"Fixture artist"}},
-          {"track":{"track_id":12,"track_name":"Fixture track","artist_name":"Other performer"}},
-          {"track":{"track_id":42,"commontrack_id":142,"track_name":"Fixture track (Album Version)","artist_name":"Fixture artist feat. Guest","album_name":"Fixture album"}}
-        ]}}}
-        """;
-
     [Theory]
     [InlineData("identity")]
     [InlineData("http-404")]
     [InlineData("matcher-404")]
     [InlineData("envelope-404")]
-    public async Task SearchFallbackFetchesVerifiedTrackByIdAndCachesRequestIdentity(string miss)
+    public async Task MobileMissDoesNotUseAnUndocumentedSearchFallback(string miss)
     {
-        EnsureCacheSettings();
         var node = JsonNode.Parse(DesktopMacroPayload)!;
         var message = node["message"]!["body"]!["macro_calls"]!["matcher.track.get"]!["message"]!;
-        message["body"]!["track"]!["track_name"] = "Unrelated recording";
-        if (miss == "matcher-404")
-        {
-            message["header"]!["status_code"] = 404;
-            message["body"] = new JsonArray();
-        }
+        if (miss == "identity") message["body"]!["track"]!["track_name"] = "Unrelated recording";
+        if (miss == "matcher-404") message["header"]!["status_code"] = 404;
         if (miss == "envelope-404") node["message"]!["header"]!["status_code"] = 404;
-        var fetched = JsonNode.Parse(DesktopMacroPayload)!;
-        fetched["message"]!["body"]!["macro_calls"]!.AsObject().Remove("matcher.track.get");
-        var handler = new FixtureHttpHandler();
-        handler.Responses.Enqueue((miss == "http-404" ? HttpStatusCode.NotFound : HttpStatusCode.OK, node.ToJsonString()));
-        handler.Responses.Enqueue((HttpStatusCode.OK, SearchPayload));
-        handler.Responses.Enqueue((HttpStatusCode.OK, fetched.ToJsonString()));
-        var logs = new CapturedLogs();
-        using var factory = LoggerFactory.Create(builder => builder.AddProvider(logs));
-        var adapter = new MusixmatchLyricsCapabilityAdapter(new HttpClient(handler), new FixtureSecretAccessor(),
-            new TestMemoryApplicationCache(), factory.CreateLogger<MusixmatchLyricsCapabilityAdapter>());
-
-        var first = await adapter.FetchLyricsAsync(Context(), LyricsRequest());
-        var cached = await adapter.FetchLyricsAsync(Context(), LyricsRequest());
-
-        Assert.Equal("[00:01.234]First\n[00:02.500]Second", first.RequireValue().Content);
-        Assert.Equal(first.RequireValue().Content, cached.RequireValue().Content);
-        Assert.Equal(3, handler.Requests);
-        Assert.Equal("/ws/1.1/track.search", handler.RequestUris[1].AbsolutePath);
-        var search = ParseQuery(handler.RequestUris[1]);
-        Assert.Equal("Fixture track", search["q_track"]);
-        Assert.Equal("Fixture artist", search["q_artist"]);
-        Assert.Equal("web-desktop-app-v1.0", search["app_id"]);
-        Assert.Equal("desktop-user-token", search["usertoken"]);
-        Assert.Equal("json", search["format"]);
-        Assert.Equal("1", search["f_has_lyrics"]);
-        Assert.Equal("10", search["page_size"]);
-        Assert.Equal("desc", search["s_track_rating"]);
-        var fetch = ParseQuery(handler.RequestUris[2]);
-        Assert.Equal("142", fetch["commontrack_id"]);
-        Assert.Equal("42", fetch["track_id"]);
-        foreach (var parameter in new[] { "q_track", "q_artist", "q_artists", "q_album", "q_duration", "f_subtitle_length", "f_subtitle_length_max_deviation" })
-        {
-            Assert.False(fetch.ContainsKey(parameter));
-            if (parameter != "q_track" && parameter != "q_artist") Assert.False(search.ContainsKey(parameter));
-        }
-        Assert.Contains(logs.Messages, entry => entry.Message.Contains("lookup-path search-fallback; stage fetch", StringComparison.Ordinal) &&
-            entry.Message.Contains("decision selected:LineTimed", StringComparison.Ordinal));
-    }
-
-    [Fact]
-    public async Task SearchFallbackWithoutAcceptableIdentityDoesNotFetchOrCache()
-    {
-        EnsureCacheSettings();
         var handler = new FixtureHttpHandler
         {
-            Payload = DesktopMacroPayload.Replace("Fixture track", "Unrelated recording", StringComparison.Ordinal)
+            Payload = node.ToJsonString(),
+            StatusCode = miss == "http-404" ? HttpStatusCode.NotFound : HttpStatusCode.OK
         };
-        var search = JsonNode.Parse(SearchPayload)!;
-        search["message"]!["body"]!["track_list"]!.AsArray().RemoveAt(2);
-        for (var attempt = 0; attempt < 2; attempt++)
-        {
-            handler.Responses.Enqueue((HttpStatusCode.OK, handler.Payload));
-            handler.Responses.Enqueue((HttpStatusCode.OK, search.ToJsonString()));
-        }
-        var adapter = CreateAdapter(handler, new FixtureSecretAccessor(), new TestMemoryApplicationCache());
+        var adapter = CreateAdapter(handler, new FixtureSecretAccessor());
 
         for (var attempt = 0; attempt < 2; attempt++)
             Assert.Equal(ProviderLyricsAvailabilityState.Unavailable,
                 (await adapter.FetchLyricsAsync(Context(), LyricsRequest())).RequireValue().Availability);
-        Assert.Equal(4, handler.Requests);
-    }
 
-    [Theory]
-    [InlineData(200, "renew")]
-    [InlineData(404, "captcha")]
-    [InlineData(401, "")]
-    public async Task SearchAuthorizationStopsFallbackWithReconnectError(int status, string hint)
-    {
-        var handler = new FixtureHttpHandler();
-        handler.Responses.Enqueue((HttpStatusCode.OK, DesktopMacroPayload.Replace("Fixture track", "Unrelated recording", StringComparison.Ordinal)));
-        var search = JsonNode.Parse(SearchPayload)!;
-        search["message"]!["header"]!["status_code"] = status;
-        search["message"]!["header"]!["hint"] = hint;
-        handler.Responses.Enqueue((HttpStatusCode.OK, search.ToJsonString()));
-
-        var result = await CreateAdapter(handler, new FixtureSecretAccessor()).FetchLyricsAsync(Context(), LyricsRequest());
-
-        Assert.Equal(ProviderErrorKind.AccountNeedsReauthentication, result.Error?.Kind);
-        Assert.Contains("Reconnect", result.Error?.SafeMessage);
         Assert.Equal(2, handler.Requests);
-    }
-
-    [Theory]
-    [InlineData("plain")]
-    [InlineData("richsync")]
-    [InlineData("identity")]
-    [InlineData("authorization")]
-    [InlineData("restricted")]
-    public async Task SearchFallbackKeepsContentParsingAndStopsAfterOneIdFetch(string scenario)
-    {
-        var search = JsonNode.Parse(SearchPayload)!;
-        search["message"]!["body"]!["track_list"]![2]!["track"]!.AsObject().Remove("commontrack_id");
-        var fetched = JsonNode.Parse(scenario == "richsync" ? PayloadWithRichsync(RichsyncWithSegmentsBody) : DesktopMacroPayload)!;
-        var calls = fetched["message"]!["body"]!["macro_calls"]!.AsObject();
-        if (scenario == "plain") calls.Remove("track.subtitles.get");
-        if (scenario == "identity") calls["matcher.track.get"]!["message"]!["body"]!["track"]!["track_name"] = "Unrelated recording";
-        if (scenario == "authorization") calls["track.subtitles.get"]!["message"]!["header"]!["hint"] = "renew";
-        if (scenario == "restricted") calls["track.lyrics.get"]!["message"]!["body"]!["lyrics"]!["restricted"] = 1;
-        var handler = new FixtureHttpHandler();
-        handler.Responses.Enqueue((HttpStatusCode.OK, DesktopMacroPayload.Replace("Fixture track", "Unrelated recording", StringComparison.Ordinal)));
-        handler.Responses.Enqueue((HttpStatusCode.OK, search.ToJsonString()));
-        handler.Responses.Enqueue((HttpStatusCode.OK, fetched.ToJsonString()));
-
-        var result = await CreateAdapter(handler, new FixtureSecretAccessor()).FetchLyricsAsync(Context(), LyricsRequest());
-
-        Assert.Equal(3, handler.Requests);
-        var query = ParseQuery(handler.RequestUris[2]);
-        Assert.Equal("42", query["track_id"]);
-        Assert.False(query.ContainsKey("commontrack_id"));
-        if (scenario == "authorization")
+        Assert.All(handler.RequestUris, uri =>
         {
-            Assert.Equal(ProviderErrorKind.AccountNeedsReauthentication, result.Error?.Kind);
-            return;
-        }
-        var lyrics = result.RequireValue();
-        Assert.Equal(scenario == "identity" ? ProviderLyricsAvailabilityState.Unavailable :
-            scenario == "restricted" ? ProviderLyricsAvailabilityState.Restricted : ProviderLyricsAvailabilityState.Available,
-            lyrics.Availability);
-        if (scenario == "plain") Assert.Equal("Plain fallback", lyrics.Content);
-        if (scenario == "richsync") Assert.NotEmpty(lyrics.TimedLines!);
-    }
-
-    [Theory]
-    [InlineData("{\"message\":")]
-    [InlineData("{\"message\":{\"header\":{\"status_code\":200},\"body\":{\"track_list\":{}}}}")]
-    public async Task MalformedSearchStopsWithContractFailureAtSearchStage(string payload)
-    {
-        var handler = new FixtureHttpHandler();
-        handler.Responses.Enqueue((HttpStatusCode.OK, DesktopMacroPayload.Replace("Fixture track", "Unrelated recording", StringComparison.Ordinal)));
-        handler.Responses.Enqueue((HttpStatusCode.OK, payload));
-        var logs = new CapturedLogs();
-        using var factory = LoggerFactory.Create(builder => builder.AddProvider(logs));
-        using var http = new HttpClient(handler);
-
-        var result = await MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(http, "private-token", LyricsRequest(), default,
-            factory.CreateLogger<MusixmatchLyricsCapabilityAdapter>());
-
-        Assert.Equal(ProviderErrorKind.CapabilityUnavailable, result.Error?.Kind);
-        Assert.Equal(2, handler.Requests);
-        Assert.Contains(logs.Messages, entry => entry.Message.Contains("lookup-path search-fallback; stage search", StringComparison.Ordinal));
+            Assert.Equal("apic-appmobile.musixmatch.com", uri.Host);
+            Assert.Equal("/ws/1.1/macro.subtitles.get", uri.AbsolutePath);
+        });
     }
 
     [Fact]
@@ -660,7 +524,7 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
     }
 
     [Fact]
-    public void Registration_RequiresAccountDeclaresBothScopesTokenAndFixedOrigin()
+    public void Registration_AllowsAutomaticTokenAndBothAccountScopes()
     {
         var adapter = CreateAdapter(new FixtureHttpHandler(), new FixtureSecretAccessor());
         var registration = MusixmatchLyricsCapabilityAdapter.CreateRegistration(adapter);
@@ -670,20 +534,20 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         var token = Assert.Single(descriptor.Settings);
 
         Assert.Equal(MusixmatchLyricsCapabilityAdapter.StableProviderId, descriptor.Id);
-        Assert.Equal(ProviderAccountRequirement.Required, lyrics.AccountRequirement);
+        Assert.Equal(ProviderAccountRequirement.Optional, lyrics.AccountRequirement);
         Assert.Contains(ProviderAccountScope.Personal, lyrics.AllowedAccountScopes);
         Assert.Contains(ProviderAccountScope.Shared, lyrics.AllowedAccountScopes);
         Assert.Contains("fetchLyrics", lyrics.Hooks);
         Assert.Contains(
             descriptor.Permissions.NetworkOrigins,
-            origin => origin == new Uri("https://apic-desktop.musixmatch.com/"));
+            origin => origin == new Uri("https://apic-appmobile.musixmatch.com/"));
         Assert.Equal(["userToken"], descriptor.Permissions.SecretSettingKeys);
         Assert.False(descriptor.Permissions.Cache);
         Assert.Equal("userToken", token.Key);
         Assert.Equal(ProviderSettingValueKind.Secret, token.ValueKind);
-        Assert.True(token.Required);
+        Assert.False(token.Required);
         Assert.Equal(
-            "Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it.",
+            "Paste the Debug Info from the Musixmatch app's debug info, or just the user token. Optional: Musixmatch works without it.",
             token.HelpText);
         Assert.False(lyrics.SupportsPublicRead);
     }
@@ -707,13 +571,13 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         Assert.StartsWith("sha256:", result.Revision, StringComparison.Ordinal);
         Assert.Equal(1, handler.Requests);
         Assert.Equal(HttpMethod.Get, handler.Method);
-        Assert.Equal("apic-desktop.musixmatch.com", handler.RequestUri!.Host);
+        Assert.Equal("apic-appmobile.musixmatch.com", handler.RequestUri!.Host);
         Assert.Equal(
             "/ws/1.1/macro.subtitles.get",
             handler.RequestUri.AbsolutePath);
 
         var query = ParseQuery(handler.RequestUri);
-        Assert.Equal("web-desktop-app-v1.0", query["app_id"]);
+        Assert.Equal("mac-ios-v2.0", query["app_id"]);
         Assert.Equal("json", query["format"]);
         Assert.Equal("lyrics_richsynched", query["namespace"]);
         Assert.Equal("track.richsync", query["optional_calls"]);
@@ -726,13 +590,19 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         Assert.False(query.ContainsKey("track_spotify_id"));
         Assert.Equal("desktop-user-token", query["usertoken"]);
         Assert.Equal("180", query["f_subtitle_length"]);
-        Assert.Equal("3", query["f_subtitle_length_max_deviation"]);
+        Assert.False(query.ContainsKey("f_subtitle_length_max_deviation"));
+        Assert.Equal("words", query["richsync_compact_type"]);
+        Assert.Equal("track_lyrics_translation_status,track_structure,track_performer_tagging", query["part"]);
         Assert.False(query.ContainsKey("duration"));
         Assert.False(query.ContainsKey("deviation"));
-        Assert.True(long.TryParse(query["t"], out var timestamp) && timestamp > 0);
-        Assert.Equal("en", handler.AcceptLanguage);
+        Assert.False(query.ContainsKey("t"));
+        Assert.Equal("en-US,en;q=0.9", handler.AcceptLanguage);
+        Assert.Equal("10.1.1", handler.AppVersion);
+        Assert.Equal("Musixmatch/2025120901 CFNetwork/3860.300.31 Darwin/25.2.0", handler.UserAgent);
+        Assert.Equal("application/json", handler.Accept);
+        Assert.Equal("apic-appmobile.musixmatch.com", handler.Host);
         Assert.Equal("x-mxm-token-guid=", handler.Cookie);
-        Assert.Equal("apic-desktop.musixmatch.com", handler.Authority);
+        Assert.Equal("apic-appmobile.musixmatch.com", handler.Authority);
         var secret = Assert.Single(secrets.Accounts);
         Assert.Equal(AccountA, secret.AccountId);
         Assert.Equal(SecretA, secret.SecretReferenceId);
@@ -1049,7 +919,7 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
             LyricsRequest(title: "Alternate track"));
 
         Assert.Equal(6, handler.Requests);
-        var keys = cache.GetKeysByPattern("lyrics:v3:*").ToArray();
+        var keys = cache.GetKeysByPattern("lyrics:v4:*").ToArray();
         Assert.Equal(6, keys.Length);
         Assert.Contains(keys, key => key.Contains(AccountA.ToString("N"), StringComparison.Ordinal));
         Assert.Contains(keys, key => key.Contains(AccountB.ToString("N"), StringComparison.Ordinal));
@@ -1075,8 +945,10 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         Assert.Equal(2, handler.Requests);
     }
 
-    [Fact]
-    public async Task Cache_DoesNotReuseStaleV2LineOnlyEntries()
+    [Theory]
+    [InlineData(2)]
+    [InlineData(3)]
+    public async Task Cache_DoesNotReuseStaleDesktopEntries(int version)
     {
         EnsureCacheSettings();
         var cache = new TestMemoryApplicationCache();
@@ -1091,15 +963,16 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
                 "Fixture album",
                 "180"
             ]);
+        if (version == 3) metadata += "\n";
         var fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(metadata))).ToLowerInvariant();
-        var staleKey = $"lyrics:v2:{MusixmatchLyricsCapabilityAdapter.StableProviderId}:" +
+        var staleKey = $"lyrics:v{version}:{MusixmatchLyricsCapabilityAdapter.StableProviderId}:" +
             $"{AccountA:N}:1:{SecretA:N}:{fingerprint}:linetimed";
         await cache.SetAsync(staleKey,
             new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available,
                 MusixmatchLyricsCapabilityAdapter.StableProviderId,
                 ProviderLyricsFormat.LineTimed,
-                "[00:99.999]stale-v2"),
+                "[00:99.999]stale-desktop"),
             TimeSpan.FromMinutes(5));
 
         var handler = new FixtureHttpHandler { Payload = TimedMacroPayload };
@@ -1109,8 +982,8 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         Assert.True(result.IsSuccess, result.Error?.SafeMessage);
         Assert.Equal("[00:01.234]First\n[00:02.500]Second", result.RequireValue().Content);
         Assert.Equal(1, handler.Requests);
-        Assert.Single(cache.GetKeysByPattern("lyrics:v2:*"));
-        Assert.Single(cache.GetKeysByPattern("lyrics:v3:*"));
+        Assert.Single(cache.GetKeysByPattern($"lyrics:v{version}:*"));
+        Assert.Single(cache.GetKeysByPattern("lyrics:v4:*"));
     }
 
     [Fact]
@@ -1132,21 +1005,13 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task PublicAndMissingAccountContextsAreDeniedBeforeSecretOrHttp()
+    public async Task PublicContextIsDeniedBeforeSecretOrHttp()
     {
-        var handler = new FixtureHttpHandler { Payload = TimedMacroPayload };
+        var handler = new FixtureHttpHandler();
         var secrets = new FixtureSecretAccessor();
-        var adapter = CreateAdapter(handler, secrets);
+        var result = await CreateAdapter(handler, secrets).FetchLyricsAsync(PublicContext(), LyricsRequest());
 
-        var publicResult = await adapter.FetchLyricsAsync(PublicContext(), LyricsRequest());
-        var missingAccount = await adapter.FetchLyricsAsync(
-            MissingAccountContext(),
-            LyricsRequest());
-
-        Assert.False(publicResult.IsSuccess);
-        Assert.Equal(ProviderErrorKind.Forbidden, publicResult.Error!.Kind);
-        Assert.False(missingAccount.IsSuccess);
-        Assert.Equal(ProviderErrorKind.AccountNeedsConfiguration, missingAccount.Error!.Kind);
+        Assert.Equal(ProviderErrorKind.Forbidden, result.Error?.Kind);
         Assert.Empty(secrets.Accounts);
         Assert.Equal(0, handler.Requests);
     }
@@ -1320,7 +1185,7 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
 
         Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, first.RequireValue().Availability);
         Assert.Equal(ProviderLyricsAvailabilityState.Available, second.RequireValue().Availability);
-        Assert.Equal(3, handler.Requests);
+        Assert.Equal(2, handler.Requests);
     }
 
     [Fact]
@@ -1542,12 +1407,20 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         public string? Cookie { get; private set; }
         public string? Authority { get; private set; }
         public string? AcceptLanguage { get; private set; }
+        public string? AppVersion { get; private set; }
+        public string? UserAgent { get; private set; }
+        public string? Accept { get; private set; }
+        public string? Host { get; private set; }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             Requests++;
+            AppVersion = request.Headers.TryGetValues("x-mxm-app-version", out var versions) ? versions.Single() : null;
+            UserAgent = request.Headers.UserAgent.ToString();
+            Accept = request.Headers.Accept.ToString();
+            Host = request.Headers.Host;
             Method = request.Method;
             RequestUri = request.RequestUri;
             RequestUris.Add(request.RequestUri!);
@@ -1556,8 +1429,8 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
             Cookie = request.Headers.TryGetValues("Cookie", out var values)
                 ? values.SingleOrDefault()
                 : null;
-            AcceptLanguage = request.Headers.TryGetValues("Accept-Language", out var languages)
-                ? languages.SingleOrDefault()
+            AcceptLanguage = request.Headers.NonValidated.TryGetValues("Accept-Language", out var languages)
+                ? languages.ToString()
                 : null;
             var (status, payload) = Responses.Count > 0 ? Responses.Dequeue() :
                 (StatusCode, request.RequestUri!.AbsolutePath.EndsWith("/track.search", StringComparison.Ordinal)

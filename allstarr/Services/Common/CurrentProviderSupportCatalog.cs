@@ -85,9 +85,9 @@ public static class CurrentProviderSupportCatalog
             "Public instances with fallback, or an exclusive optional self-hosted URL.",
             Capability("lyrics", Supported, "Metadata lookup preserves plain content and millisecond line timing through the shared resolver.", "LyricsPlusCapabilityAdapterTests; ProtocolLyricsResolverTests")),
         Provider(
-            "musixmatch", "musixmatch", "Musixmatch", "user",
-            "Desktop user token resolved from the selected encrypted Personal or Shared account.",
-            Capability("lyrics", Supported, "Identity-checked desktop macro responses prefer richsync, subtitles and plain lyrics with account-scoped caching.", "MusixmatchLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests")),
+            "musixmatch", "musixmatch", "Musixmatch", "none",
+            "Automatic mobile access, with optional encrypted app Debug Info or a user token.",
+            Capability("lyrics", Supported, "Identity-checked mobile macro responses prefer richsync, subtitles and plain lyrics with separate automatic and account caches.", "MusixmatchLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests")),
         Provider(
             "musicbrainz",
             "musicbrainz",

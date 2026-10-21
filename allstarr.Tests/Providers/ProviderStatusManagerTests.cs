@@ -356,14 +356,14 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public void LyricsPlusIsAccountFreeAndMusixmatchRequiresItsManagedToken()
+    public void LyricsPlusAndMusixmatchWorkWithoutAccounts()
     {
         var manager = CreateManager(new Dictionary<string, string?>
         { ["MULTI_PROVIDER_LYRICS_ORDER"] = "lyricsplus,musixmatch,lrclib" });
-        Assert.Equal(new[] { "lyricsplus", "lrclib" }, manager.GetEnabledLyricsProviders());
+        Assert.Equal(new[] { "lyricsplus", "musixmatch", "lrclib" }, manager.GetEnabledLyricsProviders());
         Assert.Equal(ProviderConfigurationState.NotRequired,
             manager.GetAccountFreeStatus("lyricsplus", "lyrics").Configuration);
-        Assert.Throws<InvalidOperationException>(() => manager.GetAccountFreeStatus("musixmatch", "lyrics"));
+        Assert.Equal(ProviderConfigurationState.NotRequired, manager.GetAccountFreeStatus("musixmatch", "lyrics").Configuration);
         var account = Guid.NewGuid();
         Assert.Equal(ProviderConfigurationState.NeedsConfiguration,
             manager.GetManagedStatus("musixmatch", "lyrics", account, new Dictionary<string, string>()).Configuration);
@@ -393,15 +393,34 @@ public sealed class ProviderStatusManagerTests
             : await manager.TestManagedProviderCapabilityAsync(provider, "lyrics", Guid.NewGuid(),
                 new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" });
         Assert.Equal(healthy, status.Health == ProviderHealthState.Healthy);
-        Assert.Equal(provider == "musixmatch" && healthy ? 2 : 1, handler.Requests.Count);
+        Assert.Single(handler.Requests);
         var request = handler.Requests[0];
-        Assert.Equal(provider == "lyricsplus" ? "lyrics" : "apic-desktop.musixmatch.com", request.Host);
+        Assert.Equal(provider == "lyricsplus" ? "lyrics" : "apic-appmobile.musixmatch.com", request.Host);
         if (provider == "musixmatch")
         {
             Assert.Contains("usertoken=synthetic-desktop-token", request.Query, StringComparison.Ordinal);
-            if (healthy) Assert.Equal("/ws/1.1/track.search", handler.Requests[1].AbsolutePath);
+            Assert.Equal("/ws/1.1/macro.subtitles.get", request.AbsolutePath);
         }
         if (!healthy) Assert.Equal(provider == "lyricsplus" ? "rate-limited" : "account-needs-reauthentication", status.ReasonCode);
+    }
+
+    [Fact]
+    public async Task MusixmatchAccountFreeProbeSharesTheAutomaticToken()
+    {
+        var handler = new QueuedResponseHandler(
+            Json(HttpStatusCode.OK, """{"message":{"header":{"status_code":200},"body":{"user_token":"automatic-fixture-token"}}}"""),
+            Json(HttpStatusCode.OK, """{"message":{"header":{"status_code":404},"body":{}}}"""),
+            Json(HttpStatusCode.OK, """{"message":{"header":{"status_code":404},"body":{}}}"""));
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler));
+
+        for (var attempt = 0; attempt < 2; attempt++)
+            Assert.Equal(ProviderHealthState.Healthy,
+                (await manager.TestAccountFreeProviderCapabilityAsync("musixmatch", "lyrics")).Health);
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.Equal("/ws/1.1/token.get", handler.Requests[0].AbsolutePath);
+        Assert.All(handler.Requests, request => Assert.Equal("apic-appmobile.musixmatch.com", request.Host));
+        Assert.All(handler.Requests.Skip(1), request => Assert.Contains("usertoken=automatic-fixture-token", request.Query));
     }
 
     [Theory]
