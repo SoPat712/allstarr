@@ -42,6 +42,8 @@ public sealed class Song
     public string? SpotifyId { get; set; }
     public string? ReleaseDate { get; set; }
     public string? AlbumArtist { get; set; }
+    public List<Artist> AlbumArtists { get; set; } = [];
+    public Dictionary<string, string> ProviderIds { get; set; } = [];
     public string? Composer { get; set; }
     public string? Label { get; set; }
     public string? Copyright { get; set; }

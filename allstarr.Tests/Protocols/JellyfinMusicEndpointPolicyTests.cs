@@ -191,7 +191,7 @@ public sealed class JellyfinMusicEndpointPolicyTests
     [InlineData("GET", "/Artists/ext-provider-artist-1/Similar", true)]
     [InlineData("GET", "/Artists/ext-provider-artist-1/Images/Primary/0", false)]
     [InlineData("GET", "/Albums/ext-provider-album-1/InstantMix", true)]
-    [InlineData("GET", "/Albums/ext-provider-album-1/Similar", false)]
+    [InlineData("GET", "/Albums/ext-provider-album-1/Similar", true)]
     [InlineData("GET", "/Songs/ext-provider-song-1/InstantMix", true)]
     [InlineData("GET", "/MusicGenres/ext-provider-genre-1/InstantMix", false)]
     public void SynthesizedTypedResources_NeverLeakIntoNativeRoutes(

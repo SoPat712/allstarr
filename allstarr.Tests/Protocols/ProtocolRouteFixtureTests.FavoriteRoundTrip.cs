@@ -483,9 +483,11 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         if (format == "xml")
         {
-            var item = XDocument.Parse(body).Descendants().SingleOrDefault(item => item.Attribute("id")?.Value == id);
-            if (required) Assert.NotNull(item);
-            var timestamp = item?.Attribute("starred")?.Value;
+            var items = XDocument.Parse(body).Descendants().Where(item => item.Attribute("id")?.Value == id).ToArray();
+            if (required) Assert.NotEmpty(items);
+            var timestamps = items.Select(item => item.Attribute("starred")?.Value).Distinct(StringComparer.Ordinal).ToArray();
+            Assert.InRange(timestamps.Length, 0, 1);
+            var timestamp = timestamps.SingleOrDefault();
             if (timestamp != null) Assert.True(DateTimeOffset.TryParse(timestamp, out _));
             return timestamp;
         }
@@ -503,8 +505,11 @@ public sealed partial class ProtocolRouteFixtureTests
                     foreach (var item in Items(child)) yield return item;
         }
         var match = Items(document.RootElement).Where(item => item.GetProperty("id").GetString() == id).ToArray();
-        if (required) Assert.Single(match);
-        var timestampJson = match.Length == 1 && match[0].TryGetProperty("starred", out var value) ? value.GetString() : null;
+        if (required) Assert.NotEmpty(match);
+        var timestampsJson = match.Select(item => item.TryGetProperty("starred", out var value) ? value.GetString() : null)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        Assert.InRange(timestampsJson.Length, 0, 1);
+        var timestampJson = timestampsJson.SingleOrDefault();
         if (timestampJson != null) Assert.True(DateTimeOffset.TryParse(timestampJson, out _));
         return timestampJson;
     }

@@ -10,7 +10,7 @@ using allstarr.Core.Music;
 
 namespace allstarr.Services.Jellyfin;
 
-public class JellyfinResponseBuilder
+public partial class JellyfinResponseBuilder
 {
     public Dictionary<string, object?> ConvertFavoriteToJellyfinItem(allstarr.Core.Favorites.FavoriteViewItem favorite)
     {
@@ -498,6 +498,7 @@ public class JellyfinResponseBuilder
 
         if (!song.IsLocal)
         {
+            AddSongDescription(song, item);
             JellyfinLyricStreams.AddTo(item);
             if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] sources)
             {
@@ -726,6 +727,7 @@ public class JellyfinResponseBuilder
             };
         }
 
+        if (!album.IsLocal) AddAlbumDescription(album, item);
         return album.IsLocal ? item : ApplyExternalFields(item, includeAllFields);
     }
 
@@ -785,6 +787,7 @@ public class JellyfinResponseBuilder
             };
         }
 
+        if (!artist.IsLocal) AddArtistDescription(artist, item);
         return artist.IsLocal ? item : ApplyExternalFields(item, includeAllFields);
     }
 

@@ -215,7 +215,7 @@ public static class JellyfinMusicEndpointPolicy
                 return isSong && (isGet || HttpMethods.IsPost(method)) && segments.Length == 3;
             if (!isGet || segments.Length != 3) return false;
             if (segments[2].Equals("similar", StringComparison.OrdinalIgnoreCase))
-                return isSong || IsSynthesizedArtistId(itemId);
+                return isSong || IsSynthesizedArtistId(itemId) || IsSynthesizedAlbumId(itemId);
             return isSong &&
                    (segments[2].Equals("instantmix", StringComparison.OrdinalIgnoreCase) ||
                     segments[2].Equals("lyrics", StringComparison.OrdinalIgnoreCase));
@@ -240,7 +240,8 @@ public static class JellyfinMusicEndpointPolicy
         if (segments[0].Equals("albums", StringComparison.OrdinalIgnoreCase))
         {
             return IsSynthesizedAlbumId(itemId) && isGet && segments.Length == 3 &&
-                   segments[2].Equals("instantmix", StringComparison.OrdinalIgnoreCase);
+                   (segments[2].Equals("instantmix", StringComparison.OrdinalIgnoreCase) ||
+                    segments[2].Equals("similar", StringComparison.OrdinalIgnoreCase));
         }
 
         if (segments[0].Equals("artists", StringComparison.OrdinalIgnoreCase))

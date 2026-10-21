@@ -7,6 +7,9 @@ public class Artist
 {
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
+    public string? Biography { get; set; }
+    public Dictionary<string, string> ProviderIds { get; set; } = [];
+    public string? LastFmUrl { get; set; }
     public string? ImageUrl { get; set; }
     public int? AlbumCount { get; set; }
     public bool IsLocal { get; set; }

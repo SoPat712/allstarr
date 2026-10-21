@@ -311,6 +311,9 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                     using var albumDocument = JsonDocument.Parse(albumJson);
                     var albumData = albumDocument.RootElement;
 
+                    if (song.AlbumArtists.Count == 0)
+                        song.AlbumArtists = CatalogDescriptiveMetadata.AlbumArtists(albumData, "deezer");
+
                     // Genre
                     if (albumData.TryGetProperty("genres", out var genres) &&
                         genres.TryGetProperty("data", out var genresData) &&
@@ -563,6 +566,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                 ? cover.GetString()
                 : null,
             AlbumArtist = albumArtist,
+            AlbumArtists = CatalogDescriptiveMetadata.EmbeddedAlbumArtists(track, "deezer"),
             Isrc = track.TryGetProperty("isrc", out var isrc)
                 ? isrc.GetString()
                 : null,
@@ -691,6 +695,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             Isrc = isrc,
             ReleaseDate = releaseDate,
             AlbumArtist = albumArtist,
+            AlbumArtists = CatalogDescriptiveMetadata.EmbeddedAlbumArtists(track, "deezer"),
             Contributors = contributors,
             CoverArtUrl = coverMedium,
             CoverArtUrlLarge = coverLarge,
@@ -730,6 +735,9 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                     genresData.GetArrayLength() > 0
                 ? genresData[0].GetProperty("name").GetString()
                 : null,
+            Artists = CatalogDescriptiveMetadata.AlbumArtists(album, "deezer"),
+            Label = CatalogDescriptiveMetadata.Label(album),
+            Notes = CatalogDescriptiveMetadata.Text(album, "description"),
             IsLocal = false,
             ExternalProvider = "deezer",
             ExternalId = externalId

@@ -794,6 +794,8 @@ public sealed partial class ProtocolProviderGateway(
     {
         ArgumentNullException.ThrowIfNull(protocol);
         var routedProviderId = NormalizeProvider(providerId);
+        if (protocol.IsReadOnly)
+            return await ReadKnownRelationshipsAsync<Album>(protocol, routedProviderId, externalId, "albums");
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-albums");
         if (routed.Candidate != null)
@@ -822,6 +824,7 @@ public sealed partial class ProtocolProviderGateway(
             } while (cursor != null);
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(), protocol);
             await CacheResourcesAsync(routed.Candidate.Context, albums, []);
+            await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "albums", albums);
             return albums;
         }
 
@@ -859,6 +862,9 @@ public sealed partial class ProtocolProviderGateway(
     {
         ArgumentNullException.ThrowIfNull(protocol);
         var routedProviderId = NormalizeProvider(providerId);
+        if (protocol.IsReadOnly)
+            return (await ReadKnownRelationshipsAsync<Artist>(protocol, routedProviderId, externalId, "similar"))
+                .Take(Math.Max(0, limit)).ToList();
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-similar-artists");
         if (routed.Candidate == null) return [];
@@ -867,7 +873,10 @@ public sealed partial class ProtocolProviderGateway(
             new ProviderSimilarArtistsRequest(
                 new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId),
                 Math.Clamp(limit, 1, 200)));
-        return outcome.IsSuccess ? outcome.RequireValue().Items.Select(Map).ToList() : [];
+        if (!outcome.IsSuccess) return [];
+        var artists = outcome.RequireValue().Items.Select(Map).ToList();
+        await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "similar", artists);
+        return artists;
     }
 
     public async Task<List<Song>> GetArtistTracksAsync(
@@ -877,6 +886,12 @@ public sealed partial class ProtocolProviderGateway(
     {
         ArgumentNullException.ThrowIfNull(protocol);
         var routedProviderId = NormalizeProvider(providerId);
+        if (protocol.IsReadOnly)
+        {
+            var known = await ReadKnownRelationshipsAsync<Song>(protocol, routedProviderId, externalId, "tracks");
+            var currentPolicy = await ResolveEffectivePolicyAsync(protocol);
+            return known.Where(song => currentPolicy?.Includes(song) != false).ToList();
+        }
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist-tracks");
         if (routed.Candidate != null)
@@ -905,6 +920,7 @@ public sealed partial class ProtocolProviderGateway(
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
             await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
+            await CacheKnownRelationshipsAsync(protocol, routed.Candidate.Context, externalId, "tracks", tracks);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
@@ -1823,6 +1839,10 @@ public sealed partial class ProtocolProviderGateway(
             SpotifyId = item.SpotifyId,
             ReleaseDate = item.ReleaseDate,
             AlbumArtist = item.AlbumArtist,
+            AlbumArtists = item.AlbumArtists.Select(artist => artist.ArtistId is { } artistId
+                ? Map(new ProviderArtistMetadata(artistId, artist.Name))
+                : new Artist { Name = artist.Name }).ToList(),
+            ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
             Composer = item.Composer,
             Label = item.Label,
             Copyright = item.Copyright,
@@ -1937,24 +1957,42 @@ public sealed partial class ProtocolProviderGateway(
         return song;
     }
 
-    internal static Album Map(ProviderAlbumMetadata item) => new()
+    internal static Album Map(ProviderAlbumMetadata item)
     {
-        Id = ProtocolItemId(item.Id),
-        ExternalProvider = PublicProviderId(item.Id),
-        ExternalId = item.Id.Value,
-        Title = item.Title,
-        Artist = item.Artists.FirstOrDefault()?.Name ?? string.Empty,
-        ArtistId = item.Artists.FirstOrDefault()?.ArtistId is { } artistId
-            ? ProtocolItemId(artistId)
-            : null,
-        SongCount = item.TrackCount,
-        CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
-        Year = item.Year,
-        ReleaseDate = item.ReleaseDate,
-        Genre = item.Genre,
-        Songs = item.Tracks.Select(Map).ToList(),
-        IsLocal = false
-    };
+        var artists = item.Artists.Select(artist => artist.ArtistId is { } creditId
+            ? Map(new ProviderArtistMetadata(creditId, artist.Name))
+            : new Artist { Name = artist.Name }).ToList();
+        var songs = item.Tracks.Select(Map).ToList();
+        foreach (var song in songs)
+        {
+            if (song.AlbumArtists.Count == 0)
+                song.AlbumArtists = artists.ToList();
+        }
+
+        return new Album
+        {
+            Id = ProtocolItemId(item.Id),
+            ExternalProvider = PublicProviderId(item.Id),
+            ExternalId = item.Id.Value,
+            Title = item.Title,
+            Artist = item.Artists.FirstOrDefault()?.Name ?? string.Empty,
+            ArtistId = item.Artists.FirstOrDefault()?.ArtistId is { } artistId
+                ? ProtocolItemId(artistId)
+                : null,
+            Artists = artists,
+            Label = item.Label,
+            Notes = item.Notes,
+            ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
+            LastFmUrl = item.LastFmUrl,
+            SongCount = item.TrackCount,
+            CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
+            Year = item.Year,
+            ReleaseDate = item.ReleaseDate,
+            Genre = item.Genre,
+            Songs = songs,
+            IsLocal = false
+        };
+    }
 
     internal static Artist Map(ProviderArtistMetadata item) => new()
     {
@@ -1962,6 +2000,9 @@ public sealed partial class ProtocolProviderGateway(
         ExternalProvider = PublicProviderId(item.Id),
         ExternalId = item.Id.Value,
         Name = item.Name,
+        Biography = item.Biography,
+        ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
+        LastFmUrl = item.LastFmUrl,
         ImageUrl = item.Artwork?.PublicUri?.ToString(),
         IsLocal = false
     };

@@ -8,7 +8,7 @@ using allstarr.Core.Music;
 
 namespace allstarr.Services.Subsonic;
 
-public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
+public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
 {
     public Dictionary<string, object?> ConvertFavoriteToJson(allstarr.Core.Favorites.FavoriteViewItem favorite)
     {
@@ -439,6 +439,7 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
             result["contentType"] = UnknownSongContentType;
         }
 
+        AddSongDescription(song, result);
         return result;
     }
 
@@ -470,6 +471,7 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
             result["genre"] = album.Genre;
         }
 
+        AddAlbumDescription(album, result);
         return result;
     }
 
@@ -558,6 +560,7 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
             element.Add(new XAttribute("contentType", UnknownSongContentType));
         }
 
+        AddSongDescription(song, element);
         return element;
     }
 
@@ -618,6 +621,7 @@ public class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts = null)
             element.Add(new XAttribute("genre", album.Genre));
         }
 
+        AddAlbumDescription(album, element);
         return element;
     }
 

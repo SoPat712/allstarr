@@ -846,6 +846,7 @@ public partial class JellyfinController : ControllerBase
     #region Recommendations & Instant Mix
 
     [HttpGet("Items/{itemId}/Similar")]
+    [HttpGet("Albums/{itemId}/Similar")]
     [HttpGet("Songs/{itemId}/Similar")]
     [HttpGet("Artists/{itemId}/Similar")]
     public async Task<IActionResult> GetSimilarItems(
@@ -854,6 +855,10 @@ public partial class JellyfinController : ControllerBase
         [FromQuery] string? fields = null,
         [FromQuery] string? userId = null)
     {
+        var (externalAlbum, albumProvider, albumType, albumId) = _localLibraryService.ParseExternalId(itemId);
+        if (externalAlbum && albumType == "album")
+            return await GetRelatedProviderAlbumsAsync(itemId, albumProvider!, albumId!, limit);
+
         var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(itemId);
 
         if (isExternal)
@@ -913,7 +918,9 @@ public partial class JellyfinController : ControllerBase
 
         var endpoint = Request.Path.Value?.Contains("/Artists/", StringComparison.OrdinalIgnoreCase) == true
             ? $"Artists/{itemId}/Similar"
-            : $"Items/{itemId}/Similar";
+            : Request.Path.Value?.Contains("/Albums/", StringComparison.OrdinalIgnoreCase) == true
+                ? $"Albums/{itemId}/Similar"
+                : $"Items/{itemId}/Similar";
 
         // Preserve the full query string for Jellyfin's optional similarity parameters.
         if (Request.QueryString.HasValue)

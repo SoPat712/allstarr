@@ -9,6 +9,11 @@ public class Album
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
+    public List<Artist> Artists { get; set; } = [];
+    public string? Label { get; set; }
+    public string? Notes { get; set; }
+    public Dictionary<string, string> ProviderIds { get; set; } = [];
+    public string? LastFmUrl { get; set; }
     public string? ReleaseDate { get; set; }
     public int? Year { get; set; }
     public int? SongCount { get; set; }
