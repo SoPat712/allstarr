@@ -112,9 +112,12 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
     public Task StopAsync(CancellationToken cancellationToken) => WithRuntimeGateAsync(async () =>
     {
         foreach (var sandbox in _sandboxes.Values)
+        {
             if (_readRegistry.TryGetCapability<ExtensionDownloadStreamingCapabilityAdapter>(sandbox.Id,
                     ProviderCapabilityKind.Streaming, out var streaming))
                 await streaming!.DisposeAsync();
+            sandbox.Cleanup();
+        }
         return true;
     }, cancellationToken);
 
@@ -675,35 +678,40 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
     private async Task RegisterRuntimeAsync(ExtensionPackageRecord package, RuntimeBuild build)
     {
         ExtensionDownloadStreamingCapabilityAdapter? previous;
+        IReadOnlyList<ExtensionSandbox> replaced;
         lock (_runtimeMutationLock)
         {
             RejectBuiltInCollision(build.Registration.Descriptor.Id);
             _readRegistry.TryGetCapability(package.ExtensionId, ProviderCapabilityKind.Streaming, out previous);
             _registry.RegisterOrReplaceExtension(build.Registration);
-            StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
+            replaced = StoreSandbox(package.Id, package.ExtensionId, build.Sandbox);
         }
         if (previous != null) await previous.DisposeAsync();
+        foreach (var sandbox in replaced) sandbox.Cleanup();
     }
 
     private async Task RemoveRuntimeAsync(ExtensionPackageRecord package)
     {
         ExtensionDownloadStreamingCapabilityAdapter? previous = null;
+        ExtensionSandbox? removed;
         lock (_runtimeMutationLock)
         {
-            if (_sandboxes.TryRemove(package.Id, out _))
+            if (_sandboxes.TryRemove(package.Id, out removed))
             {
                 _readRegistry.TryGetCapability(package.ExtensionId, ProviderCapabilityKind.Streaming, out previous);
                 _registry.RemoveExtension(package.ExtensionId);
             }
         }
         if (previous != null) await previous.DisposeAsync();
+        removed?.Cleanup();
     }
 
-    private void StoreSandbox(
+    private IReadOnlyList<ExtensionSandbox> StoreSandbox(
         Guid packageId,
         string extensionId,
         ExtensionSandbox sandbox)
     {
+        var replaced = _sandboxes.Values.Where(item => item.Id.Equals(extensionId, StringComparison.Ordinal)).ToArray();
         foreach (var item in _sandboxes
                      .Where(item =>
                          item.Key != packageId &&
@@ -714,6 +722,7 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
         }
 
         _sandboxes[packageId] = sandbox;
+        return replaced;
     }
 
     private sealed record RuntimeBuild(

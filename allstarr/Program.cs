@@ -254,6 +254,7 @@ builder.Services.AddHttpClient("ExtensionSdkV1")
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
     {
         AllowAutoRedirect = false,
+        UseCookies = false,
         MaxConnectionsPerServer = 8,
         PooledConnectionLifetime = TimeSpan.FromMinutes(5)
     });

@@ -108,7 +108,15 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
             Long(value, "durationMs") is { } duration ? TimeSpan.FromMilliseconds(duration) : null,
             OptionalText(value, "isrc"), value.TryGetProperty("isExplicit", out var explicitValue) &&
                                         explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
-            Artwork(value), OptionalText(value, "snapshotVersion"), bitrate: Int(value, "bitrate"));
+            Artwork(value), OptionalText(value, "snapshotVersion"),
+            trackNumber: Int(value, "trackNumber"), discNumber: Int(value, "discNumber"), totalTracks: Int(value, "totalTracks"),
+            year: Int(value, "year"), genre: OptionalText(value, "genre"), bpm: Int(value, "bpm"),
+            spotifyId: OptionalText(value, "spotifyId"), releaseDate: OptionalText(value, "releaseDate"),
+            albumArtist: OptionalText(value, "albumArtist"), composer: OptionalText(value, "composer"),
+            label: OptionalText(value, "label"), copyright: OptionalText(value, "copyright"),
+            contributors: value.TryGetProperty("contributors", out var contributors) && contributors.ValueKind == JsonValueKind.Array
+                ? contributors.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!) : [],
+            explicitContentLyrics: Int(value, "explicitContentLyrics"), bitrate: Int(value, "bitrate"));
     }
 
     private ProviderAlbumMetadata MapAlbum(JsonElement value) => new(Id(ProviderResourceKind.Album, Text(value, "id")),
