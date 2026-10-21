@@ -246,6 +246,12 @@
   }
 
   function audioFacts(media: NonNullable<ProviderTryResult["media"]>) {
+    const check = (media as typeof media & { qualityCheck?: { verdict: string; likelySourceRate?: number | null } }).qualityCheck;
+    const qualityCheck = check?.verdict === "true-hi-res" ? "True hi-res"
+      : check?.verdict === "upsampled" ? `Upsampled from ${check.likelySourceRate === 48000 ? "48" : "44.1"} kHz`
+      : check?.verdict === "padded-bit-depth" ? "16-bit padded to 24-bit"
+      : check?.verdict === "lossy-transcode-suspected" ? "Lossy source suspected"
+      : check?.verdict === "standard" ? "CD quality" : "Not checked";
     const format = [
       media.codec?.toUpperCase(),
       media.bitDepth && media.sampleRateHz ? `${media.bitDepth}-bit / ${(media.sampleRateHz / 1000).toLocaleString(undefined, { maximumFractionDigits: 1 })} kHz` : null,
@@ -255,6 +261,7 @@
       media.startMs != null ? ["Started in", elapsed(media.startMs)] : null,
       media.seekMode ? ["Seeking", humanize(media.seekMode)] : null,
       format ? ["Format", format] : null,
+      media.kind === "download" ? ["Quality check", qualityCheck] : null,
       media.sizeBytes != null ? ["Size", size(media.sizeBytes)] : null,
       media.durationSeconds ? ["Length", clock(media.durationSeconds)] : null,
     ].filter((item): item is [string, string] => Boolean(item?.[1]));

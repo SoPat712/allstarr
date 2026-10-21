@@ -11,7 +11,7 @@ namespace allstarr.Core.ManagedFiles;
 public sealed record KeptFavoriteInterest(Guid OwnerUserId, Guid JobId, int AttemptNumber);
 
 public sealed record KeptRecordingMetadata(string Title, string[] Artists, string? Album = null,
-    long? DurationMilliseconds = null, int? ExplicitContentLyrics = null);
+    long? DurationMilliseconds = null, int? ExplicitContentLyrics = null, allstarr.Services.Common.AudioQualityCheck? QualityCheck = null);
 
 public sealed partial class RecordingKeptFiles
 {

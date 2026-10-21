@@ -41,6 +41,7 @@ public static class ProviderDownloadArtifactModelConfiguration
             entity.Property(item => item.RelativePath).HasMaxLength(1000).IsRequired();
             entity.Property(item => item.SourceExternalTrackId).HasMaxLength(500);
             entity.Property(item => item.ContentSha256).HasMaxLength(64).IsRequired();
+            entity.Property(item => item.QualityCheckJson).HasMaxLength(4000);
             entity.Property(item => item.MimeType).HasMaxLength(100);
             entity.Property(item => item.Container).HasMaxLength(100);
             entity.Property(item => item.Codec).HasMaxLength(100);

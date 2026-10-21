@@ -287,6 +287,10 @@ public sealed partial class DurableJobQueue
             query = query.Where(item => supportedTypes.Contains(item.Type));
         }
 
+        query = query.Where(item => item.Type != allstarr.Core.Downloads.AudioQualityCheckJobHandler.Type ||
+            !context.Jobs.Any(running => running.Type == allstarr.Core.Downloads.AudioQualityCheckJobHandler.Type &&
+                running.State == DurableJobState.Running));
+
         var job = await query
             .OrderByDescending(item => item.Priority)
             .ThenBy(item => item.AvailableAt)

@@ -159,6 +159,7 @@ public sealed class DurableJobWorker : BackgroundService
     }
 
     private int TypeLimit(string type) =>
+        type == allstarr.Core.Downloads.AudioQualityCheckJobHandler.Type ? 1 :
         _options.TypeConcurrencyLimits.TryGetValue(type, out var configured)
             ? configured
             : 1;

@@ -46,7 +46,8 @@ public sealed class ManagedTrackDownloadService(
     ProviderDownloadArtifactResolver artifacts,
     IPlatformClock clock,
     ILogger<ManagedTrackDownloadService> logger,
-    IEffectiveProviderPolicyResolver? effectivePolicies = null)
+    IEffectiveProviderPolicyResolver? effectivePolicies = null,
+    allstarr.Core.Jobs.DurableJobQueue? jobs = null)
 {
     public async Task<ManagedTrackDownloadResult> ExecuteAsync(
         ManagedTrackDownloadCommand command,
@@ -215,6 +216,7 @@ public sealed class ManagedTrackDownloadService(
                     ProviderRouteOutcomeStatus.Succeeded,
                     "verified-artifact-reused",
                     nextProviderId: null);
+                if (jobs != null) await jobs.EnqueueAsync(AudioQualityCheckJobHandler.Request(verified!.Id, command.OwnerUserId), cancellationToken);
                 return ManagedTrackDownloadResult.Success(verified);
             }
 
@@ -300,6 +302,7 @@ public sealed class ManagedTrackDownloadService(
                     ProviderRouteOutcomeStatus.Succeeded,
                     "download-verified",
                     nextProviderId: null);
+                if (jobs != null) await jobs.EnqueueAsync(AudioQualityCheckJobHandler.Request(artifact.Id, command.OwnerUserId), cancellationToken);
                 return ManagedTrackDownloadResult.Success(artifact);
             }
             catch (IOException)

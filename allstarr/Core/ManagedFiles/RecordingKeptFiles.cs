@@ -165,7 +165,9 @@ public sealed partial class RecordingKeptFiles(
                     route.PublishedByUserId = winner?.Route?.PublishedByUserId ?? publication.InitiatingUserId;
                     route.PublicationJobId = winner?.Route?.PublicationJobId ?? publication.DurableJobId;
                     route.SourceArtifactId = winner?.Route?.SourceArtifactId ?? publication.SourceArtifactId;
-                    route.DisplayMetadataJson = metadata;
+                    var qualityJson = await db.Set<ProviderDownloadArtifactEntity>().Where(item => item.Id == route.SourceArtifactId)
+                        .Select(item => item.QualityCheckJson).SingleAsync(cancellationToken);
+                    route.DisplayMetadataJson = AudioQualityCheckJobHandler.WithCheck(metadata, AudioQualityCheckJobHandler.ReadCheck(qualityJson));
                     route.UpdatedAt = clock.UtcNow;
                     route.Revision++;
                     db.AuditEvents.Add(new()
@@ -194,6 +196,9 @@ public sealed partial class RecordingKeptFiles(
                             new(recording.Id, fileId), publication.InitiatingUserId,
                             CorrelationId: proof.CorrelationId), cancellationToken);
                 }
+                if (jobs != null)
+                    await jobs.EnqueueInExistingTransactionAsync(db,
+                        AudioQualityCheckJobHandler.Request(source.Id, publication.InitiatingUserId), cancellationToken);
                 await db.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
                 result = ToResult(recording.Id, serving, mime);

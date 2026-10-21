@@ -141,6 +141,10 @@ namespace allstarr.Core.Storage.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("QualityCheckJson")
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("RelativePath")
                         .IsRequired()
                         .HasMaxLength(1000)

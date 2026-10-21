@@ -13,7 +13,8 @@ public enum ApplicationCacheCategory
     Lyrics,
     TemporaryAudio,
     NegativeResult,
-    Coordination
+    Coordination,
+    AudioQuality
 }
 
 public enum ApplicationCacheStorageTier
@@ -60,6 +61,8 @@ public static class ApplicationCachePolicyRegistry
         ArgumentException.ThrowIfNullOrWhiteSpace(key);
         category = default;
 
+        if (key.StartsWith("audio_quality:", StringComparison.Ordinal))
+            category = ApplicationCacheCategory.AudioQuality;
         if (CacheKeyBuilder.IsMediaAssetPayloadKey(key) ||
             StartsWithAny(key, "media:descriptor:v4:", "playlist:artwork-descriptor:v1:"))
             category = ApplicationCacheCategory.Artwork;
@@ -148,6 +151,10 @@ public static class ApplicationCachePolicyRegistry
                 category, "provider-gateway", ApplicationCacheStorageTier.Metadata,
                 settings.MetadataTTL, TimeSpan.FromMinutes(30), 64 * Megabyte, 50_000,
                 ApplicationCacheWarmingRule.None, "provider-account-or-storefront-revision"),
+            ApplicationCacheCategory.AudioQuality => new(
+                category, "audio-quality", ApplicationCacheStorageTier.Media,
+                TimeSpan.FromDays(30), TimeSpan.Zero, 4 * Megabyte, 20_000,
+                ApplicationCacheWarmingRule.None, "file-size-or-modification-time"),
             ApplicationCacheCategory.Artwork => new(
                 category, "media-assets", ApplicationCacheStorageTier.Media,
                 settings.ProxyImagesTTL, TimeSpan.FromDays(1),

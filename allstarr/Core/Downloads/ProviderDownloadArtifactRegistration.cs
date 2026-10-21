@@ -9,6 +9,8 @@ public static class ProviderDownloadArtifactRegistration
         services.AddSingleton<IProviderDownloadArtifactStore, EfProviderDownloadArtifactStore>();
         services.AddSingleton<ProviderDownloadArtifactResolver>();
         services.AddSingleton<ManagedTrackDownloadService>();
+        services.AddSingleton<allstarr.Services.Common.AudioQualityAnalyzer>();
+        services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, AudioQualityCheckJobHandler>();
         services.AddSingleton<allstarr.Core.Jobs.IDurableJobHandler, RecordingKeepJobHandler>();
         var placement = new ManagedTrackPlacementOptions();
         configuration.GetSection("FavoriteActions:Placement").Bind(placement);

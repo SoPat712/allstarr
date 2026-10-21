@@ -68,6 +68,13 @@ public sealed partial class RecordingKeptFilesTests
         collection.AddSingleton<IPlatformClock>(new SystemPlatformClock());
         collection.AddSingleton(artifacts);
         collection.AddSingleton(ExplicitKeepService());
+        collection.AddSingleton<IDbContextFactory<AllstarrDbContext>>(factory);
+        collection.AddSingleton(queue);
+        using var qualityCache = new allstarr.Services.Common.FileMediaApplicationCache(
+            new allstarr.Services.Common.FileMediaCacheOptions(Path.Combine(root, "quality-cache")),
+            new SystemPlatformClock(),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<allstarr.Services.Common.FileMediaApplicationCache>.Instance);
+        collection.AddSingleton(qualityCache);
         await using var registered = collection.BuildServiceProvider();
         var handler = registered.GetServices<IDurableJobHandler>().Single(item => item.JobType == RecordingKeptFiles.ExplicitKeepJobType);
         var result = await handler.ExecuteAsync(new(claim, registered), default);
