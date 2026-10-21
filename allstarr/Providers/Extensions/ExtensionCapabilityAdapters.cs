@@ -98,7 +98,7 @@ public abstract class ExtensionCapabilityAdapterBase
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return new(ProviderErrorKind.NotFound);
         if (Regex.IsMatch(message,
-                @"\b(?:preview|snippet)\b|\b(?:not|does[ _-]+not)\b.*\bfull[ _-]+playable[ _-]+stream\b|\bno\b.*\b(?:supported|playable|full)\b.*\bstreams?\b.*\b(?:available|found)\b|\bduration\b.*\b(?:mismatch|does[ _-]+not[ _-]+match)\b|\bencrypted\b.*\bstreams?\b|\bunsupported[ _-]+stream\b|\bstreams?\b.*\bnot[ _-]+supported\b",
+                @"\bdecryption failed\b|\b(?:preview|snippet)\b|\b(?:not|does[ _-]+not)\b.*\bfull[ _-]+playable[ _-]+stream\b|\bno\b.*\b(?:supported|playable|full)\b.*\bstreams?\b.*\b(?:available|found)\b|\bduration\b.*\b(?:mismatch|does[ _-]+not[ _-]+match)\b|\bencrypted\b.*\bstreams?\b|\bunsupported[ _-]+stream\b|\bstreams?\b.*\bnot[ _-]+supported\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             return new(ProviderErrorKind.IncompatibleMedia);
         return new(ProviderErrorKind.TransientFailure);
@@ -170,10 +170,16 @@ public sealed class ExtensionStreamingCapabilityAdapter : ExtensionCapabilityAda
     {
         context.RequireResourceOwner(request.TrackId, ProviderResourceKind.Track);
         return InvokeAsync(context, "getStreamLease", new { trackId = request.TrackId.Value, requestedQuality = request.RequestedQuality.ToString(), request.RangeStart }, value =>
-            new ProviderStreamLease(Text(value, "leaseId"), NetworkUri(value, "sourceUri"),
+        {
+            foreach (var marker in new[] { "decryption", "decryption_key", "encrypted", "needs_decryption", "encryption_scheme" })
+                if (value.TryGetProperty(marker, out var encryption) && encryption.ValueKind is not
+                    (JsonValueKind.Null or JsonValueKind.False) && encryption.ToString().Length > 0)
+                    throw new InvalidDataException(ExtensionDownloadPostProcessor.FailureMessage);
+            return new ProviderStreamLease(Text(value, "leaseId"), NetworkUri(value, "sourceUri"),
                 value.GetProperty("expiresAt").GetDateTimeOffset(), Bool(value, "supportsByteRanges"), Bool(value, "supportsSeeking"),
                 Media(value), EnumValue<ProviderStreamRetryBehavior>(value, "retryBehavior"),
-                qualityDowngradeReason: OptionalText(value, "qualityDowngradeReason")),
+                qualityDowngradeReason: OptionalText(value, "qualityDowngradeReason"));
+        },
             requireAccount: accountRequired);
     }
     public Task<ProviderOutcome<ProviderStreamProbeResult>> ProbeStreamAsync(ProviderExecutionContext context, ProviderStreamLeaseRequest request)

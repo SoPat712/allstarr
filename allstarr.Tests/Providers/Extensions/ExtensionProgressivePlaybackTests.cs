@@ -463,7 +463,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
         Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
     }
 
-    private (ExtensionDownloadStreamingCapabilityAdapter, ProviderExecutionContext, ProviderExternalResourceId) Setup(bool knownLength, string processing = "", string mimeType = "audio/flac", bool segmented = false, long maximumBytes = 1024 * 1024, bool deezer = false)
+    private (ExtensionDownloadStreamingCapabilityAdapter, ProviderExecutionContext, ProviderExternalResourceId) Setup(bool knownLength, string processing = "", string mimeType = "audio/flac", bool segmented = false, long maximumBytes = 1024 * 1024, bool deezer = false, string extension = "")
     {
         var manifestSource = """
             {"name":"growing-test","displayName":"Growing test","version":"1.0.0","type":["download_provider"],
@@ -479,6 +479,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
             : "var result=file.download('https://media.example.test/audio',path,{});";
         var script = $$$"""
             registerExtension({download:function(id,quality,path){
+              path += '{{{extension}}}';
               {{{transfer}}}
               if (!result.success) throw new Error('download failed');
               {{{processing}}}

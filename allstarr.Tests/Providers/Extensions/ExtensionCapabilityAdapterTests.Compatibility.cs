@@ -191,7 +191,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         var (sandbox, _) = CompatibilitySandbox(script, "download_provider");
 
         var error = Assert.ThrowsAny<Exception>(() => sandbox.InvokeJson("download", """{"trackId":"track-1"}"""));
-        Assert.Contains("post-processing", error.Message, StringComparison.Ordinal);
+        Assert.Contains("decryption failed", error.Message, StringComparison.Ordinal);
         Assert.DoesNotContain("fixture", error.Message, StringComparison.Ordinal);
     }
 
