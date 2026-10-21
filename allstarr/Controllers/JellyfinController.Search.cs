@@ -57,77 +57,8 @@ public partial class JellyfinController
             searchTerm ?? string.Empty,
             includeItemTypes ?? string.Empty);
 
-        if (!string.IsNullOrWhiteSpace(effectiveArtistIds))
-        {
-            var artistId = effectiveArtistIds.Split(',')[0];
-            var (isExternal, provider, type, externalId) = _localLibraryService.ParseExternalId(artistId);
-
-            if (isExternal)
-            {
-                if (favoritesOnlyRequest)
-                {
-                    _logger.LogDebug("Suppressing external artist results for favorites-only request: {ArtistId}", artistId);
-                    return CreateEmptyItemsResponse(startIndex);
-                }
-
-                // Curators use the synthetic ext-{provider}-curator-{name} identity.
-                if (artistId.Contains("-curator-", StringComparison.OrdinalIgnoreCase))
-                {
-                    _logger.LogDebug("Fetching playlists for curator: {ArtistId}", artistId);
-                    return await GetCuratorPlaylists(provider!, externalId!, includeItemTypes, HttpContext.RequestAborted);
-                }
-
-                _logger.LogDebug("Fetching content for external artist: {Provider}/{ExternalId}, type={Type}, parentId={ParentId}",
-                    provider, externalId, type, parentId);
-                var artistRelation = !string.IsNullOrWhiteSpace(albumArtistIds)
-                    ? ExternalArtistRelation.AlbumArtist
-                    : !string.IsNullOrWhiteSpace(contributingArtistIds)
-                        ? ExternalArtistRelation.ContributingArtist
-                        : ExternalArtistRelation.All;
-                return await GetExternalChildItems(
-                    provider!,
-                    type!,
-                    externalId!,
-                    includeItemTypes,
-                    HttpContext.RequestAborted,
-                    artistId,
-                    artistRelation);
-            }
-        }
-
-        if (!string.IsNullOrWhiteSpace(albumIds))
-        {
-            var albumId = albumIds.Split(',')[0];
-            var (isExternal, provider, externalId) = _localLibraryService.ParseSongId(albumId);
-
-            if (isExternal)
-            {
-                if (favoritesOnlyRequest)
-                {
-                    _logger.LogDebug("Suppressing external album results for favorites-only request: {AlbumId}", albumId);
-                    return CreateEmptyItemsResponse(startIndex);
-                }
-
-                _logger.LogDebug("Fetching songs for external album: {Provider}/{ExternalId}", provider,
-                    externalId);
-
-                var album = await GetProviderAlbumAsync(provider!, externalId!, HttpContext.RequestAborted);
-                if (album == null)
-                {
-                    return new JsonResult(new
-                    { Items = Array.Empty<object>(), TotalRecordCount = 0, StartIndex = startIndex });
-                }
-
-                var albumItems = album.Songs.Select(song => _responseBuilder.ConvertSongToJellyfinItem(song)).ToList();
-
-                return new JsonResult(new
-                {
-                    Items = albumItems,
-                    TotalRecordCount = albumItems.Count,
-                    StartIndex = startIndex
-                });
-            }
-        }
+        var externalQuery = await TryReadExternalQueryAsync(includeItemTypes, userId);
+        if (externalQuery != null) return externalQuery;
 
         if (!string.IsNullOrWhiteSpace(parentId))
         {
@@ -150,12 +81,6 @@ public partial class JellyfinController
 
             if (isExternal)
             {
-                if (favoritesOnlyRequest)
-                {
-                    _logger.LogDebug("Suppressing external parent results for favorites-only request: {ParentId}", parentId);
-                    return CreateEmptyItemsResponse(startIndex);
-                }
-
                 _logger.LogDebug("Fetching children for external parent: {Provider}/{Type}/{ExternalId}",
                     provider, type, externalId);
                 return await GetExternalChildItems(provider!, type!, externalId!, includeItemTypes, HttpContext.RequestAborted);
@@ -318,7 +243,8 @@ public partial class JellyfinController
         _logger.LogDebug("Performing integrated search for: {Query}", cleanQuery);
 
         var itemTypes = ParseItemTypes(includeItemTypes);
-        var integratedFetchLimit = GetIntegratedSearchFetchLimit(startIndex, limit);
+        var artistSearch = itemTypes?.Length == 1 && itemTypes[0].Equals("MusicArtist", StringComparison.OrdinalIgnoreCase);
+        var integratedFetchLimit = artistSearch ? 200 : GetIntegratedSearchFetchLimit(startIndex, limit);
         var externalSearchLimits = GetExternalSearchLimits(itemTypes, integratedFetchLimit, includePlaylistsAsAlbums: true);
         _logger.LogInformation(
             "SEARCH TRACE: external limits for query '{Query}' => songs={SongLimit}, albums={AlbumLimit}, artists={ArtistLimit}",
@@ -335,20 +261,20 @@ public partial class JellyfinController
                 new MusicSearchWindow(externalSearchLimits.SongLimit),
                 new MusicSearchWindow(externalSearchLimits.AlbumLimit),
                 new MusicSearchWindow(externalSearchLimits.ArtistLimit),
-                _settings.EnableExternalPlaylists ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
+                _settings.EnableExternalPlaylists && !artistSearch ? new MusicSearchWindow(integratedFetchLimit) : MusicSearchWindow.None,
                 IncludeProviders: !favoritesOnlyRequest,
                 HideProviderArtistsNamedLikeNative: true),
             new JellyfinNativeMusicSearch(
                 cancellationToken => GetLocalSearchResultForCurrentRequest(
-                    cleanQuery, includeItemTypes, integratedFetchLimit, recursive, userId),
+                    cleanQuery, includeItemTypes, artistSearch ? int.MaxValue : integratedFetchLimit, recursive, userId),
                 (id, cancellationToken) => _proxyService.GetJsonAsync(
                     $"Users/{Uri.EscapeDataString(context.VerifiedBackendPrincipalId)}/Items/{Uri.EscapeDataString(id)}",
-                    null, Request.Headers)),
+                    null, Request.Headers), CaptureNativeQueryRows),
             HttpContext.RequestAborted);
 
         // Native rows stay Jellyfin-shaped; only provider rows are synthesized.
         var allSongs = merged.Songs.Select(RenderSearchEntry).ToList();
-        var allArtists = merged.Artists.Select(RenderSearchEntry).ToList();
+        var allArtists = merged.Artists.Select(entry => artistSearch ? RenderQuerySearchEntry(entry) : RenderSearchEntry(entry)).ToList();
         var mergedAlbumsAndPlaylists = merged.Albums.Select(RenderSearchEntry).ToList();
 
         _logger.LogDebug(
@@ -379,37 +305,15 @@ public partial class JellyfinController
             items.AddRange(allSongs);
         }
 
-        var shapedResponse = _searchProtocolAdapter.ShapeItemsResponse(items, startIndex, limit);
+        if (artistSearch) return await ShapeProviderQueryAsync(items, nativeAlreadyFiltered: true, defaultLimit: limit);
+        var response = _searchProtocolAdapter.ShapeItemsResponse(items, startIndex, limit);
+        return new ContentResult { Content = response.Body, ContentType = response.ContentType, StatusCode = response.StatusCode };
+    }
 
-        _logger.LogDebug(
-            "Returning protocol-shaped page starting at {StartIndex} (total: {Total})",
-            startIndex,
-            items.Count);
-
-        try
-        {
-            var json = shapedResponse.Body;
-
-            _logger.LogDebug("About to serialize response...");
-
-            if (_logger.IsEnabled(LogLevel.Debug))
-            {
-                var preview = json.Length > 200 ? json[..200] : json;
-                _logger.LogDebug("JSON response preview: {Json}", preview);
-            }
-
-            return new ContentResult
-            {
-                Content = json,
-                ContentType = shapedResponse.ContentType,
-                StatusCode = shapedResponse.StatusCode
-            };
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error serializing search response");
-            throw;
-        }
+    private Dictionary<string, object?> RenderQuerySearchEntry(MusicSearchEntry<Dictionary<string, object?>> entry)
+    {
+        if (entry.Native != null) return entry.Native.Payload;
+        return _responseBuilder.ConvertArtistForQuery(entry.Artist!);
     }
 
     private Dictionary<string, object?> RenderSearchEntry(MusicSearchEntry<Dictionary<string, object?>> entry)
@@ -445,7 +349,8 @@ public partial class JellyfinController
     /// <summary>The backend half of a Jellyfin integrated search.</summary>
     private sealed class JellyfinNativeMusicSearch(
         Func<CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> search,
-        Func<string, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> getItem)
+        Func<string, CancellationToken, Task<(JsonDocument? Body, int StatusCode)>> getItem,
+        Action<JsonElement>? capture = null)
         : INativeMusicSearch<Dictionary<string, object?>>
     {
         public async Task<IReadOnlyList<NativeMusicItem<Dictionary<string, object?>>>> SearchAsync(
@@ -455,6 +360,7 @@ public partial class JellyfinController
             using (document)
             {
                 if (document == null || !document.RootElement.TryGetProperty("Items", out var items)) return [];
+                capture?.Invoke(document.RootElement);
                 return items.EnumerateArray()
                     .Where(item => item.TryGetProperty("Type", out _))
                     .Select(item => ToNativeSearchItem(item.Deserialize<Dictionary<string, object?>>() ?? []))
@@ -472,6 +378,7 @@ public partial class JellyfinController
                 if (status != StatusCodes.Status200OK || document == null ||
                     !document.RootElement.TryGetProperty("Id", out var itemId) || itemId.GetString() != id ||
                     !document.RootElement.TryGetProperty("Type", out var type) || type.GetString() != "Audio") return null;
+                capture?.Invoke(document.RootElement);
                 var item = document.RootElement.Deserialize<Dictionary<string, object?>>();
                 return item == null ? null : ToNativeSearchItem(item);
             }

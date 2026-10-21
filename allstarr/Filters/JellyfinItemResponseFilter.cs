@@ -77,7 +77,8 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         http.Response.Headers.Remove("Last-Modified");
         if (result is JsonResult jsonResult) jsonResult.Value = root;
         else if (result is ContentResult contentResult)
-            contentResult.Content = NativeItemText.PreserveJson(contentResult.Content!, root.ToJsonString(), "Id");
+            contentResult.Content = JellyfinQueryResponseRows.Preserve(
+                NativeItemText.PreserveJson(contentResult.Content!, root.ToJsonString(), "Id"), http);
     }
 
     private static bool IsExternal(JsonObject item)

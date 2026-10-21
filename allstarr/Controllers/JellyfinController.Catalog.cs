@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Music;
 using allstarr.Core.Protocols;
+using allstarr.Services.Jellyfin;
 using Microsoft.AspNetCore.Mvc;
 
 namespace allstarr.Controllers;
@@ -31,6 +32,8 @@ public partial class JellyfinController
         {
             if (!upstream.IsSuccessStatusCode) return new ProtocolRelayResponseResult(upstream);
             var bytes = await upstream.Content.ReadAsByteArrayAsync(HttpContext.RequestAborted);
+            using var snapshot = JsonDocument.Parse(bytes);
+            CaptureNativeQueryRows(snapshot.RootElement);
             var envelope = JsonNode.Parse(bytes) as JsonObject;
             if (envelope?["Items"] is not JsonArray original) return new ProtocolRelayResponseResult(upstream);
             var (detail, status) = await _proxyService.GetJsonAsync(
@@ -52,7 +55,7 @@ public partial class JellyfinController
                 {
                     foreach (var album in await merge.MissingArtistAlbumsAsync(context, name.GetString() ?? "", titles))
                     {
-                        var item = _responseBuilder.ConvertAlbumToJellyfinItem(album);
+                        var item = _responseBuilder.ConvertAlbumForQuery(album);
                         item["Name"] = ExternalTrackPresentation.Title(album.Title, false, context.Policy?.Preferences);
                         item["SortName"] = item["Name"];
                         var parentCredit = new[] { new { Id = parent, Name = name.GetString() } };
@@ -71,16 +74,17 @@ public partial class JellyfinController
                         artist = artists.EnumerateArray().FirstOrDefault().ValueKind == JsonValueKind.String
                             ? artists[0].GetString() : null;
                     foreach (var song in await merge.MissingAlbumSongsAsync(context, name.GetString() ?? "", artist ?? "", titles))
-                        additions.Add(_responseBuilder.ConvertSongToJellyfinItem(song));
+                        additions.Add(QuerySong(song));
                 }
                 if (additions.Count == 0) return new ProtocolRelayResponseResult(upstream);
-                var start = int.TryParse(Request.Query["StartIndex"], out var offset) ? Math.Max(0, offset) : 0;
-                var limit = int.TryParse(Request.Query["Limit"], out var count) ? Math.Max(0, count) : int.MaxValue;
-                var combined = owned.Concat(additions.Select(item => JsonSerializer.SerializeToNode(item)!)).ToList();
-                envelope!["Items"] = new JsonArray(combined.Skip(start).Take(limit).Select(row => row.DeepClone()).ToArray());
-                envelope["TotalRecordCount"] = combined.Count;
-                envelope["StartIndex"] = start;
-                var result = Content(envelope.ToJsonString(), "application/json");
+                var combined = owned.Select(row => row.Deserialize<Dictionary<string, object?>>() ?? []).Concat(additions).ToList();
+                var query = new JellyfinProviderQuery(Request.Query);
+                var page = query.Apply(combined, out var total, nativeAlreadyFiltered: true, reconcile: ReconcileQueryRows);
+                foreach (var item in page.Where(IsProviderQueryItem)) new JellyfinItemFields(Request.Query).Apply(item);
+                envelope!["Items"] = JsonSerializer.SerializeToNode(page);
+                envelope["TotalRecordCount"] = total;
+                envelope["StartIndex"] = query.StartIndex;
+                var result = Content(PreserveNativeQueryRows(envelope.ToJsonString()), "application/json");
                 result.StatusCode = (int)upstream.StatusCode;
                 upstream.Dispose();
                 return result;
@@ -154,6 +158,7 @@ public partial class JellyfinController
                     items.ValueKind != JsonValueKind.Array || items.GetArrayLength() == 0) return null;
                 if (page.RootElement.TryGetProperty("TotalRecordCount", out var currentTotal) && currentTotal.GetInt32() != total)
                     return null;
+                CaptureNativeQueryRows(page.RootElement);
                 rows.AddRange(items.EnumerateArray().Select(item => JsonNode.Parse(item.GetRawText())!));
                 if (rows.Count > total.Value) return null;
             }

@@ -23,8 +23,8 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task JellyfinNativeCatalog_AppendsMissingProviderChildrenAndPreservesNativeFields(string kind, bool userScoped)
     {
         var gateway = JellyfinCatalogGateway(kind, false);
-        const string nativeAlbum = """{"Id":"native-child","Name":"Visions","Type":"MusicAlbum","Future":{"value":[1,true,"x"]},"ImageTags":{"Primary":"original"}}""";
-        const string nativeSong = """{"Id":"native-child","Name":"Oblivion","Type":"Audio","Future":{"value":[1,true,"x"]},"UserData":{"PlayCount":7}}""";
+        const string nativeAlbum = """{"Id":"native-child","Name":"Visions","Type":"MusicAlbum","Future" : { "value" : [1, true,"Björk"] },"ImageTags":{"Primary":"original"}}""";
+        const string nativeSong = """{"Id":"native-child","Name":"Oblivion","Type":"Audio","Future" : { "value" : [1, true,"Björk"] },"UserData":{"PlayCount":7}}""";
         var native = kind == "artist" ? nativeAlbum : nativeSong;
         using var factory = JellyfinCatalogFactory(gateway.Object, kind,
             $$"""{ "Items":[{{native}}], "TotalRecordCount":1, "StartIndex":0, "FutureEnvelope":true }""");
@@ -44,6 +44,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
         Assert.Equal(2, rows.Length);
         Assert.Equal(CanonicalJson(JsonDocument.Parse(native).RootElement), CanonicalJson(rows[0]));
+        Assert.Equal(native, rows[0].GetRawText());
         Assert.True(body.RootElement.GetProperty("FutureEnvelope").GetBoolean());
         Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         Assert.Equal(kind == "artist" ? "ext-deezer-album-missing" : "ext-deezer-song-missing", rows[1].GetProperty("Id").GetString());

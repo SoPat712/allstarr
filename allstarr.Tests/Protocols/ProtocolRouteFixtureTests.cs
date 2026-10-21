@@ -434,7 +434,7 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.Setup(service => service.SearchAsync(
                 It.Is<ProtocolExecutionContext>(context => context.Protocol == ProtocolKind.Jellyfin &&
                     context.VerifiedBackendPrincipalId == "user-1"),
-                "Fixture Artist", 0, 0, 10, null))
+                "Fixture Artist", 0, 0, 200, null))
             .ReturnsAsync(new SearchResult
             {
                 Artists = [new Artist
@@ -442,7 +442,7 @@ public sealed partial class ProtocolRouteFixtureTests
                     Id = "ext-deezer-artist-42",
                     ExternalProvider = "deezer",
                     ExternalId = "42",
-                    Name = "External Artist"
+                    Name = "Fixture Artist External"
                 }]
             });
         var observedRequests = new List<string>();
@@ -451,7 +451,7 @@ public sealed partial class ProtocolRouteFixtureTests
             observedRequests.Add(request.RequestUri!.PathAndQuery);
             return request.RequestUri.AbsolutePath == "/Users/Me"
                 ? Json(StatusCodes.Status200OK, """{"Id":"user-1"}""")
-                : Json(StatusCodes.Status200OK, $$"""{"Items":[{{artist}}],"TotalRecordCount":1,"StartIndex":3}""");
+                : Json(StatusCodes.Status200OK, $$"""{"Items":[{{artist}}],"TotalRecordCount":1,"StartIndex":0}""");
         }, services =>
         {
             services.RemoveAll<IProtocolProviderGateway>();
@@ -460,7 +460,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var client = factory.CreateClient();
 
         using var response = await client.GetAsync(
-            "/Artists?SearchTerm=Fixture%20Artist&Limit=10&StartIndex=3&Fields=ProviderIds&api_key=fixture-key");
+            "/Artists?SearchTerm=Fixture%20Artist&Limit=10&StartIndex=0&Fields=ProviderIds&api_key=fixture-key");
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -470,11 +470,11 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(2, body.RootElement.GetProperty("Items").GetArrayLength());
         Assert.Equal("ext-deezer-artist-42", body.RootElement.GetProperty("Items")[1].GetProperty("Id").GetString());
         Assert.Equal(2, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
-        Assert.Equal(3, body.RootElement.GetProperty("StartIndex").GetInt32());
+        Assert.Equal(0, body.RootElement.GetProperty("StartIndex").GetInt32());
         var nativeQuery = QueryHelpers.ParseQuery(new Uri("http://fixture" + observedRequests[1]).Query);
         Assert.Equal("Fixture Artist", nativeQuery["SearchTerm"]);
-        Assert.Equal("10", nativeQuery["Limit"]);
-        Assert.Equal("3", nativeQuery["StartIndex"]);
+        Assert.Equal(int.MaxValue.ToString(), nativeQuery["Limit"]);
+        Assert.Equal("0", nativeQuery["StartIndex"]);
         Assert.Equal("ProviderIds", nativeQuery["Fields"]);
         gateway.VerifyAll();
     }

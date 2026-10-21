@@ -635,6 +635,8 @@ public class JellyfinResponseBuilder
 
     public Dictionary<string, object?> ConvertAlbumToJellyfinItem(Album album) => BuildAlbumItem(album);
 
+    internal Dictionary<string, object?> ConvertAlbumForQuery(Album album) => BuildAlbumItem(album, includeAllFields: true);
+
     private Dictionary<string, object?> BuildAlbumItem(Album album, bool includeAllFields = false)
     {
         var albumName = album.Title;
@@ -728,6 +730,8 @@ public class JellyfinResponseBuilder
     }
 
     public Dictionary<string, object?> ConvertArtistToJellyfinItem(Artist artist) => BuildArtistItem(artist);
+
+    internal Dictionary<string, object?> ConvertArtistForQuery(Artist artist) => BuildArtistItem(artist, includeAllFields: true);
 
     private Dictionary<string, object?> BuildArtistItem(Artist artist, bool includeAllFields = false)
     {
