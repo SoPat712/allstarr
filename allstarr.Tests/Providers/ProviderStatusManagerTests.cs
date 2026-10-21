@@ -248,6 +248,24 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
+    public async Task BiniChallengeProbeAndTestPanelKeepTheSafeReason()
+    {
+        var response = Json(HttpStatusCode.TemporaryRedirect, "fixture challenge");
+        response.Headers.Server.ParseAdd("cloudflare");
+        response.Headers.TryAddWithoutValidation("cf-mitigated", "challenge");
+        var solver = new CloudflareChallengeSolver(new HttpClient(new QueuedResponseHandler()),
+            _ => Task.FromResult(new ChallengeSolverOptions("", 60)));
+        var transport = new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org"])
+        { InnerHandler = new QueuedResponseHandler(response) };
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(transport));
+        var status = await manager.TestAccountFreeProviderCapabilityAsync("binilyrics", "lyrics");
+        Assert.Equal("blocked-by-challenge", status.ReasonCode);
+        Assert.Equal("blocked-by-challenge", manager.GetAccountFreeStatus("binilyrics", "lyrics").ReasonCode);
+        manager.RecordTryResult("binilyrics", "lyrics", null, null, false, 1, "blocked-by-challenge");
+        Assert.Equal("blocked-by-challenge", manager.GetAccountFreeStatus("binilyrics", "lyrics").ReasonCode);
+    }
+
+    [Fact]
     public async Task PaxsenixProbeResolvesSampleIsrcWithoutAnAccount()
     {
         var handler = new QueuedResponseHandler(Json(HttpStatusCode.OK,

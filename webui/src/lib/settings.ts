@@ -3,7 +3,7 @@ import type { ConfigField, PriorityGroup } from "./api";
 export function pathValue(source: Record<string, unknown>, path?: string | null): unknown {
   return path?.split(".").reduce<unknown>(
     (value, key) => value && typeof value === "object"
-      ? (value as Record<string, unknown>)[key]
+      ? (value as Record<string, unknown>)[key] ?? (value as Record<string, unknown>)[key.charAt(0).toLowerCase() + key.slice(1)]
       : undefined,
     source,
   );

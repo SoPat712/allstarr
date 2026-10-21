@@ -711,6 +711,7 @@ public class ProviderStatusManager
             "transientfailure" => "transient-failure",
             "permanentfailure" => "permanent-failure",
             "timeout" => "timeout",
+            "blockedbychallenge" => "blocked-by-challenge",
             "lyricsupstreambusyortimedout" => "lyrics-upstream-busy-or-timed-out",
             "unauthorized" or "providerunauthorized" => "unauthorized",
             "accountneedsreauthentication" => "account-needs-reauthentication",
@@ -960,6 +961,9 @@ public class ProviderStatusManager
     {
         var probeTimeout = provider is "paxsenix" or "binilyrics" or "genius"
             ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
+        var solver = provider is "binilyrics" or "lyricsplus" ? _services?.GetService<CloudflareChallengeSolver>() : null;
+        if (solver != null && await solver.ConfiguredTimeoutAsync(cancellationToken) is { } solveTimeout)
+            probeTimeout += solveTimeout * (provider == "binilyrics" ? 2 : 1);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(probeTimeout);
         var request = new ProviderLyricsRequest(Guid.NewGuid(), new(provider, ProviderResourceKind.Track, "connection-probe"),
@@ -1001,7 +1005,7 @@ public class ProviderStatusManager
             {
                 "lrcred" => new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null),
                 "unison" => new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null),
-                "binilyrics" => new allstarr.Core.Providers.Lyrics.BiniLyricsCapabilityAdapter(client, null),
+                "binilyrics" => new allstarr.Core.Providers.Lyrics.BiniLyricsCapabilityAdapter(client, null, solver: solver),
                 "genius" => new allstarr.Core.Providers.Lyrics.GeniusCapabilityAdapter(client, null),
                 _ => paxsenix ?? new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
                     new AppleMusicKitMetadataCapabilityAdapter(apple!))
@@ -1017,7 +1021,7 @@ public class ProviderStatusManager
             var adapter = new allstarr.Core.Providers.Lyrics.LyricsPlusCapabilityAdapter(client, null,
                 async ct => _services?.GetService<allstarr.Core.Settings.IDurableRuntimeSettings>() is { } settings
                     ? (string)(await settings.GetAsync("LyricsPlus:BaseUrl", ct)).Value
-                    : _configuration["LyricsPlus:BaseUrl"] ?? string.Empty);
+                    : _configuration["LyricsPlus:BaseUrl"] ?? string.Empty, solver: solver);
             var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
                 new(new(ProviderAudioQuality.Any, ProviderAudioQuality.HighResolution, true), ProviderExplicitContentPolicy.Allow,
                     true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(probeTimeout), timeout.Token);

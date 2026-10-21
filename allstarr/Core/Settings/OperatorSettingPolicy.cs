@@ -6,6 +6,8 @@ internal static class OperatorSettingPolicy
 {
     internal static readonly RuntimeSettingDefinition[] Definitions =
     [
+        new("ChallengeSolver:Url", RuntimeSettingValueType.String, "ChallengeSolver:Url", AllowEmpty: true, DefaultValue: "", MaximumLength: 2048),
+        new("ChallengeSolver:TimeoutSeconds", RuntimeSettingValueType.Integer, "ChallengeSolver:TimeoutSeconds", 10, 180, DefaultValue: "60"),
         new("MusicBrainz:SourceId", RuntimeSettingValueType.String, "MusicBrainz:SourceId", DefaultValue: "musicbrainz", MaximumLength: 100, RequiresRestart: true),
         new("MusicBrainz:BaseUrl", RuntimeSettingValueType.String, "MusicBrainz:BaseUrl", DefaultValue: "https://musicbrainz.org/ws/2", MaximumLength: 2048, RequiresRestart: true),
         new("MusicBrainz:RateLimitMs", RuntimeSettingValueType.Integer, "MusicBrainz:RateLimitMs", 1000, 60000, DefaultValue: "1000", RequiresRestart: true),
@@ -35,6 +37,9 @@ internal static class OperatorSettingPolicy
             throw new ArgumentException("Single sign-on URLs must use HTTPS without credentials, query or fragment.");
         if (key.StartsWith("Admin:Oidc:", StringComparison.Ordinal) && value.Any(char.IsControl))
             throw new ArgumentException("Single sign-on settings cannot contain control characters.");
+        if (key == "ChallengeSolver:Url" && value.Length > 0 &&
+            (value.Any(char.IsControl) || !OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _)))
+            throw new ArgumentException("Use an HTTP or HTTPS solver URL without credentials, query or fragment.");
         if (key == "MusicBrainz:BaseUrl" &&
             !OutboundRequestGuard.TryCreateConfiguredServiceUri(value, out _, out _))
             throw new ArgumentException("Use an HTTP or HTTPS metadata service URL without credentials, query or fragment.");

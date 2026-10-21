@@ -38,6 +38,38 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("http://flaresolverr:8191")]
+    [InlineData("http://192.168.1.40:8191")]
+    [InlineData("http://[::1]:8191/solver/")]
+    [InlineData("https://solver.example.test/base")]
+    public async Task ChallengeSolverUrlPersistsAndAllowsHouseholdServices(string value)
+    {
+        var service = CreateService([]);
+        Assert.Equal("", (await service.GetAsync("ChallengeSolver:Url")).NormalizedValue);
+        Assert.Equal("60", (await service.GetAsync("ChallengeSolver:TimeoutSeconds")).NormalizedValue);
+        await service.ApplyBatchAsync([new("ChallengeSolver:Url", value)], "fixture", _userId);
+        Assert.Equal(value, (await CreateService([]).GetAsync("ChallengeSolver:Url")).NormalizedValue);
+        Assert.False(RuntimeSettingCatalog.Require("ChallengeSolver:Url").RequiresRestart);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.ApplyBatchAsync(
+            [new("ChallengeSolver:Url", value)], "fixture", _userB));
+    }
+
+    [Theory]
+    [InlineData("ChallengeSolver:Url", "ftp://solver.test")]
+    [InlineData("ChallengeSolver:Url", "solver:8191")]
+    [InlineData("ChallengeSolver:Url", "https://user:secret@solver.test")]
+    [InlineData("ChallengeSolver:Url", "http://solver.test/?secret=value")]
+    [InlineData("ChallengeSolver:Url", "http://solver.test/#fragment")]
+    [InlineData("ChallengeSolver:TimeoutSeconds", "9")]
+    [InlineData("ChallengeSolver:TimeoutSeconds", "181")]
+    public async Task ChallengeSolverSettingsRejectInvalidValues(string key, string value)
+    {
+        await Assert.ThrowsAsync<ArgumentException>(() => CreateService([]).ApplyBatchAsync(
+            [new(key, value)], "fixture", _userId));
+    }
+
     [Fact]
     public async Task SourceModesMergeHouseholdDefaultsWithoutChangingOtherPreferencesOrUsers()
     {

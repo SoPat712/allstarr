@@ -102,7 +102,7 @@
   });
   const pageSections = $derived(configSections.map((item) => ({ ...item,
     fields: item.fields.filter((field) => item.id !== "operator" ||
-      ((field.valuePath ?? "").includes("Cors:") ? "network" : /BackupRetention|EventLog/.test(field.valuePath ?? "") ? "storage" : "general") === active),
+      (/Cors:|ChallengeSolver:/.test(field.valuePath ?? "") ? "network" : /BackupRetention|EventLog/.test(field.valuePath ?? "") ? "storage" : "general") === active),
   })).filter((item) => item.fields.length && (item.id === "operator" || (sectionPages[item.id] ?? "general") === active)));
   const cacheDiskCeiling = $derived(
     Number((config.cache as Record<string, unknown> | undefined)?.mediaMaximumMegabytes ?? 512),
@@ -209,6 +209,22 @@
       await refresh();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : `${message} failed.`);
+    } finally {
+      action = "";
+    }
+  }
+
+  async function testChallengeSolver(event: MouseEvent) {
+    const form = (event.currentTarget as HTMLButtonElement).form;
+    if (action || !form) return;
+    const url = String(new FormData(form).get("CHALLENGE_SOLVER_URL") ?? "");
+    action = "challenge-solver-test";
+    try {
+      const result = await settings.testChallengeSolver(url);
+      if (result.ok) toast.success(result.message);
+      else toast.error(result.message);
+    } catch (cause) {
+      toast.error(cause instanceof Error ? cause.message : "Solver could not be reached.");
     } finally {
       action = "";
     }
@@ -323,6 +339,18 @@
             <header><h3>{item.label}</h3></header>
             <div class="settings-fields">
               {#each item.fields as field}
+                {#if field.key === "CHALLENGE_SOLVER_URL" && !deploymentOwned(field)}
+                  <div class="setting-field settings-row">
+                    <div>
+                      <label for="challenge-solver-url"><strong>{field.label}</strong></label>
+                      {#if field.helpText}<small id="challenge-solver-help">{field.helpText}</small>{/if}
+                    </div>
+                    <span class="solver-control">
+                      <input id="challenge-solver-url" name={field.key} type="text" value={String(fieldValue(config, field))} placeholder={field.placeholder ?? "http://flaresolverr:8191"} aria-describedby={field.helpText ? "challenge-solver-help" : undefined} />
+                      <Button type="button" variant="secondary" disabled={Boolean(action)} onclick={(event) => void testChallengeSolver(event)}>{action === "challenge-solver-test" ? "Testing…" : "Test"}</Button>
+                    </span>
+                  </div>
+                {:else}
                 <label class="setting-field settings-row" class:read-only={deploymentOwned(field)}>
                   <div>
                     <strong>{field.label}</strong>
@@ -357,6 +385,7 @@
                     />
                   {/if}
                 </label>
+                {/if}
               {/each}
               {#if item.id === "cache"}
                 <p class="settings-impact">
@@ -464,3 +493,17 @@
     onConfirm={restore}
   />
 {/if}
+
+<style>
+  .solver-control {
+    display: flex;
+    min-width: 0;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .solver-control input {
+    min-width: 0;
+    flex: 1;
+  }
+</style>

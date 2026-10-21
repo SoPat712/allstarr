@@ -1563,8 +1563,12 @@ public class AdminUiController : ControllerBase
                 LegacyEnvParser.DurableAliasKeys.First(key => LegacyEnvParser.TryGetDurableAlias(key, out var target) && target == item.Key),
                 OperatorSettingLabel(item.Key),
                 item.ValueType == RuntimeSettingValueType.Boolean ? "toggle" : item.ValueType == RuntimeSettingValueType.Integer ? "number" : "text",
-                "operatorSettings." + item.Key, requiresRestart: true, min: item.Minimum, max: item.Maximum,
-                helpText: "Saved in the data folder. Allstarr restarts after saving this setting."))
+                "operatorSettings." + item.Key, requiresRestart: item.RequiresRestart, min: item.Minimum, max: item.Maximum,
+                placeholder: item.Key == "ChallengeSolver:Url" ? "http://flaresolverr:8191" : null,
+                helpText: item.Key == "ChallengeSolver:Url"
+                    ? "Optional. Your FlareSolverr or Byparr address, for example http://flaresolverr:8191. Used only for sources that sit behind Cloudflare checks."
+                    : item.Key == "ChallengeSolver:TimeoutSeconds" ? "Seconds to wait for the solver. Default: 60."
+                    : "Saved in the data folder. Allstarr restarts after saving this setting."))
             .Append(Field("ODESLI_API_KEY", "Optional song.link API key", "password", "operatorSettings.Odesli:ApiKey",
                 sensitive: true, requiresRestart: true,
                 helpText: "Stored encrypted. Optional; blank clears a saved key. Allstarr restarts after saving."))
@@ -1640,6 +1644,8 @@ public class AdminUiController : ControllerBase
 
     private static string OperatorSettingLabel(string key) => key switch
     {
+        "ChallengeSolver:Url" => "Challenge solver URL",
+        "ChallengeSolver:TimeoutSeconds" => "Solver timeout",
         "Backend:MusicLibraryIds" => "Music library identifiers (blank selects all permitted libraries)",
         "Extensions:AllowRemoteInstall" => "Allow remote extension installation",
         "Odesli:Enabled" => "Enable cross-service song links",

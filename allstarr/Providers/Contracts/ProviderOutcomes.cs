@@ -75,6 +75,11 @@ public sealed record ProviderError
         "service_unavailable",
         "The service's download server is unavailable.");
 
+    public static ProviderError BlockedByChallenge() => new(
+        ProviderErrorKind.CapabilityUnavailable,
+        "blocked-by-challenge",
+        "This source is behind a Cloudflare check. Add a FlareSolverr or Byparr URL in Settings to use it.");
+
     public static ProviderError LyricsUpstreamBusyOrTimedOut() => new(
         ProviderErrorKind.TransientFailure,
         "lyrics-upstream-busy-or-timed-out",

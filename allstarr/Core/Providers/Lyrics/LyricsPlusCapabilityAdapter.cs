@@ -12,7 +12,8 @@ public sealed class LyricsPlusCapabilityAdapter(
     HttpClient http,
     IApplicationCache? cache,
     Func<CancellationToken, Task<string>> configuredEndpoint,
-    Func<TimeSpan>? lyricsTtl = null) : IProviderLyricsCapability
+    Func<TimeSpan>? lyricsTtl = null,
+    CloudflareChallengeSolver? solver = null) : IProviderLyricsCapability
 {
     public const string HttpClientName = "LyricsPlus";
     private const int MaximumBytes = 2_000_000;
@@ -68,7 +69,9 @@ public sealed class LyricsPlusCapabilityAdapter(
             {
                 token.ThrowIfCancellationRequested();
                 using var attempt = CancellationTokenSource.CreateLinkedTokenSource(token);
-                attempt.CancelAfter(TimeSpan.FromSeconds(3));
+                var solveTimeout = baseUri.Host == "lyricsplus.binimum.org" && solver != null
+                    ? await solver.ConfiguredTimeoutAsync(token) : null;
+                attempt.CancelAfter((solveTimeout ?? TimeSpan.Zero) + TimeSpan.FromSeconds(3));
                 ProviderOutcome<ProviderLyricsResult> result;
                 try { result = await ReadAsync(baseUri, request, attempt.Token); }
                 catch (OperationCanceledException) when (!token.IsCancellationRequested)
@@ -115,6 +118,7 @@ public sealed class LyricsPlusCapabilityAdapter(
             using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
             return Parse(document.RootElement, request);
         }
+        catch (CloudflareChallengeException) { return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.BlockedByChallenge()); }
         catch (JsonException) { return ContractFailure(); }
         catch (HttpRequestException) { return Failure(ProviderErrorKind.TransientFailure); }
         catch (IOException) { return Failure(ProviderErrorKind.TransientFailure); }

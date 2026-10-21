@@ -11,6 +11,13 @@ describe("settings presentation", () => {
     })).toBe("Cache");
   });
 
+  it("reads normalized operator dictionary keys using their schema paths", () => {
+    expect(fieldValue({ operatorSettings: { "challengeSolver:Url": "http://saved-solver:8191" } }, {
+      key: "CHALLENGE_SOLVER_URL", label: "Challenge solver URL", type: "text",
+      valuePath: "operatorSettings.ChallengeSolver:Url",
+    })).toBe("http://saved-solver:8191");
+  });
+
   it("preserves configured routing order and appends new providers", () => {
     expect(routingOrder({ providers: { streamingOrder: "future-extension,deezer" } }, {
       id: "streaming",
