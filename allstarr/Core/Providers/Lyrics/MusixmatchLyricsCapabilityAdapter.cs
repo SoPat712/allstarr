@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Music;
 using allstarr.Core.Providers.Spotify;
@@ -316,9 +317,17 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         {
             if (sent)
                 logger.LogInformation(
-                    "Musixmatch lookup {Path}: HTTP {HttpStatus}; envelope {Envelope}; matcher.track.get {Matcher}; track.lyrics.get {Lyrics}; track.subtitles.get {Subtitles}; track.richsync.get {Richsync}",
+                    "Musixmatch lookup {Path}: HTTP {HttpStatus}; envelope {Envelope}; matcher.track.get {Matcher}; track.lyrics.get {Lyrics}; track.subtitles.get {Subtitles}; track.richsync.get {Richsync}; " +
+                    "matcher-body {MatcherBody}; track {TrackPresent}; track-keys {TrackKeys}; title-score {TitleScore}; artist-score {ArtistScore}; has-lyrics {HasLyrics}; has-subtitles {HasSubtitles}; instrumental {Instrumental}; restricted {Restricted}; " +
+                    "lyrics-body {LyricsBody}; lyrics-body-present {LyricsBodyPresent}; subtitle-body {SubtitleBody}; subtitle-count {SubtitleCount}; subtitle-first {SubtitleStartClass}; richsync-body {RichsyncBody}; richsync-body-present {RichsyncBodyPresent}; " +
+                    "parsed-lines plain {PlainLines}/subtitle {SubtitleLines}/richsync {RichsyncLines}; decision {Decision}",
                     DesktopEndpoint.GetLeftPart(UriPartial.Path), httpStatus,
-                    diagnostics.Envelope, diagnostics.Matcher, diagnostics.Lyrics, diagnostics.Subtitles, diagnostics.Richsync);
+                    diagnostics.Envelope, diagnostics.Matcher, diagnostics.Lyrics, diagnostics.Subtitles, diagnostics.Richsync,
+                    diagnostics.MatcherBody, diagnostics.TrackPresent, diagnostics.TrackKeys, diagnostics.TitleScore, diagnostics.ArtistScore,
+                    diagnostics.HasLyrics, diagnostics.HasSubtitles, diagnostics.Instrumental, diagnostics.Restricted,
+                    diagnostics.LyricsBody, diagnostics.LyricsBodyPresent, diagnostics.SubtitleBody, diagnostics.SubtitleCount,
+                    diagnostics.SubtitleFirst, diagnostics.RichsyncBody, diagnostics.RichsyncBodyPresent,
+                    diagnostics.PlainLines, diagnostics.SubtitleLines, diagnostics.RichsyncLines, diagnostics.Decision);
         }
     }
 
@@ -396,6 +405,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             new JsonDocumentOptions { MaxDepth = 64 });
         var root = document.RootElement;
         diagnostics.Read(root);
+        diagnostics.Decision = "no-content-parsed";
         if (!TryGetObject(root, "message", out var envelope) ||
             !TryGetStatus(envelope, out var outerStatus))
             return ContractFailure();
@@ -422,13 +432,20 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             return matcherError == null
                 ? Unavailable()
                 : Failure<ProviderLyricsResult>(matcherError);
-        if (!TryReadTrack(matcherBody, out var metadata) ||
-            !Matches(request, metadata))
+        if (!TryReadTrack(matcherBody, out var metadata))
             return Unavailable();
+        if (!Matches(request, metadata, diagnostics))
+        {
+            diagnostics.Decision = "identity-rejected";
+            return Unavailable();
+        }
 
         if (HasRestrictedContent(calls))
+        {
+            diagnostics.Decision = "restricted";
             return ProviderOutcome<ProviderLyricsResult>.Success(new(
                 ProviderLyricsAvailabilityState.Restricted, StableProviderId));
+        }
 
         ProviderError? deferredError = null;
         var timed = ReadRichsync(calls, "track.richsync.get", out var timedError);
@@ -438,13 +455,21 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         var plain = ReadPlain(calls, "track.lyrics.get", out var plainError);
         deferredError ??= plainError;
 
+        diagnostics.RichsyncLines = CountLines(timed?.Content);
+        diagnostics.SubtitleLines = CountLines(subtitle);
+        diagnostics.PlainLines = CountLines(plain);
         var selected = SelectContent(request.PreferredFormat, timed, subtitle, plain);
+        if (selected != null)
+            diagnostics.Decision = $"selected:{selected.Value.Format}";
         return selected != null
             ? Available(selected.Value.Format, selected.Value.Content, selected.Value.TimedLines)
             : deferredError == null
                 ? Unavailable()
                 : Failure<ProviderLyricsResult>(deferredError);
     }
+
+    private static int CountLines(string? content) => string.IsNullOrWhiteSpace(content)
+        ? 0 : content.Split('\n').Count(line => !string.IsNullOrWhiteSpace(line));
 
     private static SelectedLyrics? SelectContent(
         ProviderLyricsFormat? preferred,
@@ -712,6 +737,11 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 !TryGetObject(message, "body", out var body))
                 continue;
             if (IsRestricted(body)) return true;
+            if (TryGetObject(body, "lyrics", out var lyrics) &&
+                lyrics.TryGetProperty("lyrics_body_percentage", out var percentage) &&
+                percentage.ValueKind == JsonValueKind.Number &&
+                percentage.TryGetDecimal(out var value) && value > 0 && value < 100)
+                return true;
         }
         return false;
     }
@@ -741,6 +771,33 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         public string Subtitles { get; private set; } = "missing/none";
         public string Richsync { get; private set; } = "missing/none";
 
+        private static readonly string[] TrackKeyAllowlist =
+        [
+            "track_id", "track_name", "artist_name", "album_name", "has_lyrics", "has_subtitles",
+            "has_richsync", "instrumental", "restricted", "commontrack_id", "track_length"
+        ];
+
+        public string MatcherBody { get; private set; } = "empty";
+        public bool TrackPresent { get; private set; }
+        public string TrackKeys { get; private set; } = "none";
+        public int TitleScore { get; set; }
+        public int ArtistScore { get; set; }
+        public bool? HasLyrics { get; private set; }
+        public bool? HasSubtitles { get; private set; }
+        public bool? Instrumental { get; private set; }
+        public bool? Restricted { get; private set; }
+        public string LyricsBody { get; private set; } = "empty";
+        public bool LyricsBodyPresent { get; private set; }
+        public string SubtitleBody { get; private set; } = "empty";
+        public int SubtitleCount { get; private set; }
+        public string SubtitleFirst { get; private set; } = "empty";
+        public string RichsyncBody { get; private set; } = "empty";
+        public bool RichsyncBodyPresent { get; private set; }
+        public int PlainLines { get; set; }
+        public int SubtitleLines { get; set; }
+        public int RichsyncLines { get; set; }
+        public string Decision { get; set; } = "not-parsed";
+
         public void Read(JsonElement root)
         {
             if (!TryGetObject(root, "message", out var envelope)) return;
@@ -751,6 +808,55 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             Lyrics = DescribeCall(calls, "track.lyrics.get");
             Subtitles = DescribeCall(calls, "track.subtitles.get");
             Richsync = DescribeCall(calls, "track.richsync.get");
+            var matcherBody = ReadBody(calls, "matcher.track.get");
+            MatcherBody = BodyKind(matcherBody);
+            TrackPresent = matcherBody.ValueKind == JsonValueKind.Object && matcherBody.TryGetProperty("track", out _);
+            if (TryGetObject(matcherBody, "track", out var track))
+            {
+                var keys = TrackKeyAllowlist.Where(key => track.TryGetProperty(key, out _)).ToArray();
+                TrackKeys = keys.Length == 0 ? "none" : string.Join(',', keys);
+                HasLyrics = ReadFlag(track, "has_lyrics");
+                HasSubtitles = ReadFlag(track, "has_subtitles");
+                Instrumental = ReadFlag(track, "instrumental");
+                Restricted = ReadFlag(track, "restricted");
+            }
+            var lyricsBody = ReadBody(calls, "track.lyrics.get");
+            LyricsBody = BodyKind(lyricsBody);
+            LyricsBodyPresent = TryGetObject(lyricsBody, "lyrics", out var lyrics) && lyrics.TryGetProperty("lyrics_body", out _);
+            var subtitleBody = ReadBody(calls, "track.subtitles.get");
+            SubtitleBody = BodyKind(subtitleBody);
+            if (subtitleBody.ValueKind == JsonValueKind.Object &&
+                subtitleBody.TryGetProperty("subtitle_list", out var subtitles) && subtitles.ValueKind == JsonValueKind.Array)
+            {
+                SubtitleCount = subtitles.GetArrayLength();
+                if (SubtitleCount > 0 && TryGetObject(subtitles[0], "subtitle", out var subtitle))
+                {
+                    var raw = ReadString(subtitle, "subtitle_body")?.TrimStart();
+                    SubtitleFirst = string.IsNullOrEmpty(raw) ? "empty" : raw[0] == '[' ? "[" : "text";
+                }
+            }
+            var richsyncBody = ReadBody(calls, "track.richsync.get");
+            RichsyncBody = BodyKind(richsyncBody);
+            RichsyncBodyPresent = TryGetObject(richsyncBody, "richsync", out var richsync) && richsync.TryGetProperty("richsync_body", out _);
+        }
+
+        private static JsonElement ReadBody(JsonElement calls, string name) =>
+            TryGetObject(calls, name, out var call) && TryGetObject(call, "message", out var message) &&
+            message.TryGetProperty("body", out var body) ? body : default;
+
+        private static string BodyKind(JsonElement body) => body.ValueKind switch
+        {
+            JsonValueKind.Object => body.EnumerateObject().Any() ? "object" : "empty",
+            JsonValueKind.Array => "array",
+            JsonValueKind.Undefined or JsonValueKind.Null => "empty",
+            _ => "other"
+        };
+
+        private static bool? ReadFlag(JsonElement track, string name)
+        {
+            if (!track.TryGetProperty(name, out var value)) return null;
+            if (value.ValueKind is JsonValueKind.True or JsonValueKind.False) return value.GetBoolean();
+            return value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number != 0 : null;
         }
 
         private static string DescribeCall(JsonElement calls, string name) =>
@@ -781,10 +887,12 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         error = null;
         if (!TryGetCallBody(calls, name, out var body, out error))
             return null;
-        return TryGetObject(body, "lyrics", out var lyrics) &&
-               TryGetString(lyrics, "lyrics_body", out var value)
-            ? value
-            : null;
+        if (!TryGetObject(body, "lyrics", out var lyrics) ||
+            !TryGetString(lyrics, "lyrics_body", out var value))
+            return null;
+        const string disclaimer = "******* This Lyrics is NOT for Commercial use *******";
+        var footer = value!.IndexOf(disclaimer, StringComparison.OrdinalIgnoreCase);
+        return (footer >= 0 ? value[..footer] : value).Trim();
     }
 
     private static bool TryGetCallBody(
@@ -845,19 +953,43 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     private static bool Matches(
         ProviderLyricsRequest request,
-        TrackMetadata actual)
+        TrackMetadata actual,
+        LookupDiagnostics diagnostics)
     {
-        if (string.IsNullOrWhiteSpace(actual.Artist) ||
-            string.IsNullOrWhiteSpace(actual.Title))
+        var title = NormalizeMatcherTitle(request.TrackTitle ?? string.Empty);
+        var actualTitle = NormalizeMatcherTitle(actual.Title);
+        diagnostics.TitleScore = FuzzyMatcher.CalculateSimilarity(title, actualTitle);
+        diagnostics.ArtistScore = request.ArtistNames
+            .Select(artist => ArtistSimilarity(artist, actual.Artist)).DefaultIfEmpty(0).Max();
+        if (string.IsNullOrWhiteSpace(actual.Artist) || string.IsNullOrWhiteSpace(actualTitle))
             return false;
-        if (request.TrackTitle is { Length: > 0 } title &&
-            FuzzyMatcher.CalculateSimilarity(title, actual.Title) < 90)
+        if (!string.IsNullOrWhiteSpace(request.TrackTitle) &&
+            (diagnostics.TitleScore < 90 ||
+             Math.Min(title.Length, actualTitle.Length) < Math.Max(title.Length, actualTitle.Length) * 0.9))
             return false;
-        if (request.ArtistNames.Count > 0 &&
-            !request.ArtistNames.Any(artist =>
-                FuzzyMatcher.CalculateSimilarity(artist, actual.Artist) >= 90))
-            return false;
-        return true;
+        return request.ArtistNames.Count == 0 || ArtistSimilarity(request.ArtistNames[0], actual.Artist) >= 90;
+    }
+
+    private static string NormalizeMatcherTitle(string title)
+    {
+        var stripped = FuzzyMatcher.StripDecorators(title);
+        stripped = Regex.Replace(stripped, @"[\(\[]([^\)\]]+)[\)\]]",
+            match => FuzzyMatcher.SemanticVersionTags(match.Groups[1].Value).Count > 0 ? " " : match.Value);
+        stripped = Regex.Replace(stripped, @"\s+[-–—]\s+(.+)$",
+            match => FuzzyMatcher.SemanticVersionTags(match.Groups[1].Value).Count > 0 ? " " : match.Value);
+        return FuzzyMatcher.NormalizeForMatching(stripped);
+    }
+
+    private static int ArtistSimilarity(string requested, string actual)
+    {
+        var primary = FuzzyMatcher.NormalizeForMatching(FuzzyMatcher.SplitCredits(requested).FirstOrDefault() ?? string.Empty);
+        if (primary.Length == 0) return 0;
+        var tokens = primary.Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        var actualTokens = FuzzyMatcher.NormalizeForMatching(actual).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.Ordinal);
+        var coverage = tokens.Count == 0 ? 0 : 100 * tokens.Count(actualTokens.Contains) / tokens.Count;
+        var bestCredit = FuzzyMatcher.SplitCredits(actual)
+            .Select(credit => FuzzyMatcher.CalculateSimilarity(primary, credit)).DefaultIfEmpty(0).Max();
+        return Math.Max(coverage, bestCredit);
     }
 
     private static bool TryGetObject(
