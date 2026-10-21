@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using System.Text;
@@ -333,271 +334,11 @@ public partial class JellyfinController : ControllerBase
         string? selectedArtistId = null,
         ExternalArtistRelation artistRelation = ExternalArtistRelation.All)
     {
-        if (IsFavoritesOnlyRequest())
-        {
-            _logger.LogDebug(
-                "Suppressing external child items for favorites-only request: provider={Provider}, type={Type}, externalId={ExternalId}",
-                provider,
-                type,
-                externalId);
-            return CreateEmptyItemsResponse(GetRequestedStartIndex());
-        }
-
-        var itemTypes = ParseItemTypes(includeItemTypes);
-        var itemTypesUnspecified = itemTypes == null || itemTypes.Length == 0;
-
-        _logger.LogDebug("GetExternalChildItems: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}",
-            provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
-
-        // Albums are track containers in Jellyfin clients; when ParentId points to an album,
-        // return tracks even if IncludeItemTypes is omitted.
-        if (type == "album" && (itemTypesUnspecified || itemTypes!.Contains("Audio", StringComparer.OrdinalIgnoreCase)))
-        {
-            _logger.LogDebug("Fetching album tracks for {Provider}/{ExternalId}", provider, externalId);
-            var album = await GetProviderAlbumAsync(provider, externalId, cancellationToken);
-            if (album == null)
-            {
-                return _responseBuilder.CreateError(404, "Album not found");
-            }
-
-            var sortedAndPagedSongs = ApplySongSortAndPagingForCurrentRequest(album.Songs, out var totalRecordCount, out var startIndex);
-            var items = sortedAndPagedSongs.Select(_responseBuilder.ConvertSongToJellyfinItem).ToList();
-
-            return _responseBuilder.CreateJsonResponse(new
-            {
-                Items = items,
-                TotalRecordCount = totalRecordCount,
-                StartIndex = startIndex
-            });
-        }
-
-        if (type == "artist")
-        {
-            var includeTracks = itemTypes?.Contains("Audio", StringComparer.OrdinalIgnoreCase) == true;
-            var includeAlbums = itemTypesUnspecified ||
-                                itemTypes!.Contains("MusicAlbum", StringComparer.OrdinalIgnoreCase);
-            if (includeTracks || includeAlbums)
-            {
-                var tracksTask = includeTracks || artistRelation == ExternalArtistRelation.ContributingArtist
-                    ? GetProviderArtistTracksAsync(provider, externalId, cancellationToken)
-                    : Task.FromResult(new List<Song>());
-                var albumsTask = includeAlbums || includeTracks
-                    ? GetProviderArtistAlbumsAsync(provider, externalId, cancellationToken)
-                    : Task.FromResult(new List<Album>());
-                var artistTask = includeAlbums
-                    ? GetProviderArtistAsync(provider, externalId, cancellationToken)
-                    : Task.FromResult<Artist?>(null);
-                await Task.WhenAll(tracksTask, albumsTask, artistTask);
-
-                var tracks = await tracksTask;
-                var albums = await albumsTask;
-                var artist = await artistTask;
-
-                if (artistRelation == ExternalArtistRelation.ContributingArtist)
-                {
-                    var knownAlbumIds = albums.Select(album => album.Id)
-                        .Where(id => !string.IsNullOrWhiteSpace(id))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var requestedCount = int.TryParse(Request.Query["Limit"], out var requestedLimit)
-                        ? Math.Clamp(requestedLimit, 1, 200)
-                        : 50;
-                    var lookupCount = (int)Math.Min(
-                        200L,
-                        (long)GetRequestedStartIndex() + requestedCount);
-                    var appearanceLookups = tracks
-                        .Select(track => track.AlbumId)
-                        .Where(id => !string.IsNullOrWhiteSpace(id) && !knownAlbumIds.Contains(id))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .Select(id => _localLibraryService.ParseExternalId(id!))
-                        .Where(parsed => parsed.isExternal &&
-                                         parsed.type == "album" &&
-                                         string.Equals(parsed.provider, provider, StringComparison.OrdinalIgnoreCase))
-                        .Take(lookupCount)
-                        .Select(parsed => GetProviderAlbumAsync(
-                            provider,
-                            parsed.externalId!,
-                            cancellationToken));
-                    albums.AddRange((await Task.WhenAll(appearanceLookups)).OfType<Album>());
-                    albums = albums.DistinctBy(album => album.Id, StringComparer.OrdinalIgnoreCase).ToList();
-                }
-
-                if (includeTracks && tracks.Count == 0)
-                    tracks = albums.SelectMany(album => album.Songs)
-                        .DistinctBy(song => song.Id, StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-
-                if (artistRelation != ExternalArtistRelation.All)
-                {
-                    bool HasArtistIdentity(Album album) =>
-                        !string.IsNullOrWhiteSpace(album.ArtistId) ||
-                        artist != null && !string.IsNullOrWhiteSpace(album.Artist);
-                    bool IsPrimaryAlbum(Album album) => !string.IsNullOrWhiteSpace(album.ArtistId)
-                        ? string.Equals(album.ArtistId, selectedArtistId, StringComparison.OrdinalIgnoreCase)
-                        : string.Equals(album.Artist, artist?.Name, StringComparison.OrdinalIgnoreCase);
-                    var wantsPrimaryAlbums = artistRelation == ExternalArtistRelation.AlbumArtist;
-                    albums = albums.Where(album =>
-                            HasArtistIdentity(album) && IsPrimaryAlbum(album) == wantsPrimaryAlbums)
-                        .ToList();
-
-                    if (includeTracks)
-                    {
-                        var albumIds = albums.Select(album => album.Id)
-                            .Where(id => !string.IsNullOrWhiteSpace(id))
-                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                        tracks = tracks.Where(track =>
-                                !string.IsNullOrWhiteSpace(track.AlbumId) && albumIds.Contains(track.AlbumId))
-                            .ToList();
-                    }
-                }
-
-                if (artist != null && artistRelation != ExternalArtistRelation.ContributingArtist)
-                {
-                    foreach (var album in albums)
-                    {
-                        if (string.IsNullOrEmpty(album.Artist)) album.Artist = artist.Name;
-                        if (string.IsNullOrEmpty(album.ArtistId)) album.ArtistId = artist.Id;
-                    }
-                }
-
-                var items = (includeAlbums ? albums : []).Select(_responseBuilder.ConvertAlbumToJellyfinItem)
-                    .Concat((includeTracks ? tracks : []).Select(_responseBuilder.ConvertSongToJellyfinItem))
-                    .ToList();
-                var startIndex = GetRequestedStartIndex();
-                var limit = int.TryParse(Request.Query["Limit"], out var parsedLimit) && parsedLimit >= 0
-                    ? parsedLimit
-                    : int.MaxValue;
-                _logger.LogDebug(
-                    "Found {AlbumCount} albums and {TrackCount} tracks for artist {ArtistName}",
-                    albums.Count,
-                    tracks.Count,
-                    artist?.Name ?? "unknown");
-                return _responseBuilder.CreateJsonResponse(new
-                {
-                    Items = items.Skip(startIndex).Take(limit).ToList(),
-                    TotalRecordCount = items.Count,
-                    StartIndex = startIndex
-                });
-            }
-        }
-
-        _logger.LogWarning("Unhandled GetExternalChildItems request: provider={Provider}, type={Type}, externalId={ExternalId}, itemTypes={ItemTypes}",
-            provider, type, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
-        return _responseBuilder.CreateItemsResponse(new List<Song>());
+        var items = await ReadExternalChildRowsAsync(provider, type, externalId, includeItemTypes,
+            cancellationToken, selectedArtistId, artistRelation);
+        return items == null ? _responseBuilder.CreateError(404, "Album not found") :
+            await ShapeProviderQueryAsync(items, "ParentIndexNumber,IndexNumber,SortName");
     }
-
-    private int GetRequestedStartIndex()
-    {
-        return int.TryParse(Request.Query["StartIndex"], out var startIndex) && startIndex > 0
-            ? startIndex
-            : 0;
-    }
-
-    private List<Song> ApplySongSortAndPagingForCurrentRequest(IReadOnlyCollection<Song> songs, out int totalRecordCount, out int startIndex)
-    {
-        var sortBy = Request.Query["SortBy"].ToString();
-        var sortOrder = Request.Query["SortOrder"].ToString();
-        var descending = sortOrder.Equals("Descending", StringComparison.OrdinalIgnoreCase);
-        var sortFields = ParseSortFields(sortBy);
-
-        var sortedSongs = songs.ToList();
-        sortedSongs.Sort((left, right) => CompareSongs(left, right, sortFields, descending));
-
-        totalRecordCount = sortedSongs.Count;
-        startIndex = 0;
-        if (int.TryParse(Request.Query["StartIndex"], out var parsedStartIndex) && parsedStartIndex > 0)
-        {
-            startIndex = parsedStartIndex;
-        }
-
-        if (int.TryParse(Request.Query["Limit"], out var parsedLimit) && parsedLimit > 0)
-        {
-            return sortedSongs.Skip(startIndex).Take(parsedLimit).ToList();
-        }
-
-        return sortedSongs.Skip(startIndex).ToList();
-    }
-
-    private static int CompareSongs(Song left, Song right, IReadOnlyList<string> sortFields, bool descending)
-    {
-        var effectiveSortFields = sortFields.Count > 0
-            ? sortFields
-            : new[] { "ParentIndexNumber", "IndexNumber", "SortName" };
-
-        foreach (var field in effectiveSortFields)
-        {
-            var comparison = CompareSongsByField(left, right, field);
-            if (comparison == 0)
-            {
-                continue;
-            }
-
-            return descending ? -comparison : comparison;
-        }
-
-        return string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static int CompareSongsByField(Song left, Song right, string field)
-    {
-        return field.ToLowerInvariant() switch
-        {
-            "parentindexnumber" => Nullable.Compare(left.DiscNumber, right.DiscNumber),
-            "indexnumber" => Nullable.Compare(left.Track, right.Track),
-            "sortname" => string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase),
-            "name" => string.Compare(left.Title, right.Title, StringComparison.OrdinalIgnoreCase),
-            "datecreated" => Nullable.Compare(left.Year, right.Year),
-            "productionyear" => Nullable.Compare(left.Year, right.Year),
-            _ => 0
-        };
-    }
-
-    private static List<string> ParseSortFields(string sortBy)
-    {
-        if (string.IsNullOrWhiteSpace(sortBy))
-        {
-            return new List<string>();
-        }
-
-        return sortBy
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(field => !string.IsNullOrWhiteSpace(field))
-            .ToList();
-    }
-    private async Task<IActionResult> GetCuratorPlaylists(string provider, string externalId, string? includeItemTypes, CancellationToken cancellationToken = default)
-    {
-        var itemTypes = ParseItemTypes(includeItemTypes);
-
-        _logger.LogDebug("GetCuratorPlaylists: provider={Provider}, curatorId={CuratorId}, itemTypes={ItemTypes}",
-            provider, externalId, string.Join(",", itemTypes ?? Array.Empty<string>()));
-
-        // Curator IDs encode the name; provider APIs require search-then-filter.
-        var curatorName = externalId.Replace("curator-", "", StringComparison.OrdinalIgnoreCase);
-
-        var playlists = await _providerGateway.SearchPlaylistsAsync(
-            HttpContext.RequireProtocolExecutionContext(), curatorName, 50);
-
-        var curatorPlaylists = playlists
-            .Where(p => !string.IsNullOrEmpty(p.CuratorName) &&
-                       p.CuratorName.Equals(curatorName, StringComparison.OrdinalIgnoreCase))
-            .ToList();
-
-        _logger.LogDebug("Found {Count} playlists for curator '{CuratorName}'", curatorPlaylists.Count, curatorName);
-
-        var albumItems = curatorPlaylists
-            .Select(p => _responseBuilder.ConvertPlaylistToAlbumItem(p))
-            .ToList();
-
-        var response = new Dictionary<string, object>
-        {
-            ["Items"] = albumItems,
-            ["TotalRecordCount"] = albumItems.Count,
-            ["StartIndex"] = 0
-        };
-
-        return new JsonResult(response);
-    }
-
-
 
     #endregion
 
@@ -618,40 +359,7 @@ public partial class JellyfinController : ControllerBase
 
         if (!string.IsNullOrWhiteSpace(searchTerm))
         {
-            var cleanQuery = searchTerm.Trim().Trim('"');
-            _logger.LogDebug("Searching artists for: {Query}", cleanQuery);
-
-            var jellyfinTask = GetLocalArtistsResultForCurrentRequest(cleanQuery);
-
-            var externalTask = _providerGateway.SearchAsync(
-                HttpContext.RequireProtocolExecutionContext(), cleanQuery, 0, 0, limit);
-
-            await Task.WhenAll(jellyfinTask, externalTask);
-
-            var (jellyfinResult, _) = await jellyfinTask;
-            var externalArtists = (await externalTask).Artists;
-
-            _logger.LogDebug("Artist search results: Jellyfin={JellyfinCount}, External={ExternalCount}",
-                jellyfinResult != null ? "found" : "null", externalArtists.Count);
-
-            var artistItems = new List<Dictionary<string, object?>>();
-            if (jellyfinResult != null && jellyfinResult.RootElement.TryGetProperty("Items", out var items))
-            {
-                foreach (var item in items.EnumerateArray())
-                {
-                    artistItems.Add(item.Deserialize<Dictionary<string, object?>>() ?? []);
-                }
-            }
-
-            artistItems.AddRange(externalArtists.Select(_responseBuilder.ConvertArtistToJellyfinItem));
-            _logger.LogDebug("Returning {Count} total artists (local + external, no deduplication)", artistItems.Count);
-
-            return _responseBuilder.CreateJsonResponse(new
-            {
-                Items = artistItems,
-                TotalRecordCount = artistItems.Count,
-                StartIndex = startIndex
-            });
+            return await ReadArtistSearchAsync(searchTerm.Trim().Trim('"'), limit);
         }
 
         // Browse is a transparent relay; preserve the client's route and query semantics.
@@ -678,6 +386,8 @@ public partial class JellyfinController : ControllerBase
 
         // Normalize recovered SearchTerm while preserving every other client parameter.
         queryParams["SearchTerm"] = cleanQuery;
+        queryParams["StartIndex"] = "0";
+        queryParams["Limit"] = int.MaxValue.ToString(CultureInfo.InvariantCulture);
 
         _logger.LogInformation(
             "SEARCH TRACE: local artists proxy request endpoint='{Endpoint}' query='{SafeQuery}'",

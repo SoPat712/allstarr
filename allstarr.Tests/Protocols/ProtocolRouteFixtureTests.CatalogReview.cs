@@ -41,7 +41,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("album", "IncludeItemTypes=Audio&ParentId=native-parent&Recursive=true&SortBy=ParentIndexNumber%2CIndexNumber%2CSortName&Fields=ChildCount%2CDateCreated%2CDateLastMediaAdded%2CEtag%2CGenres%2CIndexNumber%2CParentId%2CProviderIds%2CTags%2CalbumPrimaryImageTag%2CparentPrimaryImageItemId%2CsongCount")]
     [InlineData("album", "ParentId=native-parent&SortBy=SortName&SortOrder=Ascending&CollapseBoxSetItems=false&ExcludeLocationTypes=Virtual&IsMissing=false")]
     [InlineData("artist", "AlbumArtistIds=native-parent&IncludeItemTypes=MusicAlbum&SortBy=DateCreated&SortOrder=Descending&CollapseBoxSetItems=true&ExcludeLocationTypes=Virtual&IsMissing=false")]
-    public async Task JellyfinCatalog_ClientBrowseOptionsKeepNativeOrderThenAppendProviders(string kind, string query)
+    public async Task JellyfinCatalog_ClientBrowseOptionsSortCombinedRowsBeforePaging(string kind, string query)
     {
         var gateway = JellyfinCatalogGateway(kind, false);
         var name = kind == "artist" ? "Visions" : "Oblivion";
@@ -65,8 +65,12 @@ public sealed partial class ProtocolRouteFixtureTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
-        Assert.Equal(new[] { "native-z", "native-a", kind == "artist" ? "ext-deezer-album-missing" : "ext-deezer-song-missing" }, rows.Select(row => row.GetProperty("Id").GetString()));
-        Assert.True(rows[0].GetProperty("Future").GetBoolean());
+        var providerId = kind == "artist" ? "ext-deezer-album-missing" : "ext-deezer-song-missing";
+        var expectedIds = kind == "album" && query.Contains("SortBy=SortName&", StringComparison.Ordinal)
+            ? new[] { providerId, "native-z", "native-a" }
+            : new[] { "native-z", "native-a", providerId };
+        Assert.Equal(expectedIds, rows.Select(row => row.GetProperty("Id").GetString()));
+        Assert.True(rows.Single(row => row.GetProperty("Id").GetString() == "native-z").GetProperty("Future").GetBoolean());
         Assert.Equal(3, body.RootElement.GetProperty("TotalRecordCount").GetInt32());
         gateway.VerifyAll();
     }

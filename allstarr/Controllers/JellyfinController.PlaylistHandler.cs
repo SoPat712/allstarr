@@ -126,7 +126,7 @@ public partial class JellyfinController
                 // Jellyfin must see every playlist track under one synthetic album parent.
                 var items = tracks.Select(track =>
                 {
-                    var item = _responseBuilder.ConvertSongToJellyfinItem(track);
+                    var item = QuerySong(track);
                     if (new JellyfinItemFields(Request.Query).Includes("ParentId"))
                         item["ParentId"] = playlistId;
                     item["PlaylistItemId"] = track.Id;
@@ -135,12 +135,7 @@ public partial class JellyfinController
                     return item;
                 }).ToList();
 
-                return new JsonResult(new
-                {
-                    Items = items,
-                    TotalRecordCount = items.Count,
-                    StartIndex = 0
-                });
+                return await ShapeProviderQueryAsync(items, deduplicate: false);
             }
 
             var endpoint = $"Playlists/{playlistId}/Items";
