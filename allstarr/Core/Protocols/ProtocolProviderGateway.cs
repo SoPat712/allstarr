@@ -55,6 +55,15 @@ public interface IProtocolProviderGateway
 
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
+    Task<Song?> GetStoredSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        Task.FromResult<Song?>(null);
+
+    Task<Album?> GetStoredAlbumAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        Task.FromResult<Album?>(null);
+
+    Task<Artist?> GetStoredArtistAsync(ProtocolExecutionContext protocol, string providerId, string externalId) =>
+        Task.FromResult<Artist?>(null);
+
     Task RememberTrackAsync(ProtocolExecutionContext protocol, string itemId);
 
     Task<Song?> GetPublicSongAsync(string providerId, string externalId, CancellationToken cancellationToken = default);
@@ -192,6 +201,10 @@ public sealed partial class ProtocolProviderGateway(
         CancellationToken cancellationToken = default)
     {
         providerId = NormalizeProvider(providerId);
+        if (resourceKind == ProviderResourceKind.Track &&
+            await GetStoredSongAsync(PublicMetadataContext(cancellationToken), providerId, externalId) is { CoverArtUrl: { } cover } &&
+            Uri.TryCreate(cover, UriKind.Absolute, out var storedArtwork))
+            return storedArtwork;
         if (providerId != "allstarr" && (!IsPublicMetadataProvider(providerId) ||
             !ResolveProviderOrder(ProviderCapabilityKind.Metadata).Contains(providerId))) return null;
         if (resourceKind is not (ProviderResourceKind.Track or ProviderResourceKind.Album or
@@ -231,6 +244,8 @@ public sealed partial class ProtocolProviderGateway(
         CancellationToken cancellationToken = default)
     {
         providerId = NormalizeProvider(providerId);
+        if (await GetStoredSongAsync(PublicMetadataContext(cancellationToken), providerId, externalId) is { } stored)
+            return stored;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
         var candidate = await PlanPublicMetadataAsync(providerId, "public-playback-metadata", timeout.Token, externalId);
@@ -299,15 +314,15 @@ public sealed partial class ProtocolProviderGateway(
 
     private Task<EffectiveProviderPolicySnapshot?> ResolveEffectivePolicyAsync(ProtocolExecutionContext protocol)
     {
-        if (protocol.Actor is not { } actor) return Task.FromResult<EffectiveProviderPolicySnapshot?>(null);
-        if (protocol.Policy is { } policy && policy.UserId == actor.EffectiveUserId)
+        var userId = protocol.Actor?.EffectiveUserId;
+        if (protocol.Policy is { } policy && policy.UserId == userId)
             return Task.FromResult<EffectiveProviderPolicySnapshot?>(policy);
         return ResolveAsync();
 
         async Task<EffectiveProviderPolicySnapshot?> ResolveAsync() => effectivePolicies == null
             ? null
-            : actor.EffectiveUserId is { } userId
-                ? await effectivePolicies.ResolveForUserAsync(userId, protocol.CancellationToken)
+            : userId is { } resolvedUserId
+                ? await effectivePolicies.ResolveForUserAsync(resolvedUserId, protocol.CancellationToken)
                 : await effectivePolicies.ResolveAsync(protocol.CancellationToken);
     }
 
@@ -395,7 +410,7 @@ public sealed partial class ProtocolProviderGateway(
         var songs = await CollapseVerifiedSearchTracksAsync(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
             trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
-            playableOrder, effectivePolicy, protocol.CancellationToken);
+            playableOrder, effectivePolicy, protocol);
         var knownDurationTitles = songs.Where(song => song.Duration is > 0)
             .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist))
             .ToHashSet(StringComparer.Ordinal);
@@ -416,8 +431,9 @@ public sealed partial class ProtocolProviderGateway(
         IReadOnlyList<(Song Song, TrackIdentityLookup Lookup)> trackLookups,
         IReadOnlyList<string> providerOrder,
         EffectiveProviderPolicySnapshot? policy,
-        CancellationToken cancellationToken)
+        ProtocolExecutionContext protocol)
     {
+        var cancellationToken = protocol.CancellationToken;
         var automaticSongs = songs.Where(song => IsAutomaticProvider(NormalizeProvider(song.ExternalProvider), policy)).ToArray();
         trackLookups = trackLookups.Where(item => IsAutomaticProvider(item.Lookup.ExternalId.ProviderId, policy)).ToArray();
         var verified = Array.Empty<(Song Song, TrackIdentityResolution? Identity)>();
@@ -446,7 +462,7 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         // One row per proven recording: an accepted identity link proves it, and so does the same ISRC
-        // from two different providers in this response. Nothing is looked up or written here.
+        // from two different providers in this response.
         var groupBySong = new Dictionary<Song, string>(ReferenceEqualityComparer.Instance);
         var groupByIsrc = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var (song, identity) in verified)
@@ -476,8 +492,10 @@ public sealed partial class ProtocolProviderGateway(
                      Identity: groupBySong[song], Mixed: FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album))))
         {
             var members = group.ToArray();
-            var best = members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
             var linked = group.Key.Identity.StartsWith("recording:", StringComparison.Ordinal);
+            var best = linked && members.Any(song => !string.IsNullOrWhiteSpace(song.AlbumId))
+                ? ChooseDisplaySource(protocol, members, providerOrder) :
+                members.OrderBy(song => ProviderPriority(providerOrder, song.ExternalProvider)).First();
             if (linked)
             {
                 var known = verified.FirstOrDefault(item => groupBySong[item.Song] == group.Key.Identity).Identity;
@@ -641,27 +659,36 @@ public sealed partial class ProtocolProviderGateway(
         var policy = await ResolveEffectivePolicyAsync(protocol);
         if (routedProviderId != "allstarr" && policy?.IsEnabled(routedProviderId) == false)
             throw new UnauthorizedAccessException("That source is disabled for this listener.");
-        if (keptFiles != null && protocol.Actor is { } actor &&
-            (routedProviderId == "allstarr" || IsAutomaticProvider(routedProviderId, policy)))
-        {
-            var retained = await keptFiles.FindSongAsync(actor,
-                $"ext-{routedProviderId}-song-{externalId}", protocol.CancellationToken);
-            if (retained != null)
-                return policy?.Includes(retained) == false ? null : retained;
-        }
+        var stored = await GetStoredSongAsync(protocol, routedProviderId, externalId);
+        if (stored != null && (NormalizeProvider(stored.ExternalProvider) == "allstarr" ||
+            string.IsNullOrWhiteSpace(stored.Album) || !string.IsNullOrWhiteSpace(stored.AlbumId)))
+            return stored;
+        if ((routedProviderId == "allstarr" || IsAutomaticProvider(routedProviderId, policy)) &&
+            identities != null && await identities.ResolveRecordingAsync(
+                protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null),
+                $"ext-{routedProviderId}-song-{externalId}", protocol.CancellationToken) != null)
+            return await GetKnownSongAsync(protocol, routedProviderId, externalId) ?? stored;
+        if (stored != null) return stored;
         if (routedProviderId == "allstarr") return await GetKnownSongAsync(protocol, routedProviderId, externalId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-track");
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Track, externalId);
+            if (await ReadCachedSongAsync(routed.Candidate.Context.Actor, routedProviderId, externalId,
+                    routed.Candidate.Context.Account) is { } cached)
+            {
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [cached], protocol);
+                return (await ResolveEffectivePolicyAsync(protocol))?.Includes(cached) == false ? null : cached;
+            }
             var outcome = await routed.Candidate.Implementation.GetTrackAsync(
                 routed.Candidate.Context,
                 new ProviderTrackLookupRequest(id));
             if (outcome.IsSuccess)
             {
                 var song = await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song], policy);
+                await CacheSongsAsync(routed.Candidate.Context, [song], true);
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song], protocol, policy);
                 return policy?.Includes(song) == false ? null : song;
             }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound)
@@ -683,15 +710,24 @@ public sealed partial class ProtocolProviderGateway(
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Album, externalId);
+            if (await ReadCachedMetadataAsync<Album>(routed.Candidate.Context.Actor, routedProviderId,
+                    ProviderResourceKind.Album, externalId, true, routed.Candidate.Context.Account) is { } cached)
+            {
+                var policy = await ResolveEffectivePolicyAsync(protocol);
+                cached.Songs = cached.Songs.Where(song => policy?.Includes(song) != false).ToList();
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, cached.Songs, protocol);
+                return cached;
+            }
             var outcome = await routed.Candidate.Implementation.GetAlbumAsync(
                 routed.Candidate.Context,
                 new ProviderAlbumLookupRequest(id));
             if (outcome.IsSuccess)
             {
                 var album = Map(outcome.RequireValue());
+                await CacheResourcesAsync(routed.Candidate.Context, [album], [], true);
                 var policy = await ResolveEffectivePolicyAsync(protocol);
                 album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, policy);
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, protocol);
                 return album;
             }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
@@ -707,15 +743,24 @@ public sealed partial class ProtocolProviderGateway(
         string externalId)
     {
         var routedProviderId = NormalizeProvider(providerId);
+        if (await ReadStoredMetadataAsync<Artist>(protocol, routedProviderId, ProviderResourceKind.Artist, externalId, true) is { } stored) return stored;
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
             protocol, routedProviderId, ProviderCapabilityKind.Metadata, "protocol-metadata-get-artist");
         if (routed.Candidate != null)
         {
             var id = new ProviderExternalResourceId(routedProviderId, ProviderResourceKind.Artist, externalId);
+            if (await ReadCachedMetadataAsync<Artist>(routed.Candidate.Context.Actor, routedProviderId,
+                    ProviderResourceKind.Artist, externalId, true, routed.Candidate.Context.Account) is { } cached)
+                return cached;
             var outcome = await routed.Candidate.Implementation.GetArtistAsync(
                 routed.Candidate.Context,
                 new ProviderArtistLookupRequest(id));
-            if (outcome.IsSuccess) return Map(outcome.RequireValue());
+            if (outcome.IsSuccess)
+            {
+                var artist = Map(outcome.RequireValue());
+                await CacheResourcesAsync(routed.Candidate.Context, [], [artist], true);
+                return artist;
+            }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
             ThrowRouteFailure(outcome.Error);
         }
@@ -756,8 +801,8 @@ public sealed partial class ProtocolProviderGateway(
                 if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
                     throw new HttpRequestException("The provider repeated an artist-album page cursor.");
             } while (cursor != null);
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(),
-                await ResolveEffectivePolicyAsync(protocol));
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(), protocol);
+            await CacheResourcesAsync(routed.Candidate.Context, albums, []);
             return albums;
         }
 
@@ -783,7 +828,7 @@ public sealed partial class ProtocolProviderGateway(
         if (!outcome.IsSuccess) return [];
         var tracks = outcome.RequireValue().Items.Select(Map).ToList();
         var policy = await ResolveEffectivePolicyAsync(protocol);
-        await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, policy);
+        await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
         return tracks.Where(song => policy?.Includes(song) != false).ToList();
     }
 
@@ -840,7 +885,7 @@ public sealed partial class ProtocolProviderGateway(
                     throw new HttpRequestException("The provider repeated an artist-track page cursor.");
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, policy);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
@@ -959,7 +1004,7 @@ public sealed partial class ProtocolProviderGateway(
                 cursor = page.NextCursor;
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, policy);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, protocol);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 

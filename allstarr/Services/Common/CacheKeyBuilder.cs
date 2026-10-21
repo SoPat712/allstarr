@@ -15,6 +15,9 @@ public static class CacheKeyBuilder
         int limit, bool songs, bool albums, bool artists) =>
         $"search:v2:{Normalize(providerId)}:{accountId?.ToString("N") ?? "public"}:{accountRevision ?? 0}:{Digest(scope)}:{DigestIdentity(query, limit, songs, albums, artists)}";
 
+    public static string BuildProtocolMetadataKey(string provider, string scope, string kind, string externalId) =>
+        $"protocol:metadata:v1:{Normalize(provider)}:{Digest(scope)}:{Normalize(kind)}:{Digest(externalId)}";
+
     public static string BuildPlaybackMetadataKey(string provider, string itemId) =>
         $"playback:metadata:v1:{Normalize(provider)}:{Digest(itemId.Trim())}";
 

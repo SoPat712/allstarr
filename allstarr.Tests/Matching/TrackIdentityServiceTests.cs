@@ -684,7 +684,9 @@ public sealed partial class TrackIdentityServiceTests : IAsyncLifetime
 
     private sealed class FakeClock(DateTimeOffset now) : IPlatformClock
     {
-        public DateTimeOffset UtcNow { get; } = now;
+        public DateTimeOffset UtcNow { get; private set; } = now;
+
+        public void Advance(TimeSpan duration) => UtcNow += duration;
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<AllstarrDbContext> options)

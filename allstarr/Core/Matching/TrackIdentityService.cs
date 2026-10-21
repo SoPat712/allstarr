@@ -103,6 +103,13 @@ public sealed record TrackIdentityLookup(
 
 public interface ITrackIdentityService
 {
+    Task<IReadOnlyList<allstarr.Models.Domain.Song>> GetStoredSongsAsync(
+        ProviderActorContext actor, string publicId, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<allstarr.Models.Domain.Song>>([]);
+
+    Task<string?> GetStoredMetadataAsync(ProviderActorContext actor, ProviderExternalResourceId resource,
+        CancellationToken cancellationToken = default) => Task.FromResult<string?>(null);
+
     Task<CanonicalRecordingCreationResult> CreateRecordingAsync(
         ProviderActorContext actor,
         string correlationId,
