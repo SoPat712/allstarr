@@ -1,4 +1,5 @@
 using allstarr.Core.Protocols;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Storage;
 using allstarr.Services.Local;
 using Microsoft.EntityFrameworkCore;
@@ -43,6 +44,9 @@ public sealed partial class LibraryIndexService
             EnsureStorageReady();
             recordings = recordings.Select(item => item.ProviderId == null ? item : item with
             { ProviderId = _registry?.ResolveProviderId(item.ProviderId) ?? item.ProviderId }).ToArray();
+            var policy = context.Policy?.UserId == context.Principal.UserId ? context.Policy :
+                _effectivePolicies == null ? null :
+                    await _effectivePolicies.ResolveForUserAsync(context.Principal.UserId, cancellationToken);
             var access = await _libraryAccess.ResolveAsync(context, cancellationToken);
             if (!access.Succeeded || access.LibraryIds.Length == 0) return result;
             await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
@@ -61,8 +65,12 @@ public sealed partial class LibraryIndexService
                     item.Isrc != null && isrcs.Contains(item.Isrc))
                 .OrderBy(item => item.BackendLibraryId).ThenBy(item => item.BackendItemId).ThenBy(item => item.Id)
                 .ToArrayAsync(cancellationToken);
+            ProviderUseMode Mode(string providerId) => policy?.GetProviderMode(providerId) ??
+                (_registry?.TryGet(providerId, out var descriptor) == true
+                    ? descriptor!.DefaultUseMode : ProviderUseMode.Automatic);
             foreach (var recording in recordings)
             {
+                if (recording.ProviderId is { } providerId && Mode(providerId) == ProviderUseMode.Off) continue;
                 var manual = recording.ProviderId != null && recording.ExternalId != null
                     ? overrides.GetValueOrDefault((recording.ProviderId, CanonicalCatalogKeys.Hash(recording.ExternalId))) : null;
                 LibraryTrackRecord? track;
@@ -74,6 +82,8 @@ public sealed partial class LibraryIndexService
                 }
                 else
                 {
+                    if (recording.ProviderId is { } automaticProvider && Mode(automaticProvider) != ProviderUseMode.Automatic)
+                        continue;
                     track = recording.RecordingId.HasValue
                         ? tracks.FirstOrDefault(item => item.CanonicalRecordingId == recording.RecordingId) : null;
                     var isrc = CleanIsrc(recording.Isrc);

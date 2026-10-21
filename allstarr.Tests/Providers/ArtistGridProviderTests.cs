@@ -236,7 +236,7 @@ public sealed class ArtistGridProviderTests
     }
 
     [Fact]
-    public void Registration_DeclaresManualAccountFreeMetadataAndStreaming()
+    public void Registration_DefaultsToManualAccountFreeMetadataAndStreaming()
     {
         using var client = new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.NotFound)));
         var catalog = new ArtistGridCatalog(client);
@@ -245,7 +245,6 @@ public sealed class ArtistGridProviderTests
             new ArtistGridStreamingCapabilityAdapter(catalog, client));
 
         var validated = ProviderRegistrationValidator.Validate(registration);
-        Assert.Equal(ProviderMatchingMode.ManualOnly, validated.Descriptor.MatchingMode);
         Assert.Equal(ProviderUseMode.ManualOnly, validated.Descriptor.DefaultUseMode);
         Assert.All(validated.Descriptor.Capabilities, capability =>
             Assert.Equal(ProviderAccountRequirement.None, capability.AccountRequirement));

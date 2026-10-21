@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Collections.Immutable;
+using allstarr.Core.Settings;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Jobs;
 using allstarr.Core.Identity;
@@ -15,6 +17,41 @@ namespace allstarr.Tests;
 
 public sealed partial class PlaylistOrchestrationIntegrationTests
 {
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly, false)]
+    [InlineData(ProviderUseMode.Off, false)]
+    [InlineData(ProviderUseMode.ManualOnly, true)]
+    [InlineData(ProviderUseMode.Off, true)]
+    public async Task RefreshDoesNotSelectRestrictedSourcesOrReuseTheirAutomaticMatches(ProviderUseMode mode, bool previouslyOn)
+    {
+        await SetLink(mode: PlaylistLinkMode.Virtual);
+        _source.Snapshot = Snapshot("stable-source", Entry(0, "one", "source-1", "One"));
+        var currentMode = previouslyOn ? ProviderUseMode.Automatic : mode;
+        var policies = new Mock<IEffectiveProviderPolicyResolver>(MockBehavior.Strict);
+        policies.Setup(item => item.ResolveForUserAsync(_user, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new EffectiveProviderPolicySnapshot(
+                ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+                ImmutableHashSet<string>.Empty, "High", 0.07)
+            { ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("fixture", currentMode) });
+        var service = new PlaylistOrchestrationService(_factory, _source, new FakeTargetResolver(_target),
+            new PlaylistMaterializationPlanner(), new TrackMatchDecisionEngine(), _trackMatches,
+            new Clock(_now), new KeyedAsyncLock(), new TestBackendLibraryAccess(_factory, "music"),
+            effectivePolicies: policies.Object);
+        if (previouslyOn)
+        {
+            await service.RefreshAsync(Context(), _link);
+            await using var before = await _factory.CreateDbContextAsync();
+            Assert.Equal(TrackMatchState.Accepted, (await before.TrackMatches.SingleAsync()).State);
+            currentMode = mode;
+        }
+        await service.RefreshAsync(Context(), _link);
+        await using var db = await _factory.CreateDbContextAsync();
+        var latest = await db.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(TrackMatchState.Unresolved, latest.State);
+        Assert.Null(latest.LibraryTrackId);
+        Assert.Null(latest.CanonicalRecordingId);
+    }
+
     [Fact]
     public async Task Refresh_publishes_pending_rows_and_reuses_the_active_background_job()
     {
@@ -28,7 +65,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         var repeated = await service.RefreshAsync(Context(), _link);
         disconnected.Cancel();
 
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), It.IsAny<int>()), Times.Never);
         Assert.NotNull(first.JobId);
         Assert.Equal(first.JobId, repeated.JobId);
@@ -74,7 +111,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         var completion = await ExecuteRefreshRematch(service, matches, claim);
         Assert.Equal(DurableJobCompletionKind.Succeeded, completion.Kind);
         await queue.CompleteAsync(claim, completion);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(
             It.IsAny<ProtocolExecutionContext>(), It.Is<string>(query => query.Contains("Old Song")), It.IsAny<int>()), Times.Never);
         var projection = await new DurablePlaylistProjectionReader(_factory,
             new TestBackendLibraryAccess(_factory, "music"), gateway.Object).ReadByLinkIdAsync(_user, _link);
@@ -360,7 +397,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
                     Album = "Album",
                     Duration = 180
                 });
-        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "equivalent", Title = "New Song",
                 Artist = "Artist", Album = "Album", Duration = 180 }]);
         await using var db = await _factory.CreateDbContextAsync();
@@ -408,7 +445,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
                     Album = "Other collection",
                     Duration = 300
                 });
-        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "replacement", Title = "New Song",
                 Artist = "Artist", Album = "Album", Duration = 180 }]);
         Assert.True((await matches.RematchSnapshotAsync(Context(), snapshotId, "replace", "updated-policy")).Succeeded);
@@ -432,7 +469,7 @@ public sealed partial class PlaylistOrchestrationIntegrationTests
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["deezer"]);
         gateway.Setup(item => item.GetPlayableProviderOrderAsync(It.IsAny<ProviderActorContext>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(["deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(
                 It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .ReturnsAsync([new Song { ExternalProvider = "deezer", ExternalId = "new-song", Title = "New Song",
                 Artist = "Artist", Album = "Album", Duration = 180 }]);

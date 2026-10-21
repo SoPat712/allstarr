@@ -999,9 +999,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 continue;
             var manual = allManualOverrides.GetValueOrDefault(external.Id)?.Effective;
             storedByExternalId.TryGetValue(external.Id, out var stored);
+            var automaticSource = providerPolicy?.IsAutomatic(external.ProviderId) != false;
+            var sourceCandidates = automaticSource ? candidateSet : _matcher.PrepareCandidates([]);
+            var sourceIndexRevision = automaticSource ? libraryIndexRevision : sourceCandidates.Revision;
             if (stored != null &&
                 stored.SourceSnapshotVersion == external.SnapshotVersion &&
-                stored.LibraryIndexRevision == libraryIndexRevision &&
+                stored.LibraryIndexRevision == sourceIndexRevision &&
                 stored.MatcherVersion == TrackMatchDecisionEngine.AlgorithmVersion &&
                 stored.PolicyVersion == link.PolicyVersion)
                 continue;
@@ -1042,7 +1045,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
             var match = effectiveMatcher.Decide(
                 new TrackMatchScope(link.OwnerUserId, link.TargetBackendInstanceId, link.ProviderAccountId, 1, snapshot.SnapshotVersion, access.LibraryIds.ToHashSet(StringComparer.Ordinal)),
                 source,
-                candidateSet,
+                sourceCandidates,
                 rejectedOverride);
             var matchedCanonicalRecordingId = match.SelectedLibraryTrackId.HasValue &&
                                               candidateById.TryGetValue(match.SelectedLibraryTrackId.Value, out var matchedCandidate)
@@ -1054,7 +1057,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 match,
                 (stored?.DecisionVersion ?? 0) + 1,
                 external.SnapshotVersion,
-                libraryIndexRevision,
+                sourceIndexRevision,
                 link.PolicyVersion);
         }
 
@@ -1095,7 +1098,7 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                 sourceIdentity,
                 routeIdentities,
                 providerOrder,
-                playableLibraryTrackIds: candidateIds, providerPolicy: providerPolicy);
+                playableLibraryTrackIds: candidateIds, providerPolicy: providerPolicy, sourceProviderId: external.ProviderId);
             var effectiveLibraryTrackId = classification.LibraryTrackId;
             var effectiveState = ToReviewState(classification.State);
 

@@ -63,18 +63,35 @@ public sealed partial class TrackIdentityService
             ?? throw new KeyNotFoundException("The recording does not exist.");
         if (!recording.Identifiers.Any(item => item.Kind == RecordingIdentifierKinds.Isrc && item.Value == expected))
             throw new InvalidOperationException("The recording no longer has the lookup ISRC.");
+        if (!await HasAutomaticProviderIdentityAsync(db, recording.Id, actor, cancellationToken))
+            return ToIdentity(recording);
         var related = await db.CanonicalRecordings.Include(item => item.Identifiers).Where(item =>
             item.MergedIntoId == null && item.Id != recording.Id && item.Identifiers.Any(identifier =>
                 identifier.Kind == RecordingIdentifierKinds.MusicBrainz && identifier.Value == mbid ||
                 identifier.Kind == RecordingIdentifierKinds.Isrc && codes.Contains(identifier.Value)))
             .ToListAsync(cancellationToken);
+        var eligibleRelated = new List<CanonicalRecordingRecord>(related.Count);
+        var restrictedIsrcs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var item in related)
+        {
+            if (await HasAutomaticProviderIdentityAsync(db, item.Id, actor, cancellationToken))
+                eligibleRelated.Add(item);
+            else
+            {
+                if (item.Identifiers.Any(identifier => identifier.Kind == RecordingIdentifierKinds.MusicBrainz && identifier.Value == mbid))
+                    return ToIdentity(recording);
+                restrictedIsrcs.UnionWith(item.Identifiers.Where(identifier => identifier.Kind == RecordingIdentifierKinds.Isrc)
+                    .Select(identifier => identifier.Value));
+            }
+        }
+        related = eligibleRelated;
         foreach (var item in related.Append(recording))
             EnsureSignalsCompatible(item, null, mbid);
         var now = _clock.UtcNow;
         foreach (var other in related)
             recording = await MergeRecordsAsync(db, recording, other, actor, correlationId, now, cancellationToken);
         var changed = AttachIdentifier(db, recording, RecordingIdentifierKinds.MusicBrainz, mbid, "musicbrainz-isrc", now);
-        foreach (var code in codes)
+        foreach (var code in codes.Where(code => !restrictedIsrcs.Contains(code)))
             changed |= AttachIdentifier(db, recording, RecordingIdentifierKinds.Isrc, code, "musicbrainz-isrc", now);
         if (changed)
         {
@@ -87,5 +104,24 @@ public sealed partial class TrackIdentityService
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return ToIdentity(recording);
+    }
+
+    private async Task<bool> HasAutomaticProviderIdentityAsync(
+        AllstarrDbContext db, Guid recordingId, ProviderActorContext actor,
+        CancellationToken cancellationToken)
+    {
+        var providers = await db.ProviderTrackIdentities.AsNoTracking()
+            .Where(item => item.CanonicalRecordingId == recordingId &&
+                           item.ResourceKind == ProviderResourceKind.Track)
+            .Select(item => item.ProviderId)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+        if (providers.Length == 0) return true;
+        foreach (var provider in providers)
+        {
+            if (await CanAutomaticallyLinkAsync(actor, provider, cancellationToken))
+                return true;
+        }
+        return false;
     }
 }

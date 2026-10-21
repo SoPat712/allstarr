@@ -73,7 +73,6 @@ public sealed record ExtensionSdkManifest(
     IReadOnlyList<string>? RequiredRuntimeFeatures = null,
     string? Compatibility = null,
     ExtensionSignedSessionConfig? SignedSession = null,
-    ProviderMatchingMode MatchingMode = ProviderMatchingMode.Automatic,
     ProviderUseMode DefaultUseMode = ProviderUseMode.Automatic);
 
 public sealed record VerifiedExtensionPackage(
@@ -128,23 +127,16 @@ public static partial class ExtensionSdkV1
             var settings = ParseSettings(root);
             var qualityOptions = ParseQualityOptions(root);
             var runtimeFeatures = OptionalStringArray(root, "requiredRuntimeFeatures", 64, 100);
-            var matchingMode = Optional(root, "matchingMode") switch
-            {
-                null or "automatic" => ProviderMatchingMode.Automatic,
-                "manualOnly" => ProviderMatchingMode.ManualOnly,
-                _ => throw new ExtensionSdkValidationException("matchingMode must be automatic or manualOnly.")
-            };
             var defaultUseMode = Optional(root, "defaultUseMode") switch
             {
-                null => matchingMode == ProviderMatchingMode.ManualOnly ? ProviderUseMode.ManualOnly : ProviderUseMode.Automatic,
-                "automatic" when matchingMode == ProviderMatchingMode.Automatic => ProviderUseMode.Automatic,
+                null or "automatic" => ProviderUseMode.Automatic,
                 "manualOnly" => ProviderUseMode.ManualOnly,
                 "off" => ProviderUseMode.Off,
-                _ => throw new ExtensionSdkValidationException("defaultUseMode is incompatible with matchingMode.")
+                _ => throw new ExtensionSdkValidationException("defaultUseMode must be automatic, manualOnly, or off.")
             };
             return new(id, displayName, version, sdk, entryPoint, capabilities, permissions,
                 description, author, iconPath, settings, qualityOptions, runtimeFeatures,
-                Optional(root, "compatibility"), ParseSignedSession(root), matchingMode, defaultUseMode);
+                Optional(root, "compatibility"), ParseSignedSession(root), defaultUseMode);
         }
     }
 

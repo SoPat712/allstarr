@@ -42,8 +42,7 @@ public sealed class CrossProviderLinkResolver(
         var disabled = policy.DisabledProviders.Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).ToHashSet(StringComparer.Ordinal);
         var order = policy.GetProviderOrder(ProviderCapabilityKind.Metadata)
             .Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
-            .Where(id => !disabled.Contains(id) && policy.IsAutomatic(id) &&
-                registry.Providers.FirstOrDefault(provider => provider.Id == id)?.MatchingMode != ProviderMatchingMode.ManualOnly)
+            .Where(id => !disabled.Contains(id) && policy.IsAutomatic(id))
             .Distinct(StringComparer.Ordinal).Take(32).ToArray();
         var known = verifiedIdentities.Select(item => Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(item.ProviderId))
             .Append(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(recording.ProviderId)).ToHashSet(StringComparer.Ordinal);

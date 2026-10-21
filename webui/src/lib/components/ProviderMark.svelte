@@ -18,10 +18,12 @@
     const plain = value.toLowerCase().replace(/^spotiflac-/, "").replace(/[^a-z0-9]/g, "");
     return aliases[plain] ?? plain;
   };
+  // Category icons ("extension", "lyrics") name no mark of their own, so the source's id picks it.
+  const generic = new Set(["extension", "lyrics"]);
   const icon = $derived(
-    definition?.icon && definition.icon !== "extension"
+    definition?.icon && !generic.has(definition.icon)
       ? definition.icon
-      : definition?.icon === "extension" || !label ? key(id) : key(label),
+      : definition?.icon && generic.has(definition.icon) || !label ? key(id) : key(label),
   );
   const source = $derived(adminUrl(definition?.logoUrl || `/images/providers/${encodeURIComponent(icon || id.toLowerCase())}.svg`));
 

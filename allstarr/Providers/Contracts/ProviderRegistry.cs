@@ -218,8 +218,8 @@ public static class ProviderRegistrationValidator
         if (registration.Aliases.Any(ProviderContractValidation.IsLocalLyricsSource))
             throw new InvalidOperationException("Local lyrics source IDs cannot be used as provider aliases.");
         var descriptor = ProviderManifestValidator.Validate(registration.Descriptor);
-        if (!Enum.IsDefined(descriptor.MatchingMode) || !Enum.IsDefined(descriptor.DefaultUseMode))
-            throw new InvalidOperationException("The provider matching or use mode is invalid.");
+        if (!Enum.IsDefined(descriptor.DefaultUseMode))
+            throw new InvalidOperationException("The provider use mode is invalid.");
         if (registration.Implementations.Any(item => item == null))
         {
             throw new InvalidOperationException(

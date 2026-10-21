@@ -548,8 +548,8 @@ async function mockApi(page: Page, options: {
     if (url.pathname === "/api/admin/providers/use") body = {
       personalRevision: "source-use-personal", householdRevision: "source-use-household",
       providers: (responses["/api/admin/ui/schema"] as { providers: { id: string }[] }).providers.map(provider => ({
-        providerId: provider.id, mode: "automatic", householdMode: "automatic",
-        supportsAutomaticMatching: true, householdDisabled: false,
+        providerId: provider.id, householdMode: "automatic", personalMode: null,
+        effectiveMode: "automatic", canChoosePersonal: true,
       })),
     };
     if (url.pathname === "/api/admin/jobs" && body === undefined) {
@@ -7212,6 +7212,51 @@ test("Source test panel searches one source and sends a result to lyrics, playba
   await expect(dialog.locator(".try-media-facts")).toContainText("24-bit / 96 kHz");
   await expect(dialog.locator(".try-media-facts")).toContainText("44.0 MB");
 });
+
+for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light"], [1280, "dark"]] as const) {
+  test(`Source use switch sets the household and personal positions at ${width}px ${colorScheme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+    await mockApi(page);
+    await page.route("**/api/admin/ui/schema", (route) => route.fulfill({ json: {
+      ...schema, providers: [...schema.providers, { id: "artistgrid", name: "ArtistGrid", icon: "extension", useMode: "manualOnly",
+        categories: ["metadata", "streaming"], runtimeCapabilities: [] }],
+    } }));
+    const writes: Record<string, unknown>[] = [];
+    const settings = (householdMode: string, personalMode: string | null) => ({
+      personalRevision: "personal-1", householdRevision: "household-1",
+      providers: [{ providerId: "artistgrid", householdMode, personalMode, effectiveMode: householdMode === "off" ? "off" : personalMode ?? householdMode, canChoosePersonal: householdMode !== "off" }],
+    });
+    await page.route("**/api/admin/providers/use**", (route) => {
+      if (route.request().method() === "PUT") writes.push(route.request().postDataJSON());
+      return route.fulfill({ json: writes.length === 0 ? settings("manualOnly", "automatic") : writes.length === 1 ? settings("manualOnly", null) : settings("off", null) });
+    });
+    await page.route("**/images/providers/*.svg", (route) => route.fulfill({
+      path: new URL(`../../allstarr/wwwroot/images/providers/${new URL(route.request().url()).pathname.split("/").pop()}`, import.meta.url).pathname,
+      contentType: "image/svg+xml",
+    }));
+    await page.goto("#/integrations/services/artistgrid");
+    const use = page.getByRole("region", { name: "Use this source", exact: true });
+    const everyone = use.getByRole("radiogroup", { name: "Use this source for everyone" });
+    const mine = use.getByRole("radiogroup", { name: "Use this source for you" });
+    await expect(everyone.getByRole("radio", { name: "Manual only", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(mine.getByRole("radio", { name: "On", exact: true })).toHaveAttribute("aria-checked", "true");
+    await expect(use).toContainText("Your own setting.");
+    await expect(page.locator(".provider-mark img").first()).toHaveAttribute("src", /artistgrid\.svg$/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/source-use-${width}-${colorScheme}.png`, fullPage: false });
+    await use.getByRole("button", { name: "Follow everyone instead" }).click();
+    await expect.poll(() => writes.length).toBe(1);
+    expect(writes[0]).toEqual({ mode: null, scope: "personal", expectedRevision: "personal-1" });
+    await expect(use).toContainText("Follows the setting for everyone.");
+    await everyone.getByRole("radio", { name: "Manual only", exact: true }).focus();
+    await page.keyboard.press("ArrowRight");
+    await expect.poll(() => writes.length).toBe(2);
+    expect(writes[1]).toEqual({ mode: "off", scope: "household", expectedRevision: "household-1" });
+    await expect(use).toContainText("An administrator turned this source off for everyone.");
+    await expect(mine.getByRole("radio", { name: "Off", exact: true })).toBeDisabled();
+  });
+}
 
 test("Sources without an account can be tested in detail", async ({ page }) => {
   await mockApi(page);

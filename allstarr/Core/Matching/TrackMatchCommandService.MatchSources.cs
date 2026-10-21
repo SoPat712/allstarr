@@ -187,7 +187,11 @@ public sealed partial class TrackMatchCommandService
                 seed.Isrc,
                 null,
                 null)
-            { ExactProviderAliases = aliases.GetValueOrDefault(identity.CanonicalRecordingId) };
+            {
+                ExactProviderAliases = FilterAutomaticCrossLinks(
+                    aliases.GetValueOrDefault(identity.CanonicalRecordingId),
+                    ownerPolicies[snapshot.OwnerUserId])
+            };
             var rejectedOverride =
                 manual?.Decision == ManualOverrideDecision.Reject &&
                 manual.LibraryTrackId.HasValue &&

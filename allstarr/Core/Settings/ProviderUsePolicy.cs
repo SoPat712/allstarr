@@ -53,10 +53,5 @@ public static class ProviderUsePolicy
         JsonSerializer.Serialize(modes.OrderBy(item => item.Key, StringComparer.Ordinal)
             .ToDictionary(item => item.Key, item => Name(item.Value), StringComparer.Ordinal));
 
-    public static ProviderUseMode DefaultMode(ProviderDescriptor provider) =>
-        Restrict(provider, provider.DefaultUseMode);
-
-    public static ProviderUseMode Restrict(ProviderDescriptor provider, ProviderUseMode mode) =>
-        provider.MatchingMode == ProviderMatchingMode.ManualOnly && mode == ProviderUseMode.Automatic
-            ? ProviderUseMode.ManualOnly : mode;
+    public static ProviderUseMode DefaultMode(ProviderDescriptor provider) => provider.DefaultUseMode;
 }

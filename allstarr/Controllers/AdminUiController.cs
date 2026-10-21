@@ -94,7 +94,6 @@ public class AdminUiController : ControllerBase
                     LogoUrl = item.LogoUrl,
                     Status = item.Status,
                     UseMode = item.UseMode,
-                    SupportsAutomaticMatching = item.SupportsAutomaticMatching,
                     Categories = item.Categories,
                     Notes = item.Notes,
                     AccountSettings = item.AccountSettings,
@@ -1320,7 +1319,6 @@ public class AdminUiController : ControllerBase
             var useMode = usePolicy?.GetProviderMode(provider.Id) ?? (registered == null
                 ? ProviderUseMode.Automatic : ProviderUsePolicy.DefaultMode(registered));
             provider.UseMode = ProviderUsePolicy.Name(useMode);
-            provider.SupportsAutomaticMatching = registered?.MatchingMode != ProviderMatchingMode.ManualOnly;
             provider.SupportedAudiences = allstarr.Core.Identity.ProviderAccountAudiences.Supported(_providerRegistry, provider.Id)
                 .Select(scope => scope.ToString()).ToList();
             provider.SharingDescription = allstarr.Core.Identity.ProviderAccountAudiences.Description(_providerRegistry, provider.Id);

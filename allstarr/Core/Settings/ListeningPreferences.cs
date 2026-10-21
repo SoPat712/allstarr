@@ -11,7 +11,10 @@ public sealed record PersonalListeningPreferences(
     ListeningPreferences Values,
     ListeningPreferences HouseholdDefaults,
     bool UsesHouseholdDefaults,
-    string Revision);
+    string Revision)
+{
+    public IReadOnlyDictionary<string, string>? ProviderModeOverrides { get; init; }
+}
 
 internal static class ListeningPreferenceKeys
 {

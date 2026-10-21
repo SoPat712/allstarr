@@ -65,8 +65,7 @@ public sealed class ProviderRouter(
         var usePolicy = effectivePolicies == null ? null : request.Actor.EffectiveUserId is { } userId
             ? await effectivePolicies.ResolveForUserAsync(userId, request.CancellationToken)
             : await effectivePolicies.ResolveAsync(request.CancellationToken);
-        ProviderUseMode UseMode(ProviderDescriptor provider) => ProviderUsePolicy.Restrict(provider,
-            usePolicy?.GetProviderMode(provider.Id) ?? ProviderUsePolicy.DefaultMode(provider));
+        ProviderUseMode UseMode(ProviderDescriptor provider) => usePolicy?.GetProviderMode(provider.Id) ?? ProviderUsePolicy.DefaultMode(provider);
         var sourceManual = request.SourceTrackId is { ProviderId: not "allstarr" } source &&
             registry.TryGet(source.ProviderId, out var sourceDescriptor) && UseMode(sourceDescriptor!) != ProviderUseMode.Automatic;
 

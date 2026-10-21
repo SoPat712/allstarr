@@ -49,6 +49,8 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var afterA = await service.GetPreferencesAsync(_userId);
         var other = await service.GetPreferencesAsync(_userB);
         Assert.Equal("off", afterA.Values.ProviderModes!["manual"]);
+        Assert.Equal("off", afterA.ProviderModeOverrides!["manual"]);
+        Assert.Null(other.ProviderModeOverrides);
         Assert.Equal("manualOnly", other.Values.ProviderModes!["manual"]);
         Assert.Equal(beforeA.Values.ExplicitFilter, afterA.Values.ExplicitFilter);
         await using var db = await _factory.CreateDbContextAsync();
@@ -60,6 +62,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         var inherited = await service.GetPreferencesAsync(_userId);
         Assert.Equal("manualOnly", inherited.Values.ProviderModes!["manual"]);
         Assert.True(inherited.UsesHouseholdDefaults);
+        Assert.Null(inherited.ProviderModeOverrides);
         Assert.Equal("manualOnly", (await CreateService([]).GetPreferencesAsync(_userB)).Values.ProviderModes!["manual"]);
     }
 

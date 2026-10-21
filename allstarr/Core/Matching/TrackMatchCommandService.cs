@@ -284,7 +284,7 @@ public sealed partial class TrackMatchCommandService(
     private async Task<bool> AutomaticSourceAsync(Guid userId, string providerId, CancellationToken cancellationToken)
     {
         if (registry?.TryGet(providerId, out var provider) == true &&
-            provider!.MatchingMode == ProviderMatchingMode.ManualOnly) return false;
+            effectivePolicies == null && provider!.DefaultUseMode != ProviderUseMode.Automatic) return false;
         return effectivePolicies == null ||
             (await effectivePolicies.ResolveForUserAsync(userId, cancellationToken)).IsAutomatic(providerId);
     }

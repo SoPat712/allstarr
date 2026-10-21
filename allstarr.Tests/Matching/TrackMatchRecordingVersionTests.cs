@@ -194,7 +194,7 @@ public sealed class TrackMatchRecordingVersionTests
         };
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult<IReadOnlyList<Song>>(
                 !broaderQuery ? [mix, original] : query == "Espresso Sabrina Carpenter" ? [mix] : [original]));
         var search = new TrackMatchPlayableSearch(gateway.Object, new TrackMatchDecisionEngine(),
@@ -237,7 +237,7 @@ public sealed class TrackMatchRecordingVersionTests
         };
         var gateway = new Mock<IProtocolProviderGateway>();
         gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["apple-download", "deezer"]);
-        gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
             .Returns((ProtocolExecutionContext _, string query, int _) => Task.FromResult<IReadOnlyList<Song>>(
                 query == "Espresso Sabrina Carpenter" || !cleanExists ? [explicitSong] : [clean]));
         var search = new TrackMatchPlayableSearch(gateway.Object, new TrackMatchDecisionEngine(),
@@ -248,7 +248,7 @@ public sealed class TrackMatchRecordingVersionTests
         Assert.Equal(TrackMatchReviewState.Accepted, result.Decision.State);
         Assert.Equal(cleanExists ? "clean" : "explicit", result.SelectedExternal!.ExternalId);
         Assert.Equal(cleanExists ? "clean" : "explicit", Assert.Single(result.RoutableExternalCandidates).ExternalId);
-        gateway.Verify(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Espresso", 15), Times.Once);
+        gateway.Verify(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Espresso", 15), Times.Once);
     }
 
     [Theory]

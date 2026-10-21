@@ -10,17 +10,15 @@ namespace allstarr.Tests;
 public sealed class ExtensionSdkV1Tests : IDisposable
 {
     [Fact]
-    public void ManifestDefaultsToAutomaticAndCanDeclareAManualOnlySource()
+    public void LegacyMatchingDeclarationsDoNotRestrictSourceModes()
     {
         var automatic = ExtensionSdkV1.ParseManifest(Manifest());
-        Assert.Equal(ProviderMatchingMode.Automatic, automatic.MatchingMode);
         Assert.Equal(ProviderUseMode.Automatic, automatic.DefaultUseMode);
         var manual = ExtensionSdkV1.ParseManifest(Manifest().Replace("\"sdkVersion\":\"1\"",
             "\"sdkVersion\":\"1\",\"matchingMode\":\"manualOnly\""));
-        Assert.Equal(ProviderMatchingMode.ManualOnly, manual.MatchingMode);
-        Assert.Equal(ProviderUseMode.ManualOnly, manual.DefaultUseMode);
-        Assert.Throws<ExtensionSdkValidationException>(() => ExtensionSdkV1.ParseManifest(Manifest().Replace(
-            "\"sdkVersion\":\"1\"", "\"sdkVersion\":\"1\",\"matchingMode\":\"manualOnly\",\"defaultUseMode\":\"automatic\"")));
+        Assert.Equal(ProviderUseMode.Automatic, manual.DefaultUseMode);
+        Assert.Equal(ProviderUseMode.ManualOnly, ExtensionSdkV1.ParseManifest(Manifest().Replace(
+            "\"sdkVersion\":\"1\"", "\"sdkVersion\":\"1\",\"matchingMode\":\"manualOnly\",\"defaultUseMode\":\"manualOnly\"")).DefaultUseMode);
     }
     [Fact]
     public void ParseManifest_ValidatesSignedSessionConfiguration()

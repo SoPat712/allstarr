@@ -1,10 +1,18 @@
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using Microsoft.EntityFrameworkCore;
 
 namespace allstarr.Core.Matching;
 
 public sealed partial class TrackMatchCommandService
 {
+    private static IReadOnlyDictionary<string, string>? FilterAutomaticCrossLinks(
+        IReadOnlyDictionary<string, string>? links,
+        EffectiveProviderPolicySnapshot? policy) => links == null || policy == null
+        ? links
+        : links.Where(item => policy.IsAutomatic(item.Key))
+            .ToDictionary(item => item.Key, item => item.Value, StringComparer.OrdinalIgnoreCase);
+
     private static async Task<IReadOnlyDictionary<Guid, IReadOnlyDictionary<string, string>>> LoadCrossLinksAsync(
         AllstarrDbContext db, IEnumerable<Guid> recordingIds, CancellationToken cancellationToken)
     {

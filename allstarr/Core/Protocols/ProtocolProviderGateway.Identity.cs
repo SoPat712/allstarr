@@ -1,6 +1,7 @@
 using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Domain;
 using allstarr.Services.Local;
 
@@ -49,11 +50,12 @@ public sealed partial class ProtocolProviderGateway
     private async Task<Song?> GetKnownSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId)
     {
         if (identities == null) return null;
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        if (providerId != "allstarr" && !IsAutomaticProvider(providerId, policy)) return null;
         var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
         var recording = await identities.ResolveRecordingAsync(actor, $"ext-{providerId}-song-{externalId}",
             protocol.CancellationToken);
         if (recording == null) return null;
-        var policy = await ResolveEffectivePolicyAsync(protocol);
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(protocol, actor,
             ProviderCapabilityKind.Metadata, "protocol-recording-metadata",
             ResolveProviderOrder(ProviderCapabilityKind.Metadata, policy),
@@ -75,9 +77,15 @@ public sealed partial class ProtocolProviderGateway
         return null;
     }
 
-    private async Task ApplyKnownPublicIdsAsync(ProviderExecutionContext context, IReadOnlyList<Song> songs)
+    private async Task ApplyKnownPublicIdsAsync(ProviderExecutionContext context, IReadOnlyList<Song> songs,
+        EffectiveProviderPolicySnapshot? policy = null)
     {
         if (identities == null || songs.Count == 0) return;
+        if (policy == null && effectivePolicies != null)
+            policy = context.Actor.EffectiveUserId is { } userId
+                ? await effectivePolicies.ResolveForUserAsync(userId, context.CancellationToken)
+                : await effectivePolicies.ResolveAsync(context.CancellationToken);
+        if (!IsAutomaticProvider(context.ProviderId, policy)) return;
         var lookups = songs.Select(song => new TrackIdentityLookup(context,
             new ProviderExternalResourceId(context.ProviderId, ProviderResourceKind.Track, song.ExternalId!))).ToArray();
         var resolved = await identities.ResolveManyAsync(lookups, context.CancellationToken);

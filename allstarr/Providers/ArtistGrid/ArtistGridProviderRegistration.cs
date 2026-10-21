@@ -69,7 +69,6 @@ public static class ArtistGridProviderRegistration
                 ],
                 cache: true))
         {
-            MatchingMode = ProviderMatchingMode.ManualOnly,
             DefaultUseMode = ProviderUseMode.ManualOnly
         },
         [metadata, streaming]);

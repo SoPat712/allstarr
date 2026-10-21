@@ -151,11 +151,12 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
             UserId = userId,
             Preferences = preferences.Values,
             PreferenceRevision = preferences.Revision,
-            ProviderModes = ResolveModes(preferences.Values.ProviderModes)
+            ProviderModes = ResolveModes(preferences.Values.ProviderModes, preferences.HouseholdDefaults.ProviderModes)
         };
     }
 
-    private ImmutableDictionary<string, ProviderUseMode> ResolveModes(IReadOnlyDictionary<string, string>? configured)
+    private ImmutableDictionary<string, ProviderUseMode> ResolveModes(IReadOnlyDictionary<string, string>? configured,
+        IReadOnlyDictionary<string, string>? household)
     {
         var modes = (registry?.Providers ?? []).ToImmutableDictionary(
             provider => provider.Id, ProviderUsePolicy.DefaultMode, StringComparer.Ordinal).ToBuilder();
@@ -163,8 +164,12 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         {
             var id = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(entry.Key);
             var mode = ProviderUsePolicy.ParseMode(entry.Value);
-            modes[id] = registry?.TryGet(id, out var provider) == true
-                ? ProviderUsePolicy.Restrict(provider!, mode) : mode;
+            modes[id] = mode;
+        }
+        foreach (var entry in household ?? new Dictionary<string, string>())
+        {
+            if (ProviderUsePolicy.ParseMode(entry.Value) == ProviderUseMode.Off)
+                modes[allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(entry.Key)] = ProviderUseMode.Off;
         }
         return modes.ToImmutable();
     }

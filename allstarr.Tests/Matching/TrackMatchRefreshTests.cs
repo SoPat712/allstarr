@@ -1,5 +1,6 @@
 using System.Data.Common;
 using System.Diagnostics;
+using System.Collections.Immutable;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +8,7 @@ using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
 using allstarr.Core.Matching;
 using allstarr.Core.Operations;
+using allstarr.Core.Settings;
 using allstarr.Core.Storage;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -189,6 +191,85 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         }
     }
 
+    [Theory]
+    [InlineData(ProviderUseMode.Automatic, true)]
+    [InlineData(ProviderUseMode.ManualOnly, false)]
+    [InlineData(ProviderUseMode.Off, false)]
+    [Trait("Category", "Sqlite")]
+    public async Task Automatic_refresh_uses_only_cross_provider_aliases_allowed_by_owner_policy(
+        ProviderUseMode mode, bool expectedMatch)
+    {
+        await using var fixture = await Fixture.CreateAsync(policyTargetMode: mode);
+        var localId = await AddCrossProviderAliasCandidateAsync(fixture);
+
+        var result = Assert.Single(await fixture.Service.MatchSourceTracksAsync(
+            [new("spotify", "source", "Source title", "Source artist", null, 180000, null, null, "1")], "alias-policy"));
+
+        Assert.Equal(expectedMatch ? TrackMatchReviewState.Accepted : TrackMatchReviewState.Unresolved, result.State);
+        await using var saved = fixture.Factory.CreateDbContext();
+        var latest = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(expectedMatch ? (Guid?)localId : null, latest.LibraryTrackId);
+        if (!expectedMatch)
+            Assert.DoesNotContain(JsonSerializer.Deserialize<TrackMatchCandidateScore[]>(latest.CandidateResultsJson)!,
+                item => item.Reasons.Contains("odesli_alias_exact"));
+    }
+
+    [Theory]
+    [InlineData(ProviderUseMode.Automatic, true)]
+    [InlineData(ProviderUseMode.ManualOnly, false)]
+    [InlineData(ProviderUseMode.Off, false)]
+    [Trait("Category", "Sqlite")]
+    public async Task Rematch_uses_only_cross_provider_aliases_allowed_by_owner_policy(
+        ProviderUseMode mode, bool expectedMatch)
+    {
+        await using var fixture = await Fixture.CreateAsync(policyTargetMode: mode);
+        var localId = await AddCrossProviderAliasCandidateAsync(fixture);
+
+        var result = await fixture.Service.RematchSnapshotAsync(
+            new TrackMatchActor(fixture.Owner, false), fixture.SnapshotId, "alias-policy");
+
+        Assert.True(result.Succeeded);
+        Assert.Equal(expectedMatch ? TrackMatchReviewState.Accepted.ToString().ToLowerInvariant() :
+            TrackMatchReviewState.Unresolved.ToString().ToLowerInvariant(), result.State);
+        await using var saved = fixture.Factory.CreateDbContext();
+        var latest = await saved.TrackMatches.OrderByDescending(item => item.DecisionVersion).FirstAsync();
+        Assert.Equal(expectedMatch ? (Guid?)localId : null, latest.LibraryTrackId);
+    }
+
+    private static async Task<Guid> AddCrossProviderAliasCandidateAsync(Fixture fixture)
+    {
+        var localId = Guid.NewGuid();
+        await using var db = fixture.Factory.CreateDbContext();
+        db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+        {
+            Id = Guid.NewGuid(),
+            CanonicalRecordingId = fixture.Recording,
+            ProviderId = "qobuz",
+            ExternalId = "qobuz-target",
+            ExternalIdHash = Hash("qobuz-target"),
+            ResourceKind = ProviderResourceKind.Track,
+            Scope = ProviderIdentityScope.Catalog,
+            Verification = ProviderIdentityVerification.Verified,
+            VerificationMethod = "cross-service-match",
+            DecisionVersion = 1
+        });
+        db.LibraryTracks.Add(new LibraryTrackRecord
+        {
+            Id = localId,
+            OwnerUserId = fixture.Owner,
+            BackendInstanceId = "backend",
+            BackendLibraryId = "music",
+            BackendItemId = "qobuz-local",
+            Title = "Unrelated title",
+            Artist = "Unrelated artist",
+            DurationMilliseconds = 180000,
+            ProviderIdsJson = "{\"qobuz\":\"qobuz-target\"}",
+            Protocol = "jellyfin"
+        });
+        await db.SaveChangesAsync();
+        return localId;
+    }
+
     private static ExternalMetadataSnapshotRecord Snapshot(Guid owner, Guid? identity, string externalId,
         string payload, DateTimeOffset retrievedAt) => new()
         {
@@ -198,6 +279,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
             ProviderId = "spotify",
             ResourceKind = "track",
             BackendInstanceId = "backend",
+            BackendPrincipalId = "owner",
+            Protocol = "jellyfin",
             ExternalIdHash = Hash(externalId),
             SnapshotVersion = 1,
             ProviderRevision = "1",
@@ -217,7 +300,8 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
         public Guid SnapshotId { get; private set; }
         public TrackMatchCommandService Service { get; private set; } = null!;
 
-        public static async Task<Fixture> CreateAsync(string? payload = null)
+        public static async Task<Fixture> CreateAsync(string? payload = null,
+            ProviderUseMode? policyTargetMode = null)
         {
             var fixture = new Fixture(await SqliteTestDatabase.CreateAsync());
             fixture.Factory = new(new DbContextOptionsBuilder<AllstarrDbContext>(fixture.DatabaseOptions)
@@ -265,8 +349,12 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
             fixture.SnapshotId = snapshot.Id;
             db.ExternalMetadataSnapshots.Add(snapshot);
             await db.SaveChangesAsync();
+            var policies = policyTargetMode.HasValue
+                ? new FixedPolicyResolver(fixture.Owner, policyTargetMode.Value)
+                : null;
             fixture.Service = new(fixture.Factory, new TrackMatchDecisionEngine(),
-                new ProviderAccountResolver(fixture.Factory), new Clock(), new TestBackendLibraryAccess(fixture.Factory, "music"));
+                new ProviderAccountResolver(fixture.Factory), new Clock(), new TestBackendLibraryAccess(fixture.Factory, "music"),
+                effectivePolicies: policies);
             return fixture;
         }
 
@@ -281,6 +369,26 @@ public sealed class TrackMatchRefreshTests(ITestOutputHelper output)
     }
 
     private sealed class Clock : IPlatformClock { public DateTimeOffset UtcNow => DateTimeOffset.UtcNow; }
+
+    private sealed class FixedPolicyResolver(Guid owner, ProviderUseMode targetMode) : IEffectiveProviderPolicyResolver
+    {
+        private EffectiveProviderPolicySnapshot Snapshot(Guid userId) => new(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty,
+            "lossless",
+            0)
+        {
+            UserId = userId,
+            ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty
+                .Add("qobuz", targetMode)
+        };
+
+        public Task<EffectiveProviderPolicySnapshot> ResolveAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(Snapshot(owner));
+
+        public Task<EffectiveProviderPolicySnapshot> ResolveForUserAsync(Guid userId,
+            CancellationToken cancellationToken = default) => Task.FromResult(Snapshot(userId));
+    }
 
     private sealed class QueryCounter : DbCommandInterceptor
     {

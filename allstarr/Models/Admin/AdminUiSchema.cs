@@ -109,9 +109,6 @@ public sealed class AdminUiProvider
     [JsonPropertyName("useMode")]
     public string UseMode { get; set; } = "automatic";
 
-    [JsonPropertyName("supportsAutomaticMatching")]
-    public bool SupportsAutomaticMatching { get; set; } = true;
-
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 

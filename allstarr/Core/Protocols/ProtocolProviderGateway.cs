@@ -48,11 +48,10 @@ public interface IProtocolProviderGateway
         string query,
         int limit);
 
-    Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
+    Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
         ProtocolExecutionContext protocol,
         string query,
-        int limit,
-        string? providerId);
+        int limit);
 
     Task<Song?> GetSongAsync(ProtocolExecutionContext protocol, string providerId, string externalId);
 
@@ -344,7 +343,8 @@ public sealed partial class ProtocolProviderGateway(
             ProviderCapabilityKind.Metadata,
             "protocol-metadata-search",
             providerIds: providerOrder,
-            sourceTrackId: null));
+            sourceTrackId: null,
+            purpose: ProviderRoutePurpose.ManualSelection));
 
         var routed = new SearchResult();
         var trackLookups = new List<(Song Song, TrackIdentityLookup Lookup)>();
@@ -395,7 +395,7 @@ public sealed partial class ProtocolProviderGateway(
         var songs = await CollapseVerifiedSearchTracksAsync(
             routed.Songs.Where(song => effectivePolicy?.Includes(song) != false).ToArray(),
             trackLookups.Where(item => effectivePolicy?.Includes(item.Song) != false).ToArray(),
-            playableOrder, protocol.CancellationToken);
+            playableOrder, effectivePolicy, protocol.CancellationToken);
         var knownDurationTitles = songs.Where(song => song.Duration is > 0)
             .Select(song => SearchRelevanceRanker.RecordingTitle(song.Title, song.Artist, song.AlbumArtist))
             .ToHashSet(StringComparer.Ordinal);
@@ -415,8 +415,11 @@ public sealed partial class ProtocolProviderGateway(
         IReadOnlyList<Song> songs,
         IReadOnlyList<(Song Song, TrackIdentityLookup Lookup)> trackLookups,
         IReadOnlyList<string> providerOrder,
+        EffectiveProviderPolicySnapshot? policy,
         CancellationToken cancellationToken)
     {
+        var automaticSongs = songs.Where(song => IsAutomaticProvider(NormalizeProvider(song.ExternalProvider), policy)).ToArray();
+        trackLookups = trackLookups.Where(item => IsAutomaticProvider(item.Lookup.ExternalId.ProviderId, policy)).ToArray();
         var verified = Array.Empty<(Song Song, TrackIdentityResolution? Identity)>();
         if (identities != null)
         {
@@ -457,7 +460,7 @@ public sealed partial class ProtocolProviderGateway(
             groupBySong[song] = group;
             if (NormalizeIsrc(song.Isrc) is { } isrc) groupByIsrc.TryAdd(isrc, group);
         }
-        foreach (var song in songs)
+        foreach (var song in automaticSongs)
         {
             if (groupBySong.ContainsKey(song) || NormalizeIsrc(song.Isrc) is not { } isrc) continue;
             if (!groupByIsrc.TryGetValue(isrc, out var group))
@@ -469,7 +472,7 @@ public sealed partial class ProtocolProviderGateway(
         }
 
         var hidden = new HashSet<Song>(ReferenceEqualityComparer.Instance);
-        foreach (var group in songs.Where(groupBySong.ContainsKey).GroupBy(song => (
+        foreach (var group in automaticSongs.Where(groupBySong.ContainsKey).GroupBy(song => (
                      Identity: groupBySong[song], Mixed: FuzzyMatcher.IsContinuousMixExcerpt(song.Title, song.Album))))
         {
             var members = group.ToArray();
@@ -535,15 +538,15 @@ public sealed partial class ProtocolProviderGateway(
     }
 
     public Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
-        ProtocolExecutionContext protocol,
-        string query,
-        int limit) => SearchPlayableSongsAsync(protocol, query, limit, null);
+        ProtocolExecutionContext protocol, string query, int limit) =>
+        SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.ManualSelection);
 
-    public async Task<IReadOnlyList<Song>> SearchPlayableSongsAsync(
-        ProtocolExecutionContext protocol,
-        string query,
-        int limit,
-        string? providerId)
+    public Task<IReadOnlyList<Song>> SearchAutomaticSongsAsync(
+        ProtocolExecutionContext protocol, string query, int limit) =>
+        SearchSongsAsync(protocol, query, limit, ProviderRoutePurpose.Automatic);
+
+    private async Task<IReadOnlyList<Song>> SearchSongsAsync(
+        ProtocolExecutionContext protocol, string query, int limit, ProviderRoutePurpose purpose)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         limit = Math.Clamp(limit, 1, 200);
@@ -566,9 +569,7 @@ public sealed partial class ProtocolProviderGateway(
         }
         var providerOrder = await ResolvePlayableProviderOrderAsync(
             protocol, actor, configuredProviderOrder);
-        if (!string.IsNullOrWhiteSpace(providerId))
-            providerOrder = providerOrder.Where(item => item == NormalizeProvider(providerId)).ToArray();
-        else
+        if (purpose == ProviderRoutePurpose.Automatic)
             providerOrder = providerOrder.Where(item => IsAutomaticProvider(item, effectivePolicy)).ToArray();
         if (providerOrder.Count == 0) return [];
         var plan = await router.PlanAsync<IProviderMetadataCapability>(Request(
@@ -578,7 +579,7 @@ public sealed partial class ProtocolProviderGateway(
             "protocol-playable-track-search",
             providerIds: providerOrder,
             sourceTrackId: null,
-            purpose: string.IsNullOrWhiteSpace(providerId) ? ProviderRoutePurpose.Automatic : ProviderRoutePurpose.ManualSelection));
+            purpose: purpose));
         var snapshots = await SearchPlayableProvidersWithinBudgetAsync(
             plan.Candidates, query, limit, protocol.CancellationToken);
         var songs = snapshots.SelectMany(snapshot => snapshot.Result.Songs)
@@ -637,12 +638,16 @@ public sealed partial class ProtocolProviderGateway(
         string externalId)
     {
         var routedProviderId = NormalizeProvider(providerId);
-        if (keptFiles != null && protocol.Actor is { } actor)
+        var policy = await ResolveEffectivePolicyAsync(protocol);
+        if (routedProviderId != "allstarr" && policy?.IsEnabled(routedProviderId) == false)
+            throw new UnauthorizedAccessException("That source is disabled for this listener.");
+        if (keptFiles != null && protocol.Actor is { } actor &&
+            (routedProviderId == "allstarr" || IsAutomaticProvider(routedProviderId, policy)))
         {
             var retained = await keptFiles.FindSongAsync(actor,
                 $"ext-{routedProviderId}-song-{externalId}", protocol.CancellationToken);
             if (retained != null)
-                return (await ResolveEffectivePolicyAsync(protocol))?.Includes(retained) == false ? null : retained;
+                return policy?.Includes(retained) == false ? null : retained;
         }
         if (routedProviderId == "allstarr") return await GetKnownSongAsync(protocol, routedProviderId, externalId);
         var routed = await PlanExactAsync<IProviderMetadataCapability>(
@@ -656,8 +661,8 @@ public sealed partial class ProtocolProviderGateway(
             if (outcome.IsSuccess)
             {
                 var song = await EnrichRelationshipsAsync(routed.Candidate, outcome.RequireValue());
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song]);
-                return (await ResolveEffectivePolicyAsync(protocol))?.Includes(song) == false ? null : song;
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, [song], policy);
+                return policy?.Includes(song) == false ? null : song;
             }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound)
                 return await GetKnownSongAsync(protocol, routedProviderId, externalId);
@@ -686,7 +691,7 @@ public sealed partial class ProtocolProviderGateway(
                 var album = Map(outcome.RequireValue());
                 var policy = await ResolveEffectivePolicyAsync(protocol);
                 album.Songs = album.Songs.Where(song => policy?.Includes(song) != false).ToList();
-                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs);
+                await ApplyKnownPublicIdsAsync(routed.Candidate.Context, album.Songs, policy);
                 return album;
             }
             if (outcome.Error!.Kind == ProviderErrorKind.NotFound) return null;
@@ -751,7 +756,8 @@ public sealed partial class ProtocolProviderGateway(
                 if (cursor != null && (seenCursors.Count >= 1_000 || !seenCursors.Add(cursor)))
                     throw new HttpRequestException("The provider repeated an artist-album page cursor.");
             } while (cursor != null);
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray());
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, albums.SelectMany(album => album.Songs).ToArray(),
+                await ResolveEffectivePolicyAsync(protocol));
             return albums;
         }
 
@@ -777,7 +783,7 @@ public sealed partial class ProtocolProviderGateway(
         if (!outcome.IsSuccess) return [];
         var tracks = outcome.RequireValue().Items.Select(Map).ToList();
         var policy = await ResolveEffectivePolicyAsync(protocol);
-        await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks);
+        await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, policy);
         return tracks.Where(song => policy?.Includes(song) != false).ToList();
     }
 
@@ -834,7 +840,7 @@ public sealed partial class ProtocolProviderGateway(
                     throw new HttpRequestException("The provider repeated an artist-track page cursor.");
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, policy);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
@@ -953,7 +959,7 @@ public sealed partial class ProtocolProviderGateway(
                 cursor = page.NextCursor;
             } while (cursor != null);
             var policy = await ResolveEffectivePolicyAsync(protocol);
-            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks);
+            await ApplyKnownPublicIdsAsync(routed.Candidate.Context, tracks, policy);
             return tracks.Where(song => policy?.Includes(song) != false).ToList();
         }
 
@@ -1017,6 +1023,8 @@ public sealed partial class ProtocolProviderGateway(
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
+        if (providerId != "allstarr" && effectivePolicy?.IsEnabled(providerId) == false)
+            throw new UnauthorizedAccessException("That source is disabled for this listener.");
         if (quality == ProviderAudioQuality.Any && effectivePolicy != null)
         {
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
@@ -1033,7 +1041,9 @@ public sealed partial class ProtocolProviderGateway(
             throw new HttpRequestException("Restart playback before seeking this external track.", null,
                 HttpStatusCode.Conflict);
         // Legacy provider requests without a device retain their direct provider route across ranges.
-        if ((hasPlaybackIdentity || providerId == "allstarr") && (!resuming || previous?.ManagedFileId != null))
+        if ((hasPlaybackIdentity || providerId == "allstarr") &&
+            (providerId == "allstarr" || IsAutomaticProvider(providerId, effectivePolicy)) &&
+            (!resuming || previous?.ManagedFileId != null))
         {
             var kept = await OpenHouseholdKeptAsync(protocol, trackId, quality, previous?.ManagedFileId,
                 resuming, headOnly);
@@ -1477,10 +1487,8 @@ public sealed partial class ProtocolProviderGateway(
     }
 
     private bool IsAutomaticProvider(string providerId, EffectiveProviderPolicySnapshot? policy) =>
-        policy?.IsAutomatic(providerId) != false &&
-        (!registry.TryGet(providerId, out var provider) ||
-         provider!.MatchingMode == ProviderMatchingMode.Automatic &&
-         (policy != null || provider.DefaultUseMode == ProviderUseMode.Automatic));
+        policy?.IsAutomatic(providerId) ??
+        (!registry.TryGet(providerId, out var provider) || provider!.DefaultUseMode == ProviderUseMode.Automatic);
 
     private IReadOnlyList<string> ResolveProviderOrder(
         ProviderCapabilityKind capability,
