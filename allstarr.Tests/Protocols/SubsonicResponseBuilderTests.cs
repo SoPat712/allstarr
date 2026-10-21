@@ -204,7 +204,7 @@ public class SubsonicResponseBuilderTests
         Assert.Equal("music", songElement.Attribute("type")?.Value);
         Assert.Equal("false", songElement.Attribute("isVideo")?.Value);
         Assert.Null(songElement.Attribute("suffix"));
-        Assert.Null(songElement.Attribute("contentType"));
+        Assert.Equal("application/octet-stream", songElement.Attribute("contentType")?.Value);
         Assert.Null(songElement.Attribute("coverArt"));
         Assert.Null(songElement.Attribute("track"));
         Assert.Null(songElement.Attribute("discNumber"));
@@ -419,10 +419,11 @@ public class SubsonicResponseBuilderTests
 
         Assert.Equal("song123", songData.GetProperty("id").GetString());
         Assert.Equal("Test Song [A]", songData.GetProperty("title").GetString());
+        Assert.Equal("application/octet-stream", songData.GetProperty("contentType").GetString());
         foreach (var field in new[]
                  {
                      "parent", "album", "artist", "albumId", "artistId", "duration",
-                     "track", "discNumber", "year", "suffix", "contentType"
+                     "track", "discNumber", "year", "suffix"
                  })
         {
             Assert.False(songData.TryGetProperty(field, out _), field);
