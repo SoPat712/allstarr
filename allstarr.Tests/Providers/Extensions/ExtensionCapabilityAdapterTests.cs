@@ -1026,6 +1026,41 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal("result-1", item.GetProperty("id").GetString());
     }
 
+    [Theory]
+    [InlineData("searchTracks", "songs", "track")]
+    [InlineData("searchTracks", "tracks", "song")]
+    [InlineData("searchAlbums", "albums", "album")]
+    [InlineData("searchArtists", "artists", "artist")]
+    [InlineData("searchPlaylists", "playlists", "playlist")]
+    public void SpotiFlacRuntimeAdapter_UsesDeclaredSearchFilters(string hook, string expectedFilter, string itemType)
+    {
+        var sourceManifest = $$$"""
+            {"name":"fixture","version":"1.0.0","type":["metadata_provider"],"permissions":{},
+             "searchBehavior":{"enabled":true,"filters":[{"id":"unrelated"},{"id":"{{{expectedFilter}}}"}]}}
+            """;
+        var script = $$$"""
+            registerExtension({customSearch:function(query, options) {
+              if (query !== 'Song' || options.limit !== 10 || options.filter !== '{{{expectedFilter}}}') return [];
+              return [{id:'result-1',name:'Song',artists:'Artist',item_type:'{{{itemType}}}'},
+                      {id:'wrong-type',name:'Other',item_type:'unrelated'}];
+            }});
+            """;
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-search-filters", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var manifest = SpotiFlacExtensionCompatibility.NormalizeManifest(sourceManifest, script);
+            var sandbox = new ExtensionSandbox(root, manifest, script,
+                new HttpClientFactory(), NullLogger.Instance, runtimeStateDirectory: root);
+
+            using var result = JsonDocument.Parse(sandbox.InvokeJson(hook, """{"query":"Song","page":{"limit":10}}""")!);
+
+            var item = Assert.Single(result.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal("result-1", item.GetProperty("id").GetString());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
     [Fact]
     public void HttpResponses_ReportOkLikeFetch()
     {

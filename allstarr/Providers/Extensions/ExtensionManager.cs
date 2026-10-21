@@ -1886,6 +1886,7 @@ public partial class ExtensionHostBridge
         }
         catch (Exception ex)
         {
+            LogHttpFailure(method, url, ex);
             return new
             {
                 ok = false,
@@ -1895,6 +1896,25 @@ public partial class ExtensionHostBridge
                 error = ex is UnauthorizedAccessException ? "permission_denied" : "extension_request_failed"
             };
         }
+    }
+
+    private void LogHttpFailure(string method, string url, Exception exception)
+    {
+        var host = Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri.IdnHost : "unknown";
+        var reason = exception switch
+        {
+            UnauthorizedAccessException => "Network permission refused.",
+            FormatException => "Invalid request format.",
+            ArgumentException => "Invalid request argument.",
+            OperationCanceledException => "Request canceled or timed out.",
+            HttpRequestException => "HTTP transport failed.",
+            _ => "Request preparation or response processing failed."
+        };
+        var normalizedMethod = method.Trim().ToUpperInvariant();
+        _logger.LogWarning(
+            "Extension fetch failed for {ExtensionId}: {Method} {Host}: {Reason}",
+            _extensionId, normalizedMethod, host, reason);
+        _permissions.LogSink?.Invoke("warn", $"Extension fetch failed for {_extensionId}: {normalizedMethod} {host}: {reason}");
     }
 
     // Behaviour matches SpotiFLAC-Module-Version (MIT).
@@ -2062,7 +2082,7 @@ public partial class ExtensionHostBridge
                 headerKey.Equals("Content-Length", StringComparison.OrdinalIgnoreCase))
                 continue;
             if (headerKey.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) && request.Content != null)
-                request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(headerVal);
+                request.Content.Headers.ContentType = System.Net.Http.Headers.MediaTypeHeaderValue.Parse(headerVal);
             else
                 request.Headers.TryAddWithoutValidation(headerKey, headerVal);
         }
