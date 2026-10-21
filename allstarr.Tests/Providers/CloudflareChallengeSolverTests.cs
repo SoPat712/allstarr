@@ -11,7 +11,7 @@ namespace allstarr.Tests;
 
 public sealed class CloudflareChallengeSolverTests
 {
-    private const string Target = "https://lyrics-api.binimum.org/?isrc=private-query";
+    private const string Target = "https://lyrics.example.test/?isrc=private-query";
     private readonly Clock _clock = new();
 
     [Theory]
@@ -133,10 +133,10 @@ public sealed class CloudflareChallengeSolverTests
 
     [Theory]
     [InlineData("https://other.test/")]
-    [InlineData("http://lyrics-api.binimum.org/")]
-    [InlineData("https://lyrics-api.binimum.org:8443/")]
-    [InlineData("https://user:secret@lyrics-api.binimum.org/")]
-    [InlineData("https://lyrics-storage.binimum.org/fixture.ttml")]
+    [InlineData("http://lyrics.example.test/")]
+    [InlineData("https://lyrics.example.test:8443/")]
+    [InlineData("https://user:secret@lyrics.example.test/")]
+    [InlineData("https://storage.example.test/fixture.ttml")]
     public async Task RejectsSolverSolutionForDifferentTarget(string returnedUrl)
     {
         var solver = Solver(new Handler(_ => Task.FromResult(Solution(url: returnedUrl))));
@@ -238,17 +238,17 @@ public sealed class CloudflareChallengeSolverTests
         var calls = 0;
         var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => { calls++; return Task.FromResult(Solution("{\"results\":[]}")); })),
             _ => Task.FromResult(new ChallengeSolverOptions(enabled ? "http://solver:8191" : "", 60)), _clock);
-        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org", "lyrics-storage.binimum.org"])
+        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics.example.test", "storage.example.test"])
         {
             InnerHandler = new Handler(request =>
             {
-                if (request.RequestUri!.Host == "lyrics-storage.binimum.org" || !enabled)
+                if (request.RequestUri!.Host == "storage.example.test" || !enabled)
                     Assert.False(request.Headers.Contains("Cookie"));
-                return Task.FromResult(request.RequestUri.Host == "lyrics-storage.binimum.org" ? Reply("storage") : Challenge());
+                return Task.FromResult(request.RequestUri.Host == "storage.example.test" ? Reply("storage") : Challenge());
             })
         });
         Assert.Equal("{\"results\":[]}", await client.GetStringAsync(Target));
-        Assert.Equal("storage", await client.GetStringAsync("https://lyrics-storage.binimum.org/fixture.ttml"));
+        Assert.Equal("storage", await client.GetStringAsync("https://storage.example.test/fixture.ttml"));
         enabled = false;
         await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
         Assert.Equal(1, calls);
@@ -263,14 +263,12 @@ public sealed class CloudflareChallengeSolverTests
         services.AddSingleton<allstarr.Core.Settings.IDurableRuntimeSettings>(Moq.Mock.Of<allstarr.Core.Settings.IDurableRuntimeSettings>());
         allstarr.Core.Providers.Lyrics.BuiltInLyricsCapabilityRegistration.AddBuiltInLyricsCapabilities(services);
         foreach (var name in new[] { CloudflareChallengeSolver.HttpClientName,
-            allstarr.Core.Providers.Lyrics.BiniLyricsCapabilityAdapter.HttpClientName,
             allstarr.Core.Providers.Lyrics.LyricsPlusCapabilityAdapter.HttpClientName })
             services.AddHttpClient(name).ConfigurePrimaryHttpMessageHandler(() => new Handler(_ => Task.FromResult(Reply("private-body"))));
         using var provider = services.BuildServiceProvider();
         var factory = provider.GetRequiredService<IHttpClientFactory>();
         // A non-opted host avoids resolving settings while exercising the named pipeline's logging configuration.
         foreach (var name in new[] { CloudflareChallengeSolver.HttpClientName,
-            allstarr.Core.Providers.Lyrics.BiniLyricsCapabilityAdapter.HttpClientName,
             allstarr.Core.Providers.Lyrics.LyricsPlusCapabilityAdapter.HttpClientName })
         {
             using var client = factory.CreateClient(name);
@@ -355,32 +353,32 @@ public sealed class CloudflareChallengeSolverTests
     }
 
     [Theory]
-    [InlineData("https://lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina%20Carpenter", true)]
-    [InlineData("https://lyrics-api.binimum.org/match/?track=Espresso&artist=Sabrina%20Carpenter", true)]
-    [InlineData("https://lyrics-api.binimum.org/match?artist=Sabrina%20Carpenter&track=Espresso", true)]
-    [InlineData("https://lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina+Carpenter&__cf_chl_tk=challenge-secret", true)]
-    [InlineData("https://lyrics-api.binimum.org/match?__cf_chl_rt_tk=challenge-secret&artist=Sabrina%20Carpenter&track=Espresso", true)]
-    [InlineData("https://LYRICS-API.binimum.org:443/match?track=Espresso&artist=Sabrina%20Carpenter#result", true)]
-    [InlineData("http://lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina%20Carpenter", true)]
-    [InlineData("http://lyrics-api.binimum.org:80/match/?artist=Sabrina%20Carpenter&track=Espresso", true)]
+    [InlineData("https://lyrics.example.test/match?track=Espresso&artist=Sabrina%20Carpenter", true)]
+    [InlineData("https://lyrics.example.test/match/?track=Espresso&artist=Sabrina%20Carpenter", true)]
+    [InlineData("https://lyrics.example.test/match?artist=Sabrina%20Carpenter&track=Espresso", true)]
+    [InlineData("https://lyrics.example.test/match?track=Espresso&artist=Sabrina+Carpenter&__cf_chl_tk=challenge-secret", true)]
+    [InlineData("https://lyrics.example.test/match?__cf_chl_rt_tk=challenge-secret&artist=Sabrina%20Carpenter&track=Espresso", true)]
+    [InlineData("https://LYRICS.example.test:443/match?track=Espresso&artist=Sabrina%20Carpenter#result", true)]
+    [InlineData("http://lyrics.example.test/match?track=Espresso&artist=Sabrina%20Carpenter", true)]
+    [InlineData("http://lyrics.example.test:80/match/?artist=Sabrina%20Carpenter&track=Espresso", true)]
     [InlineData("https://other.test/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org.other.test/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org:8443/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("http://lyrics-api.binimum.org:443/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("ftp://lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://user:credential-secret@lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org/cdn-cgi/challenge-platform/check?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org/other?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org/Match?track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org/match?track=Other&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org/match?track=Espresso", false)]
-    [InlineData("https://lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina%20Carpenter&extra=value", false)]
-    [InlineData("https://lyrics-api.binimum.org/match?Track=Espresso&artist=Sabrina%20Carpenter", false)]
-    [InlineData("https://lyrics-api.binimum.org/match?track=Espresso&track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test.other.test/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test:8443/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("http://lyrics.example.test:443/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("ftp://lyrics.example.test/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://user:credential-secret@lyrics.example.test/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test/cdn-cgi/challenge-platform/check?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test/other?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test/Match?track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test/match?track=Other&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test/match?track=Espresso", false)]
+    [InlineData("https://lyrics.example.test/match?track=Espresso&artist=Sabrina%20Carpenter&extra=value", false)]
+    [InlineData("https://lyrics.example.test/match?Track=Espresso&artist=Sabrina%20Carpenter", false)]
+    [InlineData("https://lyrics.example.test/match?track=Espresso&track=Espresso&artist=Sabrina%20Carpenter", false)]
     [InlineData("/match?track=Espresso&artist=Sabrina%20Carpenter", false)]
     public async Task SolutionUrlMustMatchRequestedResourceAfterNormalization(string returnedUrl, bool accepted)
     {
-        const string target = "https://lyrics-api.binimum.org/match?track=Espresso&artist=Sabrina%20Carpenter";
+        const string target = "https://lyrics.example.test/match?track=Espresso&artist=Sabrina%20Carpenter";
         var requests = 0;
         using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution("{}", returnedUrl)))),
             _ => { requests++; return Challenge(); });
@@ -390,18 +388,18 @@ public sealed class CloudflareChallengeSolverTests
     }
 
     [Theory]
-    [InlineData("https://lyrics-api.binimum.org/match?tag=b&tag=a")]
-    [InlineData("https://lyrics-api.binimum.org/match/?tag=a&__cf_chl_tk=challenge-secret&tag=b")]
+    [InlineData("https://lyrics.example.test/match?tag=b&tag=a")]
+    [InlineData("https://lyrics.example.test/match/?tag=a&__cf_chl_tk=challenge-secret&tag=b")]
     public async Task QueryNormalizationPreservesRepeatedValuesAndRemovesChallengeParametersFromBothUrls(string returnedUrl)
     {
         using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution("{}", returnedUrl)))), _ => Challenge());
-        Assert.Equal("{}", await client.GetStringAsync("https://lyrics-api.binimum.org/match?tag=a&tag=b&__cf_chl_rt_tk=request-secret"));
+        Assert.Equal("{}", await client.GetStringAsync("https://lyrics.example.test/match?tag=a&tag=b&__cf_chl_rt_tk=request-secret"));
     }
 
     [Theory]
-    [InlineData("https://lyrics-api.binimum.org/cdn-cgi/challenge-platform/check")]
-    [InlineData("https://lyrics-api.binimum.org/cdn-cgi")]
-    [InlineData("https://lyrics-api.binimum.org/CDN-CGI/check")]
+    [InlineData("https://lyrics.example.test/cdn-cgi/challenge-platform/check")]
+    [InlineData("https://lyrics.example.test/cdn-cgi")]
+    [InlineData("https://lyrics.example.test/CDN-CGI/check")]
     public async Task ChallengePathIsRejectedEvenWhenItMatchesTheRequest(string target)
     {
         using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution("{}", target)))), _ => Challenge());
@@ -409,13 +407,12 @@ public sealed class CloudflareChallengeSolverTests
     }
 
     [Theory]
-    [InlineData("https://LYRICS-API.binimum.org:443/?isrc=private-query#result", "text/html")]
-    [InlineData("https://lyrics-api.binimum.org/?isrc=private-query&__cf_chl_tk=challenge-secret", "application/octet-stream")]
-    [InlineData("http://lyrics-api.binimum.org:80/?isrc=private-query", "")]
+    [InlineData("https://LYRICS.example.test:443/?isrc=private-query#result", "text/html")]
+    [InlineData("https://lyrics.example.test/?isrc=private-query&__cf_chl_tk=challenge-secret", "application/octet-stream")]
+    [InlineData("http://lyrics.example.test:80/?isrc=private-query", "")]
     public async Task WrappedJsonUsesRequestedFormatAfterNormalizationOrRedirect(string returnedUrl, string contentType)
     {
-        var body = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ChallengeSolver", "lookup.html.json"));
-        body = JsonSerializer.Deserialize<string>(body)!;
+        const string body = "<html><body><pre>{&quot;lyrics&quot;:&quot;Fixture words&quot;}</pre></body></html>";
         var requests = 0;
         using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution(body, returnedUrl, contentType)))),
             _ => { requests++; return Challenge(); });
@@ -424,20 +421,19 @@ public sealed class CloudflareChallengeSolverTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/json", response.Content.Headers.ContentType!.MediaType);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal("https://lyrics-storage.binimum.org/USABC1234567.ttml",
-            json.RootElement.GetProperty("results")[0].GetProperty("lyricsUrl").GetString());
+        Assert.Equal("Fixture words", json.RootElement.GetProperty("lyrics").GetString());
         Assert.Equal(1, requests);
     }
 
     [Fact]
     public async Task WrappedStorageBodyUsesRequestedFormatAfterSameHostRedirect()
     {
-        const string target = "https://lyrics-storage.binimum.org/fixture.ttml";
+        const string target = "https://storage.example.test/fixture.ttml";
         const string ttml = "<tt><body><p begin='1'>A &amp; B</p></body></tt>";
         var wrapped = "<html><body><pre>" + WebUtility.HtmlEncode(ttml) + "</pre></body></html>";
         var requests = 0;
         var solver = Solver(new Handler(_ => Task.FromResult(Solution(wrapped, target + "/", "application/octet-stream"))));
-        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-storage.binimum.org"])
+        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["storage.example.test"])
         {
             InnerHandler = new Handler(_ => { requests++; return Task.FromResult(Challenge()); })
         });
@@ -478,13 +474,13 @@ public sealed class CloudflareChallengeSolverTests
     }
 
     [Theory]
-    [InlineData("https://lyrics-api.binimum.org/?isrc=private-query&__cf_chl_tk=challenge-secret#fragment-secret", "https://lyrics-api.binimum.org/", "/", true)]
-    [InlineData("http://lyrics-api.binimum.org:80/?isrc=private-query", "http://lyrics-api.binimum.org/", "/", true)]
+    [InlineData("https://lyrics.example.test/?isrc=private-query&__cf_chl_tk=challenge-secret#fragment-secret", "https://lyrics.example.test/", "/", true)]
+    [InlineData("http://lyrics.example.test:80/?isrc=private-query", "http://lyrics.example.test/", "/", true)]
     [InlineData("https://other.test:8443/lookup/?isrc=private-query&__cf_chl_tk=challenge-secret", "https://other.test:8443/", "/lookup/", false)]
-    [InlineData("https://lyrics-api.binimum.org/match?isrc=private-query", "https://lyrics-api.binimum.org/", "/match", false)]
-    [InlineData("https://lyrics-api.binimum.org/?isrc=other-query&__cf_chl_tk=challenge-secret", "https://lyrics-api.binimum.org/", "/", false)]
-    [InlineData("https://lyrics-api.binimum.org/cdn-cgi/check?isrc=private-query", "https://lyrics-api.binimum.org/", "/cdn-cgi/check", false)]
-    [InlineData("https://user:credential-secret@lyrics-api.binimum.org/cdn-cgi/check?isrc=private-query", "https://lyrics-api.binimum.org/", "/cdn-cgi/check", false)]
+    [InlineData("https://lyrics.example.test/match?isrc=private-query", "https://lyrics.example.test/", "/match", false)]
+    [InlineData("https://lyrics.example.test/?isrc=other-query&__cf_chl_tk=challenge-secret", "https://lyrics.example.test/", "/", false)]
+    [InlineData("https://lyrics.example.test/cdn-cgi/check?isrc=private-query", "https://lyrics.example.test/", "/cdn-cgi/check", false)]
+    [InlineData("https://user:credential-secret@lyrics.example.test/cdn-cgi/check?isrc=private-query", "https://lyrics.example.test/", "/cdn-cgi/check", false)]
     public async Task SolveLogShowsReturnedOriginAndPathWithoutQueryOrCredentials(string returnedUrl, string origin, string path, bool accepted)
     {
         using var output = new StringWriter();
@@ -547,7 +543,7 @@ public sealed class CloudflareChallengeSolverTests
             return Solution("{\"value\":" + ++calls + "}", payload.RootElement.GetProperty("url").GetString()!);
         })), _ => Challenge());
         Assert.Equal("{\"value\":1}", await client.GetStringAsync(Target));
-        Assert.Equal("{\"value\":2}", await client.GetStringAsync("https://lyrics-api.binimum.org/?isrc=another"));
+        Assert.Equal("{\"value\":2}", await client.GetStringAsync("https://lyrics.example.test/?isrc=another"));
         Assert.Equal(2, calls);
     }
 
@@ -602,7 +598,7 @@ public sealed class CloudflareChallengeSolverTests
         if (path == "none") await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
         else await client.GetAsync(Target);
         var log = Assert.Single(logs);
-        Assert.Contains("host=lyrics-api.binimum.org", log);
+        Assert.Contains("host=lyrics.example.test", log);
         Assert.Contains("solverHttpStatus=200", log);
         Assert.Contains("solutionStatus=" + status, log);
         Assert.Contains("contentKind=" + kind, log);
@@ -647,7 +643,7 @@ public sealed class CloudflareChallengeSolverTests
     private CloudflareChallengeSolver Solver(HttpMessageHandler transport) => new(new HttpClient(transport),
         _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)), _clock);
     private static HttpClient Client(CloudflareChallengeSolver solver, Func<HttpRequestMessage, HttpResponseMessage> send) =>
-        new(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org"]) { InnerHandler = new Handler(request => Task.FromResult(send(request))) });
+        new(new CloudflareChallengeHandler(solver, ["lyrics.example.test"]) { InnerHandler = new Handler(request => Task.FromResult(send(request))) });
     private HttpResponseMessage Solution(string body = "words", string url = Target, string contentType = "application/json", int status = 200) => Reply(JsonSerializer.Serialize(new
     {
         status = "ok",
@@ -658,7 +654,7 @@ public sealed class CloudflareChallengeSolverTests
             response = body,
             headers = new Dictionary<string, string> { ["content-type"] = contentType },
             userAgent = "FixtureBrowser/1.0",
-            cookies = new[] { new { name = "cf_clearance", value = "clearance-secret", domain = ".binimum.org", path = "/", expires = _clock.Now.AddMinutes(1).ToUnixTimeSeconds(), secure = true } }
+            cookies = new[] { new { name = "cf_clearance", value = "clearance-secret", domain = ".example.test", path = "/", expires = _clock.Now.AddMinutes(1).ToUnixTimeSeconds(), secure = true } }
         }
     }));
     private static HttpResponseMessage Challenge()

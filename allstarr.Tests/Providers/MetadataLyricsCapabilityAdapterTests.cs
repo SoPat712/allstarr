@@ -10,168 +10,6 @@ namespace allstarr.Tests;
 
 public sealed class MetadataLyricsCapabilityAdapterTests
 {
-    private const string Ttml = "<tt><body><p begin='1.25' end='3'><span begin='1.25' end='2'>Synthetic </span><span begin='2' end='3'>words</span></p></body></tt>";
-    private const string Lookup = """
-        {"total":1,"source":"HIT-LOCAL-LIBSQL","results":[{"id":"fixture","track_name":"Fixture","artist_name":"Artist","album_name":"Album","duration":180,"isrc":"USABC1234567","timing_type":"word","lyricsUrl":"https://lyrics-storage.binimum.org/USABC1234567.ttml"}]}
-        """;
-
-    [Fact]
-    public async Task BiniSolvesApiAndStorageIndependentlyAndParsesRenderedLyricsWithChallengeQuery()
-    {
-        var targets = new List<Uri>();
-        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler((request, _) =>
-        {
-            using var payload = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
-            var target = new Uri(payload.RootElement.GetProperty("url").GetString()!);
-            targets.Add(target);
-            return Response(JsonSerializer.Serialize(new
-            {
-                status = "ok",
-                solution = new
-                {
-                    url = target.AbsoluteUri + (target.Query.Length == 0 ? "?" : "&") + "__cf_chl_tk=challenge-secret",
-                    status = 200,
-                    response = "<html><head></head><body><pre style=\"word-wrap: break-word; white-space: pre-wrap;\">" +
-                        WebUtility.HtmlEncode(target.Host == "lyrics-api.binimum.org"
-                            ? Lookup.Replace("Fixture", "Espresso").Replace("Artist", "Sabrina Carpenter").Replace("180", "175") : Ttml) + "</pre></body></html>",
-                    headers = new Dictionary<string, string> { ["Content-Type"] = "text/html" },
-                    userAgent = "FixtureBrowser/1.0",
-                    cookies = Array.Empty<object>()
-                }
-            }));
-        })), _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)));
-        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org", "lyrics-storage.binimum.org"])
-        {
-            InnerHandler = new Handler((request, _) =>
-            {
-                Assert.Equal(request.RequestUri!.Host == "lyrics-api.binimum.org" ? "application/json" : "application/ttml+xml",
-                    Assert.Single(request.Headers.Accept).MediaType);
-                var response = new HttpResponseMessage(HttpStatusCode.TemporaryRedirect) { Content = new StringContent("") };
-                response.Headers.Server.ParseAdd("cloudflare");
-                response.Headers.Location = new("/cdn-cgi/challenge-platform/check", UriKind.Relative);
-                return response;
-            })
-        });
-        var adapter = new BiniLyricsCapabilityAdapter(client, null, solver: solver);
-        var lookupRequest = new ProviderLyricsRequest(Guid.CreateVersion7(), new("binilyrics", ProviderResourceKind.Track, "lookup"),
-            trackTitle: "Espresso", artistNames: ["Sabrina Carpenter"], albumTitle: "Album", durationSeconds: 175);
-        var value = (await adapter.FetchLyricsAsync(Context("binilyrics"), lookupRequest)).RequireValue();
-        Assert.Equal("[00:01.250]Synthetic words", value.Content);
-        Assert.Equal(new[]
-        {
-            "https://lyrics-api.binimum.org/?track=Espresso&artist=Sabrina%20Carpenter&album=Album&duration=175",
-            "https://lyrics-storage.binimum.org/USABC1234567.ttml"
-        }, targets.Select(target => target.AbsoluteUri));
-    }
-
-    [Fact]
-    public async Task BiniDeliversWrappedLookupAndStorageAfterEmptyIsrcAndRedirects()
-    {
-        var targets = new List<Uri>();
-        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler((request, _) =>
-        {
-            using var payload = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
-            var target = new Uri(payload.RootElement.GetProperty("url").GetString()!);
-            targets.Add(target);
-            var body = targets.Count == 1 ? "{\"results\":[]}" : target.Host == "lyrics-api.binimum.org" ? Lookup : Ttml;
-            return Response(JsonSerializer.Serialize(new
-            {
-                status = "ok",
-                solution = new
-                {
-                    url = new UriBuilder(target) { Path = target.AbsolutePath.TrimEnd('/') + "/" }.Uri.AbsoluteUri,
-                    status = 200,
-                    response = "<html><head></head><body><pre>" + WebUtility.HtmlEncode(body) + "</pre></body></html>",
-                    headers = new Dictionary<string, string> { ["Content-Type"] = "application/octet-stream" },
-                    userAgent = "FixtureBrowser/1.0",
-                    cookies = Array.Empty<object>()
-                }
-            }));
-        })), _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)));
-        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org", "lyrics-storage.binimum.org"])
-        {
-            InnerHandler = new Handler((_, _) =>
-            {
-                var response = new HttpResponseMessage(HttpStatusCode.TemporaryRedirect) { Content = new StringContent("") };
-                response.Headers.Server.ParseAdd("cloudflare");
-                response.Headers.TryAddWithoutValidation("cf-mitigated", "challenge");
-                return response;
-            })
-        });
-        var adapter = new BiniLyricsCapabilityAdapter(client, null, solver: solver);
-        var value = (await adapter.FetchLyricsAsync(Context("binilyrics"), Request("binilyrics", isrc: "USABC1234567"))).RequireValue();
-        Assert.Equal("[00:01.250]Synthetic words", value.Content);
-        Assert.Equal(new[]
-        {
-            "https://lyrics-api.binimum.org/?isrc=USABC1234567",
-            "https://lyrics-api.binimum.org/?track=Fixture&artist=Artist&album=Album&duration=180",
-            "https://lyrics-storage.binimum.org/USABC1234567.ttml"
-        }, targets.Select(target => target.AbsoluteUri));
-    }
-
-    [Fact]
-    public async Task BiniContractUsesIsrcThenDownloadsFirstRankedTtmlWithWordTiming()
-    {
-        var handler = new Handler((_, index) => Response(index == 1 ? Lookup : Ttml));
-        var adapter = Adapter("binilyrics", handler, cache: new TestMemoryApplicationCache());
-        var probe = (await adapter.FetchLyricsAsync(Context("binilyrics"), Request("binilyrics", isrc: "USABC1234567", availability: true))).RequireValue();
-        var value = (await adapter.FetchLyricsAsync(Context("binilyrics"), Request("binilyrics", isrc: "USABC1234567"))).RequireValue();
-        Assert.Null(probe.Content);
-        Assert.Equal("https://lyrics-api.binimum.org/?isrc=USABC1234567", handler.Requests[0].AbsoluteUri);
-        Assert.Equal("https://lyrics-storage.binimum.org/USABC1234567.ttml", handler.Requests[1].AbsoluteUri);
-        Assert.Equal("[00:01.250]Synthetic words", value.Content);
-        Assert.Equal(ProviderLyricsFormat.LineTimed, value.Format);
-        var line = Assert.Single(value.TimedLines!);
-        Assert.Equal(2, line.Segments!.Count);
-        Assert.Equal(TimeSpan.FromMilliseconds(1250), line.Segments[0].Start);
-        Assert.Equal(TimeSpan.FromMilliseconds(750), line.Segments[0].Duration);
-        Assert.StartsWith("sha256:", value.Revision);
-        Assert.Equal(2, handler.Requests.Count);
-    }
-
-    [Fact]
-    public async Task BiniEmptyIsrcFallsBackToExactMetadataContractAndLineTiming()
-    {
-        var handler = new Handler((_, index) => Response(index switch
-        {
-            1 => "{\"results\":[]}",
-            2 => Lookup,
-            _ => "<tt><body><p begin='1'>Synthetic line</p></body></tt>"
-        }));
-        var value = (await Adapter("binilyrics", handler).FetchLyricsAsync(Context("binilyrics"),
-            Request("binilyrics", isrc: "USABC1234567"))).RequireValue();
-        Assert.Equal("https://lyrics-api.binimum.org/?track=Fixture&artist=Artist&album=Album&duration=180", handler.Requests[1].AbsoluteUri);
-        Assert.Equal("[00:01.000]Synthetic line", value.Content);
-        Assert.Null(Assert.Single(value.TimedLines!).Segments);
-    }
-
-    [Theory]
-    [InlineData("Fixture (feat. Guest)", "Artist, Guest", true)]
-    [InlineData("Fixture - Live", "Artist", false)]
-    [InlineData("Other song", "Artist", false)]
-    [InlineData("Fixture", "Other artist", false)]
-    public async Task BiniChecksIdentityBeforeFollowingLyricsUrl(string title, string artist, bool accepted)
-    {
-        var payload = Lookup.Replace("\"track_name\":\"Fixture\"", "\"track_name\":" + JsonSerializer.Serialize(title))
-            .Replace("\"artist_name\":\"Artist\"", "\"artist_name\":" + JsonSerializer.Serialize(artist));
-        var handler = new Handler((_, index) => Response(index == 1 ? payload : Ttml));
-        var result = await Adapter("binilyrics", handler).FetchLyricsAsync(Context("binilyrics"), Request("binilyrics"));
-        Assert.Equal(accepted ? ProviderLyricsAvailabilityState.Available : ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
-        Assert.Equal(accepted ? 2 : 1, handler.Requests.Count);
-    }
-
-    [Theory]
-    [InlineData("http://lyrics-storage.binimum.org/fixture.ttml")]
-    [InlineData("https://127.0.0.1/fixture.ttml")]
-    [InlineData("https://lyrics-storage.binimum.org.evil.test/fixture.ttml")]
-    [InlineData("https://user:secret@lyrics-storage.binimum.org/fixture.ttml")]
-    public async Task BiniRejectsUntrustedDownloadLocations(string url)
-    {
-        var handler = new Handler((_, _) => Response(Lookup.Replace("https://lyrics-storage.binimum.org/USABC1234567.ttml", url)));
-        Assert.False((await Adapter("binilyrics", handler).FetchLyricsAsync(Context("binilyrics"), Request("binilyrics"))).IsSuccess);
-        Assert.Single(handler.Requests);
-    }
-
     [Fact]
     public async Task GeniusContractKeepsSectionsAndRemovesPageFootersWithoutClaimingTiming()
     {
@@ -196,7 +34,6 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData("binilyrics")]
     [InlineData("genius")]
     public async Task MissingMetadataNeverSendsAndWrongOwnerIsForbidden(string provider)
     {
@@ -209,8 +46,6 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData("binilyrics", 503)]
-    [InlineData("binilyrics", 429)]
     [InlineData("genius", 503)]
     [InlineData("genius", 429)]
     public async Task BusyFailuresAreCachedForTenMinutesAndLogsExcludePayloads(string provider, int status)
@@ -236,7 +71,6 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData("binilyrics")]
     [InlineData("genius")]
     public async Task RequestTimeoutIsFourSecondsAndNegativelyCached(string provider)
     {
@@ -251,24 +85,7 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         Assert.Equal(1, handler.Calls);
     }
 
-    [Fact]
-    public async Task BiniMultipleRequestsShareSixSecondOverallBudget()
-    {
-        var clock = new ManualTimeProvider();
-        var handler = new WaitingHandler(Lookup, clock);
-        var pending = Adapter("binilyrics", handler, clock).FetchLyricsAsync(Context("binilyrics"), Request("binilyrics"));
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
-        clock.Advance(TimeSpan.FromSeconds(3));
-        handler.Release();
-        await handler.SecondRequest.Task;
-        clock.Advance(TimeSpan.FromSeconds(3));
-        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await pending).Error!.Code);
-        Assert.Equal(2, handler.Calls);
-    }
-
     [Theory]
-    [InlineData("binilyrics", "{}")]
-    [InlineData("binilyrics", "{\"results\":[null]}")]
     [InlineData("genius", "[]")]
     [InlineData("genius", "{\"lyrics\":42}")]
     public async Task UnexpectedShapesFailSafely(string provider, string payload)
@@ -278,25 +95,7 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         Assert.Equal("provider-contract-changed", result.Error!.Code);
     }
 
-    [Fact]
-    public async Task BiniUsesOnlyTheFirstRankedResultAndChecksDurationAndIsrc()
-    {
-        foreach (var payload in new[]
-        {
-            Lookup.Replace("\"track_name\":\"Fixture\"", "\"track_name\":\"Unrelated\"").Replace("}]}", "}," + Lookup[(Lookup.IndexOf("[{", StringComparison.Ordinal) + 1)..]),
-            Lookup.Replace("\"duration\":180", "\"duration\":200"),
-            Lookup.Replace("USABC1234567", "GBABC7654321")
-        })
-        {
-            var handler = new Handler((_, _) => Response(payload));
-            var result = await Adapter("binilyrics", handler).FetchLyricsAsync(Context("binilyrics"), Request("binilyrics", isrc: "USABC1234567"));
-            Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
-            Assert.Single(handler.Requests);
-        }
-    }
-
     [Theory]
-    [InlineData("binilyrics")]
     [InlineData("genius")]
     public async Task SuccessfulLookupLogsExcludeLyricsAndTransportDetails(string provider)
     {
@@ -305,8 +104,7 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         logger.Setup(value => value.Log(It.IsAny<LogLevel>(), It.IsAny<EventId>(), It.IsAny<It.IsAnyType>(),
                 It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()))
             .Callback(new InvocationAction(invocation => logs.Add(invocation.Arguments[2].ToString()!)));
-        var handler = new Handler((_, index) => Response(provider == "genius" ? "{\"lyrics\":\"Synthetic private words\"}"
-            : index == 1 ? Lookup : Ttml));
+        var handler = new Handler((_, _) => Response("{\"lyrics\":\"Synthetic private words\"}"));
         await Adapter(provider, handler, logger: logger.Object).FetchLyricsAsync(Context(provider), Request(provider));
         Assert.Single(logs);
         Assert.Contains(provider, logs[0]);
@@ -315,7 +113,6 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     [Theory]
-    [InlineData("binilyrics", "{\"results\":[]}")]
     [InlineData("genius", "{\"lyrics\":\"\"}")]
     public async Task CallerCancellationDoesNotPoisonTheFailureCache(string provider, string payload)
     {
@@ -340,16 +137,6 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     [Fact]
-    public async Task BiniNormalizesFeaturedCreditsOnEitherSideOfTheMatch()
-    {
-        var handler = new Handler((_, index) => Response(index == 1 ? Lookup.Replace("\"artist_name\":\"Artist\"", "\"artist_name\":\"Artist, Guest\"") : Ttml));
-        var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("binilyrics", ProviderResourceKind.Track, "lookup"),
-            trackTitle: "Fixture (feat. Guest)", artistNames: ["Artist"]);
-        Assert.Equal(ProviderLyricsAvailabilityState.Available,
-            (await Adapter("binilyrics", handler).FetchLyricsAsync(Context("binilyrics"), request)).RequireValue().Availability);
-    }
-
-    [Fact]
     public async Task GeniusRemovesEmbedWhenItIsAttachedToTheLastLine()
     {
         var handler = new Handler((_, _) => Response("{\"lyrics\":\"[Outro]\\nSynthetic final line12Embed\"}"));
@@ -358,9 +145,8 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     private static IProviderLyricsCapability Adapter(string provider, HttpMessageHandler handler, TimeProvider? clock = null,
-        IApplicationCache? cache = null, ILogger? logger = null) => provider == "binilyrics"
-        ? new BiniLyricsCapabilityAdapter(new HttpClient(handler), cache, clock ?? TimeProvider.System, new(clock ?? TimeProvider.System), logger)
-        : new GeniusCapabilityAdapter(new HttpClient(handler), cache, clock ?? TimeProvider.System, new(clock ?? TimeProvider.System), logger);
+        IApplicationCache? cache = null, ILogger? logger = null) =>
+        new GeniusCapabilityAdapter(new HttpClient(handler), cache, clock ?? TimeProvider.System, new(clock ?? TimeProvider.System), logger);
     private static HttpResponseMessage Response(string content) => new(HttpStatusCode.OK) { Content = new StringContent(content) };
     private static ProviderLyricsRequest Request(string provider, string? isrc = null, bool availability = false) =>
         new(Guid.CreateVersion7(), new(provider, ProviderResourceKind.Track, "lookup"), availability,
@@ -381,22 +167,13 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         }
     }
 
-    private sealed class WaitingHandler(string? first = null, TimeProvider? clock = null) : HttpMessageHandler
+    private sealed class WaitingHandler : HttpMessageHandler
     {
-        private readonly TaskCompletionSource release = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public TaskCompletionSource SecondRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int Calls { get; private set; }
-        public void Release() => release.TrySetResult();
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
-            if (Calls == 1 && first != null)
-            {
-                await release.Task.WaitAsync(cancellationToken);
-                return Response(first);
-            }
-            SecondRequest.TrySetResult();
-            await Task.Delay(Timeout.InfiniteTimeSpan, clock ?? TimeProvider.System, cancellationToken);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return Response("");
         }
     }

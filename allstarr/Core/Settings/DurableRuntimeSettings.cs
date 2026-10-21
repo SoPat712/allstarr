@@ -754,7 +754,7 @@ public sealed class DurableRuntimeSettingsService : BackgroundService, IDurableR
         if (raw.TrimStart().StartsWith('[')) parts = JsonSerializer.Deserialize<string[]>(raw, JsonOptions) ?? [];
         else parts = raw.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var values = parts.Select(item => item.Trim().ToLowerInvariant())
-            .Where(item => item.Length > 0)
+            .Where(item => item.Length > 0 && !RetiredProviderSettings.IsRetired(item))
             .ToArray();
         if (values.Length > 64 || values.Any(item => item.Length > 100 || !item.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_' or '.')) ||
             values.Distinct(StringComparer.OrdinalIgnoreCase).Count() != values.Length)

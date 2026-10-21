@@ -42,7 +42,6 @@ public sealed class ProtocolLyricsResolverTests
     [Theory]
     [InlineData("lrcred")]
     [InlineData("paxsenix")]
-    [InlineData("binilyrics")]
     [InlineData("genius")]
     public async Task PublicMetadataLyricsReceiveIsrcAndMetadataFromTheSong(string provider)
     {

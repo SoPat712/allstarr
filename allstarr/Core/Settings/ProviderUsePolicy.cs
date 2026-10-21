@@ -37,6 +37,7 @@ public static class ProviderUsePolicy
             {
                 var id = AppleMusicClient.NormalizeProviderId(
                     ProviderContractValidation.ProviderId(entry.Name, nameof(json)));
+                if (RetiredProviderSettings.IsRetired(id)) continue;
                 if (modes.Count >= 128 || entry.Value.ValueKind != JsonValueKind.String ||
                     !modes.TryAdd(id, ParseMode(entry.Value.GetString())))
                     throw new ArgumentException("Source use modes must be valid and unique.");

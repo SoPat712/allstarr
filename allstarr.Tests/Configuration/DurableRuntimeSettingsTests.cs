@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Core.Operations;
 using allstarr.Core.Settings;
 using allstarr.Core.Storage;
@@ -6,6 +7,7 @@ using allstarr.Core.Matching;
 using allstarr.Core.Capabilities;
 using allstarr.Models.Settings;
 using allstarr.Services.AppleMusic;
+using allstarr.Services.Common;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -36,6 +38,226 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             User(_userB, "listener-b", "Listener B", isAdmin: false, enabled: true, now: now),
             User(_disabledUser, "disabled", "Disabled", isAdmin: false, enabled: false, now: now));
         await db.SaveChangesAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RemovedLyricsSourceIsIgnoredInSavedOrdersAndSourceModes(bool personal)
+    {
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            foreach (var (key, type, json) in new[]
+            {
+                ("Providers:LyricsOrder", RuntimeSettingValueType.StringList, "[\"lrclib\",\"BiniLyrics\",\"lyricsplus\"]"),
+                (ProviderUsePolicy.SettingKey, RuntimeSettingValueType.String,
+                    JsonSerializer.Serialize("{\"binilyrics\":\"off\",\"lyricsplus\":\"manualOnly\"}"))
+            })
+                db.RuntimeSettings.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = personal ? _userId : null,
+                    Key = key,
+                    ValueType = type,
+                    ValueJson = json,
+                    Source = "fixture",
+                    Revision = 1,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                });
+            await db.SaveChangesAsync();
+        }
+        var service = CreateService([]);
+        var preferences = await service.GetPreferencesAsync(_userId);
+        Assert.Equal("lrclib,lyricsplus", preferences.Values.LyricsOrder);
+        Assert.Equal(new KeyValuePair<string, string>("lyricsplus", "manualOnly"), Assert.Single(preferences.Values.ProviderModes!));
+        var policy = await new EffectiveProviderPolicyResolver(service).ResolveForUserAsync(_userId);
+        Assert.DoesNotContain("binilyrics", policy.GetProviderOrder(ProviderCapabilityKind.Lyrics));
+        Assert.DoesNotContain("binilyrics", policy.ProviderModes.Keys);
+    }
+
+    [Theory]
+    [InlineData("MULTI_PROVIDER_LYRICS_ORDER")]
+    public async Task RemovedLyricsSourceIsIgnoredInBootstrapOrder(string key)
+    {
+        var service = CreateService(new Dictionary<string, string?> { [key] = "lrcred,binilyrics,lyricsplus" });
+        Assert.Equal("lrcred,lyricsplus", (await service.GetAsync("Providers:LyricsOrder")).NormalizedValue);
+    }
+
+    [Fact]
+    public async Task StoredChecksForRemovedSourceAreIgnored()
+    {
+        var history = new ProviderCheckHistory(_factory, TimeProvider.System);
+        foreach (var provider in new[] { "binilyrics", "lrcred" })
+        {
+            var status = new ProviderRuntimeStatus
+            {
+                Provider = provider,
+                Capability = "lyrics",
+                IsSupported = true,
+                IsEnabled = true,
+                Configuration = ProviderConfigurationState.NotRequired,
+                Health = ProviderHealthState.Healthy,
+                TestedAt = DateTimeOffset.UtcNow
+            };
+            await history.RecordAsync(new(new(provider, "lyrics", null), null, status), "fixture", default);
+        }
+        Assert.Equal("lrcred", Assert.Single(await history.ReadLatestAsync(default)).ProviderId);
+    }
+
+    [Fact]
+    public async Task StartupRemovesRetiredSourceSettingsChecksAndSecretsAndPreservesKeptLyrics()
+    {
+        var secretId = Guid.CreateVersion7();
+        var recordingId = Guid.CreateVersion7();
+        var retainedSecretId = Guid.CreateVersion7();
+        var keptPath = Path.Combine(_database.StorageOptions.DataDirectory, "kept.lrc");
+        const string keptLyrics = "[00:01.000]Kept words";
+        await File.WriteAllTextAsync(keptPath, keptLyrics);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            foreach (var owner in new Guid?[] { null, _userId })
+            {
+                db.RuntimeSettings.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = owner,
+                    Key = ProviderUsePolicy.SettingKey,
+                    ValueType = RuntimeSettingValueType.String,
+                    ValueJson = JsonSerializer.Serialize(owner == null
+                        ? "{\"binilyrics\":\"off\",\"lyricsplus\":\"manualOnly\"}" : "{\"binilyrics\":\"off\"}"),
+                    Source = "fixture",
+                    Revision = 1,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                });
+                db.RuntimeSettings.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    OwnerUserId = owner,
+                    Key = "Providers:LyricsOrder",
+                    ValueType = RuntimeSettingValueType.StringList,
+                    ValueJson = "[\"binilyrics\",\"lrcred\",\"lyricsplus\"]",
+                    Source = "fixture",
+                    Revision = 1,
+                    CreatedAt = _clock.UtcNow,
+                    UpdatedAt = _clock.UtcNow
+                });
+            }
+            db.RuntimeSettings.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                Key = "BiniLyrics:Token",
+                ValueType = RuntimeSettingValueType.String,
+                ValueJson = "\"unused\"",
+                Source = "fixture",
+                Revision = 1,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            db.SecretReferences.Add(new() { Id = secretId, Purpose = "provider-account:binilyrics:fixture", ActiveVersion = 1 });
+            db.SecretReferences.Add(new() { Id = retainedSecretId, Purpose = "provider-account:lyricsplus:fixture", ActiveVersion = 1 });
+            db.ProviderAccounts.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                ProviderId = "binilyrics",
+                OwnerUserId = _userId,
+                DisplayName = "Fixture",
+                Enabled = true,
+                Revision = 1,
+                SecretReferenceId = secretId
+            });
+            db.SecretVersions.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                SecretReferenceId = secretId,
+                Version = 1,
+                KeyId = "fixture",
+                Nonce = new byte[12],
+                Ciphertext = [1],
+                AuthenticationTag = new byte[16]
+            });
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                Category = "provider-check",
+                Action = "check-completed",
+                Outcome = "recorded",
+                SubjectId = "binilyrics/lyrics/public",
+                DetailsJson = "{}",
+                CreatedAt = _clock.UtcNow
+            });
+            db.AuditEvents.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                Category = "provider-check",
+                Action = "check-completed",
+                Outcome = "recorded",
+                SubjectId = "lrcred/lyrics/public",
+                DetailsJson = "{}",
+                CreatedAt = _clock.UtcNow
+            });
+            db.CanonicalRecordings.Add(new()
+            {
+                Id = recordingId,
+                CreatedByUserId = _userId,
+                Title = "Fixture",
+                PublicId = CanonicalRecordingRecord.DefaultPublicId(recordingId),
+                Revision = 1
+            });
+            db.RecordingLyricsChoices.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                CanonicalRecordingId = recordingId,
+                SourceId = "binilyrics",
+                Revision = 1
+            });
+            db.RecordingLyricsChoices.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                CanonicalRecordingId = recordingId,
+                OwnerUserId = _userId,
+                SourceId = "kept",
+                Revision = 1
+            });
+            await db.SaveChangesAsync();
+        }
+        var options = _database.StorageOptions;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var state = new DurableStorageState(options);
+            await new DurableStorageInitializer(_factory, options, state,
+                NullLogger<DurableStorageInitializer>.Instance,
+                new DurableBackupService(_factory, options, state,
+                    new allstarr.Core.Secrets.SecretStoreOptions { KeyRingPath = Path.Combine(options.DataDirectory, "keyring.json") }))
+                .StartAsync(CancellationToken.None);
+            Assert.Equal(DurableStorageReadiness.Ready, state.GetSnapshot().Readiness);
+        }
+        await using var read = await _factory.CreateDbContextAsync();
+        var orders = await read.RuntimeSettings.ToArrayAsync();
+        Assert.Equal(3, orders.Length);
+        var modes = Assert.Single(orders, row => row.Key == ProviderUsePolicy.SettingKey);
+        Assert.Null(modes.OwnerUserId);
+        Assert.Equal("{\"lyricsplus\":\"manualOnly\"}", JsonSerializer.Deserialize<string>(modes.ValueJson));
+        Assert.Equal(2, modes.Revision);
+        Assert.All(orders.Where(row => row.Key == "Providers:LyricsOrder"), row =>
+        {
+            Assert.Equal("Providers:LyricsOrder", row.Key);
+            Assert.Equal("[\"lrcred\",\"lyricsplus\"]", row.ValueJson);
+            Assert.Equal(2, row.Revision);
+        });
+        Assert.Equal(retainedSecretId, Assert.Single(await read.SecretReferences.ToArrayAsync()).Id);
+        Assert.Empty(await read.SecretVersions.ToArrayAsync());
+        Assert.Equal("lrcred/lyrics/public", Assert.Single(await read.AuditEvents.ToArrayAsync()).SubjectId);
+        Assert.Equal("kept", Assert.Single(await read.RecordingLyricsChoices.ToArrayAsync()).SourceId);
+        var retiredAccount = Assert.Single(await read.ProviderAccounts.ToArrayAsync());
+        Assert.False(retiredAccount.Enabled);
+        Assert.Null(retiredAccount.SecretReferenceId);
+        Assert.True(ProviderAccountSettings.IsRemoved(retiredAccount));
+        Assert.Equal(2, retiredAccount.Revision);
+        Assert.Single(await read.CanonicalRecordings.ToArrayAsync());
+        Assert.Equal(keptLyrics, await File.ReadAllTextAsync(keptPath));
+        Assert.Equal("lrcred,lyricsplus", (await CreateService([]).GetPreferencesAsync(_userId)).Values.LyricsOrder);
     }
 
     [Fact]

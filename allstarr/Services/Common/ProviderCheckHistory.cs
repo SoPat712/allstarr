@@ -32,7 +32,8 @@ public sealed class ProviderCheckHistory(IDbContextFactory<AllstarrDbContext> fa
             try
             {
                 var result = JsonSerializer.Deserialize<ProviderCheckResult>(row.DetailsJson);
-                if (result?.Status.TestedAt != null) results.Add(result);
+                if (result?.Status.TestedAt != null && !allstarr.Core.Settings.RetiredProviderSettings.IsRetired(result.Key.Provider))
+                    results.Add(result);
             }
             catch (JsonException) { }
         }

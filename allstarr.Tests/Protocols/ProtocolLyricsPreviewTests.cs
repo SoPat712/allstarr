@@ -79,18 +79,10 @@ public sealed class ProtocolLyricsPreviewTests
     }
 
     [Theory]
-    [InlineData("binilyrics", ProviderUseMode.Automatic, false, false, 1)]
-    [InlineData("binilyrics", ProviderUseMode.ManualOnly, false, false, 0)]
-    [InlineData("binilyrics", ProviderUseMode.ManualOnly, true, false, 1)]
-    [InlineData("binilyrics", ProviderUseMode.Off, true, false, 0)]
     [InlineData("genius", ProviderUseMode.Automatic, false, false, 1)]
     [InlineData("genius", ProviderUseMode.ManualOnly, false, false, 0)]
     [InlineData("genius", ProviderUseMode.ManualOnly, true, false, 1)]
     [InlineData("genius", ProviderUseMode.Off, true, false, 0)]
-    [InlineData("binilyrics", ProviderUseMode.Automatic, false, true, 1)]
-    [InlineData("binilyrics", ProviderUseMode.ManualOnly, false, true, 0)]
-    [InlineData("binilyrics", ProviderUseMode.ManualOnly, true, true, 1)]
-    [InlineData("binilyrics", ProviderUseMode.Off, true, true, 0)]
     [InlineData("genius", ProviderUseMode.Automatic, false, true, 1)]
     [InlineData("genius", ProviderUseMode.ManualOnly, false, true, 0)]
     [InlineData("genius", ProviderUseMode.ManualOnly, true, true, 1)]

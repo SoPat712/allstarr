@@ -233,7 +233,6 @@ public sealed class ProviderStatusManagerTests
 
     [Theory]
     [InlineData("lrcred", "{\"hits\":[]}", "lrc.red")]
-    [InlineData("binilyrics", "{\"results\":[]}", "lyrics-api.binimum.org")]
     [InlineData("genius", "{\"lyrics\":\"\"}", "fetch-genius.samidy.workers.dev")]
     [InlineData("unison", "{\"success\":false,\"code\":\"NOT_FOUND\"}", "unison.boidu.dev")]
     public async Task PublicTimedLyricsProbeNeedsNoAccount(string provider, string body, string host)
@@ -245,24 +244,6 @@ public sealed class ProviderStatusManagerTests
         var status = await manager.TestAccountFreeProviderCapabilityAsync(provider, "lyrics");
         Assert.Equal(ProviderHealthState.Healthy, status.Health);
         Assert.Equal(host, Assert.Single(handler.Requests).Host);
-    }
-
-    [Fact]
-    public async Task BiniChallengeProbeAndTestPanelKeepTheSafeReason()
-    {
-        var response = Json(HttpStatusCode.TemporaryRedirect, "fixture challenge");
-        response.Headers.Server.ParseAdd("cloudflare");
-        response.Headers.TryAddWithoutValidation("cf-mitigated", "challenge");
-        var solver = new CloudflareChallengeSolver(new HttpClient(new QueuedResponseHandler()),
-            _ => Task.FromResult(new ChallengeSolverOptions("", 60)));
-        var transport = new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org"])
-        { InnerHandler = new QueuedResponseHandler(response) };
-        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(transport));
-        var status = await manager.TestAccountFreeProviderCapabilityAsync("binilyrics", "lyrics");
-        Assert.Equal("blocked-by-challenge", status.ReasonCode);
-        Assert.Equal("blocked-by-challenge", manager.GetAccountFreeStatus("binilyrics", "lyrics").ReasonCode);
-        manager.RecordTryResult("binilyrics", "lyrics", null, null, false, 1, "blocked-by-challenge");
-        Assert.Equal("blocked-by-challenge", manager.GetAccountFreeStatus("binilyrics", "lyrics").ReasonCode);
     }
 
     [Fact]
@@ -351,7 +332,6 @@ public sealed class ProviderStatusManagerTests
 
     [Theory]
     [InlineData("paxsenix", "Paxsenix", "lyrics")]
-    [InlineData("binilyrics", "BiniLyrics", "binilyrics")]
     [InlineData("genius", "Genius", "genius")]
     public async Task PublicLyricsSchemaIncludesSourcesWithoutAccountFields(string id, string name, string icon)
     {

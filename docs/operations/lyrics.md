@@ -6,6 +6,8 @@ Listeners can save their own source order in **Listening preferences → Lyrics 
 
 **Media server lyrics** participates in the same movable order. It is first in the default order. When an older saved order omits media-server lyrics or kept LRC, the missing local sources are inserted first. Explicitly saved positions are preserved. Native Jellyfin and Subsonic song requests verify the requested song before querying other sources. When backend lyrics win, their original response is preserved, including language, offsets, enhanced cues and additional metadata. Plain backend lyrics remain a fallback while later sources are checked for timing. A failed Subsonic backend lookup keeps its original response if no other source succeeds.
 
+Retired sources are removed from saved household and personal routing preferences at startup. Kept lyrics remain available through **Kept LRC**, independently of the original source.
+
 Native parsing follows the [Jellyfin 10.11 lyrics DTOs](https://github.com/jellyfin/jellyfin/tree/v10.11.0/MediaBrowser.Model/Lyrics) and [OpenSubsonic structured lyrics](https://opensubsonic.netlify.app/docs/responses/structuredlyrics/). Verified times retain millisecond precision, and plain text is not assigned invented timestamps.
 
 **Kept LRC** reads the sibling `.lrc` of an indexed download under `Library:DownloadPath`'s `permanent` or `kept` directory. It follows Media server lyrics in the default order and can be moved or disabled. Existing saved orders are retained. Provider songs use their exact source identity; native songs use source IDs from the current listener's accessible library index. Unindexed files, cache paths, filenames and artist/title similarity do not establish an association.

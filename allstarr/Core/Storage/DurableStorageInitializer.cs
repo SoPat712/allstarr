@@ -56,6 +56,7 @@ public sealed class DurableStorageInitializer(
                 logger.LogError("SQLite startup integrity check failed");
                 return;
             }
+            await allstarr.Core.Settings.RetiredProviderSettings.RemoveAsync(context, cancellationToken);
             state.Set(DurableStorageReadiness.Ready, current.CurrentSchemaVersion);
             logger.LogInformation("SQLite storage ready at schema {SchemaVersion}", current.CurrentSchemaVersion);
         }
