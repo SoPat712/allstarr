@@ -65,6 +65,6 @@ internal sealed class JellyfinItemFields(IQueryCollection? query, bool includeAl
     private static readonly HashSet<string> UnsupportedFields = new(StringComparer.Ordinal)
     {
         "AudioInfo", "BasicSyncInfo", "SupportsSync", "ParentBackdropItemId", "ParentBackdropImageTags",
-        "ParentLogoItemId", "ParentLogoImageTag", "ImageBlurHashes"
+        "ParentLogoItemId", "ParentLogoImageTag"
     };
 }

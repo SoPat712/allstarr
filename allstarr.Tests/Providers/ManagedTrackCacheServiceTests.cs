@@ -24,6 +24,57 @@ public sealed partial class ManagedTrackCacheServiceTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task CompletedCache_ReplaysKnownMediaFactsAndActualLength(bool declared)
+    {
+        var root = CreateRoot();
+        try
+        {
+            string? published = null;
+            var local = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+            local.Setup(value => value.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), "deezer", "track-1"))
+                .ReturnsAsync(() => published);
+            local.Setup(value => value.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
+                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => published = path).Returns(Task.CompletedTask);
+            await using var service = CreateService(root, "Cache", local.Object);
+            var bytes = "fLaCknown media"u8.ToArray();
+            if (!declared)
+            {
+                bytes = new byte[128];
+                "fLaC"u8.CopyTo(bytes);
+                bytes[4] = 0x80;
+                bytes[7] = 34;
+                bytes[8] = bytes[10] = 0x10;
+                System.Buffers.Binary.BinaryPrimitives.WriteUInt64BigEndian(bytes.AsSpan(18, 8),
+                    (96_000UL << 44) | (1UL << 41) | (23UL << 36) | 96_000UL);
+            }
+            using var response = Response(HttpStatusCode.OK, bytes);
+            var media = declared ? new ProviderMediaFormat("audio/flac", "flac", "flac", 900_000, 96_000, 24, 2)
+                : new ProviderMediaFormat("audio/flac", "flac", "flac");
+            var stream = ProviderStream(response);
+            stream = stream with
+            {
+                Lease = new(stream.Lease.LeaseId, stream.Lease.ProtectedSourceUri, stream.Lease.ExpiresAt,
+                false, false, media, ProviderStreamRetryBehavior.DoNotRetry)
+            };
+            await service.WrapAsync(stream, Context(), "deezer", "track-1", false, () => Task.FromResult<Song?>(null), default);
+            await response.Content.ReadAsByteArrayAsync();
+            var replay = await service.TryOpenAsync(new("deezer", ProviderResourceKind.Track, "track-1"),
+                new(null, stream.EffectiveQuality), default);
+            Assert.NotNull(replay);
+            Assert.Equal(new FileInfo(published!).Length, replay.Response.Content.Headers.ContentLength);
+            if (declared) Assert.Equal(media, replay.Lease.Media);
+            Assert.Equal(96_000, replay.Lease.Media.SampleRate);
+            Assert.Equal(24, replay.Lease.Media.BitDepth);
+            Assert.Equal(2, replay.Lease.Media.Channels);
+            replay.Response.Dispose();
+            local.VerifyAll();
+        }
+        finally { DeleteRoot(root); }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task CompletedFullRangeStream_IsPublishedAndRegistered(bool fallback)
     {
         var root = CreateRoot();
@@ -114,18 +165,24 @@ public sealed partial class ManagedTrackCacheServiceTests
 
             var protocol = Context();
             var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
-            gateway.Setup(item => item.OpenStreamAsync(protocol, "apple-download", "song-1", ProviderAudioQuality.Any, null, false))
-                .ReturnsAsync(new ProtocolProviderStream(response,
+            var routed = new ProtocolProviderStream(response,
                     new("sequential", new Uri("https://media.example.test/track"), DateTimeOffset.UtcNow.AddMinutes(1),
                         false, false, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry),
-                    "apple-download", "song-1"));
+                    "apple-download", "song-1");
+            using var activity = new PlaybackDeliveryActivityStore();
+            activity.StreamOpened(protocol, "ext-apple-download-song-song-1", ProviderAudioQuality.Any, routed);
+            gateway.Setup(item => item.OpenStreamAsync(protocol, "apple-download", "song-1", ProviderAudioQuality.Any, null, false))
+                .ReturnsAsync(routed);
             gateway.Setup(item => item.GetSongAsync(protocol, "apple-download", "song-1"))
                 .ReturnsAsync(new Song { Title = "Song", Artist = "Artist", Album = "Album" });
             var result = await new ProviderStreamOpener(gateway.Object, new ProtocolStreamingResponseAdapter(), service)
                 .OpenAsync(new DefaultHttpContext(), protocol, "apple-download", "song-1", ProviderAudioQuality.Any);
+            var observed = activity.StreamFor(protocol, "ext-apple-download-song-song-1", ProviderAudioQuality.Any)!;
+            Assert.Null(observed.Size);
             using var firstDelivery = new MemoryStream();
             await Assert.IsType<FileStreamResult>(result).FileStream.CopyToAsync(firstDelivery);
             Assert.Equal(flac, firstDelivery.ToArray());
+            Assert.Equal(flac.Length, observed.Size);
             Assert.NotNull(registeredPath);
             Assert.Equal(flac, await File.ReadAllBytesAsync(registeredPath));
             var cached = await service.TryOpenAsync(

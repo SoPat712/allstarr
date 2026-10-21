@@ -715,6 +715,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             ArtistId = album.TryGetProperty("artist", out var artistForId)
                 ? BuildExternalArtistId("deezer", artistForId.GetProperty("id").GetInt64().ToString())
                 : null,
+            ReleaseDate = album.TryGetProperty("release_date", out var fullReleaseDate) ? fullReleaseDate.GetString() : null,
             Year = album.TryGetProperty("release_date", out var releaseDate)
                 ? ParseYearFromDateString(releaseDate.GetString())
                 : null,

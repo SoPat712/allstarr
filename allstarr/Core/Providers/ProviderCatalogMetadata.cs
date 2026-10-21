@@ -417,7 +417,8 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             PublicArtwork(album.CoverArtUrl),
             year: album.Year,
             genre: album.Genre,
-            tracks: album.Songs.Select(MapTrack));
+            tracks: album.Songs.Select(MapTrack),
+            releaseDate: album.ReleaseDate);
     }
 
     private ProviderArtistMetadata MapArtist(Artist artist) => new(

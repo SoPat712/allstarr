@@ -690,6 +690,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
                 ? BuildExternalArtistId("qobuz", GetIdAsString(artistForId.GetProperty("id")))
                 : null,
             Year = year,
+            ReleaseDate = album.TryGetProperty("release_date_original", out var fullReleaseDate) ? fullReleaseDate.GetString() : null,
             SongCount = album.TryGetProperty("tracks_count", out var tracksCount)
                 ? tracksCount.GetInt32()
                 : null,

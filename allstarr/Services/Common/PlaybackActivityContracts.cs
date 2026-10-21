@@ -61,6 +61,11 @@ public sealed record PlaybackStreamSource(
     DateTimeOffset OpenedAt,
     string SelectionReason)
 {
+    private readonly long? size;
+    private readonly ProviderMediaFormat? media;
+    internal PlaybackFileFacts? FileFacts { get; init; }
+    public long? Size { get => FileFacts != null ? FileFacts.Size : size; init => size = value; }
+    public ProviderMediaFormat? Media { get => FileFacts != null ? FileFacts.Media : media; init => media = value; }
     public long? AccountRevision { get; init; }
     public Guid? ManagedFileId { get; init; }
     public string SeekRung { get; init; } = "sequential";
@@ -105,11 +110,16 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
     {
         if (context.Actor?.EffectiveUserId is not { } userId ||
             string.IsNullOrWhiteSpace(context.Client.DeviceId) || stream.ServingExternalId == null) return;
+        stream.FileFacts.Size = stream.Response.StatusCode == System.Net.HttpStatusCode.PartialContent
+            ? stream.Response.Content.Headers.ContentRange?.Length
+            : stream.Response.Content.Headers.ContentLength;
+        stream.FileFacts.Media = stream.Lease.Media;
         var source = new PlaybackStreamSource(stream.ServingProviderId, stream.ServingExternalId,
             stream.ServingAccountId, context.Protocol.ToString().ToLowerInvariant(),
             context.BackendInstanceId, stream.IsCached, DateTimeOffset.UtcNow,
             stream.SelectionReason)
         {
+            FileFacts = stream.FileFacts,
             AccountRevision = stream.ServingAccountRevision,
             ManagedFileId = stream.ServingManagedFileId,
             ObservationToken = stream.ObservationToken,

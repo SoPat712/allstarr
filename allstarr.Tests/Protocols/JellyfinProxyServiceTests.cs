@@ -90,6 +90,35 @@ public class JellyfinProxyServiceTests
             new ConfigurationBuilder().Build());
     }
 
+    [Theory]
+    [InlineData("/Items", true)]
+    [InlineData("/Items", false)]
+    [InlineData("/Items/ext-deezer-song-1", true)]
+    [InlineData("/Items/ext-deezer-song-1", false)]
+    public async Task ExternalArtwork_EmitsOnlyCachedPrimaryHash(string path, bool known)
+    {
+        _service.RememberServerId("primary", "library-server");
+        var http = new DefaultHttpContext();
+        http.Request.Path = path;
+        http.Items[ProtocolExecutionContextFactory.HttpContextItemKey] = new ProtocolExecutionContext(
+            ProtocolKind.Jellyfin, "primary", "listener", null, "test", DateTimeOffset.UtcNow.AddMinutes(1), default);
+        var artwork = new Mock<IMediaAssetResolver>(MockBehavior.Strict);
+        artwork.Setup(value => value.GetCachedBlurHashAsync(new MediaAssetIdentity(null, null, "deezer", "song", "1", null, null, null)))
+            .ReturnsAsync(known ? "L00000fQfQfQfQfQfQfQfQfQfQfQ" : null);
+        const string native = """{"Id":"native","Type":"Audio","ImageBlurHashes":{"Primary":{"native-tag":"original"}}}""";
+        var result = new JsonResult(JsonNode.Parse("""
+            {"Items":[{"Id":"ext-deezer-song-1","Type":"Audio","ImageTags":{"Primary":"art-v2"}},NATIVE]}
+            """.Replace("NATIVE", native, StringComparison.Ordinal)));
+        await new JellyfinItemResponseFilter(_service, artwork.Object).PrepareAsync(result, http);
+        var items = JsonSerializer.SerializeToNode(result.Value)!["Items"]!;
+        Assert.Equal(known, items[0]!.AsObject().ContainsKey("ImageBlurHashes"));
+        if (known) Assert.Equal("L00000fQfQfQfQfQfQfQfQfQfQfQ", items[0]!["ImageBlurHashes"]!["Primary"]!["art-v2"]!.GetValue<string>());
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse(native), items[1]));
+        artwork.VerifyAll();
+        artwork.VerifyNoOtherCalls();
+        _mockHandler.Protected().Verify("SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+    }
+
     [Fact]
     public async Task GetServerIdAsync_FetchesAndCachesTheBackendIdentity()
     {

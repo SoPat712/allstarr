@@ -182,6 +182,12 @@ public sealed partial class TrackIdentityService
             Genre = Field("Genre"),
             ReleaseDate = Field("ReleaseDate"),
             Bitrate = (int?)Number("Bitrate"),
+            Size = Number("Size"),
+            Container = Field("Container"),
+            Codec = Field("Codec"),
+            SampleRate = (int?)Number("SampleRate"),
+            BitDepth = (int?)Number("BitDepth"),
+            Channels = (int?)Number("Channels"),
             ExplicitContentLyrics = (int?)Number("ExplicitContentLyrics") ??
                 (Property(root, "IsExplicit").ValueKind switch { JsonValueKind.True => 1, JsonValueKind.False => 0, _ => (int?)null })
         };

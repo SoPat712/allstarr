@@ -60,6 +60,23 @@ public sealed class PlaybackDeliveryActivityStoreTests
         Assert.Equal("progressive-cache", store.StreamFor(context, "ext-deezer-song-42", ProviderAudioQuality.Any)!.SeekRung);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Opened_PreservesCompleteFileLengthAndLeaseMedia(bool partial)
+    {
+        using var store = new PlaybackDeliveryActivityStore();
+        using var response = new HttpResponseMessage(partial ? HttpStatusCode.PartialContent : HttpStatusCode.OK)
+        { Content = new ByteArrayContent(new byte[100]) };
+        if (partial) response.Content.Headers.ContentRange = new(100, 199, 1000);
+        var context = Context("request");
+        var stream = Stream(response, false, "lease", true);
+        store.StreamOpened(context, "ext-deezer-song-42", ProviderAudioQuality.Any, stream);
+        var source = store.StreamFor(context, "ext-deezer-song-42", ProviderAudioQuality.Any)!;
+        Assert.Equal(partial ? 1000 : 100, source.Size);
+        Assert.Same(stream.Lease.Media, source.Media);
+    }
+
     private static readonly Guid UserId = Guid.CreateVersion7();
     private static readonly Guid AccountId = Guid.CreateVersion7();
     private static ProtocolExecutionContext Context(string correlation) => new(

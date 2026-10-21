@@ -23,6 +23,12 @@ public sealed class Song
     [System.Text.Json.Serialization.JsonIgnore]
     public TimeSpan? PreciseDuration { get; set; }
     public int? Bitrate { get; set; } // In bits per second
+    public long? Size { get; set; }
+    public string? Container { get; set; }
+    public string? Codec { get; set; }
+    public int? SampleRate { get; set; }
+    public int? BitDepth { get; set; }
+    public int? Channels { get; set; }
     public int? Track { get; set; }
     public int? DiscNumber { get; set; }
     public int? TotalTracks { get; set; }

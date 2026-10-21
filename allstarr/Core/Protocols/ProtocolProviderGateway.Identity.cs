@@ -51,6 +51,16 @@ public sealed partial class ProtocolProviderGateway
             if (kept == null) return null;
             chosen = kept;
         }
+        if (songs.FirstOrDefault(song => song.ExternalProvider == "allstarr" && song.Size is > 0) is { } keptSource)
+        {
+            chosen.Size = keptSource.Size;
+            chosen.Container = keptSource.Container;
+            chosen.Codec = keptSource.Codec;
+            chosen.Bitrate = keptSource.Bitrate;
+            chosen.SampleRate = keptSource.SampleRate;
+            chosen.BitDepth = keptSource.BitDepth;
+            chosen.Channels = keptSource.Channels;
+        }
         NormalizeDisplaySource(chosen);
         return chosen;
     }
@@ -112,6 +122,13 @@ public sealed partial class ProtocolProviderGateway
         song.Contributors = source.Contributors.ToList();
         song.Bpm = source.Bpm;
         song.SpotifyId = source.SpotifyId;
+        song.Size = source.Size;
+        song.Container = source.Container;
+        song.Codec = source.Codec;
+        song.Bitrate = source.Bitrate;
+        song.SampleRate = source.SampleRate;
+        song.BitDepth = source.BitDepth;
+        song.Channels = source.Channels;
     }
 
     private static int DisplayProviderPriority(string? provider) => NormalizeProvider(provider) switch

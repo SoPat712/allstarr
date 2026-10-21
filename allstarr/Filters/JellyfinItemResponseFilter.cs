@@ -3,12 +3,14 @@ using System.Text.Json.Nodes;
 using allstarr.Core.Playlists;
 using allstarr.Core.Protocols;
 using allstarr.Services.Jellyfin;
+using allstarr.Services.Common;
+using allstarr.Services.Local;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace allstarr.Filters;
 
-public sealed class JellyfinItemResponseFilter(JellyfinProxyService proxy) : IAsyncResultFilter
+public sealed class JellyfinItemResponseFilter(JellyfinProxyService proxy, IMediaAssetResolver? artwork = null) : IAsyncResultFilter
 {
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
@@ -47,6 +49,15 @@ public sealed class JellyfinItemResponseFilter(JellyfinProxyService proxy) : IAs
         {
             item.Remove("ServerId");
             item.Insert(Math.Min(1, item.Count), "ServerId", JsonValue.Create(serverId));
+            if (artwork != null && item["ImageTags"]?["Primary"] is JsonValue primary &&
+                primary.TryGetValue<string>(out var tag) && !string.IsNullOrWhiteSpace(tag))
+            {
+                var parsed = LocalLibraryService.ParseExternalResource(item["Id"]!.GetValue<string>());
+                if (parsed.isExternal && await artwork.GetCachedBlurHashAsync(new MediaAssetIdentity(
+                    http.GetProtocolExecutionContext()?.Actor?.EffectiveUserId, null,
+                    parsed.provider!, parsed.type!, parsed.externalId!)) is { Length: > 0 } hash)
+                    item["ImageBlurHashes"] = new JsonObject { ["Primary"] = new JsonObject { [tag] = hash } };
+            }
             JellyfinItemFields.ForRequest(http).Apply(item);
         }
         if (result is JsonResult jsonResult) jsonResult.Value = root;

@@ -59,6 +59,9 @@ public sealed partial class TrackIdentityServiceTests
             Assert.Equal(expected.AlbumArtist, song.AlbumArtist);
             Assert.Equal(expected.AlbumId, song.AlbumId);
             Assert.Equal(expected.Year, song.Year);
+            Assert.Equal(expected.ReleaseDate, song.ReleaseDate);
+            Assert.Equal(expected.Size, song.Size);
+            Assert.Equal(expected.SampleRate, song.SampleRate);
             Assert.Equal(expected.CoverArtUrl, song.CoverArtUrl);
             Assert.Equal(expected.Composer, song.Composer);
             Assert.Equal("GBUM72403956", song.Isrc);
@@ -69,6 +72,10 @@ public sealed partial class TrackIdentityServiceTests
                 var item = new JellyfinResponseBuilder().ConvertSongToJellyfinItem(song, null, null, true);
                 Assert.Equal(expected.AlbumId, item["AlbumId"]);
                 Assert.Equal(expected.AlbumId, item["ParentId"]);
+                Assert.Equal(expected.ReleaseDate + "T00:00:00.0000000Z", item["PremiereDate"]);
+                var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(item["MediaSources"]));
+                Assert.Equal(expected.Size, source["Size"]);
+                Assert.Equal(expected.Bitrate, source["Bitrate"]);
                 var providers = Assert.IsType<Dictionary<string, string>>(item["ProviderIds"]);
                 Assert.Equal(expected.ExternalId, providers[expected.ExternalProvider!]);
                 Assert.Equal(2, providers.Count);
@@ -346,6 +353,13 @@ public sealed partial class TrackIdentityServiceTests
                 AlbumId = albumId,
                 AlbumArtist = "FLO",
                 Year = provider == "apple-musickit" ? 2024 : 2023,
+                ReleaseDate = provider == "apple-musickit" ? "2024-11-15" : "2023-08-04",
+                Size = 12_000_000,
+                Bitrate = 900_000,
+                Codec = "flac",
+                SampleRate = 96_000,
+                BitDepth = 24,
+                Channels = 2,
                 CoverArtUrl = $"https://images.example.test/{provider}",
                 Isrc = "GBUM72403956",
                 Duration = 180,

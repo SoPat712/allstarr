@@ -9,6 +9,7 @@ public class Album
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
+    public string? ReleaseDate { get; set; }
     public int? Year { get; set; }
     public int? SongCount { get; set; }
     public string? CoverArtUrl { get; set; }

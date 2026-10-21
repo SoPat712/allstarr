@@ -174,7 +174,8 @@ public sealed record ProviderAlbumMetadata
         string? snapshotVersion = null,
         int? year = null,
         string? genre = null,
-        IEnumerable<ProviderTrackMetadata>? tracks = null)
+        IEnumerable<ProviderTrackMetadata>? tracks = null,
+        string? releaseDate = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Album);
@@ -205,6 +206,7 @@ public sealed record ProviderAlbumMetadata
             snapshotVersion,
             nameof(snapshotVersion),
             300);
+        ReleaseDate = ProviderContractValidation.OptionalText(releaseDate, nameof(releaseDate), 40);
         Year = year;
         Genre = ProviderContractValidation.OptionalText(genre, nameof(genre), 300);
         Tracks = tracks == null ? [] : ProviderContractValidation.Copy(tracks);
@@ -225,6 +227,8 @@ public sealed record ProviderAlbumMetadata
     public ProviderArtworkReference? Artwork { get; }
 
     public string? SnapshotVersion { get; }
+
+    public string? ReleaseDate { get; }
 
     public int? Year { get; }
 
