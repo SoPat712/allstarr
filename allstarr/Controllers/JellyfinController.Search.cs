@@ -425,7 +425,13 @@ public partial class JellyfinController
         };
         return kind == null
             ? null
-            : new(kind.Value, GetItemStringValue(item, "Id"), GetItemName(item), SearchArtistText(item), item);
+            : new(kind.Value, GetItemStringValue(item, "Id"), GetItemName(item), SearchArtistText(item), item)
+            {
+                AlbumText = GetItemStringValue(item, "Album"),
+                AlbumArtistText = GetItemStringValue(item, "AlbumArtist"),
+                DurationSeconds = long.TryParse(GetItemStringValue(item, "RunTimeTicks"), out var ticks)
+                    ? (double)ticks / TimeSpan.TicksPerSecond : null
+            };
     }
 
     /// <summary>The backend half of a Jellyfin integrated search.</summary>
@@ -762,7 +768,7 @@ public partial class JellyfinController
         var artists = GetItemStringList(item, "Artists").Take(3).ToList();
         if (artists.Count > 0)
         {
-            return string.Join(" ", artists);
+            return string.Join(", ", artists);
         }
 
         var albumArtist = GetItemStringValue(item, "AlbumArtist");

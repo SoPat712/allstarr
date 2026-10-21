@@ -5,6 +5,61 @@ namespace allstarr.Tests;
 public sealed class SearchRelevanceRankerTests
 {
     [Theory]
+    [InlineData("Get Lucky (Daft Punk)", "Charlie Parra Del Riego")]
+    [InlineData("Daft Punk - Get Lucky", "Various Artists")]
+    [InlineData("Get Lucky - Daft Punk", "Teenage Kicks.")]
+    [InlineData("Get Lucky", "Daft Punk Experience")]
+    public void MainArtistMatchOutranksArtistTokensInTheTitleOrALongerArtistName(string title, string artist)
+    {
+        Assert.True(SearchRelevanceRanker.Score("Get Lucky Daft Punk", "Get Lucky", "Daft Punk") >
+                    SearchRelevanceRanker.Score("Get Lucky Daft Punk", title, artist));
+    }
+
+    [Theory]
+    [InlineData("Originally by Daft Punk")]
+    [InlineData("Originally performed by Daft Punk")]
+    [InlineData("In the style of Daft Punk")]
+    [InlineData("Made famous by Daft Punk")]
+    [InlineData("Lullaby Version")]
+    [InlineData("Music Box Version")]
+    [InlineData("Bossa Nova Version")]
+    [InlineData("8-bit Version")]
+    [InlineData("8-bit")]
+    [InlineData("Piano Cover")]
+    public void SharedClassifiersRecognizeDerivativeRecordings(string label)
+    {
+        Assert.True(FuzzyMatcher.HasCoverRecordingLabel(label) || FuzzyMatcher.BackingRecordingTags(label).Count > 0);
+    }
+
+    [Fact]
+    public void OriginalAlbumVersionOutranksRadioEditUnlessRequested()
+    {
+        Assert.True(SearchRelevanceRanker.Score("Get Lucky", "Get Lucky", "Daft Punk") >
+                    SearchRelevanceRanker.Score("Get Lucky", "Get Lucky (Radio Edit)", "Daft Punk"));
+        Assert.True(SearchRelevanceRanker.Score("Get Lucky radio edit", "Get Lucky (Radio Edit)", "Daft Punk") >
+                    SearchRelevanceRanker.Score("Get Lucky radio edit", "Get Lucky", "Daft Punk"));
+    }
+
+    [Theory]
+    [InlineData("Album Version")]
+    [InlineData("Original Mix")]
+    public void OriginalReleaseLabelsKeepThePreferenceOverRadioEdits(string label)
+    {
+        Assert.True(SearchRelevanceRanker.Score("Get Lucky Daft Punk", $"Get Lucky ({label})", "Daft Punk") >
+                    SearchRelevanceRanker.Score("Get Lucky Daft Punk", "Get Lucky (Radio Edit)", "Daft Punk"));
+    }
+
+    [Theory]
+    [InlineData("Music Box Version")]
+    [InlineData("Lullaby Version")]
+    [InlineData("Piano Cover")]
+    public void DerivativeLabelsRemainBelowGenuineVersionsEvenWithMatchingArtistCredits(string label)
+    {
+        Assert.True(SearchRelevanceRanker.Score("Get Lucky Daft Punk", "Get Lucky (Radio Edit)", "Daft Punk") >
+                    SearchRelevanceRanker.Score("Get Lucky Daft Punk", $"Get Lucky ({label})", "Daft Punk"));
+    }
+
+    [Theory]
     [InlineData("Daft Punk Get Lucky")]
     [InlineData("Get Lucky")]
     public void OriginalRecordingOutranksAnUnrequestedUploadVariant(string query)

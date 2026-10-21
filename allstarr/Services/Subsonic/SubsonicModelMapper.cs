@@ -129,7 +129,12 @@ public class SubsonicModelMapper
         GetSearchField(item, "id"),
         kind == MusicItemKind.Song ? GetSearchField(item, "title") : NameOrTitle(item),
         kind == MusicItemKind.Artist ? null : GetSearchField(item, "artist"),
-        item);
+        item)
+    {
+        AlbumText = GetSearchField(item, "album"),
+        AlbumArtistText = GetSearchField(item, "albumArtist"),
+        DurationSeconds = int.TryParse(GetSearchField(item, "duration"), out var seconds) ? seconds : null
+    };
 
     /// <summary>Renders merged search rows: native rows keep every field, provider rows are converted.</summary>
     /// <param name="directoryAlbums">
