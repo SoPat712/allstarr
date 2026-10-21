@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, intelligence, normalizeResponse, sources } from "./api";
+import { ApiError, intelligence, normalizeResponse, settings, sources } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -83,6 +83,20 @@ describe("API response normalization", () => {
         providerId: "qobuz", displayName: "My Qobuz", scope: "Personal", enabled: true,
         secret: { userId: "listener" },
       }),
+    }));
+  });
+});
+
+describe("challenge solver test contract", () => {
+  it("reads the server camelCase result and sends the current address", async () => {
+    const response = { ok: true, message: "Solver reachable", version: "unknown" };
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify(response), { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    expect(await settings.testChallengeSolver("http://solver:8191")).toEqual(response);
+    expect(fetch).toHaveBeenCalledWith("/api/admin/challenge-solver/test", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ url: "http://solver:8191", timeoutSeconds: 60 }),
     }));
   });
 });

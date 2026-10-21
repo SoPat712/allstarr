@@ -7387,7 +7387,7 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
     await page.route("**/api/admin/challenge-solver/test", route => {
       expect(route.request().method()).toBe("POST");
       requests.push(route.request().postDataJSON());
-      return route.fulfill({ json: { ok: true, message: "Solver reachable", version: "3.3.0" } });
+      return route.fulfill({ json: { ok: true, message: "Solver reachable", version: "unknown" } });
     });
     await page.goto("#/settings/general");
     await expect(page.getByRole("heading", { name: "General", level: 2 })).toBeVisible();

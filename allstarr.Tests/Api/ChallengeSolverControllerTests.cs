@@ -1,3 +1,4 @@
+using System.Text.Json;
 using allstarr.Controllers;
 using allstarr.Services.Admin;
 using allstarr.Services.Common;
@@ -75,6 +76,11 @@ public sealed class ChallengeSolverControllerTests
         {
             var body = Assert.IsType<ChallengeSolverTestResult>(Assert.IsType<OkObjectResult>(result).Value);
             Assert.True(body.Ok);
+            using var json = JsonDocument.Parse(JsonSerializer.Serialize(body, new JsonSerializerOptions { PropertyNamingPolicy = null }));
+            Assert.Equal(new[] { "ok", "message", "version" }, json.RootElement.EnumerateObject().Select(property => property.Name));
+            Assert.True(json.RootElement.GetProperty("ok").GetBoolean());
+            Assert.Equal("Solver reachable", json.RootElement.GetProperty("message").GetString());
+            Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("version").ValueKind);
         }
         else Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
         Assert.Equal(active ? 1 : 0, transport.Calls);
