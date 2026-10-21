@@ -98,6 +98,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
     public string JobType => PlaybackSignalPipeline.JobType;
     public async Task RecoverAsync(CancellationToken cancellationToken)
     {
+        if (recoveryJobs != null)
+            await new PlaybackScrobbleRepair(factory, recoveryJobs, tracks).ReconcileStartupAsync(cancellationToken);
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         await db.PlaybackDeliveryCheckpoints.Where(x => x.AttemptStartedAt != null && !x.ReplaySafe &&
                 x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.TargetId != "lastfm")
@@ -121,6 +123,15 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             }
         }
     }
+    public async Task RecoverCompletedAsync(DurableJobClaim claim, CancellationToken cancellationToken)
+    {
+        if (recoveryJobs == null || claim.Type != JobType) return;
+        var payload = claim.Payload.Deserialize<PlaybackSignalPayload>();
+        if (payload != null && claim.OwnerUserId == payload.Scope.OwnerUserId)
+            await new PlaybackScrobbleRepair(factory, recoveryJobs, tracks).RecoverPendingAsync(cancellationToken,
+                payload.Scope.OwnerUserId, payload.OccurrenceKey ?? payload.SignalKey);
+    }
+
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
         var payload = execution.Claim.Payload.Deserialize<PlaybackSignalPayload>();
@@ -163,7 +174,7 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
             {
                 var key = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
                 await ownerDb.PlaybackDeliveryCheckpoints.Where(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
-                        x.SignalKey == key && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null)
+                        x.SignalKey == key && x.State == ScopedPlaybackScrobbleOutcome.Retrying && x.AttemptStartedAt == null && x.SendCount > 0)
                     .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.State, ScopedPlaybackScrobbleOutcome.PermanentFailure)
                         .SetProperty(x => x.ProviderCode, "retry-exhausted")
                         .SetProperty(x => x.SafeMessage, "Automatic retries are exhausted. Check the destination and explicitly retry this saved listen.")

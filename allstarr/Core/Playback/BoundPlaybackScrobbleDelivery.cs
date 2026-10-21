@@ -37,9 +37,34 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
     {
         var gate = Gate(payload.Scope.OwnerUserId, ScopedPlaybackScrobbleDelivery.CheckpointKey(payload), target.ProviderId);
         await gate.WaitAsync(token);
-        try { return await DeliverCoreAsync(target, payload, track, occurredAt, token); }
+        try
+        {
+            try { return await DeliverCoreAsync(target, payload, track, occurredAt, token); }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+            catch (Exception)
+            {
+                await using var db = await factory.CreateDbContextAsync(token);
+                var row = await db.PlaybackDeliveryCheckpoints.AsNoTracking().SingleOrDefaultAsync(x =>
+                    x.OwnerUserId == payload.Scope.OwnerUserId && x.SignalKey == ScopedPlaybackScrobbleDelivery.CheckpointKey(payload) &&
+                    x.TargetId == target.ProviderId, token);
+                var uncertain = row != null && IsUncertain(row);
+                var result = uncertain
+                    ? ScopedPlaybackScrobbleResult.Permanent("ambiguous",
+                        "Delivery could not be confirmed after its attempt began. Check the destination history before retrying.")
+                    : ScopedPlaybackScrobbleResult.Retrying("transport-failure", "The saved destination could not be processed yet.");
+                await checkpoints.RecordAsync(payload.Scope.OwnerUserId, payload.OccurrenceKey ?? payload.SignalKey,
+                    ScopedPlaybackScrobbleDelivery.CheckpointKey(payload),
+                    payload.Transition is PlaybackTransition.Start or PlaybackTransition.InferredStart
+                        ? PlaybackScrobbleDeliveryKind.NowPlaying : PlaybackScrobbleDeliveryKind.Completed,
+                    target.ProviderId, result, token);
+                return result;
+            }
+        }
         finally { gate.Release(); }
     }
+
+    internal static bool IsUncertain(PlaybackDeliveryCheckpointEntity row) =>
+        !row.ReplaySafe && (row.AttemptStartedAt != null || row.ProviderCode is "ambiguous" or "verification-pending");
 
     internal static SemaphoreSlim Gate(Guid owner, string key, string target) =>
         Gates[(int)((uint)HashCode.Combine(owner, key, target) % Gates.Length)];
@@ -58,6 +83,7 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
             return new(row.State, row.ProviderCode, row.SafeMessage, row.DetailsJson);
         if (row?.State == ScopedPlaybackScrobbleOutcome.PermanentFailure &&
             (row.DestinationJson != null || row.ProviderCode == "destination-unbound") &&
+            row.ProviderCode != "listen-incomplete" &&
             !(row.ProviderCode == "ambiguous" && target is IVerifiablePlaybackScrobbleTarget))
             return new(row.State, row.ProviderCode, row.SafeMessage, row.DetailsJson, RequiresReauthentication: row.RequiresReauthentication);
         if (row == null && payload.DestinationTargets == null && await target.FindDestinationAsync(payload.Scope, token) == null)
@@ -99,7 +125,7 @@ public sealed class BoundPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbCo
         row.SignalPayloadJson ??= JsonSerializer.Serialize(payload);
         var submission = JsonSerializer.Deserialize<PlaybackScrobbleSubmission>(row.SubmissionJson)!;
         var replay = kind == PlaybackScrobbleDeliveryKind.NowPlaying;
-        if (!replay && !row.ReplaySafe && (row.AttemptStartedAt != null || row.ProviderCode == "ambiguous"))
+        if (!replay && IsUncertain(row))
         {
             var verification = await VerifyUncertainAsync(target, payload, account, submission, row, token);
             if (verification != null)
