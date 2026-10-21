@@ -17,6 +17,25 @@ namespace allstarr.Core.Storage.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
+            modelBuilder.Entity("allstarr.Core.Storage.SubsonicPlayQueueRecord", b =>
+                {
+                    b.Property<string>("BackendInstanceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendPrincipalId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PayloadJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("BackendInstanceId", "BackendPrincipalId");
+
+                    b.ToTable("subsonic_play_queues", (string)null);
+                });
+
             modelBuilder.Entity("allstarr.Core.Downloads.DownloadedSongMappingEntity", b =>
                 {
                     b.Property<Guid>("Id")

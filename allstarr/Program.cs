@@ -408,6 +408,7 @@ else if (backendType == BackendType.Subsonic)
     builder.Services.AddSingleton<SubsonicRelayProtocolAdapter>();
     builder.Services.AddSingleton<SubsonicSearchProtocolAdapter>();
     builder.Services.AddSingleton<SubsonicScrobbleProtocolAdapter>();
+    builder.Services.AddSingleton<SubsonicPlayQueueStore>();
     builder.Services.AddScoped<SubsonicAuthFilter>();
     builder.Services.AddScoped<SubsonicExceptionFilter>();
 }

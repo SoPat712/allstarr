@@ -95,6 +95,7 @@ public sealed class ProviderHealthMigrationTests
 
         await db.Database.MigrateAsync();
         Assert.Empty(await db.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await db.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.Equal(beforeRows, await Rows(db));
         Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -119,6 +120,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(DurableStorageReadiness.Ready, state.GetSnapshot().Readiness);
         await using var restored = await factory.CreateDbContextAsync();
         Assert.Empty(await restored.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await restored.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -197,6 +199,10 @@ public sealed class ProviderHealthMigrationTests
         Assert.DoesNotContain(before, row => row.Name == storageIdentity);
         Assert.Single(after, row => row.Type == "table" && row.Name == storageIdentity);
 
+        const string queueTable = "subsonic_play_queues";
+        Assert.DoesNotContain(before, row => row.Name == queueTable);
+        Assert.Single(after, row => row.Type == "table" && row.Name == queueTable);
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -208,7 +214,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();

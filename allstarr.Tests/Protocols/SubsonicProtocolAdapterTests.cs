@@ -9,7 +9,7 @@ using Microsoft.AspNetCore.Http;
 
 namespace allstarr.Tests;
 
-public sealed class SubsonicProtocolAdapterTests
+public sealed partial class SubsonicProtocolAdapterTests
 {
     [Fact]
     public void SearchWindow_UsesIndependentOffsetsAndCounts()

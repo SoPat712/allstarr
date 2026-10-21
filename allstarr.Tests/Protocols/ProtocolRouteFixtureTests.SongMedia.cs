@@ -203,7 +203,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("getPlayQueueByIndex", "playQueue", "entry")]
     [InlineData("getNowPlaying", "nowPlaying", "entry")]
     [InlineData("getPlaylist", "playlist", "entry")]
-    public async Task SubsonicSongRelays_PreserveNativeBytesAndDoNotDiscoverProviderSongs(
+    public async Task SubsonicSongReads_PreserveNativeEntriesAndDoNotDiscoverProviderSongs(
         string endpoint, string collection, string entry)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -216,7 +216,28 @@ public sealed partial class ProtocolRouteFixtureTests
             using var response = await client.GetAsync($"/rest/{endpoint}.view?u=fixture&p=fixture-password&v=1.16.1&c=tempo&f={format}&size=20&genre=Rock");
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            Assert.Equal(format == "json" ? nativeJson : nativeXml, await response.Content.ReadAsStringAsync());
+            var body = await response.Content.ReadAsStringAsync();
+            if (endpoint != "getPlayQueueByIndex")
+                Assert.Equal(format == "json" ? nativeJson : nativeXml, body);
+            else if (format == "json")
+            {
+                using var original = JsonDocument.Parse(nativeJson);
+                using var projected = JsonDocument.Parse(body);
+                var queue = projected.RootElement.GetProperty("subsonic-response").GetProperty("playQueueByIndex");
+                Assert.Equal(0, queue.GetProperty("currentIndex").GetInt32());
+                Assert.Equal(original.RootElement.GetProperty("subsonic-response").GetProperty(collection)
+                    .GetProperty(entry)[0].GetRawText(), Assert.Single(queue.GetProperty(entry).EnumerateArray()).GetRawText());
+            }
+            else
+            {
+                var start = nativeXml.IndexOf("<entry ", StringComparison.Ordinal);
+                var end = nativeXml.IndexOf("</entry>", StringComparison.Ordinal) + "</entry>".Length;
+                Assert.Contains(nativeXml[start..end], body, StringComparison.Ordinal);
+                var root = XDocument.Parse(body).Root!;
+                var queue = root.Element(root.Name.Namespace + "playQueueByIndex")!;
+                Assert.Equal("0", queue.Attribute("currentIndex")?.Value);
+                Assert.Single(queue.Elements(root.Name.Namespace + entry));
+            }
         }
         gateway.VerifyNoOtherCalls();
     }
