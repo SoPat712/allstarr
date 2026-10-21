@@ -16,7 +16,7 @@ public sealed class MetadataLyricsCapabilityAdapterTests
         """;
 
     [Fact]
-    public async Task BiniSolvesApiAndStorageIndependentlyAndParsesRenderedLyrics()
+    public async Task BiniSolvesApiAndStorageIndependentlyAndParsesRenderedLyricsWithChallengeQuery()
     {
         var targets = new List<Uri>();
         var solver = new CloudflareChallengeSolver(new HttpClient(new Handler((request, _) =>
@@ -29,10 +29,11 @@ public sealed class MetadataLyricsCapabilityAdapterTests
                 status = "ok",
                 solution = new
                 {
-                    url = target.AbsoluteUri,
+                    url = target.AbsoluteUri + (target.Query.Length == 0 ? "?" : "&") + "__cf_chl_tk=challenge-secret",
                     status = 200,
                     response = "<html><head></head><body><pre style=\"word-wrap: break-word; white-space: pre-wrap;\">" +
-                        WebUtility.HtmlEncode(target.Host == "lyrics-api.binimum.org" ? Lookup : Ttml) + "</pre></body></html>",
+                        WebUtility.HtmlEncode(target.Host == "lyrics-api.binimum.org"
+                            ? Lookup.Replace("Fixture", "Espresso").Replace("Artist", "Sabrina Carpenter").Replace("180", "175") : Ttml) + "</pre></body></html>",
                     headers = new Dictionary<string, string> { ["Content-Type"] = "text/html" },
                     userAgent = "FixtureBrowser/1.0",
                     cookies = Array.Empty<object>()
@@ -52,9 +53,15 @@ public sealed class MetadataLyricsCapabilityAdapterTests
             })
         });
         var adapter = new BiniLyricsCapabilityAdapter(client, null, solver: solver);
-        var value = (await adapter.FetchLyricsAsync(Context("binilyrics"), Request("binilyrics", isrc: "USABC1234567"))).RequireValue();
+        var lookupRequest = new ProviderLyricsRequest(Guid.CreateVersion7(), new("binilyrics", ProviderResourceKind.Track, "lookup"),
+            trackTitle: "Espresso", artistNames: ["Sabrina Carpenter"], albumTitle: "Album", durationSeconds: 175);
+        var value = (await adapter.FetchLyricsAsync(Context("binilyrics"), lookupRequest)).RequireValue();
         Assert.Equal("[00:01.250]Synthetic words", value.Content);
-        Assert.Equal(new[] { "lyrics-api.binimum.org", "lyrics-storage.binimum.org" }, targets.Select(target => target.Host));
+        Assert.Equal(new[]
+        {
+            "https://lyrics-api.binimum.org/?track=Espresso&artist=Sabrina%20Carpenter&album=Album&duration=175",
+            "https://lyrics-storage.binimum.org/USABC1234567.ttml"
+        }, targets.Select(target => target.AbsoluteUri));
     }
 
     [Fact]
