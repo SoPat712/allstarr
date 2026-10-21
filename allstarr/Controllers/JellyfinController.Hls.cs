@@ -1,0 +1,69 @@
+using System.Globalization;
+using allstarr.Core.Music;
+using allstarr.Core.Protocols;
+using Microsoft.AspNetCore.Mvc;
+
+namespace allstarr.Controllers;
+
+public partial class JellyfinController
+{
+    [HttpGet("Audio/{itemId}/main.m3u8")]
+    [HttpHead("Audio/{itemId}/main.m3u8")]
+    public async Task<IActionResult> HlsAudio(string itemId, [FromServices] ProviderHlsSessions sessions)
+    {
+        var (external, provider, externalId) = _localLibraryService.ParseSongId(itemId);
+        if (external && await ResolveKnownNativeTrackAsync(itemId) is { } nativeId)
+        {
+            itemId = nativeId;
+            external = false;
+        }
+        if (!external)
+            return await ProxyJellyfinStream($"Audio/{itemId}/main.m3u8{Request.QueryString}", itemId);
+
+        try
+        {
+            var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query);
+            var start = delivery.StartTimeTicks / (double)TimeSpan.TicksPerSecond;
+            var container = Request.Query["segmentContainer"].ToString();
+            if (container.Length > 0 && !container.Equals("mp4", StringComparison.OrdinalIgnoreCase))
+                throw new ProviderAudioProfileException("Only original fragmented MP4 HLS segments are available; segment conversion is unavailable.");
+            var session = await sessions.CreateAsync(HttpContext.RequireProtocolExecutionContext(), itemId,
+                provider!, externalId!, delivery with { StartTimeTicks = 0 }, start);
+            var credentials = QueryString.Create(Request.Query
+                .Where(pair => pair.Key.Equals("ApiKey", StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("api_key", StringComparison.OrdinalIgnoreCase) ||
+                    pair.Key.Equals("access_token", StringComparison.OrdinalIgnoreCase)));
+            var prefix = $"hls/{session.Id}/";
+            var manifest = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-PLAYLIST-TYPE:VOD\n" +
+                $"#EXT-X-TARGETDURATION:{Math.Ceiling(session.Duration).ToString(CultureInfo.InvariantCulture)}\n" +
+                "#EXT-X-MEDIA-SEQUENCE:0\n" +
+                (start > 0 ? $"#EXT-X-START:TIME-OFFSET={start.ToString("0.#######", CultureInfo.InvariantCulture)},PRECISE=YES\n" : "") +
+                $"#EXT-X-MAP:URI=\"{prefix}init.mp4{credentials}\"\n" +
+                $"#EXTINF:{session.Duration.ToString("0.######", CultureInfo.InvariantCulture)},\n" +
+                $"{prefix}0.mp4{credentials}\n#EXT-X-ENDLIST\n";
+            Response.Headers.CacheControl = "private, no-store";
+            return Content(manifest, "application/vnd.apple.mpegurl");
+        }
+        catch (Exception error)
+        {
+            return HandleExternalStreamFailure(provider!, externalId!, error);
+        }
+    }
+
+    [HttpGet("Audio/{itemId}/hls/{sessionId}/{part}")]
+    [HttpHead("Audio/{itemId}/hls/{sessionId}/{part}")]
+    public IActionResult HlsAudioSegment(string itemId, string sessionId, string part, [FromServices] ProviderHlsSessions sessions)
+    {
+        if (part is not ("init.mp4" or "0.mp4")) return NotFound();
+        var session = sessions.Find(sessionId);
+        if (session == null) return StatusCode(StatusCodes.Status410Gone);
+        var context = HttpContext.RequireProtocolExecutionContext();
+        if (session.ItemId != itemId || session.BackendInstanceId != context.BackendInstanceId ||
+            session.PrincipalId != context.VerifiedBackendPrincipalId) return NotFound();
+        var initialization = part == "init.mp4";
+        Response.Headers.CacheControl = "private, no-store";
+        return File(new MemoryStream(session.Bytes, initialization ? 0 : session.InitializationLength,
+            initialization ? session.InitializationLength : session.Bytes.Length - session.InitializationLength, writable: false),
+            "audio/mp4", enableRangeProcessing: true);
+    }
+}

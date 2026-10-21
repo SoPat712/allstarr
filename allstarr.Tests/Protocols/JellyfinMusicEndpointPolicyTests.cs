@@ -168,6 +168,16 @@ public sealed class JellyfinMusicEndpointPolicyTests
     [InlineData("POST", "/UserItems/ext-provider-song-1/UserData", false)]
     [InlineData("POST", "/UserPlayedItems/ext-provider-song-1", true)]
     [InlineData("POST", "/PlayingItems/ext-provider-song-1", false)]
+    [InlineData("GET", "/Audio/ext-provider-song-1/main.m3u8", true)]
+    [InlineData("HEAD", "/Audio/ext-provider-song-1/main.m3u8", true)]
+    [InlineData("GET", "/Audio/ext-provider-song-1/hls/0123456789abcdef0123456789abcdef/init.mp4", true)]
+    [InlineData("HEAD", "/Audio/ext-provider-song-1/hls/0123456789abcdef0123456789abcdef/0.mp4", true)]
+    [InlineData("GET", "/Audio/ext-provider-song-1/hls/0123456789abcdef0123456789abcdef/admin.mp4", false)]
+    [InlineData("GET", "/Audio/ext-provider-song-1/hls/0123456789abcdef0123456789abcdef/1.mp4", false)]
+    [InlineData("GET", "/Audio/ext-provider-song-1/hls/invalid/0.mp4", false)]
+    [InlineData("POST", "/Audio/ext-provider-song-1/main.m3u8", false)]
+    [InlineData("GET", "/Audio/ext-provider-album-1/main.m3u8", false)]
+    [InlineData("GET", "/Audio/ext-provider-song-1/master.m3u8", false)]
     public void SynthesizedMusicItems_OnlyUseImplementedClientRoutes(
         string method,
         string target,
