@@ -735,6 +735,16 @@ public static class SpotiFlacExtensionCompatibility
           value = value && (value.artist || value) || {};
           return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value), snapshotVersion: null };
         }
+        function _sfSearchFilter(filter) {
+          var declared = (_sfManifest.searchBehavior || {}).filters;
+          var singular = filter.replace(/s$/, '');
+          if (!Array.isArray(declared)) return singular;
+          var candidates = filter === 'tracks' ? [filter, singular, 'songs', 'song'] : [filter, singular];
+          for (var i = 0; i < candidates.length; i++) {
+            if (declared.some(function(item) { return item && item.id === candidates[i]; })) return candidates[i];
+          }
+          return singular;
+        }
         function _sfSearch(request, filter, mapper) {
           // As in SpotiFLAC-Mobile: typed search hooks take (query, limit) and return {tracks|albums|artists}; customSearch takes options.
           var typed = _spotiflacExtension['search' + filter.charAt(0).toUpperCase() + filter.slice(1)];
@@ -744,7 +754,7 @@ public static class SpotiFlacExtensionCompatibility
             result = typed.call(_spotiflacExtension, request.query || '', limit);
             if (result && !Array.isArray(result) && Array.isArray(result[filter])) result = result[filter];
           } else if (typeof _spotiflacExtension.customSearch === 'function') {
-            result = _spotiflacExtension.customSearch(request.query || '', { limit: limit, filter: filter.replace(/s$/, '') });
+            result = _spotiflacExtension.customSearch(request.query || '', { limit: limit, filter: _sfSearchFilter(filter) });
           } else return { items: [], isPartial: false };
           // Typed hooks may delegate to an unfiltered customSearch, so results are always filtered by type ("song" counts as a track).
           var singular = filter.replace(/s$/, '');

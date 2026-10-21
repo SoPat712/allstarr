@@ -256,7 +256,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
             function track(id) { return {id:id,name:'Get Lucky' + (country ? ' ' + country : ''),artists:'The Infamous Stringdusters'}; }
             registerExtension({
               initialize:function(settings){ country = settings.countryCode || ''; },
-              customSearch:function(query,options){ authorize(); return options.filter === 'track' ? [track('track')] : []; },
+              customSearch:function(query,options){ authorize(); return options.filter === 'track' || options.filter === 'songs' ? [track('track')] : []; },
               getTrack:function(id){ authorize(); return track(id); },
               checkAvailability:function(){
                 if (!requiresPreparation) throw new Error('availability must not run');
