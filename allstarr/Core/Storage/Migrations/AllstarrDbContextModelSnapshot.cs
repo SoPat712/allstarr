@@ -17,6 +17,43 @@ namespace allstarr.Core.Storage.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.9");
 
+            modelBuilder.Entity("allstarr.Core.Storage.ProviderUserDataRecord", b =>
+                {
+                    b.Property<Guid>("OwnerUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Protocol")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendInstanceId")
+                        .HasMaxLength(200)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ItemId")
+                        .HasMaxLength(500)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("HistoryResetAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool?>("Played")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<long?>("PlayedAt")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int?>("Rating")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("OwnerUserId", "Protocol", "BackendInstanceId", "ItemId");
+
+                    b.ToTable("provider_user_data", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_provider_user_data_rating", "\"Rating\" IS NULL OR (\"Rating\" >= 0 AND \"Rating\" <= 5)");
+                        });
+                });
+
             modelBuilder.Entity("allstarr.Core.Storage.SubsonicPlayQueueRecord", b =>
                 {
                     b.Property<string>("BackendInstanceId")
@@ -788,6 +825,9 @@ namespace allstarr.Core.Storage.Migrations
                     b.Property<string>("RecordingMusicBrainzId")
                         .HasMaxLength(100)
                         .HasColumnType("TEXT");
+
+                    b.Property<long?>("ResumePositionTicks")
+                        .HasColumnType("INTEGER");
 
                     b.Property<long>("Revision")
                         .IsConcurrencyToken()
@@ -3962,6 +4002,15 @@ namespace allstarr.Core.Storage.Migrations
                 });
 
             modelBuilder.Entity("allstarr.Core.Intelligence.IntelligencePolicyRecord", b =>
+                {
+                    b.HasOne("allstarr.Core.Storage.UserRecord", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("allstarr.Core.Storage.ProviderUserDataRecord", b =>
                 {
                     b.HasOne("allstarr.Core.Storage.UserRecord", null)
                         .WithMany()

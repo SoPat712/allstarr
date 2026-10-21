@@ -129,6 +129,7 @@
     "scrobble",
     "search2",
     "search3",
+    "setRating",
     "star",
     "stream",
     "unstar",
@@ -157,7 +158,6 @@
     "getTranscodeStream",
     "getUser",
     "search",
-    "setRating",
     "tokenInfo"
   ],
   "denied": {

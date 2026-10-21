@@ -34,7 +34,6 @@ public static class SubsonicMusicEndpointPolicy
         "getTranscodeStream",
         "getUser",
         "search",
-        "setRating",
         "tokenInfo"
     };
 

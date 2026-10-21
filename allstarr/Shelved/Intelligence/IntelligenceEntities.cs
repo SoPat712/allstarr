@@ -52,6 +52,7 @@ public sealed class ListeningEventRecord
     public DateTimeOffset? ListenedAt { get; set; }
     public DateTimeOffset UpdatedAt { get; set; }
     public long? PositionTicks { get; set; }
+    public long? ResumePositionTicks { get; set; }
     public long? DurationMilliseconds { get; set; }
     public string? ClientClass { get; set; }
     public string? DeviceClass { get; set; }

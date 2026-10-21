@@ -328,11 +328,12 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task ProgressUsesStableTenSecondBucketsAndOrdersDistinctTransitions()
+    public async Task ProgressRetainsReportedPositionsAndDeduplicatesExactReports()
     {
         var pipeline = new PlaybackSignalPipeline(jobs);
         Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(11).Ticks)));
-        Assert.False(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(19).Ticks)));
+        Assert.False(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(11).Ticks)));
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(19).Ticks)));
         Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Progress, "track-1", TimeSpan.FromSeconds(21).Ticks)));
         Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Stop, "track-1", TimeSpan.FromSeconds(21).Ticks)));
     }

@@ -96,6 +96,7 @@ public sealed class ProviderHealthMigrationTests
         await db.Database.MigrateAsync();
         Assert.Empty(await db.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
         Assert.Empty(await db.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await db.ProviderUserData.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(db));
         Assert.Equal(beforeRows, await Rows(db));
         Assert.Equal("Existing", await db.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -121,6 +122,7 @@ public sealed class ProviderHealthMigrationTests
         await using var restored = await factory.CreateDbContextAsync();
         Assert.Empty(await restored.RecordingLyricsChoices.AsNoTracking().ToArrayAsync());
         Assert.Empty(await restored.SubsonicPlayQueues.AsNoTracking().ToArrayAsync());
+        Assert.Empty(await restored.ProviderUserData.AsNoTracking().ToArrayAsync());
         AssertSchemaPreserved(beforeSchema, await Schema(restored));
         Assert.Equal(beforeRows, await Rows(restored));
         Assert.Equal("Existing", await restored.Database.SqlQuery<string>($"SELECT DestinationMode AS Value FROM playlist_links").SingleAsync());
@@ -166,6 +168,9 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(["\"DisplayMetadataJson\" TEXT NULL"],
             TableColumns(after, "favorite_states").Except(TableColumns(before, "favorite_states")).Order(StringComparer.Ordinal));
         Assert.Empty(TableColumns(before, "favorite_states").Except(TableColumns(after, "favorite_states")));
+        Assert.Equal(["\"ResumePositionTicks\" INTEGER NULL"],
+            TableColumns(after, "listening_events").Except(TableColumns(before, "listening_events")).Order(StringComparer.Ordinal));
+        Assert.Empty(TableColumns(before, "listening_events").Except(TableColumns(after, "listening_events")));
 
         string[] keptObjects =
         [
@@ -203,6 +208,10 @@ public sealed class ProviderHealthMigrationTests
         Assert.DoesNotContain(before, row => row.Name == queueTable);
         Assert.Single(after, row => row.Type == "table" && row.Name == queueTable);
 
+        const string userDataTable = "provider_user_data";
+        Assert.DoesNotContain(before, row => row.Name == userDataTable);
+        Assert.Single(after, row => row.Type == "table" && row.Name == userDataTable);
+
         var oldSchema = before
             .Where(row => row.Name is not "job_attempts" and not "IX_job_attempts_JobId_AttemptNumber")
             .Select(row => row.Name == "runtime_settings" ? row with
@@ -214,7 +223,7 @@ public sealed class ProviderHealthMigrationTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         var newSchema = after
-            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable)
+            .Where(row => row.Name is not publicLinkIndex and not publicSnapshotIndex and not subjectIndex && !keptObjects.Contains(row.Name) && !adoptionObjects.Contains(row.Name) && row.Name != storageIdentity && row.Name != queueTable && row.Name != userDataTable)
             .Select(NormalizeSchemaObject)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -346,6 +355,7 @@ public sealed class ProviderHealthMigrationTests
             "\"Revision\" INTEGER NOT NULL DEFAULT 0" or "\"SendCount\" INTEGER NOT NULL DEFAULT 0" or
             "\"SignalPayloadJson\" TEXT NULL" or "\"SubmissionJson\" TEXT NULL") ||
         (table == "favorite_states" && component == "\"DisplayMetadataJson\" TEXT NULL") ||
+        (table == "listening_events" && component == "\"ResumePositionTicks\" INTEGER NULL") ||
         (table == "audit_events" && component is "\"SubjectId\" TEXT NULL" or "\"SubjectType\" TEXT NULL");
 
     private static string NormalizeNullability(string table, string component)
