@@ -966,7 +966,9 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         string name)
     {
         var controller = Controller(Session(userId));
-        using var secret = JsonDocument.Parse("""{"secretReferenceFixture":"encrypted","baseUrl":"https://listen.example.test"}""");
+        using var secret = JsonDocument.Parse(provider == "musixmatch"
+            ? """{"userToken":"secretReferenceFixture"}"""
+            : """{"secretReferenceFixture":"encrypted","baseUrl":"https://listen.example.test"}""");
         var result = Assert.IsType<CreatedAtActionResult>(await controller.Create(
             new ProviderAccountsController.CreateProviderAccountRequest
             {

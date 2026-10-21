@@ -317,13 +317,15 @@ public sealed class HostCompositionTests
         Assert.Equal("operator_managed", plus.ConnectionKind);
         Assert.Equal("lyricsPlus.baseUrl", Assert.Single(plus.ConfigSchema).ValuePath);
         var musixmatch = Assert.Single(schema.Providers, item => item.Id == "musixmatch");
-        Assert.Equal(disabled ? "disabled" : "needs_config", musixmatch.Status);
+        Assert.Equal(disabled ? "disabled" : "available", musixmatch.Status);
         Assert.Equal("needs_config", Assert.Single(schema.Providers, item => item.Id == "qobuz").Status);
         var secret = Assert.Single(musixmatch.AccountSettings);
         Assert.Equal("userToken", secret.Key);
-        Assert.True(secret.Required);
+        Assert.False(secret.Required);
         Assert.True(secret.Sensitive);
-        Assert.Contains("desktop", secret.HelpText!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("debug info", secret.HelpText!, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("works without", secret.HelpText!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("not_required", Assert.Single(musixmatch.RuntimeCapabilities).Configuration);
         Assert.Contains("lyrics", musixmatch.Categories);
     }
 

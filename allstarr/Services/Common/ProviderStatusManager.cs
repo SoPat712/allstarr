@@ -57,7 +57,7 @@ public class ProviderStatusManager
         ("paxsenix", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lrclib", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
         ("lyricsplus", ProviderCapabilities.Lyrics, ProviderAccountRequirement.None),
-        ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Required),
+        ("musixmatch", ProviderCapabilities.Lyrics, ProviderAccountRequirement.Optional),
         ("lastfm", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("listenbrainz", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
         ("multi-scrobbler", ProviderCapabilities.Scrobbling, ProviderAccountRequirement.Required),
@@ -77,6 +77,7 @@ public class ProviderStatusManager
     private readonly IAppleDownloadEndpointDiscovery? _appleDownloadDiscovery;
     private readonly IServiceProvider? _services;
     private readonly IPlatformClock _clock;
+    private readonly Lazy<allstarr.Core.Providers.Lyrics.MusixmatchTokenProvider> _musixmatchTokens;
     private AppleDownloadEndpointSnapshot? _appleDownloadSnapshot
     {
         get => _health.AppleDownloadSnapshot;
@@ -100,6 +101,8 @@ public class ProviderStatusManager
     {
         _configuration = configuration;
         _httpClientFactory = httpClientFactory;
+        _musixmatchTokens = new(() => new(_httpClientFactory.CreateClient(
+            allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.HttpClientName)));
         _logger = logger;
         _spotifySettings = spotifySettings.Value;
         _appleMusicSettings = appleMusicSettings.Value;
@@ -584,7 +587,7 @@ public class ProviderStatusManager
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
 
-            ("lrcred" or "unison" or "paxsenix" or "lrclib" or "lyricsplus", ProviderCapabilities.Lyrics) =>
+            ("lrcred" or "unison" or "paxsenix" or "lrclib" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) =>
                 (ProviderConfigurationState.NotRequired, null),
 
             _ => (ProviderConfigurationState.NeedsConfiguration, "unsupported_capability")
@@ -963,11 +966,20 @@ public class ProviderStatusManager
         ProviderOutcome<ProviderLyricsResult> result;
         if (provider == "musixmatch")
         {
-            var token = SecretValue(secrets, "usertoken");
-            if (!IsConfiguredValue(token)) return new(false, "account_needs_configuration");
-            using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.HttpClientName);
-            result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
-                client, token!, request, timeout.Token, _logger);
+            var adapter = _services?.GetService<allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter>();
+            if (secrets == null && adapter != null)
+                result = await adapter.ReadAutomaticLyricsAsync(request, timeout.Token);
+            else
+            {
+                using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.HttpClientName);
+                if (secrets == null)
+                    result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadAutomaticLyricsAsync(
+                        client, _musixmatchTokens.Value, request, timeout.Token, _logger);
+                else if (allstarr.Core.Providers.Lyrics.MusixmatchCredential.TryRead(JsonSerializer.SerializeToUtf8Bytes(secrets), out var credential))
+                    result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadLyricsFromCredentialAsync(
+                        client, credential, request, timeout.Token, _logger);
+                else return new(false, "account_needs_configuration");
+            }
         }
         else if (provider is "lrcred" or "unison" or "paxsenix")
         {

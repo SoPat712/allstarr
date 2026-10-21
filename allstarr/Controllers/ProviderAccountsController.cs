@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Identity;
+using allstarr.Core.Providers.Lyrics;
 using allstarr.Core.Secrets;
 using allstarr.Core.Storage;
 using allstarr.Filters;
@@ -165,6 +166,11 @@ public sealed partial class ProviderAccountsController : ControllerBase
             ValidateScrobbleAddress(normalized.ProviderId, supplied) is { } addressError)
             return BadRequest(new { error = addressError });
 
+        byte[]? normalizedSecret = null;
+        if (request.Secret is { ValueKind: not (JsonValueKind.Null or JsonValueKind.Undefined) } suppliedSecret &&
+            !TryNormalizeProviderSecret(normalized.ProviderId, suppliedSecret, out normalizedSecret))
+            return BadRequest(new { error = "Enter a Musixmatch user token or Debug Info containing a valid [UserToken]." });
+
         var now = DateTimeOffset.UtcNow;
         var account = new ProviderAccountRecord
         {
@@ -186,9 +192,9 @@ public sealed partial class ProviderAccountsController : ControllerBase
         SecretReferenceInfo? storedSecret = null;
         try
         {
-            if (request.Secret.HasValue && request.Secret.Value.ValueKind != JsonValueKind.Null)
+            if (normalizedSecret != null)
             {
-                var secretBytes = Encoding.UTF8.GetBytes(request.Secret.Value.GetRawText());
+                var secretBytes = normalizedSecret;
                 storedSecret = await _secretStore.StoreAsync(
                     account.OwnerUserId,
                     $"provider-account:{account.ProviderId}:{account.Id:N}",
@@ -296,7 +302,13 @@ public sealed partial class ProviderAccountsController : ControllerBase
             return NotFound();
         }
 
-        var bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
+        byte[] bytes;
+        if (account.ProviderId.Equals("musixmatch", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!TryNormalizeProviderSecret(account.ProviderId, request.Secret, out bytes))
+                return BadRequest(new { error = "Enter a Musixmatch user token or Debug Info containing a valid [UserToken]." });
+        }
+        else bytes = await MergeProviderSecretAsync(account, request.Secret, cancellationToken);
         using var merged = JsonDocument.Parse(bytes);
         if (ValidateScrobbleAddress(account.ProviderId, merged.RootElement) is { } addressError)
             return BadRequest(new { error = addressError });
@@ -810,6 +822,15 @@ public sealed partial class ProviderAccountsController : ControllerBase
         if (!ListenBrainzServiceEndpoint.IsCompatibleTarget(providerId)) return null;
         try { ListenBrainzServiceEndpoint.FromSecret(configuration, providerId); return null; }
         catch (InvalidOperationException) { return "Use a listening service base URL with HTTPS, or HTTP on a private address or intranet host name."; }
+    }
+
+    private static bool TryNormalizeProviderSecret(string providerId, JsonElement configuration, out byte[] bytes)
+    {
+        bytes = Encoding.UTF8.GetBytes(configuration.GetRawText());
+        if (!providerId.Equals("musixmatch", StringComparison.OrdinalIgnoreCase)) return true;
+        if (!MusixmatchCredential.TryRead(bytes, out var credential)) return false;
+        bytes = credential.ToSecretBytes();
+        return true;
     }
 
     private string PublicSettingsJson(string providerId, byte[] configuration) =>

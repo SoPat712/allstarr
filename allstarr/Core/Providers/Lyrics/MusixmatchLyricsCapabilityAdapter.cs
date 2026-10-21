@@ -19,18 +19,13 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     private const int MaximumResponseBytes = 2_000_000;
     private const long MaximumTimestampMilliseconds = 24L * 60 * 60 * 1000;
-    private const string DesktopUserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-        "(KHTML, like Gecko) Chrome/86.0.4240.183 Safari/537.36";
-    private static readonly Uri DesktopEndpoint =
-        new("https://apic-desktop.musixmatch.com/ws/1.1/macro.subtitles.get");
-    private static readonly Uri SearchEndpoint = new(DesktopEndpoint, "track.search");
     private static readonly Encoding StrictUtf8 = new UTF8Encoding(false, true);
 
     private readonly HttpClient _http;
     private readonly IProviderAccountSecretAccessor _secrets;
     private readonly IApplicationCache _cache;
     private readonly ILogger _logger;
+    private readonly MusixmatchTokenProvider _automaticTokens;
 
     private readonly record struct RichsyncLyrics(
         string Content,
@@ -48,6 +43,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         ILogger<MusixmatchLyricsCapabilityAdapter>? logger = null)
     {
         _http = http ?? throw new ArgumentNullException(nameof(http));
+        _automaticTokens = new(_http);
         _secrets = secrets ?? throw new ArgumentNullException(nameof(secrets));
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _logger = logger ?? NullLogger<MusixmatchLyricsCapabilityAdapter>.Instance;
@@ -64,15 +60,41 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         CancellationToken cancellationToken,
         ILogger? logger = null)
     {
-        var result = await ReadLyricsFromTokenCoreAsync(
-            http ?? throw new ArgumentNullException(nameof(http)),
-            userToken,
-            request ?? throw new ArgumentNullException(nameof(request)),
-            cancellationToken,
-            logger ?? NullLogger.Instance);
-        return result.IsSuccess
-            ? Project(result.RequireValue(), request)
-            : result;
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(request);
+        if (!MusixmatchCredential.TryParse(userToken, out var credential))
+            return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsConfiguration);
+        return await ReadLyricsFromCredentialAsync(http, credential, request, cancellationToken, logger);
+    }
+
+    internal static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsFromCredentialAsync(
+        HttpClient http, MusixmatchCredential credential, ProviderLyricsRequest request,
+        CancellationToken cancellationToken, ILogger? logger = null)
+    {
+        var result = await ReadLyricsFromTokenCoreAsync(http, credential, request, cancellationToken, logger ?? NullLogger.Instance);
+        return result.IsSuccess ? Project(result.RequireValue(), request) : result;
+    }
+
+    internal Task<ProviderOutcome<ProviderLyricsResult>> ReadAutomaticLyricsAsync(
+        ProviderLyricsRequest request, CancellationToken cancellationToken) =>
+        ReadAutomaticLyricsAsync(_http, _automaticTokens, request, cancellationToken, _logger);
+
+    internal static async Task<ProviderOutcome<ProviderLyricsResult>> ReadAutomaticLyricsAsync(
+        HttpClient http, MusixmatchTokenProvider tokens, ProviderLyricsRequest request,
+        CancellationToken cancellationToken, ILogger logger)
+    {
+        string? rejected = null;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var token = await tokens.GetAsync(rejected, cancellationToken);
+            if (!token.IsSuccess) return Failure<ProviderLyricsResult>(token.Error!);
+            var credential = token.RequireValue();
+            var result = await ReadLyricsFromTokenCoreAsync(http, credential, request, cancellationToken, logger);
+            if (result.Error?.Kind != ProviderErrorKind.AccountNeedsReauthentication) return result;
+            rejected = credential.UserToken;
+        }
+        tokens.Reject(rejected!);
+        return Failure<ProviderLyricsResult>(new ProviderError(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(5)));
     }
 
     public async Task<ProviderOutcome<ProviderLyricsResult>> FetchLyricsAsync(
@@ -103,9 +125,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 return Failure<ProviderLyricsResult>(ProviderErrorKind.Canceled);
             if (context.IsExpired(DateTimeOffset.UtcNow))
                 return Failure<ProviderLyricsResult>(ProviderErrorKind.CapabilityUnavailable);
-            if (context.Account == null)
-                return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsConfiguration);
-            if (context.Account.SecretReferenceId == null)
+            if (context.Account != null && context.Account.SecretReferenceId == null)
                 return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsConfiguration);
 
             using var operation = StartOperation(context);
@@ -116,15 +136,17 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 cached.Content != null)
                 return Project(cached, request);
 
-            var loaded = await _secrets.UseAsync(
+            var loaded = context.Account == null
+                ? await ReadAutomaticLyricsAsync(request, operation.Token)
+                : await _secrets.UseAsync(
                 context.Account,
                 secret =>
                 {
                     operation.Token.ThrowIfCancellationRequested();
-                    return TryReadUserToken(secret, out var userToken)
+                    return MusixmatchCredential.TryRead(secret, out var credential)
                         ? ReadLyricsFromTokenCoreAsync(
                             _http,
-                            userToken,
+                            credential,
                             request,
                             operation.Token,
                             _logger)
@@ -181,22 +203,22 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         new ProviderDescriptor(
             StableProviderId,
             "Musixmatch",
-            "Account-bound Musixmatch desktop lyrics with precise plain and timed content.",
+            "Musixmatch mobile lyrics with automatic access and an optional app connection.",
             ProviderOrigin.BuiltIn,
             sdkVersion: "1",
-            compatibilityVersion: "musixmatch-desktop-lyrics-v1",
+            compatibilityVersion: "musixmatch-mobile-lyrics-v1",
             capabilities:
             [
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Lyrics,
                     ProviderCapabilitySupportState.Supported,
-                    ProviderAccountRequirement.Required,
+                    ProviderAccountRequirement.Optional,
                     "1",
                     ["fetchLyrics"],
                     [ProviderAccountScope.Personal, ProviderAccountScope.Shared])
             ],
             permissions: new ProviderPermissionDescriptor(
-                [new Uri("https://apic-desktop.musixmatch.com/")],
+                [new Uri("https://apic-appmobile.musixmatch.com/")],
                 cache: false,
                 secretSettingKeys: ["userToken"]),
             settings:
@@ -205,76 +227,20 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                     "userToken",
                     ProviderSettingValueKind.Secret,
                     ProviderSettingScope.ProviderAccount,
-                    "Desktop user token",
-                    required: true,
-                    helpText: "Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it.")
+                    "App Debug Info or user token",
+                    required: false,
+                    helpText: "Paste the Debug Info from the Musixmatch app's debug info, or just the user token. Optional: Musixmatch works without it.")
             ]),
         [adapter]);
 
-    private static bool TryReadUserToken(
-        ReadOnlyMemory<byte> secret,
-        out string token)
-    {
-        token = string.Empty;
-        try
-        {
-            using var document = JsonDocument.Parse(
-                StrictUtf8.GetString(secret.Span),
-                new JsonDocumentOptions { MaxDepth = 8 });
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-                return false;
-
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                if (!property.Name.Equals("userToken", StringComparison.OrdinalIgnoreCase) ||
-                    property.Value.ValueKind != JsonValueKind.String)
-                    continue;
-                var value = property.Value.GetString()?.Trim();
-                if (string.IsNullOrWhiteSpace(value) || value.Length > 4_000)
-                    return false;
-                token = value;
-                return true;
-            }
-        }
-        catch (JsonException)
-        {
-        }
-        catch (DecoderFallbackException)
-        {
-        }
-
-        return false;
-    }
-
-    private static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsFromTokenCoreAsync(
-        HttpClient http,
-        string userToken,
-        ProviderLyricsRequest request,
-        CancellationToken cancellationToken,
-        ILogger logger)
-    {
-        var matcher = new LookupDiagnostics();
-        var result = await ReadLookupAsync(http, userToken, request, cancellationToken, logger, matcher);
-        if (!result.IsSuccess || !matcher.NeedsSearch)
-            return result;
-
-        var search = new LookupDiagnostics { LookupPath = "search-fallback", Stage = "search" };
-        result = await ReadLookupAsync(http, userToken, request, cancellationToken, logger, search);
-        if (!result.IsSuccess || search.SelectedTrack == null)
-            return result;
-
-        var fetch = new LookupDiagnostics
-        {
-            LookupPath = "search-fallback",
-            Stage = "fetch",
-            SelectedTrack = search.SelectedTrack
-        };
-        return await ReadLookupAsync(http, userToken, request, cancellationToken, logger, fetch);
-    }
+    private static Task<ProviderOutcome<ProviderLyricsResult>> ReadLyricsFromTokenCoreAsync(
+        HttpClient http, MusixmatchCredential credential, ProviderLyricsRequest request,
+        CancellationToken cancellationToken, ILogger logger) =>
+        ReadLookupAsync(http, credential, request, cancellationToken, logger, new LookupDiagnostics());
 
     private static async Task<ProviderOutcome<ProviderLyricsResult>> ReadLookupAsync(
         HttpClient http,
-        string userToken,
+        MusixmatchCredential credential,
         ProviderLyricsRequest request,
         CancellationToken cancellationToken,
         ILogger logger,
@@ -287,29 +253,19 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             if (request.ProviderTrackId.ProviderId != StableProviderId ||
                 request.ProviderTrackId.ResourceKind != ProviderResourceKind.Track)
                 return Failure<ProviderLyricsResult>(ProviderErrorKind.Forbidden);
-            if (string.IsNullOrWhiteSpace(userToken) || userToken.Length > 4_000)
-                return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsConfiguration);
-            userToken = userToken.Trim();
             cancellationToken.ThrowIfCancellationRequested();
-
-            using var httpRequest = new HttpRequestMessage(
-                HttpMethod.Get,
-                BuildEndpoint(request, userToken, diagnostics));
-            httpRequest.Headers.TryAddWithoutValidation("User-Agent", DesktopUserAgent);
-            httpRequest.Headers.TryAddWithoutValidation("Accept-Language", "en");
-            httpRequest.Headers.TryAddWithoutValidation("Cookie", "x-mxm-token-guid=");
-            httpRequest.Headers.TryAddWithoutValidation("authority", DesktopEndpoint.Host);
-            httpRequest.Headers.Accept.ParseAdd("application/json");
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(MusixmatchMobileApi.RequestTimeout);
+            using var httpRequest = MusixmatchMobileApi.CreateRequest(BuildEndpoint(request, credential.UserToken), credential);
             sent = true;
             using var response = await http.SendAsync(
                 httpRequest,
                 HttpCompletionOption.ResponseHeadersRead,
-                cancellationToken);
+                timeout.Token);
             httpStatus = (int)response.StatusCode;
             if (httpStatus == 404)
             {
                 diagnostics.Decision = "http-not-found";
-                diagnostics.NeedsSearch = diagnostics.Stage == "matcher";
                 return Unavailable();
             }
             var httpError = ErrorForStatus(httpStatus.Value, RetryAfter(response));
@@ -319,13 +275,11 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                 return Failure<ProviderLyricsResult>(httpError);
             }
 
-            var body = await ReadBoundedBodyAsync(response.Content, cancellationToken);
+            var body = await ReadBoundedBodyAsync(response.Content, timeout.Token);
             if (body == null)
                 return Failure<ProviderLyricsResult>(
                     ProviderError.CompatibilityContractChanged());
-            return diagnostics.Stage == "search"
-                ? ParseSearch(body, request, diagnostics)
-                : ParseMacro(body, request, diagnostics);
+            return ParseMacro(body, request, diagnostics);
         }
         catch (OperationCanceledException)
         {
@@ -365,73 +319,50 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                     "matcher-body {MatcherBody}; track {TrackPresent}; track-keys {TrackKeys}; title-score {TitleScore}; artist-score {ArtistScore}; has-lyrics {HasLyrics}; has-subtitles {HasSubtitles}; instrumental {Instrumental}; restricted {Restricted}; " +
                     "lyrics-body {LyricsBody}; lyrics-body-present {LyricsBodyPresent}; subtitle-body {SubtitleBody}; subtitle-count {SubtitleCount}; subtitle-first {SubtitleStartClass}; richsync-body {RichsyncBody}; richsync-body-present {RichsyncBodyPresent}; " +
                     "parsed-lines plain {PlainLines}/subtitle {SubtitleLines}/richsync {RichsyncLines}; decision {Decision}; lookup-path {LookupPath}; stage {Stage}",
-                    (diagnostics.Stage == "search" ? SearchEndpoint : DesktopEndpoint).GetLeftPart(UriPartial.Path), httpStatus,
+                    MusixmatchMobileApi.LyricsEndpoint.GetLeftPart(UriPartial.Path), httpStatus,
                     diagnostics.Envelope, diagnostics.Matcher, diagnostics.Lyrics, diagnostics.Subtitles, diagnostics.Richsync,
                     diagnostics.MatcherBody, diagnostics.TrackPresent, diagnostics.TrackKeys, diagnostics.TitleScore, diagnostics.ArtistScore,
                     diagnostics.HasLyrics, diagnostics.HasSubtitles, diagnostics.Instrumental, diagnostics.Restricted,
                     diagnostics.LyricsBody, diagnostics.LyricsBodyPresent, diagnostics.SubtitleBody, diagnostics.SubtitleCount,
                     diagnostics.SubtitleFirst, diagnostics.RichsyncBody, diagnostics.RichsyncBodyPresent,
                     diagnostics.PlainLines, diagnostics.SubtitleLines, diagnostics.RichsyncLines, diagnostics.Decision,
-                    diagnostics.LookupPath, diagnostics.Stage);
+                    "matcher", "matcher");
             }
         }
     }
 
-    private static Uri BuildEndpoint(
-        ProviderLyricsRequest request,
-        string userToken,
-        LookupDiagnostics diagnostics)
+    private static Uri BuildEndpoint(ProviderLyricsRequest request, string userToken)
     {
+        var artist = string.Join(", ", request.ArtistNames);
         var values = new List<KeyValuePair<string, string>>
         {
-            new("app_id", "web-desktop-app-v1.0"),
+            new("app_id", MusixmatchMobileApi.AppId),
             new("format", "json"),
-            new("usertoken", userToken)
+            new("namespace", "lyrics_richsynched"),
+            new("subtitle_format", "mxm"),
+            new("usertoken", userToken),
+            new("q_artist", artist),
+            new("q_artists", artist),
+            new("q_album", request.AlbumTitle ?? string.Empty),
+            new("q_track", request.TrackTitle ?? request.ProviderTrackId.Value),
+            new("optional_calls", "track.richsync"),
+            new("richsync_compact_type", "words"),
+            new("part", "track_lyrics_translation_status,track_structure,track_performer_tagging")
         };
-        if (diagnostics.Stage == "search")
+        if (request.DurationSeconds is > 0)
         {
-            values.Add(new("q_track", request.TrackTitle ?? request.ProviderTrackId.Value));
-            values.Add(new("q_artist", request.ArtistNames.FirstOrDefault() ?? string.Empty));
-            values.Add(new("f_has_lyrics", "1"));
-            values.Add(new("page_size", "10"));
-            values.Add(new("s_track_rating", "desc"));
+            var duration = request.DurationSeconds.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            values.Add(new("q_duration", duration));
+            values.Add(new("f_subtitle_length", duration));
         }
-        else
-        {
-            values.Add(new("namespace", "lyrics_richsynched"));
-            values.Add(new("optional_calls", "track.richsync"));
-            values.Add(new("subtitle_format", "mxm"));
-            if (diagnostics.SelectedTrack is { } selected && TryGetObject(selected, "track", out var track))
-            {
-                values.Add(new("commontrack_id", ReadTrackId(track, "commontrack_id") ?? string.Empty));
-                values.Add(new("track_id", ReadTrackId(track, "track_id") ?? string.Empty));
-            }
-            else
-            {
-                var artist = string.Join(", ", request.ArtistNames);
-                values.Add(new("q_artist", artist));
-                values.Add(new("q_artists", artist));
-                values.Add(new("q_album", request.AlbumTitle ?? string.Empty));
-                values.Add(new("q_track", request.TrackTitle ?? request.ProviderTrackId.Value));
-                if (request.DurationSeconds is > 0)
-                {
-                    var duration = request.DurationSeconds.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                    values.Add(new("q_duration", duration));
-                    values.Add(new("f_subtitle_length", duration));
-                    values.Add(new("f_subtitle_length_max_deviation", "3"));
-                }
-                if (MusicBrainzService.NormalizeIsrc(request.Isrc) is { } isrc)
-                    values.Add(new("q_track_isrc", isrc));
-            }
-        }
-        values.Add(new("t", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(
-            System.Globalization.CultureInfo.InvariantCulture)));
-        var query = string.Join(
-            "&",
-            values.Where(item => !string.IsNullOrWhiteSpace(item.Value)).Select(item =>
-                $"{Uri.EscapeDataString(item.Key)}={Uri.EscapeDataString(item.Value)}"));
-        var endpoint = diagnostics.Stage == "search" ? SearchEndpoint : DesktopEndpoint;
-        return new UriBuilder(endpoint) { Query = query }.Uri;
+        if (MusicBrainzService.NormalizeIsrc(request.Isrc) is { } isrc)
+            values.Add(new("q_track_isrc", isrc));
+        if (request.ProviderTrackId.Value.StartsWith("spotify:track:", StringComparison.Ordinal) &&
+            request.ProviderTrackId.Value[14..] is { Length: 22 } spotifyId && spotifyId.All(char.IsAsciiLetterOrDigit))
+            values.Add(new("track_spotify_id", request.ProviderTrackId.Value));
+        var query = string.Join("&", values.Where(item => !string.IsNullOrWhiteSpace(item.Value)).Select(item =>
+            $"{Uri.EscapeDataString(item.Key)}={Uri.EscapeDataString(item.Value)}"));
+        return new UriBuilder(MusixmatchMobileApi.LyricsEndpoint) { Query = query }.Uri;
     }
 
     private static string? ReadTrackId(JsonElement track, string name)
@@ -443,39 +374,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             ? id.ToString(System.Globalization.CultureInfo.InvariantCulture) : null;
     }
 
-    private static ProviderOutcome<ProviderLyricsResult> ParseSearch(
-        string json,
-        ProviderLyricsRequest request,
-        LookupDiagnostics diagnostics)
-    {
-        using var document = JsonDocument.Parse(json, new JsonDocumentOptions { MaxDepth = 64 });
-        var root = document.RootElement;
-        diagnostics.Read(root);
-        diagnostics.Decision = "no-acceptable-track";
-        if (!TryGetObject(root, "message", out var message) || !TryGetStatus(message, out var status))
-            return ContractFailure();
-        if (NeedsReauthentication(message))
-            return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsReauthentication);
-        if (status == 404) return Unavailable();
-        var error = ErrorForStatus(status, retryAfter: null);
-        if (error != null) return Failure<ProviderLyricsResult>(error);
-        if (!TryGetObject(message, "body", out var body) ||
-            !body.TryGetProperty("track_list", out var tracks) || tracks.ValueKind != JsonValueKind.Array)
-            return ContractFailure();
-        foreach (var entry in tracks.EnumerateArray().Take(10))
-        {
-            if (!TryReadTrack(entry, out var metadata) || !Matches(request, metadata, diagnostics) ||
-                !TryGetObject(entry, "track", out var track) ||
-                (ReadTrackId(track, "commontrack_id") == null && ReadTrackId(track, "track_id") == null))
-                continue;
-            diagnostics.SelectedTrack = entry.Clone();
-            diagnostics.Decision = "identity-selected";
-            break;
-        }
-        return Unavailable();
-    }
-
-    private static async Task<string?> ReadBoundedBodyAsync(
+    internal static async Task<string?> ReadBoundedBodyAsync(
         HttpContent content,
         CancellationToken cancellationToken)
     {
@@ -517,7 +416,6 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsReauthentication);
         if (outerStatus == 404)
         {
-            diagnostics.NeedsSearch = diagnostics.Stage == "matcher";
             return Unavailable();
         }
         var outerError = ErrorForStatus(outerStatus, retryAfter: null);
@@ -531,19 +429,14 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             if (TryGetObject(call.Value, "message", out var message) && NeedsReauthentication(message))
                 return Failure<ProviderLyricsResult>(ProviderErrorKind.AccountNeedsReauthentication);
         }
-        var matcherBody = diagnostics.SelectedTrack ?? default;
+        JsonElement matcherBody = default;
         if (calls.TryGetProperty("matcher.track.get", out var matcherCall))
         {
             if (TryGetCallBody(matcherCall, out var returnedBody, out var matcherError))
                 matcherBody = returnedBody;
             else if (matcherError != null)
                 return Failure<ProviderLyricsResult>(matcherError);
-            else if (diagnostics.SelectedTrack == null)
-            {
-                diagnostics.NeedsSearch = TryGetObject(matcherCall, "message", out var message) &&
-                    TryGetStatus(message, out var status) && status == 404;
-                return Unavailable();
-            }
+            else return Unavailable();
         }
         if (!TryReadTrack(matcherBody, out var metadata))
             return Unavailable();
@@ -551,7 +444,6 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
         {
             diagnostics.Decision = "identity-rejected";
             diagnostics.RejectedTrack = matcherBody.Clone();
-            diagnostics.NeedsSearch = diagnostics.Stage == "matcher";
             return Unavailable();
         }
 
@@ -880,10 +772,6 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
 
     private sealed class LookupDiagnostics
     {
-        public string LookupPath { get; init; } = "matcher";
-        public string Stage { get; init; } = "matcher";
-        public bool NeedsSearch { get; set; }
-        public JsonElement? SelectedTrack { get; set; }
         public JsonElement? RejectedTrack { get; set; }
         public string Envelope { get; private set; } = "missing/none";
         public string Matcher { get; private set; } = "missing/none";
@@ -1207,7 +1095,7 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
     }
 
     private static string BuildCacheKey(
-        ProviderAccountContext account,
+        ProviderAccountContext? account,
         ProviderLyricsRequest request)
     {
         var format = request.PreferredFormat?.ToString() ?? "auto";
@@ -1226,8 +1114,8 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
             ]);
         var fingerprint = Convert.ToHexString(
             SHA256.HashData(Encoding.UTF8.GetBytes(metadata))).ToLowerInvariant();
-        return $"lyrics:v3:{StableProviderId}:{account.AccountId:N}:{account.Revision}:" +
-            $"{account.SecretReferenceId?.ToString("N") ?? "none"}:{fingerprint}:" +
+        return $"lyrics:v4:{StableProviderId}:{account?.AccountId.ToString("N") ?? "automatic"}:{account?.Revision ?? 0}:" +
+            $"{account?.SecretReferenceId?.ToString("N") ?? "none"}:{fingerprint}:" +
             $"{format.ToLowerInvariant()}";
     }
 

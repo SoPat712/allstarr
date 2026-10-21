@@ -42,6 +42,7 @@ public sealed class FileMediaApplicationCacheTests : IAsyncLifetime
     [Theory]
     [InlineData("lyrics:v3:lyricsplus:fixture")]
     [InlineData("lyrics:v3:musixmatch:fixture")]
+    [InlineData("lyrics:v4:musixmatch:fixture")]
     [InlineData("lrclib:automatic:v2:lyrics:v2:fixture")]
     public void NewLyricsNamespacesKeepTheMediaTier(string key)
     {
