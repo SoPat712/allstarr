@@ -166,7 +166,7 @@ public sealed class JellyfinMusicEndpointPolicyTests
     [InlineData("GET", "/Items/ext-provider-song-1/Images", false)]
     [InlineData("GET", "/Items/ext-provider-song-1/RemoteImages", false)]
     [InlineData("POST", "/UserItems/ext-provider-song-1/UserData", false)]
-    [InlineData("POST", "/UserPlayedItems/ext-provider-song-1", false)]
+    [InlineData("POST", "/UserPlayedItems/ext-provider-song-1", true)]
     [InlineData("POST", "/PlayingItems/ext-provider-song-1", false)]
     public void SynthesizedMusicItems_OnlyUseImplementedClientRoutes(
         string method,

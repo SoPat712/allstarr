@@ -3,20 +3,21 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Xml.Linq;
 using allstarr.Core.Favorites;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace allstarr.Filters;
 
-public sealed class SubsonicFavoriteResponseFilter(FavoriteViewReader favorites) : IAsyncResultFilter
+public sealed partial class SubsonicFavoriteResponseFilter(FavoriteViewReader favorites, ProviderUserDataStore? userData = null) : IAsyncResultFilter
 {
     private static readonly HashSet<string> MusicElements = new(StringComparer.Ordinal)
     {
         "subsonic-response", "searchResult", "searchResult2", "searchResult3", "song", "album", "artist",
         "entry", "child", "directory", "playlist", "albumList", "albumList2", "starred", "starred2",
         "artists", "indexes", "index", "similarSongs", "similarSongs2", "topSongs", "randomSongs", "songsByGenre",
-        "artistInfo", "artistInfo2", "similarArtist", "playQueue"
+        "artistInfo", "artistInfo2", "similarArtist", "playQueue", "playQueueByIndex", "nowPlaying"
     };
 
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
@@ -51,6 +52,7 @@ public sealed class SubsonicFavoriteResponseFilter(FavoriteViewReader favorites)
                 {
                     var saved = await ReadAsync(http);
                     foreach (var item in items) item.SetAttributeValue("starred", saved.GetValueOrDefault(item.Attribute("id")!.Value));
+                    await HydrateXmlUserDataAsync(items, http);
                     result.Content = NativeItemText.PreserveXml(content, document.ToString(SaveOptions.DisableFormatting));
                     Uncache(http);
                 }
@@ -73,6 +75,7 @@ public sealed class SubsonicFavoriteResponseFilter(FavoriteViewReader favorites)
             if (saved.TryGetValue(item["id"]!.GetValue<string>(), out var timestamp)) item["starred"] = timestamp;
             else item.Remove("starred");
         }
+        await HydrateJsonUserDataAsync(items, http);
         return true;
     }
 

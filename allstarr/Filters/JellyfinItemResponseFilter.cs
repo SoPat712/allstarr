@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Playlists;
 using allstarr.Core.Favorites;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
@@ -12,7 +13,7 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace allstarr.Filters;
 
 public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService proxy, IMediaAssetResolver? artwork = null,
-    FavoriteViewReader? favorites = null) : IAsyncResultFilter
+    FavoriteViewReader? favorites = null, ProviderUserDataStore? userData = null) : IAsyncResultFilter
 {
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
@@ -36,6 +37,7 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
             _ => null
         };
         if (root == null) return;
+        if (await HydrateStandaloneUserDataAsync(root, result, http)) return;
         var allItems = BaseItems(root).ToArray();
         var items = allItems.Where(IsExternal).ToArray();
         if (items.Length == 0) return;
@@ -49,6 +51,7 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         http.Items[JellyfinResponseBuilder.ServerIdItemKey] = serverId;
         var saved = favorites == null ? [] : (await favorites.ReadForRequestAsync(http))
             .Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
+        await HydrateItemUserDataAsync(items, http);
         foreach (var item in items)
         {
             item.Remove("ServerId");

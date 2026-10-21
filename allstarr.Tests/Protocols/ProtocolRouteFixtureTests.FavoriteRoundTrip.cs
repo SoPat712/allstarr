@@ -582,7 +582,9 @@ public sealed partial class ProtocolRouteFixtureTests
             }
             var endpoint = request.RequestUri.AbsolutePath.Split('/').Last().Replace(".view", "", StringComparison.Ordinal);
             var container = endpoint switch { "getStarred" => "starred", "getStarred2" => "starred2", "getArtists" => "artists", _ => "searchResult3" };
-            var format = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query)["f"].ToString();
+            var format = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.RequestUri.Query).GetValueOrDefault("f").ToString();
+            if (format.Length == 0 && request.Content != null)
+                format = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(request.Content.ReadAsStringAsync().GetAwaiter().GetResult()).GetValueOrDefault("f").ToString();
             return CatalogNative(format, """{"subsonic-response":{"status":"ok","version":"1.16.1","CONTAINER":{}}}""".Replace("CONTAINER", container, StringComparison.Ordinal),
                 $"<subsonic-response xmlns=\"http://subsonic.org/restapi\" status=\"ok\" version=\"1.16.1\"><{container}/></subsonic-response>");
         }, services =>

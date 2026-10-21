@@ -262,9 +262,11 @@ public static class JellyfinMusicEndpointPolicy
                (HttpMethods.IsPost(method) || HttpMethods.IsDelete(method)) &&
                ((segments.Length == 4 &&
                  segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
-                 segments[2].Equals("favoriteitems", StringComparison.OrdinalIgnoreCase)) ||
+                 (segments[2].Equals("favoriteitems", StringComparison.OrdinalIgnoreCase) ||
+                  segments[2].Equals("playeditems", StringComparison.OrdinalIgnoreCase))) ||
                 (segments.Length == 2 &&
-                 segments[0].Equals("userfavoriteitems", StringComparison.OrdinalIgnoreCase)));
+                 (segments[0].Equals("userfavoriteitems", StringComparison.OrdinalIgnoreCase) ||
+                  segments[0].Equals("userplayeditems", StringComparison.OrdinalIgnoreCase))));
     }
 
     private static bool IsSynthesizedSongId(string itemId)
@@ -533,7 +535,8 @@ public static class JellyfinMusicEndpointPolicy
 
         if (segments.Length == 4 &&
             segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
-            segments[2].Equals("favoriteitems", StringComparison.OrdinalIgnoreCase)) return true;
+            (segments[2].Equals("favoriteitems", StringComparison.OrdinalIgnoreCase) ||
+             segments[2].Equals("playeditems", StringComparison.OrdinalIgnoreCase))) return true;
 
         if (segments[0].Equals("useritems", StringComparison.OrdinalIgnoreCase) &&
             segments[1].Equals("resume", StringComparison.OrdinalIgnoreCase)) return false;
@@ -566,7 +569,8 @@ public static class JellyfinMusicEndpointPolicy
         if (segments.Length >= 4 && segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
             segments[2].Equals("items", StringComparison.OrdinalIgnoreCase)) return segments[3];
         if (segments.Length >= 4 && segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
-            segments[2].Equals("favoriteitems", StringComparison.OrdinalIgnoreCase)) return segments[3];
+            (segments[2].Equals("favoriteitems", StringComparison.OrdinalIgnoreCase) ||
+             segments[2].Equals("playeditems", StringComparison.OrdinalIgnoreCase))) return segments[3];
         if (segments[0].Equals("useritems", StringComparison.OrdinalIgnoreCase) &&
             segments[1].Equals("resume", StringComparison.OrdinalIgnoreCase)) return null;
         if (segments[0].Equals("userfavoriteitems", StringComparison.OrdinalIgnoreCase) ||

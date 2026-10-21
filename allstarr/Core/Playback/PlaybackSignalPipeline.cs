@@ -19,7 +19,7 @@ public sealed record PlaybackSignalPayload(IntelligenceScope Scope, PlaybackTran
     string? DeviceId, string? PlaySessionId, long? PositionTicks, DateTimeOffset ObservedAt, string SignalKey,
     string? OccurrenceKey = null, string? ClientClass = null, string? DeviceClass = null,
     PlaybackTrackSnapshot? SubmittedTrack = null, bool RelayExternally = true, string SourceKind = "protocol",
-    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null);
+    PlaybackStreamSource? StreamSource = null, IReadOnlyList<string>? DestinationTargets = null, long? ReportedPositionTicks = null);
 public interface IPlaybackSignalPipeline { Task<bool> RecordAsync(PlaybackSignalRequest request, CancellationToken cancellationToken = default); }
 public interface IScopedPlaybackScrobbleDelivery
 {
@@ -59,7 +59,7 @@ public sealed class PlaybackSignalPipeline(
         var payload = new PlaybackSignalPayload(scope, request.Transition, request.ItemId, deviceId,
             request.PlaySessionId, normalizedTicks, request.ObservedAt, string.Empty, occurrenceKey,
             execution.Client.ClientId, execution.Client.DeviceName, request.SubmittedTrack,
-            request.RelayExternally, request.SourceKind, streamSource);
+            request.RelayExternally, request.SourceKind, streamSource, ReportedPositionTicks: request.PositionTicks);
         // A paused or repeated position can still be a new observation. Only identical
         // observations share a job; listening effects deduplicate by occurrence separately.
         var key = Hash(JsonSerializer.Serialize(payload));
@@ -260,7 +260,9 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         PlaybackTrackSnapshot? track, bool added, bool enrichWithMusicBrainz)
     {
         var latest = added || payload.ObservedAt >= record.UpdatedAt;
-        var next = Classify(payload, track);
+        var next = payload.Transition == PlaybackTransition.Progress &&
+            payload.ItemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase)
+            ? ListeningEventState.Playing : Classify(payload, track);
         record.State = added || Rank(next) > Rank(record.State) ? next : record.State;
         if (record.StartedAt == null && payload.Transition != PlaybackTransition.Submission)
             record.StartedAt = InferStart(payload);
@@ -271,6 +273,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
         record.UpdatedAt = record.UpdatedAt > payload.ObservedAt ? record.UpdatedAt : payload.ObservedAt;
         if (payload.PositionTicks is >= 0 && (!record.PositionTicks.HasValue || payload.PositionTicks > record.PositionTicks))
             record.PositionTicks = payload.PositionTicks;
+        if (latest && (payload.ReportedPositionTicks ?? payload.PositionTicks) is >= 0)
+            record.ResumePositionTicks = record.State == ListeningEventState.Completed ? 0 : payload.ReportedPositionTicks ?? payload.PositionTicks;
         if (track?.DurationMilliseconds is > 0) record.DurationMilliseconds = track.DurationMilliseconds;
         record.ClientClass ??= Trim(payload.ClientClass, 200);
         record.DeviceClass ??= Trim(payload.DeviceClass, 200);

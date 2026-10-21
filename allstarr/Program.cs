@@ -104,6 +104,7 @@ if (releaseComposition.IntelligenceEnabled)
     builder.Services.AddBuiltInRecommendationSources();
     builder.Services.AddAudioMuseIntelligenceCapability();
 }
+builder.Services.AddSingleton<allstarr.Core.Music.ProviderUserDataStore>();
 builder.Services.AddDurablePlaybackSignals(releaseComposition.IntelligenceEnabled);
 builder.Services.AddPlaylistOrchestration();
 builder.Services.AddExtensionControlPlane();
