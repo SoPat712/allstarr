@@ -394,7 +394,21 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal(provider == "lyricsplus" ? "lyrics" : "apic-desktop.musixmatch.com", request.Host);
         if (provider == "musixmatch")
             Assert.Contains("usertoken=synthetic-desktop-token", request.Query, StringComparison.Ordinal);
-        if (!healthy) Assert.Equal(provider == "lyricsplus" ? "rate-limited" : "unauthorized", status.ReasonCode);
+        if (!healthy) Assert.Equal(provider == "lyricsplus" ? "rate-limited" : "account-needs-reauthentication", status.ReasonCode);
+    }
+
+    [Theory]
+    [InlineData("renew")]
+    [InlineData("captcha")]
+    public async Task MusixmatchProbeRejectsInnerAuthorizationHints(string hint)
+    {
+        var payload = "{\"message\":{\"header\":{\"status_code\":200},\"body\":{\"macro_calls\":{\"matcher.track.get\":{\"message\":{\"header\":{\"status_code\":200,\"hint\":\"" + hint + "\"},\"body\":[]}}}}}}";
+        var handler = new QueuedResponseHandler(Json(HttpStatusCode.OK, payload));
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler));
+        var status = await manager.TestManagedProviderCapabilityAsync("musixmatch", "lyrics", Guid.NewGuid(),
+            new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" });
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal("account-needs-reauthentication", status.ReasonCode);
     }
 
     [Fact]

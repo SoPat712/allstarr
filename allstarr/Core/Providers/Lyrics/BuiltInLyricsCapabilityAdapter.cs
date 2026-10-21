@@ -127,7 +127,8 @@ public static class BuiltInLyricsCapabilityRegistration
         services.AddSingleton(provider => new MusixmatchLyricsCapabilityAdapter(
             provider.GetRequiredService<IHttpClientFactory>().CreateClient(MusixmatchLyricsCapabilityAdapter.HttpClientName),
             provider.GetRequiredService<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(),
-            provider.GetRequiredService<IApplicationCache>()));
+            provider.GetRequiredService<IApplicationCache>(),
+            provider.GetRequiredService<ILogger<MusixmatchLyricsCapabilityAdapter>>()));
         services.AddSingleton<ProviderRegistration>(provider => MusixmatchLyricsCapabilityAdapter.CreateRegistration(
             provider.GetRequiredService<MusixmatchLyricsCapabilityAdapter>()));
         services.AddSingleton<ProviderRegistration>(provider => CreateRegistration(

@@ -106,6 +106,8 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
                 albumTitle: request.Album?.Trim(), durationSeconds: request.DurationSeconds, isrc: request.Isrc?.Trim()));
             if (!outcome.IsSuccess) return Failure(outcome.Error!);
             var value = outcome.RequireValue();
+            if (value.Availability == ProviderLyricsAvailabilityState.Restricted)
+                return ProviderTryResult.Failure("lyrics-restricted", "The provider has restricted these lyrics; they are unavailable for display.");
             if (value.Availability != ProviderLyricsAvailabilityState.Available) return ProviderTryResult.Failure("not_found");
             var lines = value.TimedLines?.Select(line => new ProviderTryLyricLine(line.Start.TotalMilliseconds, CleanLyric(line.Text))).ToArray()
                 ?? ParseLyrics(value.Content ?? "");

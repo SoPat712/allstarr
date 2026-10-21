@@ -134,7 +134,7 @@ public sealed class ProviderTryCapabilityTests
         if (mode is "unavailable" or "restricted" or "error")
         {
             Assert.False(result.Succeeded);
-            Assert.Equal(mode == "error" ? "transient-failure" : "not_found", result.ReasonCode);
+            Assert.Equal(mode == "error" ? "transient-failure" : mode == "restricted" ? "lyrics-restricted" : "not_found", result.ReasonCode);
             Assert.False(json.TryGetProperty("lyrics", out _));
             return;
         }

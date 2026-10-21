@@ -967,7 +967,7 @@ public class ProviderStatusManager
             if (!IsConfiguredValue(token)) return new(false, "account_needs_configuration");
             using var client = _httpClientFactory.CreateClient(allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.HttpClientName);
             result = await allstarr.Core.Providers.Lyrics.MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
-                client, token!, request, timeout.Token);
+                client, token!, request, timeout.Token, _logger);
         }
         else if (provider is "lrcred" or "unison" or "paxsenix")
         {
