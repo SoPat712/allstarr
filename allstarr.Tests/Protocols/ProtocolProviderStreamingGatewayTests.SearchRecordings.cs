@@ -129,6 +129,174 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         Assert.Equal(4, result.Songs.Count);
     }
 
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SearchCombinesAlbumRoutesAndKeepsSpecialEditionsBelowGenuineVersions(ProtocolKind protocol)
+    {
+        var capabilities = new[]
+        {
+            RecordingSearchCapability("deezer",
+                RecordingSearchTrack("deezer", "album", "Get Lucky", "Daft Punk, Pharrell Williams & Nile Rodgers", 369,
+                    "Random Access Memories", "USQX91300105"),
+                RecordingSearchTrack("deezer", "drumless", "Get Lucky (Drumless Edition) (feat. Pharrell Williams and Nile Rodgers)",
+                    "Daft Punk", 369, "Random Access Memories (Drumless Edition)"),
+                RecordingSearchTrack("deezer", "radio", "Get Lucky (Radio Edit)", "Daft Punk", 248),
+                RecordingSearchTrack("deezer", "sped", "Get Lucky (Sped Up)", "Daft Punk", 310),
+                RecordingSearchTrack("deezer", "mixed", "Get Lucky (Mixed)", "Daft Punk", 120, "DJ Mix")),
+            RecordingSearchCapability("tidal",
+                RecordingSearchTrack("tidal", "compilation", "Get lucky feat Nile Rodgers Pharrell Williams", "Daft Punk", 370,
+                    "Until the morning 2", "USQX91300105")),
+            RecordingSearchCapability("youtube",
+                RecordingSearchTrack("youtube", "video", "Get Lucky (feat. Pharrell Williams and Nile Rodgers)",
+                    "Daft Punk", 370, "Random Access Memories"))
+        };
+        var (gateway, _) = SearchRankingGateway("deezer,tidal,youtube", "deezer,tidal,youtube", capabilities);
+
+        var result = await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Daft Punk", 25, 0, 0);
+
+        Assert.Equal(["album", "radio"], result.Songs.Take(2).Select(song => song.ExternalId));
+        Assert.Equal(5, result.Songs.Count);
+        Assert.Equal(["album", "compilation", "video"], result.Songs[0].SearchRoutes.Select(route => route.Value).Order());
+        Assert.DoesNotContain(result.Songs, song => song.ExternalId is "compilation" or "video");
+        Assert.True(result.Songs.FindIndex(song => song.ExternalId == "mixed") >
+                    result.Songs.FindIndex(song => song.ExternalId == "radio"));
+        foreach (var label in new[] { "drumless", "sped up" })
+        {
+            var requested = await gateway.SearchAsync(SearchRankingContext(protocol), $"Get Lucky Daft Punk {label}", 25, 0, 0);
+            Assert.Equal(label == "drumless" ? "drumless" : "sped", requested.Songs[0].ExternalId);
+        }
+        foreach (var capability in capabilities)
+            Mock.Get(capability).Verify(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
+                It.IsAny<ProviderTrackLookupRequest>()), Times.Never);
+    }
+
+    [Theory]
+    [InlineData(ProtocolKind.Jellyfin)]
+    [InlineData(ProtocolKind.Subsonic)]
+    public async Task SearchWithoutIsrcPrefersAlbumMetadataAndRetainsTheFirstId(ProtocolKind protocol)
+    {
+        var (gateway, _) = SearchRankingGateway("youtube,deezer", "youtube,deezer",
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "first",
+                "Get Lucky (feat. Pharrell Williams and Nile Rodgers)", "Daft Punk", 370)),
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album",
+                "Get Lucky (Album Version) - 2013 Remaster", "Daft Punk, Pharrell Williams & Nile Rodgers", 369,
+                "Random Access Memories")));
+
+        var song = Assert.Single((await gateway.SearchAsync(SearchRankingContext(protocol), "Get Lucky Daft Punk", 25, 0, 0)).Songs);
+
+        Assert.Equal("ext-youtube-song-first", song.Id);
+        Assert.Null(song.CanonicalRecordingId);
+        Assert.Equal("deezer", song.ExternalProvider);
+        Assert.Equal("album", song.ExternalId);
+        Assert.Equal("Random Access Memories", song.Album);
+        Assert.Equal(["album", "first"], song.SearchRoutes.Select(route => route.Value).Order());
+    }
+
+    [Theory]
+    [InlineData("Get Lucky", "Daft Punk", 374, "Random Access Memories")]
+    [InlineData("Get Lucky", "Daft Punk", 371.1, "Random Access Memories")]
+    [InlineData("Get Lucky (Radio Edit)", "Daft Punk", 369, "Random Access Memories")]
+    [InlineData("Get Lucky (Drumless Edition)", "Daft Punk", 369, "Random Access Memories")]
+    [InlineData("Get Lucky (Club Mix)", "Daft Punk", 369, "Random Access Memories")]
+    [InlineData("Get Lucky (Other Artist Remix)", "Daft Punk", 369, "Random Access Memories")]
+    [InlineData("Get Lucky (Live)", "Daft Punk", 369, "Random Access Memories")]
+    [InlineData("Get Lucky", "Other Artist", 369, "Random Access Memories")]
+    [InlineData("Get Lucky", "Daft Punk", 369, "Until the morning 2")]
+    [InlineData("Get Lucky", "Daft Punk", 0, "Random Access Memories")]
+    [InlineData("Get Lucky (Mixed)", "Daft Punk", 369, "Random Access Memories")]
+    public async Task SearchWithoutIsrcKeepsDifferentRecordingsSeparate(string title, string artist, double seconds, string album)
+    {
+        var candidate = new ProviderTrackMetadata(new("youtube", ProviderResourceKind.Track, "other"), title,
+            [new(artist)], albumTitle: album, duration: TimeSpan.FromSeconds(seconds));
+        var (gateway, _) = SearchRankingGateway("deezer,youtube", "deezer,youtube",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album", "Get Lucky", "Daft Punk", 369,
+                "Random Access Memories")), RecordingSearchCapability("youtube", candidate));
+
+        Assert.Equal(2, (await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs.Count);
+    }
+
+    [Theory]
+    [InlineData("Drumless Edition")]
+    [InlineData("Instrumental")]
+    [InlineData("Acapella")]
+    [InlineData("Karaoke")]
+    [InlineData("Sped Up")]
+    [InlineData("Slowed + Reverb")]
+    [InlineData("Nightcore")]
+    [InlineData("8D")]
+    [InlineData("Extended Version")]
+    [InlineData("Club Mix")]
+    public async Task SearchWithoutIsrcKeepsSpecialEditionRoutesSeparate(string label)
+    {
+        var title = $"Get Lucky ({label})";
+        var (gateway, _) = SearchRankingGateway("deezer,youtube", "deezer,youtube",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "first", title, "Daft Punk", 369)),
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "second", title, "Daft Punk", 369)));
+
+        Assert.Equal(2, (await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs.Count);
+    }
+
+    [Theory]
+    [InlineData("Get Lucky", 374)]
+    [InlineData("Get Lucky (Radio Edit)", 369)]
+    [InlineData("Get Lucky (Drumless Edition)", 369)]
+    public async Task SharedIsrcStillRequiresCompatibleDurationAndVersion(string title, int seconds)
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,youtube", "deezer,youtube",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album", "Get Lucky", "Daft Punk", 369,
+                isrc: "USQX91300105")),
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "other", title, "Daft Punk", seconds,
+                isrc: "USQX91300105")));
+
+        Assert.Equal(2, (await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs.Count);
+    }
+
+    [Fact]
+    public async Task SearchWithoutIsrcDoesNotBridgeDurationOrAlbumDifferences()
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,youtube,tidal", "deezer,youtube,tidal",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "first", "Get Lucky", "Daft Punk", 369,
+                "Random Access Memories")),
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "middle", "Get Lucky", "Daft Punk", 371)),
+            RecordingSearchCapability("tidal", RecordingSearchTrack("tidal", "last", "Get Lucky", "Daft Punk", 373,
+                "Until the morning 2")));
+
+        var songs = (await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs;
+
+        Assert.Equal(2, songs.Count);
+        Assert.Contains(songs, song => song.ExternalId == "last");
+    }
+
+    [Theory]
+    [InlineData("Get Lucky", 371)]
+    [InlineData("Get Lucky (Remastered)", 369)]
+    [InlineData("Get Lucky (Album Version)", 369)]
+    public async Task SearchWithoutIsrcCombinesGenuineAnnotationsWithinTwoSeconds(string title, double seconds)
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,youtube", "deezer,youtube",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album", "Get Lucky", "Daft Punk", 369,
+                "Random Access Memories")),
+            RecordingSearchCapability("youtube", new ProviderTrackMetadata(new("youtube", ProviderResourceKind.Track, "video"),
+                title, [new("Daft Punk")], albumTitle: "Random Access Memories", duration: TimeSpan.FromSeconds(seconds))));
+
+        Assert.Single((await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs);
+    }
+
+    [Fact]
+    public async Task MetadataGroupingRespectsEveryDurationInAnIsrcGroup()
+    {
+        var (gateway, _) = SearchRankingGateway("deezer,qobuz,youtube", "deezer,qobuz,youtube",
+            RecordingSearchCapability("deezer", RecordingSearchTrack("deezer", "album", "Get Lucky", "Daft Punk", 369,
+                "Random Access Memories", "USQX91300105")),
+            RecordingSearchCapability("qobuz", RecordingSearchTrack("qobuz", "alias", "Get Lucky", "Daft Punk", 367,
+                "Random Access Memories", "USQX91300105")),
+            RecordingSearchCapability("youtube", RecordingSearchTrack("youtube", "video", "Get Lucky", "Daft Punk", 371,
+                "Random Access Memories")));
+
+        Assert.Equal(2, (await gateway.SearchAsync(SearchRankingContext(ProtocolKind.Jellyfin), "Get Lucky", 25, 0, 0)).Songs.Count);
+    }
+
     private static NativeMusicItem<object> NativeRecordingSearchRow(ProtocolKind protocol, string id,
         string title, string artist, int seconds, string album = "Random Access Memories")
     {

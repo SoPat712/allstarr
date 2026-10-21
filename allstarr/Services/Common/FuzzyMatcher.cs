@@ -19,7 +19,7 @@ public static partial class FuzzyMatcher
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\[\(]((?:\d{4}\s+)?remaster(?:ed)?(?:\s+\d{4})?|single version|album version|bonus(?: track)?|deluxe(?: edition)?|official|audio|video|lyric)[^\]\)]*[\]\)]", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex TypeDecoratorRegex();
 
-    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|instrumental|stripped|remix|radio edit|extended(?: mix)?|original mix|clean|explicit|sped[ -]+up|slowed(?:[ -]+down)?|karaoke)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
+    [System.Text.RegularExpressions.GeneratedRegex(@"\b(live|acoustic|instrumental|stripped|remix|radio edit|extended(?:[ -]+(?:mix|version))?|club[ -]+mix|original mix|clean|explicit|sped[ -]+up|slowed(?:[ -]+down)?|karaoke|drumless(?:[ -]+edition)?|a[ -]?cap{1,2}ella|nightcore|reverb|8d|bass[ -]*boosted|tribute|cover)\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
     private static partial System.Text.RegularExpressions.Regex SemanticVersionRegex();
 
     [System.Text.RegularExpressions.GeneratedRegex(@"[\(\[]([^\)\]]+)[\)\]]")]
@@ -343,10 +343,38 @@ public static partial class FuzzyMatcher
         if (string.IsNullOrWhiteSpace(title)) return tags;
         var normalized = RemoveDiacritics(title).ToLowerInvariant();
         tags.UnionWith(SemanticVersionRegex().Matches(normalized)
-            .Select(match => NormalizeForMatching(match.Value)));
+            .Select(match => NormalizeVersionTag(match.Value)));
         tags.UnionWith(RemixLabelRegex().Matches(normalized)
             .Select(match => "remix:" + NormalizeForMatching(match.Groups["label"].Value)));
         return tags;
+    }
+
+    private static string NormalizeVersionTag(string value)
+    {
+        var normalized = NormalizeForMatching(value.Replace('-', ' '));
+        return normalized switch
+        {
+            "drumless edition" => "drumless",
+            "acapella" or "a capella" or "a cappella" => "acappella",
+            "slowed down" => "slowed",
+            "bassboosted" => "bass boosted",
+            _ => normalized
+        };
+    }
+
+    public static IReadOnlySet<string> SpecialEditionTags(string? title) =>
+        SemanticVersionTags(title).Where(tag => tag is not
+            ("live" or "acoustic" or "stripped" or "radio edit" or "original mix" or "clean" or "explicit"))
+            .ToHashSet(StringComparer.Ordinal);
+
+    public static bool HasOtherRemixer(string title, string? artist, string? albumArtist = null)
+    {
+        var artists = new[] { artist, albumArtist }
+            .Select(value => SplitCredits(value).FirstOrDefault() ?? "")
+            .Select(NormalizeForMatching).ToHashSet(StringComparer.Ordinal);
+        return SemanticVersionTags(title).Where(tag => tag.StartsWith("remix:", StringComparison.Ordinal))
+            .Select(tag => tag[6..].Replace("remix", "", StringComparison.Ordinal).Trim())
+            .Any(credit => credit.Length > 0 && !artists.Contains(credit));
     }
 
     private static string RemoveDiacritics(string text)

@@ -5,6 +5,9 @@ public sealed class Song
     public string Id { get; set; } = string.Empty;
     public Guid? CanonicalRecordingId { get; set; }
 
+    [System.Text.Json.Serialization.JsonIgnore]
+    public List<allstarr.Core.Capabilities.ProviderExternalResourceId> SearchRoutes { get; set; } = [];
+
     public string Title { get; set; } = string.Empty;
     public string Artist { get; set; } = string.Empty;
     public string? ArtistId { get; set; }
