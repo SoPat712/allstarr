@@ -28,7 +28,6 @@ public static class SubsonicMusicEndpointPolicy
         "getLicense",
         "getLyrics",
         "getMusicFolders",
-        "getNowPlaying",
         "getRandomSongs",
         "getScanStatus",
         "getSongsByGenre",
@@ -36,7 +35,6 @@ public static class SubsonicMusicEndpointPolicy
         "getStarred2",
         "getTranscodeStream",
         "getUser",
-        "reportPlayback",
         "search",
         "setRating",
         "tokenInfo"
