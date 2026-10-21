@@ -2,7 +2,7 @@
   import { tick } from "svelte";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { Download, Music2, Play, ScrollText, X } from "@lucide/svelte";
+  import { Check, CircleAlert, CircleCheck, Download, Music2, Play, ScrollText, Search, SearchX, X } from "@lucide/svelte";
   import { adminUrl } from "$lib/admin-url";
   import {
     ApiError,
@@ -155,6 +155,23 @@
     return value.message || diagnosticFailureMessage({ reasonCode: value.reasonCode });
   }
 
+  const hints: Partial<Record<Tab, string>> = {
+    metadata: "Try fewer words, or search by artist and title.",
+    lyrics: "Check the title and artist spelling, or add the album and length.",
+    playlist: "Check that the link is public and belongs to this service.",
+  };
+
+  const finds = $derived([
+    ...(search ? (search.kinds?.length ? search.kinds : ["tracks" as ProviderTrySearchKind]).map((item) => ({ id: item as string, label: kindLabels[item] })) : []),
+    ...(operation("metadata", "track") ? [{ id: "track", label: "Song ID" }] : []),
+    ...(operation("metadata", "isrc") ? [{ id: "isrc", label: "ISRC" }] : []),
+  ]);
+  const find = $derived(lookup === "search" ? kind : lookup);
+  function choose(id: string) {
+    if (id === "track" || id === "isrc") lookup = id;
+    else { lookup = "search"; kind = id as ProviderTrySearchKind; }
+  }
+
   function submitMetadata(event: SubmitEvent) {
     event.preventDefault();
     const text = query.trim();
@@ -263,9 +280,9 @@
       {#if actions.length}
         <span class="try-row-actions">
           {#each actions as action}
-            {#if action === "lyrics"}<Button variant="ghost" size="icon-sm" aria-label={`Get lyrics for ${track.title}`} title="Get lyrics" disabled={Boolean(running)} onclick={() => use(track, "lyrics")}><ScrollText /></Button>{/if}
-            {#if action === "streaming"}<Button variant="ghost" size="icon-sm" aria-label={`Play ${track.title}`} title="Play" disabled={Boolean(running)} onclick={() => use(track, "streaming")}><Play /></Button>{/if}
-            {#if action === "download"}<Button variant="ghost" size="icon-sm" aria-label={`Download ${track.title}`} title="Download" disabled={Boolean(running)} onclick={() => use(track, "download")}><Download /></Button>{/if}
+            {#if action === "lyrics"}<Button variant="ghost" size="icon" aria-label={`Get lyrics for ${track.title}`} title="Get lyrics" disabled={Boolean(running)} onclick={() => use(track, "lyrics")}><ScrollText /></Button>{/if}
+            {#if action === "streaming"}<Button variant="ghost" size="icon" aria-label={`Play ${track.title}`} title="Play" disabled={Boolean(running)} onclick={() => use(track, "streaming")}><Play /></Button>{/if}
+            {#if action === "download"}<Button variant="ghost" size="icon" aria-label={`Download ${track.title}`} title="Download" disabled={Boolean(running)} onclick={() => use(track, "download")}><Download /></Button>{/if}
           {/each}
         </span>
       {/if}
@@ -275,27 +292,40 @@
 
 {#snippet status(target: Tab, value: ProviderTryResult | undefined, success: string)}
   {#if running === target && picking !== target}
-    <p class="try-status" role="status"><span class="try-spinner" aria-hidden="true"></span>{target === "download" ? `Downloading from ${name}… This can take a minute.` : target === "streaming" ? `Starting playback on ${name}…` : `Asking ${name}…`}</p>
+    <div class="try-outcome" data-tone="busy" role="status">
+      <span class="try-spinner" aria-hidden="true"></span>
+      <div><strong>{target === "download" ? `Downloading from ${name}…` : target === "streaming" ? `Starting playback on ${name}…` : `Asking ${name}…`}</strong>{#if target === "download"}<small>This can take a minute.</small>{/if}</div>
+    </div>
   {:else if errors[target]}
-    <p class="notice-error try-notice" role="alert">{errors[target]}</p>
+    <div class="try-outcome" data-tone="error" role="alert"><CircleAlert size={20} aria-hidden="true" /><div><strong>{errors[target]}</strong></div></div>
   {:else if value && !value.succeeded}
-    <p class="notice-error try-notice" role="alert">{failure(value)}<small>{elapsed(value.elapsedMs)}{value.reasonCode ? ` · ${value.reasonCode}` : ""}</small></p>
+    {@const missing = value.reasonCode === "not_found"}
+    <div class="try-outcome" data-tone={missing ? "neutral" : "error"} role="alert">
+      {#if missing}<SearchX size={20} aria-hidden="true" />{:else}<CircleAlert size={20} aria-hidden="true" />{/if}
+      <div>
+        <strong>{failure(value)}</strong>
+        {#if missing && hints[target]}<small>{hints[target]}</small>{/if}
+        <small class="try-outcome-meta">{elapsed(value.elapsedMs)}{value.reasonCode ? ` · ${value.reasonCode}` : ""}</small>
+      </div>
+    </div>
   {:else if value}
-    <p class="try-status try-status--ok" role="status">{success} in {elapsed(value.elapsedMs)}</p>
+    <p class="try-summary" role="status"><CircleCheck size={18} aria-hidden="true" /><strong>{success}</strong> <span>in {elapsed(value.elapsedMs)}</span></p>
   {/if}
 {/snippet}
 
 {#snippet picker(target: Tab)}
   {#if canSearchSongs}
-    <form class="try-form try-form--inline" onsubmit={(event) => submitPick(event, target)}>
-      <label class="field try-grow"><span>Song</span><input type="search" placeholder={`Search ${name} for a song`} value={pickQuery[target] ?? ""} oninput={(event) => pickQuery = { ...pickQuery, [target]: event.currentTarget.value }} disabled={Boolean(running)} /></label>
+    <form class="try-searchbar" onsubmit={(event) => submitPick(event, target)}>
+      <Search size={20} aria-hidden="true" />
+      <label class="sr-only" for={`try-pick-${target}`}>Song</label>
+      <input id={`try-pick-${target}`} type="search" placeholder={`Search ${name} for a song`} value={pickQuery[target] ?? ""} oninput={(event) => pickQuery = { ...pickQuery, [target]: event.currentTarget.value }} disabled={Boolean(running)} />
       <Button type="submit" variant="secondary" disabled={Boolean(running) || !pickQuery[target]?.trim()}>{picking === target ? "Searching…" : "Find"}</Button>
     </form>
-    {#if picking === target}<p class="try-status" role="status"><span class="try-spinner" aria-hidden="true"></span>Searching {name}…</p>{/if}
+    {#if picking === target}<div class="try-outcome" data-tone="busy" role="status"><span class="try-spinner" aria-hidden="true"></span><div><strong>Searching {name}…</strong></div></div>{/if}
     {#if picks[target]?.length}
       <ul class="try-list" aria-label="Songs to test">{#each picks[target]!.slice(0, 5) as track}{@render trackRow(track, [target])}{/each}</ul>
     {:else if picks[target] && !errors[target]}
-      <p class="try-empty">{name} found no songs for that search.</p>
+      <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} found no songs for that search.</strong></div></div>
     {/if}
   {/if}
 {/snippet}
@@ -312,43 +342,37 @@
             <Dialog.Description>{accountLine}</Dialog.Description>
           </div>
         </div>
-        <Dialog.Close class="icon-button" aria-label="Close"><X size={18} aria-hidden="true" /></Dialog.Close>
+        <Dialog.Close class="icon-button" aria-label="Close"><X size={20} aria-hidden="true" /></Dialog.Close>
       </header>
 
       {#if catalogError}
-        <p class="notice-error try-notice try-notice--page" role="alert">{catalogError}</p>
+        <div class="try-body"><div class="try-outcome" data-tone="error" role="alert"><CircleAlert size={20} aria-hidden="true" /><div><strong>{catalogError}</strong></div></div></div>
       {:else if !catalog}
-        <p class="try-status try-status--page" role="status"><span class="try-spinner" aria-hidden="true"></span>Loading what {name} can do…</p>
+        <div class="try-body"><div class="try-outcome" data-tone="busy" role="status"><span class="try-spinner" aria-hidden="true"></span><div><strong>Loading what {name} can do…</strong></div></div></div>
       {:else if !tabs.length}
-        <p class="try-empty try-empty--page">{name} has nothing to try yet. Turn on one of its features first.</p>
+        <div class="try-body"><div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} has nothing to try yet.</strong><small>Turn on one of its features first.</small></div></div></div>
       {:else}
         {#if tabs.length > 1}<SegmentedNav items={tabs} active={tab} label={`${name} features`} class="route-tabs try-tabs" onchange={(id) => tab = id as Tab} />{/if}
 
         <div class="try-body" role="tabpanel" aria-label={tabLabels[tab]}>
           {#if tab === "metadata" && current}
-            <form class="try-form" onsubmit={submitMetadata}>
-              <div class="try-form--inline">
-                <label class="field try-grow">
-                  <span>{lookup === "track" ? `${name} song ID` : lookup === "isrc" ? "ISRC" : "Search"}</span>
-                  <input type="search" bind:value={query} disabled={Boolean(running)}
-                    placeholder={lookup === "track" ? "Paste a song ID" : lookup === "isrc" ? "For example USQX91300108" : "Song, album or artist"} />
-                </label>
+            <form class="try-search" onsubmit={submitMetadata}>
+              <div class="try-searchbar">
+                <Search size={20} aria-hidden="true" />
+                <input type="search" bind:value={query} disabled={Boolean(running)} aria-label={lookup === "track" ? `${name} song ID` : lookup === "isrc" ? "ISRC" : "Search"}
+                  placeholder={lookup === "track" ? `Paste a ${name} song ID` : lookup === "isrc" ? "ISRC, for example USQX91300108" : `Search ${name}`} />
                 <Button type="submit" disabled={Boolean(running) || !query.trim()}>{running === "metadata" ? "Searching…" : lookup === "search" ? "Search" : "Look up"}</Button>
               </div>
-              <div class="try-options">
-                {#if operation("metadata", "track") || operation("metadata", "isrc")}
-                  <span class="try-chips" role="radiogroup" aria-label="Look up by">
-                    {#if search}<label class="try-chip"><input type="radio" bind:group={lookup} value="search" />Text</label>{/if}
-                    {#if operation("metadata", "track")}<label class="try-chip"><input type="radio" bind:group={lookup} value="track" />Song ID</label>{/if}
-                    {#if operation("metadata", "isrc")}<label class="try-chip"><input type="radio" bind:group={lookup} value="isrc" />ISRC</label>{/if}
-                  </span>
-                {/if}
-                {#if lookup === "search" && (search?.kinds?.length ?? 0) > 1}
-                  <span class="try-chips" role="radiogroup" aria-label="Show">
-                    {#each search!.kinds! as item}<label class="try-chip"><input type="radio" bind:group={kind} value={item} />{kindLabels[item]}</label>{/each}
-                  </span>
-                {/if}
-              </div>
+              {#if finds.length > 1}
+                <div class="try-chips" role="radiogroup" aria-label="Find">
+                  {#each finds as item, index (item.id)}
+                    {#if index > 0 && (item.id === "track" || item.id === "isrc") && !["track", "isrc"].includes(finds[index - 1].id)}<span class="try-chip-divider" aria-hidden="true"></span>{/if}
+                    <button type="button" role="radio" class="try-chip" aria-checked={find === item.id} disabled={Boolean(running)} onclick={() => choose(item.id)}>
+                      {#if find === item.id}<Check size={16} strokeWidth={2.5} aria-hidden="true" />{/if}{item.label}
+                    </button>
+                  {/each}
+                </div>
+              {/if}
             </form>
             {@render status("metadata", result, result?.succeeded ? `${countLabel(result)} found` : "")}
             {#if result?.succeeded}
@@ -359,39 +383,39 @@
               {:else if result.albums?.length}
                 <ul class="try-list" aria-label="Results">
                   {#each result.albums as album}
-                    <li class="try-row"><MediaArtwork class="try-art" url={album.artworkUrl} fallback="◎" /><span class="try-row-copy"><strong>{album.title}</strong><small>{album.artists.join(", ")}{album.year ? ` · ${album.year}` : ""}{album.trackCount ? ` · ${album.trackCount} songs` : ""}</small><small class="try-ids"><span>ID {album.id}</span></small></span></li>
+                    <li class="try-row"><MediaArtwork class="try-art" url={album.artworkUrl} fallback="◎" /><span class="try-row-copy"><strong><span>{album.title}</span></strong><small>{album.artists.join(", ")}{album.year ? ` · ${album.year}` : ""}{album.trackCount ? ` · ${album.trackCount} songs` : ""}</small><small class="try-ids"><span>ID {album.id}</span></small></span></li>
                   {/each}
                 </ul>
               {:else if result.artists?.length}
                 <ul class="try-list" aria-label="Results">
                   {#each result.artists as artist}
-                    <li class="try-row"><MediaArtwork class="try-art try-art--round" url={artist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong>{artist.name}</strong><small class="try-ids"><span>ID {artist.id}</span></small></span></li>
+                    <li class="try-row"><MediaArtwork class="try-art try-art--round" url={artist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{artist.name}</span></strong><small class="try-ids"><span>ID {artist.id}</span></small></span></li>
                   {/each}
                 </ul>
               {:else}
-                <p class="try-empty">{name} returned no results. Try other words.</p>
+                <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>{name} returned no results.</strong><small>{hints.metadata}</small></div></div>
               {/if}
             {/if}
 
           {:else if tab === "lyrics"}
             <form class="try-form" onsubmit={submitLyrics}>
-              <div class="try-grid">
-                <label class="field"><span>Title</span><input bind:value={lyricTitle} oninput={() => lyricTrackId = ""} disabled={Boolean(running)} placeholder="Get Lucky" required /></label>
-                <label class="field"><span>Artist</span><input bind:value={lyricArtist} oninput={() => lyricTrackId = ""} disabled={Boolean(running)} placeholder="Daft Punk" required /></label>
-                <label class="field"><span>Album <em>optional</em></span><input bind:value={lyricAlbum} disabled={Boolean(running)} /></label>
-                <div class="try-grid try-grid--pair">
-                  <label class="field"><span>Length <em>optional</em></span><input bind:value={lyricDuration} inputmode="numeric" disabled={Boolean(running)} placeholder="6:09" /></label>
-                  <label class="field"><span>ISRC <em>optional</em></span><input bind:value={lyricIsrc} disabled={Boolean(running)} /></label>
-                </div>
+              <div class="try-fields try-fields--two">
+                <label class="try-field"><span>Title</span><input bind:value={lyricTitle} oninput={() => lyricTrackId = ""} disabled={Boolean(running)} placeholder="Get Lucky" required /></label>
+                <label class="try-field"><span>Artist</span><input bind:value={lyricArtist} oninput={() => lyricTrackId = ""} disabled={Boolean(running)} placeholder="Daft Punk" required /></label>
+              </div>
+              <div class="try-fields try-fields--details">
+                <label class="try-field"><span>Album <em>optional</em></span><input bind:value={lyricAlbum} disabled={Boolean(running)} placeholder="Random Access Memories" /></label>
+                <label class="try-field"><span>Length <em>optional</em></span><input bind:value={lyricDuration} inputmode="numeric" disabled={Boolean(running)} placeholder="6:09" /></label>
+                <label class="try-field"><span>ISRC <em>optional</em></span><input bind:value={lyricIsrc} disabled={Boolean(running)} placeholder="USQX91300108" /></label>
               </div>
               <div class="try-form-end">
                 {#if canSearchSongs}<small>Or pick a song on the Search tab to fill these in.</small>{/if}
-                <Button type="submit" disabled={Boolean(running) || !lyricTitle.trim() || !lyricArtist.trim()}>{running === "lyrics" ? "Getting lyrics…" : "Get lyrics"}</Button>
+                <Button type="submit" disabled={Boolean(running) || !lyricTitle.trim() || !lyricArtist.trim()}><ScrollText aria-hidden="true" />{running === "lyrics" ? "Getting lyrics…" : "Get lyrics"}</Button>
               </div>
             </form>
             {@render status("lyrics", result, result?.lyrics ? `${result.lyrics.lineCount} lines found` : "")}
             {#if result?.succeeded && result.lyrics}
-              <div class="try-lyrics">
+              <section class="try-card try-lyrics" aria-label="Lyrics">
                 <p class="try-facts">
                   <span class="try-pill">{result.lyrics.format === "word" ? "Word-timed" : result.lyrics.format === "line" ? "Line-timed" : "Plain text"}</span>
                   {#if result.lyrics.source}<span>From {result.lyrics.source}</span>{/if}
@@ -402,15 +426,16 @@
                     <li>{#if result.lyrics.format !== "plain"}<time>{stamp(line.startMs)}</time>{/if}<span>{line.text || " "}</span></li>
                   {/each}
                 </ol>
-              </div>
+              </section>
             {/if}
 
           {:else if tab === "playlist"}
-            <form class="try-form try-form--inline" onsubmit={(event) => { event.preventDefault(); if (playlistUrl.trim()) void run("playlist", { operation: "playlist", url: playlistUrl.trim() }); }}>
-              <label class="field try-grow"><span>Playlist link or ID</span><input inputmode="url" autocomplete="off" bind:value={playlistUrl} disabled={Boolean(running)} placeholder={`Paste a ${name} playlist link`} /></label>
+            <form class="try-searchbar" onsubmit={(event) => { event.preventDefault(); if (playlistUrl.trim()) void run("playlist", { operation: "playlist", url: playlistUrl.trim() }); }}>
+              <Search size={20} aria-hidden="true" />
+              <input inputmode="url" autocomplete="off" aria-label="Playlist link or ID" bind:value={playlistUrl} disabled={Boolean(running)} placeholder={`Paste a ${name} playlist link or ID`} />
               <Button type="submit" disabled={Boolean(running) || !playlistUrl.trim()}>{running === "playlist" ? "Opening…" : "Open"}</Button>
-              {#if operation("playlist", "mine")}<Button variant="secondary" disabled={Boolean(running)} onclick={() => void run("playlist", { operation: "mine" })}>My playlists</Button>{/if}
             </form>
+            {#if operation("playlist", "mine")}<div class="try-actions"><Button variant="secondary" disabled={Boolean(running)} onclick={() => void run("playlist", { operation: "mine" })}>Show my playlists</Button></div>{/if}
             {@render status("playlist", result, result?.playlist ? `${result.tracks?.length ?? 0} songs loaded` : result ? `${countLabel(result)} found` : "")}
             {#if result?.succeeded && result.playlist}
               <div class="try-playlist-head">
@@ -422,16 +447,16 @@
               {#if result.playlists.length}
                 <ul class="try-list" aria-label="Your playlists">
                   {#each result.playlists as playlist}
-                    <li class="try-row"><MediaArtwork class="try-art" url={playlist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong>{playlist.title}</strong><small>{playlist.owner ? `${playlist.owner} · ` : ""}{playlist.trackCount ?? "?"} songs</small><small class="try-ids"><span>ID {playlist.id}</span></small></span>
-                      <span class="try-row-end"><Button variant="ghost" size="sm" disabled={Boolean(running)} onclick={() => { playlistUrl = playlist.id; void run("playlist", { operation: "playlist", url: playlist.id }); }}>Open</Button></span></li>
+                    <li class="try-row"><MediaArtwork class="try-art" url={playlist.artworkUrl} fallback="♫" /><span class="try-row-copy"><strong><span>{playlist.title}</span></strong><small>{playlist.owner ? `${playlist.owner} · ` : ""}{playlist.trackCount ?? "?"} songs</small><small class="try-ids"><span>ID {playlist.id}</span></small></span>
+                      <span class="try-row-end"><Button variant="secondary" size="sm" disabled={Boolean(running)} onclick={() => { playlistUrl = playlist.id; void run("playlist", { operation: "playlist", url: playlist.id }); }}>Open</Button></span></li>
                   {/each}
                 </ul>
-              {:else}<p class="try-empty">This account has no playlists on {name}.</p>{/if}
+              {:else}<div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>This account has no playlists on {name}.</strong></div></div>{/if}
             {/if}
 
           {:else if tab === "streaming" || tab === "download"}
             <div class="try-quality">
-              <label class="field"><span>Quality</span>
+              <label class="try-field"><span>Quality</span>
                 <select bind:value={quality} disabled={Boolean(running)}>
                   <option value="high-resolution">Hi-res</option>
                   <option value="lossless">Lossless</option>
@@ -439,21 +464,22 @@
                   <option value="any">Whatever is available</option>
                 </select>
               </label>
-              {#if tab === "streaming"}<Button variant="secondary" disabled={Boolean(running)} onclick={() => void run("streaming", { operation: "stream", quality })}>Play a sample song</Button>{/if}
+              {#if tab === "streaming"}<Button variant="secondary" disabled={Boolean(running)} onclick={() => void run("streaming", { operation: "stream", quality })}><Play aria-hidden="true" />Play a sample song</Button>{/if}
             </div>
             {@render picker(tab)}
             {#if !canSearchSongs && tab === "download"}
-              <form class="try-form try-form--inline" onsubmit={(event) => { event.preventDefault(); const id = pickQuery.download?.trim(); if (id) void run("download", { operation: "download", trackId: id, quality }); }}>
-                <label class="field try-grow"><span>{name} song ID</span><input value={pickQuery.download ?? ""} oninput={(event) => pickQuery = { ...pickQuery, download: event.currentTarget.value }} disabled={Boolean(running)} /></label>
+              <form class="try-searchbar" onsubmit={(event) => { event.preventDefault(); const id = pickQuery.download?.trim(); if (id) void run("download", { operation: "download", trackId: id, quality }); }}>
+                <Download size={20} aria-hidden="true" />
+                <input aria-label={`${name} song ID`} placeholder={`Paste a ${name} song ID`} value={pickQuery.download ?? ""} oninput={(event) => pickQuery = { ...pickQuery, download: event.currentTarget.value }} disabled={Boolean(running)} />
                 <Button type="submit" disabled={Boolean(running) || !pickQuery.download?.trim()}>Download</Button>
               </form>
             {/if}
             {@render status(tab, result, tab === "streaming" ? "Playback started" : "Downloaded")}
             {#if result?.succeeded && result.media}
               {@const media = result.media}
-              <div class="try-media">
+              <section class="try-card try-media" aria-label={media.kind === "download" ? "Downloaded file" : "Playback"}>
                 <div class="try-media-title">
-                  <span class="try-media-icon" aria-hidden="true">{#if media.kind === "download"}<Download size={18} />{:else}<Music2 size={18} />{/if}</span>
+                  <span class="try-media-icon" aria-hidden="true">{#if media.kind === "download"}<Download size={20} />{:else}<Music2 size={20} />{/if}</span>
                   <strong>{media.fileName ?? picks[tab]?.[0]?.title ?? "Sample song"}</strong>
                 </div>
                 <!-- svelte-ignore a11y_media_has_caption -->
@@ -467,12 +493,12 @@
                     <a class={buttonVariants({ variant: "default" })} href={adminUrl(`${media.url}?download=1`)} download={media.fileName ?? ""}><Download aria-hidden="true" />Save file</a>
                   </div>
                 {/if}
-              </div>
+              </section>
             {/if}
 
           {:else if tab === "scrobbling"}
-            <div class="try-form try-form--inline">
-              <p class="try-explain">Checks that {account ? account.displayName : "this account"} is accepted. No listen is sent.</p>
+            <div class="try-card try-explain-card">
+              <p>Checks that {account ? account.displayName : "this account"} is accepted. No listen is sent.</p>
               <Button disabled={Boolean(running)} onclick={() => void run("scrobbling", { operation: "check" })}>{running === "scrobbling" ? "Checking…" : "Check account"}</Button>
             </div>
             {@render status("scrobbling", result, "Account accepted")}
@@ -491,8 +517,8 @@
   :global {
     @layer components {
       .try-dialog {
-        --dialog-width: 46rem;
-        --dialog-max-height: 52rem;
+        --dialog-width: 44rem;
+        --dialog-max-height: 54rem;
 
         display: grid;
         grid-template-rows: auto auto minmax(0, 1fr) auto;
@@ -501,89 +527,211 @@
 
       .try-heading {
         display: flex;
+        min-width: 0;
         align-items: center;
-        gap: var(--space-3);
+        gap: var(--space-4);
       }
 
       .try-mark {
         display: grid;
         flex-shrink: 0;
-        width: 2.75rem;
-        height: 2.75rem;
+        width: 3rem;
+        height: 3rem;
         place-items: center;
         overflow: hidden;
         border-radius: var(--radius-md);
-        background: var(--color-panel-raised);
+        background: var(--color-surface-raised);
       }
 
-      .try-mark > :is(img, svg, span) {
-        width: 1.75rem;
-        height: 1.75rem;
+      .try-mark .provider-mark,
+      .try-mark .provider-mark > img {
+        width: 2.25rem;
+        height: 2.25rem;
+        border-radius: var(--radius-sm);
       }
 
       .try-dialog > .segmented-nav {
-        padding: var(--space-3) var(--space-4) 0;
+        padding: var(--space-2) var(--space-6) 0;
       }
 
       .try-body {
         display: grid;
         align-content: start;
         gap: var(--space-4);
-        min-height: 18rem;
+        min-height: 20rem;
         overflow: auto;
-        padding: var(--space-4);
+        padding: var(--space-5) var(--space-6) var(--space-6);
       }
 
-      .try-form {
+      /* Search bar: one pill holding the icon, the field and the action. */
+      .try-search {
         display: grid;
         gap: var(--space-3);
       }
 
-      .try-form--inline {
+      .try-searchbar {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: var(--space-3);
+        min-height: 3.5rem;
+        border-radius: 999px;
+        background: var(--color-surface-raised);
+        padding: 0.375rem 0.375rem 0.375rem var(--space-5);
+        color: var(--color-ink-muted);
+        transition: box-shadow 120ms ease;
+      }
+
+      .try-searchbar:focus-within {
+        box-shadow: inset 0 0 0 2px var(--color-signal);
+      }
+
+      .try-searchbar > svg {
+        flex-shrink: 0;
+      }
+
+      .try-searchbar > input {
+        flex: 1 1 auto;
+        min-width: 0;
+        height: 2.75rem;
+        border: 0;
+        background: transparent;
+        padding: 0;
+        color: var(--color-ink);
+        font: inherit;
+        font-size: var(--text-md);
+        outline: none;
+        box-shadow: none;
+      }
+
+      .try-searchbar > input::placeholder {
+        color: var(--color-ink-muted);
+      }
+
+      .try-searchbar > input::-webkit-search-cancel-button {
+        display: none;
+      }
+
+      .try-searchbar > button {
+        flex-shrink: 0;
+        min-height: 2.75rem;
+      }
+
+      /* Filter chips (Material 3): outlined, filled with a check when selected. */
+      .try-chips {
         display: flex;
         flex-wrap: wrap;
-        align-items: flex-end;
-        gap: var(--space-3);
+        align-items: center;
+        gap: var(--space-2);
       }
 
-      .try-form--inline > :is(button, a),
-      .try-quality > button,
-      .try-form-end > button {
-        min-height: 3rem;
+      .try-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--space-2);
+        height: 2rem;
+        border: 1px solid var(--color-edge-strong);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        padding: 0 var(--space-4);
+        color: var(--color-ink-muted);
+        font: inherit;
+        font-size: var(--text-sm);
+        font-weight: 500;
+        cursor: pointer;
+        transition: background-color 120ms ease, color 120ms ease;
       }
 
-      .try-grow {
-        flex: 1 1 16rem;
-        min-width: 0;
+      .try-chip:hover:not(:disabled) {
+        background: color-mix(in srgb, var(--color-ink) 8%, transparent);
+        color: var(--color-ink);
       }
 
-      .try-grid {
+      .try-chip[aria-checked="true"] {
+        border-color: transparent;
+        background: var(--md-sys-color-secondary-container);
+        padding-left: var(--space-2);
+        color: var(--md-sys-color-on-secondary-container);
+      }
+
+      .try-chip:focus-visible {
+        outline: 2px solid var(--color-ring);
+        outline-offset: 2px;
+      }
+
+      .try-chip-divider {
+        width: 1px;
+        height: 1.25rem;
+        margin: 0 var(--space-1);
+        background: var(--color-edge);
+      }
+
+      /* Outlined text fields. */
+      .try-form {
         display: grid;
+        gap: var(--space-4);
+      }
+
+      .try-fields {
+        display: grid;
+        gap: var(--space-4);
+      }
+
+      .try-fields--two {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: var(--space-3);
       }
 
-      .try-grid--pair {
-        grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+      .try-fields--details {
+        grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.5fr);
       }
 
-      .try-dialog .field {
+      .try-field {
+        display: grid;
         min-width: 0;
+        gap: var(--space-2);
       }
 
-      .try-dialog .field :is(input, select) {
-        width: 100%;
-        min-width: 0;
+      .try-field > span {
+        color: var(--color-ink);
+        font-size: var(--text-sm);
+        font-weight: 600;
+        line-height: 1.25rem;
       }
 
-      .field > span > em {
+      .try-field > span > em {
         color: var(--color-ink-muted);
         font-style: normal;
         font-weight: 400;
       }
 
-      .try-form-end {
+      .try-field :is(input, select) {
+        width: 100%;
+        min-width: 0;
+        height: 3rem;
+        border: 1px solid var(--color-edge-strong);
+        border-radius: var(--radius-sm);
+        background: transparent;
+        padding: 0 var(--space-4);
+        color: var(--color-ink);
+        font: inherit;
+        font-size: var(--text-md);
+      }
+
+      .try-field :is(input, select):focus {
+        border-color: var(--color-signal);
+        outline: none;
+        box-shadow: inset 0 0 0 1px var(--color-signal);
+      }
+
+      .try-field input::placeholder {
+        color: var(--color-ink-muted);
+        opacity: 0.7;
+      }
+
+      .try-form-end,
+      .try-actions {
         display: flex;
+        flex-wrap: wrap;
         align-items: center;
         justify-content: flex-end;
         gap: var(--space-3);
@@ -592,51 +740,7 @@
       .try-form-end > small {
         margin-right: auto;
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
-      }
-
-      .try-options {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: space-between;
-        gap: var(--space-2) var(--space-4);
-      }
-
-      .try-chips {
-        display: inline-flex;
-        flex-wrap: wrap;
-        gap: var(--space-2);
-      }
-
-      .try-chip {
-        display: inline-flex;
-        align-items: center;
-        min-height: 2rem;
-        border: 1px solid var(--color-edge-strong);
-        border-radius: var(--radius-sm);
-        color: var(--color-ink);
-        cursor: pointer;
-        padding: 0 var(--space-3);
         font-size: var(--text-sm);
-        font-weight: 600;
-        transition: background-color 120ms ease, border-color 120ms ease;
-      }
-
-      .try-chip > input {
-        position: absolute;
-        opacity: 0;
-        pointer-events: none;
-      }
-
-      .try-chip:has(input:checked) {
-        border-color: transparent;
-        background: var(--md-sys-color-secondary-container);
-        color: var(--md-sys-color-on-secondary-container);
-      }
-
-      .try-chip:has(input:focus-visible) {
-        outline: 2px solid var(--color-signal);
-        outline-offset: 2px;
       }
 
       .try-quality {
@@ -647,34 +751,91 @@
         gap: var(--space-3);
       }
 
-      .try-quality > .field {
-        flex: 0 1 14rem;
+      .try-quality > .try-field {
+        flex: 0 1 15rem;
       }
 
-      .try-status {
+      .try-quality > button {
+        min-height: 3rem;
+      }
+
+      /* Outcomes: busy, nothing found and errors read as tonal cards; success is one line. */
+      .try-outcome {
         display: flex;
+        align-items: flex-start;
+        gap: var(--space-3);
+        margin: 0;
+        border-radius: var(--radius-md);
+        background: var(--color-surface-raised);
+        padding: var(--space-4);
+        color: var(--color-ink);
+      }
+
+      .try-outcome > svg,
+      .try-outcome > .try-spinner {
+        flex-shrink: 0;
+        margin-top: 0.0625rem;
+        color: var(--color-ink-muted);
+      }
+
+      .try-outcome > div {
+        display: grid;
+        min-width: 0;
+        gap: 0.125rem;
+      }
+
+      .try-outcome strong {
+        font-size: var(--text-sm);
+        font-weight: 600;
+        line-height: 1.25rem;
+      }
+
+      .try-outcome small {
+        color: var(--color-ink-muted);
+        font-size: var(--text-sm);
+        line-height: 1.25rem;
+      }
+
+      .try-outcome .try-outcome-meta {
+        font-size: 0.8125rem;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .try-outcome[data-tone="error"] {
+        background: var(--md-sys-color-error-container);
+        color: var(--md-sys-color-on-error-container);
+      }
+
+      .try-outcome[data-tone="error"] > svg,
+      .try-outcome[data-tone="error"] small {
+        color: var(--md-sys-color-on-error-container);
+      }
+
+      .try-summary {
+        display: flex;
+        flex-wrap: wrap;
         align-items: center;
         gap: var(--space-2);
         margin: 0;
-        color: var(--color-ink-muted);
         font-size: var(--text-sm);
       }
 
-      .try-status--ok {
+      .try-summary > svg {
+        color: var(--color-success);
+      }
+
+      .try-summary > strong {
         color: var(--color-ink);
         font-weight: 600;
       }
 
-      .try-status--page,
-      .try-notice--page,
-      .try-empty--page {
-        margin: var(--space-6) var(--space-4);
+      .try-summary > span {
+        color: var(--color-ink-muted);
       }
 
       .try-spinner {
-        width: 1rem;
-        height: 1rem;
-        flex-shrink: 0;
+        width: 1.25rem;
+        height: 1.25rem;
         border: 2px solid var(--color-edge-strong);
         border-top-color: var(--color-signal);
         border-radius: 50%;
@@ -693,45 +854,22 @@
         }
       }
 
-      .try-notice {
-        display: grid;
-        gap: var(--space-1);
-        margin: 0;
-        font-size: var(--text-sm);
-        line-height: 1.5;
-      }
-
-      .try-notice > small {
-        opacity: 0.8;
-        font-size: 0.8125rem;
-      }
-
-      .try-empty,
-      .try-explain {
-        margin: 0;
-        color: var(--color-ink-muted);
-        font-size: var(--text-sm);
-      }
-
-      .try-explain {
-        flex: 1 1 16rem;
-        align-self: center;
-      }
-
+      /* Lists. */
       .try-list {
         margin: 0;
-        padding: 0;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        background: var(--color-panel-raised);
+        padding: var(--space-1) 0;
         list-style: none;
-        border: 1px solid var(--color-edge);
-        border-radius: var(--radius-md);
       }
 
       .try-row {
         display: grid;
-        grid-template-columns: 2.75rem minmax(0, 1fr) auto;
+        grid-template-columns: 3.5rem minmax(0, 1fr) auto;
         align-items: center;
-        gap: var(--space-3);
-        padding: var(--space-2) var(--space-3);
+        gap: var(--space-4);
+        padding: var(--space-3) var(--space-4);
       }
 
       .try-row + .try-row {
@@ -739,11 +877,11 @@
       }
 
       .try-art {
-        width: 2.75rem;
-        height: 2.75rem;
+        width: 3.5rem;
+        height: 3.5rem;
         overflow: hidden;
         border-radius: var(--radius-sm);
-        background: var(--color-panel-raised);
+        background: var(--color-surface-raised);
       }
 
       .try-art--round {
@@ -751,15 +889,15 @@
       }
 
       .try-art--large {
-        width: 4.5rem;
-        height: 4.5rem;
+        width: 5rem;
+        height: 5rem;
         border-radius: var(--radius-md);
       }
 
       .try-row-copy {
         display: grid;
         min-width: 0;
-        gap: 1px;
+        gap: 0.125rem;
       }
 
       .try-row-copy > strong {
@@ -768,11 +906,13 @@
         gap: var(--space-2);
         min-width: 0;
         color: var(--color-ink);
-        font-size: var(--text-sm);
-        font-weight: 650;
+        font-size: var(--text-md);
+        font-weight: 500;
+        line-height: 1.5rem;
       }
 
-      .try-row-copy > strong > span {
+      .try-row-copy > strong > span,
+      .try-row-copy > small {
         min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -780,23 +920,23 @@
       }
 
       .try-row-copy > small {
-        overflow: hidden;
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
-        text-overflow: ellipsis;
-        white-space: nowrap;
+        font-size: var(--text-sm);
+        line-height: 1.25rem;
       }
 
-      .try-ids {
+      .try-row-copy > .try-ids {
         display: flex;
         gap: var(--space-3);
+        font-size: 0.8125rem;
         font-variant-numeric: tabular-nums;
+        opacity: 0.85;
       }
 
       .try-explicit {
         display: inline-grid;
-        width: 1.1rem;
-        height: 1.1rem;
+        width: 1.125rem;
+        height: 1.125rem;
         flex-shrink: 0;
         place-items: center;
         border-radius: 3px;
@@ -814,14 +954,34 @@
       }
 
       .try-duration {
+        min-width: 2.5rem;
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
+        font-size: var(--text-sm);
         font-variant-numeric: tabular-nums;
+        text-align: right;
       }
 
       .try-row-actions {
         display: flex;
-        gap: 2px;
+        gap: 0;
+      }
+
+      .try-row-actions > button {
+        border-radius: 50%;
+        color: var(--color-ink-muted);
+      }
+
+      .try-row-actions > button:hover:not(:disabled) {
+        color: var(--color-ink);
+      }
+
+      /* Cards for lyrics, media and explanations. */
+      .try-card {
+        display: grid;
+        gap: var(--space-3);
+        border-radius: var(--radius-lg);
+        background: var(--color-panel-raised);
+        padding: var(--space-4) var(--space-5);
       }
 
       .try-facts {
@@ -829,38 +989,36 @@
         flex-wrap: wrap;
         align-items: center;
         gap: var(--space-2) var(--space-4);
-        margin: 0 0 var(--space-3);
+        margin: 0;
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
+        font-size: var(--text-sm);
       }
 
       .try-pill {
-        border-radius: 999px;
+        border-radius: var(--radius-sm);
         background: var(--md-sys-color-secondary-container);
         color: var(--md-sys-color-on-secondary-container);
-        padding: 0.2rem 0.65rem;
-        font-weight: 650;
+        padding: 0.25rem 0.75rem;
+        font-weight: 600;
       }
 
       .try-lyric-lines {
         display: grid;
         max-height: 22rem;
-        gap: 0.35rem;
+        gap: var(--space-2);
         margin: 0;
         overflow: auto;
-        border: 1px solid var(--color-edge);
-        border-radius: var(--radius-md);
-        padding: var(--space-3) var(--space-4);
+        padding: 0;
         list-style: none;
       }
 
       .try-lyric-lines > li {
         display: grid;
-        grid-template-columns: 4.5rem minmax(0, 1fr);
+        grid-template-columns: 4.75rem minmax(0, 1fr);
         gap: var(--space-3);
         color: var(--color-ink);
-        font-size: var(--text-sm);
-        line-height: 1.55;
+        font-size: var(--text-md);
+        line-height: 1.5rem;
       }
 
       .try-lyric-lines.untimed > li {
@@ -869,9 +1027,9 @@
 
       .try-lyric-lines time {
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
+        font-size: var(--text-sm);
         font-variant-numeric: tabular-nums;
-        line-height: 1.7;
+        line-height: 1.5rem;
       }
 
       .try-playlist-head {
@@ -888,22 +1046,14 @@
 
       .try-playlist-head strong {
         font-family: var(--font-display);
-        font-size: 1.125rem;
+        font-size: 1.25rem;
+        font-weight: 500;
         overflow-wrap: anywhere;
       }
 
       .try-playlist-head small {
         color: var(--color-ink-muted);
         font-size: var(--text-sm);
-      }
-
-      .try-media {
-        display: grid;
-        gap: var(--space-3);
-        border: 1px solid var(--color-edge);
-        border-radius: var(--radius-md);
-        background: var(--color-panel-raised);
-        padding: var(--space-4);
       }
 
       .try-media-title {
@@ -915,15 +1065,16 @@
 
       .try-media-title > strong {
         overflow: hidden;
-        font-size: var(--text-sm);
+        font-size: var(--text-md);
+        font-weight: 500;
         text-overflow: ellipsis;
         white-space: nowrap;
       }
 
       .try-media-icon {
         display: grid;
-        width: 2.25rem;
-        height: 2.25rem;
+        width: 2.5rem;
+        height: 2.5rem;
         flex-shrink: 0;
         place-items: center;
         border-radius: 50%;
@@ -937,22 +1088,22 @@
 
       .try-media-facts {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
-        gap: var(--space-3);
+        grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+        gap: var(--space-3) var(--space-4);
         margin: 0;
       }
 
       .try-media-facts dt {
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
+        font-size: var(--text-sm);
       }
 
       .try-media-facts dd {
         margin: 0;
         color: var(--color-ink);
-        font-size: var(--text-sm);
+        font-size: var(--text-md);
         font-variant-numeric: tabular-nums;
-        font-weight: 650;
+        font-weight: 500;
       }
 
       .try-media-actions {
@@ -967,32 +1118,64 @@
 
       .try-media-actions > small {
         color: var(--color-ink-muted);
-        font-size: 0.8125rem;
+        font-size: var(--text-sm);
       }
 
+      .try-explain-card {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .try-explain-card > p {
+        flex: 1 1 16rem;
+        margin: 0;
+        color: var(--color-ink);
+        font-size: var(--text-sm);
+      }
     }
 
     @media (max-width: 760px) {
-      .try-dialog {
-        grid-template-rows: auto auto minmax(0, 1fr) auto;
+      .try-dialog > .segmented-nav {
+        padding: var(--space-2) var(--space-4) 0;
       }
 
       .try-body {
         min-height: 0;
+        padding: var(--space-4);
       }
 
-      .try-grid,
-      .try-grid--pair {
+      .try-fields--two,
+      .try-fields--details {
         grid-template-columns: minmax(0, 1fr);
       }
 
-      .try-form--inline > :is(button, a) {
-        flex: 1 1 auto;
+      .try-searchbar {
+        padding-left: var(--space-4);
+      }
+
+      .try-chips {
+        flex-wrap: nowrap;
+        margin: 0 calc(var(--space-4) * -1);
+        overflow-x: auto;
+        padding: 0 var(--space-4) var(--space-1);
+        scrollbar-width: none;
+      }
+
+      .try-chips::-webkit-scrollbar {
+        display: none;
+      }
+
+      .try-chip,
+      .try-chip-divider {
+        flex-shrink: 0;
       }
 
       .try-row {
-        grid-template-columns: 2.5rem minmax(0, 1fr);
+        grid-template-columns: 3rem minmax(0, 1fr);
         row-gap: var(--space-1);
+        gap: var(--space-3);
       }
 
       .try-row-end {
@@ -1001,12 +1184,19 @@
       }
 
       .try-art {
-        width: 2.5rem;
-        height: 2.5rem;
+        width: 3rem;
+        height: 3rem;
       }
 
       .try-lyric-lines > li {
-        grid-template-columns: 3.75rem minmax(0, 1fr);
+        grid-template-columns: 4rem minmax(0, 1fr);
+        font-size: var(--text-sm);
+      }
+
+      .try-quality > .try-field,
+      .try-quality > button,
+      .try-form-end > button {
+        flex: 1 1 100%;
       }
     }
   }
