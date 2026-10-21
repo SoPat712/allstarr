@@ -68,7 +68,7 @@ public sealed class JellyfinExternalMetadataTests
         foreach (var sources in new[] { list["MediaSources"], Item(builder.CreateSongResponse(song))["MediaSources"], builder.CreatePlaybackMediaSources(song) })
         {
             var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(sources));
-            var stream = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]));
+            var stream = AudioStream(source);
             Assert.Equal(known ? 12_000_000L : null, source.GetValueOrDefault("Size"));
             Assert.Equal(known ? 960_000 : null, source.GetValueOrDefault("Bitrate"));
             foreach (var (key, value) in new[] { ("BitRate", 960_000), ("SampleRate", 96_000), ("BitDepth", 24), ("Channels", 2) })
@@ -107,8 +107,13 @@ public sealed class JellyfinExternalMetadataTests
         var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(builder.ConvertSongToJellyfinItem(Track())["MediaSources"]));
         Assert.Equal(matchingBackend ? 12_000_000L : null, source.GetValueOrDefault("Size"));
         Assert.Equal(matchingBackend ? 960_000 : null, source.GetValueOrDefault("Bitrate"));
-        var stream = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]));
-        Assert.Equal(matchingBackend ? 96_000 : null, stream.GetValueOrDefault("SampleRate"));
+        var stream = AudioStream(source);
+        foreach (var (key, value) in new[] { ("BitRate", 960_000), ("SampleRate", 96_000), ("BitDepth", 24), ("Channels", 2) })
+        {
+            Assert.Equal(matchingBackend ? value : null, stream.GetValueOrDefault(key));
+            Assert.Equal(matchingBackend, stream.ContainsKey(key));
+        }
+        Assert.Equal(matchingBackend ? "flac" : null, stream.GetValueOrDefault("Codec"));
         activity.VerifyAll();
     }
 
@@ -119,9 +124,12 @@ public sealed class JellyfinExternalMetadataTests
         song.Size = 12_000_000;
         var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(new JellyfinResponseBuilder().CreatePlaybackMediaSources(song)));
         Assert.Equal(960_000, source["Bitrate"]);
-        var stream = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]));
+        var stream = AudioStream(source);
         Assert.False(stream.ContainsKey("BitRate"));
         Assert.False(stream.ContainsKey("SampleRate"));
+        Assert.False(stream.ContainsKey("BitDepth"));
+        Assert.False(stream.ContainsKey("Channels"));
+        Assert.False(stream.ContainsKey("Codec"));
     }
 
     [Fact]
@@ -144,6 +152,27 @@ public sealed class JellyfinExternalMetadataTests
         Assert.Equal("2024-02-29", album.ReleaseDate);
         var item = new JellyfinResponseBuilder().ConvertAlbumToJellyfinItem(album);
         Assert.Equal(2024, item["ProductionYear"]);
+    }
+
+    private static Dictionary<string, object?> AudioStream(Dictionary<string, object?> source)
+    {
+        var streams = Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]);
+        Assert.Collection(streams,
+            audio =>
+            {
+                Assert.Equal("Audio", audio["Type"]);
+                Assert.Equal(0, audio["Index"]);
+            },
+            lyric =>
+            {
+                Assert.Equal("Lyric", lyric["Type"]);
+                Assert.Equal(1, lyric["Index"]);
+                Assert.True(Assert.IsType<bool>(lyric["IsExternal"]));
+                foreach (var key in new[] { "Size", "BitRate", "SampleRate", "BitDepth", "Channels", "Codec", "TimeBase" })
+                    Assert.False(lyric.ContainsKey(key));
+            });
+        Assert.Equal(0, source["DefaultAudioStreamIndex"]);
+        return streams[0];
     }
 
     private static Dictionary<string, object?> Item(IActionResult result) =>

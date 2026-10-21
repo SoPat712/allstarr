@@ -47,7 +47,9 @@ public sealed class JellyfinAudioShapeTests
         // Keep playback URLs for clients that open streams from item lists.
         AssertKeys(shape.GetProperty("MediaSourceKeys"),
             source.Keys.Except(["DirectStreamUrl", "TranscodingUrl"]), "Size", "Bitrate");
-        var stream = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]));
+        var streams = Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]);
+        var stream = Assert.Single(streams, entry => Equals(entry["Type"], "Audio"));
+        Assert.Single(streams, entry => Equals(entry["Type"], "Lyric"));
         AssertKeys(shape.GetProperty("AudioStreamKeys"), stream.Keys, "BitRate", "Codec", "SampleRate", "Channels", "BitDepth", "ChannelLayout", "TimeBase", "DisplayTitle");
         Assert.Same(source["MediaStreams"], item["MediaStreams"]);
         Assert.Empty(Assert.IsType<object[]>(item["People"]));

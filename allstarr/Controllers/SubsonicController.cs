@@ -46,6 +46,7 @@ public partial class SubsonicController : ControllerBase
     private readonly ILogger<SubsonicController> _logger;
     private readonly MusicFavorites _favorites;
     private readonly MusicPlaybackObservations _playbackObservations;
+    private readonly UpcomingSongPreparation? _upcomingSongs;
     private readonly IProtocolProviderGateway _providerGateway;
     private readonly ProtocolStreamingResponseAdapter _streamingResponseAdapter;
     private readonly MusicSearchService _musicSearch;
@@ -83,11 +84,15 @@ public partial class SubsonicController : ControllerBase
         IAudioMuseRecommendationClient? audioMuse = null,
         IIntelligencePolicyService? intelligencePolicies = null,
         ILibraryIndexService? libraryIndex = null,
-        FavoriteViewReader? favoriteViews = null)
+        FavoriteViewReader? favoriteViews = null,
+        SubsonicPlayQueueStore? playQueues = null,
+        UpcomingSongPreparation? upcomingSongs = null)
     {
         _subsonicSettings = subsonicSettings.Value;
         _libraryIndex = libraryIndex;
         _favoriteViews = favoriteViews;
+        _playQueues = playQueues;
+        _upcomingSongs = upcomingSongs;
         _localLibraryService = localLibraryService;
         _requestParser = requestParser;
         _responseBuilder = responseBuilder;
@@ -1249,6 +1254,8 @@ public partial class SubsonicController : ControllerBase
         var context = CurrentProtocolContext;
         foreach (var signal in _scrobbleProtocolAdapter.Parse(parameters, DateTimeOffset.UtcNow))
         {
+            _upcomingSongs?.Observe(context, signal.Transition, signal.ItemId,
+                context.Client.DeviceId ?? context.Client.ClientId, null, null);
             if (!await _playbackObservations.RecordAsync(
                     _scrobbleProtocolAdapter.ToSignalRequest(context, signal),
                     HttpContext.RequestAborted))
@@ -1284,6 +1291,12 @@ public partial class SubsonicController : ControllerBase
                 parameters,
                 HttpContext.RequestAborted,
                 Request.Headers);
+            var method = SubsonicMusicEndpointPolicy.MethodName(endpoint);
+            if ((method is "savePlayQueue" or "savePlayQueueByIndex") && UpcomingPlaybackQueue.IsSuccessfulSubsonicSave(result))
+            {
+                var queue = UpcomingPlaybackQueue.ParseSubsonic(parameters, method == "savePlayQueueByIndex");
+                _upcomingSongs?.RememberQueue(CurrentProtocolContext, queue.Current, queue.Next);
+            }
             return _relayProtocolAdapter.CreateResult(result, $"application/{format}");
         }
         catch (HttpRequestException ex)

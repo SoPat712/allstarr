@@ -498,6 +498,7 @@ public class JellyfinResponseBuilder
 
         if (!song.IsLocal)
         {
+            JellyfinLyricStreams.AddTo(item);
             if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] sources)
             {
                 ApplyMediaFacts(song, item, sources[0]);

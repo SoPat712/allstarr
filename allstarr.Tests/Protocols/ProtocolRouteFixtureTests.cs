@@ -2357,7 +2357,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal(["songLyrics", "sonicSimilarity"], body.RootElement
+        Assert.Equal(["songLyrics", "sonicSimilarity", "indexBasedQueue"], body.RootElement
             .GetProperty("subsonic-response").GetProperty("openSubsonicExtensions")
             .EnumerateArray().Select(item => item.GetProperty("name").GetString()!).ToArray());
         audioMuse.VerifyAll();
@@ -2378,9 +2378,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("sonicSimilarity", body.RootElement
-            .GetProperty("subsonic-response").GetProperty("openSubsonicExtensions")[0]
-            .GetProperty("name").GetString());
+        Assert.Contains(body.RootElement.GetProperty("subsonic-response").GetProperty("openSubsonicExtensions")
+            .EnumerateArray(), extension => extension.GetProperty("name").GetString() == "sonicSimilarity");
         audioMuse.VerifyAll();
     }
 

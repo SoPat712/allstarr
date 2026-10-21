@@ -93,15 +93,6 @@ public partial class SubsonicController
     {
         var parameters = await _requestParser.ExtractAllParametersAsync(Request);
         var format = SonicFormat(parameters);
-        if (_audioMuse?.IsAvailable != true)
-        {
-            var upstream = await _proxyService.RelayRawAsync(
-                "rest/getOpenSubsonicExtensions.view",
-                parameters.SetValue("f", format),
-                HttpContext.RequestAborted);
-            return _relayProtocolAdapter.CreateResult(upstream, $"application/{format}");
-        }
-
         SubsonicProxyResponse? availableExtensions = null;
         try
         {
@@ -120,7 +111,8 @@ public partial class SubsonicController
                 "Could not read backend OpenSubsonic extensions ({ExceptionType})",
                 exception.GetType().Name);
         }
-        return MergeSonicExtension(availableExtensions, format);
+        var lyricsDiscovery = SubsonicLyricsDiscovery.Merge(availableExtensions, format);
+        return MergePlayQueueExtension(lyricsDiscovery, format);
     }
 
     private async Task<IntelligenceScope?> ResolveSonicScopeAsync(string itemId)
