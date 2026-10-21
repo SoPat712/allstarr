@@ -1247,6 +1247,7 @@ public class AdminUiController : ControllerBase
                         _ => "text"
                     },
                     Sensitive = setting.ValueKind == ProviderSettingValueKind.Secret,
+                    Multiline = setting.Multiline,
                     Required = setting.Required,
                     Options = setting.Choices.ToList(),
                     HelpText = setting.HelpText,

@@ -6073,7 +6073,7 @@ test("Source selection and entered credentials survive a readiness refresh", asy
 });
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
-  test(`Lyrics services configure safely at ${width}px ${theme}`, async ({ page }) => {
+  test(`Lyrics services preserve multiline Musixmatch credentials at ${width}px ${theme}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), theme);
     await mockApi(page);
@@ -6085,8 +6085,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
           helpText: "Leave blank to use public instances with fallback. A configured service is used exclusively." }],
       }, {
         id: "musixmatch", name: "Musixmatch", categories: ["lyrics"],
-        accountSettings: [{ key: "userToken", label: "Desktop user token", type: "password", sensitive: true, required: true,
-          helpText: "Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it." }],
+        accountSettings: [{ key: "userToken", label: "Debug Info or user token", type: "password", sensitive: true, multiline: true,
+          helpText: "Paste the Debug Info from the Musixmatch app, or just the user token. Optional: Musixmatch works without it." }],
       }],
     } }));
     let endpoint = "";
@@ -6111,13 +6111,55 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"]) {
     await page.goto("#/integrations/services/musixmatch");
     await page.getByRole("button", { name: "Connect account", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Connect a Source" });
-    const token = dialog.getByLabel("Desktop user token Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it.", { exact: true });
-    await expect(token).toHaveAttribute("type", "password");
-    await expect(dialog.getByText("Copy the user token from the Musixmatch desktop app's debug information. Allstarr encrypts it.")).toBeVisible();
-    await token.fill("synthetic-desktop-token");
+    const token = dialog.locator('textarea[name="userToken"]');
+    await expect(token).toHaveAttribute("rows", "6");
+    await expect(token).toHaveAttribute("autocomplete", "off");
+    await expect(token).toHaveAttribute("autocapitalize", "off");
+    await expect(token).toHaveAttribute("spellcheck", "false");
+    await expect(token).toHaveAttribute("wrap", "off");
+    await expect(token).toHaveAttribute("placeholder", "Paste the Debug Info here");
+    await expect(token).not.toHaveAttribute("required");
+    await expect(dialog.getByText("Paste the Debug Info from the Musixmatch app, or just the user token. Optional: Musixmatch works without it.")).toBeVisible();
+    const debugInfo = "[DeviceId]: fixture-device\n[UserToken]: fixture-user-token\n[AppBuild]: 2025120901";
+    await token.focus();
+    await page.keyboard.insertText(debugInfo);
+    await expect(token).toHaveValue(debugInfo);
     await expectContainedMobileGeometry(page);
-    await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+    const style = await token.evaluate(element => {
+      const css = getComputedStyle(element);
+      return { resize: css.resize, minHeight: css.minHeight, maxHeight: css.maxHeight, fontSize: css.fontSize, lineHeight: css.lineHeight,
+        width: element.getBoundingClientRect().width, columnWidth: element.parentElement!.getBoundingClientRect().width };
+    });
+    expect(style).toMatchObject({ resize: "vertical", minHeight: "144px", maxHeight: "288px", fontSize: "14px", lineHeight: "19.6px" });
+    expect(Math.abs(style.width - style.columnWidth)).toBeLessThanOrEqual(1);
+    await page.screenshot({ path: `test-results/mxm-field-${width}-${theme}.png`, fullPage: true });
+    const fixture = responses["/api/admin/provider-accounts"] as { accounts: Record<string, unknown>[] };
+    const account = { ...fixture.accounts[0], id: "musixmatch-account", providerId: "musixmatch", displayName: "Musixmatch",
+      configuration: {}, configuredFields: ["userToken"], secret: { configured: true, revoked: false } };
+    let created: Record<string, unknown> | undefined;
+    let replacement: Record<string, unknown> | undefined;
+    await page.route("**/api/admin/provider-accounts", route => {
+      if (route.request().method() === "POST") {
+        created = route.request().postDataJSON();
+        return route.fulfill({ json: account });
+      }
+      return route.fulfill({ json: { ...fixture, accounts: [account] } });
+    });
+    await page.route("**/api/admin/provider-accounts/musixmatch-account/test", route => route.fulfill({ json: {} }));
+    await page.route("**/api/admin/provider-accounts/musixmatch-account/secret", route => {
+      replacement = route.request().postDataJSON();
+      return route.fulfill({ json: { accountId: account.id, revision: 2 } });
+    });
+    await dialog.getByRole("button", { name: "Save and test" }).click();
+    await expect.poll(() => created?.secret).toEqual({ userToken: debugInfo });
     await expect(dialog).toHaveCount(0);
+    await page.locator(".service-account").getByRole("button", { name: "Edit configuration", exact: true }).click();
+    const configure = page.getByRole("dialog", { name: "Configure Musixmatch" });
+    await expect(configure.locator('textarea[name="userToken"]')).toHaveValue("");
+    await expect(configure.getByText("Configured · replace", { exact: true })).toBeVisible();
+    await configure.getByRole("button", { name: "Save and test" }).click();
+    await expect.poll(() => replacement?.secret).toEqual({});
+    await expect(configure).toHaveCount(0);
   });
 }
 
