@@ -928,9 +928,18 @@ public static class SpotiFlacExtensionCompatibility
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
             }
             if (!result || result.success === false) throw _sfDownloadError(result);
-            if (result.decryption || result.decryption_key || result.requires_container_conversion)
-              throw new Error('Download requires unsupported audio post-processing');
             var path = String(result.file_path || result.path || output);
+            if (result.decryption || result.decryption_key || result.encrypted || result.needs_decryption || result.encryption_scheme) {
+              var metadata = track || (_sfPreparedFor(trackId, request.trackId) || {}).host_track || {};
+              var processing = Object.assign({}, result, { duration_ms: result.duration_ms ||
+                (result.duration ? Number(result.duration) * 1000 : metadata.duration_ms || metadata.durationMs || 0) });
+              var processed = host.ProcessDownloadResult(path, JSON.stringify(processing));
+              result.actual_extension = '.m4a';
+              result.output_extension = '.m4a';
+              result.audio_codec = processed.codec;
+            } else if (result.requires_container_conversion) {
+              throw new Error('Download requires unsupported audio post-processing');
+            }
             var extension = String(result.actual_extension || result.output_extension || path.substring(path.lastIndexOf('.')) || '.audio').toLowerCase();
             if (extension.charAt(0) !== '.') extension = '.' + extension;
             var artifactId = safeId + extension;

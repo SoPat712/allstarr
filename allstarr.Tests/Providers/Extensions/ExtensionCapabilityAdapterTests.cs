@@ -2328,6 +2328,29 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal(ProviderErrorKind.TransientFailure, outcome.Error!.Kind);
     }
 
+    [Theory]
+    [InlineData("")]
+    [InlineData("decryption:{strategy:'widevine'}")]
+    [InlineData("decryption_key:'00112233445566778899aabbccddeeff'")]
+    [InlineData("encrypted:true")]
+    [InlineData("needs_decryption:true")]
+    public async Task Streaming_RefusesEncryptedNativeLeases(string encryption)
+    {
+        var manifest = Manifest(ProviderCapabilityKind.Streaming, "getStreamLease");
+        var sandbox = Sandbox(manifest, """
+            registerExtension({getStreamLease:function(){return {
+              leaseId:'lease',sourceUri:'https://media.example.test/audio',expiresAt:'2030-01-01T00:00:00Z',
+              supportsByteRanges:true,supportsSeeking:true,
+              media:{mimeType:'audio/mp4',container:'mp4',codec:'aac'},retryBehavior:'DoNotRetry',ENCRYPTION
+            };}});
+            """.Replace("ENCRYPTION", encryption, StringComparison.Ordinal),
+            new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]), new HashSet<string>(), new HashSet<string>()));
+        var adapter = new ExtensionStreamingCapabilityAdapter(sandbox, manifest);
+        var outcome = await adapter.GetStreamLeaseAsync(Context(includeAccount: true),
+            new ProviderStreamLeaseRequest(Id(ProviderResourceKind.Track, "track-1")));
+        Assert.Equal(encryption.Length == 0, outcome.IsSuccess);
+    }
+
     [Fact]
     public async Task Streaming_EnforcesAccountOriginCancellationAndTypedMediaFacts()
     {

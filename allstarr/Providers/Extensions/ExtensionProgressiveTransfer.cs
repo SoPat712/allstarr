@@ -45,8 +45,8 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
                         (parent is not MemberExpression member || member.Object != node || member.Computed ||
                          member.Property is not Identifier { Name: "download" or "downloadSegments" or "exists" or "getSize" or "readBytes" })) return false;
                 }
-                if (node is StringLiteral { Value: "file" or "host" or "ffmpeg" or "decryption" or "requires_container_conversion" }) return false;
-                if (node is Identifier { Name: "decryption" or "requires_container_conversion" }) return false;
+                if (node is StringLiteral { Value: "file" or "host" or "ffmpeg" or "decryption" or "decryption_key" or "encrypted" or "needs_decryption" or "encryption_scheme" or "requires_container_conversion" }) return false;
+                if (node is Identifier { Name: "decryption" or "decryption_key" or "encrypted" or "needs_decryption" or "encryption_scheme" or "requires_container_conversion" }) return false;
                 foreach (var child in node.ChildNodes)
                     if (!Visit(child, node)) return false;
                 return true;
@@ -143,7 +143,12 @@ internal sealed partial class ExtensionProgressiveTransfer(TimeProvider clock, b
             }
             if (box.Slice(4, 4).SequenceEqual("mdat"u8)) return false;
             if (size < (ulong)minimum || size > (ulong)box.Length) return false;
-            if (box.Slice(4, 4).SequenceEqual("moov"u8)) return true;
+            if (box.Slice(4, 4).SequenceEqual("moov"u8))
+            {
+                var metadata = box[..(int)size];
+                return metadata.IndexOf("sinf"u8) < 0 && metadata.IndexOf("enca"u8) < 0 &&
+                    metadata.IndexOf("encv"u8) < 0 && metadata.IndexOf("pssh"u8) < 0 && metadata.IndexOf("tenc"u8) < 0;
+            }
             offset += (int)size;
         }
         return false;
