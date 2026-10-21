@@ -38,6 +38,21 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await db.SaveChangesAsync();
     }
 
+    [Fact]
+    public async Task UpcomingPreparationSettingsPersistWithHouseholdDefaultsAndCountBounds()
+    {
+        var service = CreateService([]);
+        Assert.Equal("false", (await service.GetAsync("Playback:PrepareUpcomingSongs")).NormalizedValue);
+        Assert.Equal("1", (await service.GetAsync("Playback:PrepareUpcomingCount")).NormalizedValue);
+        await service.ApplyBatchAsync([new("Playback:PrepareUpcomingSongs", "true"),
+            new("Playback:PrepareUpcomingCount", "2")], "fixture", _userId);
+        Assert.Equal("true", (await CreateService([]).GetAsync("Playback:PrepareUpcomingSongs")).NormalizedValue);
+        Assert.Equal("2", (await CreateService([]).GetAsync("Playback:PrepareUpcomingCount")).NormalizedValue);
+        foreach (var value in new[] { "0", "3" })
+            await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+                [new("Playback:PrepareUpcomingCount", value)], "fixture", _userId));
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("http://flaresolverr:8191")]

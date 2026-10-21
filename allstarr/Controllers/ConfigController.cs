@@ -164,6 +164,8 @@ public class ConfigController : ControllerBase
             },
             playback = new
             {
+                prepareUpcomingSongs = RuntimeBool("Playback:PrepareUpcomingSongs", _playbackSettings.PrepareUpcomingSongs),
+                prepareUpcomingCount = RuntimeInt("Playback:PrepareUpcomingCount", _playbackSettings.PrepareUpcomingCount),
                 lastFmSimilarEnabled = RuntimeBool(
                     "Playback:LastFmSimilarEnabled", _playbackSettings.LastFmSimilarEnabled),
                 listenBrainzSimilarEnabled = RuntimeBool(

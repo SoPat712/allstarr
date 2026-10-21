@@ -11,6 +11,9 @@ public static class PlaybackRegistration
         this IServiceCollection services,
         bool includeIntelligenceEnrichment)
     {
+        services.AddSingleton<IUpcomingTrackPreparation, UpcomingTrackPreparation>();
+        services.AddSingleton<UpcomingSongPreparation>();
+        services.AddHostedService<UpcomingSongPreparation>(provider => provider.GetRequiredService<UpcomingSongPreparation>());
         services.AddSingleton<PlaybackDeliveryActivityStore>();
         services.AddSingleton<IPlaybackDeliveryActivitySource>(provider =>
             provider.GetRequiredService<PlaybackDeliveryActivityStore>());

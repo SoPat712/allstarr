@@ -113,6 +113,7 @@ public partial class JellyfinController
 
             var (deviceId, client, device, version) = ExtractDeviceInfo(Request.Headers);
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+            ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Start, itemId, deviceId, playSessionId, positionTicks);
 
 
             // Native playback state is retained so missing transitions can be inferred.
@@ -394,6 +395,7 @@ public partial class JellyfinController
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+            ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Progress, itemId, deviceId, playSessionId, positionTicks);
 
 
             if (string.IsNullOrWhiteSpace(itemId))
@@ -965,6 +967,7 @@ public partial class JellyfinController
             playSessionId = ParsePlaybackSessionId(doc.RootElement);
 
             deviceId = ResolveDeviceId(deviceId, doc.RootElement);
+            ObserveUpcomingSongs(doc.RootElement, PlaybackTransition.Stop, itemId, deviceId, playSessionId, positionTicks);
 
             // Some clients send stop without ItemId. Recover from tracked session state when possible.
             if (string.IsNullOrWhiteSpace(itemId) && !string.IsNullOrWhiteSpace(deviceId))
@@ -1343,6 +1346,15 @@ public partial class JellyfinController
         }
 
         return null;
+    }
+
+    private void ObserveUpcomingSongs(JsonElement report, PlaybackTransition transition, string? itemId,
+        string? deviceId, string? sessionId, long? positionTicks)
+    {
+        if (_upcomingSongs == null || !CanRunOptionalUserScopedWork()) return;
+        var paused = report.TryGetProperty("IsPaused", out var value) && value.ValueKind == JsonValueKind.True;
+        _upcomingSongs.Observe(HttpContext.RequireProtocolExecutionContext(), transition, itemId ?? "",
+            deviceId, sessionId, positionTicks, UpcomingPlaybackQueue.ParseJellyfin(report, itemId ?? ""), paused);
     }
 
     private async Task QueuePlaybackSignalAsync(PlaybackTransition transition, string? itemId,
