@@ -143,8 +143,9 @@
     catch { if (current === appleRequest) appleStatusError = "Apple Music setup could not be checked. Open step 2 and refresh status."; }
   }
   $effect(() => { if (administrator && pageId === "apple-musickit") void loadAppleStatus(); });
-  function diagnosticError(cause: unknown) {
-    return diagnosticFailureMessage(cause instanceof ApiError ? normalizeResponse(cause.details) as DiagnosticFailure : {});
+  function diagnosticError(cause: unknown, capability?: string) {
+    const details = cause instanceof ApiError ? normalizeResponse(cause.details) as DiagnosticFailure : {};
+    return diagnosticFailureMessage({ ...details, capability });
   }
   async function testApplePlayback() {
     if (!appleAccount?.canManage || action) return;
@@ -380,18 +381,18 @@
     if (action) return;
     action = key;
     try {
-      const slow = !capability || capability === "streaming";
+      const slow = capability === "streaming" || !capability && supportsPlaybackDiagnostic(providerHealth(account.providerId));
       const pending = toast.progress(`Testing ${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"}…${slow ? " Playback checks can take a few minutes." : ""}`);
       const result = await sources.test(account, capability).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: result };
       let message = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
       if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
-      if (result.reasonCode) message += ` ${diagnosticFailureMessage(result)}`;
+      if (result.reasonCode) message += ` ${diagnosticFailureMessage({ ...result, capability })}`;
       toast.show(message, result.healthy ?? result.success ? "success" : "error");
       await refresh();
       return result;
     } catch (cause) {
-      toast.error(diagnosticError(cause));
+      toast.error(diagnosticError(cause, capability ?? "connection"));
     } finally {
       action = "";
     }
@@ -406,10 +407,10 @@
       const result = await sources.testWithoutAccount(source.id, capability).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: result };
       const passed = result.healthy ?? result.success ?? false;
-      toast.show(`${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage(result)}` : ""}`, passed ? "success" : "error");
+      toast.show(`${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage({ ...result, capability })}` : ""}`, passed ? "success" : "error");
       await refresh();
     } catch (cause) {
-      toast.error(diagnosticError(cause));
+      toast.error(diagnosticError(cause, capability ?? "connection"));
     } finally {
       action = "";
     }

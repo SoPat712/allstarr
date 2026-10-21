@@ -55,6 +55,41 @@ public sealed class ProviderTryServiceTests
     }
 
     [Fact]
+    public async Task MetadataOnlySource_RejectsPlaybackWithoutRecordingAnOutcome()
+    {
+        await using var fixture = await Fixture.CreateAsync(metadataOnly: true);
+        var catalog = Assert.IsType<OkObjectResult>(await fixture.Controller().Describe("fixture"));
+        Assert.Equal("metadata", Assert.Single(Assert.IsType<ProviderTryCatalog>(catalog.Value).Capabilities).Capability);
+        var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
+        { Capability = "streaming", Operation = "stream", TrackId = "track" }, "unsupported", CancellationToken.None);
+        Assert.Equal(404, result.StatusCode);
+        Assert.Null(result.Result);
+        var status = fixture.Status.GetManagedStatus("fixture", "streaming", Guid.NewGuid(), new Dictionary<string, string>());
+        Assert.Equal(ProviderHealthState.Unknown, status.Health);
+        Assert.Null(status.TestedAt);
+        fixture.Streaming.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task LyricsOnlySource_UsesLyricsAndKeepsItsUpstreamFailureInStatus()
+    {
+        await using var fixture = await Fixture.CreateAsync(lyricsOnly: true);
+        fixture.Lyrics.Setup(item => item.FetchLyricsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderLyricsRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsUpstreamBusyOrTimedOut()));
+        var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
+        { Capability = "lyrics", Operation = "lyrics", Title = "Song", Artist = "Artist" }, "lyrics", CancellationToken.None);
+        Assert.Equal(200, result.StatusCode);
+        Assert.Equal("lyrics", result.Result!.Capability);
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", result.Result.ReasonCode);
+        Assert.Contains("lyrics upstream is busy or timed out", result.Result.Message);
+        var status = fixture.Status.GetAccountFreeStatus("fixture", "lyrics");
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal(result.Result.ReasonCode, status.ReasonCode);
+        fixture.Streaming.VerifyNoOtherCalls();
+        fixture.Metadata.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task Execute_BoundsProviderAndOverallConcurrency()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -281,6 +316,7 @@ public sealed class ProviderTryServiceTests
     private sealed class Fixture : IAsyncDisposable
     {
         public Mock<IProviderMetadataCapability> Metadata { get; } = new();
+        public Mock<IProviderLyricsCapability> Lyrics { get; } = new();
         public Mock<IProviderStreamingCapability> Streaming { get; } = new();
         public Mock<IProviderDownloadCapability> Download { get; } = new();
         public Mock<IProviderDownloadArtifactStore> Store { get; } = new();
@@ -299,7 +335,7 @@ public sealed class ProviderTryServiceTests
         private readonly Mock<IProviderRegistry> registry = new();
         public ProviderActorContext Actor { get; } = new(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "backend", "principal"));
 
-        public static async Task<Fixture> CreateAsync(bool signed = false)
+        public static async Task<Fixture> CreateAsync(bool signed = false, bool metadataOnly = false, bool lyricsOnly = false)
         {
             var fixture = new Fixture();
             fixture.database = await SqliteTestDatabase.CreateAsync();
@@ -318,16 +354,21 @@ public sealed class ProviderTryServiceTests
                 });
                 await db.SaveChangesAsync();
             }
-            ProviderDescriptor Descriptor(string id) => new(id, "Fixture", "Fixture provider", ProviderOrigin.Extension, "1", "1",
-                [new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, signed ? ProviderAccountRequirement.Optional : ProviderAccountRequirement.None,
+            ProviderCapabilityDescriptor[] capabilities = [
+                new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported, signed ? ProviderAccountRequirement.Optional : ProviderAccountRequirement.None,
                     "1", ["searchTracks", "getTrack"], signed ? [ProviderAccountScope.Shared] : []),
-                 new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["getStreamLease"]),
-                 new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["download"])], new())
+                new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["getStreamLease"]),
+                new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None, "1", ["download"])];
+            if (lyricsOnly) capabilities = [new(ProviderCapabilityKind.Lyrics, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["fetchLyrics"])];
+            ProviderDescriptor Descriptor(string id) => new(id, "Fixture", "Fixture provider", ProviderOrigin.Extension, "1", "1",
+                capabilities.Where(item => !metadataOnly || item.Capability == ProviderCapabilityKind.Metadata).ToArray(), new())
             { UsesSignedSession = signed };
             fixture.registry.SetupGet(item => item.Providers).Returns([Descriptor("fixture")]);
             fixture.registry.Setup(item => item.GetRequired(It.IsAny<string>())).Returns((string id) => Descriptor(id));
             fixture.registry.Setup(item => item.TryGet(It.IsAny<string>(), out It.Ref<ProviderDescriptor?>.IsAny))
                 .Returns((string id, out ProviderDescriptor? descriptor) => { descriptor = Descriptor(id); return true; });
+            fixture.registry.Setup(item => item.GetRequiredCapability<IProviderLyricsCapability>(It.IsAny<string>(), ProviderCapabilityKind.Lyrics)).Returns(fixture.Lyrics.Object);
             fixture.registry.Setup(item => item.GetRequiredCapability<IProviderMetadataCapability>(It.IsAny<string>(), ProviderCapabilityKind.Metadata)).Returns(fixture.Metadata.Object);
             fixture.registry.Setup(item => item.GetRequiredCapability<IProviderStreamingCapability>(It.IsAny<string>(), ProviderCapabilityKind.Streaming)).Returns(fixture.Streaming.Object);
             fixture.registry.Setup(item => item.GetRequiredCapability<IProviderDownloadCapability>(It.IsAny<string>(), ProviderCapabilityKind.Download)).Returns(fixture.Download.Object);

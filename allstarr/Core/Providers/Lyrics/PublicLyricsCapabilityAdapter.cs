@@ -16,6 +16,7 @@ public abstract class PublicLyricsCapabilityAdapter(
     protected virtual string CacheScope(ProviderLyricsRequest request) => string.Empty;
     protected virtual TimeSpan LookupBudget => TimeSpan.FromSeconds(3);
     protected virtual TimeSpan RequestTimeout => Timeout.InfiniteTimeSpan;
+    protected virtual ProviderError LookupTimeoutError => new(ProviderErrorKind.TransientFailure);
     public abstract string ProviderId { get; }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Lyrics;
 
@@ -64,7 +65,8 @@ public abstract class PublicLyricsCapabilityAdapter(
         }
         catch (OperationCanceledException)
         {
-            return Failure(deadline.IsCancellationRequested ? ProviderErrorKind.Canceled : ProviderErrorKind.TransientFailure);
+            return deadline.IsCancellationRequested ? Failure(ProviderErrorKind.Canceled) :
+                ProviderOutcome<ProviderLyricsResult>.Failure(LookupTimeoutError);
         }
         catch (Exception exception) when (exception is JsonException or System.Xml.XmlException or ArgumentException or OverflowException)
         { return ContractFailure(); }

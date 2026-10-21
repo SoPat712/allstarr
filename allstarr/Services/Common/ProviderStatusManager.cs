@@ -276,9 +276,12 @@ public class ProviderStatusManager
         return GetStatusCore(key, BuildBaselineStatus(key));
     }
 
-    public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status) =>
+    public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
+    {
+        if (!IsCapabilitySupported(key.Provider, key.Capability)) return;
         _recordedChecks.AddOrUpdate(key, (revision, status), (_, previous) =>
             previous.Revision > revision || previous.Status.TestedAt > status.TestedAt ? previous : (revision, status));
+    }
 
     public bool CanTestCapability(string provider, string capability) =>
         HasProbe(Normalize(provider), Normalize(capability));
@@ -310,6 +313,7 @@ public class ProviderStatusManager
             key.Capability is ProviderCapabilities.Metadata or ProviderCapabilities.Playlist &&
             _services?.GetService<AppleWebTokenProvider>() is { FailureCode: not null } tokens)
             return baseline with { Health = ProviderHealthState.Degraded, ReasonCode = tokens.FailureCode, TestedAt = tokens.ObservedAt };
+        if (!baseline.IsSupported) return baseline;
         // Display the newest evidence, with explicit checks winning completed ties; routing TTL cannot revive older checks.
         var observation = _health.GetForDisplay(key, accountRevision);
         if (_recordedChecks.TryGetValue(key, out var recorded) && recorded.Revision == accountRevision &&
@@ -671,6 +675,7 @@ public class ProviderStatusManager
     public void RecordTryResult(string provider, string capability, Guid? accountId, long? revision,
         bool succeeded, long elapsedMilliseconds, string? reasonCode)
     {
+        if (!IsCapabilitySupported(Normalize(provider), Normalize(capability))) return;
         reasonCode = NormalizeTryReason(reasonCode);
         if (!succeeded && reasonCode is "not-found" or "incompatible-media" or "not-supported" or
             "canceled" or "busy" or "temporary-storage-full" or "invalid-input") return;
@@ -701,6 +706,7 @@ public class ProviderStatusManager
             "transientfailure" => "transient-failure",
             "permanentfailure" => "permanent-failure",
             "timeout" => "timeout",
+            "lyricsupstreambusyortimedout" => "lyrics-upstream-busy-or-timed-out",
             "unauthorized" or "providerunauthorized" => "unauthorized",
             "accountneedsreauthentication" => "account-needs-reauthentication",
             "accountneedsconfiguration" => "account-needs-configuration",
@@ -947,7 +953,8 @@ public class ProviderStatusManager
     private async Task<ProbeOutcome> TestMetadataLyricsAsync(string provider,
         IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
     {
-        var probeTimeout = provider == "paxsenix" ? TimeSpan.FromSeconds(18) : ProbeTimeout;
+        var probeTimeout = provider == "paxsenix"
+            ? allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(probeTimeout);
         var request = new ProviderLyricsRequest(Guid.NewGuid(), new(provider, ProviderResourceKind.Track, "connection-probe"),
@@ -971,12 +978,14 @@ public class ProviderStatusManager
                 _ => allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.HttpClientName
             });
             var apple = provider == "paxsenix" ? _services?.GetService<AppleMusicClient>() : null;
-            if (provider == "paxsenix" && apple == null) return new(false, "apple-web-token-unavailable");
+            var paxsenix = provider == "paxsenix"
+                ? _services?.GetService<allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter>() : null;
+            if (provider == "paxsenix" && apple == null && paxsenix == null) return new(false, "apple-web-token-unavailable");
             IProviderLyricsCapability adapter = provider switch
             {
                 "lrcred" => new allstarr.Core.Providers.Lyrics.LrcRedCapabilityAdapter(client, null),
                 "unison" => new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(client, null),
-                _ => new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
+                _ => paxsenix ?? new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
                     new AppleMusicKitMetadataCapabilityAdapter(apple!))
             };
             var context = new ProviderExecutionContext(new(ProviderActorKind.PublicRead, null), provider, null,
@@ -996,6 +1005,9 @@ public class ProviderStatusManager
                     true, true, false, [provider]), "connection-probe", "connection-probe", _clock.UtcNow.Add(probeTimeout), timeout.Token);
             result = await adapter.FetchLyricsAsync(context, request);
         }
+        cancellationToken.ThrowIfCancellationRequested();
+        if (provider == "paxsenix" && result.Error?.Kind is ProviderErrorKind.TransientFailure or ProviderErrorKind.Canceled)
+            return new(false, ProviderError.LyricsUpstreamBusyOrTimedOut().Code);
         return new(result.IsSuccess, result.Error?.Code);
     }
 

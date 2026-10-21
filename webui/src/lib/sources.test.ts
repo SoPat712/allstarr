@@ -280,3 +280,10 @@ describe("account audience choices", () => {
     expect(sharingDescription({ sharingDescription: "Everyone can import playlists." })).toBe("Everyone can import playlists.");
   });
 });
+
+
+it("labels an automatic lyrics timeout with a lyrics-specific next step", () => {
+  const reasonCode = "lyrics-upstream-busy-or-timed-out";
+  expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode })).toBe("Lyrics upstream busy or timed out");
+  expect(checkGuide(reasonCode)?.step).toBe("The lyrics upstream is busy or timed out. Try another lyrics source.");
+});

@@ -7235,3 +7235,45 @@ test("Sources without an account can be tested in detail", async ({ page }) => {
   await expect(dialog.getByRole("tablist")).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Get lyrics" })).toBeDisabled();
 });
+
+
+test("Lyrics-only source checks show lyrics outcomes and no playback controls", async ({ page }) => {
+  await mockApi(page);
+  await page.route("**/api/admin/ui/schema", (route) => route.fulfill({ json: {
+    ...schema, providers: [...schema.providers, { id: "paxsenix", name: "Paxsenix", categories: ["lyrics"], runtimeCapabilities: [
+      { id: "lyrics", supported: true, health: "unknown", ready: false, canAttempt: true, canTest: true, configuration: "not_required" },
+    ] }],
+  } }));
+  let healthy = false;
+  let unavailable = false;
+  const requests: string[] = [];
+  await page.route("**/api/admin/providers/test/paxsenix/**", route => {
+    requests.push(new URL(route.request().url()).pathname);
+    if (unavailable) return route.fulfill({ status: 503, json: { error: "unavailable" } });
+    return route.fulfill({ json: { success: healthy, health: healthy ? "healthy" : "degraded", metric: "api-latency",
+      capability: "lyrics", reasonCode: healthy ? null : "lyrics-upstream-busy-or-timed-out" } });
+  });
+  await page.route("**/api/admin/providers/paxsenix/try**", route => route.fulfill({ json: { provider: "paxsenix", capabilities: [
+    { capability: "lyrics", accountRequirement: "none", operations: [{ id: "lyrics", inputs: ["title", "artist"] }] },
+  ] } }));
+  await page.goto("#/integrations/services/paxsenix");
+  const row = page.locator(".service-check").filter({ hasText: "Lyrics" });
+  await row.getByRole("button", { name: "Test", exact: true }).click();
+  const failure = page.getByRole("alert").filter({ hasText: "Paxsenix Lyrics needs attention." });
+  await expect(failure).toContainText("The lyrics upstream is busy or timed out.");
+  await expect(failure).not.toContainText("Playback");
+  healthy = true;
+  await row.getByRole("button", { name: "Test", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Paxsenix Lyrics passed." })).toBeVisible();
+  unavailable = true;
+  await row.getByRole("button", { name: "Test", exact: true }).click();
+  const error = page.getByRole("alert").filter({ hasText: "The lyrics check failed." });
+  await expect(error).toBeVisible();
+  await expect(error).not.toContainText("Playback");
+  expect(requests).toEqual(["/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics"]);
+  await row.getByRole("button", { name: "Open Lyrics tests" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
+  await expect(dialog.getByRole("button", { name: "Get lyrics" })).toBeDisabled();
+  await expect(dialog.getByRole("tab", { name: /stream|download/i })).toHaveCount(0);
+  await expect(dialog.locator("audio")).toHaveCount(0);
+});

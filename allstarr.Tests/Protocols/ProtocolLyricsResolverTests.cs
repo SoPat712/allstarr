@@ -444,6 +444,52 @@ public sealed class ProtocolLyricsResolverTests
             It.IsAny<string>(), It.IsAny<int?>(), null), Times.Never);
     }
 
+    [Theory]
+    [InlineData(ProviderLyricsFormat.PlainText)]
+    [InlineData(ProviderLyricsFormat.LineTimed)]
+    public async Task EarlierLyricsReturnWithoutWaitingForPaxsenix(ProviderLyricsFormat format)
+    {
+        var context = LyricsContext();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["lrclib", "paxsenix"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib", format,
+                format == ProviderLyricsFormat.PlainText ? "Words" : "[00:01]Words"));
+        providers.Setup(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .Returns(new TaskCompletionSource<ProviderLyricsResult?>().Task);
+
+        var pending = new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "recording");
+
+        Assert.True(pending.IsCompletedSuccessfully);
+        Assert.Equal("lrclib", (await pending)?.Source);
+        providers.Verify(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+            "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null), Times.Never);
+    }
+
+    [Fact]
+    public async Task PaxsenixTimeoutFallsThroughToTheNextConfiguredSource()
+    {
+        var context = LyricsContext();
+        var providers = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        providers.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Lyrics)).Returns(["paxsenix", "lrclib"]);
+        providers.Setup(item => item.GetLyricsAsync(context, "paxsenix", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ThrowsAsync(new HttpRequestException("The lyrics upstream is busy or timed out."));
+        providers.Setup(item => item.GetLyricsAsync(context, "lrclib", It.IsAny<string>(), ProviderLyricsFormat.LineTimed,
+                "Fixture", It.IsAny<IReadOnlyList<string>>(), "Album", 120, null))
+            .ReturnsAsync(new ProviderLyricsResult(ProviderLyricsAvailabilityState.Available, "lrclib",
+                ProviderLyricsFormat.LineTimed, "[00:01]Words"));
+
+        var result = await new ProtocolLyricsResolver(providers.Object, NullLogger<ProtocolLyricsResolver>.Instance)
+            .FindAsync(context, LyricsSong(), "recording");
+
+        Assert.Equal("lrclib", result?.Source);
+        providers.VerifyAll();
+    }
+
     private static ProtocolExecutionContext LyricsContext(CancellationToken cancellationToken = default) => new(
         ProtocolKind.Jellyfin, "backend", "listener", new AllstarrPrincipal(Guid.NewGuid(), "jellyfin", "backend",
             "listener", "Listener", false), "lyrics-order", DateTimeOffset.UtcNow.AddMinutes(1), cancellationToken);

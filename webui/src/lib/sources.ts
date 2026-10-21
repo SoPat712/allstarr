@@ -41,6 +41,7 @@ const checkGuides: Record<string, CheckGuide> = {
     step: "The service found the song but sent no audio in time. This is usually on the service's side; it is checked again every 6 hours.",
   },
   service_unavailable: { label: "Service unavailable", step: "The service's download server is failing right now. Try again later; nothing to change in Allstarr." },
+  "lyrics-upstream-busy-or-timed-out": { label: "Lyrics upstream busy or timed out", step: "The lyrics upstream is busy or timed out. Try another lyrics source." },
   timeout: { label: "Timed out", step: "The service took too long to answer. It is checked again every 6 hours." },
   unreachable: { label: "Can't reach the service", step: "Check the server's internet connection, then use Test." },
   administrator_required: { label: "Needs an administrator", step: "Add an administrator in Settings so checks can run." },

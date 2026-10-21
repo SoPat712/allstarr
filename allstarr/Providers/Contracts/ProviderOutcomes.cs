@@ -75,6 +75,11 @@ public sealed record ProviderError
         "service_unavailable",
         "The service's download server is unavailable.");
 
+    public static ProviderError LyricsUpstreamBusyOrTimedOut() => new(
+        ProviderErrorKind.TransientFailure,
+        "lyrics-upstream-busy-or-timed-out",
+        "The lyrics upstream is busy or timed out. Try another lyrics source.");
+
     public static ProviderError StreamRangeUnavailable() => new(
         ProviderErrorKind.NotSupported,
         "stream-range-unavailable",

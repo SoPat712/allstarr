@@ -176,7 +176,7 @@ public sealed class PaxsenixCapabilityAdapterTests
         var pending = adapter.FetchLyricsAsync(Context(), Request());
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(spacingSeconds));
         Assert.Single(handler.Requests);
-        clock.Advance(TimeSpan.FromSeconds(Math.Min(spacingSeconds, 18)));
+        clock.Advance(TimeSpan.FromSeconds(Math.Min(spacingSeconds, 6)));
         var result = await pending;
 
         if (availability == null)
@@ -315,8 +315,8 @@ public sealed class PaxsenixCapabilityAdapterTests
         var adapter = new PaxsenixCapabilityAdapter(new HttpClient(lyrics), null,
             new PaxsenixRequestPacer(clock), clock, apple);
         var pending = adapter.FetchLyricsAsync(Context(), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(18));
-        clock.Advance(TimeSpan.FromSeconds(18));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(6));
+        clock.Advance(TimeSpan.FromSeconds(6));
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Equal(1, slow.Calls);
         Assert.Empty(lyrics.Requests);
@@ -461,8 +461,8 @@ public sealed class PaxsenixCapabilityAdapterTests
         var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
             new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, Catalog());
         var pending = adapter.FetchLyricsAsync(Context(), Request());
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
-        clock.Advance(TimeSpan.FromSeconds(8));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        clock.Advance(TimeSpan.FromSeconds(4));
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Equal(1, handler.Calls);
 
@@ -472,9 +472,115 @@ public sealed class PaxsenixCapabilityAdapterTests
         await adapter.FetchLyricsAsync(Context(), Request());
         pending = adapter.FetchLyricsAsync(Context(), Request());
         await clock.WaitForTimersAsync(TimeSpan.FromSeconds(20));
-        clock.Advance(TimeSpan.FromSeconds(18));
+        clock.Advance(TimeSpan.FromSeconds(6));
         Assert.Equal(ProviderErrorKind.TransientFailure, (await pending).Error!.Kind);
         Assert.Single(paced.Requests);
+    }
+
+    [Fact]
+    public async Task TimedOutIdLeavesTimeForAnotherCandidateAndIsSkippedOnRetry()
+    {
+        var clock = new ManualTimeProvider();
+        var handler = new FirstWaitingHandler();
+        var apple = Catalog(_ => Response("{\"data\":[" + CatalogSong("1") + "," + CatalogSong("2") + "]}"));
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
+            new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, apple);
+
+        var pending = adapter.FetchLyricsAsync(Context(), Request());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        clock.Advance(TimeSpan.FromSeconds(4));
+        Assert.Equal(ProviderLyricsAvailabilityState.Available, (await pending).RequireValue().Availability);
+        await adapter.FetchLyricsAsync(Context(), Request());
+        Assert.Equal(["?id=1", "?id=2", "?id=2"], handler.Requests.Select(uri => uri.Query));
+    }
+
+    [Fact]
+    public async Task MultipleHangingIdsCannotExceedSixSecondsAndBothAreSkippedOnRetry()
+    {
+        var clock = new ManualTimeProvider();
+        var handler = new WaitingHandler();
+        var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+            ? "{\"results\":{\"songs\":{\"data\":[]}}}"
+            : "{\"data\":[" + CatalogSong("1") + "," + CatalogSong("2") + "]}"));
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
+            new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, apple);
+
+        var pending = adapter.FetchLyricsAsync(Context(), Request());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        clock.Advance(TimeSpan.FromSeconds(4));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        await handler.SecondStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal(2, handler.Calls);
+        clock.Advance(TimeSpan.FromSeconds(2));
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await pending).Error!.Code);
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await adapter.FetchLyricsAsync(Context(), Request())).Error!.Code);
+        Assert.Equal(2, handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    [InlineData(HttpStatusCode.RequestTimeout)]
+    public async Task BusyIdIsSkippedAcrossRecordingsUntilTenMinutesHavePassed(HttpStatusCode status)
+    {
+        var clock = new ManualTimeProvider();
+        var handler = new Handler((_, _) => Busy(status));
+        var apple = Catalog(request => Response(request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+            ? "{\"results\":{\"songs\":{\"data\":[]}}}" : "{\"data\":[" + Song + "]}"));
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
+            new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, apple);
+
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", (await adapter.FetchLyricsAsync(Context(), Request())).Error!.Code);
+        clock.Advance(TimeSpan.FromMinutes(9));
+        Assert.Equal("lyrics-upstream-busy-or-timed-out",
+            (await adapter.FetchLyricsAsync(Context(), Request(recording: Guid.CreateVersion7()))).Error!.Code);
+        Assert.Single(handler.Requests);
+        clock.Advance(TimeSpan.FromMinutes(1));
+        await adapter.FetchLyricsAsync(Context(), Request());
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    [Fact]
+    public void FailureCacheEvictsOldestIdsAtItsSizeLimit()
+    {
+        var clock = new ManualTimeProvider();
+        var cache = new PaxsenixFailureCache(clock, 2);
+        cache.Remember("1");
+        cache.Remember("2");
+        cache.Remember("3");
+        Assert.False(cache.Contains("1"));
+        Assert.True(cache.Contains("2"));
+        Assert.True(cache.Contains("3"));
+        clock.Advance(TimeSpan.FromMinutes(10));
+        Assert.False(cache.Contains("2"));
+        Assert.False(cache.Contains("3"));
+    }
+
+    [Fact]
+    public async Task CallerCancellationDoesNotSuppressTheNextLookup()
+    {
+        var clock = new ManualTimeProvider();
+        var handler = new FirstWaitingHandler();
+        var adapter = new PaxsenixCapabilityAdapter(new HttpClient(handler), null,
+            new PaxsenixRequestPacer(clock, TimeSpan.Zero), clock, Catalog());
+        using var cancellation = new CancellationTokenSource();
+        var pending = adapter.FetchLyricsAsync(Context(cancellation.Token), Request());
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+        cancellation.Cancel();
+        Assert.Equal(ProviderErrorKind.Canceled, (await pending).Error!.Kind);
+        Assert.Equal(ProviderLyricsAvailabilityState.Available,
+            (await adapter.FetchLyricsAsync(Context(), Request())).RequireValue().Availability);
+        Assert.Equal(2, handler.Requests.Count);
+    }
+
+    private sealed class FirstWaitingHandler : HttpMessageHandler
+    {
+        public List<Uri> Requests { get; } = [];
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Requests.Add(request.RequestUri!);
+            if (Requests.Count == 1) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return Response(Lyrics);
+        }
     }
 
     private static string CatalogSong(string id, bool compilation = false, string releaseDate = "2013-05-17") =>
@@ -522,9 +628,11 @@ public sealed class PaxsenixCapabilityAdapterTests
     private sealed class WaitingHandler : HttpMessageHandler
     {
         public int Calls { get; private set; }
+        public TaskCompletionSource SecondStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Calls++;
+            if (Calls == 2) SecondStarted.TrySetResult();
             await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
             return new(HttpStatusCode.OK);
         }

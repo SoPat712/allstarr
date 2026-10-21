@@ -338,6 +338,41 @@ public sealed partial class PlaybackSignalPipelineTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task PlaybackStartReportingCompletesWhileBackgroundLyricsAreBlocked()
+    {
+        var lyrics = new BlockedLyrics();
+        var pipeline = new PlaybackSignalPipeline(jobs);
+        Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0)));
+        Assert.Equal(0, lyrics.Calls);
+        var claim = await jobs.ClaimNextAsync("worker", [PlaybackSignalPipeline.JobType]);
+        Assert.NotNull(claim);
+        var handler = new PlaybackSignalJobHandler(new Writer(), new Scrobbles(), lyrics, factory);
+        var background = handler.ExecuteAsync(new(claim!, EmptyServices.Instance), default);
+        await lyrics.Started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        try
+        {
+            Assert.False(background.IsCompleted);
+            Assert.True(await pipeline.RecordAsync(Signal(PlaybackTransition.Start, "track-1", 0) with { PlaySessionId = "next-session" }));
+            Assert.Equal(1, lyrics.Calls);
+        }
+        finally { lyrics.Release.TrySetResult(); }
+        Assert.Equal(DurableJobCompletionKind.Succeeded, (await background).Kind);
+    }
+
+    private sealed class BlockedLyrics : IPlaybackLyricsPrefetch
+    {
+        public int Calls;
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public async Task PrefetchAsync(PlaybackSignalPayload payload, CancellationToken cancellationToken)
+        {
+            Calls++;
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+        }
+    }
+
+    [Fact]
     public async Task HandlerRejectsCrossOwnerClaimBeforeAnySideEffect()
     {
         var writer = new Writer(); var scrobbles = new Scrobbles(); var lyrics = new Lyrics();
