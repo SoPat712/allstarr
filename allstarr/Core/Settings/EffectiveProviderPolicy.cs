@@ -89,7 +89,8 @@ public sealed record EffectiveProviderPolicySnapshot(
         var availableSet = available.ToHashSet(StringComparer.Ordinal);
         return ProviderOrderPolicyCatalog.NormalizeOrder(capability, GetProviderOrder(capability))
             .Where(availableSet.Contains)
-            .Concat(available.Order(StringComparer.Ordinal))
+            .Concat(available.OrderBy(id => capability == ProviderCapabilityKind.Streaming && id == "monochrome")
+                .ThenBy(id => id, StringComparer.Ordinal))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
     }

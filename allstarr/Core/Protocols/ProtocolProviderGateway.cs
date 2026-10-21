@@ -1293,6 +1293,24 @@ public sealed partial class ProtocolProviderGateway(
         {
             if (!headOnly && execution != null && servingTrack != null)
                 await RememberPlayedTrackAsync(execution, servingTrack, itemId);
+            if (!headOnly && stream.ServingProviderId == "monochrome" && !stream.Lease.SupportsByteRanges &&
+                execution != null && identities != null)
+            {
+                try
+                {
+                    var known = await identities.GetRecordingAvailabilityAsync(execution, itemId, execution.CancellationToken);
+                    if (known?.DurationMilliseconds is > 0 and < 86400000)
+                    {
+                        stream.Response.Headers.Remove("X-Allstarr-Duration-Seconds");
+                        stream.Response.Headers.Add("X-Allstarr-Duration-Seconds",
+                            (known.DurationMilliseconds.Value / 1000d).ToString(System.Globalization.CultureInfo.InvariantCulture));
+                    }
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    logger?.LogDebug("Stored playback duration is unavailable ({ErrorType})", error.GetType().Name);
+                }
+            }
             stream.Response.Headers.Remove("X-Allstarr-Provider");
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
             stream.Response.Headers.Remove("X-Allstarr-Route-Reason");
@@ -1370,7 +1388,11 @@ public sealed partial class ProtocolProviderGateway(
                             ? ProviderError.StreamRangeUnavailable() : new(ProviderErrorKind.IncompatibleMedia);
                     break;
                 }
-                error = StreamError(response.StatusCode);
+                var retryAfter = response.Headers.RetryAfter;
+                error = response.StatusCode == HttpStatusCode.TooManyRequests ? new(ProviderErrorKind.RateLimited,
+                    retryAfter?.Delta ?? (retryAfter?.Date is { } retryDate
+                        ? TimeSpan.FromSeconds(Math.Max(0, (retryDate - DateTimeOffset.UtcNow).TotalSeconds)) : TimeSpan.FromSeconds(30))) :
+                    StreamError(response.StatusCode);
                 if (!ShouldRetry(lease, response.StatusCode)) break;
             }
             catch (Exception exception) when (exception is HttpRequestException or IOException ||
@@ -1567,7 +1589,8 @@ public sealed partial class ProtocolProviderGateway(
         ordered.AddRange(availableProviders
             .Where(providerId => !disabled.Contains(providerId) &&
                                  !ordered.Contains(providerId, StringComparer.Ordinal))
-            .OrderBy(providerId => providerId, StringComparer.Ordinal));
+            .OrderBy(providerId => providerId == "monochrome")
+            .ThenBy(providerId => providerId, StringComparer.Ordinal));
         return ordered;
     }
 

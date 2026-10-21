@@ -19,6 +19,22 @@ namespace allstarr.Tests;
 
 public sealed class ProviderStatusManagerTests
 {
+    [Theory]
+    [InlineData(200, true)]
+    [InlineData(503, false)]
+    public async Task MonochromeConnectionProbeUsesStreamingFixture(int status, bool expected)
+    {
+        var handler = new QueuedResponseHandler(new HttpResponseMessage((HttpStatusCode)status)
+        { Content = new StringContent("fLaCfixture", Encoding.UTF8, "audio/flac") });
+        using var http = new HttpClient(handler);
+        var registry = new ProviderRegistry([allstarr.Core.Providers.Monochrome.MonochromeProviderRegistration.CreateRegistration(new(http))]);
+        var manager = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry);
+        Assert.True(manager.CanTestAccountFreeCapability("monochrome", "streaming"));
+        var result = await manager.TestAccountFreeProviderCapabilityAsync("monochrome", "streaming");
+        Assert.Equal(expected, result.Health == ProviderHealthState.Healthy);
+        Assert.Equal("/track/155142501534011392", Assert.Single(handler.Requests).AbsolutePath);
+    }
+
     [Fact]
     public void RecordedCheckWinsTimestampTieWithPassiveObservation()
     {

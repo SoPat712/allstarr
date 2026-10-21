@@ -38,6 +38,10 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("qobuz", "metadata", CurrentProviderSupportCatalog.Supported);
         AssertState("qobuz", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("qobuz", "download", CurrentProviderSupportCatalog.Supported);
+        AssertState("monochrome", "streaming", CurrentProviderSupportCatalog.Supported);
+        AssertState("monochrome", "health", CurrentProviderSupportCatalog.Supported);
+        AssertState("monochrome", "metadata", CurrentProviderSupportCatalog.Unavailable);
+        AssertState("monochrome", "download", CurrentProviderSupportCatalog.Unavailable);
         AssertState("deezer", "streaming", CurrentProviderSupportCatalog.Supported);
         AssertState("deezer", "download", CurrentProviderSupportCatalog.Supported);
         AssertState("musicbrainz", "metadata", CurrentProviderSupportCatalog.Unavailable);

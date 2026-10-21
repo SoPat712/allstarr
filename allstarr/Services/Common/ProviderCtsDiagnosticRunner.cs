@@ -148,7 +148,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                 corpusSize = null;
                 return samples.Current;
             }
-            if (streaming is not IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true } fallback)
+            if (streaming is not IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true } fallback)
                 return null;
             recordings ??= await trackSelector.SelectRecordingSamplesAsync(cancellationToken,
                 actor.Kind == ProviderActorKind.Administrator ? actor.UserId : null);

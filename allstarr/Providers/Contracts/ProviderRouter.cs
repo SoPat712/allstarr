@@ -73,6 +73,7 @@ public sealed class ProviderRouter(
             .FindByCapability(request.Capability, includeNonOperational: true)
             .OrderBy(provider => ExplicitPriority(request, provider.Id))
             .ThenBy(provider => Priority(request, provider.Id))
+            .ThenBy(provider => provider.Id == "monochrome")
             .ThenBy(provider => provider.Id, StringComparer.Ordinal)
             .ToArray();
         var decisions = new List<ProviderRouteCandidateDecision>(orderedProviders.Length);
