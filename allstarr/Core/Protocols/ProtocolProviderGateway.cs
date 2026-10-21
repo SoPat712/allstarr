@@ -170,7 +170,19 @@ public sealed record ProtocolProviderStream(
     long? ServingAccountRevision = null)
 {
     internal object ObservationToken { get; } = new();
+    internal PlaybackFileFacts FileFacts { get; } = new();
     public Guid? ServingManagedFileId { get; init; }
+}
+
+internal sealed class PlaybackFileFacts
+{
+    private long size = -1;
+    public long? Size
+    {
+        get { var value = Interlocked.Read(ref size); return value < 0 ? null : value; }
+        set => Interlocked.Exchange(ref size, value ?? -1);
+    }
+    public ProviderMediaFormat? Media { get; set; }
 }
 
 public sealed partial class ProtocolProviderGateway(
@@ -1876,6 +1888,7 @@ public sealed partial class ProtocolProviderGateway(
         SongCount = item.TrackCount,
         CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
         Year = item.Year,
+        ReleaseDate = item.ReleaseDate,
         Genre = item.Genre,
         Songs = item.Tracks.Select(Map).ToList(),
         IsLocal = false

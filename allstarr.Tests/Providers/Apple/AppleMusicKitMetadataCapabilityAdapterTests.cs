@@ -79,6 +79,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
         Assert.Equal("Library Song", track.RequireValue().Title);
         Assert.Equal("Library Album", album.RequireValue().Title);
         Assert.Equal(12, album.RequireValue().TrackCount);
+        Assert.Equal("2024-02-29", album.RequireValue().ReleaseDate);
+        Assert.Equal("2024-02-29", albums.RequireValue().Items[0].ReleaseDate);
         Assert.Equal("Library Artist", artist.RequireValue().Name);
         Assert.Equal("https://is1-ssl.mzstatic.com/image/thumb/library/1024x1024bb.jpg",
             track.RequireValue().Artwork?.PublicUri?.ToString());
@@ -277,6 +279,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapterTests
                     name = "Library Album",
                     artistName = "Library Artist",
                     trackCount = 12,
+                    releaseDate = "2024-02-29",
                     artwork = new { url = "https://is1-ssl.mzstatic.com/image/thumb/library/{w}x{h}bb.jpg" }
                 }
             },

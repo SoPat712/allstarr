@@ -437,6 +437,7 @@ public class QobuzProviderTests
         Assert.NotNull(result);
         Assert.Single(result);
         Assert.Equal("Time Out", result[0].Title);
+        Assert.Equal("1959-12-14", result[0].ReleaseDate);
         Assert.Equal("Dave Brubeck Quartet", result[0].Artist);
         Assert.Equal(1959, result[0].Year);
     }
@@ -633,6 +634,7 @@ public class QobuzProviderTests
         var result = await _service.GetAlbumAsync("qobuz", "222");
 
         Assert.NotNull(result);
+        Assert.Equal("1959-12-14", result.ReleaseDate);
         Assert.Equal("Time Out", result.Title);
         Assert.Equal("Dave Brubeck Quartet", result.Artist);
         Assert.Equal(1959, result.Year);

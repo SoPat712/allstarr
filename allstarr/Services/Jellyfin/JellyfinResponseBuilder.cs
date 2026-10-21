@@ -30,10 +30,13 @@ public class JellyfinResponseBuilder
 
     private string? ServerId => _httpContexts?.HttpContext?.Items[ServerIdItemKey] as string;
     private readonly IHttpContextAccessor? _httpContexts;
+    private readonly IPlaybackDeliveryActivitySource? _playbackActivity;
 
-    public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null, IHttpContextAccessor? httpContexts = null)
+    public JellyfinResponseBuilder(IOptions<JellyfinSettings>? settings = null, IHttpContextAccessor? httpContexts = null,
+        IPlaybackDeliveryActivitySource? playbackActivity = null)
     {
         _httpContexts = httpContexts;
+        _playbackActivity = playbackActivity;
     }
 
     public IActionResult CreateItemsResponse(List<Song> songs)
@@ -162,7 +165,7 @@ public class JellyfinResponseBuilder
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = artistId,
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["ImageBlurHashes"] = null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Unknown",
             ["UserData"] = new Dictionary<string, object>
@@ -346,10 +349,12 @@ public class JellyfinResponseBuilder
             // The route still returns 404 when every configured provider has a genuine miss.
             ["HasLyrics"] = !song.IsLocal,
             ["Container"] = "flac",
-            ["PremiereDate"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null,
+            ["PremiereDate"] = song.IsLocal
+                ? song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null
+                : ReleaseDate(song.ReleaseDate, song.Year)?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture),
             ["DateCreated"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
             ["RunTimeTicks"] = runTimeTicks,
-            ["ProductionYear"] = song.Year,
+            ["ProductionYear"] = song.IsLocal ? song.Year : ReleaseDate(song.ReleaseDate, song.Year)?.Year,
             ["IndexNumber"] = song.Track,
             ["ParentIndexNumber"] = song.DiscNumber ?? 1,
             ["IsFolder"] = false,
@@ -399,7 +404,7 @@ public class JellyfinResponseBuilder
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = song.AlbumId,
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["ImageBlurHashes"] = song.IsLocal ? new Dictionary<string, object>() : null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Audio",
             ["NormalizationGain"] = 0.0,
@@ -458,20 +463,13 @@ public class JellyfinResponseBuilder
                     {
                         new Dictionary<string, object?>
                         {
-                            ["Codec"] = "flac",
-                            ["TimeBase"] = "1/44100",
                             ["VideoRange"] = "Unknown",
                             ["VideoRangeType"] = "Unknown",
                             ["AudioSpatialFormat"] = "None",
                             ["LocalizedDefault"] = "Default",
                             ["LocalizedExternal"] = "External",
                             ["LocalizedOriginal"] = "Original",
-                            ["DisplayTitle"] = "FLAC - Stereo",
                             ["IsInterlaced"] = false,
-                            ["ChannelLayout"] = "stereo",
-                            ["BitDepth"] = 16,
-                            ["Channels"] = 2,
-                            ["SampleRate"] = 44100,
                             ["IsDefault"] = false,
                             ["IsForced"] = false,
                             ["IsHearingImpaired"] = false,
@@ -501,7 +499,10 @@ public class JellyfinResponseBuilder
         if (!song.IsLocal)
         {
             if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] sources)
+            {
+                ApplyMediaFacts(song, item, sources[0]);
                 item["MediaStreams"] = sources[0]["MediaStreams"];
+            }
             return fields?.Apply(item) ?? item;
         }
         return item;
@@ -515,18 +516,66 @@ public class JellyfinResponseBuilder
         {
             foreach (var source in externalSources)
             {
-                source["Size"] = null;
-                source["Bitrate"] = null;
                 if (source.GetValueOrDefault("MediaStreams") is Dictionary<string, object?>[] streams)
                     foreach (var stream in streams)
                     {
-                        stream["BitRate"] = null;
                         stream["IsAVC"] = false;
                         stream["Level"] = 0;
                     }
             }
         }
         return sources;
+    }
+
+    private void ApplyMediaFacts(Song song, Dictionary<string, object?> item, Dictionary<string, object?> source)
+    {
+        var http = _httpContexts?.HttpContext;
+        var context = http?.GetProtocolExecutionContext();
+        var previous = context == null ? null : _playbackActivity?.StreamFor(
+            context.Actor?.EffectiveUserId, context.Client.DeviceId, song.Id);
+        if (previous?.Matches(context!.Protocol.ToString().ToLowerInvariant(), context.BackendInstanceId) != true)
+            previous = null;
+        var media = previous?.Media;
+        var size = previous != null ? previous.Size : song.Size;
+        // Catalog bitrates can describe a different encode from the serving file.
+        var bitrate = previous != null ? media?.Bitrate : song.Size is > 0 ? song.Bitrate : null;
+        var sampleRate = previous != null ? media?.SampleRate : song.SampleRate;
+        var bitDepth = previous != null ? media?.BitDepth : song.BitDepth;
+        var channels = previous != null ? media?.Channels : song.Channels;
+        var codec = previous != null ? media?.Codec : song.Codec;
+        var stream = ((Dictionary<string, object?>[])source["MediaStreams"]!)[0];
+        if (!string.IsNullOrWhiteSpace(codec) && codec != "unknown") stream["Codec"] = codec;
+        if (sampleRate is > 0)
+        {
+            stream["SampleRate"] = sampleRate.Value;
+            stream["TimeBase"] = $"1/{sampleRate.Value}";
+        }
+        if (bitDepth is > 0) stream["BitDepth"] = bitDepth.Value;
+        if (channels is > 0) stream["Channels"] = channels.Value;
+        if (bitrate is > 0) stream["BitRate"] = bitrate.Value;
+        if (size is > 0) source["Size"] = size.Value;
+        var seconds = song.PreciseDuration?.TotalSeconds ?? song.Duration;
+        var averageBitrate = size is > 0 && seconds is > 0 ? size.Value * 8d / seconds.Value : 0;
+        if (bitrate is > 0) source["Bitrate"] = bitrate.Value;
+        else if (averageBitrate is > 0 and <= int.MaxValue) source["Bitrate"] = (int)averageBitrate;
+        var container = previous != null ? media?.Container : song.Container;
+        if (!string.IsNullOrWhiteSpace(container) && container != "unknown")
+        {
+            source["Container"] = container;
+            item["Container"] = container;
+        }
+    }
+
+    private static DateTime? ReleaseDate(string? value, int? year)
+    {
+        if (value != null && DateTime.TryParseExact(value, ["yyyy-MM-dd", "yyyy-MM", "yyyy"],
+            System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var date))
+            return DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+        if (value != null && DateTimeOffset.TryParseExact(value,
+            ["yyyy-MM-dd'T'HH:mm:ssK", "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"],
+            System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var timestamp))
+            return DateTime.SpecifyKind(timestamp.Date, DateTimeKind.Utc);
+        return year is >= 1 and <= 9999 ? new DateTime(year.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc) : null;
     }
 
     private static bool ShouldDisableTranscoding(string provider)
@@ -619,14 +668,16 @@ public class JellyfinResponseBuilder
             ["Name"] = albumName,
             ["ServerId"] = ServerId,
             ["Id"] = album.Id,
-            ["PremiereDate"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : null,
+            ["PremiereDate"] = album.IsLocal
+                ? album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : null
+                : ReleaseDate(album.ReleaseDate, album.Year)?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture),
             ["DateCreated"] = album.Year.HasValue ? $"{album.Year}-01-01T05:00:00.0000000Z" : "1970-01-01T00:00:00.0000000Z",
             ["ChannelId"] = (object?)null,
             ["Genres"] = !string.IsNullOrEmpty(album.Genre)
                 ? new[] { album.Genre }
                 : new string[0],
             ["RunTimeTicks"] = album.Songs.Sum(song => (long)(song.Duration ?? 0)) * TimeSpan.TicksPerSecond,
-            ["ProductionYear"] = album.Year,
+            ["ProductionYear"] = album.IsLocal ? album.Year : ReleaseDate(album.ReleaseDate, album.Year)?.Year,
             ["IsFolder"] = true,
             ["Type"] = "MusicAlbum",
             ["SortName"] = albumName,
@@ -663,7 +714,7 @@ public class JellyfinResponseBuilder
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = album.ArtistId ?? album.Id,
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["ImageBlurHashes"] = album.IsLocal ? new Dictionary<string, object>() : null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Unknown",
             ["ChildCount"] = album.SongCount ?? album.Songs.Count
@@ -720,7 +771,7 @@ public class JellyfinResponseBuilder
                 ["Primary"] = artist.Id
             },
             ["BackdropImageTags"] = new string[0],
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["ImageBlurHashes"] = artist.IsLocal ? new Dictionary<string, object>() : null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Unknown",
             ["AlbumCount"] = artist.AlbumCount ?? 0
@@ -792,7 +843,7 @@ public class JellyfinResponseBuilder
                 ["Primary"] = playlist.Id
             },
             ["BackdropImageTags"] = new string[0],
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["ImageBlurHashes"] = null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Audio",
             ["ProviderIds"] = new Dictionary<string, string>
@@ -864,7 +915,7 @@ public class JellyfinResponseBuilder
                 ["Primary"] = playlist.Id
             },
             ["BackdropImageTags"] = new string[0],
-            ["ImageBlurHashes"] = new Dictionary<string, object>(),
+            ["ImageBlurHashes"] = null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Unknown",
             ["ProviderIds"] = new Dictionary<string, string>

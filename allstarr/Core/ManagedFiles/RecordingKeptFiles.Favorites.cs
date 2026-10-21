@@ -73,8 +73,23 @@ public sealed partial class RecordingKeptFiles
             try { metadata = JsonSerializer.Deserialize<KeptRecordingMetadata>(snapshot); }
             catch (JsonException) { return null; }
             if (metadata == null || !ValidMetadata(metadata)) return null;
+            var file = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                              join canonical in db.CanonicalRecordings.AsNoTracking() on route.CanonicalRecordingId equals canonical.Id
+                              join managed in db.ManagedFiles.AsNoTracking() on route.ManagedFileId equals managed.Id
+                              where (canonical.Id == recordingId || canonical.MergedIntoId == recordingId) &&
+                                    managed.RemovedAt == null && managed.ReferenceCount > 0 && managed.IsManaged
+                              orderby route.CanonicalRecordingId == recordingId descending, route.CreatedAt, route.ManagedFileId
+                              select managed).FirstOrDefaultAsync(cancellationToken);
+            var media = file == null ? null : await ReadMediaAsync(db, file.Id, file.ContentSha256, file.Length, cancellationToken);
             return new()
             {
+                Size = file?.Length,
+                Container = media?.Container,
+                Codec = media?.Codec,
+                Bitrate = media?.Bitrate,
+                SampleRate = media?.SampleRate,
+                BitDepth = media?.BitDepth,
+                Channels = media?.Channels,
                 Id = recording.PublicId,
                 CanonicalRecordingId = recording.Id,
                 Title = metadata.Title,

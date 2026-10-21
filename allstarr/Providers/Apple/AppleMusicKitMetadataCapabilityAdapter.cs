@@ -100,7 +100,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             tracks.AddRange(entries.Select(track => MapTrack(track, response.ETag)));
             if (!HasNext(trackDocument.RootElement))
                 return ProviderOutcome<ProviderAlbumMetadata>.Success(new(album.Id, album.Title, album.Artists,
-                    album.TrackCount, album.Artwork, album.SnapshotVersion, tracks: tracks));
+                    album.TrackCount, album.Artwork, album.SnapshotVersion, tracks: tracks,
+                    year: album.Year, genre: album.Genre, releaseDate: album.ReleaseDate));
             if (entries.Length == 0) break;
         }
         return ProviderOutcome<ProviderAlbumMetadata>.Failure(ProviderError.CompatibilityContractChanged());
@@ -272,7 +273,7 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
             ? parsed
             : null;
         return new(id, Required(attributes, "name"), [ArtistCredit(Required(attributes, "artistName"), RelationshipId(item, "artists"))],
-            trackCount, Artwork(id, attributes, revision), revision);
+            trackCount, Artwork(id, attributes, revision), revision, releaseDate: String(attributes, "releaseDate"));
     }
 
     private static ProviderArtistMetadata MapArtist(JsonElement item, string? revision)

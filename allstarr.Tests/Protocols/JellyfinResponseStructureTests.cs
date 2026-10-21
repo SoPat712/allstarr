@@ -108,17 +108,16 @@ public class JellyfinResponseStructureTests
         var audioStream = mediaStreams[0] as Dictionary<string, object?>;
         Assert.NotNull(audioStream);
 
-        Assert.Contains("Codec", audioStream.Keys);
-        Assert.Equal("flac", audioStream["Codec"]);
+        Assert.DoesNotContain("Codec", audioStream.Keys);
         Assert.Contains("Type", audioStream.Keys);
         Assert.Equal("Audio", audioStream["Type"]);
         Assert.DoesNotContain("BitRate", audioStream.Keys);
-        Assert.Contains("Channels", audioStream.Keys);
-        Assert.Contains("SampleRate", audioStream.Keys);
-        Assert.Contains("BitDepth", audioStream.Keys);
-        Assert.Contains("ChannelLayout", audioStream.Keys);
-        Assert.Contains("TimeBase", audioStream.Keys);
-        Assert.Contains("DisplayTitle", audioStream.Keys);
+        Assert.DoesNotContain("Channels", audioStream.Keys);
+        Assert.DoesNotContain("SampleRate", audioStream.Keys);
+        Assert.DoesNotContain("BitDepth", audioStream.Keys);
+        Assert.DoesNotContain("ChannelLayout", audioStream.Keys);
+        Assert.DoesNotContain("TimeBase", audioStream.Keys);
+        Assert.DoesNotContain("DisplayTitle", audioStream.Keys);
 
         Assert.Contains("VideoRange", audioStream.Keys);
         Assert.Contains("VideoRangeType", audioStream.Keys);

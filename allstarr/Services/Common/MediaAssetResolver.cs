@@ -30,6 +30,10 @@ public sealed record ResolvedMediaAsset(
 
 public interface IMediaAssetResolver
 {
+    Task<string?> GetCachedBlurHashAsync(MediaAssetIdentity identity) => Task.FromResult<string?>(null);
+
+    Task<string?> GetCachedBlurHashAsync(string descriptorOrPayloadKey) => Task.FromResult<string?>(null);
+
     Task<ResolvedMediaAsset?> ResolveAsync(
         MediaAssetIdentity identity,
         Func<CancellationToken, Task<MediaAssetSource?>> fetch,
@@ -48,6 +52,21 @@ public sealed class MediaAssetResolver(
         activityMetrics ?? new ApplicationCacheActivityMetrics();
     private readonly ConcurrentDictionary<string, Lazy<Task<ResolvedMediaAsset?>>> _inflight =
         new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, Lazy<Task<StoredPayload>>> _payloadInflight =
+        new(StringComparer.Ordinal);
+
+    public Task<string?> GetCachedBlurHashAsync(MediaAssetIdentity identity) =>
+        GetCachedBlurHashAsync(CacheKeyBuilder.BuildMediaAssetDescriptorKey(identity));
+
+    public async Task<string?> GetCachedBlurHashAsync(string descriptorOrPayloadKey)
+    {
+        if (string.IsNullOrWhiteSpace(descriptorOrPayloadKey)) return null;
+        if (CacheKeyBuilder.IsMediaAssetDescriptorKey(descriptorOrPayloadKey))
+            return (await cache.GetAsync<MediaAssetDescriptor>(descriptorOrPayloadKey))?.BlurHash;
+        if (CacheKeyBuilder.IsMediaAssetPayloadKey(descriptorOrPayloadKey))
+            return (await cache.GetAsync<MediaAssetPayload>(descriptorOrPayloadKey))?.BlurHash;
+        return null;
+    }
 
     public async Task<ResolvedMediaAsset?> ResolveAsync(
         MediaAssetIdentity identity,
@@ -93,6 +112,13 @@ public sealed class MediaAssetResolver(
             bytes.Length != descriptor.PayloadBytes ||
             !Convert.ToHexStringLower(SHA256.HashData(bytes)).Equals(descriptor.Sha256, StringComparison.Ordinal))
             return null;
+        var blurHash = payload.BlurHash;
+        if (!payload.BlurHashComputed)
+            blurHash = (await StorePayloadAsync(bytes,
+                ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.Artwork))).BlurHash;
+        if (blurHash is not null && descriptor.BlurHash != blurHash)
+            await cache.SetAsync(descriptorKey, descriptor with { BlurHash = blurHash },
+                ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.Artwork).FreshFor);
         return new(bytes, descriptor.ContentType, descriptor.Sha256,
             descriptor.ETag, descriptor.LastModified, true);
     }
@@ -113,10 +139,13 @@ public sealed class MediaAssetResolver(
                 return null;
             var policy = ApplicationCachePolicyRegistry.Resolve(ApplicationCacheCategory.Artwork);
             var selected = CreateVariant(source, identity, maximumBytes);
-            if (!await StorePayloadAsync(bytes, policy))
+            var originalPayload = await StorePayloadAsync(bytes, policy);
+            if (!originalPayload.Stored)
                 return Asset(selected, false);
 
-            if (!bytes.AsSpan().SequenceEqual(selected.Bytes))
+            var differentVariant = !bytes.AsSpan().SequenceEqual(selected.Bytes);
+            if (differentVariant || originalPayload.BlurHash is not null &&
+                (identity.Width.HasValue || identity.Height.HasValue))
             {
                 var originalSha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
                 await cache.SetAsync(
@@ -128,19 +157,22 @@ public sealed class MediaAssetResolver(
                         source.ContentType,
                         bytes.Length,
                         source.ETag,
-                        source.LastModified),
+                        source.LastModified,
+                        originalPayload.BlurHash),
                     policy.FreshFor);
             }
             var sha256 = Convert.ToHexStringLower(SHA256.HashData(selected.Bytes));
             var payloadKey = CacheKeyBuilder.BuildMediaAssetPayloadKey(sha256);
-            if (!bytes.AsSpan().SequenceEqual(selected.Bytes) &&
-                !await StorePayloadAsync(selected.Bytes, policy))
+            var selectedPayload = differentVariant
+                ? await StorePayloadAsync(selected.Bytes, policy)
+                : originalPayload;
+            if (!selectedPayload.Stored)
                 return Asset(selected, false);
             await cache.SetAsync(
                 descriptorKey,
                 new MediaAssetDescriptor(
                     payloadKey, sha256, selected.ContentType, selected.Bytes.Length,
-                    source.ETag, source.LastModified),
+                    source.ETag, source.LastModified, selectedPayload.BlurHash),
                 policy.FreshFor);
             return Asset(selected, false);
         }
@@ -156,13 +188,36 @@ public sealed class MediaAssetResolver(
         }
     }
 
-    private async Task<bool> StorePayloadAsync(
+    private async Task<StoredPayload> StorePayloadAsync(
         byte[] bytes,
         ApplicationCacheCategoryPolicy policy)
     {
         var key = CacheKeyBuilder.BuildMediaAssetPayloadKey(
             Convert.ToHexStringLower(SHA256.HashData(bytes)));
-        return await cache.SetAsync(key, new MediaAssetPayload(bytes), policy.FreshFor);
+        var created = new Lazy<Task<StoredPayload>>(
+            () => StorePayloadCoreAsync(key, bytes, policy), LazyThreadSafetyMode.ExecutionAndPublication);
+        var pending = _payloadInflight.GetOrAdd(key, created);
+        try
+        {
+            return await pending.Value;
+        }
+        finally
+        {
+            _payloadInflight.TryRemove(new KeyValuePair<string, Lazy<Task<StoredPayload>>>(key, pending));
+        }
+    }
+
+    private async Task<StoredPayload> StorePayloadCoreAsync(
+        string key,
+        byte[] bytes,
+        ApplicationCacheCategoryPolicy policy)
+    {
+        var existing = await cache.GetAsync<MediaAssetPayload>(key);
+        var blurHash = existing is { BlurHashComputed: true } && existing.Bytes.AsSpan().SequenceEqual(bytes)
+            ? existing.BlurHash
+            : BlurHashEncoder.TryEncode(bytes);
+        var stored = await cache.SetAsync(key, new MediaAssetPayload(bytes, blurHash, true), policy.FreshFor);
+        return new(stored, blurHash);
     }
 
     private MediaAssetSource CreateVariant(
@@ -239,7 +294,10 @@ public sealed class MediaAssetResolver(
         string ContentType,
         int PayloadBytes,
         string? ETag,
-        DateTimeOffset? LastModified);
+        DateTimeOffset? LastModified,
+        string? BlurHash = null);
 
-    private sealed record MediaAssetPayload(byte[] Bytes);
+    private sealed record MediaAssetPayload(byte[] Bytes, string? BlurHash = null, bool BlurHashComputed = false);
+
+    private sealed record StoredPayload(bool Stored, string? BlurHash);
 }

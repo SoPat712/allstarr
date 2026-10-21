@@ -32,7 +32,7 @@ public sealed partial class ProtocolProviderGateway
             response.Headers.AcceptRanges.Add("bytes");
             var container = Path.GetExtension(kept.Path).TrimStart('.').ToLowerInvariant();
             var lease = new ProviderStreamLease("household-kept", new Uri("https://kept.invalid/audio"),
-                protocol.Deadline, true, true, new(kept.MimeType, string.IsNullOrEmpty(container) ? "bin" : container, "unknown"),
+                protocol.Deadline, true, true, kept.Media ?? new(kept.MimeType, string.IsNullOrEmpty(container) ? "bin" : container, "unknown"),
                 ProviderStreamRetryBehavior.DoNotRetry);
             return new(response, lease, "allstarr", kept.RecordingId.ToString("D"), IsCached: true,
                 EffectiveQuality: quality, SelectionReason: "household-kept")

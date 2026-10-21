@@ -23,7 +23,10 @@ public sealed record KeptRecordingPublication(
 }
 
 public sealed record KeptRecordingFile(Guid RecordingId, Guid ManagedFileId, long Length,
-    string ContentSha256, string MimeType, [property: JsonIgnore] string Path);
+    string ContentSha256, string MimeType, [property: JsonIgnore] string Path)
+{
+    public ProviderMediaFormat? Media { get; init; }
+}
 
 public sealed record KeptRecordingRead(KeptRecordingFile File, [property: JsonIgnore] Stream? Content);
 
@@ -280,11 +283,32 @@ public sealed partial class RecordingKeptFiles(
                 scope.ServiceProvider.GetRequiredService<IManagedFileRemovalStore>(), recordingId.Value, true, cancellationToken,
                 verifyContent: false);
             if (candidate == null) return null;
+            var result = ToResult(recordingId.Value, candidate.File, candidate.MimeType);
+            result = result with
+            {
+                Media = await ReadMediaAsync(
+                scope.ServiceProvider.GetRequiredService<AllstarrDbContext>(), result.ManagedFileId,
+                result.ContentSha256, result.Length, cancellationToken)
+            };
             var stream = files.OpenOwnedPlaybackRead(candidate.File, cancellationToken);
             if (headOnly) { await stream.DisposeAsync(); stream = null; }
-            return new(ToResult(recordingId.Value, candidate.File, candidate.MimeType), stream);
+            return new(result, stream);
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    private static async Task<ProviderMediaFormat?> ReadMediaAsync(AllstarrDbContext db,
+        Guid fileId, string hash, long length, CancellationToken cancellationToken)
+    {
+        var source = await (from route in db.Set<RecordingKeptRouteEntity>().AsNoTracking()
+                            join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking()
+                                on route.SourceArtifactId equals artifact.Id
+                            where route.ManagedFileId == fileId && artifact.ContentSha256 == hash && artifact.Length == length
+                            select artifact).FirstOrDefaultAsync(cancellationToken);
+        return source == null ? null : new(source.MimeType ?? "application/octet-stream",
+            source.Container ?? "unknown", source.Codec ?? "unknown", source.Bitrate is > 0 ? source.Bitrate : null,
+            source.SampleRate is > 0 ? source.SampleRate : null, source.BitDepth is > 0 ? source.BitDepth : null,
+            source.Channels is > 0 ? source.Channels : null);
     }
 
     private async Task<Candidate?> FindCandidateAsync(AllstarrDbContext db, FilePlacementService files,

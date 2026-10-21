@@ -48,7 +48,7 @@ public sealed class JellyfinAudioShapeTests
         AssertKeys(shape.GetProperty("MediaSourceKeys"),
             source.Keys.Except(["DirectStreamUrl", "TranscodingUrl"]), "Size", "Bitrate");
         var stream = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]));
-        AssertKeys(shape.GetProperty("AudioStreamKeys"), stream.Keys, "BitRate");
+        AssertKeys(shape.GetProperty("AudioStreamKeys"), stream.Keys, "BitRate", "Codec", "SampleRate", "Channels", "BitDepth", "ChannelLayout", "TimeBase", "DisplayTitle");
         Assert.Same(source["MediaStreams"], item["MediaStreams"]);
         Assert.Empty(Assert.IsType<object[]>(item["People"]));
     }

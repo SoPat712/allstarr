@@ -120,7 +120,8 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
     }
 
     private ProviderAlbumMetadata MapAlbum(JsonElement value) => new(Id(ProviderResourceKind.Album, Text(value, "id")),
-        Text(value, "title"), Artists(value), Int(value, "trackCount"), Artwork(value), OptionalText(value, "snapshotVersion"));
+        Text(value, "title"), Artists(value), Int(value, "trackCount"), Artwork(value), OptionalText(value, "snapshotVersion"),
+        year: Int(value, "year"), releaseDate: OptionalText(value, "releaseDate"));
 
     private ProviderArtistMetadata MapArtist(JsonElement value) => new(Id(ProviderResourceKind.Artist, Text(value, "id")),
         Text(value, "name"), Artwork(value), OptionalText(value, "snapshotVersion"));

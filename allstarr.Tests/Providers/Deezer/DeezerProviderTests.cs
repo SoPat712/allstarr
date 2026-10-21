@@ -136,6 +136,7 @@ public class DeezerProviderTests
         Assert.Single(result);
         Assert.Equal("ext-deezer-album-456789", result[0].Id);
         Assert.Equal("Test Album", result[0].Title);
+        Assert.Equal("2023-01-15", result[0].ReleaseDate);
         Assert.Equal("Test Artist", result[0].Artist);
         Assert.Equal(12, result[0].SongCount);
         Assert.Equal(2023, result[0].Year);
@@ -437,6 +438,7 @@ public class DeezerProviderTests
         Assert.NotNull(result);
         Assert.Equal("ext-deezer-album-456789", result.Id);
         Assert.Equal("Test Album", result.Title);
+        Assert.Equal("2023-05-20", result.ReleaseDate);
         Assert.Equal("Test Artist", result.Artist);
         Assert.Equal(2, result.Songs.Count);
         Assert.Equal("Track 1", result.Songs[0].Title);

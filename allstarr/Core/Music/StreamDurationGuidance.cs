@@ -20,11 +20,16 @@ internal static class StreamDurationGuidance
         if (container is not ("flac" or "mp3" or "mp4" or "m4a")) return;
         var original = routed.Response.Content;
         var replacement = new GuidedContent(new DeferredGuidanceStream(original, cancellationToken =>
-            PrepareAsync(original, routed, container, metadata, selected, cancellationToken)));
+            PrepareAsync(original, routed, container, metadata, selected, cancellationToken),
+            length => routed.FileFacts.Size = length));
         foreach (var header in original.Headers)
             replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         // An optional FLAC ID3 prelude is removed lazily, so its final length is not known at header time.
-        if (container == "flac") replacement.Headers.ContentLength = null;
+        if (container == "flac")
+        {
+            replacement.Headers.ContentLength = null;
+            routed.FileFacts.Size = null;
+        }
         routed.Response.Content = replacement;
     }
 
@@ -124,7 +129,8 @@ internal static class StreamDurationGuidance
 
     private readonly record struct PreparedAudio(Stream Stream, int SkippedBytes);
 
-    private sealed class DeferredGuidanceStream(HttpContent owner, Func<CancellationToken, Task<PreparedAudio>> prepare) : Stream
+    private sealed class DeferredGuidanceStream(HttpContent owner, Func<CancellationToken, Task<PreparedAudio>> prepare,
+        Action<long?> lengthKnown) : Stream
     {
         private Task<PreparedAudio>? prepared;
         public long? DeclaredLength { get; private set; }
@@ -146,6 +152,7 @@ internal static class StreamDurationGuidance
             var audio = await (prepared ??= prepare(cancellationToken));
             DeclaredLength = owner.Headers.ContentLength - audio.SkippedBytes;
             if (DeclaredLength is < 0) throw new IOException("The media prelude exceeded the declared length.");
+            lengthKnown(DeclaredLength);
             return await audio.Stream.ReadAsync(buffer, cancellationToken);
         }
         protected override void Dispose(bool disposing)

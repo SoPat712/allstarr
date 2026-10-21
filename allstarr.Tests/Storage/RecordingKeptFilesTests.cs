@@ -87,6 +87,32 @@ public sealed partial class RecordingKeptFilesTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task KeptMetadata_UsesThePublishedArtifactFactsWithoutProviderAccess()
+    {
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            var source = await db.Set<ProviderDownloadArtifactEntity>().SingleAsync();
+            source.Bitrate = 900_000;
+            source.SampleRate = 96_000;
+            source.BitDepth = 24;
+            source.Channels = 2;
+            await db.SaveChangesAsync();
+        }
+        await Service().PublishAsync(Request());
+        var song = await Service().FindSongAsync(Actor(other), recordingId.ToString("D"));
+        Assert.NotNull(song);
+        Assert.Equal(audio.Length, song.Size);
+        Assert.Equal("flac", song.Codec);
+        Assert.Equal(900_000, song.Bitrate);
+        Assert.Equal(96_000, song.SampleRate);
+        Assert.Equal(24, song.BitDepth);
+        Assert.Equal(2, song.Channels);
+        var opened = await Service().OpenForPlaybackAsync(Actor(other), new("allstarr", ProviderResourceKind.Track, recordingId.ToString("D")), true);
+        Assert.NotNull(opened);
+        Assert.Equal(96_000, opened.File.Media!.SampleRate);
+    }
+
+    [Fact]
     public async Task PublishVerifiesPersonalSourceAndCreatesHouseholdFileWithDurableProvenance()
     {
         var result = await Service().PublishAsync(Request());

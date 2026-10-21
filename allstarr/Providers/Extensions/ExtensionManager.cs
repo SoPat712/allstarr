@@ -957,6 +957,7 @@ public class ExtensionSandbox
 
     internal void LogDownloadFailure(Exception exception)
     {
+        if (exception.Message.Contains(ExtensionDownloadPostProcessor.FailureMessage, StringComparison.Ordinal)) return;
         if (exception.Data.Contains(InvocationLimitLogged)) return;
         _logger.LogWarning(exception, "Extension download failed for {ProviderId}: {Reason}", Id, SafeFailureReason(exception.Message));
     }
@@ -997,6 +998,11 @@ public class ExtensionSandbox
     }
 
     internal bool IsNetworkAllowed(Uri uri) => _hostBridge.IsNetworkAllowed(uri);
+
+    internal ExtensionDownloadPostProcessor DownloadPostProcessor
+    {
+        set => _hostBridge.DownloadPostProcessor = value;
+    }
 
     public bool HasSignedSession => _hostBridge.HasSignedSession;
     internal ExtensionSignedSessionClient SignedSessionClient => _hostBridge.SignedSessionClient;
@@ -1065,6 +1071,7 @@ public class ExtensionSandbox
                 Title = item.Get("name").ToString(),
                 Artist = ParseJsArtists(item.Get("artists")),
                 Year = ParseJsYear(item.Get("release_date")),
+                ReleaseDate = item.Get("release_date").IsString() ? item.Get("release_date").AsString() : null,
                 ExternalProvider = Id,
                 ExternalId = item.Get("id").ToString()
             };
@@ -1182,6 +1189,7 @@ public class ExtensionSandbox
                         Title = item.Get("name").ToString(),
                         Artist = ParseJsArtists(item.Get("artists")),
                         Year = ParseJsYear(item.Get("release_date")),
+                        ReleaseDate = item.Get("release_date").IsString() ? item.Get("release_date").AsString() : null,
                         ExternalProvider = Id,
                         ExternalId = item.Get("id").ToString()
                     };
@@ -1750,6 +1758,33 @@ public partial class ExtensionHostBridge
 
     public void PreparePatternedDownload(string trackId) =>
         ExtensionArtifactInvocationScope.Current?.Progressive?.PrepareDeezer(trackId);
+
+    internal ExtensionDownloadPostProcessor DownloadPostProcessor { get; set; } = new(TimeSpan.FromMinutes(2));
+
+    public object ProcessDownloadResult(string path, string resultJson)
+    {
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var outcome = "failed";
+        long bytes = 0;
+        try
+        {
+            var scope = RequireFileScope();
+            if (scope.Progressive?.Published == true) throw new InvalidDataException();
+            var resolved = scope.ResolveTemporaryPath(path);
+            var media = DownloadPostProcessor
+                .ProcessAsync(resolved, resultJson, scope.MaximumBytes, scope.CancellationToken).GetAwaiter().GetResult();
+            bytes = new FileInfo(resolved).Length;
+            outcome = "success";
+            return new { codec = media.Codec };
+        }
+        catch (OperationCanceledException) { outcome = "canceled"; throw; }
+        catch { throw new InvalidDataException(ExtensionDownloadPostProcessor.FailureMessage); }
+        finally
+        {
+            _logger.LogInformation("Extension {ExtensionId} decryption {Outcome} in {ElapsedMs} ms, {Bytes} bytes",
+                _extensionId, outcome, (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, bytes);
+        }
+    }
 
     public object CommitFile(string path, string artifactId)
     {
