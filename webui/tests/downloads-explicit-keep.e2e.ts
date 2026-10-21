@@ -193,3 +193,32 @@ for (const width of [390, 1280]) {
     });
   }
 }
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`hires downloads quality badges at ${width}px in ${colorScheme} mode`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await mockDownloadsApp(page);
+      await page.route("**/api/admin/downloads?**", (route) => json(route, {
+        storage: "kept", totalSize: 4_096_000, totalSizeFormatted: "4 MB", count: 4, managedCount: 4, diagnosticCount: 0,
+        files: ["upsampled", "padded-bit-depth", "lossy-transcode-suspected", "true-hi-res"].map((verdict, index) => ({
+          ...baseFile, path: `${index}.flac`, storage: "kept", title: `Quality ${index + 1}`, quality: "24-bit / 96 kHz",
+          qualityCheck: { claimedSampleRate: 96000, claimedBitDepth: 24, effectiveBandwidthHz: 20000, verdict, confidence: 0.8, likelySourceRate: 44100 },
+        })),
+      }));
+      await page.goto("/#/library/kept");
+      await expect(page.getByText("Likely upscaled", { exact: true })).toBeVisible();
+      await expect(page.getByText("Padded", { exact: true })).toBeVisible();
+      await expect(page.getByText("Lossy source?", { exact: true })).toBeVisible();
+      await expect(page.locator(".quality-check-badge")).toHaveCount(3);
+      for (const badge of await page.locator(".quality-check-badge").all()) {
+        await expect(badge).toHaveAttribute("title", /.+\.$/);
+      }
+      const row = page.locator(".download-row").filter({ hasText: "Quality 4" });
+      await expect(row.locator(".quality-check-badge")).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await page.screenshot({ path: `test-results/hires-downloads-${width}-${colorScheme}.png`, fullPage: true });
+    });
+  }
+}

@@ -5,6 +5,9 @@ using allstarr.Core.Storage;
 using allstarr.Filters;
 using allstarr.Services.Admin;
 using allstarr.Services.Lyrics;
+using allstarr.Services.Common;
+using allstarr.Core.Downloads;
+using allstarr.Core.Jobs;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using TagLib;
@@ -48,6 +51,24 @@ public partial class DownloadsController : ControllerBase
         _protocolContexts = protocolContexts;
         _kept = kept;
         _placement = placement;
+    }
+
+    [HttpPost("downloads/{artifactId:guid}/quality-check")]
+    public async Task<IActionResult> RecheckQuality(Guid artifactId, CancellationToken cancellationToken = default)
+    {
+        if (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] is not AdminAuthSession
+            { IsAdministrator: true, AllstarrUserId: { } administrator })
+            return StatusCode(403, new { error = "Administrator permissions required." });
+        if (_contextFactory == null) return StatusCode(503);
+        await using var db = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        if (!await db.Users.AnyAsync(item => item.Id == administrator && item.Enabled && item.IsAdmin, cancellationToken))
+            return StatusCode(403, new { error = "Administrator permissions required." });
+        var artifact = await db.Set<ProviderDownloadArtifactEntity>().AsNoTracking().SingleOrDefaultAsync(item =>
+            item.Id == artifactId && item.SupersededAt == null, cancellationToken);
+        if (artifact?.OwnerUserId is not { } owner) return NotFound();
+        var queue = HttpContext.RequestServices.GetRequiredService<DurableJobQueue>();
+        var queued = await queue.EnqueueAsync(AudioQualityCheckJobHandler.Request(artifactId, owner, force: true), cancellationToken);
+        return Accepted(new { jobId = queued.JobId });
     }
 
     [HttpGet("downloads")]
@@ -502,7 +523,7 @@ public partial class DownloadsController : ControllerBase
             ownership?.ReferenceCount > 0 ? "Referenced" : ownership?.Mapping != null || ownership?.ManagedFileId != null ? "Indexed" : "Diagnostic",
             ownership?.ReferenceCount,
             ownership?.ExplicitlyKept == true || ownership?.Mapping != null && ownership.ReferenceCount.GetValueOrDefault() == 0,
-            ownership?.ExplicitlyKept == true);
+            ownership?.ExplicitlyKept == true, ownership?.QualityCheck, ownership?.QualityCheckArtifactId);
     }
 
     private DateTime? Expiry(string root, DateTime lastModified) => root switch
@@ -525,6 +546,11 @@ public partial class DownloadsController : ControllerBase
         var managed = await db.ManagedFiles.AsNoTracking()
             .Where(item => item.RemovedAt == null && paths.Contains(item.CanonicalPath))
             .ToListAsync(cancellationToken);
+        var fileIds = managed.Select(item => item.Id).ToArray();
+        var qualityRows = await (from route in db.Set<Core.ManagedFiles.RecordingKeptRouteEntity>().AsNoTracking()
+                                 join artifact in db.Set<ProviderDownloadArtifactEntity>().AsNoTracking() on route.SourceArtifactId equals artifact.Id
+                                 where fileIds.Contains(route.ManagedFileId)
+                                 select new { route.ManagedFileId, artifact.Id, artifact.QualityCheckJson }).ToArrayAsync(cancellationToken);
         var owner = (HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] as AdminAuthSession)?.AllstarrUserId;
         var prefix = $"keep:user:{owner:N}:";
         var keptFiles = owner == null ? [] : await db.ManagedFileReferences.AsNoTracking()
@@ -535,7 +561,9 @@ public partial class DownloadsController : ControllerBase
             var file = managed.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.CanonicalPath), path));
             return new DownloadOwnership(
                 mappings.FirstOrDefault(item => PathComparer.Equals(Path.GetFullPath(item.LocalPath), path)),
-                file?.ReferenceCount, file?.Id, file != null && keptFiles.Contains(file.Id));
+                file?.ReferenceCount, file?.Id, file != null && keptFiles.Contains(file.Id),
+                AudioQualityCheckJobHandler.ReadCheck(qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.QualityCheckJson),
+                qualityRows.FirstOrDefault(item => item.ManagedFileId == file?.Id)?.Id);
         }, PathComparer);
     }
 
@@ -723,7 +751,9 @@ public partial class DownloadsController : ControllerBase
         Core.Downloads.DownloadedSongMappingEntity? Mapping,
         int? ReferenceCount,
         Guid? ManagedFileId,
-        bool ExplicitlyKept);
+        bool ExplicitlyKept,
+        AudioQualityCheck? QualityCheck = null,
+        Guid? QualityCheckArtifactId = null);
 
     private sealed record ManagedDownloadFile(
         string Path,
@@ -750,5 +780,7 @@ public partial class DownloadsController : ControllerBase
         string PublicationState,
         int? ReferenceCount,
         bool Removable,
-        bool ExplicitlyKept);
+        bool ExplicitlyKept,
+        AudioQualityCheck? QualityCheck = null,
+        Guid? QualityCheckArtifactId = null);
 }

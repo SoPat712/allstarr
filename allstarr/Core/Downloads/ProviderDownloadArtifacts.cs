@@ -34,6 +34,7 @@ public sealed class ProviderDownloadArtifactEntity
     public string RelativePath { get; set; } = string.Empty;
     public string ContentSha256 { get; set; } = string.Empty;
     public long Length { get; set; }
+    public string? QualityCheckJson { get; set; }
     public string? MimeType { get; set; }
     public string? Container { get; set; }
     public string? Codec { get; set; }

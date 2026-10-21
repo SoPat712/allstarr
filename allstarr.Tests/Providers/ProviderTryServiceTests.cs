@@ -228,6 +228,29 @@ public sealed class ProviderTryServiceTests
     }
 
     [Fact]
+    public async Task DownloadAddsQualityMeasurementWithoutChangingTheMediaTicket()
+    {
+        await using var fixture = await Fixture.CreateAsync(withQualityCheck: true);
+        fixture.Metadata.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(Fixture.Track()));
+        fixture.Download.Setup(item => item.DownloadAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderDownloadRequest>(), null))
+            .Returns(async (ProviderExecutionContext context, ProviderDownloadRequest request, IProgress<ProviderDownloadProgress>? _) =>
+            {
+                var write = await fixture.Artifacts.WriteAsync(new(request.Workspace, request.DurableJobId, "fixture", "song.flac",
+                    new MemoryStream([1, 2, 3, 4]), 1024));
+                return ProviderOutcome<ProviderDownloadedArtifact>.Success(new(write.ArtifactId, write.Sha256, write.SizeBytes,
+                    new("audio/flac", "flac", "flac", 1411000, 96000, 24), true));
+            });
+        var result = await fixture.Service.ExecuteAsync(fixture.Actor, "fixture", new()
+        { Capability = "download", Operation = "download", TrackId = "track" }, "quality", CancellationToken.None);
+        Assert.True(result.Result!.Succeeded);
+        var media = JsonSerializer.SerializeToElement(result.Result).GetProperty("media");
+        Assert.Equal("unknown", media.GetProperty("qualityCheck").GetProperty("verdict").GetString());
+        Assert.Contains("/media/", media.GetProperty("url").GetString());
+        fixture.DeleteTickets();
+    }
+
+    [Fact]
     public async Task DownloadTimeout_RetainsQuotaUntilProviderWorkStops()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -335,7 +358,7 @@ public sealed class ProviderTryServiceTests
         private readonly Mock<IProviderRegistry> registry = new();
         public ProviderActorContext Actor { get; } = new(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "backend", "principal"));
 
-        public static async Task<Fixture> CreateAsync(bool signed = false, bool metadataOnly = false, bool lyricsOnly = false)
+        public static async Task<Fixture> CreateAsync(bool signed = false, bool metadataOnly = false, bool lyricsOnly = false, bool withQualityCheck = false)
         {
             var fixture = new Fixture();
             fixture.database = await SqliteTestDatabase.CreateAsync();
@@ -388,7 +411,10 @@ public sealed class ProviderTryServiceTests
             var cts = new ProviderCtsDiagnosticRunner(fixture.registry.Object, Mock.Of<IProviderRouteAccountResolver>(), fixture.selector,
                 Mock.Of<IProviderOutcomeObserver>(), timeProvider: fixture.Clock);
             fixture.Service = new(fixture.registry.Object, execution, operations, fixture.Status, fixture.tickets, cts,
-                fixture.Artifacts, fixture.factory, null!, timeProvider: fixture.Clock);
+                fixture.Artifacts, fixture.factory, null!, timeProvider: fixture.Clock,
+                qualityAnalyzer: withQualityCheck ? new AudioQualityAnalyzer(new FileMediaApplicationCache(
+                    new FileMediaCacheOptions(Path.Combine(fixture.WorkspaceRoot, "quality-cache")),
+                    new allstarr.Core.Operations.SystemPlatformClock(), NullLogger<FileMediaApplicationCache>.Instance)) : null);
             return fixture;
         }
 

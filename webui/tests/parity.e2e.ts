@@ -7408,3 +7408,52 @@ for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const
     await page.screenshot({ path: `test-results/solver-${width}-${scheme}.png`, fullPage: true });
   });
 }
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`hires source download quality fact at ${width}px in ${colorScheme} mode`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await mockApi(page);
+      await mockTry(page);
+      let verdict = "upsampled";
+      let likelySourceRate = 44100;
+      await page.route("**/api/admin/providers/lumen-audio/try**", async (route) => {
+        if (route.request().method() === "GET") return route.fallback();
+        const body = route.request().postDataJSON();
+        if (body.operation !== "download") return route.fallback();
+        return route.fulfill({ json: { succeeded: true, capability: "download", operation: "download", elapsedMs: 200,
+          media: { kind: "download", url: "/api/admin/providers/try/media/download-ticket", fileName: "Fixture.flac", codec: "flac",
+            sampleRateHz: 96000, bitDepth: 24, sizeBytes: 46137344,
+            qualityCheck: { claimedSampleRate: 96000, claimedBitDepth: 24, effectiveBandwidthHz: 20000, verdict, confidence: 0.8, likelySourceRate } } } });
+      });
+      await page.goto("#/integrations/accounts");
+      await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+      await page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" })
+        .getByRole("button", { name: "Open Metadata tests" }).click();
+      const dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
+      await dialog.getByRole("tab", { name: "Download" }).click();
+      await dialog.getByLabel("Song").fill("get lucky");
+      await dialog.getByRole("button", { name: "Find" }).click();
+      const download = dialog.getByRole("button", { name: "Download Get Lucky (feat. Pharrell Williams and Nile Rodgers)" });
+      const fact = dialog.locator(".try-media-facts > div").filter({ has: page.locator("dt", { hasText: /^Quality check$/ }) });
+      for (const [next, rate, label] of [
+        ["upsampled", 44100, "Upsampled from 44.1 kHz"], ["upsampled", 48000, "Upsampled from 48 kHz"],
+        ["true-hi-res", 0, "True hi-res"], ["padded-bit-depth", 0, "16-bit padded to 24-bit"],
+        ["lossy-transcode-suspected", 0, "Lossy source suspected"], ["standard", 0, "CD quality"], ["unknown", 0, "Not checked"],
+      ] as const) {
+        verdict = next;
+        likelySourceRate = rate;
+        await download.click();
+        await expect(fact.locator("dd")).toHaveText(label);
+      }
+      verdict = "upsampled";
+      likelySourceRate = 44100;
+      await download.click();
+      await expect(fact.locator("dd")).toHaveText("Upsampled from 44.1 kHz");
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+      await fact.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `test-results/hires-source-${width}-${colorScheme}.png`, fullPage: false });
+    });
+  }
+}

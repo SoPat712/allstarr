@@ -176,7 +176,7 @@ public sealed class ProviderHealthMigrationTests
         Assert.Equal(keptObjects.Order(StringComparer.Ordinal),
             after.Where(row => keptObjects.Contains(row.Name)).Select(row => row.Name).Order(StringComparer.Ordinal));
         Assert.Equal(
-            ["\"SourceAccountRevision\" INTEGER NULL", "\"SourceExternalTrackId\" TEXT NULL", "\"SupersededAt\" INTEGER NULL"],
+            ["\"QualityCheckJson\" TEXT NULL", "\"SourceAccountRevision\" INTEGER NULL", "\"SourceExternalTrackId\" TEXT NULL", "\"SupersededAt\" INTEGER NULL"],
             TableColumns(after, "provider_download_artifacts").Except(TableColumns(before, "provider_download_artifacts")).Order(StringComparer.Ordinal));
         Assert.Empty(TableColumns(before, "provider_download_artifacts").Except(TableColumns(after, "provider_download_artifacts")));
         foreach (var column in new[] { "ManagedFileId", "PublicationJobId", "PublishedByUserId", "SourceArtifactId" })
@@ -333,7 +333,7 @@ public sealed class ProviderHealthMigrationTests
         (table == "playlist_target_memberships" && component == "\"RemovalConfirmedAt\" INTEGER NULL") ||
         (table == "durable_jobs" && component is "\"LeaseOwner\" TEXT NULL" or "\"LeaseExpiresAt\" INTEGER NULL" or
             "\"LastAttemptStartedAt\" INTEGER NULL" or "\"LastAttemptCompletedAt\" INTEGER NULL" or "\"LastAttemptOutcome\" TEXT NULL") ||
-        (table == "provider_download_artifacts" && component is "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL" or "\"SupersededAt\" INTEGER NULL") ||
+        (table == "provider_download_artifacts" && component is "\"QualityCheckJson\" TEXT NULL" or "\"SourceExternalTrackId\" TEXT NULL" or "\"SourceAccountRevision\" INTEGER NULL" or "\"SupersededAt\" INTEGER NULL") ||
         (table == "playback_delivery_checkpoints" && component is "\"AutomaticResendCount\" INTEGER NOT NULL DEFAULT 0" or "\"AttemptStartedAt\" INTEGER NULL" or
             "\"DestinationAccountId\" TEXT NULL" or "\"DestinationAccountRevision\" INTEGER NULL" or
             "\"DestinationJson\" TEXT NULL" or "\"ReplaySafe\" INTEGER NOT NULL DEFAULT 0" or

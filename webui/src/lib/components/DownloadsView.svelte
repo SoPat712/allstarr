@@ -72,6 +72,14 @@
       .filter((value): value is string => Boolean(value)))].toSorted(),
   );
 
+  function qualityWarning(file: ManagedDownload) {
+    const check = (file as ManagedDownload & { qualityCheck?: { verdict: string; likelySourceRate?: number | null } }).qualityCheck;
+    if (check?.verdict === "upsampled") return { label: "Likely upscaled", detail: `The measured bandwidth suggests a ${check.likelySourceRate === 48000 ? "48" : "44.1"} kHz source in this higher-rate file.` };
+    if (check?.verdict === "padded-bit-depth") return { label: "Padded", detail: "The low sample bits suggest 16-bit audio padded to 24-bit." };
+    if (check?.verdict === "lossy-transcode-suspected") return { label: "Lossy source?", detail: "A sharp high-frequency cutoff suggests a lossy source inside this lossless file." };
+    return null;
+  }
+
   const provider = (providerId?: string | null) => findProviderDefinition(providers, providerId);
   const providerName = (providerId?: string | null) => providerDisplayName(providers, providerId);
 
@@ -252,6 +260,7 @@
         </div>
         <div class="download-rows">
           {#each visible as file (file.storage + file.path)}
+            {@const warning = qualityWarning(file)}
             <div class="download-row" role="row">
               <span class="download-track" role="cell">
                 <span class="media-art download-art">
@@ -271,7 +280,10 @@
                 <span><strong>{providerName(file.provider)}</strong>{#if file.externalId}<small>{file.externalId}</small>{/if}</span>
               </span>
               <span class="download-quality" role="cell">
-                <strong>{file.quality || file.codec}</strong>
+                <span class="download-quality-summary">
+                  <strong>{file.quality || file.codec}</strong>
+                  {#if warning}<span class="quality-check-badge" title={warning.detail}>{warning.label}</span>{/if}
+                </span>
                 <small>{qualityDetails(file).join(" · ")}</small>
               </span>
               <span class="download-lifecycle" role="cell">
@@ -362,3 +374,27 @@
     onConfirm={remove}
   />
 {/if}
+
+<style>
+  .download-quality-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .quality-check-badge {
+    display: inline-flex;
+    align-self: start;
+    max-width: 100%;
+    padding: 0.125rem 0.5rem;
+    border: 1px solid var(--md-sys-color-outline-variant);
+    border-radius: 0.5rem;
+    background: var(--md-sys-color-surface-container);
+    color: var(--md-sys-color-on-surface-variant);
+    font-size: 0.6875rem;
+    line-height: 1.25rem;
+    font-weight: 500;
+  }
+</style>

@@ -15,7 +15,8 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
     ProviderTryOperations operations, ProviderStatusManager status, ProviderTryMediaStore tickets,
     ProviderCtsDiagnosticRunner cts, ProviderDownloadArtifactResolver artifacts,
     IDbContextFactory<AllstarrDbContext> database, EncryptedSecretStore secrets,
-    ProtocolExecutionOptions? executionOptions = null, TimeProvider? timeProvider = null, CloudflareChallengeSolver? challengeSolver = null)
+    ProtocolExecutionOptions? executionOptions = null, TimeProvider? timeProvider = null, CloudflareChallengeSolver? challengeSolver = null,
+    AudioQualityAnalyzer? qualityAnalyzer = null)
 {
     private readonly BoundedOperationGate overall = new(3);
     private readonly ConcurrentDictionary<string, BoundedOperationGate> providerGates = new(StringComparer.Ordinal);
@@ -170,6 +171,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             var name = SafeFileName((metadata == null ? "Unknown artist" : string.Join(", ", metadata.Artists.Select(item => item.Name))) +
                 " - " + (metadata?.Title ?? request.TrackId) + "." + artifact.Media.Container);
             token.ThrowIfCancellationRequested();
+            var qualityCheck = qualityAnalyzer == null ? null : await qualityAnalyzer.AnalyzeAsync(artifact.SourcePath, token);
             var ticket = reservation.CreateFileTicket(actor.UserId!.Value, artifact.SourcePath, artifact.Media.MimeType, name,
                 () => artifacts.DeleteTransientWorkspace(workspace));
             transferred = true;
@@ -177,7 +179,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             {
                 Succeeded = true,
                 Media = Media("download", ticket, name, artifact.Length, artifact.Media,
-                null, null, metadata?.Duration?.TotalSeconds)
+                null, null, metadata?.Duration?.TotalSeconds, qualityCheck)
             };
         }
         finally
@@ -223,7 +225,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
     }
 
     private static object Media(string kind, ProviderTryMediaTicket ticket, string? fileName, long? size,
-        ProviderMediaFormat format, string? seekMode, double? startMs, double? duration) => new
+        ProviderMediaFormat format, string? seekMode, double? startMs, double? duration, AudioQualityCheck? qualityCheck = null) => new
         {
             kind,
             url = ticket.Url,
@@ -237,6 +239,7 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             bitrateKbps = format.Bitrate / 1000d,
             durationSeconds = duration,
             quality = DeliveredQuality(format),
+            qualityCheck,
             seekMode,
             startMs
         };
