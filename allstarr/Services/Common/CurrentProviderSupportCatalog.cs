@@ -136,11 +136,6 @@ public static class CurrentProviderSupportCatalog
             "Public API.",
             Capability("lyrics", Supported, "Typed metadata lookup preserves plain/timed content, source, and stable content revision through shared Jellyfin/Subsonic routing.", "BuiltInLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests; LrclibServiceTests")),
         Provider(
-            "binilyrics", "binilyrics", "BiniLyrics", "none",
-            "Public ISRC and metadata lookup; no account required.",
-            Capability("lyrics", Supported, "Identity-checked TTML preserves line and word timing with bounded reads and failure caching.", "MetadataLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests"),
-            Capability("health", Supported, "Bounded public lyrics probe.", "ProviderStatusManagerTests")),
-        Provider(
             "genius", "genius", "Genius", "none",
             "Public title and artist lookup through the Genius worker; no account required.",
             Capability("lyrics", Supported, "Plain lyrics preserve section headings and remove page footers with bounded reads and failure caching.", "MetadataLyricsCapabilityAdapterTests; ProtocolLyricsResolverTests"),

@@ -386,7 +386,8 @@ public static class LegacyEnvParser
                 "Use the previous music source first in streaming order. Review other capabilities in Routing.", false, "Providers:StreamingOrder");
         if (key.StartsWith("MULTI_PROVIDER_", StringComparison.OrdinalIgnoreCase))
             value = string.Join(',', value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Where(item => !item.Equals("squidwtf", StringComparison.OrdinalIgnoreCase))
+                .Where(item => !item.Equals("squidwtf", StringComparison.OrdinalIgnoreCase) &&
+                    !allstarr.Core.Settings.RetiredProviderSettings.IsRetired(item))
                 .Select(item => item.Equals("applemusic", StringComparison.OrdinalIgnoreCase) ? "apple-musickit" : item));
         if (key.Equals("SPOTIFY_IMPORT_PLAYLISTS", StringComparison.OrdinalIgnoreCase))
         {

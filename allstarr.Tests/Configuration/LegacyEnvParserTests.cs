@@ -7,6 +7,16 @@ namespace allstarr.Tests;
 public sealed class LegacyEnvParserTests
 {
     [Theory]
+    [InlineData("lrclib,binilyrics,lyricsplus")]
+    [InlineData("lrclib,BiniLyrics,lyricsplus")]
+    public void LegacyLyricsOrderOmitsRemovedSourceAndPreservesRemainingOrder(string order)
+    {
+        var entry = Assert.Single(Parse("MULTI_PROVIDER_LYRICS_ORDER=" + order).Entries);
+        Assert.Equal("Providers:LyricsOrder", entry.DurableKey);
+        Assert.Equal("lrclib,lyricsplus", entry.Value);
+    }
+
+    [Theory]
     [InlineData("CORS__ALLOWED_ORIGINS", "https://player.example.test", "Cors:AllowedOrigins")]
     [InlineData("CORS_ALLOW_CREDENTIALS", "false", "Cors:AllowCredentials")]
     [InlineData("BACKEND_MUSIC_LIBRARY_IDS", "Library-A", "Backend:MusicLibraryIds")]

@@ -46,6 +46,8 @@ The public protocol controllers preserve client compatibility. Provider metadata
 
 `EffectiveProviderPolicyResolver` owns Automatic, Manual only and Off source use, combining descriptor defaults, household settings and personal overrides. `ProviderRouter` rechecks it for each operation. A manual-only source can serve an exact user selection but cannot enter automatic search, matching, canonical translation or fallback. Manual provider overrides retain their source ID and external track ID independently of canonical equivalence. Source-use bookkeeping may create an isolated internal recording without importing its ISRC or adding cross-provider aliases. Built-ins and extensions follow the same boundary; a descriptor with manual-only matching cannot be promoted by a preference.
 
+Storage initialization removes retired source settings, lyric selections, diagnostic history and encrypted secrets before saved configuration is projected. Provider preference readers also omit retired IDs from legacy orders and source switches. Kept lyric files and their recording identities remain intact.
+
 ## Shared music core
 
 `allstarr/Core/Music` holds the music behavior both protocols offer, written once against the provider gateway:

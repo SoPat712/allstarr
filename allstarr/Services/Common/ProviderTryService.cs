@@ -36,9 +36,9 @@ public sealed class ProviderTryService(IProviderRegistry providers, ProviderDiag
             providers.TryGetCapability<IProviderStreamingCapability>(provider, ProviderCapabilityKind.Streaming, out var streaming) &&
             streaming is IProviderDownloadStreamingCapability
             ? (executionOptions ?? new ProtocolExecutionOptions()).GetDownloadDiagnosticTimeout() : TimeSpan.FromSeconds(30);
-        if (request.Capability == "lyrics" && provider is "binilyrics" or "lyricsplus" && challengeSolver != null &&
+        if (request.Capability == "lyrics" && provider == "lyricsplus" && challengeSolver != null &&
             await challengeSolver.ConfiguredTimeoutAsync(token) is { } solveTimeout)
-            timeout += solveTimeout * (provider == "binilyrics" ? 2 : 1);
+            timeout += solveTimeout;
         using var deadline = new CancellationTokenSource(timeout, clock);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, deadline.Token);
         ProviderExecutionContext? execution = null;

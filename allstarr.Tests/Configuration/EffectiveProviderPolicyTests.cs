@@ -120,7 +120,7 @@ public sealed class EffectiveProviderPolicyTests
     [Fact]
     public void LyricsDefaultAppendsPublicSourcesAndSavedOrdersAppendAvailableSources()
     {
-        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix,binilyrics,genius",
+        Assert.Equal("backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix,genius",
             RuntimeSettingCatalog.Require("Providers:LyricsOrder").DefaultValue);
         var snapshot = new EffectiveProviderPolicySnapshot(
             System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
@@ -128,6 +128,19 @@ public sealed class EffectiveProviderPolicyTests
             System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0);
         Assert.Equal(new[] { "lrclib", "lyricsplus", "lrcred", "paxsenix" },
             snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["paxsenix", "lrcred", "lyricsplus", "lrclib"]));
+    }
+
+    [Fact]
+    public void RemovedLyricsSourceCannotParticipateFromAnOldAvailabilityList()
+    {
+        var snapshot = new EffectiveProviderPolicySnapshot(
+            System.Collections.Immutable.ImmutableDictionary<ProviderCapabilityKind, System.Collections.Immutable.ImmutableArray<string>>.Empty
+                .Add(ProviderCapabilityKind.Lyrics, ["binilyrics", "lrclib"]),
+            System.Collections.Immutable.ImmutableHashSet<string>.Empty, "lossless", 0);
+        Assert.False(snapshot.IsEnabled("binilyrics"));
+        Assert.False(snapshot.IsAutomatic("binilyrics"));
+        Assert.Equal(new[] { "lrclib", "lrcred" },
+            snapshot.ApplyProviderAvailability(ProviderCapabilityKind.Lyrics, ["binilyrics", "lrcred", "lrclib"]));
     }
 
     private static EffectiveRuntimeSetting Setting(string key)

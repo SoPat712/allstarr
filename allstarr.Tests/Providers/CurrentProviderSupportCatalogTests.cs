@@ -54,8 +54,6 @@ public sealed class CurrentProviderSupportCatalogTests
         AssertState("unison", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("paxsenix", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("paxsenix", "health", CurrentProviderSupportCatalog.Supported);
-        AssertState("binilyrics", "lyrics", CurrentProviderSupportCatalog.Supported);
-        AssertState("binilyrics", "health", CurrentProviderSupportCatalog.Supported);
         AssertState("genius", "lyrics", CurrentProviderSupportCatalog.Supported);
         AssertState("genius", "health", CurrentProviderSupportCatalog.Supported);
         AssertState("lrclib", "lyrics", CurrentProviderSupportCatalog.Supported);

@@ -110,7 +110,7 @@ The **[A]** external and **[E]** explicit title markers can be toggled independe
 
 Use the up and down buttons in **Lyrics source order** to choose which available sources your music apps try first. Allstarr prefers synced lyrics and retains plain text when no source provides timing. Your order applies only to your listener account and still requires enabled sources and authorized accounts. Resetting preferences restores the latest household order as well as your display defaults.
 
-Administrators can optionally set **Challenge solver URL** in **Settings → Network** to their own FlareSolverr or Byparr service, such as `http://flaresolverr:8191`, and use **Test** to check it. LAN and container addresses are supported. BiniLyrics and the LyricsPlus binimum mirror use it only after a Cloudflare check is detected; other sources keep their normal connection. **Solver timeout** defaults to 60 seconds (10–180). Clearance cookies and the solver's browser identity stay in memory until expiry; clearing the URL turns this feature off.
+Administrators can optionally set **Challenge solver URL** in **Settings → Network** to their own FlareSolverr or Byparr service, such as `http://flaresolverr:8191`, and use **Test** to check it. LAN and container addresses are supported. The LyricsPlus binimum mirror uses it only after a Cloudflare check is detected; other sources keep their normal connection. **Solver timeout** defaults to 60 seconds (10–180). Clearance cookies and the solver's browser identity stay in memory until expiry; clearing the URL turns this feature off.
 
 **Media server lyrics** can be moved with the same controls. If they win, the music app receives the media server's original lyric response, including its language and timing details.
 

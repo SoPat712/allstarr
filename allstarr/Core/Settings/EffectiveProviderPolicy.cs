@@ -20,7 +20,7 @@ public static class ProviderOrderPolicyCatalog
         new(ProviderCapabilityKind.Download, "Providers:DownloadOrder", "MULTI_PROVIDER_DOWNLOAD_ORDER", "apple-download,deezer,qobuz"),
         new(ProviderCapabilityKind.Streaming, "Providers:StreamingOrder", "MULTI_PROVIDER_STREAMING_ORDER", "apple-download,deezer,qobuz"),
         new(ProviderCapabilityKind.Playlist, "Providers:PlaylistOrder", "MULTI_PROVIDER_PLAYLIST_ORDER", "spotify,apple-download,deezer,qobuz"),
-        new(ProviderCapabilityKind.Lyrics, "Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix,binilyrics,genius")
+        new(ProviderCapabilityKind.Lyrics, "Providers:LyricsOrder", "MULTI_PROVIDER_LYRICS_ORDER", "backend,kept,spotify,apple-download,lrcred,lyricsplus,musixmatch,lrclib,unison,paxsenix,genius")
     ];
 
     public static ProviderOrderPolicyDefinition? Find(ProviderCapabilityKind capability) =>
@@ -31,6 +31,7 @@ public static class ProviderOrderPolicyCatalog
     {
         var order = configured
             .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
+            .Where(id => !RetiredProviderSettings.IsRetired(id))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         return capability == ProviderCapabilityKind.Lyrics
@@ -56,7 +57,7 @@ public sealed record EffectiveProviderPolicySnapshot(
     public ProviderUseMode GetProviderMode(string providerId)
     {
         var id = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(providerId);
-        return DisabledProviders.Contains(id) ? ProviderUseMode.Off :
+        return RetiredProviderSettings.IsRetired(id) || DisabledProviders.Contains(id) ? ProviderUseMode.Off :
             ProviderModes.GetValueOrDefault(id, ProviderUseMode.Automatic);
     }
 
@@ -133,11 +134,12 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         var preferences = await settings.GetPreferencesAsync(userId, cancellationToken);
         var orders = ProviderOrderPolicyCatalog.Definitions.ToImmutableDictionary(
             item => item.Capability,
-            item => ((string[])values[item.SettingKey].Value).Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).Distinct(StringComparer.Ordinal).ToImmutableArray());
+            item => ((string[])values[item.SettingKey].Value).Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).Where(id => !RetiredProviderSettings.IsRetired(id)).Distinct(StringComparer.Ordinal).ToImmutableArray());
         if (preferences.Values.LyricsOrder is { } lyricsOrder)
             orders = orders.SetItem(ProviderCapabilityKind.Lyrics, lyricsOrder
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
+                .Where(id => !RetiredProviderSettings.IsRetired(id))
                 .Distinct(StringComparer.Ordinal).ToImmutableArray());
         var disabled = ((string[])values["Providers:Disabled"].Value)
             .Select(allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
@@ -164,12 +166,13 @@ public sealed class EffectiveProviderPolicyResolver(IDurableRuntimeSettings sett
         foreach (var entry in configured ?? new Dictionary<string, string>())
         {
             var id = allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(entry.Key);
+            if (RetiredProviderSettings.IsRetired(id)) continue;
             var mode = ProviderUsePolicy.ParseMode(entry.Value);
             modes[id] = mode;
         }
         foreach (var entry in household ?? new Dictionary<string, string>())
         {
-            if (ProviderUsePolicy.ParseMode(entry.Value) == ProviderUseMode.Off)
+            if (!RetiredProviderSettings.IsRetired(entry.Key) && ProviderUsePolicy.ParseMode(entry.Value) == ProviderUseMode.Off)
                 modes[allstarr.Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId(entry.Key)] = ProviderUseMode.Off;
         }
         return modes.ToImmutable();

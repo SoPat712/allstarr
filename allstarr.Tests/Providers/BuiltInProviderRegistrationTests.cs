@@ -32,7 +32,7 @@ public sealed class BuiltInProviderRegistrationTests
         services.AddBuiltInLyricsCapabilities();
         using var provider = services.BuildServiceProvider();
         var registry = new ProviderRegistry(provider.GetServices<ProviderRegistration>());
-        foreach (var id in new[] { "lrcred", "unison", "paxsenix", "binilyrics", "genius" })
+        foreach (var id in new[] { "lrcred", "unison", "paxsenix", "genius" })
         {
             var descriptor = registry.GetRequired(id);
             Assert.Equal(ProviderOrigin.BuiltIn, descriptor.Origin);
