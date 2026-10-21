@@ -12,7 +12,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace allstarr.Tests;
 
-public sealed class ProviderStreamOpenerTests
+public sealed partial class ProviderStreamOpenerTests
 {
     private readonly ProtocolExecutionContext _context = new(
         ProtocolKind.Jellyfin, "backend", "principal", null, "stream-test",

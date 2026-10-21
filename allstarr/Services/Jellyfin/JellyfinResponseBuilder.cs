@@ -6,6 +6,7 @@ using allstarr.Models.Settings;
 using allstarr.Models.Subsonic;
 using allstarr.Services.Common;
 using allstarr.Core.Protocols;
+using allstarr.Core.Music;
 
 namespace allstarr.Services.Jellyfin;
 
@@ -417,7 +418,6 @@ public class JellyfinResponseBuilder
 
         if (!song.IsLocal && !string.IsNullOrEmpty(song.ExternalProvider))
         {
-            var supportsTranscoding = !ShouldDisableTranscoding(song.ExternalProvider);
             item["Overview"] = ExternalTrackPresentation.PlaybackDescription;
 
             item["ProviderIds"] = new Dictionary<string, string>
@@ -440,7 +440,6 @@ public class JellyfinResponseBuilder
                     ["Id"] = song.Id,
                     ["Path"] = download!.Path,
                     ["DirectStreamUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/stream?static=true",
-                    ["TranscodingUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/universal?container=flac&audioCodec=flac",
                     ["Type"] = "Default",
                     ["Container"] = download.Container,
                     ["Name"] = download.Name,
@@ -451,7 +450,7 @@ public class JellyfinResponseBuilder
                     ["IgnoreDts"] = false,
                     ["IgnoreIndex"] = false,
                     ["GenPtsInput"] = false,
-                    ["SupportsTranscoding"] = supportsTranscoding,
+                    ["SupportsTranscoding"] = false,
                     ["SupportsDirectStream"] = true,
                     ["SupportsDirectPlay"] = true,
                     ["IsInfiniteStream"] = false,
@@ -510,7 +509,7 @@ public class JellyfinResponseBuilder
         return item;
     }
 
-    public object CreatePlaybackMediaSources(Song song)
+    public object CreatePlaybackMediaSources(Song song, ProviderAudioDeliveryDecision? delivery = null)
     {
         var item = BuildSongItem(song, ExternalTrackPresentation.Preferences(_httpContexts?.HttpContext), null);
         var sources = item.GetValueOrDefault("MediaSources") ?? Array.Empty<object>();
@@ -518,6 +517,7 @@ public class JellyfinResponseBuilder
         {
             foreach (var source in externalSources)
             {
+                if (delivery != null) JellyfinAudioDeliveryShape.Apply(source, song.Id, delivery);
                 if (source.GetValueOrDefault("MediaStreams") is Dictionary<string, object?>[] streams)
                     foreach (var stream in streams)
                     {
@@ -578,12 +578,6 @@ public class JellyfinResponseBuilder
             System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var timestamp))
             return DateTime.SpecifyKind(timestamp.Date, DateTimeKind.Utc);
         return year is >= 1 and <= 9999 ? new DateTime(year.Value, 1, 1, 0, 0, 0, DateTimeKind.Utc) : null;
-    }
-
-    private static bool ShouldDisableTranscoding(string provider)
-    {
-        return provider.Equals("deezer", StringComparison.OrdinalIgnoreCase) ||
-               provider.Equals("qobuz", StringComparison.OrdinalIgnoreCase);
     }
 
     internal static string AppendExternalSourceLabel(string value, string? provider)

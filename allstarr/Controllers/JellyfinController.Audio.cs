@@ -1,4 +1,5 @@
 using allstarr.Services.Common;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using Microsoft.AspNetCore.Mvc;
 using System.Net;
@@ -80,8 +81,8 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
-        return await StreamExternalContent(provider!, externalId!, itemId, quality);
+        var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, container: container);
+        return await StreamExternalContent(provider!, externalId!, itemId, delivery: delivery);
     }
 
     private async Task<IActionResult> ProxyJellyfinStream(string path, string itemId)
@@ -131,7 +132,7 @@ public partial class JellyfinController
         string provider,
         string externalId,
         string requestedItemId,
-        StreamQuality quality = StreamQuality.Original,
+        ProviderAudioDeliveryRequest? delivery = null,
         bool originalDownload = false)
     {
         try
@@ -141,13 +142,8 @@ public partial class JellyfinController
                 RequestedItemId = requestedItemId,
                 IsOriginalDownload = originalDownload
             };
-            var requestedQuality = quality switch
-            {
-                StreamQuality.Low => ProviderAudioQuality.DataSaver,
-                StreamQuality.High => ProviderAudioQuality.Lossy,
-                _ => ProviderAudioQuality.Any
-            };
-            return await _streamOpener.OpenAsync(HttpContext, protocol, provider, externalId, requestedQuality);
+            return await _streamOpener.OpenAsync(HttpContext, protocol, provider, externalId,
+                delivery?.Quality ?? ProviderAudioQuality.Any, delivery);
         }
         catch (Exception ex)
         {
@@ -190,6 +186,9 @@ public partial class JellyfinController
 
     internal static (int statusCode, string errorMessage) MapExternalStreamException(Exception ex)
     {
+        if (ex is ProviderAudioProfileException profile)
+            return (StatusCodes.Status406NotAcceptable, profile.Message);
+
         if (ex is ProtocolProviderUnavailableException unavailable)
             return (StatusCodes.Status503ServiceUnavailable, unavailable.Message);
 
@@ -267,8 +266,8 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        var quality = StreamQualityHelper.ParseFromQueryString(Request.Query);
-        return await StreamExternalContent(provider!, externalId!, itemId, quality);
+        var delivery = ProviderAudioDeliveryRequests.Jellyfin(Request.Query, universal: true);
+        return await StreamExternalContent(provider!, externalId!, itemId, delivery: delivery);
     }
 
     #endregion

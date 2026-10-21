@@ -453,14 +453,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter :
 
             var output = outcome.RequireValue();
             var artifact = await artifacts.ResolveTransientAsync(workspace, output, context.CancellationToken);
-            var media = output.Media.Bitrate.HasValue ? output.Media : new ProviderMediaFormat(
-                output.Media.MimeType,
-                output.Media.Container,
-                output.Media.Codec,
-                bitrate: 1337,
-                sampleRate: output.Media.SampleRate,
-                bitDepth: output.Media.BitDepth,
-                channels: output.Media.Channels);
+            var media = output.Media;
             Task<HttpResponseMessage> OpenAsync(HttpRequestMessage message, CancellationToken cancellationToken)
             {
                 cancellationToken.ThrowIfCancellationRequested();

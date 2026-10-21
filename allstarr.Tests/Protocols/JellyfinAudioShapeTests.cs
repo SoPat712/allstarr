@@ -119,7 +119,7 @@ public sealed class JellyfinAudioShapeTests
         var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(builder.CreatePlaybackMediaSources(Track())));
         Assert.Equal("ext-deezer-song-1", source["Id"]);
         Assert.Equal("/Audio/ext-deezer-song-1/stream?static=true", source["DirectStreamUrl"]);
-        Assert.Equal("/Audio/ext-deezer-song-1/universal?container=flac&audioCodec=flac", source["TranscodingUrl"]);
+        Assert.False(source.ContainsKey("TranscodingUrl"));
         Assert.False(Assert.IsType<bool>(source["RequiresOpening"]));
         Assert.True(Assert.IsType<bool>(source["SupportsDirectStream"]));
     }
@@ -187,6 +187,20 @@ public sealed class JellyfinAudioShapeTests
         Assert.True(item.ContainsKey("ProviderIds"));
         var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(item["MediaSources"]));
         Assert.Equal("/Audio/ext-deezer-song-1/stream?static=true", source["DirectStreamUrl"]);
+    }
+
+    [Theory]
+    [InlineData("applemusic")]
+    [InlineData("monochrome")]
+    [InlineData("deezer")]
+    [InlineData("qobuz")]
+    public void ProviderSources_DoNotPromiseUnavailableTranscoding(string provider)
+    {
+        var song = Track();
+        song.ExternalProvider = provider;
+        var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(new JellyfinResponseBuilder().CreatePlaybackMediaSources(song)));
+        Assert.False(Assert.IsType<bool>(source["SupportsTranscoding"]));
+        Assert.False(source.ContainsKey("TranscodingUrl"));
     }
 
     private static void AssertKeys(JsonElement expected, IEnumerable<string> actual, params string[] unavailable) =>

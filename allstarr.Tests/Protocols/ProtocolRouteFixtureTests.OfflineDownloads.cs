@@ -50,19 +50,22 @@ public sealed partial class ProtocolRouteFixtureTests
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(item => item.OpenStreamAsync(
                 It.Is<ProtocolExecutionContext>(context => context.Protocol.ToString() == backend &&
-                    context.RequestedItemId == "ext-deezer-song-42"),
+                    context.RequestedItemId == "ext-deezer-song-42" && context.IsOriginalDownload && context.AudioDelivery == null),
                 "deezer", "42", ProviderAudioQuality.Any, range ? "bytes=4-7" : null, method == "HEAD"))
             .ReturnsAsync(new ProtocolProviderStream(upstream, DownloadLease(), "deezer", "42"));
         using var factory = DownloadFactory(backend, gateway.Object);
         using var client = factory.CreateClient();
         var credentials = $"u=listener&t=fixture-hash&s=fixture-salt&v=1.13.0&c={Uri.EscapeDataString(clientName)}{(format == "json" ? "&f=json" : "")}&id=ext-deezer-song-42";
         // Original downloads ignore playback/transcode preferences even if a client appends them.
-        if (method == "POST") credentials += "&maxBitRate=64&format=mp3";
+        credentials += "&maxBitRate=64&format=mp3&timeOffset=30";
         using var request = new HttpRequestMessage(new HttpMethod(method), backend == "Subsonic"
             ? path + (method == "POST" ? "" : "?" + credentials)
             : path + (clientName == "Finamp" ? "" : clientName == "Feishin"
                 ? "?apiKey=fixture-key&playSessionId=" : "?ApiKey=fixture-key"));
         if (method == "POST") request.Content = new StringContent(credentials, Encoding.UTF8, "application/x-www-form-urlencoded");
+        if (backend == "Jellyfin") request.RequestUri = new Uri(request.RequestUri +
+            (request.RequestUri!.OriginalString.Contains('?') ? "&" : "?") +
+            "AudioCodec=mp3&Container=mp3&MaxStreamingBitrate=64000&StartTimeTicks=300000000", UriKind.Relative);
         if (clientName == "Finamp") request.Headers.TryAddWithoutValidation("Authorization", "MediaBrowser Token=\"fixture-key\"");
         if (range) request.Headers.Range = new RangeHeaderValue(4, 7);
 

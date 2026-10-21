@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
 using allstarr.Core.Matching;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Protocols;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -22,6 +23,10 @@ public sealed partial class ProtocolRouteFixtureTests
     {
         var observed = new List<ObservedRequest>();
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
+        gateway.Setup(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", ProviderAudioQuality.Lossless, null, true))
+            .ReturnsAsync(() => new ProtocolProviderStream(new HttpResponseMessage(HttpStatusCode.OK),
+                new ProviderStreamLease("fixture", new Uri("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
+                    true, true, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry), "deezer", "42"));
         using var factory = new ProtocolFactory("Subsonic", request =>
         {
             observed.Add(Observe(request));
@@ -55,6 +60,7 @@ public sealed partial class ProtocolRouteFixtureTests
             Assert.Equal("false", decision.Attribute("canTranscode")?.Value);
         }
         Assert.All(observed, request => Assert.StartsWith("/rest/ping.view", request.PathAndQuery, StringComparison.Ordinal));
+        gateway.Verify(service => service.OpenStreamAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "42", ProviderAudioQuality.Lossless, null, true), Times.Once);
         gateway.VerifyNoOtherCalls();
     }
 

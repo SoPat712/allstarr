@@ -340,6 +340,8 @@ public sealed record ProviderExecutionContext
 
     public string? IdempotencyKey { get; }
 
+    public bool IsReadOnly { get; init; }
+
     public bool IsExpired(DateTimeOffset now) => now >= Deadline;
 
     public TimeSpan Remaining(DateTimeOffset now) => Deadline <= now ? TimeSpan.Zero : Deadline - now;

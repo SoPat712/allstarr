@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Xml.Linq;
+using allstarr.Core.Capabilities;
 using allstarr.Core.Matching;
 using allstarr.Core.Protocols;
 using allstarr.Models.Domain;
@@ -225,6 +226,12 @@ public sealed partial class ProtocolRouteFixtureTests
     public async Task LyricsClients_JellyfinMarkersEnableFetchAndCacheThenAllowNotFound(string clientName, string kind)
     {
         var gateway = LyricsClientGateway();
+        gateway.Setup(service => service.OpenStreamAsync(
+                It.Is<ProtocolExecutionContext>(context => context.IsReadOnly), "deezer", "42",
+                ProviderAudioQuality.Any, null, true))
+            .ReturnsAsync(() => new ProtocolProviderStream(new HttpResponseMessage(HttpStatusCode.OK),
+                new ProviderStreamLease("fixture", new Uri("https://fixture.invalid/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
+                    true, true, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry), "deezer", "42"));
         var resolver = LyricsClientResolver(kind);
         using var factory = new ProtocolFactory("Jellyfin", request =>
             request.RequestUri!.AbsolutePath == "/Users/Me"

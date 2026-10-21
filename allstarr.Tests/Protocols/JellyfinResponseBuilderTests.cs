@@ -424,7 +424,7 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
-    public void ConvertSongToJellyfinItem_OtherExternalProviders_KeepTranscodingEnabled()
+    public void ConvertSongToJellyfinItem_OtherExternalProviders_DisableUnavailableTranscoding()
     {
         var song = new Song
         {
@@ -440,7 +440,7 @@ public class JellyfinResponseBuilderTests
 
         var mediaSources = Assert.IsAssignableFrom<object[]>(result["MediaSources"]);
         var mediaSource = Assert.IsType<Dictionary<string, object?>>(mediaSources[0]);
-        Assert.True(Assert.IsType<bool>(mediaSource["SupportsTranscoding"]));
+        Assert.False(Assert.IsType<bool>(mediaSource["SupportsTranscoding"]));
     }
 
     [Fact]

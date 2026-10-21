@@ -257,7 +257,8 @@ public class JellyfinResponseStructureTests
             {
                 RequiredString(mediaSource, "Id");
                 RequiredString(mediaSource, "DirectStreamUrl");
-                RequiredString(mediaSource, "TranscodingUrl");
+                Assert.False(mediaSource.GetProperty("SupportsTranscoding").GetBoolean());
+                Assert.False(mediaSource.TryGetProperty("TranscodingUrl", out _));
                 foreach (var mediaStream in mediaSource.GetProperty("MediaStreams").EnumerateArray())
                     Assert.Equal(JsonValueKind.Number, mediaStream.GetProperty("Index").ValueKind);
             }
