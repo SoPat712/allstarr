@@ -36,15 +36,48 @@ public sealed class PlaybackScrobbleAcceptance(IDbContextFactory<AllstarrDbConte
             var currentKey = ScopedPlaybackScrobbleDelivery.CheckpointKey(payload);
             foreach (var (target, account) in selected)
             {
-                var prior = await db.PlaybackDeliveryCheckpoints.AsNoTracking().SingleOrDefaultAsync(x =>
+                var prior = await db.PlaybackDeliveryCheckpoints.SingleOrDefaultAsync(x =>
                     x.OwnerUserId == payload.Scope.OwnerUserId && x.SignalKey == completionKey && x.TargetId == target.ProviderId, token);
                 var frozen = prior?.DestinationJson == null ? account :
                     System.Text.Json.JsonSerializer.Deserialize<allstarr.Core.Capabilities.ProviderAccountContext>(prior.DestinationJson)!;
                 if (prior == null)
                 {
                     var completion = BoundPlaybackScrobbleDelivery.New(payload, completionKey, PlaybackScrobbleDeliveryKind.Completed, target.ProviderId, frozen);
-                    if (currentKey != completionKey) completion.SignalPayloadJson = null;
+                    if (currentKey != completionKey)
+                    {
+                        completion.SignalPayloadJson = null;
+                        completion.State = ScopedPlaybackScrobbleOutcome.Ignored;
+                        completion.ProviderCode = "listen-incomplete";
+                        completion.SafeMessage = null;
+                    }
                     db.Add(completion);
+                }
+                if (prior is { State: ScopedPlaybackScrobbleOutcome.Ignored, ProviderCode: "listen-incomplete" } &&
+                    prior.UpdatedAt < DateTimeOffset.UtcNow - PlaybackScrobbleRepair.ReservationLifetime)
+                {
+                    prior.ProviderCode = "listen-not-completed";
+                    prior.UpdatedAt = DateTimeOffset.UtcNow;
+                    prior.Revision++;
+                }
+                if (prior != null && currentKey == completionKey && prior.SendCount == 0 && prior.AttemptStartedAt == null &&
+                    prior.SubmissionJson == null && (prior.State is ScopedPlaybackScrobbleOutcome.Retrying or ScopedPlaybackScrobbleOutcome.PermanentFailure ||
+                        prior.State == ScopedPlaybackScrobbleOutcome.Ignored && prior.ProviderCode == "listen-incomplete"))
+                {
+                    var previous = prior.SignalPayloadJson == null ? null :
+                        System.Text.Json.JsonSerializer.Deserialize<PlaybackSignalPayload>(prior.SignalPayloadJson);
+                    if (previous == null || payload.Transition == PlaybackTransition.Submission ||
+                        previous.Transition != PlaybackTransition.Submission && (payload.PositionTicks ?? 0) >= (previous.PositionTicks ?? 0))
+                    {
+                        prior.SignalPayloadJson = System.Text.Json.JsonSerializer.Serialize(payload);
+                        if (prior.ProviderCode is "listen-incomplete" or "delivery-not-attempted")
+                        {
+                            prior.State = ScopedPlaybackScrobbleOutcome.Retrying;
+                            prior.ProviderCode = "pending";
+                            prior.SafeMessage = null;
+                        }
+                        prior.UpdatedAt = DateTimeOffset.UtcNow;
+                        prior.Revision++;
+                    }
                 }
                 if (currentKey != completionKey && !await db.PlaybackDeliveryCheckpoints.AnyAsync(x =>
                         x.OwnerUserId == payload.Scope.OwnerUserId && x.SignalKey == currentKey && x.TargetId == target.ProviderId, token))

@@ -109,6 +109,9 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 if (target is IBoundPlaybackScrobbleTarget bound)
                 {
                     if (payload.DestinationTargets != null && !payload.DestinationTargets.Contains(target.ProviderId)) continue;
+                    if (await db.PlaybackDeliveryCheckpoints.AnyAsync(x => x.OwnerUserId == payload.Scope.OwnerUserId &&
+                            x.SignalKey == checkpointKey && x.TargetId == target.ProviderId && x.State == ScopedPlaybackScrobbleOutcome.Ignored &&
+                            (x.ProviderCode == "listen-incomplete" || x.ProviderCode == "listen-not-completed"), cancellationToken)) continue;
                     if (await checkpoints.IsCompletedAsync(payload.Scope.OwnerUserId, checkpointKey, target.ProviderId, cancellationToken))
                     {
                         providerIds.Add(target.ProviderId);
@@ -195,6 +198,13 @@ public sealed class ScopedPlaybackScrobbleDelivery(IDbContextFactory<AllstarrDbC
                 await checkpoints.RecordAsync(payload.Scope.OwnerUserId,
                     occurrenceKey, checkpointKey, kind, target.ProviderId, result, cancellationToken);
                 retryableFailure ??= new("playback_scrobble_retrying", result.SafeMessage!, true);
+            }
+            catch (Exception) when (target is IBoundPlaybackScrobbleTarget)
+            {
+                providerIds.Add(target.ProviderId);
+                retryingCount++;
+                retryableFailure ??= new("playback_scrobble_retrying",
+                    "The saved destination outcome could not be recorded yet.", true);
             }
         }
         if (delivered)

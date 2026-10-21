@@ -295,7 +295,8 @@ public class AdminUiController : ControllerBase
                 item.Kind == PlaybackScrobbleDeliveryKind.Completed &&
                 item.UpdatedAt >= lastDay &&
                 (item.State == ScopedPlaybackScrobbleOutcome.Delivered ||
-                 item.State == ScopedPlaybackScrobbleOutcome.Ignored), cancellationToken);
+                 item.State == ScopedPlaybackScrobbleOutcome.Ignored &&
+                 item.ProviderCode != "listen-incomplete" && item.ProviderCode != "listen-not-completed"), cancellationToken);
         var currentWeekListens = await listensQuery.CountAsync(item =>
             item.State == ListeningEventState.Completed && item.ListenedAt >= currentWeekStart,
             cancellationToken);
