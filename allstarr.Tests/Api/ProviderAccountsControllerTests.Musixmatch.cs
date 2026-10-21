@@ -1,5 +1,8 @@
 using System.Text;
 using System.Text.Json;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Providers.Lyrics;
+using allstarr.Core.Providers.Spotify;
 using allstarr.Core.Secrets;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +19,10 @@ public sealed partial class ProviderAccountsControllerTests
             userToken = "Debug Info\r\n[DeviceId]: private-device\r\n[AppBuild]: 2025120901\r\n[UserToken]: private-fixture-token\r\n[AppVersion]: 10.1.1",
             unused = "private-unused"
         }));
-        var controller = Controller(Session(_userId));
+        using var http = new HttpClient();
+        var registration = MusixmatchLyricsCapabilityAdapter.CreateRegistration(
+            new MusixmatchLyricsCapabilityAdapter(http, new EncryptedProviderAccountSecretAccessor(_secretStore), _cache));
+        var controller = Controller(Session(_userId), providerRegistry: new ProviderRegistry([registration]));
         var result = Assert.IsType<CreatedAtActionResult>(await controller.Create(new()
         { ProviderId = "musixmatch", Secret = input.RootElement }));
         await using var db = await _factory.CreateDbContextAsync();
@@ -33,7 +39,12 @@ public sealed partial class ProviderAccountsControllerTests
         Assert.DoesNotContain("private-unused", lease.ReadUtf8());
         Assert.DoesNotContain("private-fixture-token", Encoding.UTF8.GetString((await db.SecretVersions.SingleAsync()).Ciphertext));
         Assert.DoesNotContain("private-fixture-token", JsonSerializer.Serialize(result.Value));
-        Assert.DoesNotContain("private-fixture-token", JsonSerializer.Serialize(Assert.IsType<OkObjectResult>(await controller.List()).Value));
+        var listed = Assert.IsType<OkObjectResult>(await controller.List());
+        Assert.DoesNotContain("private-fixture-token", JsonSerializer.Serialize(listed.Value));
+        using var response = JsonDocument.Parse(JsonSerializer.Serialize(listed.Value));
+        var summary = Assert.Single(response.RootElement.GetProperty("accounts").EnumerateArray());
+        Assert.Contains("userToken", summary.GetProperty("configuredFields").EnumerateArray().Select(item => item.GetString()));
+        Assert.False(summary.GetProperty("configuration").TryGetProperty("userToken", out _));
     }
 
     [Theory]

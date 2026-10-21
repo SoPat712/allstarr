@@ -227,9 +227,10 @@ public sealed class MusixmatchLyricsCapabilityAdapter : IProviderLyricsCapabilit
                     "userToken",
                     ProviderSettingValueKind.Secret,
                     ProviderSettingScope.ProviderAccount,
-                    "App Debug Info or user token",
+                    "Debug Info or user token",
                     required: false,
-                    helpText: "Paste the Debug Info from the Musixmatch app's debug info, or just the user token. Optional: Musixmatch works without it.")
+                    helpText: "Paste the Debug Info from the Musixmatch app, or just the user token. Optional: Musixmatch works without it.",
+                    multiline: true)
             ]),
         [adapter]);
 

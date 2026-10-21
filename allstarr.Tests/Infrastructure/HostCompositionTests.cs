@@ -321,10 +321,19 @@ public sealed class HostCompositionTests
         Assert.Equal("needs_config", Assert.Single(schema.Providers, item => item.Id == "qobuz").Status);
         var secret = Assert.Single(musixmatch.AccountSettings);
         Assert.Equal("userToken", secret.Key);
+        Assert.Equal("Debug Info or user token", secret.Label);
+        Assert.Equal("password", secret.Type);
+        using var serialized = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(schema));
+        var fields = serialized.RootElement.GetProperty("providers").EnumerateArray()
+            .SelectMany(item => item.GetProperty("accountSettings").EnumerateArray()).ToArray();
+        Assert.True(Assert.Single(fields, field => field.GetProperty("key").GetString() == "userToken")
+            .GetProperty("multiline").GetBoolean());
+        Assert.All(fields.Where(field => field.GetProperty("key").GetString() != "userToken"),
+            field => Assert.False(field.GetProperty("multiline").GetBoolean()));
         Assert.False(secret.Required);
         Assert.True(secret.Sensitive);
-        Assert.Contains("debug info", secret.HelpText!, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("works without", secret.HelpText!, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal("Paste the Debug Info from the Musixmatch app, or just the user token. Optional: Musixmatch works without it.",
+            secret.HelpText);
         Assert.Equal("not_required", Assert.Single(musixmatch.RuntimeCapabilities).Configuration);
         Assert.Contains("lyrics", musixmatch.Categories);
     }

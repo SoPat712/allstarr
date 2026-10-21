@@ -72,12 +72,14 @@
     error = "";
     const form = event.currentTarget as HTMLFormElement;
     const data = new FormData(form);
+    const secret = Object.fromEntries(Object.entries(secretFromForm(selected, data))
+      .filter(([key, value]) => value !== "" || !accountSettings(selected).some(field => field.key === key && field.sensitive)));
     try {
       if (!account && scope === "Shared" && !data.has("confirmShare"))
         throw new Error("Confirm that household users may use this connection.");
       let saved: ProviderAccount;
       if (account) {
-        const replacement = await sources.replaceSecret(account, secretFromForm(selected, data));
+        const replacement = await sources.replaceSecret(account, secret);
         saved = account.enabled
           ? { ...account, revision: replacement.revision }
           : await sources.setEnabled({ ...account, revision: replacement.revision }, true);
@@ -88,7 +90,7 @@
           scope,
           ...(administrator && scope === "Personal" && ownerUserId ? { ownerUserId } : {}),
           enabled: true,
-          secret: secretFromForm(selected, data),
+          secret,
         });
       }
       if (selected.id === "lastfm")
@@ -171,8 +173,21 @@
                   <SelectField name={field.key} label={field.label} value={String(currentSetting(field.key, settingDefault(field)))} options={field.options ?? []} required={field.required} />
                 {:else if field.type === "toggle"}
                   <Checkbox name={field.key} checked={currentSetting(field.key, settingDefault(field)) === true} />
+                {:else if field.sensitive && "multiline" in field && field.multiline === true}
+                  <textarea
+                    class="account-input"
+                    name={field.key}
+                    rows={6}
+                    required={field.required && !account?.configuredFields?.includes(field.key)}
+                    autocomplete="off"
+                    autocapitalize="off"
+                    spellcheck="false"
+                    wrap="off"
+                    placeholder={"placeholder" in field && typeof field.placeholder === "string" ? field.placeholder : "Paste the Debug Info here"}
+                  ></textarea>
                 {:else}
                   <input
+                    class="account-input"
                     name={field.key}
                     type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
                     value={field.sensitive ? "" : String(currentSetting(field.key, settingDefault(field)))}
@@ -180,6 +195,7 @@
                     autocomplete={field.key === "username" ? "username" : field.key === "password" ? "current-password" : "off"}
                   />
                 {/if}
+                {#if field.sensitive && account?.configuredFields?.includes(field.key)}<small>Configured · replace</small>{/if}
                 {#if field.helpText}<small>{field.helpText}</small>{/if}
               </label>
             {/each}
@@ -196,3 +212,36 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
+
+<style>
+  .account-input {
+    min-width: 0;
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-sm);
+    background: var(--color-panel-raised);
+    color: var(--color-ink);
+    padding: 0 0.9rem;
+    font-weight: 400;
+  }
+
+  .account-input:hover:not(:disabled) {
+    border-color: var(--color-ink-muted);
+  }
+
+  .account-input:focus-visible {
+    border-color: var(--color-signal);
+    outline: 1px solid var(--color-signal);
+    outline-offset: 0;
+  }
+
+  textarea.account-input {
+    width: 100%;
+    min-height: 9rem;
+    max-height: 18rem;
+    resize: vertical;
+    padding: 0.75rem 0.9rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+</style>

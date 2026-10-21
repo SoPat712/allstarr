@@ -292,6 +292,9 @@ public sealed class AdminUiConfigField
     [JsonPropertyName("sensitive")]
     public bool Sensitive { get; set; }
 
+    [JsonPropertyName("multiline")]
+    public bool Multiline { get; set; }
+
     [JsonPropertyName("required")]
     public bool Required { get; set; }
 

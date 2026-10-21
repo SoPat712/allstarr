@@ -97,7 +97,8 @@ public sealed record ProviderSettingDescriptor
         bool required = false,
         IEnumerable<string>? choices = null,
         string? helpText = null,
-        string? defaultJson = null)
+        string? defaultJson = null,
+        bool multiline = false)
     {
         if (!Enum.IsDefined(valueKind))
         {
@@ -131,6 +132,7 @@ public sealed record ProviderSettingDescriptor
         HelpText = ProviderContractValidation.OptionalContent(helpText, nameof(helpText), 1000);
         DefaultJson = ProviderContractValidation.OptionalContent(defaultJson, nameof(defaultJson), 4000);
         Required = required;
+        Multiline = multiline;
         Choices = Array.AsReadOnly(normalizedChoices);
     }
 
@@ -147,6 +149,8 @@ public sealed record ProviderSettingDescriptor
     public string? DefaultJson { get; }
 
     public bool Required { get; }
+
+    public bool Multiline { get; }
 
     public IReadOnlyList<string> Choices { get; }
 }

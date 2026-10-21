@@ -546,8 +546,10 @@ public sealed partial class MusixmatchLyricsCapabilityAdapterTests
         Assert.Equal("userToken", token.Key);
         Assert.Equal(ProviderSettingValueKind.Secret, token.ValueKind);
         Assert.False(token.Required);
+        Assert.Equal("Debug Info or user token", token.Label);
+        Assert.True(token.Multiline);
         Assert.Equal(
-            "Paste the Debug Info from the Musixmatch app's debug info, or just the user token. Optional: Musixmatch works without it.",
+            "Paste the Debug Info from the Musixmatch app, or just the user token. Optional: Musixmatch works without it.",
             token.HelpText);
         Assert.False(lyrics.SupportsPublicRead);
     }
