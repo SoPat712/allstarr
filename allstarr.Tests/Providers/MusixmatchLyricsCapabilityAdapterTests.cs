@@ -167,6 +167,141 @@ public sealed class MusixmatchLyricsCapabilityAdapterTests
         }
     }
 
+    [Theory]
+    [InlineData("Get Lucky", "Daft Punk", "Get Lucky (feat. Pharrell Williams & Nile Rodgers)", "Daft Punk feat. Pharrell Williams & Nile Rodgers", true)]
+    [InlineData("Espresso", "Sabrina Carpenter", "Espresso", "Sabrina Carpenter", true)]
+    [InlineData("Espresso", "Sabrina Carpenter", "Espresso (Album Version)", "Carpenter, Sabrina", true)]
+    [InlineData("Espresso", "Sabrina Carpenter", "Espresso (Radio Edit)", "Sabrina Carpenter", true)]
+    [InlineData("Espresso", "Sabrina Carpenter", "Espresso - Live", "Sabrina Carpenter", true)]
+    [InlineData("Get Lucky", "Daft Punk", "Around the World", "Daft Punk", false)]
+    [InlineData("Get Lucky", "Daft Punk", "Get Lucky Tonight", "Daft Punk", false)]
+    [InlineData("Espresso", "Sabrina Carpenter", "Espresso", "Other performer", false)]
+    [InlineData("Espresso", "Sabrina Carpenter", "Espresso", "Sabrina Other", false)]
+    public async Task MatcherAcceptsNormalizedTitlesAndPrimaryArtistCredits(string title, string artist, string matchedTitle, string matchedArtist, bool accepted)
+    {
+        var node = JsonNode.Parse(DesktopMacroPayload)!;
+        var track = node["message"]!["body"]!["macro_calls"]!["matcher.track.get"]!["message"]!["body"]!["track"]!;
+        track["track_name"] = matchedTitle;
+        track["artist_name"] = matchedArtist;
+        var result = await CreateAdapter(new FixtureHttpHandler { Payload = node.ToJsonString() }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(), LyricsRequest(title: title, artist: artist));
+
+        Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+        Assert.Equal(accepted ? ProviderLyricsAvailabilityState.Available : ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData(null, true)]
+    [InlineData(ProviderLyricsFormat.PlainText, false)]
+    [InlineData(ProviderLyricsFormat.PlainText, true)]
+    [InlineData(ProviderLyricsFormat.LineTimed, false)]
+    [InlineData(ProviderLyricsFormat.LineTimed, true)]
+    [InlineData(ProviderLyricsFormat.WordTimed, false)]
+    [InlineData(ProviderLyricsFormat.WordTimed, true)]
+    public async Task FormatPreferencesKeepAvailableContentThroughCacheAndProjection(ProviderLyricsFormat? preferred, bool plainOnly)
+    {
+        EnsureCacheSettings();
+        var node = JsonNode.Parse(DesktopMacroPayload)!;
+        var calls = node["message"]!["body"]!["macro_calls"]!.AsObject();
+        calls.Remove(plainOnly ? "track.subtitles.get" : "track.lyrics.get");
+        var handler = new FixtureHttpHandler { Payload = node.ToJsonString() };
+        var adapter = CreateAdapter(handler, new FixtureSecretAccessor());
+        var request = LyricsRequest(preferredFormat: preferred);
+        var first = await adapter.FetchLyricsAsync(Context(), request);
+        var cached = await adapter.FetchLyricsAsync(Context(), request);
+
+        foreach (var result in new[] { first, cached })
+        {
+            Assert.True(result.IsSuccess, result.Error?.SafeMessage);
+            Assert.Equal(ProviderLyricsAvailabilityState.Available, result.RequireValue().Availability);
+            Assert.Equal(plainOnly ? "Plain fallback" : preferred == ProviderLyricsFormat.PlainText ? "First\nSecond" : "[00:01.234]First\n[00:02.500]Second", result.RequireValue().Content);
+            Assert.Equal(plainOnly || preferred == ProviderLyricsFormat.PlainText ? ProviderLyricsFormat.PlainText : ProviderLyricsFormat.LineTimed, result.RequireValue().Format);
+        }
+        Assert.Equal(1, handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(30, ProviderLyricsAvailabilityState.Restricted)]
+    [InlineData(100, ProviderLyricsAvailabilityState.Available)]
+    public async Task PlainPreviewsAreRestrictedAndFullLyricsLoseCommercialFooter(int percentage, ProviderLyricsAvailabilityState expected)
+    {
+        var node = JsonNode.Parse(DesktopMacroPayload)!;
+        var calls = node["message"]!["body"]!["macro_calls"]!.AsObject();
+        var lyrics = calls["track.lyrics.get"]!["message"]!["body"]!["lyrics"]!;
+        lyrics["lyrics_body"] = "First\nSecond\n\n******* This Lyrics is NOT for Commercial use *******\n(12345678)";
+        lyrics["lyrics_body_percentage"] = percentage;
+        var result = await CreateAdapter(new FixtureHttpHandler { Payload = node.ToJsonString() }, new FixtureSecretAccessor())
+            .FetchLyricsAsync(Context(), LyricsRequest(preferredFormat: ProviderLyricsFormat.PlainText));
+
+        Assert.Equal(expected, result.RequireValue().Availability);
+        Assert.Equal(percentage == 100 ? "First\nSecond" : null, result.RequireValue().Content);
+    }
+
+    [Theory]
+    [InlineData("selected", "selected:LineTimed", 1, 2, 0)]
+    [InlineData("richsync", "selected:LineTimed", 1, 2, 2)]
+    [InlineData("text", "selected:PlainText", 1, 0, 0)]
+    [InlineData("identity", "identity-rejected", 0, 0, 0)]
+    [InlineData("restricted", "restricted", 0, 0, 0)]
+    [InlineData("empty", "no-content-parsed", 0, 0, 0)]
+    public async Task StructuralDiagnosticsExplainSelectionWithoutResponseValues(string scenario, string decision, int plainLines, int subtitleLines, int richsyncLines)
+    {
+        var node = JsonNode.Parse(DesktopMacroPayload)!;
+        var calls = node["message"]!["body"]!["macro_calls"]!.AsObject();
+        var track = calls["matcher.track.get"]!["message"]!["body"]!["track"]!;
+        track["private-property-name"] = "private-property-value";
+        track["has_lyrics"] = 1;
+        track["has_subtitles"] = true;
+        track["instrumental"] = 0;
+        track["restricted"] = scenario == "restricted";
+        if (scenario == "identity") track["track_name"] = "Different song";
+        if (scenario == "richsync")
+            calls["track.richsync.get"] = JsonNode.Parse(TimedMacroPayload)!["message"]!["body"]!["macro_calls"]!["track.richsync.get"]!.DeepClone();
+        if (scenario == "text")
+            calls["track.subtitles.get"]!["message"]!["body"]!["subtitle_list"]![0]!["subtitle"]!["subtitle_body"] = "private-subtitle-text";
+        if (scenario == "empty")
+        {
+            calls["track.lyrics.get"]!["message"]!["body"]!["lyrics"]!["lyrics_body"] = "";
+            calls["track.subtitles.get"]!["message"]!["body"]!["subtitle_list"] = new JsonArray();
+        }
+        var logs = new CapturedLogs();
+        using var factory = LoggerFactory.Create(builder => builder.AddProvider(logs));
+        using var http = new HttpClient(new FixtureHttpHandler { Payload = node.ToJsonString() });
+        await MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(http, "private-token", LyricsRequest(), default,
+            factory.CreateLogger<MusixmatchLyricsCapabilityAdapter>());
+
+        var log = Assert.Single(logs.Messages).Message;
+        Assert.Contains("matcher-body object; track True; track-keys track_id,track_name,artist_name,has_lyrics,has_subtitles,instrumental,restricted", log);
+        Assert.Contains("title-score ", log);
+        Assert.Contains("artist-score 100", log);
+        Assert.Contains("has-lyrics True; has-subtitles True; instrumental False", log);
+        Assert.Contains("lyrics-body object; lyrics-body-present True", log);
+        Assert.Contains($"subtitle-body object; subtitle-count {(scenario == "empty" ? 0 : 1)}; subtitle-first {(scenario == "empty" ? "empty" : scenario == "text" ? "text" : "[")}", log);
+        Assert.Contains(scenario == "richsync" ? "richsync-body object; richsync-body-present True" : "richsync-body array; richsync-body-present False", log);
+        Assert.Contains($"parsed-lines plain {plainLines}/subtitle {subtitleLines}/richsync {richsyncLines}; decision {decision}", log);
+        foreach (var secret in new[] { "private-property-name", "private-property-value", "private-token", "Fixture track", "Fixture artist", "Different song", "Plain fallback", "First", "private-subtitle-text" })
+            Assert.DoesNotContain(secret, log, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("[]", "array")]
+    [InlineData("{}", "empty")]
+    [InlineData("null", "empty")]
+    public async Task StructuralDiagnosticsExposeMissingMatcherTrack(string body, string kind)
+    {
+        var node = JsonNode.Parse(DesktopMacroPayload)!;
+        node["message"]!["body"]!["macro_calls"]!["matcher.track.get"]!["message"]!["body"] = JsonNode.Parse(body);
+        var logs = new CapturedLogs();
+        using var factory = LoggerFactory.Create(builder => builder.AddProvider(logs));
+        using var http = new HttpClient(new FixtureHttpHandler { Payload = node.ToJsonString() });
+        await MusixmatchLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(http, "fixture-token", LyricsRequest(), default,
+            factory.CreateLogger<MusixmatchLyricsCapabilityAdapter>());
+        var log = Assert.Single(logs.Messages).Message;
+        Assert.Contains($"matcher-body {kind}; track False; track-keys none", log);
+        Assert.Contains("decision no-content-parsed", log);
+    }
+
     private static string DesktopMacroPayload => File.ReadAllText(
         Path.Combine(AppContext.BaseDirectory, "Fixtures", "Musixmatch", "desktop-macro.json"));
 
