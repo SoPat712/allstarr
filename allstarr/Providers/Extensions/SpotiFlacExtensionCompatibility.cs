@@ -168,15 +168,42 @@ public static class SpotiFlacExtensionCompatibility
         var root = JsonNode.Parse(normalizedJson)!.AsObject();
         if (Text(root, "compatibility") != Marker) return normalizedJson;
         var capabilities = root["capabilities"]!.AsArray();
-        var metadata = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Metadata");
-        if (metadata == null) return normalizedJson;
         var exports = ExportedHooks(indexJs);
-        var hooks = new[] { "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist" }
-            .Where(hook => exports.Contains(hook) ||
-                exports.Contains("customSearch") && (hook.StartsWith("search", StringComparison.Ordinal) || hook == "getTrack"))
-            .ToArray();
-        if (hooks.Length == 0) capabilities.Remove(metadata);
-        else metadata["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray());
+        var metadata = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Metadata");
+        if (metadata != null)
+        {
+            var hooks = new[] { "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist" }
+                .Where(hook => exports.Contains(hook) ||
+                    exports.Contains("customSearch") && (hook.StartsWith("search", StringComparison.Ordinal) || hook == "getTrack"))
+                .ToArray();
+            if (hooks.Length == 0) capabilities.Remove(metadata);
+            else metadata["hooks"] = new JsonArray(hooks.Select(hook => (JsonNode?)JsonValue.Create(hook)).ToArray());
+        }
+        var playlist = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Playlist");
+        if (exports.Contains("getPlaylist"))
+        {
+            if (playlist == null)
+            {
+                var settings = root["settings"]?.AsArray().OfType<JsonObject>().ToArray() ?? [];
+                playlist = Capability("Playlist", settings.Length > 0,
+                    settings.Any(item => item["required"]?.GetValue<bool>() == true), "getPlaylistTracks");
+                capabilities.Add(playlist);
+            }
+            playlist["hooks"] = new JsonArray("getPlaylistTracks");
+            playlist["supportsPlaylistDiscovery"] = false;
+        }
+        else if (playlist != null) capabilities.Remove(playlist);
+
+        var original = root["spotiflacManifest"] as JsonObject;
+        JsonArray? patterns = null;
+        if (exports.Contains("handleUrl") && original != null)
+        {
+            patterns = original["capabilities"]?["urlPatterns"] as JsonArray;
+            if (patterns == null && original["urlHandler"] is JsonObject handler &&
+                handler["enabled"]?.GetValue<bool>() == true)
+                patterns = handler["patterns"] as JsonArray;
+        }
+        root["urlPatterns"] = patterns?.DeepClone() ?? new JsonArray();
         return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
@@ -827,12 +854,15 @@ public static class SpotiFlacExtensionCompatibility
           value = value && (value.playlist || value) || {};
           return { id: String(value.id || ''), name: String(value.name || value.title || ''),
             owner: { providerUserId: String(value.owner_id || value.owner || 'spotiflac'), displayName: String(value.owner_name || value.owner || 'SpotiFLAC') },
-            sourceRevision: String(value.revision || value.snapshot_id || '1'), description: String(value.description || ''), artworkUrl: _sfArtwork(value),
+            sourceRevision: String(value.revision || value.snapshot_id || '1'), description: value.description ? String(value.description) : null, artworkUrl: _sfArtwork(value),
             trackCount: Number(value.total_tracks || (value.tracks && value.tracks.length) || 0), sourceETag: null };
         }
         _registeredExtension = {
           initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _allstarrInitialize(settings || {}) : true; },
           cleanup: function() { return typeof _spotiflacExtension.cleanup === 'function' ? _spotiflacExtension.cleanup() : true; },
+          handleUrl: function(request) {
+            return typeof _spotiflacExtension.handleUrl === 'function' ? _spotiflacExtension.handleUrl(request.url) : null;
+          },
           searchTracks: function(request) { return _sfSearch(request, 'tracks', _sfTrack); },
           getTrack: function(request) {
             return _sfTrackDetail(String(request.id));
@@ -841,15 +871,29 @@ public static class SpotiFlacExtensionCompatibility
           getAlbum: function(request) { return _sfAlbum(typeof _spotiflacExtension.getAlbum === 'function' ? _spotiflacExtension.getAlbum(request.id) : null); },
           searchArtists: function(request) { return _sfSearch(request, 'artists', _sfArtist); },
           getArtist: function(request) { return _sfArtist(typeof _spotiflacExtension.getArtist === 'function' ? _spotiflacExtension.getArtist(request.id) : null); },
-          getUserPlaylists: function() { return { items: [], nextCursor: null, isPartial: false, snapshotVersion: null }; },
           searchPlaylists: function(request) { return _sfSearch(request, 'playlists', _sfPlaylist); },
           getPlaylistTracks: function(request) {
-            var raw = typeof _spotiflacExtension.getPlaylist === 'function' ? _spotiflacExtension.getPlaylist(request.playlistId) : null;
+            var raw;
+            var scheme = String(request.playlistId).match(/^([a-z][a-z0-9+.-]*:)/i);
+            var urlPatterns = (_sfManifest.urlHandler || {}).patterns || (_sfManifest.capabilities || {}).urlPatterns || [];
+            var declaredScheme = scheme && urlPatterns.some(function(pattern) { return String(pattern).toLowerCase() === scheme[1].toLowerCase(); });
+            if (typeof _spotiflacExtension.handleUrl === 'function' && (/^https?:\/\//i.test(String(request.playlistId)) || declaredScheme)) {
+              var resolved = typeof _spotiflacExtension.handleUrl === 'function' ? _spotiflacExtension.handleUrl(request.playlistId) : null;
+              if (!resolved || resolved.success === false || resolved.type !== 'playlist') throw new Error('The link does not contain a playlist');
+              raw = Object.assign({}, resolved.playlist || resolved);
+              raw.id = request.playlistId;
+              raw.tracks = resolved.tracks || raw.tracks || [];
+            } else raw = typeof _spotiflacExtension.getPlaylist === 'function' ? _spotiflacExtension.getPlaylist(request.playlistId) : null;
             var playlist = _sfPlaylist(raw);
             var tracks = _sfArray(raw && (raw.tracks || (raw.playlist && raw.playlist.tracks))).map(function(item, index) {
               var track = _sfTrack(item); return { position: index, trackId: track.id, canonicalRecordingId: null, metadata: track };
             });
-            return { playlist: playlist, tracks: { items: tracks, nextCursor: null, isPartial: false, snapshotVersion: playlist.sourceRevision } };
+            var offset = Number(request.page && request.page.cursor || 0);
+            var limit = Number(request.page && request.page.limit || 100);
+            if (!Number.isInteger(offset) || offset < 0) throw new Error('Invalid playlist cursor');
+            var end = Math.min(offset + limit, tracks.length);
+            return { playlist: playlist, tracks: { items: tracks.slice(offset, end), nextCursor: end < tracks.length ? String(end) : null,
+              isPartial: end < tracks.length, snapshotVersion: playlist.sourceRevision } };
           },
           fetchLyrics: function(request) {
             if (typeof _spotiflacExtension.fetchLyrics !== 'function') return { availability: 'Unavailable', source: 'SpotiFLAC' };

@@ -11,13 +11,16 @@ using SkiaSharp;
 
 namespace allstarr.Core.Extensions;
 
-public abstract class ExtensionCapabilityAdapterBase
+public abstract class ExtensionCapabilityAdapterBase : IProviderUrlCapability
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly ExtensionSandbox _sandbox;
     private readonly IProviderAccountSecretAccessor? _secrets;
     private readonly IReadOnlySet<string> _secretKeys;
     private readonly IReadOnlySet<string> _accountValueKeys;
+    private readonly ProviderCapabilityKind _capability;
+    private readonly bool _accountRequired;
+    private readonly bool _usesExpandedUrls;
 
     protected ExtensionCapabilityAdapterBase(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
         ProviderCapabilityKind capability, IProviderAccountSecretAccessor? secrets)
@@ -25,7 +28,15 @@ public abstract class ExtensionCapabilityAdapterBase
         _sandbox = sandbox;
         _secrets = secrets;
         ProviderId = manifest.Id;
-        Hooks = manifest.Capabilities.Single(item => item.Kind == capability).Hooks.ToHashSet(StringComparer.Ordinal);
+        _capability = capability;
+        var declaration = manifest.Capabilities.Single(item => item.Kind == capability);
+        _accountRequired = declaration.AccountRequired;
+        _usesExpandedUrls = manifest.Compatibility == SpotiFlacExtensionCompatibility.Marker;
+        Hooks = declaration.Hooks.ToHashSet(StringComparer.Ordinal);
+        var urlOwner = manifest.Capabilities.FirstOrDefault(item => item.Kind == ProviderCapabilityKind.Metadata)
+            ?? manifest.Capabilities.FirstOrDefault(item => item.Kind == ProviderCapabilityKind.Playlist)
+            ?? manifest.Capabilities.First();
+        UrlPatterns = urlOwner.Kind == capability ? manifest.UrlPatterns ?? [] : [];
         _secretKeys = manifest.Permissions.Where(item => item.Kind == ExtensionPermissionKind.Secret)
             .Select(item => item.Value).ToHashSet(StringComparer.Ordinal);
         _accountValueKeys = _secretKeys
@@ -34,13 +45,75 @@ public abstract class ExtensionCapabilityAdapterBase
     }
 
     public string ProviderId { get; }
+    ProviderCapabilityKind IProviderCapability.Capability => _capability;
+    public IReadOnlyList<string> UrlPatterns { get; }
     protected IReadOnlySet<string> Hooks { get; }
+
+    public async Task<ProviderOutcome<ProviderExternalResourceId>> ResolveUrlAsync(
+        ProviderExecutionContext context, string url)
+    {
+        if (string.IsNullOrWhiteSpace(url) || url.Length > 4096)
+            return Failure<ProviderExternalResourceId>(ProviderErrorKind.PermanentFailure);
+        var outcome = await InvokeAsync(context, "handleUrl", new { url }, value => value.Clone(), _accountRequired);
+        if (!outcome.IsSuccess) return ProviderOutcome<ProviderExternalResourceId>.Failure(outcome.Error!);
+        var result = outcome.RequireValue();
+        if (result.ValueKind == JsonValueKind.Null)
+            return Failure<ProviderExternalResourceId>(ProviderErrorKind.NotFound);
+        if (result.ValueKind != JsonValueKind.Object)
+            return Failure<ProviderExternalResourceId>(ProviderErrorKind.PermanentFailure);
+        if (result.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False)
+            return Failure<ProviderExternalResourceId>(ProviderErrorKind.NotFound);
+        var kind = OptionalText(result, "type")?.ToLowerInvariant() switch
+        {
+            "track" => ProviderResourceKind.Track,
+            "album" => ProviderResourceKind.Album,
+            "artist" => ProviderResourceKind.Artist,
+            "playlist" => ProviderResourceKind.Playlist,
+            _ => (ProviderResourceKind?)null
+        };
+        if (kind == null) return Failure<ProviderExternalResourceId>(ProviderErrorKind.NotSupported);
+        var id = UrlResourceId(result);
+        var resourceName = kind.Value.ToString().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(id) && result.TryGetProperty(resourceName, out var embedded) && embedded.ValueKind == JsonValueKind.Object)
+            id = UrlResourceId(embedded);
+        if (string.IsNullOrWhiteSpace(id) && Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        {
+            var separators = uri.Scheme is "http" or "https" ? new[] { '/' } : new[] { '/', ':' };
+            var parts = uri.AbsolutePath.Split(separators, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 0 && (uri.Host.Equals(resourceName, StringComparison.OrdinalIgnoreCase) ||
+                parts.SkipLast(1).Any(part => part.Equals(resourceName, StringComparison.OrdinalIgnoreCase) ||
+                    part.Equals(resourceName + "s", StringComparison.OrdinalIgnoreCase))))
+                id = Uri.UnescapeDataString(parts[^1]);
+        }
+        if (string.IsNullOrWhiteSpace(id) && _usesExpandedUrls && kind is ProviderResourceKind.Playlist or ProviderResourceKind.Album &&
+            result.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array)
+            id = url;
+        if (string.IsNullOrWhiteSpace(id)) return Failure<ProviderExternalResourceId>(ProviderErrorKind.PermanentFailure);
+        try
+        {
+            return ProviderOutcome<ProviderExternalResourceId>.Success(new(ProviderId, kind.Value, id));
+        }
+        catch (ArgumentException)
+        {
+            return Failure<ProviderExternalResourceId>(ProviderErrorKind.PermanentFailure);
+        }
+    }
+
+    private static string? UrlResourceId(JsonElement value) => value.TryGetProperty("id", out var id)
+        ? id.ValueKind switch
+        {
+            JsonValueKind.String => id.GetString(),
+            JsonValueKind.Number => id.GetRawText(),
+            _ => null
+        }
+        : null;
 
     protected async Task<ProviderOutcome<T>> InvokeAsync<T>(ProviderExecutionContext context, string hook,
         object request, Func<JsonElement, T> map, bool requireAccount = false,
         Func<IDisposable>? openInvocationScope = null)
     {
-        if (!Hooks.Contains(hook)) return Failure<T>(ProviderErrorKind.NotSupported);
+        if (!Hooks.Contains(hook) && !(hook == "handleUrl" && UrlPatterns.Count > 0))
+            return Failure<T>(ProviderErrorKind.NotSupported);
         if (!context.ProviderId.Equals(ProviderId, StringComparison.Ordinal) || !context.Policy.AllowsProvider(ProviderId))
             return Failure<T>(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure<T>(ProviderErrorKind.Canceled);
@@ -725,16 +798,20 @@ public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapability
 public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderPlaylistCapability
 {
     private const int MaximumArtworkPixels = 16_000_000;
+    private readonly bool accountRequired;
 
     public ExtensionPlaylistCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
-        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Playlist, secrets) { }
+        IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Playlist, secrets)
+    {
+        accountRequired = manifest.Capabilities.Single(item => item.Kind == ProviderCapabilityKind.Playlist).AccountRequired;
+    }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Playlist;
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> GetUserPlaylistsAsync(ProviderExecutionContext context, ProviderUserPlaylistsRequest request) =>
         InvokeAsync(context, "getUserPlaylists", request.SourceUserId == null
             ? PageRequest(request.Page)
-            : new { request.Page.Limit, request.Page.Cursor, request.SourceUserId }, value => MapPlaylistPage(value), true);
+            : new { request.Page.Limit, request.Page.Cursor, request.SourceUserId }, value => MapPlaylistPage(value), accountRequired);
     public Task<ProviderOutcome<ProviderPage<ProviderPlaylistSummary>>> SearchPlaylistsAsync(ProviderExecutionContext context, ProviderPlaylistSearchRequest request) =>
-        InvokeAsync(context, "searchPlaylists", new { request.Query, page = PageRequest(request.Page) }, value => MapPlaylistPage(value), true);
+        InvokeAsync(context, "searchPlaylists", new { request.Query, page = PageRequest(request.Page) }, value => MapPlaylistPage(value), accountRequired);
     public Task<ProviderOutcome<ProviderPlaylistTrackPage>> GetPlaylistTracksAsync(ProviderExecutionContext context, ProviderPlaylistTracksRequest request)
     {
         context.RequireResourceOwner(request.PlaylistId, ProviderResourceKind.Playlist);
@@ -745,7 +822,7 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
             var tracks = tracksValue.GetProperty("items").EnumerateArray().Select(MapTrack).ToArray();
             return new ProviderPlaylistTrackPage(summary, new ProviderPage<ProviderPlaylistTrack>(ProviderId, tracks,
                 OptionalText(tracksValue, "nextCursor"), Bool(tracksValue, "isPartial"), OptionalText(tracksValue, "snapshotVersion")));
-        }, true);
+        }, accountRequired);
     }
     public async Task<ProviderOutcome<ProviderPlaylistArtwork>> ResolveArtworkAsync(
         ProviderExecutionContext context,
@@ -754,7 +831,17 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
         var resource = request.Artwork.ResourceId;
         if (resource == null || resource.ProviderId != ProviderId || resource.ResourceKind != ProviderResourceKind.Playlist)
             return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.Forbidden);
-        var location = await InvokeAsync(
+        ProviderOutcome<ExtensionArtworkLocation> location;
+        if (!Hooks.Contains("resolveArtwork") && Hooks.Contains("getPlaylistTracks"))
+        {
+            var page = await GetPlaylistTracksAsync(context, new(resource, new(1)));
+            if (!page.IsSuccess) return ProviderOutcome<ProviderPlaylistArtwork>.Failure(page.Error!);
+            var summary = page.RequireValue().Playlist;
+            if (summary.Artwork?.PublicUri is not { Scheme: "https" } uri)
+                return Failure<ProviderPlaylistArtwork>(ProviderErrorKind.NotFound);
+            location = ProviderOutcome<ExtensionArtworkLocation>.Success(new(uri, summary.SourceRevision));
+        }
+        else location = await InvokeAsync(
             context,
             "resolveArtwork",
             new { playlistId = resource.Value, revision = request.Artwork.Revision, request.MaximumBytes },
@@ -766,7 +853,7 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
                     throw new JsonException();
                 return new ExtensionArtworkLocation(uri, revision);
             },
-            true);
+            accountRequired);
         if (!location.IsSuccess)
             return ProviderOutcome<ProviderPlaylistArtwork>.Failure(location.Error!);
         var target = location.RequireValue();
@@ -829,7 +916,7 @@ public sealed class ExtensionPlaylistCapabilityAdapter : ExtensionCapabilityAdap
     {
         var trackId = new ProviderExternalResourceId(ProviderId, ProviderResourceKind.Track, Text(item, "trackId"));
         var canonical = item.TryGetProperty("canonicalRecordingId", out var canonicalValue) &&
-                        canonicalValue.TryGetGuid(out var canonicalId)
+                        canonicalValue.ValueKind == JsonValueKind.String && canonicalValue.TryGetGuid(out var canonicalId)
             ? canonicalId
             : (Guid?)null;
         var value = item.TryGetProperty("metadata", out var metadata) ? metadata : item;

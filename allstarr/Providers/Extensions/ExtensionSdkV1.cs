@@ -23,7 +23,8 @@ public sealed record ExtensionSdkCapability(
     ProviderCapabilityKind Kind,
     IReadOnlyList<string> Hooks,
     IReadOnlyList<ProviderAccountScope> AccountScopes,
-    bool AccountRequired = true);
+    bool AccountRequired = true,
+    bool SupportsPlaylistDiscovery = true);
 
 public sealed record ExtensionSdkSetting(
     string Key,
@@ -73,7 +74,8 @@ public sealed record ExtensionSdkManifest(
     IReadOnlyList<string>? RequiredRuntimeFeatures = null,
     string? Compatibility = null,
     ExtensionSignedSessionConfig? SignedSession = null,
-    ProviderUseMode DefaultUseMode = ProviderUseMode.Automatic);
+    ProviderUseMode DefaultUseMode = ProviderUseMode.Automatic,
+    IReadOnlyList<string>? UrlPatterns = null);
 
 public sealed record VerifiedExtensionPackage(
     ExtensionSdkManifest Manifest,
@@ -136,7 +138,8 @@ public static partial class ExtensionSdkV1
             };
             return new(id, displayName, version, sdk, entryPoint, capabilities, permissions,
                 description, author, iconPath, settings, qualityOptions, runtimeFeatures,
-                Optional(root, "compatibility"), ParseSignedSession(root), defaultUseMode);
+                Optional(root, "compatibility"), ParseSignedSession(root), defaultUseMode,
+                OptionalStringArray(root, "urlPatterns", 64, 1000));
         }
     }
 
@@ -317,7 +320,13 @@ public static partial class ExtensionSdkV1
             if (scopes.Distinct().Count() != scopes.Length || accountRequired && scopes.Length == 0)
                 throw new ExtensionSdkValidationException(
                     "Capability accountScopes must be unique and non-empty when an account is required.");
-            result.Add(new(kind, hooks, scopes, accountRequired));
+            var supportsDiscovery = !value.TryGetProperty("supportsPlaylistDiscovery", out var discovery) || discovery.ValueKind switch
+            {
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                _ => throw new ExtensionSdkValidationException("supportsPlaylistDiscovery must be a boolean.")
+            };
+            result.Add(new(kind, hooks, scopes, accountRequired, supportsDiscovery));
         }
         if (result.Select(item => item.Kind).Distinct().Count() != result.Count)
             throw new ExtensionSdkValidationException("Each capability kind may be declared once.");

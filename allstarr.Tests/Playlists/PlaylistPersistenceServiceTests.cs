@@ -14,7 +14,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class PlaylistPersistenceServiceTests : IAsyncLifetime
+public sealed partial class PlaylistPersistenceServiceTests : IAsyncLifetime
 {
     private SqliteTestDatabase _database = null!;
     private TestDbContextFactory _factory = null!;
