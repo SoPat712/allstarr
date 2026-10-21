@@ -381,8 +381,11 @@ public sealed class ProviderStatusManagerTests
     {
         var payload = provider == "lyricsplus" ? "{\"type\":\"None\",\"lyrics\":[]}"
             : $"{{\"message\":{{\"header\":{{\"status_code\":{(healthy ? 404 : 401)}}},\"body\":{{}}}}}}";
-        var handler = new QueuedResponseHandler(Json(
-            provider == "lyricsplus" && !healthy ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK, payload));
+        var response = Json(provider == "lyricsplus" && !healthy ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK, payload);
+        var handler = provider == "musixmatch" && healthy
+            ? new QueuedResponseHandler(response, Json(HttpStatusCode.OK,
+                "{\"message\":{\"header\":{\"status_code\":200},\"body\":{\"track_list\":[]}}}"))
+            : new QueuedResponseHandler(response);
         var manager = CreateManager(new Dictionary<string, string?> { ["LyricsPlus:BaseUrl"] = "http://lyrics:3000/prefix" },
             httpClientFactory: new HandlerHttpClientFactory(handler));
         var status = provider == "lyricsplus"
@@ -390,10 +393,14 @@ public sealed class ProviderStatusManagerTests
             : await manager.TestManagedProviderCapabilityAsync(provider, "lyrics", Guid.NewGuid(),
                 new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" });
         Assert.Equal(healthy, status.Health == ProviderHealthState.Healthy);
-        var request = Assert.Single(handler.Requests);
+        Assert.Equal(provider == "musixmatch" && healthy ? 2 : 1, handler.Requests.Count);
+        var request = handler.Requests[0];
         Assert.Equal(provider == "lyricsplus" ? "lyrics" : "apic-desktop.musixmatch.com", request.Host);
         if (provider == "musixmatch")
+        {
             Assert.Contains("usertoken=synthetic-desktop-token", request.Query, StringComparison.Ordinal);
+            if (healthy) Assert.Equal("/ws/1.1/track.search", handler.Requests[1].AbsolutePath);
+        }
         if (!healthy) Assert.Equal(provider == "lyricsplus" ? "rate-limited" : "account-needs-reauthentication", status.ReasonCode);
     }
 
