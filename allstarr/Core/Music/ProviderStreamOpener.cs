@@ -99,11 +99,15 @@ public sealed class ProviderStreamOpener(
         {
             var itemId = context.RequestedItemId ?? $"ext-{providerId}-song-{externalId}";
             void Selected(string rung) => activity?.SeekRungSelected(context, itemId, routed.EffectiveQuality, routed, rung);
-            if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
-            if (cache != null)
-                await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
-            var cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
-            if (!headOnly && cacheRung != null) Selected(cacheRung);
+            string? cacheRung = null;
+            if (!context.IsOriginalDownload)
+            {
+                if (!headOnly) StreamDurationGuidance.Attach(routed, Metadata, Selected);
+                if (cache != null)
+                    await cache.WrapAsync(routed, context, routed.ServingProviderId, servingId, headOnly, Metadata, http.RequestAborted);
+                cacheRung = ManagedTrackCacheService.SeekRung(routed.Response.Content);
+                if (!headOnly && cacheRung != null) Selected(cacheRung);
+            }
             return await responses.CreateAsync(http, routed.Response, http.RequestAborted,
                 enableRangeProcessing: routed.IsCached || cacheRung != null);
         }

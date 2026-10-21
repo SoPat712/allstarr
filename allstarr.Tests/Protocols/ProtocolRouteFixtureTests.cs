@@ -1405,7 +1405,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData(true, "GET", "")]
     [InlineData(false, "POST", "&Fields=Genres")]
     [InlineData(true, "POST", "&Fields=Genres")]
-    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateFlacStream(bool knownRecording, string method, string fields)
+    public async Task JellyfinApplePlaybackInfo_AdvertisesImmediateStreamWithUnknownContainer(bool knownRecording, string method, string fields)
     {
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
         gateway.Setup(service => service.GetSongAsync(
@@ -1445,7 +1445,7 @@ public sealed partial class ProtocolRouteFixtureTests
         using var document = JsonDocument.Parse(responseBody);
         var source = document.RootElement.GetProperty("MediaSources")[0];
 
-        Assert.Equal("flac", source.GetProperty("Container").GetString());
+        Assert.True(!source.TryGetProperty("Container", out var container) || container.ValueKind == JsonValueKind.Null);
         Assert.Equal(
             knownRecording ? "/Audio/ext-deezer-first/stream?static=true" : "/Audio/ext-applemusic-song-6768469976/stream?static=true",
             source.GetProperty("DirectStreamUrl").GetString());

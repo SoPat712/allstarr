@@ -291,6 +291,7 @@ public class JellyfinResponseBuilder
             : artistName;
         var albumName = song.Album;
         var runTimeTicks = Math.Max(0, song.Duration ?? 0) * TimeSpan.TicksPerSecond;
+        var download = song.IsLocal ? null : JellyfinDownloadMetadata.ForSong(song);
 
         if (!song.IsLocal)
         {
@@ -348,7 +349,7 @@ public class JellyfinResponseBuilder
             // This capability flag prompts Jellyfin clients to call the lyrics route.
             // The route still returns 404 when every configured provider has a genuine miss.
             ["HasLyrics"] = !song.IsLocal,
-            ["Container"] = "flac",
+            ["Container"] = song.IsLocal ? "flac" : download?.Container,
             ["PremiereDate"] = song.IsLocal
                 ? song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null
                 : ReleaseDate(song.ReleaseDate, song.Year)?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture),
@@ -408,7 +409,7 @@ public class JellyfinResponseBuilder
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Audio",
             ["NormalizationGain"] = 0.0,
-            ["Path"] = $"/music/{artistName}/{albumName}/{songTitle}.flac",
+            ["Path"] = download?.Path ?? $"/music/{artistName}/{albumName}/{songTitle}.flac",
             ["CanDelete"] = false,
             ["CanDownload"] = true,
             ["SupportsSync"] = true
@@ -437,12 +438,12 @@ public class JellyfinResponseBuilder
                 {
                     ["Protocol"] = "File",
                     ["Id"] = song.Id,
-                    ["Path"] = $"/music/{artistName}/{albumName}/{songTitle}.flac",
+                    ["Path"] = download!.Path,
                     ["DirectStreamUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/stream?static=true",
                     ["TranscodingUrl"] = $"/Audio/{Uri.EscapeDataString(song.Id)}/universal?container=flac&audioCodec=flac",
                     ["Type"] = "Default",
-                    ["Container"] = "flac",
-                    ["Name"] = "Allstarr · Automatic source",
+                    ["Container"] = download.Container,
+                    ["Name"] = download.Name,
                     ["IsRemote"] = false,
                     ["ETag"] = song.Id,
                     ["RunTimeTicks"] = runTimeTicks,

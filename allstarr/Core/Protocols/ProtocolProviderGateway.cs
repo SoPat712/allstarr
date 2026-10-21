@@ -1088,14 +1088,15 @@ public sealed partial class ProtocolProviderGateway(
             Policy = protocol.Policy,
             RequestedItemId = protocol.RequestedItemId,
             IsPreparation = protocol.IsPreparation,
-            PreparationQuality = protocol.PreparationQuality
+            PreparationQuality = protocol.PreparationQuality,
+            IsOriginalDownload = protocol.IsOriginalDownload
         };
         providerId = NormalizeProvider(providerId);
         var actor = protocol.RequireActor();
         var effectivePolicy = await ResolveEffectivePolicyAsync(protocol);
         if (providerId != "allstarr" && effectivePolicy?.IsEnabled(providerId) == false)
             throw new UnauthorizedAccessException("That source is disabled for this listener.");
-        if (quality == ProviderAudioQuality.Any && effectivePolicy != null)
+        if (!protocol.IsOriginalDownload && quality == ProviderAudioQuality.Any && effectivePolicy != null)
         {
             quality = AudioQualityPolicy.RequestedQuality(effectivePolicy.AudioQuality);
         }
@@ -1107,9 +1108,9 @@ public sealed partial class ProtocolProviderGateway(
             providerId, ProviderResourceKind.Track, externalId);
         var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
         if (protocol.IsPreparation && playbackActivity?.WasStreamOpened(itemId) == true) return null;
-        var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
+        var previous = protocol.IsOriginalDownload ? null : playbackActivity?.StreamFor(protocol, itemId, quality);
         var resuming = parsedRange != null && rangeStart != 0;
-        var hasPlaybackIdentity = !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
+        var hasPlaybackIdentity = !protocol.IsOriginalDownload && !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
         if (resuming && hasPlaybackIdentity && playbackActivity != null && previous == null)
             throw new HttpRequestException("Restart playback before seeking this external track.", null,
                 HttpStatusCode.Conflict);
@@ -1180,7 +1181,7 @@ public sealed partial class ProtocolProviderGateway(
         var availabilityAttempted = false;
         async Task<bool> ResolveAvailabilityAsync()
         {
-            if (availabilityAttempted || resuming || !hasPlaybackIdentity && providerId != "allstarr" ||
+            if (protocol.IsOriginalDownload || availabilityAttempted || resuming || !hasPlaybackIdentity && providerId != "allstarr" ||
                 providerId != "allstarr" && !IsAutomaticProvider(providerId, effectivePolicy)) return false;
             availabilityAttempted = true;
             var linked = await TryResolvePlaybackAvailabilityAsync(plan, availabilityOrder, trackId,
@@ -1232,12 +1233,12 @@ public sealed partial class ProtocolProviderGateway(
             var cacheScope = new DownloadedSongMappingScope(
                     candidate.Context.Account?.AccountId,
                     quality);
-            var coordinate = !headOnly && managedTrackCache != null &&
+            var coordinate = !protocol.IsOriginalDownload && !headOnly && managedTrackCache != null &&
                 ProviderStreamOpener.PreparationProviders.Contains(candidate.Provider.Id);
             using var cacheOpening = coordinate ? await managedTrackCache!.BeginOpenAsync(
                 servingTrack, cacheScope, candidate.Context.Account?.Revision, protocol.IsPreparation, protocol.CancellationToken) : null;
             if (coordinate && cacheOpening == null) return null;
-            var cached = managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
+            var cached = protocol.IsOriginalDownload || managedTrackCache == null ? null : await managedTrackCache.TryOpenAsync(
                 servingTrack, cacheScope, protocol.CancellationToken, candidate.Context.Account?.Revision, protocol.IsPreparation);
             if (cached != null)
             {
@@ -1333,7 +1334,7 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
-            if (!headOnly && managedTrackCache != null && !stream.IsCached &&
+            if (!protocol.IsOriginalDownload && !headOnly && managedTrackCache != null && !stream.IsCached &&
                 ProviderStreamOpener.PreparationProviders.Contains(stream.ServingProviderId))
             {
                 Task<Song?>? metadata = null;
@@ -1346,9 +1347,9 @@ public sealed partial class ProtocolProviderGateway(
                 }
                 catch { stream.Response.Dispose(); throw; }
             }
-            if (!headOnly && !protocol.IsPreparation && execution != null && servingTrack != null)
+            if (!protocol.IsOriginalDownload && !headOnly && !protocol.IsPreparation && execution != null && servingTrack != null)
                 await RememberPlayedTrackAsync(execution, servingTrack, itemId);
-            if (!headOnly && stream.ServingProviderId == "monochrome" && !stream.Lease.SupportsByteRanges &&
+            if (!protocol.IsOriginalDownload && !headOnly && stream.ServingProviderId == "monochrome" && !stream.Lease.SupportsByteRanges &&
                 execution != null && identities != null)
             {
                 try
@@ -1370,7 +1371,8 @@ public sealed partial class ProtocolProviderGateway(
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
             stream.Response.Headers.Remove("X-Allstarr-Route-Reason");
             stream.Response.Headers.Add("X-Allstarr-Route-Reason", stream.SelectionReason);
-            if (!headOnly && !protocol.IsPreparation) playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
+            if (!protocol.IsOriginalDownload && !headOnly && !protocol.IsPreparation)
+                playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
             if (!protocol.IsPreparation)
                 logger?.LogInformation("Opened external playback from {Provider} (cached: {Cached})",
                     stream.ServingProviderId, stream.IsCached);

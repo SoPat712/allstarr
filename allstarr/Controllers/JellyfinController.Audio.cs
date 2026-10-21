@@ -43,9 +43,11 @@ public partial class JellyfinController
             return await ProxyJellyfinStream(fullPath, itemId);
         }
 
-        return await StreamExternalContent(provider!, externalId!, itemId);
+        return await StreamExternalContent(provider!, externalId!, itemId, originalDownload: true);
     }
 
+    [HttpGet("Audio/{itemId}/stream.")]
+    [HttpHead("Audio/{itemId}/stream.")]
     [HttpGet("Audio/{itemId}/stream")]
     [HttpGet("Audio/{itemId}/stream.{container}")]
     [HttpHead("Audio/{itemId}/stream")]
@@ -129,11 +131,16 @@ public partial class JellyfinController
         string provider,
         string externalId,
         string requestedItemId,
-        StreamQuality quality = StreamQuality.Original)
+        StreamQuality quality = StreamQuality.Original,
+        bool originalDownload = false)
     {
         try
         {
-            var protocol = HttpContext.RequireProtocolExecutionContext() with { RequestedItemId = requestedItemId };
+            var protocol = HttpContext.RequireProtocolExecutionContext() with
+            {
+                RequestedItemId = requestedItemId,
+                IsOriginalDownload = originalDownload
+            };
             var requestedQuality = quality switch
             {
                 StreamQuality.Low => ProviderAudioQuality.DataSaver,
