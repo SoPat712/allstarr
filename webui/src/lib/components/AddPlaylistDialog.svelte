@@ -2,9 +2,10 @@
   import { Checkbox } from "$lib/components/ui/checkbox";
   import { Dialog } from "$lib/components/ui/dialog";
   import { Button, buttonVariants } from "$lib/components/ui/button";
-  import { Check, Info, X } from "@lucide/svelte";
+  import { Check, Info, Link, X } from "@lucide/svelte";
   import {
     playlistLinks,
+    json,
     type MediaTarget,
     type PlaylistDiscoveryItem,
     type PlaylistSourceAccount,
@@ -21,6 +22,16 @@
   } from "$lib/playlists";
 
   type ImportMode = "oneTime" | "linked";
+  type LinkPreview = {
+    source: { id: string; displayName: string };
+    kind: "playlist";
+    id: string;
+    providerAccountId: string | null;
+    title: string;
+    owner: string;
+    trackCount: number | null;
+    artworkUrl: string | null;
+  };
   type TargetMode = "new" | "existing";
 
   let {
@@ -33,6 +44,10 @@
     onSaved: (message: string) => void | Promise<void>;
   } = $props();
 
+  let pastedUrl = $state("");
+  let linkPreview = $state<LinkPreview | null>(null);
+  let resolvingLink = $state(false);
+  let linkRequest = 0;
   let prepared = $state(false);
   let step = $state(1);
   let accounts = $state<PlaylistSourceAccount[]>([]);
@@ -68,9 +83,9 @@
   const orderedAccounts = $derived(orderPlaylistSources(accounts, providerOrder));
   const selectedAccount = $derived(accounts.find((item) => item.id === accountId));
   const selectedTarget = $derived(targets.find((item) => item.id === targetId));
-  const sourceName = $derived(selectedAccount?.displayName ?? providerNames[publicProviderId] ?? "the source service");
+  const sourceName = $derived(linkPreview?.source.displayName ?? selectedAccount?.displayName ?? providerNames[publicProviderId] ?? "the source service");
   const sourcePlaylistName = $derived(
-    sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ?? "this playlist",
+    linkPreview?.title ?? sourcePlaylists.find((item) => item.id === sourcePlaylistId)?.name ?? "this playlist",
   );
   const targetName = $derived(
     selectedTarget?.protocol === "jellyfin"
@@ -102,7 +117,7 @@
   ));
   const stepReady = $derived(
     step === 1
-      ? Boolean(sourcePlaylistId)
+      ? Boolean(sourcePlaylistId) && !resolvingLink
       : step === 3
         ? Boolean(targetId) && (targetMode === "new" || Boolean(targetPlaylistId))
         : true,
@@ -130,6 +145,7 @@
   $effect(() => {
     if (!open) {
       browseRequest++;
+      linkRequest++;
       prepared = false;
       return;
     }
@@ -143,6 +159,8 @@
     loading = true;
     error = "";
     step = 1;
+    pastedUrl = "";
+    clearLink();
     accounts = [];
     providerOrder = [];
     providerNames = {};
@@ -228,6 +246,7 @@
   }
 
   async function chooseAccount(id: string) {
+    clearLink();
     publicProviderId = "";
     sourceReference = "";
     publicUserReference = "";
@@ -247,6 +266,7 @@
   }
 
   function choosePublicProvider(id: string) {
+    clearLink();
     browseRequest++;
     loading = false;
     accountId = "";
@@ -259,6 +279,46 @@
     sourcePlaylists = [];
     sourceCursor = "";
     error = "";
+  }
+
+  function clearLink() {
+    linkRequest++;
+    if (linkPreview) sourcePlaylistId = "";
+    linkPreview = null;
+    resolvingLink = false;
+  }
+
+  async function resolveLink() {
+    clearLink();
+    accountId = "";
+    publicProviderId = "";
+    sourcePlaylists = [];
+    listedPublicUser = "";
+    sourcePlaylistId = "";
+    const url = pastedUrl.trim();
+    if (!url) return;
+    const request = ++linkRequest;
+    resolvingLink = true;
+    error = "";
+    try {
+      const preview = await json<LinkPreview>("/api/admin/playlist-links/resolve-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      if (request !== linkRequest || !open) return;
+      linkPreview = preview;
+      sourcePlaylistId = preview.id;
+      accountId = "";
+      publicProviderId = "";
+      sourcePlaylists = [];
+      listedPublicUser = "";
+    } catch (cause) {
+      if (request !== linkRequest) return;
+      error = cause instanceof Error ? cause.message : "No source can read this link.";
+    } finally {
+      if (request === linkRequest) resolvingLink = false;
+    }
   }
 
   function useReference() {
@@ -317,14 +377,14 @@
   }
 
   async function save() {
-    if ((!selectedAccount && !publicProviderId) || !selectedTarget || !sourcePlaylistId ||
+    if ((!linkPreview && !selectedAccount && !publicProviderId) || !selectedTarget || !sourcePlaylistId ||
         (targetMode === "existing" && !targetPlaylistId) || saving) return;
     saving = true;
     error = "";
     try {
       const link = await playlistLinks.create({
-        providerAccountId: selectedAccount?.id ?? null,
-        sourceProviderId: selectedAccount?.providerId ?? publicProviderId,
+        providerAccountId: linkPreview?.providerAccountId ?? selectedAccount?.id ?? null,
+        sourceProviderId: linkPreview?.source.id ?? selectedAccount?.providerId ?? publicProviderId,
         sourcePlaylistId,
         targetProtocol: selectedTarget.protocol,
         targetBackendInstanceId: selectedTarget.backendInstanceId,
@@ -400,6 +460,39 @@
       </nav>
 
       <div class="playlist-add-body" bind:this={addBody} aria-busy={loading}>
+        {#if step === 1}
+          <section class="pl-section">
+            <form class="url-import-form" onsubmit={(event) => { event.preventDefault(); void resolveLink(); }}>
+              <label class="url-import-field">
+                <span>Paste a link</span>
+                <span class="url-import-input">
+                  <Link size={18} aria-hidden="true" />
+                  <input bind:value={pastedUrl} type="text" placeholder="Paste a playlist or album link"
+                    oninput={() => { clearLink(); sourcePlaylistId = ""; error = ""; }}
+                    onpaste={(event) => {
+                      const text = event.clipboardData?.getData("text");
+                      if (!text) return;
+                      event.preventDefault();
+                      pastedUrl = text;
+                      void resolveLink();
+                    }} />
+                </span>
+              </label>
+            </form>
+            {#if resolvingLink}<p class="pl-help" role="status">Reading link…</p>{/if}
+            {#if linkPreview}
+              <div class="url-import-preview" role="status">
+                <MediaArtwork class="url-import-art" url={linkPreview.artworkUrl} fallback="♫" />
+                <div class="url-import-details">
+                  <strong>{linkPreview.title}</strong>
+                  <span>Playlist · {linkPreview.trackCount ?? "?"} songs · from {linkPreview.source.displayName}</span>
+                  <small>{linkPreview.owner}</small>
+                </div>
+                <ProviderMark id={linkPreview.source.id} definition={definition(linkPreview.source.id)} label={linkPreview.source.displayName} />
+              </div>
+            {/if}
+          </section>
+        {/if}
         {#if error}<p class="notice-error" role="alert">{error}</p>{/if}
 
         {#if loading && step === 1 && !accounts.length && !publicProviders.length}
@@ -411,7 +504,9 @@
           </div>
         {:else if step === 1}
           {#if !accounts.length && !publicProviders.length && !loading}
-            <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
+            {#if !linkPreview}
+              <div class="compact-empty"><strong>Connect your music account first</strong><p>Your Spotify or other playlist account is encrypted, owned by you, and kept separate from other listeners.</p><Button href="#/integrations/accounts?source=spotify&connect=1">Connect Spotify</Button></div>
+            {/if}
           {:else}
             <section class="pl-section">
               <h3 id="playlist-add-account">Import from</h3>
@@ -579,3 +674,47 @@
     </Dialog.Content>
   </Dialog.Portal>
 </Dialog.Root>
+
+<style>
+  .url-import-form, .url-import-field { width: 100%; }
+  .url-import-field { display: grid; gap: var(--space-2); }
+  .url-import-input { position: relative; display: block; }
+  .url-import-input :global(svg) {
+    position: absolute;
+    left: 0.875rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--color-ink-muted);
+    pointer-events: none;
+  }
+  .url-import-input input {
+    width: 100%;
+    height: var(--control-md);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: var(--color-panel-raised);
+    color: var(--color-ink);
+    padding-inline: 2.5rem 0.875rem;
+    font-size: 16px;
+  }
+  .url-import-input input:focus-visible {
+    border-color: var(--color-signal);
+    outline: 1px solid var(--color-signal);
+  }
+  .url-import-preview {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid var(--color-edge);
+    border-radius: var(--radius-md);
+    background: var(--color-panel-raised);
+  }
+  .url-import-preview :global(.url-import-art) {
+    width: 56px;
+    height: 56px;
+    flex: 0 0 56px;
+  }
+  .url-import-details { display: grid; gap: var(--space-1); min-width: 0; flex: 1; overflow-wrap: anywhere; }
+  .url-import-details span, .url-import-details small { color: var(--color-ink-muted); font-size: var(--text-sm); }
+</style>

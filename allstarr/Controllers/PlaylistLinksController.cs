@@ -22,7 +22,7 @@ namespace allstarr.Controllers;
 [ApiController]
 [Route("api/admin/playlist-links")]
 [ServiceFilter(typeof(AdminPortFilter))]
-public sealed class PlaylistLinksController(
+public sealed partial class PlaylistLinksController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     IPlaylistPersistenceService playlists,
     DurablePlaylistProjectionReader projections,
@@ -51,6 +51,7 @@ public sealed class PlaylistLinksController(
         {
             var supportedProviders = providerRegistry
                 .FindByCapability(ProviderCapabilityKind.Playlist, includeNonOperational: false)
+                .Where(provider => provider.Capabilities.Single(item => item.Capability == ProviderCapabilityKind.Playlist).SupportsPlaylistDiscovery)
                 .ToDictionary(item => item.Id, StringComparer.OrdinalIgnoreCase);
             await using var db = await contextFactory.CreateDbContextAsync(cancellationToken);
             var accounts = await db.ProviderAccounts.AsNoTracking()
@@ -152,6 +153,8 @@ public sealed class PlaylistLinksController(
                 item => item.Id == accountId && item.Enabled &&
                         (item.OwnerUserId == null || item.OwnerUserId == session.AllstarrUserId),
                 cancellationToken) ?? throw new KeyNotFoundException();
+            if (!CanDiscoverPlaylists(account.ProviderId))
+                return Conflict(new { error = "This source supports playlist links only." });
             var execution = await CreateExecutionAsync(session, cancellationToken);
             var actor = execution.RequireActor();
             var providerId = account.ProviderId.Trim().ToLowerInvariant();
@@ -261,6 +264,8 @@ public sealed class PlaylistLinksController(
     {
         providerId = Required(providerId, nameof(providerId)).ToLowerInvariant();
         PersistenceGuard.RequirePublicPlaylistSource(providerRegistry, providerId);
+        if (!CanDiscoverPlaylists(providerId))
+            return Conflict(new { error = "This source supports playlist links only." });
         var request = new ProviderUserPlaylistsRequest(new(Math.Clamp(limit, 1, 100), cursor),
             Required(sourceUserId, nameof(sourceUserId)));
         var candidate = await PlanPublicPlaylistSourceAsync(providerId, "public-user-playlist-discovery", cancellationToken);
@@ -1103,7 +1108,7 @@ public sealed class PlaylistLinksController(
             allowFallback: false, allowSharedAccount: false, allowManagedDownloads: false, allowedProviderIds: [providerId]);
         var plan = await providerRouter.PlanAsync<IProviderPlaylistCapability>(new ProviderRouteRequest(
             ProviderCapabilityKind.Playlist, new ProviderActorContext(ProviderActorKind.PublicRead, null), policy,
-            operationId, HttpContext.TraceIdentifier, clock.UtcNow.AddMinutes(2), [providerId], cancellationToken: cancellationToken));
+            operationId, HttpContext.TraceIdentifier, clock.UtcNow.AddMinutes(2), [providerId], cancellationToken: cancellationToken, purpose: ProviderRoutePurpose.ManualSelection));
         return plan.Candidates.FirstOrDefault();
     }
 
@@ -1132,7 +1137,7 @@ public sealed class PlaylistLinksController(
             clock.UtcNow.AddMinutes(2),
             [providerId],
             [new ProviderRouteProviderState(providerId, requestedAccountId: account.Id, expectedAccountRevision: account.Revision)],
-            cancellationToken: cancellationToken));
+            cancellationToken: cancellationToken, purpose: ProviderRoutePurpose.ManualSelection));
         return plan.Candidates.FirstOrDefault();
     }
 

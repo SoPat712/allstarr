@@ -7514,3 +7514,168 @@ for (const width of [390, 1280]) {
     });
   }
 }
+
+for (const width of [390, 1280]) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    test(`URL import preview at ${width}px ${colorScheme}`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.emulateMedia({ colorScheme, reducedMotion: "reduce" });
+      await mockApi(page);
+      if (width === 390) await page.route("**/api/admin/playlist-sources", (route) => route.fulfill({
+        contentType: "application/json", body: JSON.stringify({ accounts: [], blockedAccounts: [], providers: [] }),
+      }));
+      await page.route("**/api/admin/playlist-links/resolve-url", (route) => {
+        expect(route.request().postDataJSON()).toEqual({ url: "https://tidal.com/browse/playlist/morning" });
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+          source: { id: "tidal-fixture", displayName: "Tidal" }, kind: "playlist", id: "morning",
+          providerAccountId: null, title: "Morning listening", owner: "A curator", trackCount: 42,
+          artworkUrl: null,
+        }) });
+      });
+      const importMode = colorScheme === "dark" ? "linked" : "oneTime";
+      const existing = width === 1280;
+      await page.route("**/api/admin/playlist-links/imported/schedules", (route) => route.fulfill({
+        contentType: "application/json", body: JSON.stringify({ id: "schedule" }),
+      }));
+      let created: Record<string, unknown> | undefined;
+      await page.route("**/api/admin/playlist-links", (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        created = route.request().postDataJSON();
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: "imported" }) });
+      });
+      await page.goto("#/library/playlists");
+      await page.getByRole("button", { name: "Import playlist" }).click();
+      const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+      const input = dialog.getByRole("textbox", { name: "Paste a link" });
+      await expect(input).toHaveAttribute("placeholder", "Paste a playlist or album link");
+      if (colorScheme === "dark") {
+        await input.evaluate((element) => {
+          const data = new DataTransfer();
+          data.setData("text", "https://tidal.com/browse/playlist/morning");
+          element.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+        });
+      } else {
+        await input.fill("https://tidal.com/browse/playlist/morning");
+        await input.press("Enter");
+      }
+      await expect(dialog.getByText("Morning listening")).toBeVisible();
+      await expect(dialog.getByText("Playlist · 42 songs · from Tidal")).toBeVisible();
+      await expect(dialog.getByText("A curator", { exact: true })).toBeVisible();
+      await expect(dialog.getByText("Connect your music account first")).toHaveCount(0);
+      expect(await input.evaluate((element) => getComputedStyle(element).fontSize)).toBe("16px");
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await page.screenshot({ path: `test-results/urlimport-${width}-${colorScheme}.png`, fullPage: true });
+      await dialog.getByRole("button", { name: "Continue" }).click();
+      await dialog.getByRole("radio", { name: importMode === "linked" ? /Keep in sync/ : /Import once/ }).check();
+      await dialog.getByRole("button", { name: "Continue" }).click();
+      if (existing) {
+        await dialog.getByRole("radio", { name: /Existing playlist/ }).check();
+        await dialog.getByRole("radio", { name: /Road trip/ }).check();
+      }
+      await dialog.getByRole("button", { name: "Continue" }).click();
+      await dialog.getByRole("checkbox", { name: /Keep downloaded copies/ }).check();
+      await dialog.getByRole("button", { name: importMode === "linked" ? "Import and link" : "Import playlist", exact: true }).click();
+      await expect(dialog).toBeHidden();
+      expect(created).toMatchObject({ providerAccountId: null, sourceProviderId: "tidal-fixture",
+        sourcePlaylistId: "morning", importMode, targetPlaylistId: existing ? "jellyfin-playlist" : null, trackRetention: "keepAll" });
+    });
+  }
+}
+
+for (const message of ["No source can read this link.", "Turn on Tidal to import from it.", "Albums are not supported yet."]) {
+  test(`URL import inline error: ${message}`, async ({ page }) => {
+    await mockApi(page);
+    await page.route("**/api/admin/playlist-links/resolve-url", (route) => route.fulfill({
+      status: 400, contentType: "application/json", body: JSON.stringify({ error: message }),
+    }));
+    await page.goto("#/library/playlists");
+    await page.getByRole("button", { name: "Import playlist" }).click();
+    const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+    const input = dialog.getByRole("textbox", { name: "Paste a link" });
+    await input.fill("https://tidal.com/album/42");
+    await input.press("Enter");
+    await expect(dialog.getByRole("alert")).toContainText(message);
+    await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+  });
+}
+
+
+test("URL import ignores a preview after the pasted link is edited", async ({ page }) => {
+  await mockApi(page);
+  const response = routeRelease();
+  await page.route("**/api/admin/playlist-links/resolve-url", async (route) => {
+    await response.promise;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      source: { id: "spotify", displayName: "Spotify" }, kind: "playlist", id: "old",
+      providerAccountId: null, title: "Old preview", owner: "Curator", trackCount: 1, artworkUrl: null,
+    }) });
+  });
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Import playlist" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  const input = dialog.getByRole("textbox", { name: "Paste a link" });
+  await input.fill("https://open.spotify.com/playlist/old");
+  const requested = page.waitForRequest("**/api/admin/playlist-links/resolve-url");
+  await input.press("Enter");
+  await requested;
+  await input.fill("https://open.spotify.com/playlist/new");
+  response.release();
+  await expect(dialog.getByText("Old preview")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Continue" })).toBeDisabled();
+});
+
+test("URL import keeps destinations when a link is pasted while sources load", async ({ page }) => {
+  await mockApi(page);
+  const sources = routeRelease();
+  await page.route("**/api/admin/playlist-sources", async (route) => {
+    await sources.promise;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(responses["/api/admin/playlist-sources"]) });
+  });
+  await page.route("**/api/admin/playlist-links/resolve-url", (route) => route.fulfill({
+    contentType: "application/json", body: JSON.stringify({
+      source: { id: "spotify", displayName: "Spotify" }, kind: "playlist", id: "mix",
+      providerAccountId: null, title: "Quick preview", owner: "Curator", trackCount: 1, artworkUrl: null,
+    }),
+  }));
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Import playlist" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  const input = dialog.getByRole("textbox", { name: "Paste a link" });
+  await input.fill("https://open.spotify.com/playlist/mix");
+  await input.press("Enter");
+  await expect(dialog.getByText("Quick preview")).toBeVisible();
+  sources.release();
+  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await dialog.getByRole("button", { name: "Continue" }).click();
+  await expect(dialog.getByRole("radio", { name: /New playlist/ })).toBeChecked();
+  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+});
+
+test("URL import keeps a later browsing choice when its preview arrives", async ({ page }) => {
+  await mockApi(page);
+  const response = routeRelease();
+  await page.route("**/api/admin/playlist-links/resolve-url", async (route) => {
+    await response.promise;
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify({
+      source: { id: "spotify", displayName: "Spotify" }, kind: "playlist", id: "old",
+      providerAccountId: null, title: "Old preview", owner: "Curator", trackCount: 1, artworkUrl: null,
+    }) });
+  });
+  await page.goto("#/library/playlists");
+  await page.getByRole("button", { name: "Import playlist" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import a playlist" });
+  const input = dialog.getByRole("textbox", { name: "Paste a link" });
+  await dialog.getByRole("radio", { name: /Spotify/ }).check();
+  await input.fill("https://open.spotify.com/playlist/old");
+  const requested = page.waitForRequest("**/api/admin/playlist-links/resolve-url");
+  await input.press("Enter");
+  await requested;
+  await expect(dialog.getByRole("searchbox", { name: "Playlist link, URI or ID" })).toHaveCount(0);
+  await dialog.getByRole("radio", { name: /Spotify/ }).check();
+  await dialog.getByRole("radio", { name: /Source Mix/ }).check();
+  response.release();
+  await expect(dialog.getByText("Old preview")).toHaveCount(0);
+  await expect(dialog.getByRole("radio", { name: /Source Mix/ })).toBeChecked();
+  await expect(dialog.getByRole("button", { name: "Continue" })).toBeEnabled();
+});

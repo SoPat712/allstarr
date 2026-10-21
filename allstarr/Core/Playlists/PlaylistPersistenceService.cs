@@ -662,8 +662,7 @@ internal static class PersistenceGuard
 {
     private static readonly string[] ForbiddenNames = ["password", "secret", "token", "cookie", "authorization", "credential", "audio", "mediaBytes", "base64"];
     public static bool IsPublicPlaylistSource(IProviderRegistry? registry, string providerId) =>
-        registry != null && registry.TryGet(providerId, out var descriptor) && descriptor!.Origin == ProviderOrigin.BuiltIn &&
-        descriptor.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Playlist &&
+        registry != null && registry.TryGet(providerId, out var descriptor) && descriptor!.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Playlist &&
             item.SupportsPublicRead && item.SupportState == ProviderCapabilitySupportState.Supported) &&
         registry.TryGetCapability<IProviderPlaylistCapability>(providerId, ProviderCapabilityKind.Playlist, out _);
 

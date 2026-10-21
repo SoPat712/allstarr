@@ -355,6 +355,8 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
                 !(downloadBackedStreaming && hook is "getStreamLease" or "probeStream") &&
                 !sandbox.HasCallableHook(hook)))
             throw new ExtensionSdkValidationException("The extension does not implement every declared SDK hook.");
+        if (manifest.UrlPatterns?.Count > 0 && !sandbox.HasCallableHook("handleUrl"))
+            throw new ExtensionSdkValidationException("URL patterns require a callable URL hook.");
         var implementations = manifest.Capabilities.Select(capability => (IProviderCapability)(capability.Kind switch
         {
             ProviderCapabilityKind.Metadata => new ExtensionMetadataCapabilityAdapter(sandbox, runtimeManifest, _secrets),
@@ -401,7 +403,10 @@ public sealed partial class ExtensionRuntimeCoordinator : IHostedService, IAsync
                         ? ProviderAccountRequirement.Optional
                         : ProviderAccountRequirement.None,
                 "1.0", item.Hooks, item.AccountScopes.Count > 0 || manifest.SignedSession != null
-                    ? [ProviderAccountScope.Shared, ProviderAccountScope.Personal] : [])),
+                    ? [ProviderAccountScope.Shared, ProviderAccountScope.Personal] : [],
+                supportsPublicRead: !item.AccountRequired && manifest.SignedSession == null &&
+                    item.Kind is ProviderCapabilityKind.Metadata or ProviderCapabilityKind.Playlist,
+                supportsPlaylistDiscovery: item.SupportsPlaylistDiscovery)),
             new ProviderPermissionDescriptor(origins, cacheKeys.Count != 0, secretKeys),
             settings,
             branding,

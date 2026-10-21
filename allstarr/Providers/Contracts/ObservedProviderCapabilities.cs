@@ -29,11 +29,18 @@ public static class ObservedProviderCapabilities
     }
 
     private abstract class ObservedCapability<TCapability>(TCapability implementation, IProviderOutcomeObserver observer)
-        : IProviderCapability where TCapability : class, IProviderCapability
+        : IProviderUrlCapability where TCapability : class, IProviderCapability
     {
         protected TCapability Implementation { get; } = implementation;
         public string ProviderId => Implementation.ProviderId;
         public ProviderCapabilityKind Capability => Implementation.Capability;
+        public IReadOnlyList<string> UrlPatterns => (Implementation as IProviderUrlCapability)?.UrlPatterns ?? [];
+
+        public Task<ProviderOutcome<ProviderExternalResourceId>> ResolveUrlAsync(
+            ProviderExecutionContext context, string url) =>
+            Implementation is IProviderUrlCapability capability
+                ? InvokeAsync(context, () => capability.ResolveUrlAsync(context, url))
+                : Task.FromResult(ProviderOutcome<ProviderExternalResourceId>.Failure(new(ProviderErrorKind.NotSupported)));
 
         protected async Task<ProviderOutcome<T>> InvokeAsync<T>(
             ProviderExecutionContext context, Func<Task<ProviderOutcome<T>>> operation, bool observeSuccess = true,

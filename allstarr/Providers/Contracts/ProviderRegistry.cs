@@ -448,11 +448,9 @@ public static class ProviderManifestValidator
         ProviderOrigin origin,
         ProviderCapabilityDescriptor descriptor)
     {
-        if (descriptor.SupportsPublicRead && origin != ProviderOrigin.BuiltIn)
-            throw new InvalidOperationException("Explicit public-read capabilities are reserved for built-in providers.");
         if (descriptor.Capability == ProviderCapabilityKind.Playlist &&
             descriptor.AccountRequirement != ProviderAccountRequirement.Required &&
-            !(origin == ProviderOrigin.BuiltIn && descriptor.SupportsPublicRead))
+            !descriptor.SupportsPublicRead)
         {
             throw new InvalidOperationException(
                 $"Playlist capability on provider '{providerId}' requires an explicit provider account.");
@@ -481,6 +479,8 @@ public static class ProviderManifestValidator
 
 
         var missingRequired = RequiredHooks[descriptor.Capability]
+            .Where(hook => !(descriptor.Capability == ProviderCapabilityKind.Playlist &&
+                             !descriptor.SupportsPlaylistDiscovery && hook == "getUserPlaylists"))
             .Where(hook => !descriptor.Hooks.Contains(hook, StringComparer.Ordinal))
             .ToArray();
         if (descriptor.HasUsableImplementation && missingRequired.Length > 0 &&

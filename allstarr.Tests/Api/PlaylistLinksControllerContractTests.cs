@@ -19,7 +19,7 @@ using System.Reflection;
 
 namespace allstarr.Tests;
 
-public sealed class PlaylistLinksControllerContractTests
+public sealed partial class PlaylistLinksControllerContractTests
 {
     [Theory]
     [InlineData("csv")]
