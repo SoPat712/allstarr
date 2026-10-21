@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using allstarr.Core.Playlists;
+using allstarr.Core.Favorites;
 using allstarr.Core.Protocols;
 using allstarr.Services.Jellyfin;
 using allstarr.Services.Common;
@@ -10,7 +11,8 @@ using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace allstarr.Filters;
 
-public sealed class JellyfinItemResponseFilter(JellyfinProxyService proxy, IMediaAssetResolver? artwork = null) : IAsyncResultFilter
+public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService proxy, IMediaAssetResolver? artwork = null,
+    FavoriteViewReader? favorites = null) : IAsyncResultFilter
 {
     public async Task OnResultExecutionAsync(ResultExecutingContext context, ResultExecutionDelegate next)
     {
@@ -45,6 +47,8 @@ public sealed class JellyfinItemResponseFilter(JellyfinProxyService proxy, IMedi
         if (nativeServerId != null) proxy.RememberServerId(instance, nativeServerId);
         var serverId = await proxy.GetServerIdAsync(instance, http.RequestAborted);
         http.Items[JellyfinResponseBuilder.ServerIdItemKey] = serverId;
+        var saved = favorites == null ? [] : (await favorites.ReadForRequestAsync(http))
+            .Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
         foreach (var item in items)
         {
             item.Remove("ServerId");
@@ -58,10 +62,22 @@ public sealed class JellyfinItemResponseFilter(JellyfinProxyService proxy, IMedi
                     parsed.provider!, parsed.type!, parsed.externalId!)) is { Length: > 0 } hash)
                     item["ImageBlurHashes"] = new JsonObject { ["Primary"] = new JsonObject { [tag] = hash } };
             }
+            var id = item["Id"]!.GetValue<string>();
+            if (FavoriteDisplaySnapshot.Resource(id) != null && item["UserData"] is JsonObject userData)
+                userData["IsFavorite"] = saved.Contains(id);
             JellyfinItemFields.ForRequest(http).Apply(item);
         }
+        if (bool.TryParse(http.Request.Query["IsFavorite"], out var favoriteOnly))
+            FilterProviderFavorites(root, favoriteOnly);
+        else if (http.Request.Query["Filters"].ToString().Split(',', StringSplitOptions.TrimEntries)
+            .Contains("IsFavorite", StringComparer.OrdinalIgnoreCase))
+            FilterProviderFavorites(root, true);
+        http.Response.Headers.CacheControl = "no-store";
+        http.Response.Headers.Remove("ETag");
+        http.Response.Headers.Remove("Last-Modified");
         if (result is JsonResult jsonResult) jsonResult.Value = root;
-        else if (result is ContentResult contentResult) contentResult.Content = root.ToJsonString();
+        else if (result is ContentResult contentResult)
+            contentResult.Content = NativeItemText.PreserveJson(contentResult.Content!, root.ToJsonString(), "Id");
     }
 
     private static bool IsExternal(JsonObject item)

@@ -51,7 +51,8 @@ public sealed class JellyfinInteractionProtocolAdapter : IJellyfinInteractionPro
                 SerializerOptions));
     }
 
-    private sealed record JellyfinFavoriteResponse(bool IsFavorite, string ItemId, string Key);
+    private sealed record JellyfinFavoriteResponse(bool IsFavorite, string ItemId, string Key,
+        long PlaybackPositionTicks = 0, int PlayCount = 0, bool Played = false);
 
     private sealed record JellyfinInstantMixResponse(
         IReadOnlyList<Dictionary<string, object?>> Items,

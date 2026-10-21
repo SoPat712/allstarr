@@ -11,6 +11,11 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
 {
     internal static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    public string[] ArtistIds { get; init; } = [];
+    public string[] AlbumArtistIds { get; init; } = [];
+    public string? AlbumId { get; init; }
+    public string[] Genres { get; init; } = [];
+
     public static ProviderExternalResourceId? Resource(string itemId)
     {
         var parsed = LocalLibraryService.ParseExternalResource(itemId);
@@ -52,6 +57,9 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
         Artists is { Length: <= 20 } && Artists.All(Text) &&
         (Album == null || Text(Album)) && DurationMilliseconds is null or >= 0 and <= 86_400_000 &&
         Year is null or >= 0 and <= 9999 && Count is null or >= 0 &&
+        ArtistIds is { Length: <= 20 } && ArtistIds.All(Text) &&
+        AlbumArtistIds is { Length: <= 20 } && AlbumArtistIds.All(Text) &&
+        (AlbumId == null || Text(AlbumId)) && Genres is { Length: <= 20 } && Genres.All(Text) &&
         Resource(ItemId) is { } resource && Kind == KindName(resource.ResourceKind);
 
     internal static bool Text(string? value) => !string.IsNullOrWhiteSpace(value) && value.Length <= 500 &&
@@ -77,7 +85,12 @@ public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId 
         Title = Display.Title,
         Artist = Display.Artists.FirstOrDefault() ?? "Unknown artist",
         Artists = Display.Artists.ToList(),
+        ArtistId = Display.ArtistIds.FirstOrDefault(),
+        ArtistIds = Display.ArtistIds.ToList(),
         Album = Display.Album ?? string.Empty,
+        AlbumId = Display.AlbumId,
+        Genre = Display.Genres.FirstOrDefault(),
+        Year = Display.Year,
         Duration = Display.DurationMilliseconds is { } milliseconds ? (int)(milliseconds / 1000) : null,
         PreciseDuration = Display.DurationMilliseconds is { } precise ? TimeSpan.FromMilliseconds(precise) : null
     };
@@ -89,6 +102,8 @@ public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId 
         ExternalId = Resource.Value,
         Title = Display.Title,
         Artist = Display.Artists.FirstOrDefault() ?? "Unknown artist",
+        ArtistId = Display.AlbumArtistIds.FirstOrDefault() ?? Display.ArtistIds.FirstOrDefault(),
+        Genre = Display.Genres.FirstOrDefault(),
         Year = Display.Year,
         SongCount = Display.Count
     };

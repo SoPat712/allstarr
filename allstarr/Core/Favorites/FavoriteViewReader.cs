@@ -6,6 +6,20 @@ namespace allstarr.Core.Favorites;
 
 public sealed class FavoriteViewReader(IDbContextFactory<AllstarrDbContext> factory)
 {
+    public Task<IReadOnlyList<FavoriteViewItem>> ReadForRequestAsync(HttpContext http)
+    {
+        var execution = http.GetProtocolExecutionContext();
+        if (execution == null) return Task.FromResult<IReadOnlyList<FavoriteViewItem>>([]);
+        var requestedUsers = new[] { http.Request.RouteValues.GetValueOrDefault("userId")?.ToString(),
+            http.Request.Query["UserId"].ToString() };
+        if (requestedUsers.Any(user => !string.IsNullOrEmpty(user) && user != execution.VerifiedBackendPrincipalId))
+            return Task.FromResult<IReadOnlyList<FavoriteViewItem>>([]);
+        if (http.Items[typeof(FavoriteViewReader)] is Task<IReadOnlyList<FavoriteViewItem>> cached) return cached;
+        var read = ReadAsync(execution, http.RequestAborted);
+        http.Items[typeof(FavoriteViewReader)] = read;
+        return read;
+    }
+
     public async Task<IReadOnlyList<FavoriteViewItem>> ReadAsync(ProtocolExecutionContext execution,
         CancellationToken cancellationToken = default)
     {

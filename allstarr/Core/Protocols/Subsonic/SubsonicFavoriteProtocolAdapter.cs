@@ -8,7 +8,7 @@ using allstarr.Services.Subsonic;
 
 namespace allstarr.Core.Protocols.Subsonic;
 
-public static class SubsonicFavoriteProtocolAdapter
+public static partial class SubsonicFavoriteProtocolAdapter
 {
     public static SubsonicProxyResponse Merge(SubsonicProxyResponse native, IReadOnlyList<FavoriteViewItem> favorites,
         string container, string format, SubsonicResponseBuilder builder)
@@ -36,7 +36,7 @@ public static class SubsonicFavoriteProtocolAdapter
                         continue;
                     items.Add(JsonSerializer.SerializeToNode(builder.ConvertFavoriteToJson(favorite)));
                 }
-                body = Encoding.UTF8.GetBytes(document.ToJsonString());
+                body = Encoding.UTF8.GetBytes(NativeItemText.PreserveJson(Encoding.UTF8.GetString(native.Body), document.ToJsonString(), "id"));
             }
             else
             {
@@ -49,12 +49,14 @@ public static class SubsonicFavoriteProtocolAdapter
                     if (list.Elements().Any(item => item.Attribute("id")?.Value == favorite.ItemId)) continue;
                     list.Add(builder.ConvertFavoriteToXml(favorite, root.Name.Namespace));
                 }
-                body = Encoding.UTF8.GetBytes(document.ToString(SaveOptions.DisableFormatting));
+                body = Encoding.UTF8.GetBytes(NativeItemText.PreserveXml(Encoding.UTF8.GetString(native.Body), document.ToString(SaveOptions.DisableFormatting)));
             }
             return native with
             {
                 Body = body,
                 Headers = native.Headers.Where(header => !header.Key.Equals("ETag", StringComparison.OrdinalIgnoreCase) &&
+                    !header.Key.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase) &&
+                    !header.Key.Equals("Expires", StringComparison.OrdinalIgnoreCase) &&
                     !header.Key.Equals("Content-MD5", StringComparison.OrdinalIgnoreCase) &&
                     !header.Key.Equals("Digest", StringComparison.OrdinalIgnoreCase) &&
                     !header.Key.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) &&
