@@ -32,7 +32,8 @@ public sealed class JellyfinAudioShapeTests
         using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(
             AppContext.BaseDirectory, "Fixtures", "Protocols", "jellyfin-audio-shape.json")));
         var shape = fixture.RootElement.GetProperty(includeFields ? "feishin_fields" : "no_fields");
-        AssertKeys(shape.GetProperty("ItemKeys"), item.Keys, "ImageBlurHashes");
+        AssertKeys(shape.GetProperty("ItemKeys"), item.Keys, "ImageBlurHashes", "Container");
+        Assert.False(item.ContainsKey("Container"));
         Assert.Equal(ServerId, item["ServerId"]);
         Assert.IsType<long>(item["RunTimeTicks"]);
         Assert.False(Assert.IsType<bool>(item["IsFolder"]));

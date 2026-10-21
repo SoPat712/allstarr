@@ -99,6 +99,7 @@
   },
   "note": "Every OpenSubsonic method is classified. Intercepted methods are answered by Allstarr; relayed methods pass through to the backend unchanged; denied methods are not music library access and are refused.",
   "intercepted": [
+    "download",
     "findSonicPath",
     "getAlbum",
     "getArtist",
@@ -134,7 +135,6 @@
     "createPlaylist",
     "deleteBookmark",
     "deletePlaylist",
-    "download",
     "getAlbumInfo",
     "getAlbumInfo2",
     "getAlbumList",

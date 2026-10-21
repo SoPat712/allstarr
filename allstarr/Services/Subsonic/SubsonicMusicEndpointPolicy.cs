@@ -16,7 +16,6 @@ public static class SubsonicMusicEndpointPolicy
         "createPlaylist",
         "deleteBookmark",
         "deletePlaylist",
-        "download",
         "getAlbumInfo",
         "getAlbumInfo2",
         "getAlbumList",

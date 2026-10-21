@@ -87,6 +87,49 @@ public sealed class JellyfinExternalMetadataTests
     }
 
     [Theory]
+    [InlineData("list")]
+    [InlineData("detail")]
+    [InlineData("playback")]
+    public void KnownFileFacts_PreserveReadableDownloadMetadata(string surface)
+    {
+        var song = Track();
+        song.LocalPath = "/cache/track.mp3";
+        song.Container = "mp3";
+        song.Size = 4_000_000;
+        song.Bitrate = 320_000;
+        song.Codec = "mp3";
+        song.SampleRate = 44_100;
+        song.BitDepth = 16;
+        song.Channels = 2;
+        song.DiscNumber = 2;
+        song.Track = 3;
+        var http = new DefaultHttpContext();
+        http.Request.Path = "/Items";
+        http.Request.QueryString = new("?Fields=MediaSources,MediaStreams,Path");
+        var builder = new JellyfinResponseBuilder(httpContexts: new HttpContextAccessor { HttpContext = http });
+        var item = surface == "detail" ? Item(builder.CreateSongResponse(song)) : builder.ConvertSongToJellyfinItem(song);
+        var sources = surface == "playback" ? builder.CreatePlaybackMediaSources(song) : item["MediaSources"];
+        var source = Assert.Single(Assert.IsType<Dictionary<string, object?>[]>(sources));
+        var name = Assert.IsType<string>(source["Name"]);
+        Assert.Matches("^02-03 Track - [a-f0-9]{64}$", name);
+        Assert.Equal("mp3", source["Container"]);
+        Assert.Equal($"/music/external/{name}.mp3", source["Path"]);
+        Assert.Equal(source["Path"], item["Path"]);
+        Assert.Equal(source["Container"], item["Container"]);
+        Assert.Equal(4_000_000L, source["Size"]);
+        Assert.Equal(320_000, source["Bitrate"]);
+        var stream = AudioStream(source);
+        Assert.Equal("Audio", stream["Type"]);
+        Assert.Equal("mp3", stream["Codec"]);
+        Assert.Equal(320_000, stream["BitRate"]);
+        Assert.Equal(44_100, stream["SampleRate"]);
+        Assert.Equal("1/44100", stream["TimeBase"]);
+        Assert.Equal(16, stream["BitDepth"]);
+        Assert.Equal(2, stream["Channels"]);
+        Assert.True(Assert.IsType<bool>(item["HasLyrics"]));
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public void Lists_ReadOnlyPreviousStreamFactsForTheSameViewerAndBackend(bool matchingBackend)

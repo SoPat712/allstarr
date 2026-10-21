@@ -18,6 +18,47 @@ namespace allstarr.Tests;
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
     [Theory]
+    [InlineData("apple-musickit")]
+    [InlineData("apple-download")]
+    public async Task OriginalDownloadBypassesPreparationCacheAndPreservesContent(string provider)
+    {
+        using var upstream = AudioResponse();
+        upstream.Content.Headers.ContentLength = 4;
+        var apple = Streaming("apple-musickit", (_, _) => Task.FromResult(upstream));
+        var registry = Registry(apple.Object);
+        var router = new Mock<IProviderRouter>(MockBehavior.Strict);
+        router.Setup(item => item.PlanAsync<IProviderStreamingCapability>(It.IsAny<ProviderRouteRequest>()))
+            .ReturnsAsync((ProviderRouteRequest request) => Plan(request, registry, apple.Object));
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["Library:DownloadPath"] = root }).Build();
+        var library = new Mock<ILocalLibraryService>(MockBehavior.Strict);
+        await using var cache = new ManagedTrackCacheService(config,
+            Options.Create(new SubsonicSettings { StorageMode = StorageMode.Cache }),
+            library.Object, NullLogger<ManagedTrackCacheService>.Instance);
+        using var activity = new PlaybackDeliveryActivityStore();
+        var identities = new Mock<ITrackIdentityService>(MockBehavior.Strict);
+        var gateway = new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), config,
+            managedTrackCache: cache, playbackActivity: activity, identities: identities.Object);
+        var context = Context() with { IsOriginalDownload = true, RequestedItemId = $"ext-{provider}-song-next" };
+        var result = await gateway.OpenStreamAsync(context, provider, "next", ProviderAudioQuality.Any, null);
+        Assert.NotNull(result);
+        using var response = result.Response;
+        Assert.Equal(4L, response.Content.Headers.ContentLength);
+        Assert.Null(ManagedTrackCacheService.SeekRung(response.Content));
+        Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+        Assert.False(result.IsCached);
+        Assert.False(Directory.Exists(root));
+        Assert.Null(activity.StreamFor(context.Actor!.EffectiveUserId, "device", context.RequestedItemId));
+        apple.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
+            It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
+        library.VerifyNoOtherCalls();
+        identities.VerifyNoOtherCalls();
+        router.VerifyAll();
+        router.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
