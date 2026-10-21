@@ -29,6 +29,7 @@ public sealed partial class ProtocolProviderGateway
         if ((await ResolveEffectivePolicyAsync(protocol))?.IsEnabled(provider) == false) return null;
         var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
         if (await ReadCachedMetadataAsync<T>(actor, provider, kind, externalId, detail) is { } cached) return cached;
+        if (await ReadAccountMetadataAsync<T>(protocol, actor, provider, kind, externalId, detail) is { } accountMetadata) return accountMetadata;
         if (detail) return null;
         var payload = identities == null ? null : await identities.GetStoredMetadataAsync(
             actor, new(provider, kind, externalId), protocol.CancellationToken);
@@ -60,12 +61,42 @@ public sealed partial class ProtocolProviderGateway
         {
             await applicationCache.SetStringAsync(MetadataCacheKey(context.Actor, context.ProviderId, kind, externalId, detail, context.Account),
                 JsonSerializer.Serialize(value), TimeSpan.FromMinutes(5));
+            if (context.Account is { } account && kind is ProviderResourceKind.Album or ProviderResourceKind.Artist)
+                await applicationCache.SetStringAsync(MetadataAccountKey(context.Actor, context.ProviderId, kind, externalId, detail),
+                    JsonSerializer.Serialize(new MetadataAccount(account.AccountId, account.Revision)), TimeSpan.FromMinutes(5));
         }
         catch (Exception error)
         {
             logger?.LogDebug("Could not cache resource metadata ({ErrorType})", error.GetType().Name);
         }
     }
+
+    private async Task<T?> ReadAccountMetadataAsync<T>(ProtocolExecutionContext protocol, ProviderActorContext actor,
+        string provider, ProviderResourceKind kind, string externalId, bool detail) where T : class
+    {
+        if (applicationCache?.IsEnabled != true) return null;
+        try
+        {
+            var payload = await applicationCache.GetStringAsync(MetadataAccountKey(actor, provider, kind, externalId, detail));
+            var source = payload == null ? null : JsonSerializer.Deserialize<MetadataAccount>(payload);
+            if (source == null) return null;
+            var routed = await PlanExactAsync<IProviderMetadataCapability>(protocol, provider,
+                ProviderCapabilityKind.Metadata, "protocol-metadata-read-account");
+            if (routed.Candidate?.Context.Account is not { } account || account.AccountId != source.Id ||
+                account.Revision != source.Revision) return null;
+            return await ReadCachedMetadataAsync<T>(actor, provider, kind, externalId, detail, account);
+        }
+        catch (Exception error) when (error is not OperationCanceledException)
+        {
+            logger?.LogDebug("Could not read account metadata ({ErrorType})", error.GetType().Name);
+            return null;
+        }
+    }
+
+    private static string MetadataAccountKey(ProviderActorContext actor, string provider, ProviderResourceKind kind,
+        string externalId, bool detail) => MetadataCacheKey(actor, provider, kind, externalId, detail) + ":account";
+
+    private sealed record MetadataAccount(Guid Id, long Revision);
 
     private async Task<T?> ReadCachedMetadataAsync<T>(ProviderActorContext actor, string provider,
         ProviderResourceKind kind, string externalId, bool detail = false, ProviderAccountContext? account = null) where T : class

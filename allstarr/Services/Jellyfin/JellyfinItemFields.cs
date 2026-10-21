@@ -59,7 +59,7 @@ internal sealed class JellyfinItemFields(IQueryCollection? query, bool includeAl
     {
         "Genres", "DateCreated", "MediaSources", "MediaStreams", "ParentId", "ProviderIds",
         "Path", "SortName", "Overview", "People", "Tags", "PrimaryImageAspectRatio",
-        "CanDelete", "CanDownload", "ChildCount", "ItemCounts"
+        "CanDelete", "CanDownload", "ChildCount", "ItemCounts", "Studios"
     };
 
     private static readonly HashSet<string> UnsupportedFields = new(StringComparer.Ordinal)

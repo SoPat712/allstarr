@@ -593,6 +593,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             Album = albumTitle,
             AlbumId = albumId,
             AlbumArtist = albumArtist,
+            AlbumArtists = CatalogDescriptiveMetadata.EmbeddedAlbumArtists(track, "qobuz"),
             Duration = track.TryGetProperty("duration", out var duration)
                 ? duration.GetInt32()
                 : null,
@@ -616,6 +617,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
         if (track.TryGetProperty("composer", out var composer) &&
             composer.TryGetProperty("name", out var composerName))
         {
+            song.Composer = composerName.GetString();
             song.Contributors = new List<string> { composerName.GetString() ?? "" };
         }
 
@@ -649,6 +651,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
                 song.Genre = FormatGenres(genres);
             }
 
+            song.Label = CatalogDescriptiveMetadata.Label(album);
             song.CoverArtUrlLarge = GetLargeCoverArtUrl(album);
         }
 
@@ -698,6 +701,9 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             Genre = album.TryGetProperty("genres_list", out var genres)
                 ? FormatGenres(genres)
                 : null,
+            Artists = CatalogDescriptiveMetadata.AlbumArtists(album, "qobuz"),
+            Label = CatalogDescriptiveMetadata.Label(album),
+            Notes = CatalogDescriptiveMetadata.Text(album, "description"),
             IsLocal = false,
             ExternalProvider = "qobuz",
             ExternalId = externalId
@@ -716,6 +722,8 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             AlbumCount = artist.TryGetProperty("albums_count", out var albumsCount)
                 ? albumsCount.GetInt32()
                 : null,
+            Biography = artist.TryGetProperty("biography", out var biography)
+                ? CatalogDescriptiveMetadata.Text(biography, "content") : null,
             IsLocal = false,
             ExternalProvider = "qobuz",
             ExternalId = externalId

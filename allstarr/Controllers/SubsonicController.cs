@@ -434,9 +434,11 @@ public partial class SubsonicController : ControllerBase
             ? Math.Min(requested, 200)
             : 20;
         IReadOnlyList<Artist> similarArtists;
+        Artist? metadata = null;
         try
         {
-            similarArtists = (await _providerGateway.GetSimilarArtistsAsync(CurrentProtocolContext, provider!, externalId!, count) ?? [])
+            metadata = await _providerGateway.GetStoredArtistAsync(CurrentProtocolContext, provider!, externalId!);
+            similarArtists = (await _providerGateway.GetSimilarArtistsAsync(CurrentProtocolContext with { IsReadOnly = true }, provider!, externalId!, count) ?? [])
                 .Take(count).ToList();
         }
         catch (Exception error) when (error is not OperationCanceledException || !HttpContext.RequestAborted.IsCancellationRequested)
@@ -444,17 +446,19 @@ public partial class SubsonicController : ControllerBase
             _logger.LogWarning("Similar artists for {Provider} were unavailable ({ExceptionType})", provider, error.GetType().Name);
             similarArtists = [];
         }
-        return CreateSongListResponse(format, element, [], songsElement: null, similarArtists);
+        return CreateSongListResponse(format, element, [], songsElement: null, similarArtists, ArtistDescription(metadata));
     }
 
     private IActionResult CreateSongListResponse(string format, string element, IReadOnlyList<object> songs,
-        string? songsElement = "song", IReadOnlyList<Artist>? similarArtists = null)
+        string? songsElement = "song", IReadOnlyList<Artist>? similarArtists = null,
+        IReadOnlyDictionary<string, string>? description = null)
     {
         var ns = XNamespace.Get("http://subsonic.org/restapi");
         if (format == "json")
         {
             var body = new Dictionary<string, object>();
             if (songsElement != null) body[songsElement] = songs;
+            foreach (var pair in description ?? new Dictionary<string, string>()) body[pair.Key] = pair.Value;
             if (similarArtists is { Count: > 0 })
                 body["similarArtist"] = similarArtists.Select(_responseBuilder.ConvertArtistToJson).ToList();
             return _responseBuilder.CreateJsonResponse(new Dictionary<string, object>
@@ -465,6 +469,7 @@ public partial class SubsonicController : ControllerBase
             });
         }
         var list = new XElement(ns + element);
+        foreach (var pair in description ?? new Dictionary<string, string>()) list.Add(new XElement(ns + pair.Key, pair.Value));
         if (songsElement != null)
             list.Add(songs);
         foreach (var artist in similarArtists ?? [])
@@ -489,6 +494,9 @@ public partial class SubsonicController : ControllerBase
         var format = parameters.GetValueOrDefault("f", "xml");
         var artist = parameters.GetValueOrDefault("artist", "").Trim();
         var relayEndpoint = Request.Path.Value?.TrimStart('/') ?? "rest/getTopSongs";
+        var (externalArtist, provider, type, externalId) = _localLibraryService.ParseExternalId(parameters.GetValueOrDefault("id", ""));
+        if (externalArtist && type == "artist")
+            return await GetProviderTopSongsAsync(parameters, format, provider!, type!, externalId!);
         var nativeTask = _proxyService.RelayRawAsync(relayEndpoint, parameters, HttpContext.RequestAborted, Request.Headers);
         if (artist.Length == 0)
             return _relayProtocolAdapter.CreateResult(await nativeTask, $"application/{format}");

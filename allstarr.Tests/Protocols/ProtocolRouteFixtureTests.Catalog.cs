@@ -288,6 +288,8 @@ public sealed partial class ProtocolRouteFixtureTests
         gateway.Setup(item => item.GetSimilarArtistsAsync(
                 It.IsAny<ProtocolExecutionContext>(), "deezer", "7", 20))
             .ReturnsAsync(nullResult ? null! : []);
+        gateway.Setup(item => item.GetStoredArtistAsync(It.IsAny<ProtocolExecutionContext>(), "deezer", "7"))
+            .ReturnsAsync((Artist?)null);
         var observed = new List<ObservedRequest>();
         using var factory = CatalogFactory(observed, gateway.Object,
             request => throw new InvalidOperationException($"Unexpected upstream request: {request.RequestUri}"));

@@ -353,7 +353,9 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             : null;
     }
 
-    internal ProviderTrackMetadata MapTrack(Song song)
+    internal ProviderTrackMetadata MapTrack(Song song) => MapTrack(song, null);
+
+    private ProviderTrackMetadata MapTrack(Song song, IReadOnlyList<ProviderArtistCredit>? albumArtists)
     {
         var trackId = ExternalId(ProviderResourceKind.Track, song.ExternalId, song.Id, "track");
         var names = song.Artists.Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
@@ -399,32 +401,59 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             copyright: song.Copyright,
             contributors: song.Contributors,
             explicitContentLyrics: song.ExplicitContentLyrics,
-            bitrate: song.Bitrate);
+            bitrate: song.Bitrate,
+            albumArtists: song.AlbumArtists.Count > 0 ? song.AlbumArtists.Select(MapArtistCredit) : albumArtists,
+            providerIds: song.ProviderIds);
     }
 
     private ProviderAlbumMetadata MapAlbum(Album album)
     {
-        if (string.IsNullOrWhiteSpace(album.Artist))
+        if (album.Artists.Count == 0 && string.IsNullOrWhiteSpace(album.Artist))
             throw new InvalidOperationException($"The {ProviderId} album has no artist credit.");
-        var artistId = string.IsNullOrWhiteSpace(album.ArtistId)
-            ? null
-            : ExternalId(ProviderResourceKind.Artist, album.ArtistId, null, "artist");
+        ProviderArtistCredit[] artists = album.Artists.Count > 0
+            ? album.Artists.Select(MapArtistCredit).ToArray()
+            : [new ProviderArtistCredit(album.Artist, string.IsNullOrWhiteSpace(album.ArtistId)
+                ? null
+                : ExternalId(ProviderResourceKind.Artist, album.ArtistId, null, "artist"))];
         return new(
             ExternalId(ProviderResourceKind.Album, album.ExternalId, album.Id, "album"),
             album.Title,
-            [new ProviderArtistCredit(album.Artist, artistId)],
+            artists,
             album.SongCount,
             PublicArtwork(album.CoverArtUrl),
             year: album.Year,
             genre: album.Genre,
-            tracks: album.Songs.Select(MapTrack),
-            releaseDate: album.ReleaseDate);
+            tracks: album.Songs.Select(song => MapTrack(song, artists)),
+            releaseDate: album.ReleaseDate,
+            label: album.Label,
+            notes: album.Notes,
+            providerIds: album.ProviderIds,
+            lastFmUrl: album.LastFmUrl);
     }
 
     private ProviderArtistMetadata MapArtist(Artist artist) => new(
         ExternalId(ProviderResourceKind.Artist, artist.ExternalId, artist.Id, "artist"),
         artist.Name,
-        PublicArtwork(artist.ImageUrl));
+        PublicArtwork(artist.ImageUrl),
+        biography: artist.Biography,
+        providerIds: artist.ProviderIds,
+        lastFmUrl: artist.LastFmUrl);
+
+    private ProviderArtistCredit MapArtistCredit(Artist artist)
+    {
+        if (!string.IsNullOrWhiteSpace(artist.ExternalProvider) &&
+            !artist.ExternalProvider.Equals(ProviderId, StringComparison.Ordinal))
+            throw new ArgumentException("Artist credits must belong to the metadata provider.", nameof(artist));
+
+        var value = string.IsNullOrWhiteSpace(artist.ExternalId) ? artist.Id : artist.ExternalId;
+        if (!string.IsNullOrWhiteSpace(value) && value.StartsWith("ext-", StringComparison.Ordinal) &&
+            !value.StartsWith($"ext-{ProviderId}-", StringComparison.Ordinal))
+            throw new ArgumentException("Artist credits must belong to the metadata provider.", nameof(artist));
+
+        return new ProviderArtistCredit(artist.Name, string.IsNullOrWhiteSpace(value)
+            ? null
+            : ExternalId(ProviderResourceKind.Artist, value, null, "artist"));
+    }
 
     internal ProviderExternalResourceId ExternalId(
         ProviderResourceKind kind,

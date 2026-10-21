@@ -167,6 +167,7 @@
       { "operationId": "GetInstantMixFromAlbum", "resourceType": "album", "method": "GET", "path": "/Albums/ext-fixture-album-1/InstantMix" },
       { "operationId": "GetInstantMixFromArtists", "resourceType": "artist", "method": "GET", "path": "/Artists/ext-fixture-artist-1/InstantMix" },
       { "operationId": "GetInstantMixFromSong", "resourceType": "song", "method": "GET", "path": "/Songs/ext-fixture-song-1/InstantMix" },
+      { "operationId": "GetSimilarAlbums", "resourceType": "album", "method": "GET", "path": "/Albums/ext-fixture-album-1/Similar" },
       { "operationId": "GetSimilarArtists", "resourceType": "artist", "method": "GET", "path": "/Artists/ext-fixture-artist-1/Similar" }
     ],
     "denied": [
@@ -183,8 +184,7 @@
       { "operationId": "GetMusicGenreImageByIndex", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1/Images/Primary/0" },
       { "operationId": "HeadMusicGenreImageByIndex", "resourceType": "genre", "method": "HEAD", "path": "/MusicGenres/ext-fixture-genre-1/Images/Primary/0" },
       { "operationId": "GetInstantMixFromMusicGenreById", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/InstantMix?id=ext-fixture-genre-1", "enforcement": "controller" },
-      { "operationId": "GetInstantMixFromMusicGenreByName", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1/InstantMix" },
-      { "operationId": "GetSimilarAlbums", "resourceType": "album", "method": "GET", "path": "/Albums/ext-fixture-album-1/Similar" }
+      { "operationId": "GetInstantMixFromMusicGenreByName", "resourceType": "genre", "method": "GET", "path": "/MusicGenres/ext-fixture-genre-1/InstantMix" }
     ]
   },
   "synthesizedPlaylistOperations": {

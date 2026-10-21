@@ -104,6 +104,8 @@ public sealed partial class ProtocolProviderGateway
         song.Album = source.Album;
         song.AlbumId = source.AlbumId;
         song.AlbumArtist = source.AlbumArtist;
+        song.AlbumArtists = source.AlbumArtists.ToList();
+        song.ProviderIds = new(source.ProviderIds);
         song.Year = source.Year;
         song.CoverArtUrl = source.CoverArtUrl;
         song.CoverArtUrlLarge = source.CoverArtUrlLarge;

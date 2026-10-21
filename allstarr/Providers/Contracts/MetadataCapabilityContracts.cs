@@ -45,7 +45,9 @@ public sealed record ProviderTrackMetadata
         string? copyright = null,
         IEnumerable<string>? contributors = null,
         int? explicitContentLyrics = null,
-        int? bitrate = null)
+        int? bitrate = null,
+        IEnumerable<ProviderArtistCredit>? albumArtists = null,
+        IReadOnlyDictionary<string, string>? providerIds = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
@@ -67,6 +69,14 @@ public sealed record ProviderTrackMetadata
                 !item.ArtistId.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
         {
             throw new ArgumentException("Artist IDs must belong to the track provider.", nameof(artists));
+        }
+
+        var albumArtistList = ProviderContractValidation.Copy(albumArtists);
+        if (albumArtistList.Any(item => item == null ||
+                item.ArtistId != null &&
+                !item.ArtistId.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
+        {
+            throw new ArgumentException("Album artist IDs must belong to the track provider.", nameof(albumArtists));
         }
 
         if (duration < TimeSpan.Zero)
@@ -110,6 +120,10 @@ public sealed record ProviderTrackMetadata
                 .Select(value => value.Trim()));
         ExplicitContentLyrics = explicitContentLyrics;
         Bitrate = bitrate;
+        AlbumArtists = albumArtistList;
+        ProviderIds = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(
+            providerIds == null ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(providerIds, StringComparer.Ordinal));
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -161,6 +175,10 @@ public sealed record ProviderTrackMetadata
     public int? ExplicitContentLyrics { get; }
 
     public int? Bitrate { get; }
+
+    public IReadOnlyList<ProviderArtistCredit> AlbumArtists { get; }
+
+    public IReadOnlyDictionary<string, string> ProviderIds { get; }
 }
 
 public sealed record ProviderAlbumMetadata
@@ -175,7 +193,11 @@ public sealed record ProviderAlbumMetadata
         int? year = null,
         string? genre = null,
         IEnumerable<ProviderTrackMetadata>? tracks = null,
-        string? releaseDate = null)
+        string? releaseDate = null,
+        string? label = null,
+        string? notes = null,
+        IReadOnlyDictionary<string, string>? providerIds = null,
+        string? lastFmUrl = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Album);
@@ -209,6 +231,12 @@ public sealed record ProviderAlbumMetadata
         ReleaseDate = ProviderContractValidation.OptionalText(releaseDate, nameof(releaseDate), 40);
         Year = year;
         Genre = ProviderContractValidation.OptionalText(genre, nameof(genre), 300);
+        Label = ProviderContractValidation.OptionalText(label, nameof(label), 500);
+        Notes = ProviderContractValidation.OptionalContent(notes, nameof(notes), int.MaxValue);
+        ProviderIds = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(
+            providerIds == null ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(providerIds, StringComparer.Ordinal));
+        LastFmUrl = ProviderContractValidation.OptionalText(lastFmUrl, nameof(lastFmUrl), 4000);
         Tracks = tracks == null ? [] : ProviderContractValidation.Copy(tracks);
         if (Tracks.Any(track => !track.Id.ProviderId.Equals(id.ProviderId, StringComparison.Ordinal)))
         {
@@ -235,6 +263,14 @@ public sealed record ProviderAlbumMetadata
     public string? Genre { get; }
 
     public IReadOnlyList<ProviderTrackMetadata> Tracks { get; }
+
+    public string? Label { get; }
+
+    public string? Notes { get; }
+
+    public IReadOnlyDictionary<string, string> ProviderIds { get; }
+
+    public string? LastFmUrl { get; }
 }
 
 public sealed record ProviderArtistMetadata
@@ -243,7 +279,10 @@ public sealed record ProviderArtistMetadata
         ProviderExternalResourceId id,
         string name,
         ProviderArtworkReference? artwork = null,
-        string? snapshotVersion = null)
+        string? snapshotVersion = null,
+        string? biography = null,
+        IReadOnlyDictionary<string, string>? providerIds = null,
+        string? lastFmUrl = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Artist);
@@ -254,6 +293,11 @@ public sealed record ProviderArtistMetadata
             snapshotVersion,
             nameof(snapshotVersion),
             300);
+        Biography = ProviderContractValidation.OptionalContent(biography, nameof(biography), int.MaxValue);
+        ProviderIds = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(
+            providerIds == null ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(providerIds, StringComparer.Ordinal));
+        LastFmUrl = ProviderContractValidation.OptionalText(lastFmUrl, nameof(lastFmUrl), 4000);
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -263,6 +307,12 @@ public sealed record ProviderArtistMetadata
     public ProviderArtworkReference? Artwork { get; }
 
     public string? SnapshotVersion { get; }
+
+    public string? Biography { get; }
+
+    public IReadOnlyDictionary<string, string> ProviderIds { get; }
+
+    public string? LastFmUrl { get; }
 }
 
 public sealed record ProviderMetadataSearchRequest
