@@ -60,7 +60,8 @@ public sealed class ProviderCtsTrackSelector(
                 .Take(CorpusLimit)
                 .ToArrayAsync(cancellationToken);
         }
-        if (corpus.Length == 0) return null;
+        if (corpus.Length == 0) return providerId == "monochrome"
+            ? new(allstarr.Core.Providers.Monochrome.MonochromeStreamingCapabilityAdapter.SampleTrackId, 1) : null;
 
         var key = $"{providerId}:{(providerAccountId.HasValue ? providerAccountId.Value.ToString("N") : "account-free")}";
         int index;

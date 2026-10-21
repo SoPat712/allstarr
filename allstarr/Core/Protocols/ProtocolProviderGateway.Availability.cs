@@ -30,10 +30,10 @@ public sealed partial class ProtocolProviderGateway
         EffectiveProviderPolicySnapshot? effectivePolicy, ProviderAudioQuality quality)
     {
         if (identities == null || !plan.Request.Policy.AllowFallback || !plan.Request.Policy.AllowManagedDownloads) return false;
-        var provider = storedOrder.FirstOrDefault(id => plan.Request.ProviderPriority.Contains(id, StringComparer.Ordinal) &&
+        var provider = storedOrder.Concat(plan.Request.ProviderPriority.Where(id => id == "monochrome")).Distinct(StringComparer.Ordinal).FirstOrDefault(id => plan.Request.ProviderPriority.Contains(id, StringComparer.Ordinal) &&
             plan.Decision.Candidates.Any(item => item.ProviderId == id && item.ReasonCode == "verified-identity-required") &&
             registry.TryGetCapability<IProviderStreamingCapability>(id, ProviderCapabilityKind.Streaming, out var implementation) &&
-            implementation is IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true });
+            implementation is IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true });
         if (provider == null) return false;
         var request = plan.Request;
         var policy = request.Policy;
@@ -44,7 +44,7 @@ public sealed partial class ProtocolProviderGateway
             request.OperationId, request.CorrelationId, request.Deadline, [provider], request.ProviderStates.Values,
             sourceTrackId: null, idempotencyKey: request.IdempotencyKey, cancellationToken: request.CancellationToken));
         var candidate = authorization.Candidates.SingleOrDefault();
-        if (candidate?.Implementation is not IProviderDownloadStreamingCapability { SupportsRecordingAvailability: true }) return false;
+        if (candidate?.Implementation is not IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true }) return false;
         var evidence = await identities.GetRecordingAvailabilityAsync(candidate.Context, ProtocolItemId(source), request.CancellationToken);
         if (evidence == null || effectivePolicy?.Includes(evidence.ExplicitContentLyrics) == false ||
             !Guid.TryParse(evidence.SampleId, out var recordingId)) return false;
@@ -88,11 +88,13 @@ public sealed partial class ProtocolProviderGateway
             using var bounded = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken, timeout.Token);
             var execution = new ProviderExecutionContext(context.Actor, context.ProviderId, context.Account, context.Policy,
                 context.OperationId, context.CorrelationId, deadline, bounded.Token, context.IdempotencyKey);
+            var cacheMiss = provider != "monochrome";
             try
             {
-                var outcome = await ((IProviderDownloadStreamingCapability)authorized.Implementation)
+                var outcome = await ((IProviderRecordingStreamingCapability)authorized.Implementation)
                     .ResolveRecordingAsync(execution, recording, quality).WaitAsync(bounded.Token);
                 bounded.Token.ThrowIfCancellationRequested();
+                if (provider == "monochrome") cacheMiss = outcome.IsSuccess || outcome.Error!.Kind == ProviderErrorKind.NotFound;
                 if (outcome.IsSuccess && outcome.RequireValue().TrackId is { } track &&
                     track.ProviderId == provider && track.ResourceKind == ProviderResourceKind.Track && track.Catalog == target.Catalog)
                 {
@@ -112,7 +114,7 @@ public sealed partial class ProtocolProviderGateway
             catch (TimeoutException) { }
             catch (HttpRequestException) { }
             context.CancellationToken.ThrowIfCancellationRequested();
-            if (applicationCache?.IsEnabled == true) await applicationCache.SetStringAsync(missKey, "1", ExactRouteMissTtl);
+            if (cacheMiss && applicationCache?.IsEnabled == true) await applicationCache.SetStringAsync(missKey, "1", ExactRouteMissTtl);
             return false;
         }
     }

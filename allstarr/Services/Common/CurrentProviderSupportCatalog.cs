@@ -56,6 +56,11 @@ public static class CurrentProviderSupportCatalog
             Capability("playlist", Partial, "Read/discovery only.", "QobuzProviderTests"),
             Capability("health", Partial, "Account-scoped metadata, playlist, stream, and download probes with durable capability samples.", "ProviderStatusManagerTests; ConfigControllerAuthorizationTests")),
         Provider(
+            "monochrome", "monochrome", "Monochrome", "none",
+            "Account-free lossless streaming; uses verified Tracks identities or one exact ISRC lookup during playback.",
+            Capability("streaming", Supported, "Direct FLAC with measured byte ranges or duration guidance and progressive caching. Tidal IDs are a separate namespace.", "MonochromeProviderTests; TrackIdentityServiceTests"),
+            Capability("health", Supported, "Bounded stream probe using a sample from the public reference tests.", "MonochromeProviderTests; ProviderStatusManagerTests")),
+        Provider(
             "spotify",
             "spotify",
             "Spotify",

@@ -1289,7 +1289,7 @@ public class AdminUiController : ControllerBase
                     Id = item.Id,
                     Name = item.DisplayName,
                     Description = item.Description,
-                    Icon = "extension",
+                    Icon = item.Id == "monochrome" ? "monochrome" : "extension",
                     LogoUrl = item.Origin == ProviderOrigin.Extension && item.Branding != null
                         ? $"/api/admin/extensions/providers/{Uri.EscapeDataString(item.Id)}/icon"
                         : null,

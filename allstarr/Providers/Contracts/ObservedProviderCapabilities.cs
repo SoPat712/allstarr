@@ -17,6 +17,7 @@ public static class ObservedProviderCapabilities
             IProviderDownloadCapability download when CanReturn<Download>() => new Download(download, observer),
             IProviderLyricsCapability lyrics when CanReturn<Lyrics>() => new Lyrics(lyrics, observer),
             IProviderDownloadStreamingCapability streaming when CanReturn<DownloadStreaming>() => new DownloadStreaming(streaming, observer),
+            IProviderRecordingStreamingCapability recording when CanReturn<RecordingStreaming>() => new RecordingStreaming(recording, observer),
             IProviderStreamingCapability streaming when CanReturn<Streaming>() => new Streaming(streaming, observer),
             IProviderIntelligenceCapability intelligence when CanReturn<Intelligence>() => new Intelligence(intelligence, observer),
             IProviderHealthProbeCapability health when CanReturn<Health>() => new Health(health, observer),
@@ -188,8 +189,8 @@ public static class ObservedProviderCapabilities
                     outcome.RequireValue().Available ? null : new ProviderError(ProviderErrorKind.CapabilityUnavailable));
     }
 
-    private sealed class DownloadStreaming(IProviderDownloadStreamingCapability implementation, IProviderOutcomeObserver observer)
-        : Streaming(implementation, observer), IProviderDownloadStreamingCapability
+    private class RecordingStreaming(IProviderRecordingStreamingCapability implementation, IProviderOutcomeObserver observer)
+        : Streaming(implementation, observer), IProviderRecordingStreamingCapability
     {
         public bool SupportsRecordingAvailability => implementation.SupportsRecordingAvailability;
 
@@ -197,6 +198,9 @@ public static class ObservedProviderCapabilities
             ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality) =>
             InvokeAsync(context, () => implementation.ResolveRecordingAsync(context, recording, quality), observeSuccess: false);
     }
+
+    private sealed class DownloadStreaming(IProviderDownloadStreamingCapability implementation, IProviderOutcomeObserver observer)
+        : RecordingStreaming(implementation, observer), IProviderDownloadStreamingCapability;
 
     private sealed class Intelligence(IProviderIntelligenceCapability implementation, IProviderOutcomeObserver observer)
         : ObservedCapability<IProviderIntelligenceCapability>(implementation, observer), IProviderIntelligenceCapability

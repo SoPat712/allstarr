@@ -856,7 +856,7 @@ public class ProviderStatusManager
     private IReadOnlyList<(string Provider, string Capability, ProviderAccountRequirement AccountRequirement)> RuntimeCapabilities()
     {
         var extensions = ProviderRegistry?.Providers
-            .Where(provider => provider.Origin == ProviderOrigin.Extension)
+            .Where(provider => provider.Origin == ProviderOrigin.Extension || provider.Id == "monochrome")
             .SelectMany(provider => provider.Capabilities
                 .Where(capability => capability.Capability != ProviderCapabilityKind.Health)
                 .Select(capability => (
@@ -876,7 +876,7 @@ public class ProviderStatusManager
     {
         descriptor = null;
         if (ProviderRegistry?.TryGet(provider, out var providerDescriptor) != true ||
-            providerDescriptor!.Origin != ProviderOrigin.Extension ||
+            providerDescriptor!.Origin != ProviderOrigin.Extension && providerDescriptor.Id != "monochrome" ||
             !Enum.TryParse<ProviderCapabilityKind>(capability, true, out var kind))
             return false;
         descriptor = providerDescriptor.Capabilities.SingleOrDefault(item => item.Capability == kind);

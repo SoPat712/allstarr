@@ -25,6 +25,22 @@ namespace allstarr.Tests;
 
 public sealed partial class ProtocolProviderStreamingGatewayTests
 {
+    [Fact]
+    public async Task MonochromeProtectedOpen_PreservesRetryAfterForRouting()
+    {
+        var first = Streaming("monochrome", (_, _) =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(47));
+            return Task.FromResult(response);
+        });
+        var second = Streaming("qobuz", (_, _) => Task.FromResult(AudioResponse()));
+        var (gateway, router) = FailoverGateway(first, second);
+        using var opened = (await gateway.OpenStreamAsync(Context(), "monochrome", "155142501534011392", ProviderAudioQuality.Any, null))!.Response;
+        router.Verify(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(), 0,
+            It.Is<ProviderError>(error => error.Kind == ProviderErrorKind.RateLimited && error.RetryAfter == TimeSpan.FromSeconds(47))), Times.Once);
+    }
+
     [Theory]
     [InlineData("missing", ProviderErrorKind.NotFound)]
     [InlineData("server", ProviderErrorKind.TransientFailure)]

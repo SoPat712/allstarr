@@ -70,6 +70,19 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 
+    [Theory]
+    [InlineData(ProviderErrorKind.RateLimited)]
+    [InlineData(ProviderErrorKind.TransientFailure)]
+    public async Task MonochromeLookup_DoesNotCacheTemporaryFailureAsMissing(ProviderErrorKind kind)
+    {
+        var fixture = new AvailabilityFixture("monochrome", providerId: "monochrome");
+        fixture.Resolve = _ => Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Failure(
+            new(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromSeconds(47) : null)));
+        Assert.Null(await fixture.Open());
+        Assert.Null(await fixture.Open());
+        fixture.VerifyLookups(2);
+    }
+
     [Fact]
     public async Task RecordingAvailability_AbsentStreamingOrderDoesNotResolve()
     {
@@ -333,9 +346,9 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
 
         public AvailabilityFixture(string order, bool verifiedFirst = false, bool accountBound = false,
             string? restriction = null, bool conflict = false, ProviderErrorKind? firstError = null, bool explicitDenied = false, string? effectiveOrder = null, TimeProvider? clock = null,
-            IProviderDownloadStreamingCapability? implementation = null)
+            IProviderDownloadStreamingCapability? implementation = null, string providerId = "pandora")
         {
-            var provider = implementation?.ProviderId ?? "pandora";
+            var provider = implementation?.ProviderId ?? providerId;
             download.SetupGet(item => item.ProviderId).Returns(provider);
             download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
             download.SetupGet(item => item.SupportsRecordingAvailability).Returns(true);

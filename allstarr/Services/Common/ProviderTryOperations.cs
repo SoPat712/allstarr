@@ -160,6 +160,12 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
     public async Task<ProviderTryResult> ProbeAsync(ProviderExecutionContext context, ProviderDescriptor descriptor, ProviderCapabilityKind capability)
     {
         var selected = descriptor.Capabilities.Single(item => item.Capability == capability);
+        if (descriptor.HealthProbe && providers.TryGetCapability<IProviderHealthProbeCapability>(descriptor.Id,
+            ProviderCapabilityKind.Health, out var health))
+        {
+            var probe = await health!.ProbeAsync(context, new(capability));
+            return !probe.IsSuccess ? Failure(probe.Error!) : new() { Succeeded = probe.RequireValue().Status == ProviderProbeStatus.Healthy };
+        }
         bool Has(ProviderCapabilityKind kind, string hook) => descriptor.Capabilities.Any(item => item.Capability == kind &&
             item.HasUsableImplementation && item.Hooks.Contains(hook));
         if (capability == ProviderCapabilityKind.Metadata)

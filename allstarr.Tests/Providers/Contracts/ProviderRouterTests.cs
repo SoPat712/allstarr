@@ -7,7 +7,7 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ProviderRouterTests
+public sealed partial class ProviderRouterTests
 {
     [Theory]
     [InlineData(ProviderAccountScope.Personal, false)]

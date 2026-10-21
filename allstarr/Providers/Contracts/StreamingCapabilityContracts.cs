@@ -143,11 +143,15 @@ public sealed record ProviderRecordingAvailabilityRequest(
 
 public sealed record ProviderRecordingAvailability(ProviderExternalResourceId? TrackId, string? Reason = null);
 
-public interface IProviderDownloadStreamingCapability : IProviderStreamingCapability
+public interface IProviderRecordingStreamingCapability : IProviderStreamingCapability
 {
     bool SupportsRecordingAvailability => false;
 
     Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
         ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality) =>
         Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Failure(new ProviderError(ProviderErrorKind.NotSupported)));
+}
+
+public interface IProviderDownloadStreamingCapability : IProviderRecordingStreamingCapability
+{
 }
