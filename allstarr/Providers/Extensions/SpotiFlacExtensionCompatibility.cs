@@ -368,6 +368,17 @@ public static class SpotiFlacExtensionCompatibility
                     options = isMap(options) ? options : {};
                     return request(goString(options.method || "GET"), url, options.body, options.headers);
                 };
+                http.clearCookies = function() { return host.ClearCookies(); };
+                const fetchRequest = fetch;
+                globalThis.fetch = function(url, options) {
+                    const response = fetchRequest(url, options);
+                    const text = response.text;
+                    response.json = function() {
+                        try { return JSON.parse(text()); }
+                        catch (_) { return undefined; }
+                    };
+                    return response;
+                };
                 storage.get = function(key, fallback) {
                     if (!arguments.length) return undefined;
                     const value = host.StorageGet(goString(key));
@@ -617,17 +628,55 @@ public static class SpotiFlacExtensionCompatibility
             isrc: value.isrc ? String(value.isrc) : null,
             isExplicit: value.explicit == null ? null : Boolean(value.explicit),
             artworkUrl: _sfArtwork(value),
+            trackNumber: value.track_number || null, discNumber: value.disc_number || null,
+            totalTracks: value.total_tracks || null, year: value.year || null, genre: value.genre || null,
+            bpm: value.bpm || null, spotifyId: value.spotify_id || null, releaseDate: value.release_date || null,
+            albumArtist: value.album_artist || null, composer: value.composer || null, label: value.label || null,
+            copyright: value.copyright || null, contributors: Array.isArray(value.contributors) ? value.contributors : [],
+            explicitContentLyrics: value.explicit_content_lyrics == null ? null : Number(value.explicit_content_lyrics),
+            bitrate: Number(value.bitrate) > 0 ? Number(value.bitrate) : null,
             snapshotVersion: null
           };
         }
         var _sfTrackCache = Object.create(null);
+        var _sfRawTrackCache = Object.create(null);
+        var _sfEnrichedTracks = Object.create(null);
         var _sfTrackCacheOrder = [];
-        function _sfRememberTrack(track) {
+        function _sfRememberTrack(track, raw) {
           if (!track || !track.id) return track;
           var id = String(track.id);
+          if (_sfEnrichedTracks[id] && _sfTrackCache[id]) return _sfTrackCache[id];
           if (!Object.prototype.hasOwnProperty.call(_sfTrackCache, id)) _sfTrackCacheOrder.push(id);
           _sfTrackCache[id] = track;
-          while (_sfTrackCacheOrder.length > 512) delete _sfTrackCache[_sfTrackCacheOrder.shift()];
+          if (raw) _sfRawTrackCache[id] = raw.track || raw;
+          while (_sfTrackCacheOrder.length > 512) {
+            var removed = _sfTrackCacheOrder.shift();
+            delete _sfTrackCache[removed]; delete _sfRawTrackCache[removed]; delete _sfEnrichedTracks[removed];
+          }
+          return track;
+        }
+        function _sfTrackDetail(id) {
+          if (_sfEnrichedTracks[id]) return _sfTrackCache[id];
+          var raw = _sfRawTrackCache[id];
+          if (!raw && typeof _spotiflacExtension.getTrack === 'function') {
+            raw = _spotiflacExtension.getTrack(id);
+            raw = raw && (raw.track || raw);
+          }
+          if (!raw) {
+            _sfSearch({ query: id, page: { limit: 10 } }, 'tracks', _sfTrack);
+            raw = _sfRawTrackCache[id];
+          }
+          if (!raw) return null;
+          var original = raw;
+          if (typeof _spotiflacExtension.enrichTrack === 'function') {
+            try {
+              var candidate = _spotiflacExtension.enrichTrack(Object.assign({}, raw));
+              candidate = candidate && (candidate.track || candidate);
+              if (candidate && String(candidate.id || candidate.track_id || '') === id) raw = Object.assign({}, original, candidate);
+            } catch (_) {}
+          }
+          var track = _sfRememberTrack(_sfTrack(raw), raw);
+          _sfEnrichedTracks[id] = true;
           return track;
         }
         var _sfPrepared = Object.create(null);
@@ -761,8 +810,10 @@ public static class SpotiFlacExtensionCompatibility
           var items = _sfArray(result).filter(function(item) {
             var type = String(item.item_type || item.type || '').toLowerCase();
             return !type || type === filter || type === singular || (singular === 'track' && (type === 'song' || type === 'songs'));
-          }).map(mapper).filter(function(item) { return item.id; });
-          if (filter === 'tracks') items.forEach(_sfRememberTrack);
+          }).map(function(item) {
+            var mapped = mapper(item);
+            return filter === 'tracks' ? _sfRememberTrack(mapped, item) : mapped;
+          }).filter(function(item) { return item.id; });
           return { items: items, nextCursor: null, isPartial: false, snapshotVersion: null };
         }
         function _sfPlaylist(value) {
@@ -774,13 +825,10 @@ public static class SpotiFlacExtensionCompatibility
         }
         _registeredExtension = {
           initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _allstarrInitialize(settings || {}) : true; },
+          cleanup: function() { return typeof _spotiflacExtension.cleanup === 'function' ? _spotiflacExtension.cleanup() : true; },
           searchTracks: function(request) { return _sfSearch(request, 'tracks', _sfTrack); },
           getTrack: function(request) {
-            var id = String(request.id);
-            if (Object.prototype.hasOwnProperty.call(_sfTrackCache, id)) return _sfTrackCache[id];
-            if (typeof _spotiflacExtension.getTrack === 'function') return _sfRememberTrack(_sfTrack(_spotiflacExtension.getTrack(id)));
-            var page = _sfSearch({ query: request.id, page: { limit: 10 } }, 'tracks', _sfTrack);
-            return page.items.filter(function(item) { return item.id === id; })[0] || null;
+            return _sfTrackDetail(String(request.id));
           },
           searchAlbums: function(request) { return _sfSearch(request, 'albums', _sfAlbum); },
           getAlbum: function(request) { return _sfAlbum(typeof _spotiflacExtension.getAlbum === 'function' ? _spotiflacExtension.getAlbum(request.id) : null); },
@@ -880,6 +928,8 @@ public static class SpotiFlacExtensionCompatibility
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
             }
             if (!result || result.success === false) throw _sfDownloadError(result);
+            if (result.decryption || result.decryption_key || result.requires_container_conversion)
+              throw new Error('Download requires unsupported audio post-processing');
             var path = String(result.file_path || result.path || output);
             var extension = String(result.actual_extension || result.output_extension || path.substring(path.lastIndexOf('.')) || '.audio').toLowerCase();
             if (extension.charAt(0) !== '.') extension = '.' + extension;

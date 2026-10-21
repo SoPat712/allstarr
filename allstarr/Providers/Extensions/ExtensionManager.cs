@@ -648,6 +648,7 @@ public class ExtensionSandbox
     private readonly ILogger _logger;
     private readonly Action<string, string>? _logSink;
     private readonly object _engineLock = new();
+    private bool _cleanupCompleted;
     private readonly ExtensionHostBridge _hostBridge;
     private readonly TimeSpan _hookTimeout;
     private readonly TimeSpan _downloadTimeout;
@@ -912,7 +913,7 @@ public class ExtensionSandbox
                 if (!function.IsCallable()) return null;
 
                 var prepare = _engine.GetValue("_allstarrPrepareInvocation");
-                if (prepare.IsCallable()) _engine.Invoke(prepare);
+                if (hook != "cleanup" && prepare.IsCallable()) _engine.Invoke(prepare);
 
                 var request = _engine.Invoke(_engine.GetValue("JSON").AsObject().Get("parse"), requestJson);
                 var result = _engine.Invoke(function, request);
@@ -970,6 +971,21 @@ public class ExtensionSandbox
 
     public bool HasCallableHook(string hook) =>
         !string.IsNullOrWhiteSpace(hook) && IsCallable(hook);
+
+    internal void Cleanup()
+    {
+        lock (_engineLock)
+        {
+            if (_cleanupCompleted) return;
+            _cleanupCompleted = true;
+            try { InvokeJson("cleanup", "{}"); }
+            catch (Exception)
+            {
+                _logger.LogWarning("Extension {ExtensionId} cleanup did not complete", Id);
+            }
+            finally { _hostBridge.ClearCookies(); }
+        }
+    }
 
     internal bool HasSpotiFlacHook(string hook)
     {
@@ -1293,6 +1309,7 @@ public partial class ExtensionHostBridge
         new(StringComparer.Ordinal);
     private readonly object _httpFailureLock = new();
     private DateTimeOffset _lastSyntheticCooldownResponseAt;
+    private CookieContainer _cookies = new(300, 50, 4096);
     private int _logEvents;
 
     public ExtensionHostBridge(
@@ -1548,6 +1565,28 @@ public partial class ExtensionHostBridge
     public object HttpRequest(string method, string url, string? body, object? headers) =>
         HttpCall(method, url, body, headers);
 
+    public bool ClearCookies()
+    {
+        _cookies = new CookieContainer(300, 50, 4096);
+        return true;
+    }
+
+    private void AddCookies(HttpRequestMessage request)
+    {
+        var cookies = _cookies.GetCookieHeader(request.RequestUri!);
+        if (cookies.Length > 0) request.Headers.TryAddWithoutValidation("Cookie", cookies);
+    }
+
+    private void StoreCookies(Uri uri, HttpResponseMessage response)
+    {
+        if (!response.Headers.TryGetValues("Set-Cookie", out var cookies)) return;
+        foreach (var cookie in cookies.Take(300))
+        {
+            try { _cookies.SetCookies(uri, cookie); }
+            catch (CookieException) { }
+        }
+    }
+
     internal async Task<ExtensionBoundedHttpPayload> FetchBytesAsync(
         Uri uri,
         int maximumBytes,
@@ -1597,10 +1636,8 @@ public partial class ExtensionHostBridge
             throw new UnauthorizedAccessException("Extension artifact origin is not approved.");
 
         using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
-        using var request = new HttpRequestMessage(HttpMethod.Get, safeUri);
-        AddHeaders(request, headersObj);
-        using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken)
-            .GetAwaiter().GetResult();
+        using var response = SendHttpRequest(client, "GET", safeUri, null, headersObj,
+            HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken);
         if (response.RequestMessage?.RequestUri is not { } finalUri ||
             !IsNetworkAllowed(finalUri))
             throw new UnauthorizedAccessException("Extension artifact redirect left its approved origin.");
@@ -1628,10 +1665,8 @@ public partial class ExtensionHostBridge
         try
         {
             using var client = _httpClientFactory.CreateClient("ExtensionSdkV1");
-            using var request = new HttpRequestMessage(HttpMethod.Get, safeUri);
-            AddHeaders(request, HeaderObject(options));
-            using var response = client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken)
-                .GetAwaiter().GetResult();
+            using var response = SendHttpRequest(client, "GET", safeUri, null, HeaderObject(options),
+                HttpCompletionOption.ResponseHeadersRead, scope.CancellationToken);
             if (response.RequestMessage?.RequestUri is not { } finalUri || !IsNetworkAllowed(finalUri))
                 throw new UnauthorizedAccessException("Extension download redirect left its approved origin.");
             response.EnsureSuccessStatusCode();
@@ -1905,7 +1940,11 @@ public partial class ExtensionHostBridge
 
             var respHeaders = response.Headers.Concat(response.Content.Headers)
                 .GroupBy(header => header.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(group => group.Key.ToLowerInvariant(), group => (object)string.Join(", ", group.SelectMany(item => item.Value)), StringComparer.OrdinalIgnoreCase);
+                .ToDictionary(group => group.Key.ToLowerInvariant(), group =>
+                {
+                    var values = group.SelectMany(item => item.Value).ToArray();
+                    return values.Length == 1 ? (object)values[0] : values;
+                }, StringComparer.OrdinalIgnoreCase);
 
             return new
             {
@@ -1953,7 +1992,8 @@ public partial class ExtensionHostBridge
     }
 
     // Behaviour matches SpotiFLAC-Module-Version (MIT).
-    private HttpResponseMessage SendHttpRequest(HttpClient client, string method, Uri uri, string? body, object? headers)
+    private HttpResponseMessage SendHttpRequest(HttpClient client, string method, Uri uri, string? body, object? headers,
+        HttpCompletionOption completion = HttpCompletionOption.ResponseContentRead, CancellationToken? cancellationToken = null)
     {
         for (var redirects = 0; ; redirects++)
         {
@@ -1964,9 +2004,12 @@ public partial class ExtensionHostBridge
             if (body != null)
                 request.Content = new StringContent(ResolveSecretMarkers(body), Encoding.UTF8, "application/json");
             AddHeaders(request, headers);
+            AddCookies(request);
             if (!request.Headers.Contains("User-Agent"))
                 request.Headers.TryAddWithoutValidation("User-Agent", "Spotiflac-Extension/1.0");
-            var response = client.SendAsync(request, ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
+            var response = client.SendAsync(request, completion,
+                cancellationToken ?? ExtensionInvocationBudget.Current?.Token ?? CancellationToken.None).GetAwaiter().GetResult();
+            StoreCookies(uri, response);
             if (response.Headers.Location is not { } location ||
                 (int)response.StatusCode is not (301 or 302 or 303 or 307 or 308)) return response;
             using (response)

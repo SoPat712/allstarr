@@ -147,10 +147,12 @@ public partial class ExtensionHostBridge
                 {
                     using var request = new HttpRequestMessage(HttpMethod.Get, current);
                     AddHeaders(request, attemptHeaders);
+                    AddCookies(request);
                     using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                     if (response.RequestMessage?.RequestUri is not { } finalUri)
                         throw new SegmentFailure("permission", attempt);
                     RequireSegmentUri(finalUri.AbsoluteUri);
+                    StoreCookies(finalUri, response);
                     var status = (int)response.StatusCode;
                     if (status is 301 or 302 or 303 or 307 or 308)
                     {
