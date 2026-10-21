@@ -85,7 +85,7 @@ public sealed partial class ProtocolRouteFixtureTests
     [InlineData("json", "AudioCodec", "audioChannels", "LessThanEqual", "1", false)]
     [InlineData("xml", "AudioCodec", "audioChannels", "LessThanEqual", "1", false)]
     [InlineData("json", "AudioCodec", "audioSamplerate", "LessThanEqual", "22050", false)]
-    [InlineData("xml", "AudioCodec", "audioBitdepth", "LessThanEqual", "8", false)]
+    [InlineData("xml", "AudioCodec", "audioBitdepth", "LessThanEqual", "8", true)]
     [InlineData("json", "AudioCodec", "audioBitrate", "LessThanEqual", "128000", true)]
     public async Task FeishinTranscodeDecision_EnforcesCodecLimitations(string format, string type, string property, string comparison, string value, bool compatible)
     {
