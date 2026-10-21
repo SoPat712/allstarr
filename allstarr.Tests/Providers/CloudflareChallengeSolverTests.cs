@@ -1,6 +1,8 @@
 using System.Net;
 using System.Text.Json;
 using allstarr.Core.Capabilities;
+using allstarr.Core.Operations;
+using Microsoft.Extensions.Configuration;
 using allstarr.Services.Common;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -305,6 +307,103 @@ public sealed class CloudflareChallengeSolverTests
         Assert.Equal("{\"results\":[]}", await client.GetStringAsync(Target));
     }
 
+    [Theory]
+    [InlineData("https://LYRICS-API.binimum.org:443/?isrc=private-query#result", "text/html")]
+    [InlineData("https://lyrics-api.binimum.org/match/?isrc=private-query", "application/octet-stream")]
+    [InlineData("https://lyrics-api.binimum.org/match?isrc=private-query", "")]
+    public async Task WrappedJsonUsesRequestedFormatAfterNormalizationOrRedirect(string returnedUrl, string contentType)
+    {
+        var body = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Fixtures", "ChallengeSolver", "lookup.html.json"));
+        body = JsonSerializer.Deserialize<string>(body)!;
+        var requests = 0;
+        using var client = Client(Solver(new Handler(_ => Task.FromResult(Solution(body, returnedUrl, contentType)))),
+            _ => { requests++; return Challenge(); });
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+        using var response = await client.GetAsync(Target);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json", response.Content.Headers.ContentType!.MediaType);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("https://lyrics-storage.binimum.org/USABC1234567.ttml",
+            json.RootElement.GetProperty("results")[0].GetProperty("lyricsUrl").GetString());
+        Assert.Equal(1, requests);
+    }
+
+    [Fact]
+    public async Task WrappedStorageBodyUsesRequestedFormatAfterSameHostRedirect()
+    {
+        const string target = "https://lyrics-storage.binimum.org/fixture.ttml";
+        const string ttml = "<tt><body><p begin='1'>A &amp; B</p></body></tt>";
+        var wrapped = "<html><body><pre>" + WebUtility.HtmlEncode(ttml) + "</pre></body></html>";
+        var requests = 0;
+        var solver = Solver(new Handler(_ => Task.FromResult(Solution(wrapped, target + "/", "application/octet-stream"))));
+        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-storage.binimum.org"])
+        {
+            InnerHandler = new Handler(_ => { requests++; return Task.FromResult(Challenge()); })
+        });
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/ttml+xml");
+        using var response = await client.GetAsync(target);
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/ttml+xml", response.Content.Headers.ContentType!.MediaType);
+        Assert.Equal(ttml, await response.Content.ReadAsStringAsync());
+        Assert.Equal(1, requests);
+    }
+
+    [Theory]
+    [InlineData("", "text/plain", 200, Target, "application/json", "empty-body")]
+    [InlineData("not json", "application/json", 200, Target, "application/json", "unexpected-content")]
+    [InlineData("<title>Just a moment...</title>", "text/html", 200, Target, "application/json", "still-challenge")]
+    [InlineData("{}", "application/json", 200, "https://other.test/", "application/json", "url-mismatch")]
+    [InlineData("{}", "application/json", 503, Target, "application/json", "unexpected-content")]
+    [InlineData("large", "text/plain", 200, Target, "text/plain", "oversize")]
+    public async Task FailedDeliveryLogsSpecificReasonThroughRedactingLogger(string body, string contentType, int status,
+        string returnedUrl, string accept, string reason)
+    {
+        if (reason == "oversize") body = new string('x', CloudflareChallengeSolver.MaximumBytes + 1);
+        using var output = new StringWriter();
+        using var logging = LoggerFactory.Create(builder =>
+            builder.AddProvider(new RedactingConsoleLoggerProvider(new ConfigurationBuilder().Build(), output, output)));
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => Task.FromResult(Solution(body, returnedUrl, contentType, status)))),
+            _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)), _clock,
+            logging.CreateLogger<CloudflareChallengeSolver>());
+        using var client = Client(solver, _ => Challenge());
+        client.DefaultRequestHeaders.Accept.ParseAdd(accept);
+        await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        using var rendered = JsonDocument.Parse(output.ToString());
+        var fields = rendered.RootElement.GetProperty("fields");
+        Assert.Equal(reason, fields.GetProperty("DeliveryFailureReason").GetString());
+        Assert.Equal("none", fields.GetProperty("DeliveryPath").GetString());
+        Assert.DoesNotContain("private-query", output.ToString());
+        Assert.DoesNotContain("clearance-secret", output.ToString());
+    }
+
+    [Theory]
+    [InlineData("{}", "solver-body", "not-attempted")]
+    [InlineData("invalid json", "cookies", "False")]
+    [InlineData("invalid json", "none", "True")]
+    public async Task RenderedSolveLogKeepsClearanceCountAndRetryOutcomeVisible(string body, string path, string retry)
+    {
+        using var output = new StringWriter();
+        using var logging = LoggerFactory.Create(builder =>
+            builder.AddProvider(new RedactingConsoleLoggerProvider(new ConfigurationBuilder().Build(), output, output)));
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler(_ => Task.FromResult(Solution(body)))),
+            _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)), _clock,
+            logging.CreateLogger<CloudflareChallengeSolver>());
+        using var client = Client(solver, request => path == "cookies" && request.Headers.Contains("Cookie") ? Reply("words") : Challenge());
+        if (path == "none") await Assert.ThrowsAsync<CloudflareChallengeException>(() => client.GetAsync(Target));
+        else
+        {
+            using var response = await client.GetAsync(Target);
+        }
+        using var rendered = JsonDocument.Parse(output.ToString());
+        var fields = rendered.RootElement.GetProperty("fields");
+        Assert.Equal(1, fields.GetProperty("ClearanceCount").GetInt32());
+        Assert.Equal(retry, fields.GetProperty("RetryRechallenged").GetString());
+        Assert.Equal(path == "none" ? "unexpected-content" : "not-attempted", fields.GetProperty("DeliveryFailureReason").GetString());
+        Assert.DoesNotContain("<redacted>", output.ToString());
+        Assert.DoesNotContain("clearance-secret", output.ToString());
+        Assert.DoesNotContain("private-query", output.ToString());
+    }
+
     [Fact]
     public async Task BodyForOneRequestIsNeverDeliveredForAnotherRequest()
     {
@@ -370,8 +469,8 @@ public sealed class CloudflareChallengeSolverTests
         Assert.Contains("solverHttpStatus=200", log);
         Assert.Contains("solutionStatus=" + status, log);
         Assert.Contains("contentKind=" + kind, log);
-        Assert.Contains("cookieCount=1", log);
-        Assert.Contains("cookieRetryChallenged=" + (challenged?.ToString() ?? "not-attempted"), log);
+        Assert.Contains("clearanceCount=1", log);
+        Assert.Contains("retryRechallenged=" + (challenged?.ToString() ?? "not-attempted"), log);
         Assert.Contains("deliveryPath=" + path, log);
         Assert.Contains("elapsedMs=", log);
         Assert.DoesNotContain("private-query", log);
@@ -392,6 +491,7 @@ public sealed class CloudflareChallengeSolverTests
         var log = Assert.Single(logs);
         Assert.Contains("solverHttpStatus=503", log);
         Assert.Contains("contentKind=(null)", log);
+        Assert.Contains("deliveryFailureReason=not-attempted", log);
         Assert.Contains("deliveryPath=none", log);
         Assert.DoesNotContain("private-body", log);
         Assert.DoesNotContain("private-query", log);

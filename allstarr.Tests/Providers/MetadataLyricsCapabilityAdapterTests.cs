@@ -58,6 +58,51 @@ public sealed class MetadataLyricsCapabilityAdapterTests
     }
 
     [Fact]
+    public async Task BiniDeliversWrappedLookupAndStorageAfterEmptyIsrcAndRedirects()
+    {
+        var targets = new List<Uri>();
+        var solver = new CloudflareChallengeSolver(new HttpClient(new Handler((request, _) =>
+        {
+            using var payload = JsonDocument.Parse(request.Content!.ReadAsStringAsync().GetAwaiter().GetResult());
+            var target = new Uri(payload.RootElement.GetProperty("url").GetString()!);
+            targets.Add(target);
+            var body = targets.Count == 1 ? "{\"results\":[]}" : target.Host == "lyrics-api.binimum.org" ? Lookup : Ttml;
+            return Response(JsonSerializer.Serialize(new
+            {
+                status = "ok",
+                solution = new
+                {
+                    url = new UriBuilder(target) { Path = target.AbsolutePath.TrimEnd('/') + "/" }.Uri.AbsoluteUri,
+                    status = 200,
+                    response = "<html><head></head><body><pre>" + WebUtility.HtmlEncode(body) + "</pre></body></html>",
+                    headers = new Dictionary<string, string> { ["Content-Type"] = "application/octet-stream" },
+                    userAgent = "FixtureBrowser/1.0",
+                    cookies = Array.Empty<object>()
+                }
+            }));
+        })), _ => Task.FromResult(new ChallengeSolverOptions("http://solver:8191", 60)));
+        using var client = new HttpClient(new CloudflareChallengeHandler(solver, ["lyrics-api.binimum.org", "lyrics-storage.binimum.org"])
+        {
+            InnerHandler = new Handler((_, _) =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.TemporaryRedirect) { Content = new StringContent("") };
+                response.Headers.Server.ParseAdd("cloudflare");
+                response.Headers.TryAddWithoutValidation("cf-mitigated", "challenge");
+                return response;
+            })
+        });
+        var adapter = new BiniLyricsCapabilityAdapter(client, null, solver: solver);
+        var value = (await adapter.FetchLyricsAsync(Context("binilyrics"), Request("binilyrics", isrc: "USABC1234567"))).RequireValue();
+        Assert.Equal("[00:01.250]Synthetic words", value.Content);
+        Assert.Equal(new[]
+        {
+            "https://lyrics-api.binimum.org/?isrc=USABC1234567",
+            "https://lyrics-api.binimum.org/?track=Fixture&artist=Artist&album=Album&duration=180",
+            "https://lyrics-storage.binimum.org/USABC1234567.ttml"
+        }, targets.Select(target => target.AbsoluteUri));
+    }
+
+    [Fact]
     public async Task BiniContractUsesIsrcThenDownloadsFirstRankedTtmlWithWordTiming()
     {
         var handler = new Handler((_, index) => Response(index == 1 ? Lookup : Ttml));
