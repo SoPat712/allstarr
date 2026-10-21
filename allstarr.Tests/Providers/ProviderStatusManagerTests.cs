@@ -258,6 +258,46 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal("?id=1558533900", uri.Query);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PaxsenixProbeReportsUpstreamBusyOrTimedOutWithinSixSeconds(bool hang)
+    {
+        var clock = new ManualTimeProvider();
+        using var client = new HttpClient(new PaxsenixProbeHandler(hang));
+        var apple = AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(request =>
+            Json(HttpStatusCode.OK, request.RequestUri!.AbsolutePath.EndsWith("/search", StringComparison.Ordinal)
+                ? "{\"results\":{\"songs\":{\"data\":[]}}}"
+                : "{\"data\":[{\"id\":\"987654\",\"attributes\":{\"name\":\"Never Gonna Give You Up\",\"artistName\":\"Rick Astley\"}}]}"))));
+        var adapter = new allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter(client, null,
+            new allstarr.Core.Providers.Lyrics.PaxsenixRequestPacer(clock, TimeSpan.Zero), clock,
+            new AppleMusicKitMetadataCapabilityAdapter(apple));
+        var services = new ServiceCollection().AddSingleton(apple).AddSingleton(adapter).BuildServiceProvider();
+        var manager = CreateManager(new Dictionary<string, string?>(),
+            httpClientFactory: new HandlerHttpClientFactory(new PaxsenixProbeHandler(hang)), services: services);
+
+        var pending = manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
+        if (hang)
+        {
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
+            clock.Advance(TimeSpan.FromSeconds(4));
+        }
+        var status = await pending;
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", status.ReasonCode);
+        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 6000);
+        Assert.Equal(status.ReasonCode, manager.GetAccountFreeStatus("paxsenix", "lyrics").ReasonCode);
+    }
+
+    private sealed class PaxsenixProbeHandler(bool hang) : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (hang) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new(HttpStatusCode.ServiceUnavailable);
+        }
+    }
+
     [Fact]
     public async Task PaxsenixProbeReportsMissingAppleWebToken()
     {
@@ -932,6 +972,55 @@ public sealed class ProviderStatusManagerTests
         Assert.Equal(ProviderHealthState.Degraded, status.Health);
         Assert.Equal("apple-web-token-unavailable", status.ReasonCode);
         Assert.Equal(tokens.ObservedAt, status.TestedAt);
+    }
+
+    [Theory]
+    [InlineData("paxsenix")]
+    [InlineData("lrclib")]
+    [InlineData("lyricsplus")]
+    [InlineData("musixmatch")]
+    [InlineData("spotify")]
+    public async Task SourcesWithoutStreaming_IgnoreOldPlaybackEvidenceAndRejectPlaybackProbes(string provider)
+    {
+        var http = new CountingHttpClientFactory();
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: http);
+        var account = Guid.NewGuid();
+        var key = ProviderRuntimeStatusKey.CreateManaged(provider, "streaming", account);
+        manager.RestoreCheckResult(key, 1, new ProviderRuntimeStatus
+        {
+            Provider = provider,
+            Capability = "streaming",
+            IsSupported = true,
+            IsEnabled = true,
+            Configuration = ProviderConfigurationState.NotRequired,
+            Health = ProviderHealthState.Degraded,
+            TestedAt = DateTimeOffset.UtcNow,
+            ReasonCode = "probe_failed"
+        });
+        manager.RecordTryResult(provider, "streaming", account, 1, false, 1, "timeout");
+
+        var unsupported = manager.GetManagedStatus(provider, "streaming", account, new Dictionary<string, string>(), 1);
+        Assert.False(unsupported.IsSupported);
+        Assert.Equal(ProviderHealthState.Unknown, unsupported.Health);
+        Assert.Null(unsupported.TestedAt);
+        Assert.False(manager.CanTestCapability(provider, "streaming"));
+        var tested = await manager.TestManagedProviderCapabilityAsync(provider, "streaming", account, new Dictionary<string, string>());
+        Assert.Null(tested.TestedAt);
+        Assert.DoesNotContain(manager.GetAllManagedStatuses(provider, account, new Dictionary<string, string>(), 1),
+            item => item.Capability is "streaming" or "download");
+        Assert.DoesNotContain(manager.GetAllAccountFreeStatuses().Where(item => item.Provider == provider),
+            item => item.Capability is "streaming" or "download");
+        Assert.Equal(0, http.CreateCount);
+    }
+
+    [Fact]
+    public void LyricsTryFailure_PreservesTheSpecificUpstreamReason()
+    {
+        var manager = CreateManager(new Dictionary<string, string?>());
+        manager.RecordTryResult("paxsenix", "lyrics", null, null, false, 4, "lyrics-upstream-busy-or-timed-out");
+        var status = manager.GetAccountFreeStatus("paxsenix", "lyrics");
+        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal("lyrics-upstream-busy-or-timed-out", status.ReasonCode);
     }
 
     private static ProviderStatusManager CreateManager(

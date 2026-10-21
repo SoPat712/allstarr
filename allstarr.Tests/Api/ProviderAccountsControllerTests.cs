@@ -192,12 +192,22 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
             DisplayName = "Road trip",
             Scope = "Shared"
         }));
+        var health = new ProviderRuntimeHealth();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var account = await db.ProviderAccounts.FirstAsync();
+            health.Record(ProviderRuntimeStatusKey.CreateManaged("deezer", "intelligence", account.Id),
+                account.Revision, false, 1, "timeout");
+        }
+        var status = new ProviderStatusManager(new ConfigurationBuilder().Build(), Mock.Of<IHttpClientFactory>(),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
         await using var services = new ServiceCollection()
             .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
-            .AddSingleton(new ProviderRuntimeHealth()).BuildServiceProvider();
+            .AddSingleton(health).BuildServiceProvider();
         var controller = new AdminUiController(new ConfigurationBuilder().Build(),
             Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()),
-            Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, null!,
+            Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, status,
             new ProviderAccountOptions(), null!)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext { RequestServices = services } }

@@ -1,8 +1,23 @@
 import { checkGuide } from "./sources";
 
-export type DiagnosticFailure = { stage?: string; failureCode?: string | null; reasonCode?: string | null; error?: string | null };
+export type DiagnosticFailure = {
+  stage?: string; failureCode?: string | null; reasonCode?: string | null; error?: string | null;
+  metric?: string; capability?: string | null;
+  failedCapabilities?: { capability: string; reasonCode?: string | null }[];
+};
 export function diagnosticFailureMessage(result: DiagnosticFailure) {
+  const failed = result.metric === "api-latency" ? result.failedCapabilities?.[0] : undefined;
+  if (failed) return diagnosticFailureMessage({ ...failed, metric: "api-latency" });
   const code = (result.failureCode ?? result.reasonCode ?? result.error ?? "").toLowerCase();
+  if (code === "lyrics-upstream-busy-or-timed-out" || result.capability === "lyrics" &&
+    ["timeout", "service_unavailable"].includes(code))
+    return "The lyrics upstream is busy or timed out. Try another lyrics source.";
+  if (result.metric === "api-latency" || result.capability && !["streaming", "download"].includes(result.capability)) {
+    const guide = checkGuide(code);
+    if (guide && code !== "service_unavailable") return guide.step;
+    const capability = result.capability ?? "connection";
+    return `The ${capability} check failed. Check this source's connection and setup, then try again.`;
+  }
   if (code === "service_unavailable" || code === "timeout") return checkGuide(code)!.step;
   if (code.includes("account_mismatch") || code.includes("account-mismatch"))
     return "Use the same Apple account for the Media User Token and playback sign-in. Check steps 1 and 2.";

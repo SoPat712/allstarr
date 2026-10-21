@@ -13,7 +13,10 @@ namespace allstarr.Core.Providers.Lyrics;
 public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
 {
     public const string HttpClientName = "PaxsenixLyrics";
+    public static readonly TimeSpan OverallLookupBudget = TimeSpan.FromSeconds(6);
+    public static readonly TimeSpan PerRequestTimeout = TimeSpan.FromSeconds(4);
     private readonly PaxsenixRequestPacer _pacer;
+    private readonly PaxsenixFailureCache _failures;
     private readonly TimeProvider _clock;
     private readonly AppleMusicKitMetadataCapabilityAdapter? _apple;
     private readonly Func<ITrackIdentityService?>? _identities;
@@ -22,28 +25,28 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
     public override string ProviderId => "paxsenix";
     protected override TimeProvider Clock => _clock;
     protected override string CacheScope(ProviderLyricsRequest request) => $"apple:{request.CanonicalRecordingId:N}:";
-    protected override TimeSpan LookupBudget => TimeSpan.FromSeconds(18);
-    protected override TimeSpan RequestTimeout => TimeSpan.FromSeconds(8);
+    protected override TimeSpan LookupBudget => OverallLookupBudget;
+    protected override TimeSpan RequestTimeout => PerRequestTimeout;
+    protected override ProviderError LookupTimeoutError => ProviderError.LyricsUpstreamBusyOrTimedOut();
 
     public PaxsenixCapabilityAdapter(HttpClient http, IApplicationCache? cache,
         AppleMusicKitMetadataCapabilityAdapter? apple = null, Func<ITrackIdentityService?>? identities = null,
         Func<TimeSpan>? lyricsTtl = null)
-        : this(http, cache, PaxsenixRequestPacer.Shared, TimeProvider.System, apple, identities, lyricsTtl) { }
+        : this(http, cache, PaxsenixRequestPacer.Shared, TimeProvider.System, apple, identities, lyricsTtl, PaxsenixFailureCache.Shared) { }
 
     internal PaxsenixCapabilityAdapter(HttpClient http, IApplicationCache? cache,
         PaxsenixRequestPacer pacer, TimeProvider clock, AppleMusicKitMetadataCapabilityAdapter? apple = null,
-        Func<ITrackIdentityService?>? identities = null, Func<TimeSpan>? lyricsTtl = null)
+        Func<ITrackIdentityService?>? identities = null, Func<TimeSpan>? lyricsTtl = null, PaxsenixFailureCache? failures = null)
         : base(http, cache, lyricsTtl)
     {
         _pacer = pacer;
+        _failures = failures ?? new(clock);
         _clock = clock;
         _apple = apple;
         _identities = identities;
         _cache = cache;
         _lyricsTtl = lyricsTtl;
     }
-
-    protected override Task BeforeRequestAsync(CancellationToken token) => _pacer.WaitAsync(token);
 
     protected override Task<ProviderOutcome<ProviderLyricsResult>> ReadAsync(ProviderLyricsRequest request, CancellationToken token) =>
         ReadCoreAsync(null, request, token);
@@ -62,6 +65,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
         var attempted = new HashSet<string>(StringComparer.Ordinal);
         ProviderError? transient = null;
         var unavailable = false;
+        var sent = 0;
         await foreach (var candidate in ResolveAppleIdsAsync(appleContext, request, token))
         {
             token.ThrowIfCancellationRequested();
@@ -72,12 +76,31 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             }
             var id = candidate.Id!;
             if (!IsCatalogId(id) || !attempted.Add(id)) continue;
-            var response = await GetResponseAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(id)}"), token);
+            if (_failures.Contains(id))
+            {
+                transient = ProviderError.LyricsUpstreamBusyOrTimedOut();
+                continue;
+            }
+            await _pacer.WaitAsync(token);
+            (string? Content, ProviderError? Error, HttpStatusCode? StatusCode) response;
+            try
+            {
+                sent++;
+                response = await GetResponseAsync(new($"https://lyrics.paxsenix.org/apple-music/lyrics?id={Uri.EscapeDataString(id)}"), token);
+            }
+            catch (OperationCanceledException) when (context?.CancellationToken.IsCancellationRequested != true)
+            {
+                _failures.Remember(id);
+                throw;
+            }
             if (response.Error != null)
             {
                 // Busy songs answer 5xx or hang until the request timeout (no status); try the next copy.
-                if (response.StatusCode is null or >= HttpStatusCode.InternalServerError)
-                    transient = response.Error;
+                if (response.StatusCode is null or HttpStatusCode.RequestTimeout or >= HttpStatusCode.InternalServerError)
+                {
+                    _failures.Remember(id);
+                    transient = ProviderError.LyricsUpstreamBusyOrTimedOut();
+                }
                 else return ProviderOutcome<ProviderLyricsResult>.Failure(response.Error);
             }
             else
@@ -91,7 +114,7 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
                 }
                 unavailable = true;
             }
-            if (attempted.Count == 3) break;
+            if (sent == 3) break;
         }
         return unavailable || transient == null ? Unavailable() : ProviderOutcome<ProviderLyricsResult>.Failure(transient);
     }

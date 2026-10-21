@@ -397,6 +397,24 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
     }
 
     [Theory]
+    [InlineData("paxsenix")]
+    [InlineData("lrclib")]
+    [InlineData("lyricsplus")]
+    [InlineData("musixmatch")]
+    [InlineData("spotify")]
+    public async Task StreamingTest_ForLyricsSourcesRejectsTheCapabilityBeforeMediaExecution(string provider)
+    {
+        var accountId = Guid.NewGuid();
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.ProviderAccounts.Add(new() { Id = accountId, ProviderId = provider, DisplayName = "Lyrics fixture", Enabled = true });
+            await db.SaveChangesAsync();
+        }
+        var controller = CreateController(CreateHttpContextWithSession(isAdmin: true));
+        Assert.IsType<BadRequestObjectResult>(await Diagnostics(controller).TestProvider(provider, "streaming", accountId));
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ManagedMediaTest_UsesExactEncryptedAccountAndVolatileStreamingStatus(bool serviceFailure)

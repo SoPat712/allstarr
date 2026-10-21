@@ -25,3 +25,22 @@ it("explains a download service failure without suggesting setup changes", () =>
 it("explains a diagnostic timeout", () => {
   expect(diagnosticFailureMessage({ stage: "resolve", reasonCode: "timeout" })).toContain("too long");
 });
+
+
+it.each(["lyrics", "metadata", "playlist", "intelligence"])("keeps %s probe failures separate from playback", (capability) => {
+  const message = diagnosticFailureMessage({ metric: "api-latency", capability, reasonCode: "probe_failed" });
+  expect(message.toLowerCase()).toContain(capability);
+  expect(message.toLowerCase()).not.toContain("playback");
+});
+
+it.each(["timeout", "service_unavailable", "lyrics-upstream-busy-or-timed-out"])("explains a busy lyrics probe with %s", (reasonCode) => {
+  const message = diagnosticFailureMessage({ metric: "api-latency", capability: "lyrics", reasonCode });
+  expect(message).toContain("lyrics upstream is busy or timed out");
+  expect(message).not.toContain("playback");
+});
+
+it("explains a connection check's failed lyrics capability", () => {
+  expect(diagnosticFailureMessage({ metric: "api-latency", failedCapabilities: [
+    { capability: "lyrics", reasonCode: "lyrics-upstream-busy-or-timed-out" },
+  ] })).toContain("lyrics upstream is busy or timed out");
+});

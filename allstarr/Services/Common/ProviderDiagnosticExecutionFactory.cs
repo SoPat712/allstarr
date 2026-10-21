@@ -14,7 +14,8 @@ public sealed class ProviderDiagnosticExecutionFactory(
         CancellationToken token)
     {
         var descriptor = providers.GetRequired(providerId);
-        var selected = descriptor.Capabilities.Single(item => item.Capability == capability);
+        var selected = descriptor.Capabilities.SingleOrDefault(item => item.Capability == capability && item.HasUsableImplementation);
+        if (selected == null) return new(null, 404, "unsupported_capability");
         if (accountId == Guid.Empty) accountId = null;
         if (selected.AccountRequirement == ProviderAccountRequirement.Required && !accountId.HasValue)
             return new(null, descriptor.UsesSignedSession ? 409 : 400,

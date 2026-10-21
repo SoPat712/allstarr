@@ -210,9 +210,11 @@ public class AdminUiController : ControllerBase
             .GroupBy(item => item.ProviderId, StringComparer.OrdinalIgnoreCase)
             .Select(group =>
             {
-                var samples = group.SelectMany(account => Enum.GetValues<ProviderCapabilityKind>()
-                    .Select(capability => health.Get(ProviderRuntimeStatusKey.CreateManaged(
-                        account.ProviderId, capability.ToString(), account.Id), account.Revision)))
+                var samples = group.SelectMany(account => _providerStatusManager.GetAllManagedStatuses(
+                        account.ProviderId, account.Id, new Dictionary<string, string>(), account.Revision)
+                    .Where(status => status.IsSupported)
+                    .Select(status => health.Get(ProviderRuntimeStatusKey.CreateManaged(
+                        account.ProviderId, status.Capability, account.Id), account.Revision)))
                     .OfType<ProviderHealthObservation>().ToList();
                 var healthy = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Healthy);
                 var failed = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Degraded);

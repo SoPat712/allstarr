@@ -91,7 +91,7 @@ public sealed class ProtocolLyricsResolver(
         var lookupKey = preference.RecordingId?.ToString("N") ?? resourceKey;
         LyricsInfo? plainFallback = null;
         await foreach (var candidate in ReadCandidatesAsync(protocol, song, lookupKey,
-            sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId))
+            sourceProvider, sourceExternalId, spotifyTrackId, sources, preference.SourceId, preference.RecordingId, skipPaxsenixAfterPlainLyrics: true))
         {
             var lyrics = candidate.Lyrics;
             if (lyrics == null) continue;
@@ -144,7 +144,8 @@ public sealed class ProtocolLyricsResolver(
         string? spotifyTrackId,
         ProtocolLyricsSources? sources,
         string? preferredSourceId = null,
-        Guid? canonicalRecordingId = null)
+        Guid? canonicalRecordingId = null,
+        bool skipPaxsenixAfterPlainLyrics = false)
     {
         ArgumentNullException.ThrowIfNull(protocol);
         ArgumentNullException.ThrowIfNull(song);
@@ -231,10 +232,14 @@ public sealed class ProtocolLyricsResolver(
         if (sources?.OnlySourceId is { } onlySource)
             order = order.Where(item => string.Equals(item, onlySource, StringComparison.Ordinal)).ToArray();
 
+        var hasPlainLyrics = false;
         foreach (var providerId in order.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             protocol.CancellationToken.ThrowIfCancellationRequested();
-            yield return new ProtocolLyricsCandidate(providerId, await ReadOneAsync(providerId));
+            if (skipPaxsenixAfterPlainLyrics && hasPlainLyrics && providerId == "paxsenix") continue;
+            var lyrics = await ReadOneAsync(providerId);
+            hasPlainLyrics |= !string.IsNullOrWhiteSpace(lyrics?.PlainLyrics);
+            yield return new ProtocolLyricsCandidate(providerId, lyrics);
         }
 
         async Task<LyricsInfo?> ReadOneAsync(string providerId)

@@ -16,7 +16,8 @@ namespace allstarr.Controllers;
 public sealed class ProviderDiagnosticsController(
     IDbContextFactory<AllstarrDbContext> contextFactory,
     ProviderCtsDiagnosticRunner diagnosticRunner,
-    IEffectiveProviderPolicyResolver providerPolicy) : ControllerBase
+    IEffectiveProviderPolicyResolver providerPolicy,
+    IProviderRegistry providers) : ControllerBase
 {
     [HttpGet("deep-stream/latest")]
     public async Task<IActionResult> LatestDeepStream(CancellationToken cancellationToken)
@@ -34,6 +35,8 @@ public sealed class ProviderDiagnosticsController(
             .Select(item => ParseMeasurement(item.DetailsJson, item.CreatedAt))
             .Where(item => item != null)
             .Cast<CtsMeasurement>()
+            .Where(item => providers.TryGetCapability<IProviderStreamingCapability>(
+                item.ProviderId, ProviderCapabilityKind.Streaming, out _))
             .GroupBy(item => new { item.ProviderAccountId, item.ProviderId })
             .Select(group => group.First())
             .ToArray();

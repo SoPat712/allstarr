@@ -198,6 +198,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
 
         if (capability == ProviderCapabilities.Streaming)
         {
+            if (!statusManager.GetManagedStatus(normalizedProvider, capability, account.Id, accountSecrets, account.Revision).IsSupported)
+                return BadRequest(new { success = false, provider = normalizedProvider, capability, error = "Unsupported provider capability" });
             var media = await MeasureMediaAsync(account);
             return media == null
                 ? Conflict(new { error = "A verified administrator identity is required." })
