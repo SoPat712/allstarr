@@ -10,6 +10,89 @@ namespace allstarr.Tests;
 public sealed partial class ExtensionCapabilityAdapterTests
 {
     [Fact]
+    public async Task CatalogPlaylistProbe_RemembersTheNativePlaylistWhenSearchResultsChange()
+    {
+        const string script = """
+            var searches=0;
+            registerExtension({customSearch:function(){
+              http.get('https://catalog.example.test/search');
+              return ++searches === 1 ? [{id:'playlist',name:'Classics',item_type:'playlist'}] : [];
+            },getPlaylist:function(id){
+              http.get('https://catalog.example.test/playlist/'+id);
+              return {id:id,name:'Classics',tracks:[{id:'song',name:'Song'}]};
+            }});
+            """;
+        await WithCatalogProbe(script, HttpStatusCode.OK, async (adapter, manifest, requests) =>
+        {
+            Assert.Equal(ProviderProbeStatus.Healthy, (await adapter.ProbeAsync(Context(manifest.Id),
+                new(ProviderCapabilityKind.Playlist))).RequireValue().Status);
+            requests.Clear();
+            Assert.Equal(ProviderProbeStatus.Healthy, (await adapter.ProbeAsync(Context(manifest.Id),
+                new(ProviderCapabilityKind.Playlist))).RequireValue().Status);
+            Assert.Equal(["/playlist/playlist"], requests);
+        });
+    }
+
+    [Fact]
+    public async Task CatalogPlaylistProbe_TriesCuratedPlaylistsBeforeDiscovery()
+    {
+        const string script = """
+            registerExtension({customSearch:function(query){
+              http.get('https://catalog.example.test/search?q='+encodeURIComponent(query));
+              if(!/classics|essentials|hits/i.test(query)) throw new Error('Expected a curated playlist query');
+              return [{id:'playlist',name:'Classics',item_type:'playlist'}];
+            },getPlaylist:function(id){return {id:id,tracks:[{id:'song',name:'Song'}]};}});
+            """;
+        await WithCatalogProbe(script, HttpStatusCode.OK, async (adapter, manifest, requests) =>
+        {
+            var result = await adapter.ProbeAsync(Context(manifest.Id), new(ProviderCapabilityKind.Playlist));
+            Assert.Equal(ProviderProbeStatus.Healthy, result.RequireValue().Status);
+            Assert.Single(requests);
+        });
+    }
+
+    [Theory]
+    [InlineData("throw new Error('HTTP 404');")]
+    [InlineData("return {id:id,tracks:[{name:'Missing identifier'}]};")]
+    public async Task CatalogPlaylistProbe_TriesTheNextNativeResultAfterAnUnusableSample(string missing)
+    {
+        var script = """
+            registerExtension({customSearch:function(){
+              return [1,2].map(function(id){return {id:String(id),name:'Playlist',item_type:'playlist'};});
+            },getPlaylist:function(id){
+              http.get('https://catalog.example.test/playlist/'+id);
+              if(id === '1') { MISSING }
+              return {id:id,name:'Playlist',tracks:[{id:'song',name:'Song'}]};
+            }});
+            """.Replace("MISSING", missing, StringComparison.Ordinal);
+        await WithCatalogProbe(script, HttpStatusCode.OK, async (adapter, manifest, requests) =>
+        {
+            var result = await adapter.ProbeAsync(Context(manifest.Id), new(ProviderCapabilityKind.Playlist));
+            Assert.Equal(ProviderProbeStatus.Healthy, result.RequireValue().Status);
+            Assert.Equal(["/playlist/1", "/playlist/2"], requests);
+        });
+    }
+
+    [Fact]
+    public async Task CatalogPlaylistProbe_RegistersNativeDiscoveryWithoutSongSearch()
+    {
+        const string script = """
+            registerExtension({getTrack:function(){},getPlaylist:function(id){
+              http.get('https://catalog.example.test/playlist/'+id);
+              return {id:id,name:'Playlist',tracks:[{id:'song',name:'Song'}]};
+            }});
+            """;
+        await WithCatalogProbe(script, HttpStatusCode.OK, async (adapter, manifest, requests) =>
+        {
+            Assert.Contains("probePlaylist", Assert.Single(manifest.Capabilities,
+                item => item.Kind == ProviderCapabilityKind.Health).Hooks);
+            var result = await adapter.ProbeAsync(Context(manifest.Id), new(ProviderCapabilityKind.Playlist));
+            Assert.Equal(ProviderProbeStatus.Healthy, result.RequireValue().Status);
+            Assert.Equal(["/dj/djfind/djfind_inform.htm", "/playlist/901234567"], requests);
+        }, "melon.com");
+    }
+
+    [Fact]
     public async Task CatalogProbe_RegistersSupportedLookupsWithoutServiceHealth()
     {
         const string script = """

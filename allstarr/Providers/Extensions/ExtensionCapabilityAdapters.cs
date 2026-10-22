@@ -638,7 +638,8 @@ public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapte
                 targetCapability = request.TargetCapability.ToString(),
                 request.NonDestructive,
                 sampleQuery = sample?.Query.Trim(),
-                sampleIsrc = sample?.Isrc
+                sampleIsrc = sample?.Isrc,
+                sampleId = request.TargetCapability == ProviderCapabilityKind.Playlist ? sample?.TrackId : null
             }, value =>
             {
                 observedSampleId = OptionalText(value, "sampleId");
@@ -652,8 +653,10 @@ public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapte
             });
         if (!Hooks.Contains(hook) || request.TargetCapability is not (ProviderCapabilityKind.Metadata or ProviderCapabilityKind.Playlist))
             return await Invoke(context, null);
-        var result = await _diagnosticSamples.CheckAsync($"{context.ProviderId}:{context.Account?.AccountId}:{hook}",
-            ProviderDiagnosticSamples.Recordings(context.ProviderId), async (sample, token) =>
+        var sampleKey = $"{context.ProviderId}:{context.Account?.AccountId}:{hook}";
+        var result = await _diagnosticSamples.CheckAsync(sampleKey,
+            request.TargetCapability == ProviderCapabilityKind.Playlist ? ProviderDiagnosticSamples.Playlists :
+                ProviderDiagnosticSamples.Recordings(context.ProviderId), async (sample, token) =>
             {
                 var outcome = await Invoke(ProviderDiagnosticSamples.WithCancellation(context, token), sample);
                 if (!outcome.IsSuccess)
@@ -675,6 +678,9 @@ public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapte
                     ? observedFailures.Select(id => "native:" + id) : [observedSampleId == null ? "query:" + sample.Query : "native:" + observedSampleId]);
             }, DiscoverAsync, context.CancellationToken);
         if (direct != null) return direct;
+        if (result.Success && request.TargetCapability == ProviderCapabilityKind.Playlist && observedSampleId != null &&
+            _diagnosticSamples.LastWorking(sampleKey) is { } working)
+            _diagnosticSamples.Remember(sampleKey, working with { TrackId = observedSampleId });
         return ProviderOutcome<ProviderHealthProbeResult>.Success(new(result.Success ? ProviderProbeStatus.Healthy : ProviderProbeStatus.Unavailable,
             DateTimeOffset.UtcNow, Stopwatch.GetElapsedTime(started), result.SampleUnavailable ? "sample-unavailable" : result.ReasonCode));
 

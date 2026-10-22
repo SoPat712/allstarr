@@ -37,6 +37,11 @@ public sealed class ProviderDiagnosticSamples(TimeProvider? timeProvider = null,
     public static IReadOnlyList<ProviderDiagnosticSample> Recordings(string providerId) =>
         providerId == "spotify" ? Catalog : Catalog.Select(item => item with { TrackId = null }).ToArray();
 
+    public static IReadOnlyList<ProviderDiagnosticSample> Playlists { get; } = new[]
+    {
+        "80s hits", "90s hits", "Rock classics", "Classical essentials", "Jazz classics", "K-pop classics", "Soul classics", "Dance classics"
+    }.Select(query => new ProviderDiagnosticSample(query, "", null, 0)).ToArray();
+
     public static IReadOnlyList<string> DiscoveryQueries(string providerId) => providerId.Contains("jiosaavn", StringComparison.OrdinalIgnoreCase)
         ? ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal", "Lata Mangeshkar", "Kishore Kumar", "Diljit Dosanjh", "Shankar Mahadevan", "Ilaiyaraaja"]
         : providerId.Contains("melon", StringComparison.OrdinalIgnoreCase)
