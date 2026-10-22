@@ -204,6 +204,25 @@ public static class SpotiFlacExtensionCompatibility
                 patterns = handler["patterns"] as JsonArray;
         }
         root["urlPatterns"] = patterns?.DeepClone() ?? new JsonArray();
+        if (original?["serviceHealth"] is JsonArray endpoints && endpoints.OfType<JsonObject>().Any(item =>
+                Uri.TryCreate(Text(item, "url"), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
+                Text(item, "method", "GET").ToUpperInvariant() is "GET" or "HEAD"))
+        {
+            var hooks = capabilities.OfType<JsonObject>()
+                .Select(item => Text(item, "kind"))
+                .Where(kind => kind is "Metadata" or "Playlist" or "Streaming" or "Download" or "Intelligence")
+                .Select(kind => (JsonNode?)JsonValue.Create("probe" + kind)).ToArray();
+            if (hooks.Length > 0)
+            {
+                var health = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Health");
+                if (health == null)
+                {
+                    health = Capability("Health", false, false);
+                    capabilities.Add(health);
+                }
+                health["hooks"] = new JsonArray(hooks);
+            }
+        }
         return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
@@ -594,7 +613,7 @@ public static class SpotiFlacExtensionCompatibility
         function _sfQualitySelection(request) {
           var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
           return request.prepareForStreaming && selection.streaming
-            ? { id: selection.streaming, streamingDowngrade: true } : selection;
+            ? { id: selection.streaming, fallback: selection.id, streamingDowngrade: true } : selection;
         }
         var _allstarrInitializedSettings = null;
         function _allstarrInitialize(settings) {
@@ -809,6 +828,26 @@ public static class SpotiFlacExtensionCompatibility
           prepared.host_track = track || prepared.host_track || _sfDownloadTrack(request);
           return { preparedContext: prepared, resolutionTimeoutMs: utils.getResolutionRemainingMs() };
         }
+        function _sfProbeServiceHealth() {
+          var started = Date.now();
+          var endpoints = (_sfManifest.serviceHealth || []).filter(function(item) {
+            return item && /^https:\/\//i.test(String(item.url || '')) && /^(GET|HEAD)$/i.test(String(item.method || 'GET'));
+          }).slice(0, 16);
+          var status = endpoints.length === (_sfManifest.serviceHealth || []).length ? 'Healthy' : 'Unavailable';
+          for (var i = 0; i < endpoints.length; i++) {
+            var endpoint = endpoints[i];
+            var response = null;
+            try { response = http.request(endpoint.url, { method: String(endpoint.method || 'GET').toUpperCase() }); }
+            catch (_) {}
+            var code = response && Number(response.statusCode || response.status || 0);
+            if (!(code >= 200 && code < 300)) {
+              if (endpoint.required !== false) status = 'Unavailable';
+              else if (status === 'Healthy') status = 'Degraded';
+            }
+          }
+          return { status: endpoints.length ? status : 'Unavailable', observedAt: new Date().toISOString(),
+            latencyMs: Math.max(0, Date.now() - started), safeCode: endpoints.length && status === 'Healthy' ? null : 'service_unavailable' };
+        }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
           return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
@@ -860,6 +899,11 @@ public static class SpotiFlacExtensionCompatibility
         _registeredExtension = {
           initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _allstarrInitialize(settings || {}) : true; },
           cleanup: function() { return typeof _spotiflacExtension.cleanup === 'function' ? _spotiflacExtension.cleanup() : true; },
+          probeMetadata: _sfProbeServiceHealth,
+          probePlaylist: _sfProbeServiceHealth,
+          probeStreaming: _sfProbeServiceHealth,
+          probeDownload: _sfProbeServiceHealth,
+          probeIntelligence: _sfProbeServiceHealth,
           handleUrl: function(request) {
             return typeof _spotiflacExtension.handleUrl === 'function' ? _spotiflacExtension.handleUrl(request.url) : null;
           },
@@ -975,6 +1019,17 @@ public static class SpotiFlacExtensionCompatibility
               if (!selection.fallback || _sfStopQualityFallback(error) || utils.getResolutionRemainingMs() < 30000)
                 throw _sfDownloadError(error);
               quality = selection.fallback;
+              _sfForgetPrepared(request.trackId);
+              track = track || _sfDownloadTrack(request);
+              if (typeof _spotiflacExtension.checkAvailability === 'function') {
+                var retryOptions = _sfAvailabilityOptions(request, track);
+                retryOptions.quality = quality;
+                try {
+                  var retryAvailability = _sfCheckAvailability(request, retryOptions);
+                  if (retryAvailability && retryAvailability.available !== false)
+                    trackId = _sfPreferredTrackId(retryOptions, retryAvailability.track_id, trackId);
+                } catch (_) {}
+              }
               host.PreparePatternedDownload(String(trackId));
               result = _spotiflacExtension.download(trackId, quality, output, function() {}, _sfDownloadOptions(request, trackId, track));
             }
@@ -998,9 +1053,9 @@ public static class SpotiFlacExtensionCompatibility
             var codec = String(result.audio_codec || (extension === '.m4a' ? 'aac' : extension.replace('.', '')) || 'unknown');
             var mime = extension === '.flac' ? 'audio/flac' : extension === '.m4a' ? 'audio/mp4' : extension === '.ogg' || extension === '.opus' ? 'audio/ogg' : 'audio/mpeg';
             return { artifactId: written.artifactId, sha256: written.sha256, sizeBytes: written.sizeBytes, verified: written.verified,
-              quality: quality, qualityDowngradeReason: selection.streamingDowngrade
-                ? 'Streaming uses lossless for faster start'
-                : quality !== selection.id ? 'Using ' + quality + ' after ' + selection.id + ' download failed.' : null,
+              quality: quality, qualityDowngradeReason: quality !== selection.id
+                ? 'Using ' + quality + ' after ' + selection.id + ' download failed.'
+                : selection.streamingDowngrade ? 'Streaming uses lossless for faster start' : null,
               media: { mimeType: mime, container: extension.replace('.', '') || 'audio', codec: codec,
                 sampleRate: Number(result.sample_rate || 0) || null, bitDepth: Number(result.bit_depth || 0) || null } };
           }

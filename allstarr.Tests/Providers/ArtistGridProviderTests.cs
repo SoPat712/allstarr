@@ -7,7 +7,7 @@ using allstarr.Core.Providers.ArtistGrid;
 
 namespace allstarr.Tests.Providers;
 
-public sealed class ArtistGridProviderTests
+public sealed partial class ArtistGridProviderTests
 {
     [Theory]
     [InlineData("ogg", "audio/ogg", "ogg", "unknown")]
@@ -51,6 +51,11 @@ public sealed class ArtistGridProviderTests
             if (request.Method == HttpMethod.Head) return new(HttpStatusCode.MethodNotAllowed);
             var response = Response("audio", null, "audio/flac");
             response.StatusCode = HttpStatusCode.PartialContent;
+            if (request.Headers.Range?.ToString() == "bytes=0-0")
+            {
+                response.Content = new StringContent("a", Encoding.UTF8, "audio/flac");
+                response.Content.Headers.ContentRange = new(0, 0, 1000);
+            }
             return response;
         });
         var streaming = new ArtistGridStreamingCapabilityAdapter(new ArtistGridCatalog(client), client);
@@ -63,8 +68,7 @@ public sealed class ArtistGridProviderTests
         using var response = await lease.ProtectedResponseFactory!(outbound, CancellationToken.None);
         Assert.Equal(HttpStatusCode.PartialContent, response.StatusCode);
         Assert.True((await streaming.ProbeStreamAsync(Context(), new(SourceId(url)))).RequireValue().Available);
-        Assert.Equal(new[] { (HttpMethod.Get, (string?)"bytes=0-3"), (HttpMethod.Head, (string?)null),
-            (HttpMethod.Get, (string?)null) }, requests);
+        Assert.Equal(new[] { (HttpMethod.Get, (string?)"bytes=0-3"), (HttpMethod.Get, (string?)"bytes=0-0") }, requests);
     }
 
     [Theory]

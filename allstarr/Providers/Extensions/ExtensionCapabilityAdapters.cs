@@ -615,7 +615,9 @@ public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapte
         var started = Stopwatch.GetTimestamp();
         return InvokeAsync(context, hook, new { targetCapability = request.TargetCapability.ToString(), request.NonDestructive }, value =>
             new ProviderHealthProbeResult(EnumValue<ProviderProbeStatus>(value, "status"), value.GetProperty("observedAt").GetDateTimeOffset(),
-                value.TryGetProperty("latencyMs", out var latency) && latency.TryGetDouble(out var ms) ? TimeSpan.FromMilliseconds(ms) : Stopwatch.GetElapsedTime(started), OptionalText(value, "safeCode")));
+                value.TryGetProperty("latencyMs", out var latency) && latency.ValueKind == JsonValueKind.Number &&
+                latency.TryGetDouble(out var ms) && double.IsFinite(ms) && ms >= 0 && ms < TimeSpan.MaxValue.TotalMilliseconds / 2
+                    ? TimeSpan.FromMilliseconds(ms) : Stopwatch.GetElapsedTime(started), OptionalText(value, "safeCode")));
     }
 }
 

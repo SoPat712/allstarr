@@ -455,7 +455,7 @@ public sealed class ProviderAccountCheckRunnerTests
     [InlineData("healthy")]
     [InlineData("busy")]
     [InlineData("timeout")]
-    public async Task LyricsSweep_UsesTheShortLyricsProbeAndIgnoresStoredPlayback(string outcome)
+    public async Task LyricsSweep_UsesTheBoundedLyricsProbeAndIgnoresStoredPlayback(string outcome)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new ProviderCheckServiceTests.Factory(database.Options);
@@ -491,15 +491,15 @@ public sealed class ProviderAccountCheckRunnerTests
         var pending = runner.SweepAsync(default);
         if (outcome == "timeout")
         {
-            await time.WaitForTimersAsync(TimeSpan.FromSeconds(4));
-            time.Advance(TimeSpan.FromSeconds(4));
+            await time.WaitForTimersAsync(TimeSpan.FromSeconds(8));
+            time.Advance(TimeSpan.FromSeconds(8));
         }
         Assert.Equal(outcome == "healthy", await pending.WaitAsync(TimeSpan.FromSeconds(10)));
         var status = Assert.Single(manager.GetAllAccountFreeStatuses(), item => item.Provider == "paxsenix");
         Assert.Equal("lyrics", status.Capability);
         Assert.Equal(outcome == "healthy" ? ProviderHealthState.Healthy : ProviderHealthState.Degraded, status.Health);
         Assert.Equal(outcome == "healthy" ? null : "lyrics-upstream-busy-or-timed-out", status.ReasonCode);
-        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 6000);
+        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20000);
         Assert.All(handler.Paths, path => Assert.Equal("/apple-music/lyrics", path));
         Assert.NotEmpty(handler.Paths);
         var recorded = Assert.Single(await history.ReadLatestAsync(default), item => item.Key.Capability == "lyrics");

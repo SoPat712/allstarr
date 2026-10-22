@@ -858,7 +858,7 @@ public class ProviderStatusManager
     private IReadOnlyList<(string Provider, string Capability, ProviderAccountRequirement AccountRequirement)> RuntimeCapabilities()
     {
         var extensions = ProviderRegistry?.Providers
-            .Where(provider => provider.Origin == ProviderOrigin.Extension || provider.Id == "monochrome")
+            .Where(provider => provider.Origin == ProviderOrigin.Extension || provider.HealthProbe)
             .SelectMany(provider => provider.Capabilities
                 .Where(capability => capability.Capability != ProviderCapabilityKind.Health)
                 .Select(capability => (
@@ -878,7 +878,7 @@ public class ProviderStatusManager
     {
         descriptor = null;
         if (ProviderRegistry?.TryGet(provider, out var providerDescriptor) != true ||
-            providerDescriptor!.Origin != ProviderOrigin.Extension && providerDescriptor.Id != "monochrome" ||
+            providerDescriptor!.Origin != ProviderOrigin.Extension && !providerDescriptor.HealthProbe ||
             !Enum.TryParse<ProviderCapabilityKind>(capability, true, out var kind))
             return false;
         descriptor = providerDescriptor.Capabilities.SingleOrDefault(item => item.Capability == kind);
@@ -958,8 +958,9 @@ public class ProviderStatusManager
     private async Task<ProbeOutcome> TestMetadataLyricsAsync(string provider,
         IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
     {
-        var probeTimeout = provider is "paxsenix" or "genius"
-            ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
+        var probeTimeout = provider == "paxsenix"
+            ? allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.DiagnosticLookupBudget + TimeSpan.FromSeconds(1)
+            : provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
         var solver = provider == "lyricsplus" ? _services?.GetService<CloudflareChallengeSolver>() : null;
         if (solver != null && await solver.ConfiguredTimeoutAsync(cancellationToken) is { } solveTimeout)
             probeTimeout += solveTimeout;

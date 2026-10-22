@@ -1501,6 +1501,21 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal(["LOSSLESS"], observed.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
         Assert.Equal("LOSSLESS", observed.GetProperty("quality").GetString());
         Assert.Equal("Streaming uses lossless for faster start", outcome.RequireValue().QualityDowngradeReason);
+        Assert.Null(outcome.RequireValue().Media.Bitrate);
+    }
+
+    [Fact]
+    public async Task StreamingDiagnostic_UsesWorkingDeclaredLosslessQualityWhenPlainLosslessFails()
+    {
+        const string failure = "if (quality === 'LOSSLESS') throw new Error('HTTP 503');";
+        var (download, downloadObserved) = await RunDeclaredQualityDownload(MixedQualityOptions, ProviderAudioQuality.HighResolution, failure);
+        Assert.True(download.IsSuccess);
+        Assert.Equal(["HI_RES_LOSSLESS"], downloadObserved.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
+
+        var (stream, streamObserved) = await RunDeclaredQualityDownload(MixedQualityOptions, ProviderAudioQuality.HighResolution,
+            failure, diagnostic: true);
+        Assert.True(stream.IsSuccess, stream.Error?.Code);
+        Assert.Equal(["LOSSLESS", "HI_RES_LOSSLESS"], streamObserved.GetProperty("calls").EnumerateArray().Select(item => item.GetString()));
     }
 
     private sealed record QualityDownloadResult(ProviderMediaFormat Media, string? QualityDowngradeReason);
@@ -1515,7 +1530,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
     }
 
     private static async Task<(ProviderOutcome<QualityDownloadResult> Outcome, JsonElement Observed)> RunDeclaredQualityDownload(
-        string qualityOptions, ProviderAudioQuality requested, string failure = "", bool streaming = false, int elapsedSeconds = 0, bool diagnostic = false)
+        string qualityOptions, ProviderAudioQuality requested, string failure = "", bool streaming = false, int elapsedSeconds = 0,
+        bool diagnostic = false, string? diagnosticFailure = null)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-quality-download", Guid.NewGuid().ToString("N"));
         try
@@ -1532,7 +1548,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                     quality:availabilityOptions.quality,requestedQuality:availabilityOptions.requestedQuality})};},
                   checkAvailability:function(isrc,name,artists,options){
                     availabilityOptions = options;
-                    return {available:true,prepared_context:{marker:'prepared'}};
+                    return {available:true,prepared_context:{marker:'prepared',quality:options.quality}};
                   },
                   download:function(id,quality,path,progress,options){
                     calls.push(quality);
@@ -1568,8 +1584,16 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 var runner = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
                     selector, Mock.Of<IProviderOutcomeObserver>(), timeProvider: clock);
                 var result = await runner.MeasureAsync(context.Actor, manifest.Id, null, requested, "quality-check", trackId.Value);
-                Assert.True(result.Succeeded, result.Error);
-                outcome = ProviderOutcome<QualityDownloadResult>.Success(new(result.Media!, result.QualityDowngradeReason));
+                Assert.Equal(diagnosticFailure == null, result.Succeeded);
+                Assert.Equal(diagnosticFailure, result.ReasonCode);
+                if (result.Succeeded)
+                    outcome = ProviderOutcome<QualityDownloadResult>.Success(new(result.Media!, result.QualityDowngradeReason));
+                else
+                {
+                    Assert.Equal("resolve", result.Stage);
+                    Assert.Equal(0, result.SampleBytes);
+                    outcome = ProviderOutcome<QualityDownloadResult>.Failure(ProviderError.ServiceUnavailable());
+                }
             }
             else if (streaming)
             {
@@ -2011,23 +2035,28 @@ public sealed partial class ExtensionCapabilityAdapterTests
                     new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var artifacts = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
-            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, artifacts, options);
-            var result = await adapter.GetStreamLeaseAsync(Context(manifest.Id),
-                new(new(manifest.Id, ProviderResourceKind.Track, "track")));
+            await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, artifacts, options);
+            var descriptor = new ProviderDescriptor(manifest.Id, manifest.DisplayName, "Fixture", ProviderOrigin.Extension, "1", "1",
+                [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported,
+                    ProviderAccountRequirement.None, "1", ["getStreamLease"])], new(), entryPoint: manifest.EntryPoint);
+            var registry = new ProviderRegistry([new(descriptor, [adapter])]);
+            using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+            var runner = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+                selector, Mock.Of<IProviderOutcomeObserver>());
+            var result = await runner.MeasureAsync(Context(manifest.Id).Actor, manifest.Id, null,
+                ProviderAudioQuality.HighResolution, "stream-upstream", "track");
             Assert.Equal(1, calls);
             if (upstreamFailure)
             {
-                Assert.False(result.IsSuccess);
-                Assert.Equal(ProviderErrorKind.TransientFailure, result.Error!.Kind);
-                Assert.Equal("service_unavailable", result.Error.Code);
+                Assert.False(result.Succeeded);
+                Assert.Equal("resolve", result.Stage);
+                Assert.Equal("service_unavailable", result.ReasonCode);
             }
             else
             {
-                Assert.True(result.IsSuccess, result.Error?.Kind.ToString());
-                var lease = result.RequireValue();
-                using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
-                using var response = await lease.ProtectedResponseFactory!(request, default);
-                Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+                Assert.True(result.Succeeded, result.Error);
+                Assert.Equal(4, result.SampleBytes);
+                Assert.Null(result.Media!.Bitrate);
             }
             Assert.Empty(Directory.GetDirectories(options.RootPath));
         }

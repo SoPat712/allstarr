@@ -48,9 +48,9 @@ describe("source presentation", () => {
     expect(checkGuide("sign_in_needed")?.signIn).toBe(true);
     expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "track-selection" })).toBe("No test song found");
     expect(checkGuide("resolve")?.step).toContain("checked again every 6 hours");
-    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "service_unavailable" })).toBe("Service unavailable");
-    expect(checkGuide("service_unavailable")?.step).toBe("The service's download server is failing right now. Try again later; nothing to change in Allstarr.");
-    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "TransientFailure" })).toBe("Service error");
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "service_unavailable" })).toBe("Source service unavailable");
+    expect(checkGuide("service_unavailable")?.step).toBe("The source service is unavailable. Try again later.");
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "TransientFailure" })).toBe("Source service unavailable");
     expect(checkGuide("AccountNeedsReauthentication")?.signIn).toBe(true);
     expect(checkGuide("some-new-code")).toBeNull();
     expect(checkGuide(null)).toBeNull();
@@ -232,7 +232,11 @@ describe("source presentation", () => {
       failureCode: "Unauthorized",
     };
 
-    expect(ctsMeasurementLabel(measurement)).toBe("Failed");
+    expect(ctsMeasurementLabel(measurement)).toBe("Needs verification");
+    expect(ctsMeasurementLabel({ ...measurement, health: "unknown" })).toBe("Not measured yet");
+    expect(ctsMeasurementLabel({ ...measurement, failureCode: "service_unavailable" })).toBe("Source service unavailable");
+    expect(ctsMeasurementLabel({ ...measurement, failureCode: "http-503" })).toBe("Source service unavailable");
+    expect(ctsMeasurementLabel({ ...measurement, failureCode: "http-501" })).toBe("Source service unavailable");
     expect(ctsMeasurementLabel({ ...measurement, health: "healthy", latencyMs: 42.1 }))
       .toBe("42.1 ms");
   });

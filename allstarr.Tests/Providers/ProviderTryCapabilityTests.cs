@@ -232,7 +232,7 @@ public sealed class ProviderTryCapabilityTests
     }
 
     [Theory]
-    [InlineData(false, ProviderDownloadAvailabilityState.Unavailable, true)]
+    [InlineData(false, ProviderDownloadAvailabilityState.Unavailable, false)]
     [InlineData(true, ProviderDownloadAvailabilityState.Available, true)]
     [InlineData(true, ProviderDownloadAvailabilityState.Unavailable, false)]
     public async Task Download_probe_checks_availability_only_when_the_hook_exists(bool checkAvailability,
@@ -256,7 +256,7 @@ public sealed class ProviderTryCapabilityTests
             ProviderTryOperationsTests.Context(), descriptor, ProviderCapabilityKind.Download);
 
         Assert.Equal(success, result.Succeeded);
-        Assert.Equal(success ? null : "not_found", result.ReasonCode);
+        Assert.Equal(success ? null : checkAvailability ? "not_found" : "probe_not_available", result.ReasonCode);
         metadata.VerifyAll();
         download.VerifyAll();
         if (!checkAvailability)
@@ -284,7 +284,8 @@ public sealed class ProviderTryCapabilityTests
 
         var result = await Operations(playlists: playlists.Object).ProbeAsync(context, descriptor, ProviderCapabilityKind.Playlist);
 
-        Assert.True(result.Succeeded);
+        Assert.Equal(selectedAccount, result.Succeeded);
+        Assert.Equal(selectedAccount ? null : "probe_not_available", result.ReasonCode);
         Assert.Equal(selectedAccount, Json(result).TryGetProperty("playlists", out _));
         playlists.VerifyAll();
         if (!selectedAccount) playlists.VerifyNoOtherCalls();

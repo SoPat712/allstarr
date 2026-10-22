@@ -21,18 +21,52 @@ public sealed class ProviderStatusManagerTests
 {
     [Theory]
     [InlineData(200, true)]
+    [InlineData(206, true)]
     [InlineData(503, false)]
     public async Task MonochromeConnectionProbeUsesStreamingFixture(int status, bool expected)
     {
-        var handler = new QueuedResponseHandler(new HttpResponseMessage((HttpStatusCode)status)
-        { Content = new StringContent("fLaCfixture", Encoding.UTF8, "audio/flac") });
+        var response = new HttpResponseMessage((HttpStatusCode)status)
+        { Content = new StringContent("fLaCfixture", Encoding.UTF8, "audio/flac") };
+        if (status == 206)
+        {
+            response.Version = HttpVersion.Version20;
+            response.Content = new ByteArrayContent([102]);
+            response.Content.Headers.ContentType = new("application/octet-stream");
+            response.Content.Headers.ContentRange = new(0, 0, 22349828);
+            response.Headers.AcceptRanges.Add("bytes");
+        }
+        var handler = new QueuedResponseHandler(response);
         using var http = new HttpClient(handler);
         var registry = new ProviderRegistry([allstarr.Core.Providers.Monochrome.MonochromeProviderRegistration.CreateRegistration(new(http))]);
         var manager = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry);
         Assert.True(manager.CanTestAccountFreeCapability("monochrome", "streaming"));
         var result = await manager.TestAccountFreeProviderCapabilityAsync("monochrome", "streaming");
         Assert.Equal(expected, result.Health == ProviderHealthState.Healthy);
-        Assert.Equal("/track/155142501534011392", Assert.Single(handler.Requests).AbsolutePath);
+        Assert.Equal($"/track/{allstarr.Core.Providers.Monochrome.MonochromeStreamingCapabilityAdapter.SampleTrackId}", Assert.Single(handler.Requests).AbsolutePath);
+    }
+
+    [Fact]
+    public async Task ArtistGridConnectionProbeUsesTheRegisteredStreamingCheck()
+    {
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("artistgrid");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        var health = new Mock<IProviderHealthProbeCapability>();
+        health.SetupGet(item => item.ProviderId).Returns("artistgrid");
+        health.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Health);
+        health.Setup(item => item.ProbeAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderHealthProbeRequest>(request => request.TargetCapability == ProviderCapabilityKind.Streaming)))
+            .ReturnsAsync(ProviderOutcome<ProviderHealthProbeResult>.Success(new(ProviderProbeStatus.Healthy, DateTimeOffset.UtcNow, TimeSpan.Zero)));
+        var registry = new ProviderRegistry([new(new ProviderDescriptor("artistgrid", "ArtistGrid", "Fixture", ProviderOrigin.BuiltIn,
+            "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None,
+                "1", ["getStreamLease", "probeStream"]), new(ProviderCapabilityKind.Health, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["probeStreaming"])], new(), healthProbe: true)
+            { DefaultUseMode = ProviderUseMode.ManualOnly }, [streaming.Object, health.Object])]);
+        var manager = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry);
+        Assert.Contains(manager.GetAllAccountFreeStatuses(), item => item.Provider == "artistgrid" && item.Capability == "streaming");
+        Assert.True(manager.CanTestAccountFreeCapability("artistgrid", "streaming"));
+        Assert.Equal(ProviderHealthState.Healthy, (await manager.TestAccountFreeProviderCapabilityAsync("artistgrid", "streaming")).Health);
+        health.VerifyAll();
     }
 
     [Fact]
@@ -278,7 +312,7 @@ public sealed class ProviderStatusManagerTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task PaxsenixProbeReportsUpstreamBusyOrTimedOutWithinSixSeconds(bool hang)
+    public async Task PaxsenixProbeReportsUpstreamBusyOrTimedOutWithinDiagnosticBudget(bool hang)
     {
         var clock = new ManualTimeProvider();
         using var client = new HttpClient(new PaxsenixProbeHandler(hang));
@@ -296,13 +330,13 @@ public sealed class ProviderStatusManagerTests
         var pending = manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
         if (hang)
         {
-            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(4));
-            clock.Advance(TimeSpan.FromSeconds(4));
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
+            clock.Advance(TimeSpan.FromSeconds(8));
         }
         var status = await pending;
         Assert.Equal(ProviderHealthState.Degraded, status.Health);
         Assert.Equal("lyrics-upstream-busy-or-timed-out", status.ReasonCode);
-        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 6000);
+        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20000);
         Assert.Equal(status.ReasonCode, manager.GetAccountFreeStatus("paxsenix", "lyrics").ReasonCode);
     }
 

@@ -67,7 +67,8 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
         var value = resolved.RequireValue();
         try
         {
-            using var requestMessage = new HttpRequestMessage(HttpMethod.Head, value.Source.Endpoint);
+            using var requestMessage = new HttpRequestMessage(HttpMethod.Get, value.Source.Endpoint);
+            requestMessage.Headers.Range = new RangeHeaderValue(0, 0);
             using var response = await OpenAsync(value.Source, requestMessage, context.CancellationToken)
                 .ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
@@ -77,6 +78,13 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
                     ? ProviderOutcome<ProviderStreamProbeResult>.Success(new(false, _clock.GetUtcNow()))
                     : ProviderOutcome<ProviderStreamProbeResult>.Failure(statusError);
             }
+            if (!StreamByteRanges.Matches(response, requestMessage.Headers.Range))
+                return Failure<ProviderStreamProbeResult>(ProviderErrorKind.IncompatibleMedia);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(5));
+            await using var body = await response.Content.ReadAsStreamAsync(timeout.Token).ConfigureAwait(false);
+            if (await body.ReadAsync(new byte[1], timeout.Token).ConfigureAwait(false) == 0)
+                return Failure<ProviderStreamProbeResult>(ProviderErrorKind.IncompatibleMedia);
             return ProviderOutcome<ProviderStreamProbeResult>.Success(new(
                 true,
                 _clock.GetUtcNow(),

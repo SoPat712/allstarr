@@ -416,6 +416,12 @@ public sealed class ProviderCtsDiagnosticRunner(
                 providerId, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null)
             yield break;
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (providerId == "artistgrid")
+        {
+            await foreach (var track in allstarr.Core.Providers.ArtistGrid.ArtistGridDiagnosticSamples.TracksAsync(metadata, execution))
+                if (seen.Add(track.Id.Value)) yield return track.Id.Value;
+            yield break;
+        }
         var queries = ProviderSampleSearchQueries.TryGetValue(providerId, out var providerQueries)
             ? providerQueries.Concat(SampleSearchQueries)
             : SampleSearchQueries;
