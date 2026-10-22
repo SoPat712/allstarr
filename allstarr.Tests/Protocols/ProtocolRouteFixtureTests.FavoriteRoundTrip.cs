@@ -148,7 +148,7 @@ public sealed partial class ProtocolRouteFixtureTests
         var item = document.RootElement.GetProperty("Items")[1];
         AssertHeartUserData(item.GetProperty("UserData"), id, true);
         var primaryTag = item.GetProperty("ImageTags").GetProperty("Primary").GetString()!;
-        Assert.StartsWith("provider-cover-v1-", primaryTag);
+        Assert.StartsWith("provider-cover-v2-", primaryTag);
         Assert.Equal(hash, item.GetProperty("ImageBlurHashes").GetProperty("Primary").GetProperty(primaryTag).GetString());
         Assert.Equal("2024-02-29T00:00:00.0000000Z", item.GetProperty("PremiereDate").GetString());
         Assert.Equal(2024, item.GetProperty("ProductionYear").GetInt32());

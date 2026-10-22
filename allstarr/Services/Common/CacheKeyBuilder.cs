@@ -85,7 +85,7 @@ public static class CacheKeyBuilder
         return string.Join(':',
             "media",
             "descriptor",
-            "v4",
+            "v5",
             identity.UserId?.ToString("N") ?? "shared",
             identity.ProviderAccountId?.ToString("N") ?? "none",
             Normalize(identity.ProviderId),
@@ -96,7 +96,7 @@ public static class CacheKeyBuilder
     }
 
     public static string BuildMediaAssetDescriptorAccountPattern(Guid accountId) =>
-        $"media:descriptor:v4:*:{accountId:N}:*";
+        $"media:descriptor:v5:*:{accountId:N}:*";
 
     public static string BuildMediaAssetPayloadKey(string sha256) =>
         $"artwork:payload:v1:{Normalize(sha256)}";
@@ -139,7 +139,7 @@ public static class CacheKeyBuilder
     #region Image Keys
 
     public static bool IsMediaAssetDescriptorKey(string key) =>
-        key.StartsWith("media:descriptor:v4:", StringComparison.Ordinal);
+        key.StartsWith("media:descriptor:v5:", StringComparison.Ordinal);
 
     public static bool IsMediaAssetPayloadKey(string key) =>
         key.StartsWith("artwork:payload:v1:", StringComparison.Ordinal);

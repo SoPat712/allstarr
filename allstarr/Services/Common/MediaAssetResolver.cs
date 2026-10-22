@@ -18,7 +18,8 @@ public sealed record MediaAssetSource(
     byte[] Bytes,
     string ContentType,
     string? ETag = null,
-    DateTimeOffset? LastModified = null);
+    DateTimeOffset? LastModified = null,
+    bool IsSizeSpecific = false);
 
 public sealed record ResolvedMediaAsset(
     byte[] Bytes,
@@ -144,8 +145,8 @@ public sealed class MediaAssetResolver(
                 return Asset(selected, false);
 
             var differentVariant = !bytes.AsSpan().SequenceEqual(selected.Bytes);
-            if (differentVariant || originalPayload.BlurHash is not null &&
-                (identity.Width.HasValue || identity.Height.HasValue))
+            if (!source.IsSizeSpecific && (differentVariant || originalPayload.BlurHash is not null &&
+                (identity.Width.HasValue || identity.Height.HasValue)))
             {
                 var originalSha256 = Convert.ToHexStringLower(SHA256.HashData(bytes));
                 await cache.SetAsync(
