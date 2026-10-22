@@ -1010,12 +1010,19 @@ public partial class SubsonicController : ControllerBase
                 break;
         }
 
-        if (coverUrl != null)
+        if (coverUrl != null || ProviderArtworkFallback.IsFallback(coverProvider, coverUrl, type ?? "song"))
         {
+            int? size = int.TryParse(parameters.GetValueOrDefault("size"), out var requestedSize) && requestedSize > 0 ? requestedSize : null;
             var asset = await ResolveExternalImageAsync(
-                coverProvider!, type ?? "song", coverExternalId!, coverUrl);
+                coverProvider!, type ?? "song", coverExternalId!, coverUrl, size);
             if (asset != null)
-                return File(asset.Bytes, asset.ContentType);
+            {
+                var etag = ImageConditionalRequestHelper.ComputeStrongETag(asset.Bytes);
+                Response.Headers.ETag = etag;
+                Response.Headers.CacheControl = "private, max-age=86400";
+                return ImageConditionalRequestHelper.MatchesIfNoneMatch(Request.Headers, etag)
+                    ? StatusCode(StatusCodes.Status304NotModified) : File(asset.Bytes, asset.ContentType);
+            }
         }
 
         return NotFound();
@@ -1025,7 +1032,8 @@ public partial class SubsonicController : ControllerBase
         string provider,
         string resourceKind,
         string resourceId,
-        string? coverUrl)
+        string? coverUrl,
+        int? size = null)
     {
         var actor = CurrentProtocolContext.Actor;
         return await _mediaAssets.ResolveAsync(
@@ -1034,9 +1042,13 @@ public partial class SubsonicController : ControllerBase
                 null,
                 provider,
                 resourceKind,
-                resourceId),
+                resourceId,
+                Width: size,
+                Height: size),
             async token =>
             {
+                if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
+                    return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider, size, token, coverUrl);
                 if (resourceKind == "playlist")
                 {
                     var artwork = await _providerGateway.ResolvePlaylistArtworkAsync(

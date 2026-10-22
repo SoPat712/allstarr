@@ -92,6 +92,8 @@ public sealed partial class ManagedTrackCacheServiceTests
             var media = declared ? new ProviderMediaFormat("audio/flac", "flac", "flac", 900_000, 96_000, 24, 2)
                 : new ProviderMediaFormat("audio/flac", "flac", "flac");
             var stream = ProviderStream(response);
+            TrackMediaFacts? retained = null;
+            stream.FileFacts.RecordAsync = (facts, _) => { retained = facts; return Task.CompletedTask; };
             stream = stream with
             {
                 Lease = new(stream.Lease.LeaseId, stream.Lease.ProtectedSourceUri, stream.Lease.ExpiresAt,
@@ -103,6 +105,9 @@ public sealed partial class ManagedTrackCacheServiceTests
                 new(null, stream.EffectiveQuality), default);
             Assert.NotNull(replay);
             Assert.Equal(new FileInfo(published!).Length, replay.Response.Content.Headers.ContentLength);
+            Assert.Equal(bytes.LongLength, retained!.Size);
+            Assert.Equal(bytes.LongLength, replay.FileFacts.Measured!.Size);
+            if (!declared) Assert.Equal(1d, replay.FileFacts.Measured.DurationSeconds);
             if (declared) Assert.Equal(media, replay.Lease.Media);
             Assert.Equal(96_000, replay.Lease.Media.SampleRate);
             Assert.Equal(24, replay.Lease.Media.BitDepth);

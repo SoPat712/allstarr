@@ -331,6 +331,19 @@ public sealed class ProviderCatalogMetadataTests
                         Track = 2,
                         DiscNumber = 1,
                         TotalTracks = 10,
+                        TotalDiscs = 2,
+                        Upc = "0123456789012",
+                        MusicalKey = "C minor",
+                        Notes = "Recording notes",
+                        ReplayGain = new() { TrackGain = 0, AlbumGain = -6.25, TrackPeak = 0.95 },
+                        Genres = ["Electronic", "Dance"],
+                        Container = "flac",
+                        Codec = "flac",
+                        Bitrate = 1411200,
+                        Size = 12345678,
+                        SampleRate = 96000,
+                        BitDepth = 24,
+                        Channels = 2,
                         Year = 2024,
                         Genre = "Electronic",
                         Bpm = 120,
@@ -357,6 +370,20 @@ public sealed class ProviderCatalogMetadataTests
         Assert.Equal(2, track.TrackNumber);
         Assert.Equal(1, track.DiscNumber);
         Assert.Equal(10, track.TotalTracks);
+        Assert.Equal(2, track.TotalDiscs);
+        Assert.Equal("0123456789012", track.Upc);
+        Assert.Equal("C minor", track.MusicalKey);
+        Assert.Equal("Recording notes", track.Notes);
+        Assert.Equal(0, track.ReplayGain!.TrackGain);
+        Assert.Equal(-6.25, track.ReplayGain.AlbumGain);
+        Assert.Equal(["Electronic", "Dance"], track.Genres);
+        Assert.Equal(12345678, track.Size);
+        Assert.Equal("audio/flac", track.Media!.MimeType);
+        Assert.Equal("flac", track.Media.Container);
+        Assert.Equal(1411200, track.Media.Bitrate);
+        Assert.Equal(96000, track.Media.SampleRate);
+        Assert.Equal(24, track.Media.BitDepth);
+        Assert.Equal(2, track.Media.Channels);
         Assert.Equal(120, track.Bpm);
         Assert.Equal("2024-02-03", track.ReleaseDate);
         Assert.Equal("Album Artist", track.AlbumArtist);
@@ -366,6 +393,45 @@ public sealed class ProviderCatalogMetadataTests
         Assert.Equal(["Contributor"], track.Contributors);
         Assert.Equal(3, track.ExplicitContentLyrics);
         legacy.VerifyAll();
+    }
+
+    [Fact]
+    public async Task TrackLookup_DropsInvalidOptionalFactsAndPreservesPartialMediaAndZeroGain()
+    {
+        var legacy = new Mock<ProviderCatalogMetadata>(MockBehavior.Strict, "fixture");
+        legacy.Setup(item => item.GetSongAsync("deezer", "track-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new Song
+            {
+                ExternalId = "track-1",
+                Title = "Track",
+                Artist = "Artist",
+                Track = 0,
+                DiscNumber = -1,
+                TotalTracks = 0,
+                TotalDiscs = 0,
+                Bitrate = 0,
+                Size = -1,
+                SampleRate = 48000,
+                BitDepth = 24,
+                ReplayGain = new() { TrackGain = 0, AlbumGain = double.NaN, TrackPeak = -1, AlbumPeak = double.PositiveInfinity }
+            });
+        var adapter = new FixtureCatalog(legacy.Object);
+
+        var track = (await adapter.GetTrackAsync(Context(), new(new("deezer", ProviderResourceKind.Track, "track-1")))).RequireValue();
+
+        Assert.Null(track.TrackNumber);
+        Assert.Null(track.DiscNumber);
+        Assert.Null(track.TotalTracks);
+        Assert.Null(track.TotalDiscs);
+        Assert.Null(track.Bitrate);
+        Assert.Null(track.Size);
+        Assert.Equal("unknown", track.Media!.Codec);
+        Assert.Equal(48000, track.Media.SampleRate);
+        Assert.Equal(24, track.Media.BitDepth);
+        Assert.Equal(0, track.ReplayGain!.TrackGain);
+        Assert.Null(track.ReplayGain.AlbumGain);
+        Assert.Null(track.ReplayGain.TrackPeak);
+        Assert.Null(track.ReplayGain.AlbumPeak);
     }
 
     [Theory]

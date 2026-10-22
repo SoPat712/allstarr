@@ -50,7 +50,7 @@ public class DeezerProviderTests
                     duration = 180,
                     track_position = 1,
                     artist = new { id = 789, name = "Test Artist" },
-                    album = new { id = 456, title = "Test Album", cover_medium = "https://example.com/cover.jpg" }
+                    album = new { id = 456, title = "Test Album", cover_medium = "https://example.com/cover.jpg", cover_xl = "https://example.com/cover-xl.jpg" }
                 }
             }
         };
@@ -67,6 +67,7 @@ public class DeezerProviderTests
         Assert.Equal("Test Album", result[0].Album);
         Assert.Equal(180, result[0].Duration);
         Assert.Equal("TESTISRC1234", result[0].Isrc);
+        Assert.Equal("https://example.com/cover-xl.jpg", result[0].CoverArtUrlLarge);
         Assert.False(result[0].IsLocal);
         Assert.Equal("deezer", result[0].ExternalProvider);
     }
@@ -123,6 +124,7 @@ public class DeezerProviderTests
                     nb_tracks = 12,
                     release_date = "2023-01-15",
                     cover_medium = "https://example.com/album.jpg",
+                    cover_xl = "https://example.com/album-xl.jpg",
                     artist = new { id = 123, name = "Test Artist" }
                 }
             }
@@ -140,6 +142,7 @@ public class DeezerProviderTests
         Assert.Equal("Test Artist", result[0].Artist);
         Assert.Equal(12, result[0].SongCount);
         Assert.Equal(2023, result[0].Year);
+        Assert.Equal("https://example.com/album-xl.jpg", result[0].CoverArtUrl);
         Assert.False(result[0].IsLocal);
     }
 
@@ -155,7 +158,8 @@ public class DeezerProviderTests
                     id = 789012,
                     name = "Test Artist",
                     nb_album = 5,
-                    picture_medium = "https://example.com/artist.jpg"
+                    picture_medium = "https://example.com/artist.jpg",
+                    picture_xl = "https://example.com/artist-xl.jpg"
                 }
             }
         };
@@ -169,6 +173,7 @@ public class DeezerProviderTests
         Assert.Equal("ext-deezer-artist-789012", result[0].Id);
         Assert.Equal("Test Artist", result[0].Name);
         Assert.Equal(5, result[0].AlbumCount);
+        Assert.Equal("https://example.com/artist-xl.jpg", result[0].ImageUrl);
         Assert.False(result[0].IsLocal);
     }
 
@@ -337,6 +342,37 @@ public class DeezerProviderTests
         var result = await _service.GetSongAsync("spotify", "123456");
 
         Assert.Null(result);
+    }
+
+    [Fact]
+    public async Task GetSongAsync_RetainsEmbeddedAlbumFactsAndIgnoresUnspecifiedGainUnits()
+    {
+        SetupHttpResponse("""
+            {"id":123456,"title":"Song","duration":200,"track_position":2,"disk_number":1,"gain":-8.2,
+             "explicit_content_lyrics":0,"artist":{"id":1,"name":"Artist"},
+             "contributors":[{"id":1,"name":"Artist"},{"id":2,"name":"Guest"}],
+             "album":{"id":456,"title":"Album","artist":{"id":1,"name":"Artist"},"nb_tracks":10,"nb_disk":2,
+               "upc":"0123456789012","label":"Label","copyright":"Copyright","description":"Album notes",
+               "genres":{"data":[{"id":1,"name":"Pop"},{"id":2,"name":"Rock"}]},
+               "cover_medium":"https://cdn.example.test/medium.jpg","cover_big":"https://cdn.example.test/big.jpg",
+               "cover_xl":"https://cdn.example.test/xl.jpg"}}
+            """);
+
+        var song = await _service.GetSongAsync("deezer", "123456");
+
+        Assert.NotNull(song);
+        Assert.Equal(["Artist", "Guest"], song.Artists);
+        Assert.Equal(10, song.TotalTracks);
+        Assert.Equal(2, song.TotalDiscs);
+        Assert.Equal("0123456789012", song.Upc);
+        Assert.Equal("Label", song.Label);
+        Assert.Equal("Copyright", song.Copyright);
+        Assert.Equal("Album notes", song.Notes);
+        Assert.Equal(["Pop", "Rock"], song.Genres);
+        Assert.Equal("Pop", song.Genre);
+        Assert.Equal(0, song.ExplicitContentLyrics);
+        Assert.Equal("https://cdn.example.test/xl.jpg", song.CoverArtUrlLarge);
+        Assert.Null(song.ReplayGain);
     }
 
     [Fact]

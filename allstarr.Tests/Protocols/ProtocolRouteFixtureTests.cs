@@ -1088,7 +1088,7 @@ public sealed partial class ProtocolRouteFixtureTests
     }
 
     [Fact]
-    public async Task JellyfinItemAndImageAdapters_PreserveExternalShapingPlaceholderAndConditionalResponse()
+    public async Task JellyfinItemAndImageAdapters_PreserveExternalShapingProviderCoverAndConditionalResponse()
     {
         using var fixture = ReadFixture("jellyfin-item-image-shaping.json");
         var gateway = new Mock<IProtocolProviderGateway>(MockBehavior.Strict);
@@ -1153,7 +1153,9 @@ public sealed partial class ProtocolRouteFixtureTests
         var expectedImage = imageFixture.GetProperty("expected");
         Assert.Equal(expectedImage.GetProperty("status").GetInt32(), (int)imageResponse.StatusCode);
         Assert.Equal(expectedImage.GetProperty("contentType").GetString(), imageResponse.Content.Headers.ContentType?.MediaType);
-        Assert.Equal(expectedImage.GetProperty("length").GetInt32(), imageBytes.Length);
+        using var coverBitmap = SKBitmap.Decode(imageBytes);
+        Assert.Equal(expectedImage.GetProperty("width").GetInt32(), coverBitmap.Width);
+        Assert.Equal(expectedImage.GetProperty("height").GetInt32(), coverBitmap.Height);
         Assert.NotNull(imageResponse.Headers.ETag);
 
         using var conditionalRequest = new HttpRequestMessage(HttpMethod.Get, imageFixture.GetProperty("requestPath").GetString());
@@ -1174,9 +1176,9 @@ public sealed partial class ProtocolRouteFixtureTests
         using var pathImageResponse = await client.GetAsync(
             "/Items/ext-deezer-song-no-art/Images/Primary/0/no-art/png/300/300/0/0?api_key=fixture-key");
         Assert.Equal(HttpStatusCode.OK, pathImageResponse.StatusCode);
-        Assert.Equal(
-            expectedImage.GetProperty("length").GetInt32(),
-            (await pathImageResponse.Content.ReadAsByteArrayAsync()).Length);
+        using var pathBitmap = SKBitmap.Decode(await pathImageResponse.Content.ReadAsByteArrayAsync());
+        Assert.Equal(300, pathBitmap.Width);
+        Assert.Equal(300, pathBitmap.Height);
         gateway.VerifyAll();
     }
 

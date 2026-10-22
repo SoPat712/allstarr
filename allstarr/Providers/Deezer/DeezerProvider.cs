@@ -565,6 +565,8 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                           albumForCover.TryGetProperty("cover_medium", out var cover)
                 ? cover.GetString()
                 : null,
+            CoverArtUrlLarge = track.TryGetProperty("album", out var albumForLargeCover)
+                ? DeezerText(albumForLargeCover, "cover_xl") ?? DeezerText(albumForLargeCover, "cover_big") : null,
             AlbumArtist = albumArtist,
             AlbumArtists = CatalogDescriptiveMetadata.EmbeddedAlbumArtists(track, "deezer"),
             Isrc = track.TryGetProperty("isrc", out var isrc)
@@ -584,6 +586,9 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
     private Song ParseDeezerTrackFull(JsonElement track)
     {
         var externalId = track.GetProperty("id").GetInt64().ToString();
+        var albumFacts = track.TryGetProperty("album", out var embeddedAlbum) && embeddedAlbum.ValueKind == JsonValueKind.Object
+            ? embeddedAlbum : default;
+        var genres = DeezerGenres(albumFacts);
 
         // Track position et disc number
         int? trackNumber = track.TryGetProperty("track_position", out var trackPos)
@@ -625,15 +630,15 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         {
             foreach (var contrib in contribs.EnumerateArray())
             {
-                if (contrib.TryGetProperty("name", out var contribName) &&
-                    contrib.TryGetProperty("id", out var contribId))
+                if (contrib.TryGetProperty("name", out var contribName))
                 {
                     var name = contribName.GetString();
-                    var id = contribId.GetInt64();
                     if (!string.IsNullOrEmpty(name))
                     {
                         contributors.Add(name);
-                        contributorIds.Add(BuildExternalArtistId("deezer", id.ToString()));
+                        contributorIds.Add(contrib.TryGetProperty("id", out var contribId) &&
+                                           contribId.ValueKind is JsonValueKind.Number or JsonValueKind.String
+                            ? BuildExternalArtistId("deezer", contribId.ToString()) : string.Empty);
                     }
                 }
             }
@@ -690,6 +695,14 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
                 : null,
             Track = trackNumber,
             DiscNumber = discNumber,
+            TotalTracks = DeezerPositive(track, "total_tracks") ?? DeezerPositive(albumFacts, "nb_tracks"),
+            TotalDiscs = DeezerPositive(track, "total_discs") ?? DeezerPositive(albumFacts, "nb_disk"),
+            Upc = DeezerText(track, "upc") ?? DeezerText(albumFacts, "upc"),
+            Genre = genres.FirstOrDefault(),
+            Genres = genres,
+            Label = albumFacts.ValueKind == JsonValueKind.Object ? CatalogDescriptiveMetadata.Label(albumFacts) : null,
+            Copyright = DeezerText(track, "copyright") ?? DeezerText(albumFacts, "copyright"),
+            Notes = DeezerText(track, "description") ?? DeezerText(albumFacts, "description"),
             Year = year,
             Bpm = bpm,
             Isrc = isrc,
@@ -705,6 +718,20 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             ExplicitContentLyrics = explicitContentLyrics
         };
     }
+
+    private static string? DeezerText(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object &&
+        value.TryGetProperty(name, out var item) && item.ValueKind is JsonValueKind.String or JsonValueKind.Number
+            ? item.ToString() : null;
+
+    private static int? DeezerPositive(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object &&
+        value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number && item.TryGetInt32(out var number) && number > 0
+            ? number : null;
+
+    private static List<string> DeezerGenres(JsonElement album) => album.ValueKind == JsonValueKind.Object &&
+        album.TryGetProperty("genres", out var genres) && genres.ValueKind == JsonValueKind.Object &&
+        genres.TryGetProperty("data", out var items) && items.ValueKind == JsonValueKind.Array
+            ? items.EnumerateArray().Select(item => DeezerText(item, "name")).Where(name => !string.IsNullOrWhiteSpace(name))
+                .Select(name => name!).Distinct(StringComparer.OrdinalIgnoreCase).ToList() : [];
 
     private Album ParseDeezerAlbum(JsonElement album)
     {
@@ -727,9 +754,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
             SongCount = album.TryGetProperty("nb_tracks", out var nbTracks)
                 ? nbTracks.GetInt32()
                 : null,
-            CoverArtUrl = album.TryGetProperty("cover_medium", out var cover)
-                ? cover.GetString()
-                : null,
+            CoverArtUrl = DeezerText(album, "cover_xl") ?? DeezerText(album, "cover_big") ?? DeezerText(album, "cover_medium"),
             Genre = album.TryGetProperty("genres", out var genres) &&
                     genres.TryGetProperty("data", out var genresData) &&
                     genresData.GetArrayLength() > 0
@@ -752,9 +777,7 @@ public sealed partial class DeezerProvider(DeezerHttpClient http) : ProviderCata
         {
             Id = BuildExternalArtistId("deezer", externalId),
             Name = artist.GetProperty("name").GetString() ?? "",
-            ImageUrl = artist.TryGetProperty("picture_medium", out var picture)
-                ? picture.GetString()
-                : null,
+            ImageUrl = DeezerText(artist, "picture_xl") ?? DeezerText(artist, "picture_big") ?? DeezerText(artist, "picture_medium"),
             AlbumCount = artist.TryGetProperty("nb_album", out var nbAlbum)
                 ? nbAlbum.GetInt32()
                 : null,

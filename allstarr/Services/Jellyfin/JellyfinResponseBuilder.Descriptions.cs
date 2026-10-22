@@ -18,6 +18,34 @@ public partial class JellyfinResponseBuilder
             ["Role"] = person.Role
         }).ToArray();
         AddIdentifiers(item, song.ProviderIds, "MusicBrainzTrack");
+        if (!string.IsNullOrWhiteSpace(song.Upc))
+        {
+            if (item.GetValueOrDefault("ProviderIds") is not Dictionary<string, string> ids)
+                item["ProviderIds"] = ids = new();
+            ids["UPC"] = song.Upc;
+        }
+        if (!string.IsNullOrWhiteSpace(song.Notes)) item["Overview"] = song.Notes;
+        if (!string.IsNullOrWhiteSpace(song.Label)) item["Studios"] = new[] { new Dictionary<string, string> { ["Name"] = song.Label } };
+        if (!string.IsNullOrWhiteSpace(song.Copyright)) item["Copyright"] = song.Copyright;
+        if (song.TotalTracks is > 0) item["IndexNumberEnd"] = song.TotalTracks.Value;
+        if (song.TotalDiscs is > 0) item["TotalDiscs"] = song.TotalDiscs.Value;
+        if (song.Bpm is > 0) item["BeatsPerMinute"] = song.Bpm.Value;
+        if (!string.IsNullOrWhiteSpace(song.MusicalKey)) item["Key"] = song.MusicalKey;
+        if (song.ExplicitContentLyrics is 0 or 1 or 3) item["OfficialRating"] = song.ExplicitContentLyrics == 1 ? "Explicit" : "Clean";
+        var genres = (song.Genres.Count > 0 ? song.Genres : string.IsNullOrWhiteSpace(song.Genre) ? [] : new[] { song.Genre }.ToList())
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (genres.Length > 0)
+        {
+            item["Genres"] = genres;
+            item["GenreItems"] = genres.Select(name => new Dictionary<string, string> { ["Name"] = name, ["Id"] = "genre-" + name.ToLowerInvariant() }).ToArray();
+        }
+        if (song.ReplayGain is { } gain)
+        {
+            if (gain.TrackGain is { } track && double.IsFinite(track)) item["NormalizationGain"] = track;
+            if (gain.AlbumGain is { } album && double.IsFinite(album)) item["AlbumGain"] = album;
+            if (gain.TrackPeak is >= 0 and { } peak && double.IsFinite(peak)) item["TrackPeak"] = peak;
+            if (gain.AlbumPeak is >= 0 and { } albumPeak && double.IsFinite(albumPeak)) item["AlbumPeak"] = albumPeak;
+        }
     }
 
     private static void AddAlbumDescription(Album album, Dictionary<string, object?> item)

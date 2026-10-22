@@ -17,7 +17,8 @@
     "expected": {
       "status": 200,
       "contentType": "image/png",
-      "length": 70,
+      "width": 600,
+      "height": 600,
       "conditionalStatus": 304
     }
   }

@@ -61,7 +61,9 @@ public sealed partial class ProtocolRouteFixtureTests
             if (surface != "playback")
             {
                 var webPath = item.GetProperty("Path").GetString()!;
-                Assert.Equal(source.Name + extension, webPath.Replace('\\', '/').Split('/').Last());
+                Assert.Equal(source.Path, webPath);
+                Assert.Matches($@"^{song.DiscNumber:00}-01 Same title \[[a-f0-9]{{12}}\]$",
+                    webPath.Replace('\\', '/').Split('/').Last());
             }
             paths.Add($"Finamp/Artist/Album/{fileName}{extension}");
         }

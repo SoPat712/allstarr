@@ -340,9 +340,14 @@ class SearchContractTests(unittest.TestCase):
     def test_relevance_puts_strong_external_before_weak_native(self):
         native = audio("native-weak", "Unrelated", "Other")
         output = self.score([audio("ext-qobuz-song-1"), native], [native])
-        self.assertEqual(100, output["scores"][0])
+        self.assertEqual(130, output["scores"][0])
         self.assertGreater(output["scores"][0], output["scores"][1])
         self.assertEqual(1, output["localPreferenceChecks"])
+
+    def test_readable_virtual_path_does_not_imply_a_flac_source(self):
+        item = audio("ext-qobuz-song-1")
+        item["Path"] = "/music/external/Artist/Album/Fixture [0123456789ab]"
+        self.score([item])
 
     def test_descending_scores_allow_equal_relevance(self):
         native = audio("native-exact")
@@ -372,7 +377,8 @@ class SearchContractTests(unittest.TestCase):
     def test_unproven_lookalikes_and_shared_album_ids_remain_distinct(self):
         items = [audio("ext-qobuz-song-1"), audio("ext-deezer-song-2")]
         for item in items:
-            item["ProviderIds"] = {"MusicBrainzAlbum": "album", "MusicBrainzArtist": "artist", "AllstarrSource": "provider"}
+            item["ProviderIds"] = {"MusicBrainzAlbum": "album", "MusicBrainzArtist": "artist", "AllstarrSource": "provider",
+                                   "UPC": "123456789012", "Barcode": "123456789012"}
         self.score(items)
 
     def test_native_same_isrc_is_preferred(self):
@@ -386,11 +392,11 @@ class SearchContractTests(unittest.TestCase):
         item = audio("ext-qobuz-song-1", artist="Artist feat. Guest")
         item["Artists"] = ["Artist [Provider]", "Guest [Provider]"]
         output = self.score([item], query="Fixture Artist feat. Guest")
-        self.assertEqual([100], output["scores"])
+        self.assertEqual([130], output["scores"])
         native = audio("native-copy")
         native["Artists"] = ["Artist", "Second", "Third", "Excluded"]
         output = self.score([native], [native], query="Fixture Artist Second Third")
-        self.assertEqual([100], output["scores"])
+        self.assertEqual([130], output["scores"])
 
     def test_invalid_or_incomplete_capture_fails_safely(self):
         valid = {"query": "Fixture Artist", "page": envelope([audio("ext-qobuz-song-1")]), "local": envelope([])}

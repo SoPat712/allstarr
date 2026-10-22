@@ -15,6 +15,29 @@ namespace allstarr.Tests.Providers;
 
 public sealed partial class ArtistGridProviderTests
 {
+    [Fact]
+    public async Task MeasurementUsesTheWaveHeaderRatherThanTheSourceExtension()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        using var http = SourceClient("https://files.example/song.flac", _ =>
+        {
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(allstarr.Tests.AudioMediaFactsTests.Wave()) };
+            response.Content.Headers.ContentType = new("audio/wav");
+            return response;
+        });
+        var catalog = new ArtistGridCatalog(http);
+        var registry = new ProviderRegistry([ArtistGridProviderRegistration.CreateRegistration(new(catalog), new(catalog, http))]);
+        using var selector = new ProviderCtsTrackSelector(new ProviderCheckServiceTests.Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(), selector, Mock.Of<IProviderOutcomeObserver>());
+        var actor = new ProviderActorContext(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "fixture", "admin"));
+        var result = await runner.MeasureAsync(actor, "artistgrid", null, ProviderAudioQuality.Any, "wave-check", householdCheck: true);
+        Assert.True(result.Succeeded, result.Error);
+        Assert.Equal("wav", result.Media!.Container);
+        Assert.Equal("pcm_s24le", result.Media.Codec);
+        Assert.Equal(24, result.Media.BitDepth);
+        Assert.Equal(44100, result.Media.SampleRate);
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]

@@ -14,7 +14,7 @@ public sealed partial class ArtistGridProviderTests
     [InlineData("flac", "audio/flac", "flac", "flac")]
     [InlineData("wav", "audio/wav", "wav", "unknown")]
     [InlineData("aac", "audio/aac", "aac", "aac")]
-    [InlineData("m4a", "audio/mp4", "mp4", "aac")]
+    [InlineData("m4a", "audio/mp4", "mp4", "unknown")]
     [InlineData("MP3", "audio/mpeg", "mp3", "mp3")]
     public async Task DirectAudioWithoutQualityPreservesMediaFormat(string extension, string mime, string container, string codec)
     {

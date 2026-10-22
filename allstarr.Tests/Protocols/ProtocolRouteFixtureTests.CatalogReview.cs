@@ -66,7 +66,8 @@ public sealed partial class ProtocolRouteFixtureTests
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var rows = body.RootElement.GetProperty("Items").EnumerateArray().ToArray();
         var providerId = kind == "artist" ? "ext-deezer-album-missing" : "ext-deezer-song-missing";
-        var expectedIds = kind == "album" && query.Contains("SortBy=SortName&", StringComparison.Ordinal)
+        var expectedIds = kind == "album" && (query.Contains("SortBy=SortName&", StringComparison.Ordinal) ||
+            query.Contains("SortBy=ParentIndexNumber", StringComparison.Ordinal))
             ? new[] { providerId, "native-z", "native-a" }
             : new[] { "native-z", "native-a", providerId };
         Assert.Equal(expectedIds, rows.Select(row => row.GetProperty("Id").GetString()));

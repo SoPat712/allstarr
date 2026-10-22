@@ -539,6 +539,45 @@ public class QobuzProviderTests
     }
 
     [Fact]
+    public async Task GetSongAsync_RetainsReplayGainAndAlbumFactsWithoutInferringMaximumMediaQuality()
+    {
+        _httpMessageHandlerMock.Protected()
+            .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+            .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""
+                    {"id":123,"title":"Song","duration":180,"performer":{"id":1,"name":"Artist"},
+                     "parental_warning":false,"replaygain_track_gain":0,"replaygain_track_peak":0.98,
+                     "maximum_bit_depth":24,"maximum_sampling_rate":192,
+                     "album":{"id":"album-1","title":"Album","artist":{"id":1,"name":"Artist"},
+                       "tracks_count":12,"media_count":2,"upc":"0123456789012","description":"Album notes",
+                       "replaygain_album_gain":-5.5,"replaygain_album_peak":1,
+                       "genres_list":["Pop/Rock","Pop/Rock→Alternative"],
+                       "image":{"small":"https://cdn.example.test/small.jpg","large":"https://cdn.example.test/cover_600.jpg"}}}
+                    """)
+            });
+
+        var song = await _service.GetSongAsync("qobuz", "123");
+
+        Assert.NotNull(song);
+        Assert.Equal(12, song.TotalTracks);
+        Assert.Equal(2, song.TotalDiscs);
+        Assert.Equal("0123456789012", song.Upc);
+        Assert.Equal("Album notes", song.Notes);
+        Assert.Equal(["Pop", "Rock", "Alternative"], song.Genres);
+        Assert.Equal(0, song.ReplayGain!.TrackGain);
+        Assert.Equal(0.98, song.ReplayGain.TrackPeak);
+        Assert.Equal(-5.5, song.ReplayGain.AlbumGain);
+        Assert.Equal(1, song.ReplayGain.AlbumPeak);
+        Assert.Equal(0, song.ExplicitContentLyrics);
+        Assert.Equal("https://cdn.example.test/cover_org.jpg", song.CoverArtUrlLarge);
+        Assert.Equal("https://cdn.example.test/cover_org.jpg", song.CoverArtUrl);
+        Assert.Null(song.SampleRate);
+        Assert.Null(song.BitDepth);
+        Assert.Null(song.Codec);
+    }
+
+    [Fact]
     public async Task GetSongAsync_EscapesTheIdSoItCannotAddQueryParameters()
     {
         var requests = new List<string>();

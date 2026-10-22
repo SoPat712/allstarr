@@ -177,6 +177,8 @@ public sealed record ProtocolProviderStream(
 
 internal sealed class PlaybackFileFacts
 {
+    internal Func<TrackMediaFacts, CancellationToken, Task>? RecordAsync { get; set; }
+    internal TrackMediaFacts? Measured { get; set; }
     private long size = -1;
     public long? Size
     {
@@ -203,6 +205,7 @@ public sealed partial class ProtocolProviderGateway(
     IOptions<CacheSettings>? searchSettings = null) : IProtocolProviderGateway
 {
     private const string StreamingClientName = "ProtocolProviderStreaming";
+    private ITrackMediaFactsStore? MediaFacts => identities as ITrackMediaFactsStore;
     private const int ProviderSearchConcurrency = 4;
     private const int RelationshipSearchLimit = 10;
     private static readonly TimeSpan ExactRouteMissTtl = TimeSpan.FromMinutes(2);
@@ -1366,6 +1369,52 @@ public sealed partial class ProtocolProviderGateway(
         async Task<ProtocolProviderStream> OpenedAsync(ProtocolProviderStream stream,
             ProviderExecutionContext? execution, ProviderExternalResourceId? servingTrack)
         {
+            if (!protocol.IsReadOnly && execution != null && servingTrack != null && MediaFacts is { } store)
+                stream.FileFacts.RecordAsync = (facts, token) => store.RememberMediaFactsAsync(execution, servingTrack, facts, token);
+            var prefixFacts = PrefetchedStream.Facts(stream.Response.Content);
+            var measured = stream.FileFacts.Measured ?? prefixFacts;
+            if (protocol.Actor != null && servingTrack != null && MediaFacts is { } retainedFacts)
+            {
+                var retained = new Song { ExternalProvider = servingTrack.ProviderId, ExternalId = servingTrack.Value };
+                try
+                {
+                    await retainedFacts.ApplyStoredMediaFactsAsync(protocol.Actor, [retained], streamCancellation);
+                    if (retained.Container != null || retained.Codec != null || retained.Size is > 0 || retained.SampleRate is > 0)
+                    {
+                        var saved = new TrackMediaFacts(new(AudioMediaFacts.Mime(retained.Container ?? "unknown"), retained.Container ?? "unknown",
+                            retained.Codec ?? "unknown", retained.Bitrate, retained.SampleRate, retained.BitDepth, retained.Channels),
+                            retained.Size, retained.PreciseDuration?.TotalSeconds, retained.ReplayGain);
+                        measured = measured?.WithFallback(saved) ?? saved;
+                    }
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                { logger?.LogDebug("Stored media facts are unavailable ({ErrorType})", error.GetType().Name); }
+            }
+            measured ??= stream.IsCached
+                ? new TrackMediaFacts(stream.Lease.Media, stream.Response.Content.Headers.ContentLength) : null;
+            if (measured != null)
+            {
+                measured = measured.WithFallback(new(stream.Lease.Media));
+                if (measured.Media != stream.Lease.Media)
+                {
+                    var lease = stream.Lease;
+                    stream = stream with
+                    {
+                        Lease = new(lease.LeaseId, lease.ProtectedSourceUri, lease.ExpiresAt,
+                        lease.SupportsByteRanges, lease.SupportsSeeking, measured.Media, lease.RetryBehavior,
+                        lease.ProtectedResponseFactory, lease.QualityDowngradeReason)
+                    };
+                }
+                stream.FileFacts.Media = measured.Media;
+                stream.FileFacts.Size = measured.Size;
+                stream.FileFacts.Measured = measured;
+                if (!protocol.IsReadOnly && !headOnly && execution != null && servingTrack != null && MediaFacts is { } mediaStore)
+                {
+                    try { await mediaStore.RememberMediaFactsAsync(execution, servingTrack, measured, streamCancellation); }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    { logger?.LogDebug("Could not retain measured media facts ({ErrorType})", error.GetType().Name); }
+                }
+            }
             if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && protocol.AudioDelivery is { } delivery &&
                 delivery.Evaluate(stream.Lease.Media) is { Supported: false } rejected)
             {
@@ -1469,6 +1518,15 @@ public sealed partial class ProtocolProviderGateway(
                         (headOnly || resumePublishedSource && response.StatusCode == HttpStatusCode.PartialContent ||
                          await PrefetchedStream.PrepareAsync(response, cancellationToken)))
                     {
+                        if (PrefetchedStream.Facts(response.Content) is { } measured)
+                        {
+                            var media = measured.Media;
+                            if (media.Codec == "unknown" && ProviderAudioDeliveryRequest.Container(media.Container) == ProviderAudioDeliveryRequest.Container(lease.Media.Container))
+                                media = new(media.MimeType, media.Container, lease.Media.Codec, lease.Media.Bitrate,
+                                    lease.Media.SampleRate, lease.Media.BitDepth, lease.Media.Channels);
+                            lease = new(lease.LeaseId, lease.ProtectedSourceUri, lease.ExpiresAt, lease.SupportsByteRanges,
+                                lease.SupportsSeeking, media, lease.RetryBehavior, lease.ProtectedResponseFactory, lease.QualityDowngradeReason);
+                        }
                         transferred = true;
                         return ProviderOutcome<(HttpResponseMessage, ProviderStreamLease)>.Success((response, lease));
                     }
@@ -1827,10 +1885,22 @@ public sealed partial class ProtocolProviderGateway(
             AlbumId = item.AlbumId is { } albumId ? ProtocolItemId(albumId) : null,
             Duration = item.Duration.HasValue ? (int)item.Duration.Value.TotalSeconds : null,
             PreciseDuration = item.Duration,
-            Bitrate = item.Bitrate,
+            Bitrate = item.Media?.Bitrate ?? item.Bitrate,
+            Size = item.Size,
+            Container = item.Media?.Container,
+            Codec = item.Media?.Codec,
+            SampleRate = item.Media?.SampleRate,
+            BitDepth = item.Media?.BitDepth,
+            Channels = item.Media?.Channels,
+            TotalDiscs = item.TotalDiscs,
+            Upc = item.Upc,
+            MusicalKey = item.MusicalKey,
+            Notes = item.Notes,
+            ReplayGain = item.ReplayGain,
+            Genres = item.Genres.ToList(),
             Isrc = item.Isrc,
-            CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
-            CoverArtUrlLarge = item.Artwork?.PublicUri?.ToString(),
+            CoverArtUrl = item.Artwork?.PublicUri?.ToString() ?? ProviderArtworkFallback.CoverPath(item.Id.ProviderId),
+            CoverArtUrlLarge = item.Artwork?.PublicUri?.ToString() ?? ProviderArtworkFallback.CoverPath(item.Id.ProviderId),
             Track = item.TrackNumber,
             DiscNumber = item.DiscNumber,
             TotalTracks = item.TotalTracks,
@@ -1986,7 +2056,7 @@ public sealed partial class ProtocolProviderGateway(
             ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
             LastFmUrl = item.LastFmUrl,
             SongCount = item.TrackCount,
-            CoverArtUrl = item.Artwork?.PublicUri?.ToString(),
+            CoverArtUrl = item.Artwork?.PublicUri?.ToString() ?? ProviderArtworkFallback.CoverPath(item.Id.ProviderId),
             Year = item.Year,
             ReleaseDate = item.ReleaseDate,
             Genre = item.Genre,
@@ -2004,7 +2074,7 @@ public sealed partial class ProtocolProviderGateway(
         Biography = item.Biography,
         ProviderIds = new Dictionary<string, string>(item.ProviderIds, StringComparer.Ordinal),
         LastFmUrl = item.LastFmUrl,
-        ImageUrl = item.Artwork?.PublicUri?.ToString(),
+        ImageUrl = item.Artwork?.PublicUri?.ToString() ?? ProviderArtworkFallback.CoverPath(item.Id.ProviderId),
         IsLocal = false
     };
 

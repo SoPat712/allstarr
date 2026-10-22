@@ -263,8 +263,9 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
         var items = tracks.Select(Track).ToArray();
         return items.Length == 0 ? ProviderTryResult.Failure("not_found") : new() { Succeeded = true, Tracks = items };
     }
-    private static string? Artwork(ProviderArtworkReference? artwork) => artwork?.PublicUri is { } uri &&
-        string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.UserInfo) ? uri.AbsoluteUri : null;
+    private static string? Artwork(ProviderArtworkReference? artwork, string? provider = null) => artwork?.PublicUri is { } uri &&
+        string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.UserInfo) ? uri.AbsoluteUri :
+            provider != null ? ProviderArtworkFallback.CoverPath(provider) : null;
     private static object Track(ProviderTrackMetadata track) => new
     {
         id = track.Id.Value,
@@ -275,7 +276,7 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
         durationSeconds = track.Duration?.TotalSeconds,
         isrc = track.Isrc,
         @explicit = track.IsExplicit,
-        artworkUrl = Artwork(track.Artwork),
+        artworkUrl = Artwork(track.Artwork, track.Id.ProviderId),
         year = track.Year
     };
     private static object Album(ProviderAlbumMetadata album) => new
@@ -285,9 +286,9 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
         artists = album.Artists.Select(item => item.Name).ToArray(),
         year = album.Year,
         trackCount = album.TrackCount,
-        artworkUrl = Artwork(album.Artwork)
+        artworkUrl = Artwork(album.Artwork, album.Id.ProviderId)
     };
-    private static object Artist(ProviderArtistMetadata artist) => new { id = artist.Id.Value, name = artist.Name, artworkUrl = Artwork(artist.Artwork) };
+    private static object Artist(ProviderArtistMetadata artist) => new { id = artist.Id.Value, name = artist.Name, artworkUrl = Artwork(artist.Artwork, artist.Id.ProviderId) };
     private static object Playlist(ProviderPlaylistSummary playlist) => new
     {
         id = playlist.Id.Value,

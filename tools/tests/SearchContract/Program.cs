@@ -37,10 +37,15 @@ static int CheckCapture()
         string artist;
         if (external)
         {
-            // The synthetic path retains the exact primary artist, unlike the multi-credit Artists list.
             var suffix = $"/{Text(item, "Album")}/{title}.flac";
             var path = Text(item, "Path");
-            if (!path.StartsWith("/music/", StringComparison.Ordinal) || !path.EndsWith(suffix, StringComparison.Ordinal) ||
+            if (path.StartsWith("/music/external/", StringComparison.Ordinal))
+            {
+                artist = item.TryGetProperty("Artists", out var credits) && credits.GetArrayLength() > 0
+                    ? Regex.Replace(credits[0].GetString() ?? "", @" \[[^\[\]]+\]$", "") : "";
+                if (artist.Length == 0) errors.Add("missing-source-metadata");
+            }
+            else if (!path.StartsWith("/music/", StringComparison.Ordinal) || !path.EndsWith(suffix, StringComparison.Ordinal) ||
                 path.Length < 7 + suffix.Length)
             {
                 errors.Add("missing-source-metadata");
@@ -103,7 +108,7 @@ static HashSet<string> Keys(JsonElement item)
         if (property.Value.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(property.Value.GetString())) continue;
         var kind = property.Name.ToLowerInvariant();
         // Album/artist identifiers and presentation provenance are not recording identities.
-        if (kind.Contains("album") || kind.Contains("artist") || kind.Contains("release") || kind == "allstarrsource") continue;
+        if (kind.Contains("album") || kind.Contains("artist") || kind.Contains("release") || kind is "allstarrsource" or "upc" or "barcode") continue;
         if (kind is "musicbrainztrack" or "musicbrainzrecording") kind = "mbid";
         var value = property.Value.GetString()!;
         if (kind == "isrc") value = value.Replace("-", "", StringComparison.Ordinal).ToUpperInvariant();

@@ -232,11 +232,11 @@ public sealed class TrackMatchesController(
                 album = primaryLocal?.Album,
                 artworkUrl = primaryLocal?.CoverArtReference == null
                     ? sourceMetadata.ArtworkUrl == null || latestSnapshot == null
-                        ? null
+                        ? ProviderArtworkFallback.CoverPath(latestSnapshot?.ProviderId ?? "spotify")
                         : SourceArtworkUrl(latestSnapshot.Id)
                     : LocalArtworkUrl(primaryLocal.BackendItemId),
                 sourceArtworkUrl = sourceMetadata.ArtworkUrl == null || latestSnapshot == null
-                    ? null
+                    ? ProviderArtworkFallback.CoverPath(latestSnapshot?.ProviderId ?? "spotify")
                     : SourceArtworkUrl(latestSnapshot.Id),
                 candidateArtworkUrl = primaryLocal?.CoverArtReference == null
                     ? null
@@ -911,7 +911,7 @@ public sealed class TrackMatchesController(
         var hasManualRejection = manualAuthorities.Any(item => item.Kind == "rejection");
         var metadata = Metadata(snapshot.PayloadJson);
         var sourceArtworkUrl = metadata.ArtworkUrl == null
-            ? null
+            ? ProviderArtworkFallback.CoverPath(snapshot.ProviderId)
             : SourceArtworkUrl(snapshot.Id);
         var candidateArtworkUrl = track?.CoverArtReference == null
             ? null
@@ -947,7 +947,7 @@ public sealed class TrackMatchesController(
             searchQuery = metadata.Title ?? string.Empty,
             artist = metadata.Artist,
             album = metadata.Album,
-            artworkUrl = sourceArtworkUrl ?? candidateArtworkUrl,
+            artworkUrl = metadata.ArtworkUrl == null ? candidateArtworkUrl ?? sourceArtworkUrl : sourceArtworkUrl,
             sourceArtworkUrl,
             candidateArtworkUrl,
             isrc = metadata.Isrc,

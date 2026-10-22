@@ -16,6 +16,24 @@ public sealed class ProviderDownloadArtifactResolverTests : IDisposable
     private readonly string root = Path.Combine(Path.GetTempPath(), "allstarr-provider-artifacts", Guid.NewGuid().ToString("N"));
 
     [Fact]
+    public async Task Resolve_PersistsMeasuredWaveFactsWhenProviderDeclaresFlac()
+    {
+        var store = new MemoryStore();
+        var resolver = Resolver(store);
+        var workspace = await resolver.CreateWorkspaceAsync(Request());
+        var content = AudioMediaFactsTests.Wave();
+        System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(content.AsSpan(40), 36);
+        Write(workspace.Reference, "track.flac", content);
+        var result = await resolver.ResolveAsync(workspace.Reference, Output("track.flac", content));
+        Assert.Equal("wav", result.Container);
+        Assert.Equal("pcm_s24le", result.Codec);
+        Assert.Equal(44100, result.SampleRate);
+        Assert.Equal(24, result.BitDepth);
+        Assert.Equal(2, result.Channels);
+        Assert.Equal(content.Length, result.Length);
+    }
+
+    [Fact]
     public async Task Resolve_VerifiesWorkspaceContainedFileAndPersistsCompleteLineage()
     {
         var store = new MemoryStore();

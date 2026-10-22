@@ -1597,7 +1597,8 @@ public sealed partial class PlaylistLinksController(
                 durationProvenance = item.SourceMetadata.DurationProvenance,
                 isrc = item.SourceMetadata.Isrc,
                 isExplicit = item.SourceMetadata.IsExplicit,
-                artworkUrl = item.SourceMetadata.ArtworkUrl,
+                artworkUrl = item.SourceMetadata.ArtworkUrl ?? (item.SourceIdentity?.ProviderId is { } provider
+                    ? ProviderArtworkFallback.CoverPath(provider) : null),
                 canonicalRecordingId = item.SourceMetadata.CanonicalRecordingId
             },
             resolvedRoute = item.ResolvedRoute == null ? null : new

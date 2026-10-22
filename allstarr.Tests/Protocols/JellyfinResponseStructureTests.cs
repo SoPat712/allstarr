@@ -51,7 +51,7 @@ public class JellyfinResponseStructureTests
         Assert.Contains("Id", mediaSource.Keys);
         Assert.Contains("Path", mediaSource.Keys);
         Assert.Contains("Type", mediaSource.Keys);
-        Assert.Contains("Container", mediaSource.Keys);
+        Assert.DoesNotContain("Container", mediaSource.Keys);
         Assert.DoesNotContain("Bitrate", mediaSource.Keys);
         Assert.Contains("ETag", mediaSource.Keys);
         Assert.Contains("RunTimeTicks", mediaSource.Keys);

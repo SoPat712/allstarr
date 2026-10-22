@@ -306,7 +306,8 @@ public partial class JellyfinResponseBuilder
             albumArtistName = AppendExternalSourceLabel(albumArtistName, song.ExternalProvider);
         }
 
-        var primaryImageTag = song.IsLocal ? song.Id : $"{song.Id}-art-v2";
+        var primaryImageTag = !song.IsLocal && ProviderArtworkFallback.IsFallback(song.ExternalProvider, song.CoverArtUrl, "song")
+            ? ProviderArtworkFallback.Tag(song.ExternalProvider, song.CoverArtUrl) : song.IsLocal ? song.Id : $"{song.Id}-art-v2";
         Dictionary<string, object?>[] artistItems =
             artistNames.Count > 0 && song.ArtistIds.Count == artistNames.Count
             ? artistNames
@@ -354,11 +355,11 @@ public partial class JellyfinResponseBuilder
             ["PremiereDate"] = song.IsLocal
                 ? song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null
                 : ReleaseDate(song.ReleaseDate, song.Year)?.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ", System.Globalization.CultureInfo.InvariantCulture),
-            ["DateCreated"] = song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffffffZ"),
+            ["DateCreated"] = song.IsLocal && song.Year.HasValue ? $"{song.Year}-01-01T00:00:00.0000000Z" : null,
             ["RunTimeTicks"] = runTimeTicks,
             ["ProductionYear"] = song.IsLocal ? song.Year : ReleaseDate(song.ReleaseDate, song.Year)?.Year,
-            ["IndexNumber"] = song.Track,
-            ["ParentIndexNumber"] = song.DiscNumber ?? 1,
+            ["IndexNumber"] = song.IsLocal ? song.Track : song.Track is > 0 ? song.Track : null,
+            ["ParentIndexNumber"] = song.IsLocal ? song.DiscNumber ?? 1 : song.DiscNumber is > 0 ? song.DiscNumber : null,
             ["IsFolder"] = false,
             ["Type"] = "Audio",
             ["ChannelId"] = (object?)null,
@@ -409,7 +410,6 @@ public partial class JellyfinResponseBuilder
             ["ImageBlurHashes"] = song.IsLocal ? new Dictionary<string, object>() : null,
             ["LocationType"] = "FileSystem",
             ["MediaType"] = "Audio",
-            ["NormalizationGain"] = 0.0,
             ["Path"] = download?.Path ?? $"/music/{artistName}/{albumName}/{songTitle}.flac",
             ["CanDelete"] = false,
             ["CanDownload"] = true,
@@ -541,7 +541,7 @@ public partial class JellyfinResponseBuilder
         var media = previous?.Media;
         var size = previous != null ? previous.Size : song.Size;
         // Catalog bitrates can describe a different encode from the serving file.
-        var bitrate = previous != null ? media?.Bitrate : song.Size is > 0 ? song.Bitrate : null;
+        var bitrate = previous != null ? media?.Bitrate : song.Bitrate;
         var sampleRate = previous != null ? media?.SampleRate : song.SampleRate;
         var bitDepth = previous != null ? media?.BitDepth : song.BitDepth;
         var channels = previous != null ? media?.Channels : song.Channels;
@@ -557,6 +557,8 @@ public partial class JellyfinResponseBuilder
         if (channels is > 0) stream["Channels"] = channels.Value;
         if (bitrate is > 0) stream["BitRate"] = bitrate.Value;
         if (size is > 0) source["Size"] = size.Value;
+        if (size is > 0) item["Size"] = size.Value;
+        if (bitrate is > 0) item["Bitrate"] = bitrate.Value;
         var seconds = song.PreciseDuration?.TotalSeconds ?? song.Duration;
         var averageBitrate = size is > 0 && seconds is > 0 ? size.Value * 8d / seconds.Value : 0;
         if (bitrate is > 0) source["Bitrate"] = bitrate.Value;
@@ -567,6 +569,7 @@ public partial class JellyfinResponseBuilder
             source["Container"] = container;
             item["Container"] = container;
         }
+        if (source.GetValueOrDefault("Container") == null) source.Remove("Container");
     }
 
     private static DateTime? ReleaseDate(string? value, int? year)
@@ -709,7 +712,8 @@ public partial class JellyfinResponseBuilder
             ["AlbumArtists"] = albumArtistItems,
             ["ImageTags"] = new Dictionary<string, string>
             {
-                ["Primary"] = album.Id
+                ["Primary"] = !album.IsLocal && ProviderArtworkFallback.IsFallback(album.ExternalProvider, album.CoverArtUrl, "album")
+                    ? ProviderArtworkFallback.Tag(album.ExternalProvider, album.CoverArtUrl) : album.Id
             },
             ["BackdropImageTags"] = new string[0],
             ["ParentLogoImageTag"] = album.ArtistId ?? album.Id,
@@ -770,7 +774,8 @@ public partial class JellyfinResponseBuilder
             },
             ["ImageTags"] = new Dictionary<string, string>
             {
-                ["Primary"] = artist.Id
+                ["Primary"] = !artist.IsLocal && ProviderArtworkFallback.IsFallback(artist.ExternalProvider, artist.ImageUrl, "artist")
+                    ? ProviderArtworkFallback.Tag(artist.ExternalProvider, artist.ImageUrl) : artist.Id
             },
             ["BackdropImageTags"] = new string[0],
             ["ImageBlurHashes"] = artist.IsLocal ? new Dictionary<string, object>() : null,

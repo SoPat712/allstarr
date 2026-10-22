@@ -173,7 +173,7 @@ public interface ITrackIdentityService
         CancellationToken cancellationToken = default);
 }
 
-public sealed partial class TrackIdentityService : ITrackIdentityService
+public sealed partial class TrackIdentityService : ITrackIdentityService, ITrackMediaFactsStore
 {
     private const string DefaultCatalog = "default";
     private static readonly Regex IsrcPattern = new(

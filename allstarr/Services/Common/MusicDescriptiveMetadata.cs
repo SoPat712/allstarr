@@ -46,7 +46,13 @@ internal static class MusicDescriptiveMetadata
         if (!string.IsNullOrWhiteSpace(song.Composer)) yield return (song.Composer, "composer");
         foreach (var name in song.Contributors.Where(name => !string.IsNullOrWhiteSpace(name)).Distinct(StringComparer.Ordinal))
         {
-            if (!name.Equals(song.Composer, StringComparison.Ordinal)) yield return (name, "contributor");
+            if (name.Equals(song.Composer, StringComparison.Ordinal)) continue;
+            var separator = name.IndexOf(':');
+            var role = separator > 0 ? name[..separator].Trim().ToLowerInvariant() : string.Empty;
+            if (role is "composer" or "lyricist" or "producer" or "writer" or "conductor" or "performer" or "engineer")
+                yield return (name[(separator + 1)..].Trim(), role);
+            else if (name.StartsWith("prod. ", StringComparison.OrdinalIgnoreCase)) yield return (name[6..].Trim(), "producer");
+            else yield return (name, "contributor");
         }
     }
 }

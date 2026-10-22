@@ -35,7 +35,7 @@ public sealed class JellyfinItemProtocolAdapter(JellyfinResponseBuilder response
         var item = responseBuilder.ConvertSongToJellyfinItem(song,
             ExternalTrackPresentation.Preferences(http), null, includeAllFields: true);
         var label = $"Last stream: {source.ProviderId}{(source.Cached ? " (cached)" : "")}";
-        item["Overview"] = $"{ExternalTrackPresentation.PlaybackDescription}\n{label}. Opened {source.OpenedAt:O}.";
+        item["Overview"] = $"{item.GetValueOrDefault("Overview") ?? ExternalTrackPresentation.PlaybackDescription}\n{label}. Opened {source.OpenedAt:O}.";
         if (item.GetValueOrDefault("MediaSources") is Dictionary<string, object?>[] mediaSources)
             foreach (var media in mediaSources) media["Name"] = label;
         http!.Response.Headers.CacheControl = "private, no-store";

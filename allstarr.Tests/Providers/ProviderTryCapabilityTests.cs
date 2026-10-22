@@ -46,7 +46,7 @@ public sealed class ProviderTryCapabilityTests
         {
             var item = json.GetProperty(kind)[0];
             Assert.Equal("0", item.GetProperty("id").GetString());
-            Assert.Equal(JsonValueKind.Null, item.GetProperty("artworkUrl").ValueKind);
+            Assert.Equal("/api/admin/providers/fixture/cover", item.GetProperty("artworkUrl").GetString());
             if (kind == "albums")
             {
                 Assert.Equal("Album", item.GetProperty("title").GetString());
@@ -82,7 +82,7 @@ public sealed class ProviderTryCapabilityTests
         Assert.Equal("sample", track.GetProperty("id").GetString());
         Assert.Equal("Artist", track.GetProperty("artists")[0].GetString());
         Assert.Equal(JsonValueKind.Null, track.GetProperty("explicit").ValueKind);
-        Assert.Equal(JsonValueKind.Null, track.GetProperty("artworkUrl").ValueKind);
+        Assert.Equal("/api/admin/providers/fixture/cover", track.GetProperty("artworkUrl").GetString());
         Assert.False(track.TryGetProperty("ArtworkUrl", out _));
         metadata.VerifyAll();
     }

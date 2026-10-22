@@ -13,6 +13,43 @@ namespace allstarr.Tests;
 public sealed class AppleMusicKitMetadataCapabilityAdapterTests
 {
     [Fact]
+    public void Track_mapping_retains_returned_credits_descriptions_and_largest_declared_artwork()
+    {
+        using var payload = JsonDocument.Parse("""
+            {"id":"101","attributes":{"name":"Song","artistName":"Artist","albumName":"Album",
+              "durationInMillis":123456,"trackNumber":3,"discNumber":2,"contentRating":"clean",
+              "composerName":"Composer","genreNames":["Pop","Electronic"],"copyright":"Copyright",
+              "editorialNotes":{"standard":"Recording notes"},"audioVariants":["hi-res-lossless"],
+              "artwork":{"url":"https://is1-ssl.mzstatic.com/cover/{w}x{h}bb.jpg","width":3000,"height":2000}},
+             "relationships":{"artists":{"data":[
+               {"id":"artist-1"},
+               {"id":"artist-2","attributes":{"name":"Guest"}}]},
+               "albums":{"data":[{"id":"album-1","attributes":{"artistName":"Album Artist","trackCount":12,
+                 "discCount":2,"upc":"0123456789012","recordLabel":"Label","releaseDate":"2026-01-02"}}]}}}
+            """);
+
+        var track = AppleMusicKitMetadataCapabilityAdapter.MapTrack(payload.RootElement, null);
+
+        Assert.Equal(["Artist", "Guest"], track.Artists.Select(item => item.Name));
+        Assert.Equal("artist-2", track.Artists[1].ArtistId!.Value);
+        Assert.Equal("Album Artist", track.AlbumArtist);
+        Assert.Equal("Composer", track.Composer);
+        Assert.Equal(["Pop", "Electronic"], track.Genres);
+        Assert.Equal("Pop", track.Genre);
+        Assert.Equal("Copyright", track.Copyright);
+        Assert.Equal("Label", track.Label);
+        Assert.Equal("Recording notes", track.Notes);
+        Assert.Equal(12, track.TotalTracks);
+        Assert.Equal(2, track.TotalDiscs);
+        Assert.Equal("0123456789012", track.Upc);
+        Assert.Equal("2026-01-02", track.ReleaseDate);
+        Assert.False(track.IsExplicit);
+        Assert.Null(track.Media);
+        Assert.Null(track.ReplayGain);
+        Assert.Equal("https://is1-ssl.mzstatic.com/cover/3000x2000bb.jpg", track.Artwork!.PublicUri!.AbsoluteUri);
+    }
+
+    [Fact]
     public async Task Isrc_lookup_uses_authenticated_catalog_song_filter_and_maps_the_recording()
     {
         var handler = new AppleMetadataHandler();

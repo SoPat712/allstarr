@@ -440,6 +440,7 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
         }
 
         AddSongDescription(song, result);
+        AddTrackMetadata(song, result);
         return result;
     }
 
@@ -561,6 +562,7 @@ public partial class SubsonicResponseBuilder(IHttpContextAccessor? httpContexts 
         }
 
         AddSongDescription(song, element);
+        AddTrackMetadata(song, element);
         return element;
     }
 

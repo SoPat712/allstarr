@@ -113,7 +113,7 @@ public sealed class JellyfinExternalMetadataTests
         var name = Assert.IsType<string>(source["Name"]);
         Assert.Matches("^02-03 Track - [a-f0-9]{64}$", name);
         Assert.Equal("mp3", source["Container"]);
-        Assert.Equal($"/music/external/{name}.mp3", source["Path"]);
+        Assert.Matches(@"^/music/external/Artist/Album/02-03 Track \[[a-f0-9]{12}\]\.mp3$", Assert.IsType<string>(source["Path"]));
         Assert.Equal(source["Path"], item["Path"]);
         Assert.Equal(source["Container"], item["Container"]);
         Assert.Equal(4_000_000L, source["Size"]);
