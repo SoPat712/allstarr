@@ -220,7 +220,9 @@ public sealed class TrackMatchPlayableSearch(
         {
             [song.ExternalProvider!] = song.ExternalId!
         },
-        IsLocal: false);
+        IsLocal: false,
+        IsBestVersion: song.IsBestVersion,
+        ExternalProvider: song.ExternalProvider);
 
     private static Guid CandidateId(string provider, string externalId) =>
         new(SHA256.HashData(Encoding.UTF8.GetBytes(

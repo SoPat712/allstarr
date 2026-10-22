@@ -2,7 +2,12 @@ namespace allstarr.Models.Scrobbling;
 
 public record ScrobbleTrack
 {
-    public required string Title { get; init; }
+    private string _title = string.Empty;
+    public required string Title
+    {
+        get => _title;
+        init => _title = allstarr.Core.Protocols.ExternalTrackPresentation.StripBestVersionPrefix(value);
+    }
     public required string Artist { get; init; }
     public string? Album { get; init; }
     public string? AlbumArtist { get; init; }

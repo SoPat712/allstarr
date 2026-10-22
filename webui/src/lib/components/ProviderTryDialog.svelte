@@ -352,11 +352,11 @@
   };
 </script>
 
-{#snippet trackRow(track: ProviderTryTrack, actions: Tab[])}
+{#snippet trackRow(track: ProviderTryTrack, actions: Tab[], providerId = provider.id)}
   <li class="try-row">
     <MediaArtwork class="try-art" url={track.artworkUrl} fallback="♪" />
     <span class="try-row-copy">
-      <strong><span>{track.title}</span>{#if track.explicit}<abbr class="try-explicit" title="Explicit">E</abbr>{/if}</strong>
+      <strong><span>{#if track.isBestVersion && providerId.toLowerCase() === "artistgrid"}<span role="img" aria-label="Best version on ArtistGrid" title="Best version on ArtistGrid">⭐</span> {/if}{track.title}</span>{#if track.explicit}<abbr class="try-explicit" title="Explicit">E</abbr>{/if}</strong>
       <small>{track.artists.join(", ") || "Unknown artist"}{track.album ? ` · ${track.album}` : ""}{track.year ? ` · ${track.year}` : ""}</small>
       <small class="try-ids">{#if track.isrc}<span>ISRC {track.isrc}</span>{/if}<span>ID {track.id}</span></small>
     </span>
@@ -526,7 +526,7 @@
             {/if}
             {#if picking === "lyrics"}<div class="try-outcome" data-tone="busy" role="status"><span class="try-spinner" aria-hidden="true"></span><div><strong>Finding songs…</strong></div></div>{/if}
             {#if picks.lyrics?.length}
-              <ul class="try-list" aria-label="Songs to test">{#each picks.lyrics as track}{@render trackRow(track, ["lyrics"])}{/each}</ul>
+              <ul class="try-list" aria-label="Songs to test">{#each picks.lyrics as track}{@render trackRow(track, ["lyrics"], lyricSearchProviderId)}{/each}</ul>
             {:else if picks.lyrics && !errors.lyrics}
               <div class="try-outcome" data-tone="neutral" role="status"><SearchX size={20} aria-hidden="true" /><div><strong>No matching songs found.</strong><small>Use what you typed, or try another title.</small></div></div>
             {/if}

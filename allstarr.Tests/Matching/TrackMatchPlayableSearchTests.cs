@@ -17,6 +17,28 @@ namespace allstarr.Tests;
 public sealed class TrackMatchPlayableSearchTests
 {
     [Fact]
+    public async Task AutomaticMatchingCarriesArtistGridBestVersionIntoScores()
+    {
+        var user = Guid.CreateVersion7();
+        var gateway = new Mock<IProtocolProviderGateway>();
+        gateway.Setup(item => item.GetProviderOrder(ProviderCapabilityKind.Streaming)).Returns(["artistgrid"]);
+        gateway.Setup(item => item.SearchAutomaticSongsAsync(It.IsAny<ProtocolExecutionContext>(), It.IsAny<string>(), 15))
+            .ReturnsAsync([new Song
+            {
+                ExternalProvider = "artistgrid", ExternalId = "best", Title = "Song", Artist = "Artist",
+                Duration = 180, IsBestVersion = true
+            }]);
+        var service = new TrackMatchPlayableSearch(gateway.Object, new(), NullLogger<TrackMatchPlayableSearch>.Instance);
+        var source = new ExternalTrackMatchSnapshot("source", "spotify", "source", "Song", "Artist", null, null, 180000, null, null, null);
+        var scope = new TrackMatchScope(user, "main", null, 2, 1, new HashSet<string>());
+        var result = await service.MatchAsync(Context(user), source, scope, [], null, CancellationToken.None);
+        var score = Assert.Single(result.Decision.Candidates);
+        Assert.True(score.IsBestVersion);
+        Assert.Contains("ArtistGrid best version +5", score.Reasons);
+        Assert.Equal(1, score.Confidence);
+    }
+
+    [Fact]
     public async Task AutomaticMatchingFiltersManualOnlyCandidatesUsingTheListenersPolicy()
     {
         var user = Guid.CreateVersion7();

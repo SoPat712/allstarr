@@ -6,6 +6,18 @@ namespace allstarr.Tests;
 public class FuzzyMatcherTests
 {
     [Theory]
+    [InlineData("⭐ Song")]
+    [InlineData("⭐Song")]
+    public void BestVersionPrefixIsRemovedFromTitleQueriesAndNormalization(string title)
+    {
+        Assert.Equal("Song", FuzzyMatcher.StripDecorators(title));
+        Assert.Equal("Song", FuzzyMatcher.StripDecorators(title, "Artist"));
+        Assert.Equal("Song", FuzzyMatcher.SearchQuery(title));
+        Assert.Equal("song", FuzzyMatcher.NormalizeTitleForMatching(title, "Artist"));
+        Assert.Equal(100, FuzzyMatcher.CalculateSimilarity(title, "Song"));
+    }
+
+    [Theory]
     [InlineData("Daft Punk Get Lucky")]
     [InlineData("Get Lucky Daft Punk")]
     [InlineData("Get Lucky Daft Punk, Pharrell Williams, Nile Rodgers")]

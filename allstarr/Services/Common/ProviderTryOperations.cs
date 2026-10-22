@@ -269,6 +269,7 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
     {
         id = track.Id.Value,
         title = track.Title,
+        isBestVersion = track.IsBestVersion,
         artists = track.Artists.Select(item => item.Name).ToArray(),
         album = track.AlbumTitle,
         durationSeconds = track.Duration?.TotalSeconds,

@@ -7271,6 +7271,46 @@ async function mockTry(page: Page, requests: Record<string, unknown>[] = []) {
   await page.route("**/api/admin/providers/try/media/**", (route) => route.fulfill({ status: 204 }));
 }
 
+for (const providerId of ["artistgrid", "lumen-audio"]) {
+  test(`source test titles gate best-version markers by source for ${providerId}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await mockApi(page);
+    const name = providerId === "artistgrid" ? "ArtistGrid" : "Lumen Audio";
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema, providers: [{ id: providerId, name, connectionKind: "built_in", categories: ["metadata"],
+        runtimeCapabilities: [{ id: "metadata", supported: true, canTest: true, status: "ready" }] }],
+    } }));
+    await page.route("**/api/admin/provider-accounts", route => route.fulfill({ json: { accounts: [], audienceUsers: [] } }));
+    await page.route(`**/api/admin/providers/${providerId}/try**`, route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: {
+        provider: providerId, capabilities: [{ capability: "metadata", accountRequirement: "none",
+          operations: [{ id: "search", inputs: ["query", "kind"], kinds: ["tracks"] }] }],
+      } });
+      return route.fulfill({ json: { provider: providerId, capability: "metadata", operation: "search", succeeded: true, elapsedMs: 20,
+        tracks: [
+          { ...tryTracks[0], id: "best", title: "Preferred version", isBestVersion: true },
+          { ...tryTracks[0], id: "ordinary", title: "Ordinary version", isBestVersion: false },
+          { ...tryTracks[0], id: "legacy", title: "Older result" },
+        ],
+      } });
+    });
+    await page.goto(`#/integrations/services/${providerId}`);
+    await page.getByRole("button", { name: "Open Metadata tests" }).click();
+    const dialog = page.getByRole("dialog", { name: `Test ${name}` });
+    await dialog.getByRole("searchbox", { name: "Search" }).fill("version");
+    await dialog.getByRole("button", { name: "Search", exact: true }).click();
+    const rows = dialog.getByRole("list", { name: "Results" }).getByRole("listitem");
+    await expect(rows).toHaveCount(3);
+    const marker = rows.getByRole("img", { name: "Best version on ArtistGrid", exact: true });
+    await expect(marker).toHaveCount(providerId === "artistgrid" ? 1 : 0);
+    if (providerId === "artistgrid") {
+      await expect(marker).toHaveAttribute("title", "Best version on ArtistGrid");
+      await expect(rows.filter({ hasText: "Preferred version" }).locator("strong")).toContainText("⭐");
+    }
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  });
+}
+
 test("Source test panel Find chips support keyboard selection and one tab stop", async ({ page }) => {
   await mockApi(page);
   const requests: Record<string, unknown>[] = [];

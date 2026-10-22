@@ -62,6 +62,19 @@ public sealed class TrackMatchesProviderSearchTests : IAsyncLifetime
 
     public Task DisposeAsync() => _database.DisposeAsync().AsTask();
 
+    [Fact]
+    public async Task SearchProjectsBestVersionFlagAndScoreEvidence()
+    {
+        var songs = Versions();
+        songs[2].IsBestVersion = true;
+        _gateway.Setup(item => item.SearchPlayableSongsAsync(It.IsAny<ProtocolExecutionContext>(), "Communicate", 20))
+            .ReturnsAsync(songs);
+        var tracks = await SearchAsync("Communicate");
+        var best = Assert.Single(tracks, item => item.GetProperty("isBestVersion").GetBoolean());
+        Assert.Equal("v3", best.GetProperty("externalId").GetString());
+        Assert.Contains(best.GetProperty("reasons").EnumerateArray(), item => item.GetString() == "ArtistGrid best version +5");
+    }
+
     [Theory]
     [InlineData("Communicate who do we blame")]
     [InlineData("who do we blame Communicate")]

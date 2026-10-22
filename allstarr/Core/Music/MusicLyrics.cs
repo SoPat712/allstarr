@@ -77,7 +77,7 @@ public static partial class MusicLyrics
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         foreach (var label in PresentationLabels)
             value = value.Replace(label, "", StringComparison.Ordinal);
-        return value.Trim();
+        return ExternalTrackPresentation.StripBestVersionPrefix(value).Trim();
     }
 
     /// <summary>

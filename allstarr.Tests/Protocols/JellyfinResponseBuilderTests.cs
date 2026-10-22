@@ -23,6 +23,17 @@ public class JellyfinResponseBuilderTests
         _builder = new JellyfinResponseBuilder(httpContexts: new HttpContextAccessor { HttpContext = http });
     }
 
+    [Theory]
+    [InlineData("artistgrid", true, "⭐ Song [A]")]
+    [InlineData("artistgrid", false, "Song [A]")]
+    [InlineData("deezer", true, "Song [A]")]
+    public void BestVersionMarkerIsProjectedOnlyForArtistGrid(string provider, bool best, string expected)
+    {
+        var song = new Song { Title = "Song", Artist = "Artist", ExternalProvider = provider, ExternalId = "version", IsBestVersion = best };
+        Assert.Equal(expected, _builder.ConvertSongToJellyfinItem(song)["Name"]);
+        Assert.Equal("Song", song.Title);
+    }
+
     [Fact]
     public void ConvertSongToJellyfinItem_SetsCorrectFields()
     {

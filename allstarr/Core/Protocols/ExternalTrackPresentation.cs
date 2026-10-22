@@ -13,7 +13,15 @@ public static class ExternalTrackPresentation
 
     public static string Title(Song song, ListeningPreferences? preferences = null) => song.IsLocal
         ? song.Title
-        : Title(song.Title, song.ExplicitContentLyrics == 1, preferences);
+        : Title(BestVersionTitle(song.Title, song.ExternalProvider, song.IsBestVersion),
+            song.ExplicitContentLyrics == 1, preferences);
+
+    public static string StripBestVersionPrefix(string title) => title.TrimStart().TrimStart('⭐', '\uFE0F').TrimStart();
+
+    private static string BestVersionTitle(string title, string? provider, bool bestVersion) =>
+        bestVersion && string.Equals(provider, "artistgrid", StringComparison.OrdinalIgnoreCase)
+            ? $"⭐ {StripBestVersionPrefix(title)}"
+            : title;
 
     public static string Title(string title, bool isExplicit, ListeningPreferences? preferences = null)
     {

@@ -85,7 +85,7 @@ public static partial class FuzzyMatcher
             return string.Empty;
         }
 
-        var cleaned = title;
+        var cleaned = allstarr.Core.Protocols.ExternalTrackPresentation.StripBestVersionPrefix(title);
 
         cleaned = ParenthesizedCreditsRegex().Replace(cleaned, "");
         cleaned = FeatDecoratorRegex().Replace(cleaned, "");
@@ -112,7 +112,8 @@ public static partial class FuzzyMatcher
             return credits.Count > 0 && credits.All(credit => artists.Contains(NormalizeForMatching(credit)));
         }
 
-        var cleaned = BracketedTitlePartRegex().Replace(title,
+        var cleaned = BracketedTitlePartRegex().Replace(
+            allstarr.Core.Protocols.ExternalTrackPresentation.StripBestVersionPrefix(title),
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
         cleaned = DashTitlePartRegex().Replace(cleaned,
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);

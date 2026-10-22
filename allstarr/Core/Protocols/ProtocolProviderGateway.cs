@@ -1814,6 +1814,7 @@ public sealed partial class ProtocolProviderGateway(
             ExternalProvider = PublicProviderId(item.Id),
             ExternalId = item.Id.Value,
             Title = item.Title,
+            IsBestVersion = item.IsBestVersion,
             Artist = artists.FirstOrDefault() ?? string.Empty,
             Artists = artists,
             ArtistId = item.Artists.FirstOrDefault()?.ArtistId is { } primaryArtist

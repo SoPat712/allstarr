@@ -9,6 +9,17 @@ namespace allstarr.Tests;
 /// </summary>
 public class ScrobblingHelperTests
 {
+    [Fact]
+    public void BestVersionPrefixIsRemovedFromScrobbleTitles()
+    {
+        var helper = new ScrobblingHelper(null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<ScrobblingHelper>.Instance);
+        using var item = System.Text.Json.JsonDocument.Parse("""{"Name":"⭐ Song","Artists":["Artist"]}""");
+        Assert.Equal("Song", helper.ExtractScrobbleTrackFromJson(item)!.Title);
+        var track = new ScrobbleTrack { Title = "⭐Song", Artist = "Artist" };
+        Assert.Equal("Song", track.Title);
+        Assert.Equal("Song", (track with { Title = "⭐ Song" }).Title);
+    }
+
     [Theory]
     [InlineData(0, false)]      // 0 seconds - too short
     [InlineData(29, false)]     // 29 seconds - too short
