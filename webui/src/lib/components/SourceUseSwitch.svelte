@@ -50,7 +50,7 @@
     flex: none;
     border-radius: 999px;
     background: var(--color-surface-raised);
-    padding: 0.25rem;
+    padding: 0 0.25rem;
     box-shadow: inset 0 0 0 1px var(--color-edge);
   }
 
@@ -89,6 +89,7 @@
     z-index: 1;
     display: inline-flex;
     min-width: 0;
+    min-height: var(--control-md);
     align-items: center;
     justify-content: center;
     gap: 0.375rem;

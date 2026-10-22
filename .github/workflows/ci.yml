@@ -36,6 +36,13 @@ jobs:
           python3 tools/tests/test_live_jellyfin_smoke.py
           python3 tools/tests/test_live_subsonic_smoke.py
 
+      - name: Install media test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version
+          ffprobe -version
+
       - name: Restore dependencies
         run: python3 tools/tests/timing_report.py --name dotnet-restore -- dotnet restore -p:NuGetAudit=true
 
@@ -72,6 +79,13 @@ jobs:
         uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Install media test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version
+          ffprobe -version
 
       - name: Restore dependencies
         run: python3 tools/tests/timing_report.py --name release-critical-restore -- dotnet restore -p:NuGetAudit=true
