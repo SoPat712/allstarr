@@ -4,6 +4,9 @@ using allstarr.Core.Matching;
 using allstarr.Core.Operations;
 using allstarr.Core.Settings;
 using allstarr.Services.Common;
+using allstarr.Services.MusicBrainz;
+using allstarr.Models.Settings;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 
@@ -157,6 +160,64 @@ public sealed class CrossProviderLinkResolverTests
         metadata.VerifyAll();
     }
 
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly)]
+    [InlineData(ProviderUseMode.Off)]
+    public async Task PersonalCatalogPolicyStopsItsFallbackAndPreviouslyCachedCandidates(ProviderUseMode mode)
+    {
+        const string isrc = "USRC17607839";
+        var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
+        metadata.Setup(item => item.LookupByIsrcAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderIsrcLookupRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Failure(new(ProviderErrorKind.NotFound)));
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("deezer", [])));
+        metadata.Setup(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(),
+                It.Is<ProviderTrackLookupRequest>(request => request.Id.Value == "99")))
+            .ReturnsAsync(ProviderOutcome<ProviderTrackMetadata>.Success(Track("Song", isrc)));
+        var clock = new ManualTimeProvider();
+        var handler = new CatalogLinkHandler();
+        var factory = new Mock<IHttpClientFactory>();
+        factory.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(handler, false));
+        var catalog = new MusicBrainzService(factory.Object, Options.Create(new MusicBrainzSettings
+        {
+            BaseUrl = "https://musicbrainz.test/ws/2",
+            RateLimitMs = 1000
+        }), Options.Create(new CacheSettings()), new TestMemoryApplicationCache(), new(new()),
+            NullLogger<MusicBrainzService>.Instance, clock);
+        var links = OdesliServiceTests.Create(handler, clock, musicBrainz: catalog);
+        var cache = new TestMemoryApplicationCache();
+        var automatic = Create(metadata.Object, ["deezer"], odesli: links, cache: cache);
+        var pending = automatic.ResolveAsync(Source(isrc), [new("tidal", ProviderResourceKind.Track, "42")], Actor(), "fixture", default);
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(1));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.True(Assert.Single(await pending).Verified);
+        var restricted = Create(metadata.Object, ["deezer"], odesli: links,
+            modes: ImmutableDictionary<string, ProviderUseMode>.Empty.Add("musicbrainz", mode), cache: cache);
+
+        Assert.Empty(await restricted.ResolveAsync(Source(isrc), [new("tidal", ProviderResourceKind.Track, "42")], Actor(), "fixture", default));
+
+        Assert.Equal(2, handler.CatalogReads);
+        metadata.Verify(item => item.LookupByIsrcAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderIsrcLookupRequest>()), Times.Exactly(2));
+        metadata.Verify(item => item.GetTrackAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderTrackLookupRequest>()), Times.Once);
+    }
+
+    private sealed class CatalogLinkHandler : HttpMessageHandler
+    {
+        public int CatalogReads { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri!.Host != "musicbrainz.test")
+                return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+            CatalogReads++;
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(request.RequestUri.AbsolutePath.Contains("/isrc/", StringComparison.Ordinal)
+                    ? """{"recordings":[{"id":"5cdd7db3-8795-442d-8438-ddb8d7ea16a4","isrcs":["USRC17607839"]}]}"""
+                    : """{"relations":[{"url":{"resource":"https://deezer.com/track/99"}}]}""")
+            });
+        }
+    }
+
     private sealed class LinkHandler : HttpMessageHandler
     {
         public int Calls { get; private set; }
@@ -176,7 +237,7 @@ public sealed class CrossProviderLinkResolverTests
         => Create(metadata.Object, order, disabled);
 
     internal static CrossProviderLinkResolver Create(IProviderMetadataCapability metadata, string[] order, string[]? disabled = null, OdesliService? odesli = null,
-        ImmutableDictionary<string, ProviderUseMode>? modes = null)
+        ImmutableDictionary<string, ProviderUseMode>? modes = null, IApplicationCache? cache = null)
     {
         IProviderMetadataCapability? registered = metadata;
         var registry = new Mock<IProviderRegistry>();
@@ -191,7 +252,7 @@ public sealed class CrossProviderLinkResolverTests
             (disabled ?? []).ToImmutableHashSet(), "Any", 0.07)
         { ProviderModes = modes ?? ImmutableDictionary<string, ProviderUseMode>.Empty };
         policy.Setup(item => item.ResolveForUserAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>())).ReturnsAsync(snapshot);
-        return new(registry.Object, policy.Object, new TrackMatchDecisionEngine(), new TestMemoryApplicationCache(),
+        return new(registry.Object, policy.Object, new TrackMatchDecisionEngine(), cache ?? new TestMemoryApplicationCache(),
             Options.Create(new OdesliSettings { Enabled = true }), new SystemPlatformClock(), odesli);
     }
 

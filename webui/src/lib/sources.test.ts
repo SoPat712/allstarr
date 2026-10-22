@@ -25,6 +25,7 @@ import {
   groupSourceChecks,
   settingDefault,
   sourceTimingLabel,
+  sourceServerFields,
 } from "./sources";
 
 const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount => ({
@@ -42,6 +43,63 @@ const account = (scope: ProviderAccount["scope"] = "Personal"): ProviderAccount 
 const provider: ProviderDefinition = { id: "future-extension", name: "Future Extension" };
 
 describe("source presentation", () => {
+  it("keeps routine settings visible and compatibility overrides in Advanced", () => {
+    const standard = { key: "CACHE", label: "Cache minutes", type: "number" };
+    const advanced = { key: "ENDPOINT", label: "Endpoint", type: "text", advanced: true, defaultValueJson: '"https://service.test/default"' };
+    expect(sourceServerFields({ ...provider, configSchema: [standard, advanced] }))
+      .toEqual({ standard: [standard], advanced: [advanced] });
+    expect(settingDefault(advanced)).toBe("https://service.test/default");
+    expect(sourceServerFields(provider)).toEqual({ standard: [], advanced: [] });
+  });
+
+  it("uses the same checked capabilities for counts and the badge", () => {
+    const timestamp = "2026-10-20T12:00:00Z";
+    const catalog = { ...provider, status: "degraded", runtimeCapabilities: [
+      { id: "metadata", ready: false, canAttempt: true, health: "unknown", canTest: true },
+    ] };
+    const check = (capability: string, health: string, reasonCode: string | null = null) => ({
+      provider: provider.id, providerAccountId: "account-1", capability, supported: true, enabled: true,
+      canTest: true, health, reasonCode, testedAt: timestamp, ready: health === "healthy",
+    }) as ProviderHealth;
+    const checks = [check("metadata", "healthy"), check("streaming", "healthy"),
+      check("download", "degraded", "download-not-verified"),
+      check("playlist", "degraded", "probe_not_available")];
+    expect(sourceMetrics(catalog, checks)).toEqual({ total: 2, passing: 2, failed: 0, checkedAt: timestamp });
+    expect(sourceStatus(catalog, [account()], checks)).toBe("healthy");
+    expect(sourceStatus(catalog, [account()], [...checks, check("lyrics", "degraded", "timeout")])).toBe("degraded");
+    expect(sourceMetrics(catalog, [...checks, check("lyrics", "degraded", "timeout")]))
+      .toMatchObject({ total: 3, passing: 2, failed: 1 });
+    const disabled = { ...check("lyrics", "degraded", "sign_in_needed"), enabled: false };
+    expect(sourceMetrics(catalog, [...checks, disabled])).toMatchObject({ total: 2, passing: 2, failed: 0 });
+    expect(sourceStatus(catalog, [account()], [...checks, disabled])).toBe("healthy");
+    expect(sourceProblemLabel(catalog, [account()], [disabled])).toBeNull();
+  });
+
+  it("excludes unchecked capabilities and labels neutral outcomes", () => {
+    const untested = { ...provider, runtimeCapabilities: [
+      { id: "metadata", ready: false, canAttempt: true, canTest: true, health: "unknown" },
+      { id: "playlist", ready: false, canAttempt: true, canTest: false, health: "degraded", reasonCode: "probe_not_available" },
+    ] };
+    expect(sourceMetrics(untested, [])).toEqual({ total: 0, passing: 0, failed: 0, checkedAt: null });
+    expect(sourceStatus(untested, [], [])).toBe("available");
+    for (const reasonCode of ["probe_not_available", "download-not-verified"])
+      expect(checkStatusState({ ready: false, health: "degraded", reasonCode })).toBe("");
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "probe_not_available" })).toBe("Not checked yet");
+    expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "download-not-verified" })).toBe("Not verified");
+  });
+
+  it("keeps an unavailable diagnostic sample neutral", () => {
+    const sample = { id: "streaming", ready: false, canAttempt: true, canTest: true,
+      health: "degraded", reasonCode: "sample-unavailable" };
+    const source = { ...provider, runtimeCapabilities: [sample] };
+    expect(checkStatusState(sample)).toBe("");
+    expect(checkStatusLabel(sample)).toBe("Sample unavailable");
+    expect(checkGuide(sample.reasonCode)?.step).toBe("Sample unavailable, retrying another recording.");
+    expect(sourceStatus(source, [], [])).toBe("available");
+    expect(sourceMetrics(source, [])).toEqual({ total: 0, passing: 0, failed: 0, checkedAt: null });
+    expect(sourceProblemLabel(source, [], [{ ...sample, provider: provider.id, capability: "streaming", providerAccountId: null, providerAccountName: null, accountScope: "public", supported: true, enabled: true, configuration: "not_required" } as ProviderHealth])).toBeNull();
+  });
+
   it("gives automatic check failures a plain label and next step", () => {
     expect(checkStatusLabel({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("Needs verification");
     expect(checkStatusState({ ready: false, health: "degraded", reasonCode: "sign_in_needed" })).toBe("needs_verification");
@@ -192,7 +250,7 @@ describe("source presentation", () => {
       ],
     } satisfies ProviderDefinition;
 
-    expect(sourceMetrics(managed, undefined, [])).toMatchObject({
+    expect(sourceMetrics(managed, [])).toMatchObject({
       total: 2,
       passing: 2,
       failed: 0,

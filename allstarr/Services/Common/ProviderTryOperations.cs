@@ -7,6 +7,8 @@ namespace allstarr.Services.Common;
 
 public sealed class ProviderTryOperations(IProviderRegistry providers)
 {
+    private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
+
     public static ProviderTryCatalog Describe(ProviderDescriptor provider, Guid? accountId)
     {
         var capabilities = new List<ProviderTryCapability>();
@@ -160,66 +162,91 @@ public sealed class ProviderTryOperations(IProviderRegistry providers)
     public async Task<ProviderTryResult> ProbeAsync(ProviderExecutionContext context, ProviderDescriptor descriptor, ProviderCapabilityKind capability)
     {
         descriptor.Capabilities.Single(item => item.Capability == capability);
-        if (descriptor.HealthProbe && providers.TryGetCapability<IProviderHealthProbeCapability>(descriptor.Id,
+        if (descriptor.HealthProbe && descriptor.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Health &&
+            item.Hooks.Contains("probe" + capability)) && providers.TryGetCapability<IProviderHealthProbeCapability>(descriptor.Id,
             ProviderCapabilityKind.Health, out var health))
         {
             var probe = await health!.ProbeAsync(context, new(capability));
             if (!probe.IsSuccess) return Failure(probe.Error!);
-            var result = probe.RequireValue();
-            return result.Status == ProviderProbeStatus.Healthy ? new() { Succeeded = true } :
-                ProviderTryResult.Failure(result.SafeCode ?? (result.Status == ProviderProbeStatus.Unauthorized ? "unauthorized" : "service_unavailable"));
+            var healthResult = probe.RequireValue();
+            return healthResult.Status == ProviderProbeStatus.Healthy ? new() { Succeeded = true } :
+                ProviderTryResult.Failure(healthResult.SafeCode ?? (healthResult.Status == ProviderProbeStatus.Unauthorized ? "unauthorized" : "service_unavailable"));
         }
         bool Has(ProviderCapabilityKind kind, string hook) => descriptor.Capabilities.Any(item => item.Capability == kind &&
             item.HasUsableImplementation && item.Hooks.Contains(hook));
-        if (capability == ProviderCapabilityKind.Metadata)
-            return Has(capability, "searchTracks") ? await ExecuteAsync(context,
-                new() { Capability = "metadata", Operation = "search", Query = "Daft Punk Get Lucky", Kind = "tracks" }) :
-                ProviderTryResult.Failure("not_supported");
         if (capability == ProviderCapabilityKind.Playlist && context.Account != null && Has(capability, "getUserPlaylists"))
             return await ExecuteAsync(context, new() { Capability = "playlist", Operation = "mine" });
-        if (capability is not (ProviderCapabilityKind.Lyrics or ProviderCapabilityKind.Download or ProviderCapabilityKind.Streaming))
+        if (capability is not (ProviderCapabilityKind.Metadata or ProviderCapabilityKind.Lyrics or ProviderCapabilityKind.Download or ProviderCapabilityKind.Streaming) ||
+            capability == ProviderCapabilityKind.Metadata && !Has(capability, "searchTracks") ||
+            capability == ProviderCapabilityKind.Download && !Has(capability, "checkAvailability"))
             return ProviderTryResult.Failure("probe_not_available");
-        if (capability == ProviderCapabilityKind.Download && !Has(capability, "checkAvailability"))
-            return ProviderTryResult.Failure("probe_not_available");
-        try
+        ProviderTryResult? last = null;
+        var triedIds = new HashSet<string>(StringComparer.Ordinal);
+        var result = await _diagnosticSamples.CheckAsync($"{descriptor.Id}:{context.Account?.AccountId}:{capability}",
+            ProviderDiagnosticSamples.Recordings(descriptor.Id), async (recording, token) =>
+            {
+                var execution = ProviderDiagnosticSamples.WithCancellation(context, token);
+                try { last = await ProbeSampleAsync(execution, descriptor, capability, recording, triedIds); }
+                catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (Exception) { last = ProviderTryResult.Failure("provider_error"); }
+                return new ProviderSampleCheck(last.Succeeded || last.ReasonCode == "download-not-verified", last.ReasonCode,
+                    last.ReasonCode is "not_found" or "not-found" or "incompatible-media" or "sample-unavailable");
+            }, DiscoverAsync, context.CancellationToken);
+        return result.Success && last != null ? last : ProviderTryResult.Failure(result.SampleUnavailable
+            ? "sample-unavailable" : result.ReasonCode ?? "sample-unavailable");
+
+        async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
         {
-            ProviderTrackMetadata? sample = null;
-            if (Has(ProviderCapabilityKind.Metadata, "searchTracks"))
+            await Task.CompletedTask;
+            foreach (var query in ProviderDiagnosticSamples.DiscoveryQueries(descriptor.Id))
             {
-                var outcome = await providers.GetRequiredCapability<IProviderMetadataCapability>(descriptor.Id, ProviderCapabilityKind.Metadata)
-                    .SearchTracksAsync(context, new("Daft Punk Get Lucky", new(20))).WaitAsync(context.CancellationToken);
-                if (!outcome.IsSuccess) return Failure(outcome.Error!);
-                sample = outcome.RequireValue().Items.FirstOrDefault();
-                if (sample == null) return ProviderTryResult.Failure("not_found");
+                token.ThrowIfCancellationRequested();
+                yield return new(query, "", null, 200);
             }
-            if (capability == ProviderCapabilityKind.Streaming)
-            {
-                if (sample == null || !Has(capability, "probeStream")) return ProviderTryResult.Failure("probe_not_available");
-                var probe = await providers.GetRequiredCapability<IProviderStreamingCapability>(descriptor.Id, capability)
-                    .ProbeStreamAsync(context, new(sample.Id)).WaitAsync(context.CancellationToken);
-                return !probe.IsSuccess ? Failure(probe.Error!) : probe.RequireValue().Available
-                    ? new() { Succeeded = true } : ProviderTryResult.Failure("not_found");
-            }
-            if (capability == ProviderCapabilityKind.Lyrics)
-                return await ExecuteAsync(context, new()
-                {
-                    Capability = "lyrics",
-                    Operation = "lyrics",
-                    TrackId = sample?.Id.Value,
-                    Title = sample?.Title ?? "Get Lucky",
-                    Artist = sample == null ? "Daft Punk" : string.Join(",", sample.Artists.Select(item => item.Name)),
-                    Album = sample?.AlbumTitle,
-                    DurationSeconds = (int?)sample?.Duration?.TotalSeconds ?? 369,
-                    Isrc = sample?.Isrc ?? "USQX91300108"
-                });
-            if (sample == null) return ProviderTryResult.Failure("not_found");
-            var available = await providers.GetRequiredCapability<IProviderDownloadCapability>(descriptor.Id, capability)
-                .CheckAvailabilityAsync(context, new(sample.Id)).WaitAsync(context.CancellationToken);
-            return available.IsSuccess ? available.RequireValue().State == ProviderDownloadAvailabilityState.Available
-                ? new() { Succeeded = true } : ProviderTryResult.Failure("not_found") : Failure(available.Error!);
         }
-        catch (OperationCanceledException) { return ProviderTryResult.Failure("timeout"); }
-        catch (Exception) { return ProviderTryResult.Failure("provider_error"); }
+    }
+
+    private async Task<ProviderTryResult> ProbeSampleAsync(ProviderExecutionContext context, ProviderDescriptor descriptor,
+        ProviderCapabilityKind capability, ProviderDiagnosticSample recording, HashSet<string> triedIds)
+    {
+        bool Has(ProviderCapabilityKind kind, string hook) => descriptor.Capabilities.Any(item => item.Capability == kind &&
+            item.HasUsableImplementation && item.Hooks.Contains(hook));
+        ProviderTrackMetadata? sample = null;
+        if (Has(ProviderCapabilityKind.Metadata, "searchTracks"))
+        {
+            var outcome = await providers.GetRequiredCapability<IProviderMetadataCapability>(descriptor.Id, ProviderCapabilityKind.Metadata)
+                .SearchTracksAsync(context, new(recording.Query.Trim(), new(3))).WaitAsync(context.CancellationToken);
+            if (!outcome.IsSuccess) return Failure(outcome.Error!);
+            sample = outcome.RequireValue().Items.FirstOrDefault();
+            if (sample == null) return ProviderTryResult.Failure("not_found");
+        }
+        if (capability == ProviderCapabilityKind.Metadata) return new() { Succeeded = sample != null };
+        if (sample != null && !triedIds.Add(sample.Id.Value)) return ProviderTryResult.Failure("not_found");
+        if (capability == ProviderCapabilityKind.Streaming)
+        {
+            if (sample == null || !Has(capability, "probeStream")) return ProviderTryResult.Failure("probe_not_available");
+            var probe = await providers.GetRequiredCapability<IProviderStreamingCapability>(descriptor.Id, capability)
+                .ProbeStreamAsync(context, new(sample.Id)).WaitAsync(context.CancellationToken);
+            return !probe.IsSuccess ? Failure(probe.Error!) : probe.RequireValue().Available
+                ? new() { Succeeded = true } : ProviderTryResult.Failure("not_found");
+        }
+        if (capability == ProviderCapabilityKind.Lyrics)
+            return await ExecuteAsync(context, new()
+            {
+                Capability = "lyrics",
+                Operation = "lyrics",
+                TrackId = sample?.Id.Value,
+                Title = sample?.Title ?? recording.Title,
+                Artist = sample == null ? recording.Artist : string.Join(",", sample.Artists.Select(item => item.Name)),
+                Album = sample?.AlbumTitle,
+                DurationSeconds = (int?)sample?.Duration?.TotalSeconds ?? recording.DurationSeconds,
+                Isrc = sample?.Isrc ?? recording.Isrc
+            });
+        if (sample == null) return ProviderTryResult.Failure("not_found");
+        var available = await providers.GetRequiredCapability<IProviderDownloadCapability>(descriptor.Id, capability)
+            .CheckAvailabilityAsync(context, new(sample.Id)).WaitAsync(context.CancellationToken);
+        return available.IsSuccess ? available.RequireValue().State == ProviderDownloadAvailabilityState.Available
+            ? ProviderTryResult.Failure("download-not-verified") : ProviderTryResult.Failure("not_found") : Failure(available.Error!);
     }
 
     public static ProviderAudioQuality Quality(string? quality) => quality switch

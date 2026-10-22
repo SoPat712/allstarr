@@ -18,6 +18,14 @@ public sealed class RuntimeEnvConfigurationTests : IDisposable
     public void MapEnvVarToConfiguration_IgnoresRetiredSpotifySidecar(string key) =>
         Assert.Empty(RuntimeEnvConfiguration.MapEnvVarToConfiguration(key, "http://obsolete.example.test"));
 
+    [Theory]
+    [InlineData("SPOTIFY_API_ENABLED")]
+    [InlineData("SpotifyApi__Enabled")]
+    [InlineData("MUSICBRAINZ_ENABLED")]
+    [InlineData("MusicBrainz__Enabled")]
+    public void MapEnvVarToConfiguration_IgnoresDuplicateSourceSwitch(string key) =>
+        Assert.Empty(RuntimeEnvConfiguration.MapEnvVarToConfiguration(key, "false"));
+
     [Fact]
     public void MapEnvVarToConfiguration_MapsFlatKeyToNestedConfigKey()
     {

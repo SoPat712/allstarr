@@ -37,7 +37,8 @@ public sealed class ProviderUseControllerTests
         var json = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(await controller.Get(default)).Value);
         Assert.Equal("household-revision", json.GetProperty("householdRevision").GetString());
         Assert.Equal("personal-revision", json.GetProperty("personalRevision").GetString());
-        var source = Assert.Single(json.GetProperty("providers").EnumerateArray());
+        var source = Assert.Single(json.GetProperty("providers").EnumerateArray(),
+            item => item.GetProperty("providerId").GetString() == "source");
         Assert.Equal("source", source.GetProperty("providerId").GetString());
         Assert.Equal(household, source.GetProperty("householdMode").GetString());
         Assert.Equal(personal, source.GetProperty("personalMode").GetString());
@@ -68,7 +69,8 @@ public sealed class ProviderUseControllerTests
         policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(Policy("automatic"));
         var json = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(
             await controller.Update("source", new(null, "personal", "revision"), default)).Value);
-        Assert.Null(Assert.Single(json.GetProperty("providers").EnumerateArray()).GetProperty("personalMode").GetString());
+        Assert.Null(Assert.Single(json.GetProperty("providers").EnumerateArray(),
+            item => item.GetProperty("providerId").GetString() == "source").GetProperty("personalMode").GetString());
         settings.Verify(item => item.UpdateProviderModeAsync(user, "source", null, "revision", user,
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -81,8 +83,39 @@ public sealed class ProviderUseControllerTests
             new("off", "household", "revision"), default)).StatusCode);
     }
 
+    [Theory]
+    [InlineData("personal", "automatic")]
+    [InlineData("personal", "manualOnly")]
+    [InlineData("personal", "off")]
+    [InlineData("household", "automatic")]
+    [InlineData("household", "manualOnly")]
+    [InlineData("household", "off")]
+    public async Task BuiltInEnrichmentSourceCanUseTheSamePolicyControls(string scope, string mode)
+    {
+        var (controller, settings, policies, user) = Fixture(administrator: true);
+        settings.Setup(item => item.UpdateProviderModeAsync(scope == "personal" ? user : null,
+            "musicbrainz", mode, "revision", user, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        settings.Setup(item => item.GetPreferencesAsync(It.IsAny<Guid?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new PersonalListeningPreferences(new(), new(), true, "next-revision"));
+        var policy = Policy("automatic");
+        policy = policy with { ProviderModes = policy.ProviderModes.Add("musicbrainz", ProviderUsePolicy.ParseMode(mode)) };
+        policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        policies.Setup(item => item.ResolveForUserAsync(user, It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+
+        var json = JsonSerializer.SerializeToElement(Assert.IsType<OkObjectResult>(
+            await controller.Update("musicbrainz", new(mode, scope, "revision"), default)).Value);
+
+        var source = Assert.Single(json.GetProperty("providers").EnumerateArray(),
+            item => item.GetProperty("providerId").GetString() == "musicbrainz");
+        Assert.Equal(mode, source.GetProperty("effectiveMode").GetString());
+        Assert.Equal(mode, source.GetProperty("householdMode").GetString());
+        Assert.Equal(mode != "off", source.GetProperty("canChoosePersonal").GetBoolean());
+        settings.Verify(item => item.UpdateProviderModeAsync(scope == "personal" ? user : null,
+            "musicbrainz", mode, "revision", user, It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     private static (ProviderUseController Controller, Mock<IDurableRuntimeSettings> Settings,
-        Mock<IEffectiveProviderPolicyResolver> Policies, Guid User) Fixture()
+        Mock<IEffectiveProviderPolicyResolver> Policies, Guid User) Fixture(bool administrator = false)
     {
         var user = Guid.CreateVersion7();
         var settings = new Mock<IDurableRuntimeSettings>(MockBehavior.Strict);
@@ -100,7 +133,7 @@ public sealed class ProviderUseControllerTests
             SessionId = "session",
             UserId = "listener",
             UserName = "Listener",
-            IsAdministrator = false,
+            IsAdministrator = administrator,
             AllstarrUserId = user,
             JellyfinAccessToken = "fixture",
             ExpiresAtUtc = DateTime.UtcNow.AddMinutes(1)

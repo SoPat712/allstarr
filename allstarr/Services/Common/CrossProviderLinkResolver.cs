@@ -39,6 +39,7 @@ public sealed class CrossProviderLinkResolver(
         if (!settings.Value.Enabled || actor.EffectiveUserId is not { } userId) return [];
         var policy = await policies.ResolveForUserAsync(userId, cancellationToken);
         if (!policy.IsAutomatic(recording.ProviderId)) return [];
+        var allowMusicBrainz = policy.IsAutomatic("musicbrainz");
         var disabled = policy.DisabledProviders.Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId).ToHashSet(StringComparer.Ordinal);
         var order = policy.GetProviderOrder(ProviderCapabilityKind.Metadata)
             .Select(Core.Providers.AppleMusicKit.AppleMusicClient.NormalizeProviderId)
@@ -91,6 +92,7 @@ public sealed class CrossProviderLinkResolver(
                     recording.Isrc,
                     recording.IsExplicit,
                     userId,
+                    allowMusicBrainz,
                     account = account?.AccountId,
                     revision = account?.Revision,
                     version = TrackMatchDecisionEngine.AlgorithmVersion
@@ -136,7 +138,11 @@ public sealed class CrossProviderLinkResolver(
                         var url = verifiedIdentities.Select(id => OdesliService.BuildTrackUrl(id.ProviderId, id.Value)).FirstOrDefault(url => url != null);
                         if (url != null)
                         {
-                            try { optionalLinks ??= await odesli.GetTrackLinksAsync(url, timeout.Token, recording.Isrc, recording.Title, recording.Artist); }
+                            try
+                            {
+                                optionalLinks ??= await odesli.GetTrackLinksAsync(url, timeout.Token, recording.Isrc,
+                                recording.Title, recording.Artist, allowMusicBrainz);
+                            }
                             catch (OdesliLookupException) { transient = true; }
                             if (optionalLinks?.TryGetValue(OdesliService.NormalizeProviderId(providerId), out var id) == true)
                             {

@@ -63,7 +63,8 @@ public sealed partial class TrackIdentityService
             ?? throw new KeyNotFoundException("The recording does not exist.");
         if (!recording.Identifiers.Any(item => item.Kind == RecordingIdentifierKinds.Isrc && item.Value == expected))
             throw new InvalidOperationException("The recording no longer has the lookup ISRC.");
-        if (!await HasAutomaticProviderIdentityAsync(db, recording.Id, actor, cancellationToken))
+        if (!await CanAutomaticallyLinkAsync(actor, "musicbrainz", cancellationToken) ||
+            !await HasAutomaticProviderIdentityAsync(db, recording.Id, actor, cancellationToken))
             return ToIdentity(recording);
         var related = await db.CanonicalRecordings.Include(item => item.Identifiers).Where(item =>
             item.MergedIntoId == null && item.Id != recording.Id && item.Identifiers.Any(identifier =>

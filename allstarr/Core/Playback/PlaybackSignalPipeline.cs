@@ -150,7 +150,8 @@ public sealed class PlaybackSignalJobHandler(IRecommendationSignalWriter signals
                 var track = payload.SubmittedTrack ??
                     (tracks == null ? null : await tracks.ResolveAsync(payload, cancellationToken));
                 var state = await RecordOccurrenceAsync(
-                    payload, track, musicBrainz?.Enabled == true, cancellationToken);
+                    payload, track, musicBrainz != null && await musicBrainz.IsEnabledForAsync(
+                        payload.Scope, cancellationToken), cancellationToken);
                 var signalType = SignalType(payload.Transition, state);
                 if (signalType != null)
                     await WriteSignalAsync(payload, execution.Claim.JobId, signalType, cancellationToken);

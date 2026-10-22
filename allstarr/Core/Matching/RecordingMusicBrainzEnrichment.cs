@@ -18,13 +18,14 @@ public sealed class RecordingMusicBrainzEnrichmentQueue(
     DurableJobQueue jobs,
     IOptions<MusicBrainzSettings> settings,
     IMusicBrainzCatalogClient musicBrainz,
-    IPlatformClock clock)
+    IPlatformClock clock,
+    IEffectiveProviderPolicyResolver? providerPolicies = null)
 {
     public const string JobType = "recording.musicbrainz.enrich";
 
     public async Task<int> EnqueuePendingAsync(CancellationToken cancellationToken)
     {
-        if (!settings.Value.Enabled) return 0;
+        _ = settings;
         var queued = 0;
         // Unresolved or exhausted work may be attempted again the following week.
         var week = clock.UtcNow.ToUnixTimeSeconds() / (7 * 24 * 60 * 60);
@@ -40,6 +41,9 @@ public sealed class RecordingMusicBrainzEnrichmentQueue(
                 .Select(item => new { item.Id, item.CreatedByUserId }).ToArrayAsync(cancellationToken);
             foreach (var item in pending)
             {
+                if (providerPolicies != null && !(await providerPolicies.ResolveForUserAsync(
+                        item.CreatedByUserId, cancellationToken)).IsAutomatic("musicbrainz"))
+                    continue;
                 var receipt = await jobs.EnqueueAsync(new DurableJobEnqueueRequest<RecordingMusicBrainzPayload>(
                     JobType, $"{item.Id:N}:{musicBrainz.ConfiguredSourceRevision}:{week}", new(item.Id),
                     item.CreatedByUserId, Priority: -100, MaxAttempts: 3, CorrelationId: "recording-enrichment"), cancellationToken);
@@ -58,7 +62,7 @@ public sealed class RecordingMusicBrainzEnrichmentService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!settings.Value.Enabled) return;
+        _ = settings;
         taskActivity?.Register("recording-enrichment", "Recording identity backfill", TimeSpan.FromHours(1));
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -95,7 +99,7 @@ public sealed class RecordingMusicBrainzEnrichmentJobHandler(
 
     public async Task<DurableJobCompletion> ExecuteAsync(DurableJobExecutionContext execution, CancellationToken cancellationToken)
     {
-        if (!settings.Value.Enabled) return DurableJobCompletion.Success();
+        _ = settings;
         RecordingMusicBrainzPayload? payload;
         try { payload = execution.Claim.Payload.Deserialize<RecordingMusicBrainzPayload>(); }
         catch (JsonException) { payload = null; }
@@ -113,6 +117,7 @@ public sealed class RecordingMusicBrainzEnrichmentJobHandler(
         {
             var policy = await providerPolicies.ResolveForUserAsync(
                 execution.Claim.OwnerUserId.Value, cancellationToken);
+            if (!policy.IsAutomatic("musicbrainz")) return DurableJobCompletion.Success();
             var providers = await db.ProviderTrackIdentities.AsNoTracking()
                 .Where(item => item.CanonicalRecordingId == recording.Id &&
                                item.ResourceKind == ProviderResourceKind.Track)

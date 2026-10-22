@@ -187,6 +187,12 @@ public sealed class AdminUiProviderCapabilityRoute
 
 public sealed class AdminUiProviderRuntimeCapability
 {
+    [JsonPropertyName("verificationMeasurementId")]
+    public Guid? VerificationMeasurementId { get; set; }
+
+    [JsonPropertyName("verificationMethod")]
+    public string? VerificationMethod { get; set; }
+
     [JsonPropertyName("id")]
     public string Id { get; set; } = string.Empty;
 
@@ -309,6 +315,9 @@ public sealed class AdminUiConfigField
 
     [JsonPropertyName("defaultValueJson")]
     public string? DefaultValueJson { get; set; }
+
+    [JsonPropertyName("advanced")]
+    public bool Advanced { get; set; }
 
     [JsonPropertyName("requiresRestart")]
     public bool RequiresRestart { get; set; }

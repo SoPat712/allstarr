@@ -22,7 +22,7 @@
   let nowPlayingTimer: ReturnType<typeof setInterval> | null = null;
 
   const summary = $derived(snapshot ? summarizeHome(snapshot) : null);
-  const sourceIssues = $derived(playbackSourceIssues(snapshot?.providerCatalog ?? []));
+  const sourceIssues = $derived(playbackSourceIssues(snapshot?.providerCatalog ?? [], snapshot?.providers ?? []));
   const completelyUnavailable = $derived(
     snapshot !== null &&
       !snapshot.status &&

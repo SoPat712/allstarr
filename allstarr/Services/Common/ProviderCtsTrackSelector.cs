@@ -20,7 +20,10 @@ public sealed class ProviderCtsTrackSelector(
     });
     private readonly object _rotationLock = new();
 
-    public async Task<ProviderCtsTrackSelection?> SelectAsync(
+    public async Task<ProviderCtsTrackSelection?> SelectAsync(string providerId, Guid? providerAccountId, CancellationToken cancellationToken) =>
+        (await SelectCandidatesAsync(providerId, providerAccountId, cancellationToken)).FirstOrDefault();
+
+    public async Task<IReadOnlyList<ProviderCtsTrackSelection>> SelectCandidatesAsync(
         string providerId,
         Guid? providerAccountId,
         CancellationToken cancellationToken)
@@ -60,8 +63,7 @@ public sealed class ProviderCtsTrackSelector(
                 .Take(CorpusLimit)
                 .ToArrayAsync(cancellationToken);
         }
-        if (corpus.Length == 0) return providerId == "monochrome"
-            ? new(allstarr.Core.Providers.Monochrome.MonochromeStreamingCapabilityAdapter.SampleTrackId, 1) : null;
+        if (corpus.Length == 0) return [];
 
         var key = $"{providerId}:{(providerAccountId.HasValue ? providerAccountId.Value.ToString("N") : "account-free")}";
         int index;
@@ -79,8 +81,8 @@ public sealed class ProviderCtsTrackSelector(
                     SlidingExpiration = RotationLifetime
                 });
         }
-        var selected = corpus[index % corpus.Length];
-        return new ProviderCtsTrackSelection(selected.ExternalId, corpus.Length);
+        return corpus.Skip(index).Concat(corpus.Take(index)).Take(8)
+            .Select(item => new ProviderCtsTrackSelection(item.ExternalId, corpus.Length)).ToArray();
     }
 
     public async Task<IReadOnlyList<ProviderRecordingAvailabilityRequest>> SelectRecordingSamplesAsync(

@@ -47,7 +47,7 @@ public sealed class ProviderAccountCheckRunnerTests
         var manual = await manager.TestManagedProviderCapabilityAsync("deezer", "metadata", enabled.Id, new Dictionary<string, string>(), accountRevision: enabled.Revision);
         handler.Paths.Clear();
         await runner.SweepAsync(default);
-        Assert.Equal(3, handler.Paths.Count(path => path == "api.deezer.com/track/3135556"));
+        Assert.Equal(3, handler.Paths.Count(path => path == "api.deezer.com/search"));
         Assert.Single(handler.Paths, path => path.StartsWith("lrclib.net/", StringComparison.Ordinal));
         var recorded = await history.ReadLatestAsync(default);
         Assert.DoesNotContain(recorded, result => result.Key.ProviderAccountId == disabled.Id);
@@ -60,7 +60,7 @@ public sealed class ProviderAccountCheckRunnerTests
         }
         handler.Paths.Clear();
         await runner.SweepAsync(default);
-        Assert.Single(handler.Paths, path => path == "api.deezer.com/track/3135556");
+        Assert.Single(handler.Paths, path => path == "api.deezer.com/search");
         var restarted = Manager(config, handler, time);
         await Runner(factory, restarted, history, config, time).RestoreAsync(default);
         Assert.Null(restarted.GetManagedStatus("deezer", "metadata", enabled.Id, new Dictionary<string, string>(), enabled.Revision).TestedAt);
@@ -263,21 +263,24 @@ public sealed class ProviderAccountCheckRunnerTests
             });
             if (account != null) db.ProviderAccounts.Add(account);
             db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = user, Revision = 1 });
-            db.ProviderTrackIdentities.Add(new()
+            for (var i = 0; i < 3; i++)
             {
-                Id = Guid.NewGuid(),
-                CanonicalRecordingId = recording,
-                ProviderId = "fixture-stream",
-                ResourceKind = ProviderResourceKind.Track,
-                Scope = ProviderIdentityScope.Catalog,
-                ExternalId = "fixture-track",
-                ExternalIdHash = new string('c', 64),
-                CatalogNamespace = "default",
-                Verification = ProviderIdentityVerification.Verified,
-                VerificationMethod = "fixture",
-                DecisionVersion = 1,
-                Revision = 1
-            });
+                db.ProviderTrackIdentities.Add(new()
+                {
+                    Id = Guid.NewGuid(),
+                    CanonicalRecordingId = recording,
+                    ProviderId = "fixture-stream",
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = $"fixture-track-{i}",
+                    ExternalIdHash = new string((char)('c' + i), 64),
+                    CatalogNamespace = "default",
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1,
+                    Revision = 1
+                });
+            }
             await db.SaveChangesAsync();
         }
         var streamHealthy = true;
@@ -286,7 +289,7 @@ public sealed class ProviderAccountCheckRunnerTests
         stream.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
         stream.Setup(item => item.GetStreamLeaseAsync(It.Is<ProviderExecutionContext>(context =>
                 context.Account == null && !managed || context.Account != null && context.Account.AccountId == account!.Id),
-            It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "fixture-track")))
+            It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value.StartsWith("fixture-track-", StringComparison.Ordinal))))
             .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease(
                 "fixture", new Uri("https://media.example.test/sample?token=private-token"), DateTimeOffset.UtcNow.AddHours(1),
                 true, true, new ProviderMediaFormat("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry,
@@ -445,8 +448,10 @@ public sealed class ProviderAccountCheckRunnerTests
             time.Advance(TimeSpan.FromSeconds(seconds - 1));
             Assert.False(pending.IsCompleted);
             time.Advance(TimeSpan.FromSeconds(1));
-            Assert.False(await pending.WaitAsync(TimeSpan.FromSeconds(10)));
-            Assert.Equal("timeout", Assert.Single(await history.ReadLatestAsync(default)).Status.ReasonCode);
+            Assert.True(await pending.WaitAsync(TimeSpan.FromSeconds(30)));
+            var result = Assert.Single(await history.ReadLatestAsync(default));
+            Assert.Equal("sample-unavailable", result.Status.ReasonCode);
+            Assert.Equal(ProviderHealthState.Unknown, result.Status.Health);
         }
         finally { release.TrySetResult(ProviderOutcome<ProviderStreamLease>.Failure(new(ProviderErrorKind.Canceled))); }
     }
@@ -494,12 +499,13 @@ public sealed class ProviderAccountCheckRunnerTests
             await time.WaitForTimersAsync(TimeSpan.FromSeconds(8));
             time.Advance(TimeSpan.FromSeconds(8));
         }
-        Assert.Equal(outcome == "healthy", await pending.WaitAsync(TimeSpan.FromSeconds(10)));
+        Assert.Equal(outcome != "busy", await pending.WaitAsync(TimeSpan.FromSeconds(30)));
         var status = Assert.Single(manager.GetAllAccountFreeStatuses(), item => item.Provider == "paxsenix");
         Assert.Equal("lyrics", status.Capability);
-        Assert.Equal(outcome == "healthy" ? ProviderHealthState.Healthy : ProviderHealthState.Degraded, status.Health);
+        Assert.Equal(outcome == "healthy" ? ProviderHealthState.Healthy : outcome == "timeout" ? ProviderHealthState.Unknown : ProviderHealthState.Degraded, status.Health);
         Assert.Equal(outcome == "healthy" ? null : "lyrics-upstream-busy-or-timed-out", status.ReasonCode);
-        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20000);
+        if (outcome == "timeout") Assert.Null(status.LatencyMilliseconds);
+        else Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20000);
         Assert.All(handler.Paths, path => Assert.Equal("/apple-music/lyrics", path));
         Assert.NotEmpty(handler.Paths);
         var recorded = Assert.Single(await history.ReadLatestAsync(default), item => item.Key.Capability == "lyrics");
@@ -541,7 +547,7 @@ public sealed class ProviderAccountCheckRunnerTests
         Assert.Equal(ProviderHealthState.Healthy, Assert.Single(recorded, item => item.Key.Capability == "metadata").Status.Health);
         Assert.Equal("lyrics-upstream-busy-or-timed-out", Assert.Single(recorded, item => item.Key.Capability == "lyrics").Status.ReasonCode);
         metadata.Verify(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Once);
-        lyrics.Verify(item => item.FetchLyricsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderLyricsRequest>()), Times.Once);
+        lyrics.Verify(item => item.FetchLyricsAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderLyricsRequest>()), Times.Exactly(3));
     }
 
     private sealed class LyricsHandler(string outcome) : HttpMessageHandler
@@ -590,7 +596,7 @@ public sealed class ProviderAccountCheckRunnerTests
         {
             Paths.Add(request.RequestUri!.Host + request.RequestUri.AbsolutePath);
             return Task.FromResult(new HttpResponseMessage(Healthy ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
-            { Content = new StringContent("{\"id\":3135556}") });
+            { Content = new StringContent(request.RequestUri.Host == "lrclib.net" ? "{\"plainLyrics\":\"Words\"}" : "{\"data\":[{\"id\":3135556}]}") });
         }
     }
     private sealed class BlockingHandler : HttpMessageHandler

@@ -6482,6 +6482,7 @@
   }
 
   .settings-toggle {
+    position: relative;
     justify-self: end;
   }
 
@@ -9520,5 +9521,23 @@
     font-weight: 600;
     letter-spacing: 0;
     white-space: nowrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-toggle > [role="checkbox"] {
+    box-sizing: content-box;
+    padding: 12px;
+    margin: -12px;
+    border-color: transparent;
+    background-clip: content-box;
+    outline: 2px solid var(--color-edge-strong);
+    outline-offset: -14px;
+  }
+
+  .settings-toggle > [role="checkbox"][aria-checked="true"] {
+    background-color: var(--color-primary);
+    color: var(--md-sys-color-on-primary);
+    outline-color: var(--color-primary);
   }
 }

@@ -42,7 +42,7 @@ internal sealed class PlatformLinkResolverChain
     }
 
     public async Task<Dictionary<string, string>> ResolveAsync(string sourceUrl, string? apiKey, int apiIntervalMs,
-        string? isrc, string? title, string? artist, CancellationToken cancellationToken)
+        string? isrc, string? title, string? artist, CancellationToken cancellationToken, bool allowMusicBrainz = true)
     {
         if (sourceUrl.Length > 65536) throw new OdesliLookupException(false);
         if (title?.Length > 500) title = null;
@@ -82,7 +82,7 @@ internal sealed class PlatformLinkResolverChain
                         if (string.IsNullOrWhiteSpace(artist)) artist = foundArtist;
                         break;
                     case 3:
-                        if (_musicBrainz == null) continue;
+                        if (!allowMusicBrainz || _musicBrainz == null) continue;
                         found = new(StringComparer.Ordinal);
                         foreach (var url in await _musicBrainz.LookupPlatformLinksAsync(isrc, title, artist, token))
                             AddLink(found, url);

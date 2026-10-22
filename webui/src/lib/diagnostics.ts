@@ -5,10 +5,16 @@ export type DiagnosticFailure = {
   metric?: string; capability?: string | null;
   failedCapabilities?: { capability: string; reasonCode?: string | null }[];
 };
+export function diagnosticIsNeutral(result: DiagnosticFailure) {
+  return ["probe_not_available", "download-not-verified", "sample-unavailable"]
+    .includes((result.failureCode ?? result.reasonCode ?? result.error ?? "").toLowerCase());
+}
+
 export function diagnosticFailureMessage(result: DiagnosticFailure) {
   const failed = result.metric === "api-latency" ? result.failedCapabilities?.[0] : undefined;
   if (failed) return diagnosticFailureMessage({ ...failed, metric: "api-latency" });
   const code = (result.failureCode ?? result.reasonCode ?? result.error ?? "").toLowerCase();
+  if (code === "probe_not_available" || code === "download-not-verified" || code === "sample-unavailable") return checkGuide(code)!.step;
   if (code === "lyrics-upstream-busy-or-timed-out" || result.capability === "lyrics" &&
     ["timeout", "service_unavailable"].includes(code))
     return "The lyrics upstream is busy or timed out. Try another lyrics source.";

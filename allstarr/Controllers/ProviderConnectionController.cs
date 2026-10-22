@@ -58,7 +58,31 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
             .ThenBy(item => item.Id)
             .ToListAsync(cancellationToken);
 
+        accounts = accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)).ToList();
         var results = new List<object>();
+        foreach (var status in statusManager.GetAllAccountFreeStatuses().Concat(statusManager.GetAppleDownloadEndpointStatuses())
+            .Where(item => !accounts.Any(account => account.ProviderId.Equals(item.Provider, StringComparison.OrdinalIgnoreCase))))
+        {
+            results.Add(new
+            {
+                provider = status.Provider,
+                providerAccountId = (Guid?)null,
+                providerAccountName = (string?)null,
+                capability = status.Capability,
+                accountScope = "public",
+                supported = status.IsSupported,
+                enabled = status.IsEnabled,
+                configuration = status.Configuration == ProviderConfigurationState.NeedsConfiguration ? "needs_configuration" : "not_required",
+                health = status.Health.ToString().ToLowerInvariant(),
+                ready = status.IsReady,
+                canAttempt = status.CanAttempt,
+                testedAt = status.TestedAt,
+                reasonCode = status.ReasonCode,
+                verificationMeasurementId = status.VerificationMeasurementId,
+                verificationMethod = status.VerificationMethod,
+                canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
+            });
+        }
         foreach (var account in accounts)
         {
             IReadOnlyDictionary<string, string> accountSecrets =
@@ -102,6 +126,8 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                     canAttempt = account.Enabled && status.CanAttempt,
                     testedAt = status.TestedAt,
                     reasonCode = account.Enabled ? status.ReasonCode : "account_disabled",
+                    verificationMeasurementId = status.VerificationMeasurementId,
+                    verificationMethod = status.VerificationMethod,
                     canTest = statusManager.CanTestCapability(status.Provider, status.Capability)
                 });
             }
@@ -125,6 +151,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
 
         var statusManager = HttpContext.RequestServices.GetRequiredService<ProviderStatusManager>();
         var normalizedProvider = provider.Trim().ToLowerInvariant();
+        capability = capability?.Trim().ToLowerInvariant();
         if (!accountId.HasValue || accountId == Guid.Empty)
         {
             if (string.IsNullOrWhiteSpace(capability))
@@ -138,12 +165,27 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
 
             if (!statusManager.CanTestCapability(normalizedProvider, capability))
             {
-                return BadRequest(new { success = false, error = "This provider capability has no endpoint probe" });
+                return Ok(new
+                {
+                    success = false,
+                    provider = normalizedProvider,
+                    capability,
+                    health = "unknown",
+                    reasonCode = "probe_not_available"
+                });
             }
 
             if (!statusManager.CanTestAccountFreeCapability(normalizedProvider, capability))
             {
                 return BadRequest(new { success = false, error = "Select a provider account for this capability" });
+            }
+
+            if (capability == ProviderCapabilities.Streaming)
+            {
+                var media = await MeasureMediaAsync(null, normalizedProvider);
+                return media == null
+                    ? Conflict(new { error = "A verified administrator identity is required." })
+                    : MediaTestResult(null, capability, media, []);
             }
 
             var accountFreeTimer = System.Diagnostics.Stopwatch.StartNew();
@@ -230,7 +272,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
                 mediaStatus.Configuration != ProviderConfigurationState.NeedsConfiguration)
             {
                 var media = await MeasureMediaAsync(account);
-                if (media != null && media.Stage != "track-selection")
+                if (media != null && (media.Stage != "track-selection" || !ProviderRuntimeStatus.IsNeutralReason(media.ReasonCode)))
                     return MediaTestResult(account, null, media, failedCapabilities);
                 mediaReason = media == null ? "media_sample_unavailable" : "media_sample_needs_known_track";
             }
@@ -291,7 +333,7 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
 
     private sealed record FailedCapability(string Capability, string? ReasonCode);
 
-    private async Task<ProviderCtsDiagnosticResult?> MeasureMediaAsync(ProviderAccountRecord account)
+    private async Task<ProviderCtsDiagnosticResult?> MeasureMediaAsync(ProviderAccountRecord? account, string? providerId = null)
     {
         var session = GetAdminSession();
         if (session?.AllstarrUserId is not { } userId) return null;
@@ -308,12 +350,12 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         var policy = await HttpContext.RequestServices.GetRequiredService<IEffectiveProviderPolicyResolver>()
             .ResolveForUserAsync(userId, token);
         return await HttpContext.RequestServices.GetRequiredService<ProviderCtsDiagnosticRunner>().MeasureAsync(
-            actor, account.ProviderId, account.Id, AudioQualityPolicy.RequestedQuality(policy.AudioQuality),
+            actor, account?.ProviderId ?? providerId!, account?.Id, AudioQualityPolicy.RequestedQuality(policy.AudioQuality),
             HttpContext.TraceIdentifier.Length <= 100 ? HttpContext.TraceIdentifier : HttpContext.TraceIdentifier[..100],
             cancellationToken: token);
     }
 
-    private IActionResult MediaTestResult(ProviderAccountRecord account, string? capability,
+    private IActionResult MediaTestResult(ProviderAccountRecord? account, string? capability,
         ProviderCtsDiagnosticResult result, IReadOnlyList<FailedCapability> failedCapabilities)
     {
         if (result.RetryAfterSeconds.HasValue) Response.Headers.RetryAfter = result.RetryAfterSeconds.Value.ToString();
@@ -321,10 +363,10 @@ public sealed class ProviderConnectionController(ILogger<ProviderConnectionContr
         {
             success = result.Succeeded,
             healthy = result.Succeeded,
-            provider = account.ProviderId,
-            providerAccountId = account.Id,
+            provider = result.ProviderId,
+            providerAccountId = account?.Id,
             capability,
-            health = result.Succeeded ? "healthy" : "degraded",
+            health = ProviderRuntimeStatus.IsNeutralReason(result.ReasonCode) ? "unknown" : result.Succeeded ? "healthy" : "degraded",
             latencyMs = result.ClickToStreamMilliseconds,
             bars = result.Bars,
             metric = "cts",

@@ -17,32 +17,145 @@ using Microsoft.Extensions.Options;
 
 namespace allstarr.Tests;
 
-public sealed class ProviderStatusManagerTests
+public sealed partial class ProviderStatusManagerTests
 {
+    [Theory]
+    [InlineData("apple-musickit")]
+    [InlineData("deezer")]
+    [InlineData("qobuz")]
+    public async Task DownloadReachabilityDoesNotVerifyMedia(string provider)
+    {
+        var discovery = new Mock<IAppleDownloadEndpointDiscovery>();
+        discovery.Setup(item => item.DiscoverAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new AppleDownloadEndpointSnapshot(AppleDownloadEndpointState.Available, null, null, true,
+                [new(ProviderCapabilities.Download, AppleDownloadCapabilityState.Available, null)]));
+        var handler = new AppleProviderTestFactory.Handler(_ => Json(HttpStatusCode.OK,
+            """{"results":{"USER":{"USER_ID":42}}}"""));
+        var health = new ProviderRuntimeHealth();
+        var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler),
+            appleMusicSettings: new AppleDownloadSettings { BaseUrl = "https://download.example.test" },
+            appleDownloadDiscovery: discovery.Object, health: health);
+        var account = Guid.NewGuid();
+        var secrets = new Dictionary<string, string>
+        { ["musicusertoken"] = "fixture-token", ["arl"] = "fixture-cookie", ["userauthtoken"] = "fixture-token", ["userid"] = "fixture-user" };
+
+        var result = await manager.TestManagedProviderCapabilityAsync(provider, "download", account, secrets);
+
+        Assert.Equal(ProviderHealthState.Unknown, result.Health);
+        Assert.Equal("download-not-verified", result.ReasonCode);
+        Assert.False(result.HasCheckResult);
+        Assert.Null(health.Get(ProviderRuntimeStatusKey.CreateManaged(provider, "download", account)));
+    }
+
+    [Theory]
+    [InlineData("download-not-verified")]
+    [InlineData("probe_not_available")]
+    [InlineData("sample-unavailable")]
+    [InlineData("not-found")]
+    [InlineData("playlist-not-found")]
+    public async Task NeutralProbeDoesNotRecordAFailure(string reason)
+    {
+        var download = new Mock<IProviderDownloadCapability>();
+        download.SetupGet(item => item.ProviderId).Returns("fixture-extension");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        var probe = new Mock<IProviderHealthProbeCapability>();
+        probe.SetupGet(item => item.ProviderId).Returns("fixture-extension");
+        probe.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Health);
+        probe.Setup(item => item.ProbeAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderHealthProbeRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderHealthProbeResult>.Success(new(ProviderProbeStatus.Degraded,
+                DateTimeOffset.UtcNow, TimeSpan.Zero, reason)));
+        var descriptor = new ProviderDescriptor("fixture-extension", "Fixture", "Fixture", ProviderOrigin.Extension, "1", "1",
+            [new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None,
+                "1", ["download", "checkAvailability"]), new(ProviderCapabilityKind.Health, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["probeDownload"])], new(), entryPoint: "index.js", healthProbe: true);
+        var registry = new ProviderRegistry([new(descriptor, [download.Object, probe.Object])]);
+        var health = new ProviderRuntimeHealth();
+        var manager = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry, health: health);
+
+        var result = await manager.TestAccountFreeProviderCapabilityAsync("fixture-extension", "download");
+
+        Assert.Equal(ProviderHealthState.Unknown, result.Health);
+        Assert.Equal(reason, result.ReasonCode);
+        Assert.False(result.CircuitOpen);
+        Assert.Null(health.Get(ProviderRuntimeStatusKey.CreateAccountFree("fixture-extension", "download")));
+        Assert.Equal(result, manager.GetAccountFreeStatus("fixture-extension", "download"));
+
+        var measurement = new ProviderCtsDiagnosticResult
+        {
+            Succeeded = true,
+            DownloadVerified = true,
+            ProviderId = "fixture-extension",
+            SampleBytes = 4,
+            MeasuredAt = DateTimeOffset.UtcNow,
+            ClickToStreamMilliseconds = 12
+        };
+        var verified = manager.RecordDownloadVerification(measurement, null);
+        Assert.NotNull(verified);
+        var rechecked = await manager.TestAccountFreeProviderCapabilityAsync("fixture-extension", "download");
+        Assert.Equal(ProviderHealthState.Healthy, rechecked.Health);
+        Assert.Equal(measurement.MeasurementId, rechecked.VerificationMeasurementId);
+        Assert.Equal("streaming-download", rechecked.VerificationMethod);
+        Assert.Null(rechecked.ReasonCode);
+        var restored = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry);
+        var saved = System.Text.Json.JsonSerializer.Deserialize<ProviderCheckResult>(System.Text.Json.JsonSerializer.Serialize(verified))!;
+        restored.RestoreCheckResult(saved.Key, saved.Revision, saved.Status);
+        Assert.Equal(rechecked, restored.GetAccountFreeStatus("fixture-extension", "download"));
+        Assert.Null(manager.RecordDownloadVerification(new ProviderCtsDiagnosticResult
+        { Succeeded = true, ProviderId = "fixture-extension", SampleBytes = 4 }, null));
+        var accountId = Guid.NewGuid();
+        var privateMeasurement = new ProviderCtsDiagnosticResult
+        {
+            Succeeded = true,
+            DownloadVerified = true,
+            ProviderId = "fixture-extension",
+            ProviderAccountId = accountId,
+            SampleBytes = 4,
+            MeasuredAt = DateTimeOffset.UtcNow
+        };
+        manager.RecordDownloadVerification(privateMeasurement, 7);
+        Assert.Equal(ProviderHealthState.Healthy, manager.GetManagedStatus("fixture-extension", "download", accountId,
+            new Dictionary<string, string>(), 7).Health);
+        Assert.Equal(ProviderHealthState.Unknown, manager.GetManagedStatus("fixture-extension", "download", accountId,
+            new Dictionary<string, string>(), 8).Health);
+        Assert.Equal(ProviderHealthState.Unknown, manager.GetManagedStatus("fixture-extension", "download", Guid.NewGuid(),
+            new Dictionary<string, string>(), 7).Health);
+    }
+
     [Theory]
     [InlineData(200, true)]
     [InlineData(206, true)]
     [InlineData(503, false)]
     public async Task MonochromeConnectionProbeUsesStreamingFixture(int status, bool expected)
     {
-        var response = new HttpResponseMessage((HttpStatusCode)status)
-        { Content = new StringContent("fLaCfixture", Encoding.UTF8, "audio/flac") };
-        if (status == 206)
+        var requests = new List<string>();
+        var handler = new AppleProviderTestFactory.Handler(request =>
         {
-            response.Version = HttpVersion.Version20;
-            response.Content = new ByteArrayContent([102]);
-            response.Content.Headers.ContentType = new("application/octet-stream");
-            response.Content.Headers.ContentRange = new(0, 0, 22349828);
-            response.Headers.AcceptRanges.Add("bytes");
-        }
-        var handler = new QueuedResponseHandler(response);
+            requests.Add(request.RequestUri!.AbsolutePath);
+            if (request.RequestUri.AbsolutePath == "/search/tracks") return Json(HttpStatusCode.OK,
+                System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    tracks = ProviderDiagnosticSamples.Recordings("monochrome")
+                    .Select((sample, i) => new { id = (154008664334667776L + i).ToString(), isrc = sample.Isrc })
+                }));
+            var response = new HttpResponseMessage((HttpStatusCode)status)
+            { Content = new StringContent("fLaCfixture", Encoding.UTF8, "audio/flac") };
+            if (status == 206)
+            {
+                response.Version = HttpVersion.Version20;
+                response.Content = new ByteArrayContent([102]);
+                response.Content.Headers.ContentType = new("application/octet-stream");
+                response.Content.Headers.ContentRange = new(0, 0, 22349828);
+                response.Headers.AcceptRanges.Add("bytes");
+            }
+            return response;
+        });
         using var http = new HttpClient(handler);
         var registry = new ProviderRegistry([allstarr.Core.Providers.Monochrome.MonochromeProviderRegistration.CreateRegistration(new(http))]);
         var manager = CreateManager(new Dictionary<string, string?>(), providerRegistry: registry);
         Assert.True(manager.CanTestAccountFreeCapability("monochrome", "streaming"));
         var result = await manager.TestAccountFreeProviderCapabilityAsync("monochrome", "streaming");
         Assert.Equal(expected, result.Health == ProviderHealthState.Healthy);
-        Assert.Equal($"/track/{allstarr.Core.Providers.Monochrome.MonochromeStreamingCapabilityAdapter.SampleTrackId}", Assert.Single(handler.Requests).AbsolutePath);
+        Assert.Equal(expected ? 1 : 3, requests.Count(item => item.StartsWith("/track/", StringComparison.Ordinal)));
     }
 
     [Fact]
@@ -211,7 +324,7 @@ public sealed class ProviderStatusManagerTests
             if (testsFavorites)
                 Assert.Contains("user_id=selected-user", request.RequestUri.Query);
             Assert.Equal("selected-token", request.Headers.GetValues("X-User-Auth-Token").Single());
-            return Json(HttpStatusCode.OK, "{\"tracks\":{\"items\":[]}}");
+            return Json(HttpStatusCode.OK, "{\"tracks\":{\"items\":[{\"id\":42}]}}");
         });
         var manager = CreateManager(new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(handler),
@@ -221,7 +334,7 @@ public sealed class ProviderStatusManagerTests
             new Dictionary<string, string> { ["userAuthToken"] = "selected-token", ["userId"] = "selected-user" });
 
         Assert.True(manager.CanTestCapability("qobuz", capability));
-        Assert.Equal(ProviderHealthState.Healthy, status.Health);
+        Assert.Equal(capability == "download" ? ProviderHealthState.Unknown : ProviderHealthState.Healthy, status.Health);
         Assert.NotNull(status.TestedAt);
         Assert.Equal(1, calls);
     }
@@ -250,11 +363,11 @@ public sealed class ProviderStatusManagerTests
 
     [Theory]
     [InlineData(HttpStatusCode.OK, true)]
-    [InlineData(HttpStatusCode.NotFound, true)]
+    [InlineData(HttpStatusCode.NotFound, false)]
     [InlineData(HttpStatusCode.ServiceUnavailable, false)]
     public async Task LrclibProbe_DistinguishesReachableCatalogFromUpstreamFailure(HttpStatusCode response, bool healthy)
     {
-        var handler = new QueuedResponseHandler(Json(response, "{}"));
+        var handler = new RepeatingResponseHandler(_ => Json(response, "{\"plainLyrics\":\"Words\"}"));
         var manager = CreateManager(new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(handler));
 
@@ -263,9 +376,13 @@ public sealed class ProviderStatusManagerTests
         Assert.True(manager.CanTestAccountFreeCapability("lrclib", "lyrics"));
         Assert.Equal(healthy, status.Health == ProviderHealthState.Healthy);
         Assert.NotNull(status.TestedAt);
-        var request = Assert.Single(handler.Requests);
-        Assert.Equal("lrclib.net", request.Host);
-        Assert.Equal("/api/get", request.AbsolutePath);
+        Assert.Equal(response == HttpStatusCode.OK ? 1 : response == HttpStatusCode.NotFound ? 12 : 3, handler.Requests.Count);
+        Assert.All(handler.Requests, request =>
+        {
+            Assert.Equal("lrclib.net", request.Host);
+            Assert.Contains(request.AbsolutePath, new[] { "/api/get", "/api/search" });
+        });
+        if (response == HttpStatusCode.NotFound) Assert.Equal("sample-unavailable", status.ReasonCode);
     }
 
     [Theory]
@@ -274,13 +391,17 @@ public sealed class ProviderStatusManagerTests
     [InlineData("unison", "{\"success\":false,\"code\":\"NOT_FOUND\"}", "unison.boidu.dev")]
     public async Task PublicTimedLyricsProbeNeedsNoAccount(string provider, string body, string host)
     {
-        var handler = new QueuedResponseHandler(Json(HttpStatusCode.OK, body));
+        var handler = new RepeatingResponseHandler(request => Json(
+            provider == "lrcred" && request.RequestUri!.AbsolutePath.EndsWith(".ttml", StringComparison.Ordinal)
+                ? HttpStatusCode.NotFound : HttpStatusCode.OK, body));
         var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler));
         Assert.True(manager.CanTestAccountFreeCapability(provider, "lyrics"));
         Assert.Equal(ProviderConfigurationState.NotRequired, manager.GetAccountFreeStatus(provider, "lyrics").Configuration);
         var status = await manager.TestAccountFreeProviderCapabilityAsync(provider, "lyrics");
-        Assert.Equal(ProviderHealthState.Healthy, status.Health);
-        Assert.Equal(host, Assert.Single(handler.Requests).Host);
+        Assert.Equal(ProviderHealthState.Unknown, status.Health);
+        Assert.Equal("sample-unavailable", status.ReasonCode);
+        Assert.All(handler.Requests, request => Assert.Equal(host, request.Host));
+        Assert.InRange(handler.Requests.Count, 8, 16);
     }
 
     [Fact]
@@ -291,10 +412,10 @@ public sealed class ProviderStatusManagerTests
         var apple = AppleProviderTestFactory.Client(new HttpClient(new AppleProviderTestFactory.Handler(request =>
         {
             Assert.Equal("/v1/catalog/us/songs", request.RequestUri!.AbsolutePath);
-            Assert.Contains("filter[isrc]=GBARL9300135", Uri.UnescapeDataString(request.RequestUri.Query));
+            Assert.Contains("filter[isrc]=USQX91300108", Uri.UnescapeDataString(request.RequestUri.Query));
             Assert.False(request.Headers.Contains("Cookie"));
             return Json(HttpStatusCode.OK,
-                """{"data":[{"id":"1558533900","attributes":{"name":"Never Gonna Give You Up","artistName":"Rick Astley","durationInMillis":215000}}]}""");
+                """{"data":[{"id":"1558533900","attributes":{"name":"Get Lucky","artistName":"Daft Punk","durationInMillis":369000}}]}""");
         })));
         var manager = CreateManager(new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(handler), services:
@@ -330,6 +451,7 @@ public sealed class ProviderStatusManagerTests
         var manager = CreateManager(new Dictionary<string, string?>(),
             httpClientFactory: new HandlerHttpClientFactory(new PaxsenixProbeHandler(hang)), services: services);
 
+        var started = System.Diagnostics.Stopwatch.StartNew();
         var pending = manager.TestAccountFreeProviderCapabilityAsync("paxsenix", "lyrics");
         if (hang)
         {
@@ -337,9 +459,11 @@ public sealed class ProviderStatusManagerTests
             clock.Advance(TimeSpan.FromSeconds(8));
         }
         var status = await pending;
-        Assert.Equal(ProviderHealthState.Degraded, status.Health);
+        Assert.Equal(hang ? ProviderHealthState.Unknown : ProviderHealthState.Degraded, status.Health);
         Assert.Equal("lyrics-upstream-busy-or-timed-out", status.ReasonCode);
-        Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20000);
+        Assert.InRange(started.ElapsedMilliseconds, 0, 21000);
+        if (hang) Assert.Null(status.LatencyMilliseconds);
+        else Assert.InRange(status.LatencyMilliseconds!.Value, 0, 20500);
         Assert.Equal(status.ReasonCode, manager.GetAccountFreeStatus("paxsenix", "lyrics").ReasonCode);
     }
 
@@ -401,6 +525,8 @@ public sealed class ProviderStatusManagerTests
     {
         var handler = new QueuedResponseHandler(
             Json(HttpStatusCode.OK, "{\"success\":true,\"data\":{\"lyrics\":\"Fixture\",\"format\":\"plain\"}}"),
+            Json(HttpStatusCode.TooManyRequests, "{}"),
+            Json(HttpStatusCode.TooManyRequests, "{}"),
             Json(HttpStatusCode.TooManyRequests, "{}"));
         var adapter = new allstarr.Core.Providers.Lyrics.UnisonCapabilityAdapter(new HttpClient(handler), new TestMemoryApplicationCache());
         var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler),
@@ -409,7 +535,7 @@ public sealed class ProviderStatusManagerTests
         var second = await manager.TestAccountFreeProviderCapabilityAsync("unison", "lyrics");
         Assert.Equal(ProviderHealthState.Degraded, second.Health);
         Assert.Equal("rate-limited", second.ReasonCode);
-        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(4, handler.Requests.Count);
     }
 
     [Fact]
@@ -436,13 +562,10 @@ public sealed class ProviderStatusManagerTests
     [InlineData("musixmatch", false)]
     public async Task NewLyricsProbesReuseTheirNativeTransportAndSafeOutcomes(string provider, bool healthy)
     {
-        var payload = provider == "lyricsplus" ? "{\"type\":\"None\",\"lyrics\":[]}"
-            : $"{{\"message\":{{\"header\":{{\"status_code\":{(healthy ? 404 : 401)}}},\"body\":{{}}}}}}";
-        var response = Json(provider == "lyricsplus" && !healthy ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK, payload);
-        var handler = provider == "musixmatch" && healthy
-            ? new QueuedResponseHandler(response, Json(HttpStatusCode.OK,
-                "{\"message\":{\"header\":{\"status_code\":200},\"body\":{\"track_list\":[]}}}"))
-            : new QueuedResponseHandler(response);
+        var handler = new RepeatingResponseHandler(request => Json(
+            provider == "lyricsplus" && !healthy ? HttpStatusCode.TooManyRequests : HttpStatusCode.OK,
+            provider == "lyricsplus" ? "{\"type\":\"None\",\"lyrics\":[{\"text\":\"Words\"}]}" :
+                healthy ? MusixmatchProbeBody(request.RequestUri!) : "{\"message\":{\"header\":{\"status_code\":401},\"body\":{}}}"));
         var manager = CreateManager(new Dictionary<string, string?> { ["LyricsPlus:BaseUrl"] = "http://lyrics:3000/prefix" },
             httpClientFactory: new HandlerHttpClientFactory(handler));
         var status = provider == "lyricsplus"
@@ -450,7 +573,7 @@ public sealed class ProviderStatusManagerTests
             : await manager.TestManagedProviderCapabilityAsync(provider, "lyrics", Guid.NewGuid(),
                 new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" });
         Assert.Equal(healthy, status.Health == ProviderHealthState.Healthy);
-        Assert.Single(handler.Requests);
+        Assert.Equal(healthy ? 1 : 3, handler.Requests.Count);
         var request = handler.Requests[0];
         Assert.Equal(provider == "lyricsplus" ? "lyrics" : "apic-appmobile.musixmatch.com", request.Host);
         if (provider == "musixmatch")
@@ -464,10 +587,10 @@ public sealed class ProviderStatusManagerTests
     [Fact]
     public async Task MusixmatchAccountFreeProbeSharesTheAutomaticToken()
     {
-        var handler = new QueuedResponseHandler(
-            Json(HttpStatusCode.OK, """{"message":{"header":{"status_code":200},"body":{"user_token":"automatic-fixture-token"}}}"""),
-            Json(HttpStatusCode.OK, """{"message":{"header":{"status_code":404},"body":{}}}"""),
-            Json(HttpStatusCode.OK, """{"message":{"header":{"status_code":404},"body":{}}}"""));
+        var handler = new RepeatingResponseHandler(request => Json(HttpStatusCode.OK,
+            request.RequestUri!.AbsolutePath.EndsWith("token.get", StringComparison.Ordinal)
+                ? """{"message":{"header":{"status_code":200},"body":{"user_token":"automatic-fixture-token"}}}"""
+                : MusixmatchProbeBody(request.RequestUri)));
         var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler));
 
         for (var attempt = 0; attempt < 2; attempt++)
@@ -486,7 +609,7 @@ public sealed class ProviderStatusManagerTests
     public async Task MusixmatchProbeRejectsInnerAuthorizationHints(string hint)
     {
         var payload = "{\"message\":{\"header\":{\"status_code\":200},\"body\":{\"macro_calls\":{\"matcher.track.get\":{\"message\":{\"header\":{\"status_code\":200,\"hint\":\"" + hint + "\"},\"body\":[]}}}}}}";
-        var handler = new QueuedResponseHandler(Json(HttpStatusCode.OK, payload));
+        var handler = new RepeatingResponseHandler(_ => Json(HttpStatusCode.OK, payload));
         var manager = CreateManager(new Dictionary<string, string?>(), httpClientFactory: new HandlerHttpClientFactory(handler));
         var status = await manager.TestManagedProviderCapabilityAsync("musixmatch", "lyrics", Guid.NewGuid(),
             new Dictionary<string, string> { ["userToken"] = "synthetic-desktop-token" });
@@ -522,7 +645,7 @@ public sealed class ProviderStatusManagerTests
         implementation.SetupGet(item => item.ProviderId).Returns("fixture-extension");
         implementation.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
         implementation.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(),
-                It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Daft Punk Get Lucky")))
+                It.IsAny<ProviderMetadataSearchRequest>()))
             .ReturnsAsync(succeeds ? ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture-extension",
                 [new(new("fixture-extension", ProviderResourceKind.Track, "track"), "Get Lucky", [new("Daft Punk")])])) :
                 ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.TransientFailure)));
@@ -716,7 +839,9 @@ public sealed class ProviderStatusManagerTests
     public async Task ProbeObservations_AreIsolatedByProviderAccount()
     {
         var handler = new QueuedResponseHandler(
-            Json(HttpStatusCode.OK, "{\"id\":3135556}"),
+            Json(HttpStatusCode.OK, "{\"data\":[{\"id\":3135556}]}"),
+            Json(HttpStatusCode.ServiceUnavailable, "{}"),
+            Json(HttpStatusCode.ServiceUnavailable, "{}"),
             Json(HttpStatusCode.ServiceUnavailable, "{}"));
         var manager = CreateManager(
             new Dictionary<string, string?>(),
@@ -975,7 +1100,7 @@ public sealed class ProviderStatusManagerTests
     }
 
     [Fact]
-    public async Task ExpiredAccountFreeFailure_RemainsVisibleWithoutBlockingRetry()
+    public async Task MissingCatalogClient_RemainsUncheckedWithoutBlockingRetry()
     {
         var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
         var discovery = new Mock<IAppleDownloadEndpointDiscovery>();
@@ -1004,9 +1129,10 @@ public sealed class ProviderStatusManagerTests
             ProviderCapabilities.Metadata);
         clock.UtcNow += TimeSpan.FromHours(1);
 
-        Assert.Equal(ProviderHealthState.Degraded, failed.Health);
+        Assert.Equal(ProviderHealthState.Unknown, failed.Health);
+        Assert.Equal("probe_not_available", failed.ReasonCode);
         Assert.Equal(["apple-musickit", "deezer"], manager.GetEnabledSearchProviders());
-        Assert.Equal(ProviderHealthState.Degraded,
+        Assert.Equal(ProviderHealthState.Unknown,
             manager.GetAccountFreeStatus("apple-download", ProviderCapabilities.Metadata).Health);
     }
 
@@ -1206,7 +1332,7 @@ public sealed class ProviderStatusManagerTests
         {
             Started.TrySetResult(true);
             await Release.Task.WaitAsync(cancellationToken);
-            return Json(HttpStatusCode.OK, "{\"id\":3135556}");
+            return Json(HttpStatusCode.OK, "{\"data\":[{\"id\":3135556}]}");
         }
     }
 

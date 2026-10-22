@@ -1,17 +1,43 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
+using System.Collections.Immutable;
+using allstarr.Core.Capabilities;
+using allstarr.Core.Settings;
 using allstarr.Models.Settings;
 using allstarr.Core.Intelligence;
 using allstarr.Services.Common;
 using allstarr.Services.MusicBrainz;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class MusicBrainzServiceTests
 {
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly, 1)]
+    [InlineData(ProviderUseMode.Off, 0)]
+    public async Task SourcePolicyBlocksAutomaticLinksAndOffBlocksDirectReads(ProviderUseMode mode, int expectedReads)
+    {
+        var handler = new QueueHandler(_ => Json("{\"recordings\":[]}"));
+        var policy = new EffectiveProviderPolicySnapshot(
+            ImmutableDictionary<ProviderCapabilityKind, ImmutableArray<string>>.Empty,
+            ImmutableHashSet<string>.Empty, "lossless", 0)
+        {
+            ProviderModes = ImmutableDictionary<string, ProviderUseMode>.Empty.Add("musicbrainz", mode)
+        };
+        var policies = new Mock<IEffectiveProviderPolicyResolver>();
+        policies.Setup(item => item.ResolveAsync(It.IsAny<CancellationToken>())).ReturnsAsync(policy);
+        var service = Create(new RecordingFactory(handler), providerPolicies: policies.Object);
+
+        Assert.Empty(await service.LookupPlatformLinksAsync("USABC1234567", null, null));
+        Assert.Equal(0, handler.Calls);
+        Assert.Null(await service.LookupByIsrcAsync("USABC1234567"));
+        Assert.Equal(expectedReads, handler.Calls);
+    }
+
     [Theory]
     [InlineData("[]")]
     [InlineData("[{\"id\":\"31e68c1d-31f9-432c-a3a4-13aef4a53833\",\"isrcs\":[\"GBAYE0601498\"]}]")]
@@ -356,7 +382,8 @@ public sealed class MusicBrainzServiceTests
     private static MusicBrainzService Create(
         RecordingFactory factory,
         MusicBrainzSettings? settings = null,
-        TimeProvider? timeProvider = null) => new(
+        TimeProvider? timeProvider = null,
+        IEffectiveProviderPolicyResolver? providerPolicies = null) => new(
         factory,
         Options.Create(settings ?? new MusicBrainzSettings
         {
@@ -368,7 +395,8 @@ public sealed class MusicBrainzServiceTests
         new TestMemoryApplicationCache(),
         new ApplicationCacheRequestCoalescer(new ApplicationCacheActivityMetrics()),
         NullLogger<MusicBrainzService>.Instance,
-        timeProvider);
+        timeProvider,
+        providerPolicies);
 
     private static HttpResponseMessage Json(string body) => new(HttpStatusCode.OK)
     {

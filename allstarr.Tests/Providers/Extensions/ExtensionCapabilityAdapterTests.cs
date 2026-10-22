@@ -876,7 +876,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             registerExtension(extension);
             """;
         var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
-        var metadata = Assert.Single(ExtensionSdkV1.ParseManifest(normalized).Capabilities);
+        var metadata = Assert.Single(ExtensionSdkV1.ParseManifest(normalized).Capabilities, item => item.Kind == ProviderCapabilityKind.Metadata);
         Assert.Equal(new[] { "searchTracks" }, metadata.Hooks);
         var sandbox = new ExtensionSandbox(Path.GetTempPath(), normalized, script, new HttpClientFactory(), NullLogger.Instance,
             ExtensionRuntimePermissionSet.None);

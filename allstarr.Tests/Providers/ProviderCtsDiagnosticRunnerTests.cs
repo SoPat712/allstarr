@@ -9,12 +9,276 @@ using allstarr.Core.Storage;
 using allstarr.Services.Common;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using allstarr.Models.Settings;
 using Moq;
 
 namespace allstarr.Tests;
 
 public sealed class ProviderCtsDiagnosticRunnerTests
 {
+    [Fact]
+    public async Task Measure_OneFailedSampleCannotOpenACircuitThroughPassiveObservation()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var attempts = 0;
+        var health = new ProviderRuntimeHealth();
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("fixture");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(() => Task.FromResult(ProviderOutcome<ProviderStreamLease>.Failure(++attempts == 1
+                ? new(ProviderErrorKind.RateLimited, TimeSpan.FromMinutes(1)) : new(ProviderErrorKind.NotFound))));
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture", Enumerable.Range(1, 3)
+                .Select(i => new ProviderTrackMetadata(new("fixture", ProviderResourceKind.Track, $"song-{i}"), "Song", [new("Artist")])).ToArray())));
+        var registry = AccountFreeRegistry("fixture", ObservedProviderCapabilities.Wrap(streaming.Object, health), metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, health);
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "sample-observation");
+        Assert.Equal("sample-unavailable", result.ReasonCode);
+        Assert.Equal(3, attempts);
+        Assert.Null(health.Get(ProviderRuntimeStatusKey.CreateAccountFree("fixture", "streaming")));
+        Assert.False(health.GetRouteStatus("fixture", null, ProviderCapabilityKind.Streaming).CircuitOpen);
+    }
+
+    [Fact]
+    public async Task Measure_DiscoveryHasRoomAfterCuratedSearchResultsAreAllRemoved()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var searches = 0;
+        var attempts = 0;
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() =>
+            {
+                var batch = ++searches;
+                return Task.FromResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture",
+                    Enumerable.Range(1, 3).Select(i => new ProviderTrackMetadata(
+                        new("fixture", ProviderResourceKind.Track, $"batch-{batch}-{i}"), "Song", [new("Artist")])).ToArray())));
+            });
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns(() =>
+            {
+                attempts++;
+                return Task.FromResult(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/song"),
+                    DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/aac", "aac", "aac"),
+                    ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(
+                        searches <= 8 ? HttpStatusCode.NotFound : HttpStatusCode.OK)
+                    { Content = new ByteArrayContent([1, 2, 3, 4]) }))));
+            });
+        var registry = AccountFreeRegistry("fixture", streaming.Object, metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, Mock.Of<IProviderOutcomeObserver>());
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "fresh-sample");
+        Assert.True(result.Succeeded);
+        Assert.Equal(9, searches);
+        Assert.Equal(25, attempts);
+    }
+
+    [Fact]
+    public async Task Measure_LastWorkingSampleTakesPriorityOverStoredCorpusRotation()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        await using (var db = new AllstarrDbContext(database.Options))
+        {
+            var user = Guid.CreateVersion7();
+            db.Users.Add(new() { Id = user, BackendType = "fixture", BackendInstanceId = "fixture", BackendPrincipalId = "listener" });
+            for (var i = 0; i < 3; i++)
+            {
+                var recording = Guid.CreateVersion7();
+                db.CanonicalRecordings.Add(new() { Id = recording, CreatedByUserId = user, Title = "Song", Revision = 1 });
+                db.ProviderTrackIdentities.Add(new()
+                {
+                    Id = Guid.CreateVersion7(),
+                    CanonicalRecordingId = recording,
+                    ProviderId = "fixture",
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = $"stored-{i}",
+                    ExternalIdHash = new string((char)('a' + i), 64),
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerificationMethod = "fixture",
+                    DecisionVersion = 1,
+                    Revision = 1
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        var attempts = new List<string>();
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns((ProviderExecutionContext _, ProviderStreamLeaseRequest request) =>
+            {
+                attempts.Add(request.TrackId.Value);
+                return Task.FromResult(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/song"),
+                    DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/aac", "aac", "aac"),
+                    ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = new ByteArrayContent([1, 2, 3, 4]) }))));
+            });
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, Mock.Of<IProviderOutcomeObserver>());
+        for (var i = 0; i < 3; i++)
+            Assert.True((await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "cached-sample")).Succeeded);
+        Assert.Equal(3, attempts.Count);
+        Assert.Single(attempts.Distinct());
+    }
+
+    [Fact]
+    public async Task Measure_SelectionDeadlineAfterMissingSamplesStaysNeutral()
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource<ProviderOutcome<ProviderPage<ProviderTrackMetadata>>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var calls = 0;
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .Returns(() =>
+            {
+                if (++calls == 1) return Task.FromResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture", [])));
+                entered.TrySetResult();
+                return release.Task;
+            });
+        var registry = AccountFreeRegistry("fixture", Mock.Of<IProviderStreamingCapability>(), metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var health = new ProviderRuntimeHealth();
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, health, timeProvider: clock);
+        var pending = runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "selection-deadline");
+        await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        clock.Advance(TimeSpan.FromSeconds(30));
+        try
+        {
+            var result = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Equal("sample-unavailable", result.ReasonCode);
+            Assert.Null(health.Get(ProviderRuntimeStatusKey.CreateAccountFree("fixture", "streaming")));
+        }
+        finally { release.TrySetResult(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture", []))); }
+    }
+
+    [Theory]
+    [InlineData(404)]
+    [InlineData(410)]
+    public async Task Measure_ExplicitRemovedTrackDoesNotFailTheSource(int status)
+    {
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/song"),
+                DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/aac", "aac", "aac"), ProviderStreamRetryBehavior.DoNotRetry,
+                (_, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)status)))));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>());
+        using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var health = new ProviderRuntimeHealth();
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, health);
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "removed-track", "song");
+        Assert.False(result.Succeeded);
+        Assert.Equal($"http-{status}", result.ReasonCode);
+        Assert.Null(health.Get(ProviderRuntimeStatusKey.CreateAccountFree("fixture", "streaming")));
+    }
+
+    [Theory]
+    [InlineData("missing", true, 2, null)]
+    [InlineData("outage", false, 3, "http-503")]
+    [InlineData("expired", false, 3, "expired-lease")]
+    [InlineData("connection", true, 2, null)]
+    [InlineData("connection-outage", false, 3, "endpoint-unreachable")]
+    [InlineData("io-outage", false, 3, "endpoint-unreachable")]
+    [InlineData("empty", false, 3, "empty-media-response")]
+    public async Task Measure_AutomaticMediaRetriesDistinctSamplesBeforeReportingFailure(string response, bool succeeds, int attempts, string? reason)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var tried = new HashSet<string>();
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .Returns((ProviderExecutionContext _, ProviderStreamLeaseRequest request) =>
+            {
+                tried.Add(request.TrackId.Value);
+                var missing = response == "missing" && tried.Count == 1;
+                return Task.FromResult(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new Uri("https://media.example.test/song"),
+                    DateTimeOffset.UtcNow.AddMinutes(response == "expired" ? -1 : 1), false, false, new("audio/aac", "aac", "aac"),
+                    ProviderStreamRetryBehavior.DoNotRetry, (_, _) => response switch
+                    {
+                        "connection" when tried.Count == 1 => throw new HttpRequestException(),
+                        "connection-outage" => throw new HttpRequestException(),
+                        "io-outage" => throw new IOException(),
+                        _ => Task.FromResult(new HttpResponseMessage(
+                        missing ? HttpStatusCode.NotFound : response == "outage" ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
+                        { Content = new ByteArrayContent(response == "empty" ? [] : [1, 2, 3, 4]) })
+                    })));
+            });
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture", Enumerable.Range(1, 3)
+                .Select(index => new ProviderTrackMetadata(new("fixture", ProviderResourceKind.Track, $"sample-{index}"), "Song", [new("Artist")])).ToArray())));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, metadata.Object);
+        using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(), selector, Mock.Of<IProviderOutcomeObserver>());
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "media-samples");
+        Assert.Equal(succeeds, result.Succeeded);
+        Assert.Equal(reason, result.ReasonCode);
+        Assert.Equal(attempts, tried.Count);
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task Measure_RecordsDownloadProofOnlyAfterSuccessfulDownloadBackedMedia(bool downloadBacked, bool succeeds)
+    {
+        await using var database = await SqliteTestDatabase.CreateAsync();
+        var factory = new Factory(database.Options);
+        var streaming = new Mock<IProviderStreamingCapability>();
+        if (downloadBacked) streaming.As<IProviderDownloadStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("fixture");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        var download = new Mock<IProviderDownloadCapability>();
+        download.SetupGet(item => item.ProviderId).Returns("fixture");
+        download.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Download);
+        var lease = new ProviderStreamLease("lease", new Uri("https://media.example.test/track"),
+            DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/flac", "flac", "flac"),
+            ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(
+                succeeds ? HttpStatusCode.OK : HttpStatusCode.ServiceUnavailable)
+            { Content = new ByteArrayContent([102, 76, 97, 67]) }));
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(lease));
+        var descriptor = new ProviderDescriptor("fixture", "Fixture", "Fixture", ProviderOrigin.Extension, "1", "1",
+            [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None,
+                "1", ["getStreamLease", "probeStream"]), new(ProviderCapabilityKind.Download, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["download", "checkAvailability"])], new(), entryPoint: "index.js");
+        var registry = new ProviderRegistry([new(descriptor, [streaming.Object, download.Object])]);
+        await using var services = new ServiceCollection().AddSingleton<IProviderRegistry>(registry).BuildServiceProvider();
+        var health = new ProviderRuntimeHealth();
+        var status = new ProviderStatusManager(new ConfigurationBuilder().Build(), Mock.Of<IHttpClientFactory>(),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()),
+            health: health, services: services);
+        using var selector = new ProviderCtsTrackSelector(factory);
+        var runner = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(),
+            selector, health, factory, statusManager: status);
+
+        var result = await runner.MeasureAsync(new(ProviderActorKind.SystemJob, null, durableJobId: Guid.NewGuid()),
+            "fixture", null, ProviderAudioQuality.Any, "download-proof", "track");
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result));
+        Assert.Equal(downloadBacked && succeeds, json.RootElement.GetProperty("DownloadVerified").GetBoolean());
+        Assert.NotEqual(Guid.Empty, json.RootElement.GetProperty("MeasurementId").GetGuid());
+        var current = status.GetAccountFreeStatus("fixture", "download");
+        Assert.Equal(downloadBacked && succeeds ? ProviderHealthState.Healthy : ProviderHealthState.Unknown, current.Health);
+        Assert.Equal(downloadBacked && succeeds ? result.MeasurementId : (Guid?)null, current.VerificationMeasurementId);
+        Assert.Equal(succeeds ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+            status.GetAccountFreeStatus("fixture", "streaming").Health);
+        var history = await new ProviderCheckHistory(factory, TimeProvider.System).ReadLatestAsync(default);
+        Assert.Contains(history, item => item.Key.Capability == "streaming");
+        if (downloadBacked && succeeds)
+            Assert.Contains(history, item => item.Key.Capability == "download" && item.Status.VerificationMeasurementId == result.MeasurementId);
+    }
+
     [Theory]
     [InlineData(ProviderErrorKind.RateLimited, "rate-limited")]
     [InlineData(ProviderErrorKind.TransientFailure, "transient-failure")]
@@ -51,10 +315,10 @@ public sealed class ProviderCtsDiagnosticRunnerTests
     [InlineData("spotiflac-jiosaavn", "Arijit Singh")]
     [InlineData("spotiflac-jiosaavn", "A. R. Rahman")]
     [InlineData("spotiflac-jiosaavn", "Shreya Ghoshal")]
-    [InlineData("spotiflac-jiosaavn", "The Beatles")]
+    [InlineData("regional-jiosaavn", "Ilaiyaraaja")]
     [InlineData("jiosaavn", "Arijit Singh")]
     [InlineData("fixture", "Daft Punk")]
-    public async Task Measure_TriesProviderCatalogQueriesBeforeGenericQueries(string provider, string matchingQuery)
+    public async Task Measure_ExhaustsCuratedRecordingsBeforeProviderDiscovery(string provider, string matchingQuery)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var queries = new List<string>();
@@ -89,10 +353,9 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.True(result.Succeeded);
         Assert.Equal("search", result.SelectionMode);
         Assert.Equal(4, result.SampleBytes);
-        string[] expected = provider == "fixture"
-            ? ["Daft Punk", "Taylor Swift", "The Beatles"]
-            : ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal", "Daft Punk", "Taylor Swift", "The Beatles"];
-        Assert.Equal(expected.Take(Array.IndexOf(expected, matchingQuery) + 1), queries);
+        var discovery = ProviderDiagnosticSamples.DiscoveryQueries(provider).ToArray();
+        Assert.Equal(ProviderDiagnosticSamples.Recordings(provider).Select(item => item.Query.Trim())
+            .Concat(discovery.Take(Array.IndexOf(discovery, matchingQuery) + 1)), queries);
         streaming.VerifyAll();
     }
 
@@ -687,10 +950,10 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.Equal(StatusCodes.Status409Conflict, result.StatusCode);
         Assert.Equal("track-selection", result.Stage);
         Assert.Equal(
-            "amazon has no song to test with. None of its songs appear in your playlists yet, and its search returned no results.",
+            "sample-unavailable",
             result.Error);
         metadata.Verify(item => item.SearchTracksAsync(
-            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(3));
+            It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()), Times.Exactly(16));
     }
 
     [Theory]
@@ -781,7 +1044,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any))
             .Returns((ProviderExecutionContext _, ProviderRecordingAvailabilityRequest sample, ProviderAudioQuality _) =>
             {
-                Assert.True(sample.ProviderIds.ContainsKey("deezer"));
+                Assert.True(sample.ProviderIds.ContainsKey("deezer") || sample.Isrc != null);
                 calls++;
                 entered.TrySetResult();
                 if (timeout) return release.Task;
@@ -826,7 +1089,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 var expired = await pending.WaitAsync(TimeSpan.FromSeconds(10));
                 Assert.False(expired.Succeeded);
                 Assert.Equal("track-selection", expired.Stage);
-                Assert.Equal("timeout", expired.ReasonCode);
+                Assert.Equal("sample-unavailable", expired.ReasonCode);
                 Assert.Equal(1, calls);
             }
             finally { release.TrySetResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(null))); }
@@ -835,17 +1098,17 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         var result = await pending;
         Assert.Equal(available, result.Succeeded);
         metadata.Verify(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()),
-            Times.Exactly(search == "none" ? 0 : 3));
+            Times.Exactly(search == "none" ? 0 : search == "error" ? 3 : 16));
         streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "preview")), Times.Exactly(search == "track-failures" ? 1 : 0));
         streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(),
             It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "catalog-preview")), Times.Exactly(search == "catalog-track-failures" ? 1 : 0));
-        Assert.Equal(available ? 2 : 3, calls);
+        Assert.Equal(available ? 2 : 12, calls);
         if (available) Assert.Equal("availability-corpus", result.SelectionMode);
         else
         {
             Assert.Equal("track-selection", result.Stage);
-            Assert.Contains("not_found_on_pandora", result.Error, StringComparison.Ordinal);
+            Assert.Equal("sample-unavailable", result.ReasonCode);
         }
     }
 
@@ -931,11 +1194,17 @@ public sealed class ProviderCtsDiagnosticRunnerTests
                 It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any))
             .Returns((ProviderExecutionContext _, ProviderRecordingAvailabilityRequest sample, ProviderAudioQuality _) =>
             {
-                Assert.Equal(new[] { "Own artist" }, sample.ArtistNames);
-                Assert.Equal("deezer", Assert.Single(sample.ProviderIds).Key);
+                if (sample.ProviderIds.Count > 0)
+                {
+                    Assert.Equal(new[] { "Own artist" }, sample.ArtistNames);
+                    Assert.Equal("deezer", Assert.Single(sample.ProviderIds).Key);
+                }
+                else Assert.Contains(sample.Title, ProviderDiagnosticSamples.Recordings("fixture").Select(item => item.Title));
                 return Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Success(new(null, "unavailable")));
             });
         var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        IProviderMetadataCapability? absent = null;
+        registry.Setup(item => item.TryGetCapability<IProviderMetadataCapability>("fixture", ProviderCapabilityKind.Metadata, out absent)).Returns(false);
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
             selector, Mock.Of<IProviderOutcomeObserver>());
@@ -947,7 +1216,7 @@ public sealed class ProviderCtsDiagnosticRunnerTests
         Assert.Equal("track-selection", result.Stage);
         Assert.Contains("unavailable", result.Error, StringComparison.Ordinal);
         streaming.Verify(item => item.ResolveRecordingAsync(It.IsAny<ProviderExecutionContext>(),
-            It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any), Times.Once);
+            It.IsAny<ProviderRecordingAvailabilityRequest>(), ProviderAudioQuality.Any), Times.Exactly(9));
     }
 
     private static ProviderActorContext Actor() => new(

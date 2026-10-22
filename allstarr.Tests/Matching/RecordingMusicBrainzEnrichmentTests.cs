@@ -17,6 +17,36 @@ public sealed partial class TrackIdentityServiceTests
     [Theory]
     [InlineData(ProviderUseMode.ManualOnly)]
     [InlineData(ProviderUseMode.Off)]
+    public async Task RecordingEvidence_RespectsCatalogSourcePolicyAtDiscoveryAndExecution(ProviderUseMode mode)
+    {
+        var recording = await _service.CreateRecordingAsync(Actor(_userA), "catalog-policy", "USRC17607839");
+        var settings = Options.Create(new MusicBrainzSettings { Enabled = false });
+        var client = new Mock<IMusicBrainzCatalogClient>(MockBehavior.Strict);
+        client.SetupGet(item => item.ConfiguredSourceRevision).Returns("fixture:ws2");
+        var options = new DurableJobOptions();
+        var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
+        Assert.Equal(1, await new RecordingMusicBrainzEnrichmentQueue(
+            _factory, jobs, settings, client.Object, _clock).EnqueuePendingAsync(default));
+        var claim = await jobs.ClaimNextAsync("recording-worker", [RecordingMusicBrainzEnrichmentQueue.JobType]);
+        var policies = PolicyResolver(_userA, ("musicbrainz", mode));
+        Assert.Equal(0, await new RecordingMusicBrainzEnrichmentQueue(
+            _factory, jobs, settings, client.Object, _clock, policies.Object).EnqueuePendingAsync(default));
+        var handler = new RecordingMusicBrainzEnrichmentJobHandler(
+            _factory, client.Object, settings, _service, policies.Object);
+
+        var result = await handler.ExecuteAsync(new(claim!, Mock.Of<IServiceProvider>()), default);
+
+        Assert.Equal(DurableJobCompletionKind.Succeeded, result.Kind);
+        client.Verify(item => item.LookupByIsrcAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        var service = new TrackIdentityService(_factory, _storageState, _clock, providerPolicies: policies.Object);
+        var unchanged = await service.EnrichRecordingAsync(Actor(_userA), recording.Recording.Id,
+            "USRC17607839", "31e68c1d-31f9-432c-a3a4-13aef4a53833", ["USRC17607839"], "catalog-policy");
+        Assert.Null(unchanged.MusicBrainzRecordingId);
+    }
+
+    [Theory]
+    [InlineData(ProviderUseMode.ManualOnly)]
+    [InlineData(ProviderUseMode.Off)]
     public async Task RecordingEvidenceJob_SkipsRestrictedSourceWithoutLookupOrWrites(ProviderUseMode mode)
     {
         var recording = await _service.CreateRecordingAsync(Actor(_userA), "restricted-source", "USRC17607839");
@@ -126,10 +156,12 @@ public sealed partial class TrackIdentityServiceTests
             .ReturnsAsync(new MusicBrainzRecording { Id = mbid, Isrcs = ["USRC17607839"] });
         var options = new DurableJobOptions();
         var jobs = new DurableJobQueue(_factory, options, new JobPayloadPolicy(options), _clock);
-        var queue = new RecordingMusicBrainzEnrichmentQueue(_factory, jobs, settings, client.Object, _clock);
+        var policies = PolicyResolver(_userA, ("musicbrainz", ProviderUseMode.Off));
+        var queue = new RecordingMusicBrainzEnrichmentQueue(_factory, jobs, settings, client.Object, _clock, policies.Object);
         Assert.Equal(0, await queue.EnqueuePendingAsync(default));
         client.VerifyNoOtherCalls();
-        settings.Value.Enabled = true;
+        policies.Setup(item => item.ResolveForUserAsync(_userA, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(await PolicyResolver(_userA).Object.ResolveForUserAsync(_userA));
         Assert.Equal(1, await queue.EnqueuePendingAsync(default));
         Assert.Equal(0, await queue.EnqueuePendingAsync(default));
         var claim = await jobs.ClaimNextAsync("recording-worker", [RecordingMusicBrainzEnrichmentQueue.JobType]);

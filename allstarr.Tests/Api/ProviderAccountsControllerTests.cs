@@ -24,6 +24,42 @@ namespace allstarr.Tests;
 
 public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
 {
+    [Fact]
+    public async Task PublicProviderSummariesUseRestoredChecksFromStatusRows()
+    {
+        var status = new ProviderStatusManager(new ConfigurationBuilder().Build(), Mock.Of<IHttpClientFactory>(),
+            NullLogger<ProviderStatusManager>.Instance, Options.Create(new SpotifyApiSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()));
+        var key = ProviderRuntimeStatusKey.CreateAccountFree("musixmatch", "lyrics");
+        var testedAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        status.RestoreCheckResult(key, null, status.GetAccountFreeStatus("musixmatch", "lyrics") with
+        { Health = ProviderHealthState.Healthy, TestedAt = testedAt });
+        await using var services = new ServiceCollection()
+            .AddSingleton<IDbContextFactory<AllstarrDbContext>>(_factory)
+            .AddSingleton(status).AddSingleton(new ProviderRuntimeHealth()).BuildServiceProvider();
+        var http = new DefaultHttpContext { RequestServices = services };
+        http.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, administrator: true);
+        var controller = new AdminUiController(new ConfigurationBuilder().Build(),
+            Options.Create(new SpotifyApiSettings()), Options.Create(new DeezerSettings()), Options.Create(new QobuzSettings()),
+            Options.Create(new AppleDownloadSettings()), Options.Create(new MusicBrainzSettings()), null!, status,
+            new ProviderAccountOptions(), null!)
+        { ControllerContext = new ControllerContext { HttpContext = http } };
+        using var summaries = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await controller.GetProviderSummaries()).Value));
+        var summary = Assert.Single(summaries.RootElement.GetProperty("providers").EnumerateArray(),
+            item => item.GetProperty("providerId").GetString() == "musixmatch");
+        Assert.Equal(1, summary.GetProperty("capabilityTotal").GetInt32());
+        Assert.Equal(1, summary.GetProperty("healthyCapabilityCount").GetInt32());
+        Assert.Equal(0, summary.GetProperty("failedCapabilityCount").GetInt32());
+        Assert.Equal(testedAt, summary.GetProperty("lastCheckedAt").GetDateTimeOffset());
+        var connection = new ProviderConnectionController(NullLogger<ProviderConnectionController>.Instance)
+        { ControllerContext = new ControllerContext { HttpContext = http } };
+        using var rows = JsonDocument.Parse(JsonSerializer.Serialize(
+            Assert.IsType<OkObjectResult>(await connection.GetProvidersStatus()).Value));
+        var row = Assert.Single(rows.RootElement.EnumerateArray(), item => item.GetProperty("provider").GetString() == "musixmatch");
+        Assert.Equal("healthy", row.GetProperty("health").GetString());
+    }
+
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "allstarr-tests",
@@ -215,7 +251,8 @@ public sealed partial class ProviderAccountsControllerTests : IAsyncLifetime
         controller.HttpContext.Items[AdminAuthSessionService.HttpContextSessionItemKey] = Session(_userId, administrator: true);
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(
             Assert.IsType<OkObjectResult>(await controller.GetProviderSummaries()).Value));
-        var summary = Assert.Single(json.RootElement.GetProperty("providers").EnumerateArray());
+        var summary = Assert.Single(json.RootElement.GetProperty("providers").EnumerateArray(),
+            item => item.GetProperty("providerId").GetString() == "deezer");
         var accounts = summary.GetProperty("connectedAccounts").EnumerateArray().ToArray();
         Assert.Equal(2, accounts.Length);
         Assert.Contains(accounts, item => item.GetProperty("scope").GetString() == "Personal" &&

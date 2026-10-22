@@ -101,7 +101,6 @@ public static class LegacyEnvParser
             ["SPOTIFY_LIKED_SONGS_QUERY_HASH"] = "SpotifyApi:LikedSongsQueryHash",
             ["SPOTIFY_TOTP_SECRETS_URL"] = "SpotifyApi:TotpSecretsUrl",
             ["SPOTIFY_TOKEN_ENDPOINT"] = "SpotifyApi:TokenEndpoint",
-            ["SPOTIFY_API_ENABLED"] = "SpotifyApi:Enabled",
             ["SPOTIFY_API_CACHE_DURATION_MINUTES"] = "SpotifyApi:CacheDurationMinutes",
             ["SPOTIFY_API_RATE_LIMIT_DELAY_MS"] = "SpotifyApi:RateLimitDelayMs",
             ["SPOTIFY_API_PREFER_ISRC_MATCHING"] = "SpotifyApi:PreferIsrcMatching",
@@ -123,7 +122,6 @@ public static class LegacyEnvParser
             ["APPLE_DOWNLOAD_URL"] = "AppleDownload:BaseUrl",
             ["APPLE_DOWNLOAD_QUALITY"] = "AppleDownload:Quality",
             ["APPLE_MUSIC_QUALITY"] = "AppleDownload:Quality",
-            ["MUSICBRAINZ_ENABLED"] = "MusicBrainz:Enabled",
             ["MULTI_PROVIDER_METADATA_ORDER"] = "Providers:MetadataOrder",
             ["MULTI_PROVIDER_DOWNLOAD_ORDER"] = "Providers:DownloadOrder",
             ["MULTI_PROVIDER_STREAMING_ORDER"] = "Providers:StreamingOrder",
@@ -350,6 +348,12 @@ public static class LegacyEnvParser
 
     private static LegacyEnvEntry Classify(string key, string value, int line)
     {
+        if (key.Equals("SPOTIFY_API_ENABLED", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("SpotifyApi__Enabled", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("MUSICBRAINZ_ENABLED", StringComparison.OrdinalIgnoreCase) ||
+            key.Equals("MusicBrainz__Enabled", StringComparison.OrdinalIgnoreCase))
+            return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "source_policy",
+                "Availability follows source policy and connected accounts. This duplicate switch is no longer used.", false);
         if (key.Equals("DEBUG_REDACT_SENSITIVE_REQUEST_VALUES", StringComparison.OrdinalIgnoreCase))
             return new(key, value, line, LegacyEnvDisposition.IgnoredDeprecated, "always_redacted",
                 "Sensitive request values are always redacted. The old switch cannot disable protection.", false);

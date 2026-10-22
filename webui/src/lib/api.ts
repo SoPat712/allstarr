@@ -248,6 +248,8 @@ export type ProviderSetting = {
 };
 
 export type ProviderRuntimeCapability = {
+  verificationMeasurementId?: string | null;
+  verificationMethod?: string | null;
   id: string;
   configuration?: string;
   supported?: boolean;
@@ -321,6 +323,8 @@ export type ConfigField = {
   ownership?: string;
   readOnly?: boolean;
   helpText?: string | null;
+  advanced?: boolean;
+  defaultValueJson?: string | null;
   min?: number | null;
   max?: number | null;
 };
@@ -489,8 +493,8 @@ export type ProviderAccount = {
 
 export type ProviderHealth = {
   provider: string;
-  providerAccountId: string;
-  providerAccountName: string;
+  providerAccountId: string | null;
+  providerAccountName: string | null;
   capability: string;
   accountScope: string;
   supported: boolean;
@@ -502,6 +506,8 @@ export type ProviderHealth = {
   testedAt?: string | null;
   reasonCode?: string | null;
   canTest: boolean;
+  verificationMeasurementId?: string | null;
+  verificationMethod?: string | null;
 };
 
 export type ConnectivityResult = {

@@ -198,7 +198,6 @@ public class ConfigController : ControllerBase
             lyricsPlus = new { baseUrl = RuntimeString("LyricsPlus:BaseUrl", _configuration["LyricsPlus:BaseUrl"] ?? string.Empty) },
             spotifyApi = new
             {
-                enabled = RuntimeBool("SpotifyApi:Enabled", _spotifyApiSettings.Enabled),
                 sessionCookie = AdminHelperService.MaskValue(effectiveSessionCookie, showLast: 8),
                 sessionCookieSetDate = effectiveCookieSetDate ?? string.Empty,
                 usingGlobalFallback = cookieStatus.UsingGlobalFallback,
@@ -268,7 +267,6 @@ public class ConfigController : ControllerBase
             },
             musicBrainz = new
             {
-                enabled = RuntimeBool("MusicBrainz:Enabled", _musicBrainzSettings.Enabled),
                 sourceId = RuntimeString("MusicBrainz:SourceId", _musicBrainzSettings.SourceId),
                 baseUrl = RuntimeString("MusicBrainz:BaseUrl", _musicBrainzSettings.BaseUrl),
                 rateLimitMs = RuntimeInt("MusicBrainz:RateLimitMs", _musicBrainzSettings.RateLimitMs),

@@ -24,14 +24,15 @@ public sealed class ProviderUseController(
         {
             personalRevision = personal.Revision,
             householdRevision = household.Revision,
-            providers = registry.Providers.Select(provider => new
-            {
-                providerId = provider.Id,
-                householdMode = ProviderUsePolicy.Name(defaults.GetProviderMode(provider.Id)),
-                personalMode = personal.ProviderModeOverrides?.GetValueOrDefault(provider.Id),
-                effectiveMode = ProviderUsePolicy.Name(policy.GetProviderMode(provider.Id)),
-                canChoosePersonal = defaults.GetProviderMode(provider.Id) != ProviderUseMode.Off
-            })
+            providers = registry.Providers.Select(provider => provider.Id).Append("musicbrainz")
+                .Distinct(StringComparer.Ordinal).Select(providerId => new
+                {
+                    providerId,
+                    householdMode = ProviderUsePolicy.Name(defaults.GetProviderMode(providerId)),
+                    personalMode = personal.ProviderModeOverrides?.GetValueOrDefault(providerId),
+                    effectiveMode = ProviderUsePolicy.Name(policy.GetProviderMode(providerId)),
+                    canChoosePersonal = defaults.GetProviderMode(providerId) != ProviderUseMode.Off
+                })
         });
     }
 
@@ -44,9 +45,11 @@ public sealed class ProviderUseController(
         if (request.Scope == "household" && !session.IsAdministrator) return StatusCode(403);
         try
         {
-            if (!registry.TryGet(providerId, out var provider)) return NotFound();
+            var sourceId = registry.TryGet(providerId, out var provider) ? provider!.Id :
+                providerId.Equals("musicbrainz", StringComparison.OrdinalIgnoreCase) ? "musicbrainz" : null;
+            if (sourceId == null) return NotFound();
             await settings.UpdateProviderModeAsync(request.Scope == "household" ? null : userId,
-                provider!.Id, request.Mode, request.ExpectedRevision, userId, cancellationToken);
+                sourceId, request.Mode, request.ExpectedRevision, userId, cancellationToken);
             return await Get(cancellationToken);
         }
         catch (RuntimeSettingConflictException) { return Conflict(new { error = "Source preferences changed. Refresh and try again." }); }

@@ -44,7 +44,8 @@ public sealed class ProviderDiagnosticExecutionFactory(
             ProviderExplicitContentPolicy.Allow, allowFallback: false, allowSharedAccount: true,
             allowManagedDownloads: true, [providerId]);
         return new(new ProviderExecutionContext(executionActor, providerId, resolved?.Account, policy,
-            "provider-diagnostic", ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100), deadline, token), 200, null);
+            "provider-diagnostic", ProviderContractValidation.RequiredText(correlationId, nameof(correlationId), 100), deadline, token)
+        { IsReadOnly = true }, 200, null);
     }
 }
 

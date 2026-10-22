@@ -194,12 +194,17 @@ public static class ObservedProviderCapabilities
             ProviderExecutionContext context, ProviderStreamLeaseRequest request) =>
             InvokeAsync(context, () => Implementation.ProbeStreamAsync(context, request),
                 observationError: outcome => !outcome.IsSuccess ? outcome.Error :
-                    outcome.RequireValue().Available ? null : new ProviderError(ProviderErrorKind.CapabilityUnavailable));
+                    outcome.RequireValue().Available ? null : new ProviderError(ProviderErrorKind.NotFound));
     }
 
     private class RecordingStreaming(IProviderRecordingStreamingCapability implementation, IProviderOutcomeObserver observer)
-        : Streaming(implementation, observer), IProviderRecordingStreamingCapability
+        : Streaming(implementation, observer), IProviderRecordingStreamingCapability, IProviderDiagnosticSampleSearch
     {
+        public Task<ProviderOutcome<ProviderRecordingAvailability>> DiscoverSampleAsync(
+            ProviderExecutionContext context, string query, ProviderAudioQuality quality) =>
+            implementation is IProviderDiagnosticSampleSearch search ? search.DiscoverSampleAsync(context, query, quality) :
+                Task.FromResult(ProviderOutcome<ProviderRecordingAvailability>.Failure(new ProviderError(ProviderErrorKind.NotSupported)));
+
         public bool SupportsRecordingAvailability => implementation.SupportsRecordingAvailability;
 
         public Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
@@ -257,11 +262,13 @@ public static class ObservedProviderCapabilities
             ProviderExecutionContext context, ProviderHealthProbeRequest request) =>
             InvokeAsync(context, () => Implementation.ProbeAsync(context, request),
                 observedCapability: request.TargetCapability,
-                observationError: outcome => !outcome.IsSuccess ? outcome.Error : outcome.RequireValue().Status switch
-                {
-                    ProviderProbeStatus.Healthy => null,
-                    ProviderProbeStatus.Unauthorized => new ProviderError(ProviderErrorKind.Unauthorized),
-                    _ => new ProviderError(ProviderErrorKind.TransientFailure)
-                });
+                observationError: outcome => !outcome.IsSuccess ? outcome.Error :
+                    allstarr.Services.Common.ProviderRuntimeStatus.IsNeutralReason(outcome.RequireValue().SafeCode)
+                        ? new ProviderError(ProviderErrorKind.NotFound) : outcome.RequireValue().Status switch
+                        {
+                            ProviderProbeStatus.Healthy => null,
+                            ProviderProbeStatus.Unauthorized => new ProviderError(ProviderErrorKind.Unauthorized),
+                            _ => new ProviderError(ProviderErrorKind.TransientFailure)
+                        });
     }
 }

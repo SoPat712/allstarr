@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Health;
 using allstarr.Core.Storage;
+using allstarr.Services.Common;
 using Moq;
 
 namespace allstarr.Tests;
@@ -38,6 +39,34 @@ public sealed class ObservedProviderCapabilitiesTests
         Assert.Equal(available, (await wrapped.ProbeStreamAsync(context, request)).RequireValue().Available);
         Assert.Empty(observer.Observations);
         capability.Verify(item => item.ProbeStreamAsync(context, request), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MissingDiagnosticSamplesNeverOpenTheSourceCircuit(bool healthHook)
+    {
+        var context = Context();
+        var runtime = new ProviderRuntimeHealth();
+        if (healthHook)
+        {
+            var capability = Capability<IProviderHealthProbeCapability>(ProviderCapabilityKind.Health);
+            capability.Setup(item => item.ProbeAsync(context, It.IsAny<ProviderHealthProbeRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderHealthProbeResult>.Success(new(ProviderProbeStatus.Unavailable,
+                    DateTimeOffset.UtcNow, TimeSpan.Zero, "sample-unavailable")));
+            var wrapped = ObservedProviderCapabilities.Wrap(capability.Object, runtime);
+            for (var i = 0; i < 4; i++) await wrapped.ProbeAsync(context, new(ProviderCapabilityKind.Streaming));
+        }
+        else
+        {
+            var capability = Capability<IProviderStreamingCapability>(ProviderCapabilityKind.Streaming);
+            capability.Setup(item => item.ProbeStreamAsync(context, It.IsAny<ProviderStreamLeaseRequest>()))
+                .ReturnsAsync(ProviderOutcome<ProviderStreamProbeResult>.Success(new(false, DateTimeOffset.UtcNow)));
+            var wrapped = ObservedProviderCapabilities.Wrap(capability.Object, runtime);
+            for (var i = 0; i < 4; i++) await wrapped.ProbeStreamAsync(context, new(TrackId()));
+        }
+        Assert.Null(runtime.Get(ProviderRuntimeStatusKey.CreateManaged("fixture", "streaming", context.Account!.AccountId)));
+        Assert.False(runtime.GetRouteStatus("fixture", context.Account.AccountId, ProviderCapabilityKind.Streaming).CircuitOpen);
     }
 
     [Fact]
