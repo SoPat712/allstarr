@@ -48,7 +48,15 @@ public sealed record ProviderTrackMetadata
         int? bitrate = null,
         IEnumerable<ProviderArtistCredit>? albumArtists = null,
         IReadOnlyDictionary<string, string>? providerIds = null,
-        bool isBestVersion = false)
+        bool isBestVersion = false,
+        int? totalDiscs = null,
+        string? upc = null,
+        string? musicalKey = null,
+        string? notes = null,
+        ProviderMediaFormat? media = null,
+        long? size = null,
+        ProviderReplayGain? replayGain = null,
+        IEnumerable<string>? genres = null)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
@@ -126,6 +134,14 @@ public sealed record ProviderTrackMetadata
         ProviderIds = new System.Collections.ObjectModel.ReadOnlyDictionary<string, string>(
             providerIds == null ? new Dictionary<string, string>(StringComparer.Ordinal)
                 : new Dictionary<string, string>(providerIds, StringComparer.Ordinal));
+        TotalDiscs = totalDiscs is > 0 ? totalDiscs : null;
+        Upc = ProviderContractValidation.OptionalText(upc, nameof(upc), 100);
+        MusicalKey = ProviderContractValidation.OptionalText(musicalKey, nameof(musicalKey), 100);
+        Notes = ProviderContractValidation.OptionalContent(notes is { Length: > 4000 } ? notes[..4000] : notes, nameof(notes), 4000);
+        Media = media;
+        Size = size is > 0 ? size : null;
+        ReplayGain = replayGain;
+        Genres = ProviderContractValidation.Copy((genres ?? []).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value.Trim()));
     }
 
     public ProviderExternalResourceId Id { get; }
@@ -183,6 +199,23 @@ public sealed record ProviderTrackMetadata
     public IReadOnlyList<ProviderArtistCredit> AlbumArtists { get; }
 
     public IReadOnlyDictionary<string, string> ProviderIds { get; }
+
+    public int? TotalDiscs { get; }
+    public string? Upc { get; }
+    public string? MusicalKey { get; }
+    public string? Notes { get; }
+    public ProviderMediaFormat? Media { get; }
+    public long? Size { get; }
+    public ProviderReplayGain? ReplayGain { get; }
+    public IReadOnlyList<string> Genres { get; }
+}
+
+public sealed record ProviderReplayGain
+{
+    public double? TrackGain { get; init; }
+    public double? AlbumGain { get; init; }
+    public double? TrackPeak { get; init; }
+    public double? AlbumPeak { get; init; }
 }
 
 public sealed record ProviderAlbumMetadata

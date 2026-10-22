@@ -192,21 +192,22 @@ public sealed class ArtistGridStreamingCapabilityAdapter : IProviderStreamingCap
                 ".ogg" => new ProviderMediaFormat("audio/ogg", "ogg", "unknown"),
                 ".wav" => new ProviderMediaFormat("audio/wav", "wav", "unknown"),
                 ".aac" => new ProviderMediaFormat("audio/aac", "aac", "aac"),
-                ".m4a" or ".mp4" => new ProviderMediaFormat("audio/mp4", "mp4", "aac"),
+                ".m4a" or ".mp4" => new ProviderMediaFormat("audio/mp4", "mp4", "unknown"),
                 ".mp3" => new ProviderMediaFormat("audio/mpeg", "mp3", "mp3"),
                 _ => null
             };
             if (direct != null) return direct;
         }
         var normalized = quality?.ToLowerInvariant() ?? string.Empty;
-        if (normalized.Contains("flac", StringComparison.Ordinal) ||
-            normalized.Contains("lossless", StringComparison.Ordinal))
+        if (normalized.Contains("flac", StringComparison.Ordinal))
             return new ProviderMediaFormat("audio/flac", "flac", "flac");
         if (normalized.Contains("m4a", StringComparison.Ordinal) ||
             normalized.Contains("aac", StringComparison.Ordinal) ||
             normalized.Contains("mp4", StringComparison.Ordinal))
-            return new ProviderMediaFormat("audio/mp4", "mp4", "aac");
-        return new ProviderMediaFormat("audio/mpeg", "mp3", "mp3");
+            return new ProviderMediaFormat("audio/mp4", "mp4", normalized.Contains("aac", StringComparison.Ordinal) ? "aac" : "unknown");
+        if (normalized.Contains("wav", StringComparison.Ordinal)) return new("audio/wav", "wav", "unknown");
+        return normalized.Contains("mp3", StringComparison.Ordinal) ? new("audio/mpeg", "mp3", "mp3") :
+            new ProviderMediaFormat("application/octet-stream", "unknown", "unknown");
     }
 
     private static ProviderError? ValidateContext(

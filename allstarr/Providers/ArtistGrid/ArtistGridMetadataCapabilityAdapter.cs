@@ -162,10 +162,27 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
         ProviderMetadataSearchRequest request) =>
         Task.FromResult(Failure<ProviderPage<ProviderAlbumMetadata>>(ProviderErrorKind.NotSupported));
 
-    public Task<ProviderOutcome<ProviderAlbumMetadata>> GetAlbumAsync(
+    public async Task<ProviderOutcome<ProviderAlbumMetadata>> GetAlbumAsync(
         ProviderExecutionContext context,
-        ProviderAlbumLookupRequest request) =>
-        Task.FromResult(Failure<ProviderAlbumMetadata>(ProviderErrorKind.NotSupported));
+        ProviderAlbumLookupRequest request)
+    {
+        var error = ValidateContext(context, request.Id, ProviderResourceKind.Album);
+        if (error != null) return Failure<ProviderAlbumMetadata>(error);
+        if (!ArtistGridTrackId.TryParse(request.Id.Value, out var trackerId, out var gid, out var hash))
+            return Failure<ProviderAlbumMetadata>(ProviderErrorKind.NotFound);
+        var result = await _catalog.GetTrackerAsync(trackerId, gid, true, false, context.CancellationToken);
+        if (!result.IsSuccess) return ProviderOutcome<ProviderAlbumMetadata>.Failure(result.Error!);
+        var tracker = result.RequireValue();
+        var cached = _catalog.GetCachedTrackers().FirstOrDefault(item => item.Artist.Tracker == trackerId);
+        if (cached.Artist == null) return Failure<ProviderAlbumMetadata>(ProviderErrorKind.NotFound);
+        var tracks = tracker.Tracks.Where(track => track.AlbumTitle != null && AlbumHash(track.AlbumTitle) == hash)
+            .SelectMany(track => track.Sources.Select(source => TryMapTrack(cached.Artist, tracker, track, source)))
+            .Where(track => track != null).Cast<ProviderTrackMetadata>().ToArray();
+        if (tracks.Length == 0) return Failure<ProviderAlbumMetadata>(ProviderErrorKind.NotFound);
+        return ProviderOutcome<ProviderAlbumMetadata>.Success(new(request.Id, tracks[0].AlbumTitle!,
+            [new(cached.Artist.Name, new(ProviderId, ProviderResourceKind.Artist, trackerId))], tracks.Length,
+            tracks[0].Artwork, tracker.ETag, tracks: tracks));
+    }
 
     public async Task<ProviderOutcome<ProviderPage<ProviderArtistMetadata>>> SearchArtistsAsync(
         ProviderExecutionContext context,
@@ -339,17 +356,28 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
                     ? new ProviderExternalResourceId(ArtistGridConstants.ProviderId, ProviderResourceKind.Artist, artist.Tracker)
                     : null))
             .ToArray();
+        var trackId = new ProviderExternalResourceId(ArtistGridConstants.ProviderId, ProviderResourceKind.Track, idValue);
+        var albumId = track.AlbumTitle == null ? null : new ProviderExternalResourceId(ArtistGridConstants.ProviderId,
+            ProviderResourceKind.Album, ArtistGridTrackId.Create(tracker.Tracker, tracker.Gid, AlbumHash(track.AlbumTitle)));
         return new ProviderTrackMetadata(
-            new ProviderExternalResourceId(ArtistGridConstants.ProviderId, ProviderResourceKind.Track, idValue),
+            trackId,
             title,
             artistCredits,
+            albumId: albumId,
             albumTitle: track.AlbumTitle,
             duration: track.Duration,
             snapshotVersion: tracker.ETag,
             albumArtist: artistName,
             contributors: track.Contributors,
-            isBestVersion: track.BestVersion);
+            isBestVersion: track.BestVersion,
+            releaseDate: track.FileDate,
+            year: int.TryParse(track.FileDate?[..4], out var year) ? year : null,
+            notes: track.Notes,
+            artwork: track.ArtworkUrl == null ? new ProviderArtworkReference(resourceId: albumId ?? trackId, revision: "artistgrid-cover-v1")
+                : new ProviderArtworkReference(publicUri: new Uri(track.ArtworkUrl)));
     }
+
+    private static string AlbumHash(string album) => ArtistGridTrackId.HashSource("album:" + album);
 
     private static bool IsUsableTrack(ArtistGridRawTrack track) => track.Sources.Count > 0;
 

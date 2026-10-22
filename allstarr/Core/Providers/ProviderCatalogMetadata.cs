@@ -387,12 +387,12 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             string.IsNullOrWhiteSpace(song.Isrc) ? null : song.Isrc,
             ExplicitState(song.ExplicitContentLyrics),
             PublicArtwork(song.CoverArtUrlLarge ?? song.CoverArtUrl),
-            trackNumber: song.Track,
-            discNumber: song.DiscNumber,
-            totalTracks: song.TotalTracks,
-            year: song.Year,
+            trackNumber: Positive(song.Track),
+            discNumber: Positive(song.DiscNumber),
+            totalTracks: Positive(song.TotalTracks),
+            year: Positive(song.Year),
             genre: song.Genre,
-            bpm: song.Bpm,
+            bpm: Positive(song.Bpm),
             spotifyId: song.SpotifyId,
             releaseDate: song.ReleaseDate,
             albumArtist: song.AlbumArtist,
@@ -401,9 +401,57 @@ public abstract class ProviderCatalogMetadata(string providerId) : TrackParserBa
             copyright: song.Copyright,
             contributors: song.Contributors,
             explicitContentLyrics: song.ExplicitContentLyrics,
-            bitrate: song.Bitrate,
+            bitrate: Positive(song.Bitrate),
             albumArtists: song.AlbumArtists.Count > 0 ? song.AlbumArtists.Select(MapArtistCredit) : albumArtists,
-            providerIds: song.ProviderIds);
+            providerIds: song.ProviderIds,
+            totalDiscs: Positive(song.TotalDiscs),
+            upc: song.Upc,
+            musicalKey: song.MusicalKey,
+            notes: song.Notes,
+            media: CatalogMedia(song),
+            size: song.Size,
+            replayGain: KnownReplayGain(song.ReplayGain),
+            genres: song.Genres);
+    }
+
+    private static int? Positive(int? value) => value is > 0 ? value : null;
+
+    private static ProviderReplayGain? KnownReplayGain(ProviderReplayGain? gain)
+    {
+        if (gain == null) return null;
+        static double? Finite(double? number, bool peak = false) => number is { } value && double.IsFinite(value) && (!peak || value >= 0) ? value : null;
+        var result = new ProviderReplayGain
+        {
+            TrackGain = Finite(gain.TrackGain),
+            AlbumGain = Finite(gain.AlbumGain),
+            TrackPeak = Finite(gain.TrackPeak, true),
+            AlbumPeak = Finite(gain.AlbumPeak, true)
+        };
+        return result.TrackGain != null || result.AlbumGain != null || result.TrackPeak != null || result.AlbumPeak != null ? result : null;
+    }
+
+    private static ProviderMediaFormat? CatalogMedia(Song song)
+    {
+        var container = song.Container?.Trim().ToLowerInvariant();
+        var codec = song.Codec?.Trim().ToLowerInvariant();
+        var bitrate = Positive(song.Bitrate);
+        var sampleRate = Positive(song.SampleRate);
+        var bitDepth = Positive(song.BitDepth);
+        var channels = Positive(song.Channels);
+        if (string.IsNullOrEmpty(container) && string.IsNullOrEmpty(codec) &&
+            bitrate == null && sampleRate == null && bitDepth == null && channels == null) return null;
+        var mimeType = container switch
+        {
+            "flac" => "audio/flac",
+            "mp3" => "audio/mpeg",
+            "m4a" or "mp4" => "audio/mp4",
+            "ogg" or "opus" => "audio/ogg",
+            "aac" => "audio/aac",
+            "wav" => "audio/wav",
+            _ => "application/octet-stream"
+        };
+        return new(mimeType, string.IsNullOrEmpty(container) ? "unknown" : container,
+            string.IsNullOrEmpty(codec) ? "unknown" : codec, bitrate, sampleRate, bitDepth, channels);
     }
 
     private ProviderAlbumMetadata MapAlbum(Album album)

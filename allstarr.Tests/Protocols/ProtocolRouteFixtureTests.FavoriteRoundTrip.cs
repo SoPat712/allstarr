@@ -147,7 +147,9 @@ public sealed partial class ProtocolRouteFixtureTests
         using var document = JsonDocument.Parse(result.Content!);
         var item = document.RootElement.GetProperty("Items")[1];
         AssertHeartUserData(item.GetProperty("UserData"), id, true);
-        Assert.Equal(hash, item.GetProperty("ImageBlurHashes").GetProperty("Primary").GetProperty(id + "-art-v2").GetString());
+        var primaryTag = item.GetProperty("ImageTags").GetProperty("Primary").GetString()!;
+        Assert.StartsWith("provider-cover-v1-", primaryTag);
+        Assert.Equal(hash, item.GetProperty("ImageBlurHashes").GetProperty("Primary").GetProperty(primaryTag).GetString());
         Assert.Equal("2024-02-29T00:00:00.0000000Z", item.GetProperty("PremiereDate").GetString());
         Assert.Equal(2024, item.GetProperty("ProductionYear").GetInt32());
         Assert.Equal(song.AlbumId, item.GetProperty("ParentId").GetString());

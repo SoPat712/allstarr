@@ -194,6 +194,7 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         var hash = Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)).ToLowerInvariant();
         if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(hash), Convert.FromHexString(output.Sha256)))
             throw new InvalidOperationException("The provider download artifact checksum does not match its contract.");
+        var media = (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media;
         var stored = await store.AddVerifiedAsync(new()
         {
             Id = Guid.CreateVersion7(),
@@ -209,13 +210,13 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
             RelativePath = relative,
             ContentSha256 = hash,
             Length = info.Length,
-            MimeType = output.Media.MimeType,
-            Container = output.Media.Container,
-            Codec = output.Media.Codec,
-            Bitrate = output.Media.Bitrate,
-            SampleRate = output.Media.SampleRate,
-            BitDepth = output.Media.BitDepth,
-            Channels = output.Media.Channels,
+            MimeType = media.MimeType,
+            Container = media.Container,
+            Codec = media.Codec,
+            Bitrate = media.Bitrate,
+            SampleRate = media.SampleRate,
+            BitDepth = media.BitDepth,
+            Channels = media.Channels,
             State = ProviderDownloadArtifactState.Verified,
             CreatedAt = DateTimeOffset.UtcNow,
             VerifiedAt = DateTimeOffset.UtcNow,
@@ -248,7 +249,8 @@ public sealed class ProviderDownloadArtifactResolver(IProviderDownloadArtifactSt
         { throw new InvalidOperationException("The provider download artifact checksum is invalid.", exception); }
         if (expected.Length != SHA256.HashSizeInBytes || !CryptographicOperations.FixedTimeEquals(hash, expected))
             throw new InvalidOperationException("The provider download artifact checksum does not match its contract.");
-        return new(path, info.Length, output.Media);
+        return new(path, info.Length,
+            (await allstarr.Services.Common.AudioMediaFacts.ReadFileAsync(path, cancellationToken))?.Media ?? output.Media);
     }
 
     public void DeleteTransientWorkspace(ProviderTransientDownloadWorkspace workspace)

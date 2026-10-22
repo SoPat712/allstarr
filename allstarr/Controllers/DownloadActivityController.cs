@@ -219,6 +219,8 @@ public class DownloadActivityController : ControllerBase
                     if (artwork != null)
                         return new MediaAssetSource(artwork.Content, artwork.ContentType);
                 }
+                if (normalizedItemId.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+                    return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, ResolvePlaybackProvider(normalizedItemId), 96, token);
                 return null;
             },
             5 * 1024 * 1024,

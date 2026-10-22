@@ -249,20 +249,31 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         var id = Resource(item, ProviderResourceKind.Track);
         var attributes = RequiredObject(item, "attributes");
         var artistName = Required(attributes, "artistName");
+        var embeddedAlbum = RelationshipItems(item, "albums").FirstOrDefault();
+        var albumAttributes = embeddedAlbum.ValueKind == JsonValueKind.Object &&
+                              embeddedAlbum.TryGetProperty("attributes", out var embeddedAttributes) ? embeddedAttributes : default;
+        var releaseDate = String(attributes, "releaseDate") ?? String(albumAttributes, "releaseDate");
+        var genres = Strings(attributes, "genreNames").ToArray();
+        var albumArtist = String(attributes, "albumArtistName") ?? String(albumAttributes, "artistName");
         ProviderExternalResourceId? albumId = null;
         var albumResourceId = RelationshipId(item, "albums") ?? String(attributes, "albumId");
         if (albumResourceId != null)
             albumId = new(AppleMusicKitPlaylistCapabilityAdapter.StableProviderId, ProviderResourceKind.Album, albumResourceId);
         TimeSpan? duration = attributes.TryGetProperty("durationInMillis", out var durationValue) &&
-                             durationValue.TryGetInt64(out var milliseconds)
+                             durationValue.ValueKind == JsonValueKind.Number && durationValue.TryGetInt64(out var milliseconds) && milliseconds > 0
             ? TimeSpan.FromMilliseconds(milliseconds)
             : null;
         var artwork = Artwork(id, attributes, revision);
-        return new(id, Required(attributes, "name"), [ArtistCredit(artistName, RelationshipId(item, "artists"))], albumId,
+        return new(id, Required(attributes, "name"), ArtistCredits(item, artistName), albumId,
             String(attributes, "albumName"), duration, String(attributes, "isrc"),
             String(attributes, "contentRating") switch { "explicit" => true, "clean" => false, _ => null },
             artwork, revision, trackNumber: Number(attributes, "trackNumber"), discNumber: Number(attributes, "discNumber"),
-            releaseDate: String(attributes, "releaseDate"));
+            totalTracks: Number(albumAttributes, "trackCount"), totalDiscs: Number(albumAttributes, "discCount"),
+            releaseDate: releaseDate, year: ReleaseYear(releaseDate), genre: genres.FirstOrDefault(), genres: genres,
+            composer: String(attributes, "composerName"), copyright: String(attributes, "copyright") ?? String(albumAttributes, "copyright"),
+            label: String(attributes, "recordLabel") ?? String(albumAttributes, "recordLabel"),
+            albumArtist: albumArtist, albumArtists: albumArtist == null ? [] : ArtistCredits(embeddedAlbum, albumArtist),
+            upc: String(attributes, "upc") ?? String(albumAttributes, "upc"), notes: Notes(attributes));
     }
 
     private static ProviderAlbumMetadata MapAlbum(JsonElement item, string? revision)
@@ -272,15 +283,18 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         int? trackCount = attributes.TryGetProperty("trackCount", out var count) && count.TryGetInt32(out var parsed)
             ? parsed
             : null;
-        return new(id, Required(attributes, "name"), [ArtistCredit(Required(attributes, "artistName"), RelationshipId(item, "artists"))],
-            trackCount, Artwork(id, attributes, revision), revision, releaseDate: String(attributes, "releaseDate"));
+        var releaseDate = String(attributes, "releaseDate");
+        return new(id, Required(attributes, "name"), ArtistCredits(item, Required(attributes, "artistName")),
+            trackCount is > 0 ? trackCount : null, Artwork(id, attributes, revision), revision,
+            releaseDate: releaseDate, year: ReleaseYear(releaseDate), genre: Strings(attributes, "genreNames").FirstOrDefault(),
+            label: String(attributes, "recordLabel"), notes: Notes(attributes));
     }
 
     private static ProviderArtistMetadata MapArtist(JsonElement item, string? revision)
     {
         var id = Resource(item, ProviderResourceKind.Artist);
         var attributes = RequiredObject(item, "attributes");
-        return new(id, Required(attributes, "name"), Artwork(id, attributes, revision), revision);
+        return new(id, Required(attributes, "name"), Artwork(id, attributes, revision), revision, biography: Notes(attributes));
     }
 
     internal static ProviderArtworkReference? Artwork(
@@ -292,8 +306,8 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         var template = String(artwork, "url");
         if (template == null) return null;
 
-        var resolved = template.Replace("{w}", "1024", StringComparison.Ordinal)
-            .Replace("{h}", "1024", StringComparison.Ordinal);
+        var resolved = template.Replace("{w}", (Number(artwork, "width") ?? 1024).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal)
+            .Replace("{h}", (Number(artwork, "height") ?? 1024).ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
         return Uri.TryCreate(resolved, UriKind.Absolute, out var uri) &&
                uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
                IsAppleArtworkHost(uri.Host) && uri.Port == 443 && string.IsNullOrEmpty(uri.UserInfo)
@@ -316,8 +330,39 @@ public sealed class AppleMusicKitMetadataCapabilityAdapter : IProviderMetadataCa
         host.Equals("mzstatic.com", StringComparison.OrdinalIgnoreCase) ||
         host.EndsWith(".mzstatic.com", StringComparison.OrdinalIgnoreCase);
 
-    private static int? Number(JsonElement value, string name) => value.TryGetProperty(name, out var number) &&
-        number.TryGetInt32(out var parsed) ? parsed : null;
+    private static int? Number(JsonElement value, string name) => value.ValueKind == JsonValueKind.Object &&
+        value.TryGetProperty(name, out var number) && number.ValueKind == JsonValueKind.Number &&
+        number.TryGetInt32(out var parsed) && parsed > 0 ? parsed : null;
+
+    private static int? ReleaseYear(string? date) => date is { Length: >= 4 } && int.TryParse(date.AsSpan(0, 4), out var year) && year > 0 ? year : null;
+
+    private static IEnumerable<string> Strings(JsonElement value, string name) =>
+        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out var items) && items.ValueKind == JsonValueKind.Array
+            ? items.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!) : [];
+
+    private static string? Notes(JsonElement attributes) =>
+        attributes.TryGetProperty("editorialNotes", out var notes) && notes.ValueKind == JsonValueKind.Object
+            ? String(notes, "standard") ?? String(notes, "short") : String(attributes, "description");
+
+    private static IEnumerable<JsonElement> RelationshipItems(JsonElement item, string name) =>
+        item.ValueKind == JsonValueKind.Object && item.TryGetProperty("relationships", out var relationships) &&
+        relationships.TryGetProperty(name, out var relationship) && relationship.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array
+            ? data.EnumerateArray().ToArray() : [];
+
+    private static IReadOnlyList<ProviderArtistCredit> ArtistCredits(JsonElement item, string fallbackName)
+    {
+        var related = RelationshipItems(item, "artists").ToArray();
+        var credits = new List<ProviderArtistCredit>();
+        for (var index = 0; index < related.Length; index++)
+        {
+            var artist = related[index];
+            var name = artist.TryGetProperty("attributes", out var attributes) ? String(attributes, "name") : null;
+            name ??= index == 0 ? fallbackName : null;
+            if (name != null) credits.Add(ArtistCredit(name, String(artist, "id")));
+        }
+        if (credits.Count == 0) credits.Add(ArtistCredit(fallbackName, related.Select(value => String(value, "id")).FirstOrDefault()));
+        return credits;
+    }
 
     private static string? RelationshipId(JsonElement item, string name) =>
         item.TryGetProperty("relationships", out var relationships) && relationships.TryGetProperty(name, out var relationship)

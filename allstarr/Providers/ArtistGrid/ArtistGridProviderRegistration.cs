@@ -42,7 +42,7 @@ public static class ArtistGridProviderRegistration
                     ProviderCapabilitySupportState.Supported,
                     ProviderAccountRequirement.None,
                     compatibilityVersion: "1",
-                    hooks: ["searchTracks", "getTrack", "searchArtists", "getArtist"],
+                    hooks: ["searchTracks", "getTrack", "getAlbum", "searchArtists", "getArtist"],
                     supportsPublicRead: true),
                 new ProviderCapabilityDescriptor(
                     ProviderCapabilityKind.Streaming,

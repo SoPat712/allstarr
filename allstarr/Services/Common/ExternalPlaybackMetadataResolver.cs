@@ -10,7 +10,8 @@ public sealed class ExternalPlaybackMetadataResolver(
     IHttpClientFactory httpClientFactory,
     IPlatformClock clock,
     ILogger<ExternalPlaybackMetadataResolver> logger,
-    ApplicationCacheActivityMetrics? activityMetrics = null) : IPlaybackMetadataResolver
+    ApplicationCacheActivityMetrics? activityMetrics = null,
+    IServiceProvider? services = null) : IPlaybackMetadataResolver
 {
     private const int MaximumArtworkBytes = 5 * 1024 * 1024;
     private static readonly TimeSpan MetadataCacheDuration = TimeSpan.FromMinutes(10);
@@ -134,6 +135,12 @@ public sealed class ExternalPlaybackMetadataResolver(
             var song = await providerGateway.GetPublicSongAsync(
                 identity.Value.Provider, identity.Value.ExternalId, cancellationToken);
             var artworkUrl = song?.CoverArtUrlLarge ?? song?.CoverArtUrl;
+            if (services != null && ProviderArtworkFallback.IsFallback(song?.ExternalProvider ?? identity.Value.Provider, artworkUrl, "track"))
+            {
+                var fallback = await ProviderArtworkFallback.ReadAsync(services, song?.ExternalProvider ?? identity.Value.Provider,
+                    96, cancellationToken, artworkUrl);
+                return fallback == null ? null : new PlaybackArtwork(fallback.Bytes, fallback.ContentType);
+            }
             if (!OutboundRequestGuard.TryCreateSafeHttpUri(
                     artworkUrl, out var artworkUri, out _) || artworkUri == null)
                 return null;

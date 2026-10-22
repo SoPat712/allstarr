@@ -105,29 +105,76 @@ public sealed class ExtensionMetadataCapabilityAdapter : ExtensionCapabilityAdap
         var albumId = OptionalText(value, "albumId");
         return new ProviderTrackMetadata(Id(ProviderResourceKind.Track, Text(value, "id")), Text(value, "title"),
             Artists(value), albumId == null ? null : Id(ProviderResourceKind.Album, albumId), OptionalText(value, "albumTitle"),
-            Long(value, "durationMs") is { } duration ? TimeSpan.FromMilliseconds(duration) : null,
+            Long(value, "durationMs") is { } duration && duration > 0 ? TimeSpan.FromMilliseconds(duration) : null,
             OptionalText(value, "isrc"), value.TryGetProperty("isExplicit", out var explicitValue) &&
                                         explicitValue.ValueKind is JsonValueKind.True or JsonValueKind.False ? explicitValue.GetBoolean() : null,
             Artwork(value), OptionalText(value, "snapshotVersion"),
-            trackNumber: Int(value, "trackNumber"), discNumber: Int(value, "discNumber"), totalTracks: Int(value, "totalTracks"),
-            year: Int(value, "year"), genre: OptionalText(value, "genre"), bpm: Int(value, "bpm"),
+            trackNumber: Positive(value, "trackNumber"), discNumber: Positive(value, "discNumber"), totalTracks: Positive(value, "totalTracks"),
+            year: Positive(value, "year"), genre: OptionalText(value, "genre"), bpm: Positive(value, "bpm"),
             spotifyId: OptionalText(value, "spotifyId"), releaseDate: OptionalText(value, "releaseDate"),
             albumArtist: OptionalText(value, "albumArtist"), composer: OptionalText(value, "composer"),
             label: OptionalText(value, "label"), copyright: OptionalText(value, "copyright"),
-            contributors: value.TryGetProperty("contributors", out var contributors) && contributors.ValueKind == JsonValueKind.Array
-                ? contributors.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!) : [],
-            explicitContentLyrics: Int(value, "explicitContentLyrics"), bitrate: Int(value, "bitrate"));
+            contributors: Strings(value, "contributors"),
+            explicitContentLyrics: Int(value, "explicitContentLyrics"), bitrate: Positive(value, "bitrate"),
+            albumArtists: Artists(value, "albumArtists"), providerIds: ProviderIds(value), totalDiscs: Positive(value, "totalDiscs"),
+            upc: OptionalText(value, "upc"), musicalKey: OptionalText(value, "musicalKey"), notes: OptionalText(value, "notes"),
+            media: TrackMedia(value), size: Long(value, "size"), replayGain: ReplayGain(value), genres: Strings(value, "genres"));
     }
 
     private ProviderAlbumMetadata MapAlbum(JsonElement value) => new(Id(ProviderResourceKind.Album, Text(value, "id")),
-        Text(value, "title"), Artists(value), Int(value, "trackCount"), Artwork(value), OptionalText(value, "snapshotVersion"),
-        year: Int(value, "year"), releaseDate: OptionalText(value, "releaseDate"));
+        Text(value, "title"), Artists(value), Positive(value, "trackCount"), Artwork(value), OptionalText(value, "snapshotVersion"),
+        year: Positive(value, "year"), genre: OptionalText(value, "genre"), releaseDate: OptionalText(value, "releaseDate"),
+        label: OptionalText(value, "label"), notes: OptionalText(value, "notes"), providerIds: ProviderIds(value),
+        lastFmUrl: OptionalText(value, "lastFmUrl"), tracks: value.TryGetProperty("tracks", out var tracks) && tracks.ValueKind == JsonValueKind.Array
+            ? tracks.EnumerateArray().Select(MapTrack) : []);
 
     private ProviderArtistMetadata MapArtist(JsonElement value) => new(Id(ProviderResourceKind.Artist, Text(value, "id")),
-        Text(value, "name"), Artwork(value), OptionalText(value, "snapshotVersion"));
+        Text(value, "name"), Artwork(value), OptionalText(value, "snapshotVersion"),
+        biography: OptionalText(value, "biography"), providerIds: ProviderIds(value), lastFmUrl: OptionalText(value, "lastFmUrl"));
 
-    private IReadOnlyList<ProviderArtistCredit> Artists(JsonElement value) => value.GetProperty("artists").EnumerateArray()
-        .Select(item => new ProviderArtistCredit(Text(item, "name"), OptionalText(item, "id") is { } id ? Id(ProviderResourceKind.Artist, id) : null)).ToArray();
+    private IReadOnlyList<ProviderArtistCredit> Artists(JsonElement value, string name = "artists") =>
+        value.TryGetProperty(name, out var artists) && artists.ValueKind == JsonValueKind.Array
+            ? artists.EnumerateArray().Select(item => new ProviderArtistCredit(Text(item, "name"),
+                ResourceValue(item, "id") is { } id ? Id(ProviderResourceKind.Artist, id) : null)).ToArray() : [];
+
+    private static string? ResourceValue(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var item) && item.ValueKind is JsonValueKind.String or JsonValueKind.Number
+            ? item.ToString() : null;
+
+    private static int? Positive(JsonElement value, string name) => Int(value, name) is { } number && number > 0 ? number : null;
+
+    private static IEnumerable<string> Strings(JsonElement value, string name) =>
+        value.TryGetProperty(name, out var items) && items.ValueKind == JsonValueKind.Array
+            ? items.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!) : [];
+
+    private static IReadOnlyDictionary<string, string> ProviderIds(JsonElement value) =>
+        value.TryGetProperty("providerIds", out var ids) && ids.ValueKind == JsonValueKind.Object
+            ? ids.EnumerateObject().Where(item => item.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number)
+                .ToDictionary(item => item.Name, item => item.Value.ToString()) : new Dictionary<string, string>();
+
+    private static ProviderMediaFormat? TrackMedia(JsonElement value)
+    {
+        if (!value.TryGetProperty("media", out var media) || media.ValueKind != JsonValueKind.Object) return null;
+        return new(OptionalText(media, "mimeType") ?? "application/octet-stream", OptionalText(media, "container") ?? "unknown",
+            OptionalText(media, "codec") ?? "unknown", Positive(media, "bitrate"), Positive(media, "sampleRate"),
+            Positive(media, "bitDepth"), Positive(media, "channels"));
+    }
+
+    private static ProviderReplayGain? ReplayGain(JsonElement value)
+    {
+        if (!value.TryGetProperty("replayGain", out var gain) || gain.ValueKind != JsonValueKind.Object) return null;
+        static double? Number(JsonElement item, string name, bool peak = false) =>
+            item.TryGetProperty(name, out var number) && number.ValueKind == JsonValueKind.Number &&
+            number.TryGetDouble(out var result) && double.IsFinite(result) && (!peak || result >= 0) ? result : null;
+        var result = new ProviderReplayGain
+        {
+            TrackGain = Number(gain, "trackGain"),
+            AlbumGain = Number(gain, "albumGain"),
+            TrackPeak = Number(gain, "trackPeak", true),
+            AlbumPeak = Number(gain, "albumPeak", true)
+        };
+        return result.TrackGain != null || result.AlbumGain != null || result.TrackPeak != null || result.AlbumPeak != null ? result : null;
+    }
 
     private ProviderExternalResourceId Id(ProviderResourceKind kind, string id) => new(ProviderId, kind, id);
 

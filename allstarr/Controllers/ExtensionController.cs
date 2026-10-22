@@ -142,32 +142,8 @@ public sealed class ExtensionController(
 
     private IActionResult ServePackageIcon(ExtensionPackageRecord package)
     {
-        try
-        {
-            var manifest = ExtensionSdkV1.ParseManifest(package.ManifestJson);
-            var icon = manifest.IconPath;
-            if (string.IsNullOrWhiteSpace(icon))
-                icon = new[] { "icon.png", "icon.jpg", "icon.jpeg", "icon.webp" }
-                    .FirstOrDefault(candidate => System.IO.File.Exists(Path.Combine(package.PackagePath, candidate)));
-            if (string.IsNullOrWhiteSpace(icon)) return NotFound();
-            var root = Path.GetFullPath(package.PackagePath);
-            var path = Path.GetFullPath(Path.Combine(root, icon));
-            if (!path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
-                !System.IO.File.Exists(path))
-                return NotFound();
-            var contentType = Path.GetExtension(path).ToLowerInvariant() switch
-            {
-                ".png" => "image/png",
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".webp" => "image/webp",
-                _ => null
-            };
-            return contentType == null ? NotFound() : PhysicalFile(path, contentType);
-        }
-        catch (ExtensionSdkValidationException)
-        {
-            return NotFound();
-        }
+        var icon = ExtensionPackageIcon.Resolve(package);
+        return icon is { } resolved ? PhysicalFile(resolved.Path, resolved.ContentType) : NotFound();
     }
 
     [HttpPost("packages/{packageId:guid}/review")]

@@ -142,7 +142,13 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 calls++;
                 if (calls !== 1) throw new Error('duplicate enrichment');
                 return Object.assign({}, value, {isrc:'USFIX2600001',duration_ms:123000,track_number:2,disc_number:1,
-                  total_tracks:9,release_date:'2026-01-02',genre:'Rock',label:'Fixture',album_artist:'Artist',bitrate:320});
+                  total_tracks:9,total_discs:2,release_date:'2026-01-02',genre:'Rock',genres:['Rock','Pop'],label:'Fixture',album_artist:'Artist',bitrate:320,
+                  album_artists:[{id:'album-artist',name:'Album Artist'}],composer:'Composer',contributors:['Contributor'],
+                  upc:'0123456789012',musical_key:'D minor',description:'Recording notes',explicit:false,
+                  spotify_id:'spotify-track',tidal_id:'tidal-track',qobuz_id:'qobuz-track',deezer_id:'deezer-track',
+                  container:'flac',codec:'flac',sample_rate:96000,bit_depth:24,channels:2,size:9876543,
+                  replay_gain:{track_gain:0,album_gain:-6.5,track_peak:0.98,album_peak:1},
+                  images:[{url:'https://cdn.example.test/small.jpg',width:64,height:64},{url:'https://cdn.example.test/large.jpg',width:1400,height:1400}]});
               }
             });
             """;
@@ -158,15 +164,89 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.Equal(2, track.TrackNumber);
         Assert.Equal(1, track.DiscNumber);
         Assert.Equal(9, track.TotalTracks);
+        Assert.Equal(2, track.TotalDiscs);
         Assert.Equal("2026-01-02", track.ReleaseDate);
         Assert.Equal("Rock", track.Genre);
         Assert.Equal("Fixture", track.Label);
         Assert.Equal("Artist", track.AlbumArtist);
         Assert.Equal(320, track.Bitrate);
+        Assert.Equal(["Rock", "Pop"], track.Genres);
+        Assert.Equal("0123456789012", track.Upc);
+        Assert.Equal("D minor", track.MusicalKey);
+        Assert.Equal("Recording notes", track.Notes);
+        Assert.False(track.IsExplicit);
+        Assert.Equal("album-artist", Assert.Single(track.AlbumArtists).ArtistId!.Value);
+        Assert.Equal("Composer", track.Composer);
+        Assert.Equal(["Contributor"], track.Contributors);
+        Assert.Equal("spotify-track", track.ProviderIds["spotify"]);
+        Assert.Equal("tidal-track", track.ProviderIds["tidal"]);
+        Assert.Equal("qobuz-track", track.ProviderIds["qobuz"]);
+        Assert.Equal("deezer-track", track.ProviderIds["deezer"]);
+        Assert.Equal("flac", track.Media!.Container);
+        Assert.Equal(96000, track.Media.SampleRate);
+        Assert.Equal(24, track.Media.BitDepth);
+        Assert.Equal(2, track.Media.Channels);
+        Assert.Equal(9876543, track.Size);
+        Assert.Equal(0, track.ReplayGain!.TrackGain);
+        Assert.Equal(-6.5, track.ReplayGain.AlbumGain);
+        Assert.Equal(0.98, track.ReplayGain.TrackPeak);
+        Assert.Equal("https://cdn.example.test/large.jpg", track.Artwork!.PublicUri!.AbsoluteUri);
         sandbox.InvokeJson("searchTracks", """{"query":"Song"}""");
         Assert.Equal("USFIX2600001", (await adapter.GetTrackAsync(Context(manifest.Id), request)).RequireValue().Isrc);
         using var counter = JsonDocument.Parse(sandbox.InvokeJson("getArtist", """{"id":"counter"}""")!);
         Assert.Equal("1", counter.RootElement.GetProperty("id").GetString());
+    }
+
+    [Fact]
+    public async Task MetadataCompatibility_PreservesCamelCaseFactsAndDescriptions()
+    {
+        const string script = """
+            registerExtension({
+              getTrack:function(){return {id:'track-1',title:'Song',artists:[{id:'artist-1',name:'Artist'}],
+                albumId:'album-1',albumTitle:'Album',durationMs:4567,isExplicit:false,trackNumber:2,discNumber:1,
+                totalTracks:8,totalDiscs:2,releaseDate:'2026-02-03',albumArtists:[{id:'artist-2',name:'Album Artist'}],
+                spotifyId:'spotify-track',musicalKey:'F',notes:'Notes',providerIds:{musicbrainz:'recording-1'},
+                sampleRate:48000,bitDepth:24,channels:2,size:2345,replayGain:{trackGain:0,albumPeak:-1}};},
+              getAlbum:function(){return {id:'album-1',title:'Album',artists:[{id:'artist-1',name:'Artist'}],
+                trackCount:8,releaseDate:'2026-02-03',genre:'Pop',label:'Label',description:'Album notes',
+                providerIds:{spotify:'spotify-album'},tracks:[{id:'track-1',name:'Song',artists:'Artist'}]};},
+              getArtist:function(){return {id:'artist-1',name:'Artist',biography:'Artist biography',
+                providerIds:{musicbrainz:'artist-mbid'},lastFmUrl:'https://www.last.fm/music/Artist'};}
+            });
+            """;
+        var (sandbox, manifest) = CompatibilitySandbox(script);
+        var adapter = new ExtensionMetadataCapabilityAdapter(sandbox, manifest);
+
+        var track = (await adapter.GetTrackAsync(Context(manifest.Id), new(new(manifest.Id, ProviderResourceKind.Track, "track-1")))).RequireValue();
+        var album = (await adapter.GetAlbumAsync(Context(manifest.Id), new(new(manifest.Id, ProviderResourceKind.Album, "album-1")))).RequireValue();
+        var artist = (await adapter.GetArtistAsync(Context(manifest.Id), new(new(manifest.Id, ProviderResourceKind.Artist, "artist-1")))).RequireValue();
+
+        Assert.Equal(TimeSpan.FromMilliseconds(4567), track.Duration);
+        Assert.False(track.IsExplicit);
+        Assert.Equal(2, track.TrackNumber);
+        Assert.Equal(1, track.DiscNumber);
+        Assert.Equal(8, track.TotalTracks);
+        Assert.Equal(2, track.TotalDiscs);
+        Assert.Equal("Album", track.AlbumTitle);
+        Assert.Equal("2026-02-03", track.ReleaseDate);
+        Assert.Equal("spotify-track", track.SpotifyId);
+        Assert.Equal("recording-1", track.ProviderIds["musicbrainz"]);
+        Assert.Equal("F", track.MusicalKey);
+        Assert.Equal("Notes", track.Notes);
+        Assert.Equal("artist-2", Assert.Single(track.AlbumArtists).ArtistId!.Value);
+        Assert.Equal(48000, track.Media!.SampleRate);
+        Assert.Equal("unknown", track.Media.Codec);
+        Assert.Equal(0, track.ReplayGain!.TrackGain);
+        Assert.Null(track.ReplayGain.AlbumPeak);
+        Assert.Equal(8, album.TrackCount);
+        Assert.Equal("Pop", album.Genre);
+        Assert.Equal("Label", album.Label);
+        Assert.Equal("Album notes", album.Notes);
+        Assert.Equal("spotify-album", album.ProviderIds["spotify"]);
+        Assert.Single(album.Tracks);
+        Assert.Equal("Artist biography", artist.Biography);
+        Assert.Equal("artist-mbid", artist.ProviderIds["musicbrainz"]);
+        Assert.Equal("https://www.last.fm/music/Artist", artist.LastFmUrl);
     }
 
     [Theory]

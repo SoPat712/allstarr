@@ -33,6 +33,12 @@ public sealed class Song
     public int? Track { get; set; }
     public int? DiscNumber { get; set; }
     public int? TotalTracks { get; set; }
+    public int? TotalDiscs { get; set; }
+    public string? Upc { get; set; }
+    public string? MusicalKey { get; set; }
+    public string? Notes { get; set; }
+    public allstarr.Core.Capabilities.ProviderReplayGain? ReplayGain { get; set; }
+    public List<string> Genres { get; set; } = [];
     public int? Year { get; set; }
     public string? Genre { get; set; }
     public string? CoverArtUrl { get; set; }

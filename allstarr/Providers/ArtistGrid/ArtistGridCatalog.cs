@@ -55,6 +55,9 @@ internal sealed record ArtistGridRawTrack(
     public IReadOnlyList<string> AlternateTitles { get; init; } = [];
     public IReadOnlyList<string> Contributors { get; init; } = [];
     public bool BestVersion { get; init; }
+    public string? FileDate { get; init; }
+    public string? Notes { get; init; }
+    public string? ArtworkUrl { get; init; }
 
     public int LengthRank => AvailableLength?.Trim().ToLowerInvariant() switch
     {
@@ -596,7 +599,8 @@ public sealed class ArtistGridCatalog
                     if (eraTracks.ValueKind != JsonValueKind.Array) continue;
                     foreach (var value in eraTracks.EnumerateArray())
                     {
-                        if (TryParseTrack(value, album, out var track)) tracks.Add(track);
+                        if (TryParseTrack(value, album, out var track))
+                            tracks.Add(track with { ArtworkUrl = track.ArtworkUrl ?? Artwork(era) });
                         if (tracks.Count > ArtistGridConstants.MaximumTrackRows) return false;
                     }
                 }
@@ -696,15 +700,54 @@ public sealed class ArtistGridCatalog
             credits,
             sources.OrderBy(item => item.CanonicalUrl, StringComparer.Ordinal).ToArray(),
             ParseDuration(String(value, "track_length")),
-            album,
+            album ?? String(value, "era") ?? String(value, "sub_era"),
             String(value, "quality"),
             String(value, "available_length")?.Trim())
         {
             AlternateTitles = alternateTitles,
             Contributors = contributors,
-            BestVersion = bestVersion
+            BestVersion = bestVersion,
+            FileDate = TrackerDate(String(value, "file_date")),
+            ArtworkUrl = Artwork(value),
+            Notes = TrackNotes(value)
         };
         return true;
+    }
+
+    private static string? Artwork(JsonElement value)
+    {
+        var text = String(value, "artwork_url") ?? String(value, "cover_url") ?? String(value, "image_url");
+        return text != null && OutboundRequestGuard.TryCreateSafeHttpUri(text, out var uri, out _) && uri?.Scheme == "https"
+            ? uri.AbsoluteUri : null;
+    }
+
+    private static string? TrackerDate(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        if (DateTime.TryParseExact(text.Trim(), ["yyyy-MM-dd", "MMM d, yyyy", "MMMM d, yyyy", "yyyy-MM", "yyyy"],
+            CultureInfo.InvariantCulture, DateTimeStyles.None, out var date))
+            return date.ToString(text.Trim().Length == 4 ? "yyyy" : text.Trim().Length == 7 && text[4] == '-' ? "yyyy-MM" : "yyyy-MM-dd", CultureInfo.InvariantCulture);
+        return null;
+    }
+
+    private static string? TrackNotes(JsonElement value)
+    {
+        var parts = new List<string>();
+        void Add(string label, string? text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return;
+            text = Regex.Replace(text, @"https?://\S+", "", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"\s+", " ").Trim();
+            if (text.Length > 600) text = text[..600].TrimEnd();
+            if (text.Length > 0) parts.Add(label + text);
+        }
+        Add("", String(value, "notes"));
+        Add("Type: ", String(value, "type"));
+        Add("Quality: ", String(value, "quality"));
+        Add("Original file: ", String(value, "og_filename"));
+        Add("Leaked: ", TrackerDate(String(value, "leak_date")));
+        Add("Session: ", String(value, "sub_era"));
+        return parts.Count == 0 ? null : string.Join("; ", parts);
     }
 
     private static bool TryParseSource(string? rawUrl, out ArtistGridSource source)

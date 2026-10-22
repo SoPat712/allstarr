@@ -130,6 +130,8 @@ public sealed partial class TrackIdentityService
             retained.ExternalProvider = provider;
             retained.ExternalId = externalId;
             retained.IsLocal = false;
+            retained.CoverArtUrl ??= allstarr.Services.Common.ProviderArtworkFallback.CoverPath(provider);
+            retained.CoverArtUrlLarge ??= retained.CoverArtUrl;
             return retained;
         }
         long? Number(params string[] names) => Property(root, names) is { ValueKind: JsonValueKind.Number } value &&
@@ -157,8 +159,17 @@ public sealed partial class TrackIdentityService
         if (Property(root, "ArtistIds") is { ValueKind: JsonValueKind.Array } ids)
             artistIds = ids.EnumerateArray().Select(id => Resource(id, "artist") ?? string.Empty).ToList();
         var duration = Number("DurationMilliseconds", "DurationMs") / 1000 ?? Number("Duration");
+        var preciseDuration = TimeSpan.TryParse(Field("Duration"), System.Globalization.CultureInfo.InvariantCulture, out var parsedDuration) &&
+            parsedDuration > TimeSpan.Zero && parsedDuration < TimeSpan.FromDays(1) ? (TimeSpan?)parsedDuration : null;
+        duration ??= preciseDuration.HasValue ? (long)preciseDuration.Value.TotalSeconds : null;
         var artwork = Field("CoverArtUrl", "ArtworkUrl", "ArtworkReference") ??
             Text(Property(Property(root, "Artwork"), "PublicUri"));
+        artwork ??= allstarr.Services.Common.ProviderArtworkFallback.CoverPath(provider);
+        List<string> Strings(string name) => Property(root, name) is { ValueKind: JsonValueKind.Array } values
+            ? values.EnumerateArray().Select(Text).Where(value => !string.IsNullOrWhiteSpace(value)).Select(value => value!).ToList() : [];
+        var media = Property(root, "Media");
+        string? MediaText(string name) => Text(Property(media, name));
+        int? MediaNumber(string name) => Property(media, name) is { ValueKind: JsonValueKind.Number } value && value.TryGetInt32(out var number) && number > 0 ? number : null;
         return new Song
         {
             ExternalProvider = provider,
@@ -171,23 +182,43 @@ public sealed partial class TrackIdentityService
             Album = Field("Album", "AlbumTitle") ?? string.Empty,
             AlbumId = Resource(Property(root, "AlbumId"), "album"),
             AlbumArtist = Field("AlbumArtist"),
+            AlbumArtists = Property(root, "AlbumArtists") is { ValueKind: JsonValueKind.Array } albumCredits
+                ? albumCredits.EnumerateArray().Where(credit => Text(Property(credit, "Name")) != null)
+                    .Select(credit => new Artist { Name = Text(Property(credit, "Name"))!, Id = Resource(Property(credit, "ArtistId"), "artist") ?? string.Empty }).ToList() : [],
             Year = (int?)Number("Year"),
             CoverArtUrl = artwork,
             CoverArtUrlLarge = Field("CoverArtUrlLarge") ?? artwork,
             Duration = duration is >= 0 and <= int.MaxValue ? (int)duration.Value : null,
+            PreciseDuration = preciseDuration,
             Isrc = Field("Isrc", "CandidateIsrc"),
             Track = (int?)Number("Track", "TrackNumber"),
             DiscNumber = (int?)Number("DiscNumber"),
             TotalTracks = (int?)Number("TotalTracks"),
+            TotalDiscs = (int?)Number("TotalDiscs"),
+            Upc = Field("Upc"),
+            Notes = Field("Notes"),
+            MusicalKey = Field("MusicalKey"),
+            Composer = Field("Composer"),
+            Label = Field("Label"),
+            Copyright = Field("Copyright"),
+            Bpm = (int?)Number("Bpm"),
+            Genres = Strings("Genres"),
+            Contributors = Strings("Contributors"),
+            ReplayGain = Property(root, "ReplayGain") is { ValueKind: JsonValueKind.Object } gain
+                ? JsonSerializer.Deserialize<ProviderReplayGain>(gain.GetRawText(), DisplayJson) : null,
+            ProviderIds = Property(root, "ProviderIds") is { ValueKind: JsonValueKind.Object } identifiers
+                ? identifiers.EnumerateObject().Where(item => item.Value.ValueKind == JsonValueKind.String)
+                    .ToDictionary(item => item.Name, item => item.Value.GetString()!) : [],
+            IsBestVersion = Property(root, "IsBestVersion").ValueKind == JsonValueKind.True,
             Genre = Field("Genre"),
             ReleaseDate = Field("ReleaseDate"),
-            Bitrate = (int?)Number("Bitrate"),
+            Bitrate = MediaNumber("Bitrate") ?? (int?)Number("Bitrate"),
             Size = Number("Size"),
-            Container = Field("Container"),
-            Codec = Field("Codec"),
-            SampleRate = (int?)Number("SampleRate"),
-            BitDepth = (int?)Number("BitDepth"),
-            Channels = (int?)Number("Channels"),
+            Container = MediaText("Container") ?? Field("Container"),
+            Codec = MediaText("Codec") ?? Field("Codec"),
+            SampleRate = MediaNumber("SampleRate") ?? (int?)Number("SampleRate"),
+            BitDepth = MediaNumber("BitDepth") ?? (int?)Number("BitDepth"),
+            Channels = MediaNumber("Channels") ?? (int?)Number("Channels"),
             ExplicitContentLyrics = (int?)Number("ExplicitContentLyrics") ??
                 (Property(root, "IsExplicit").ValueKind switch { JsonValueKind.True => 1, JsonValueKind.False => 0, _ => (int?)null })
         };

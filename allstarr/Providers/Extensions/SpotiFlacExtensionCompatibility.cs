@@ -677,46 +677,139 @@ public static class SpotiFlacExtensionCompatibility
           if (!value) return [];
           return value.items || value.tracks || value.results || [];
         }
+        function _sfFirst(value, names) {
+          for (var i = 0; value && i < names.length; i++) {
+            var item = value[names[i]];
+            if (item !== null && item !== undefined && item !== '') return item;
+          }
+          return null;
+        }
+        function _sfPositive(value) {
+          var number = Number(value);
+          return isFinite(number) && number > 0 ? number : null;
+        }
         function _sfArtwork(value) {
           if (!value) return null;
-          var image = value.cover_url || value.coverUrl || value.image_url || value.imageUrl || value.cover || value.images;
-          if (Array.isArray(image)) image = image.length ? (image[0].url || image[0]) : null;
-          if (image && typeof image === 'object') image = image.url || image.src;
-          return image ? String(image) : null;
+          var selected = null, largest = -1;
+          function consider(image) {
+            if (!image) return;
+            if (Array.isArray(image)) { image.forEach(consider); return; }
+            var url = typeof image === 'object' ? image.url || image.src : image;
+            if (!url) return;
+            var width = _sfPositive(image.width), height = _sfPositive(image.height);
+            var area = width && height ? width * height : 0;
+            if (area > largest) { selected = String(url); largest = area; }
+          }
+          ['coverArtUrlLarge','cover_art_url_large','cover_xl','cover_big','artworkUrl','artwork_url',
+            'coverArtUrl','cover_art_url','cover_url','coverUrl','cover_art','image_url','imageUrl','cover','images','image','artwork'].forEach(function(key) { consider(value[key]); });
+          return selected || (value.album && typeof value.album === 'object' ? _sfArtwork(value.album) : null);
+        }
+        function _sfCredits(value, fallbackId) {
+          if (!Array.isArray(value)) value = value && typeof value === 'object' ? [value] : String(value || '').split(',');
+          var ids = Array.isArray(fallbackId) ? fallbackId : String(fallbackId || '').split(',');
+          return value.map(function(item, index) {
+            return item && typeof item === 'object'
+              ? { name: String(item.name || item.title || ''), id: _sfFirst(item, ['id','artist_id','artistId','browse_id','browseId']) }
+              : { name: String(item || '').trim(), id: ids[index] ? String(ids[index]).trim() : null };
+          }).filter(function(item) { return item.name; });
         }
         function _sfArtists(value) {
-          var source = value || {};
-          var fallbackId = source.artist_id || source.artistId || null;
-          value = source.artists || source.artist || [];
-          if (!Array.isArray(value)) value = String(value || '').split(',');
-          return value.map(function(item, index) {
-            return typeof item === 'object'
-              ? { name: String(item.name || item.title || ''), id: item.id || item.artist_id || item.artistId || item.browse_id || item.browseId || null }
-              : { name: String(item).trim(), id: index === 0 && fallbackId != null ? String(fallbackId) : null };
-          }).filter(function(item) { return item.name; });
+          return _sfCredits(value.artists || value.artist || [], _sfFirst(value, ['artist_ids','artistIds','artist_id','artistId']));
+        }
+        function _sfProviderIds(value) {
+          var result = Object.assign({}, value.providerIds || value.provider_ids || {});
+          ['spotify','tidal','qobuz','deezer'].forEach(function(provider) {
+            var id = _sfFirst(value, [provider + '_id', provider + 'Id']);
+            if (id !== null && (provider !== 'spotify' || String(id).indexOf(':') < 0)) result[provider] = String(id);
+          });
+          return result;
+        }
+        function _sfContributors(value) {
+          var result = [], source = value.contributors || value.credits || [];
+          if (!Array.isArray(source)) source = [];
+          source.forEach(function(person) {
+            if (typeof person === 'string') result.push(person);
+            else if (person && typeof person === 'object') {
+              var name = person.name || person.artist && person.artist.name;
+              var role = person.role || person.type;
+              if (name) result.push(role ? String(role).toLowerCase() + ': ' + name : String(name));
+            }
+          });
+          ['lyricist','producer'].forEach(function(role) {
+            var names = value[role];
+            if (!Array.isArray(names)) names = names ? [names] : [];
+            names.forEach(function(name) { if (typeof name === 'string') result.push(role + ': ' + name); });
+          });
+          return result;
+        }
+        function _sfGenres(value) {
+          var genres = value.genres || value.genreNames || [];
+          if (!Array.isArray(genres)) genres = genres.data || [genres];
+          return genres.map(function(item) { return typeof item === 'object' ? item.name : item; })
+            .filter(function(item) { return typeof item === 'string' && item.trim(); });
+        }
+        function _sfMedia(value) {
+          var source = value.media || {}, container = _sfFirst(source, ['container']) || value.container,
+            codec = _sfFirst(source, ['codec']) || value.codec;
+          var bitrate = _sfPositive(_sfFirst(source, ['bitrate']) || value.bitrate);
+          var sampleRate = _sfPositive(_sfFirst(source, ['sampleRate','sample_rate']) || _sfFirst(value, ['sampleRate','sample_rate']));
+          var bitDepth = _sfPositive(_sfFirst(source, ['bitDepth','bit_depth']) || _sfFirst(value, ['bitDepth','bit_depth']));
+          var channels = _sfPositive(source.channels || value.channels);
+          if (!container && !codec && !bitrate && !sampleRate && !bitDepth && !channels) return null;
+          container = container ? String(container).toLowerCase() : 'unknown';
+          codec = codec ? String(codec).toLowerCase() : 'unknown';
+          var types = {flac:'audio/flac',mp3:'audio/mpeg',m4a:'audio/mp4',mp4:'audio/mp4',ogg:'audio/ogg',opus:'audio/ogg',aac:'audio/aac',wav:'audio/wav'};
+          return {mimeType:_sfFirst(source, ['mimeType','mime_type']) || types[container] || 'application/octet-stream',
+            container:container,codec:codec,bitrate:bitrate,sampleRate:sampleRate,bitDepth:bitDepth,channels:channels};
+        }
+        function _sfReplayGain(value) {
+          var source = value.replayGain || value.replay_gain || value;
+          function number(names, peak) {
+            var raw = _sfFirst(source, names);
+            if (raw === null) return null;
+            var result = Number(raw);
+            return isFinite(result) && (!peak || result >= 0) ? result : null;
+          }
+          var gain = {trackGain:number(['trackGain','track_gain','replaygain_track_gain'],false),
+            albumGain:number(['albumGain','album_gain','replaygain_album_gain'],false),
+            trackPeak:number(['trackPeak','track_peak','replaygain_track_peak'],true),
+            albumPeak:number(['albumPeak','album_peak','replaygain_album_peak'],true)};
+          return Object.keys(gain).some(function(key) { return gain[key] !== null; }) ? gain : null;
         }
         function _sfTrack(value) {
           value = value && (value.track || value) || {};
           var album = value.album && typeof value.album === 'object' ? value.album : {};
+          var genres = _sfGenres(value), albumArtists = _sfCredits(value.albumArtists || value.album_artists || value.album_artist || value.albumArtist || album.artists || album.artist || []);
+          var albumId = _sfFirst(value, ['album_id','albumId']) || album.id || album.browse_id || album.browseId || null;
+          var explicit = _sfFirst(value, ['isExplicit','is_explicit','explicit']);
+          var lyrics = _sfFirst(value, ['explicitContentLyrics','explicit_content_lyrics']);
           return {
-            id: String(value.id || value.track_id || ''),
+            id: String(_sfFirst(value, ['id','track_id','trackId']) || ''),
             title: String(value.name || value.title || ''),
             artists: _sfArtists(value),
-            albumId: value.album_id || value.albumId || album.id || album.browse_id || album.browseId || null,
-            albumTitle: String(value.album_name || value.albumTitle || album.name || album.title || '').trim() || null,
-            durationMs: Number(value.duration_ms || value.durationMs || 0),
+            albumId: albumId == null ? null : String(albumId),
+            albumTitle: String(value.album_name || value.albumTitle || value.album_title || album.name || album.title || (typeof value.album === 'string' ? value.album : '')).trim() || null,
+            durationMs: _sfPositive(_sfFirst(value, ['duration_ms','durationMs'])),
             spotify_id: value.spotify_id, tidal_id: value.tidal_id, qobuz_id: value.qobuz_id, deezer_id: value.deezer_id,
+            providerIds: _sfProviderIds(value),
             isrc: value.isrc ? String(value.isrc) : null,
-            isExplicit: value.explicit == null ? null : Boolean(value.explicit),
+            isExplicit: explicit == null ? null : Boolean(explicit),
             artworkUrl: _sfArtwork(value),
-            trackNumber: value.track_number || null, discNumber: value.disc_number || null,
-            totalTracks: value.total_tracks || null, year: value.year || null, genre: value.genre || null,
-            bpm: value.bpm || null, spotifyId: value.spotify_id || null, releaseDate: value.release_date || null,
-            albumArtist: value.album_artist || null, composer: value.composer || null, label: value.label || null,
-            copyright: value.copyright || null, contributors: Array.isArray(value.contributors) ? value.contributors : [],
-            explicitContentLyrics: value.explicit_content_lyrics == null ? null : Number(value.explicit_content_lyrics),
-            bitrate: Number(value.bitrate) > 0 ? Number(value.bitrate) : null,
-            snapshotVersion: null
+            trackNumber: _sfPositive(_sfFirst(value, ['trackNumber','track_number'])),
+            discNumber: _sfPositive(_sfFirst(value, ['discNumber','disc_number'])),
+            totalTracks: _sfPositive(_sfFirst(value, ['totalTracks','total_tracks'])),
+            totalDiscs: _sfPositive(_sfFirst(value, ['totalDiscs','total_discs'])),
+            year: _sfPositive(value.year), genre: value.genre || genres[0] || null, genres: genres,
+            bpm: _sfPositive(value.bpm), spotifyId: _sfFirst(value, ['spotifyId','spotify_id']),
+            releaseDate: _sfFirst(value, ['releaseDate','release_date']),
+            albumArtist: _sfFirst(value, ['albumArtist','album_artist']) || (albumArtists[0] && albumArtists[0].name) || null,
+            albumArtists: albumArtists, composer: value.composer || null, label: value.label || null,
+            copyright: value.copyright || null, contributors: _sfContributors(value),
+            explicitContentLyrics: lyrics == null ? null : Number(lyrics),
+            bitrate: _sfPositive(value.bitrate), upc: value.upc ? String(value.upc) : null,
+            musicalKey: _sfFirst(value, ['musicalKey','musical_key']), notes: value.notes || value.description || value.comment || null,
+            media: _sfMedia(value), size: _sfPositive(_sfFirst(value, ['size','size_bytes','sizeBytes'])),
+            replayGain: _sfReplayGain(value), snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version'])
           };
         }
         var _sfTrackCache = Object.create(null);
@@ -1004,11 +1097,18 @@ public static class SpotiFlacExtensionCompatibility
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
           return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
-            trackCount: Number(value.total_tracks || (value.tracks && value.tracks.length) || 0), artworkUrl: _sfArtwork(value), snapshotVersion: null };
+            trackCount: _sfPositive(_sfFirst(value, ['trackCount','total_tracks','tracks_count']) || (value.tracks && value.tracks.length)),
+            artworkUrl: _sfArtwork(value), snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']),
+            year: _sfPositive(value.year), releaseDate: _sfFirst(value, ['releaseDate','release_date']),
+            genre: value.genre || _sfGenres(value)[0] || null, label: value.label || null, notes: value.notes || value.description || null,
+            providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']),
+            tracks: _sfArray(value.tracks).map(_sfTrack) };
         }
         function _sfArtist(value) {
           value = value && (value.artist || value) || {};
-          return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value), snapshotVersion: null };
+          return { id: String(value.id || ''), name: String(value.name || value.title || ''), artworkUrl: _sfArtwork(value),
+            snapshotVersion: _sfFirst(value, ['snapshotVersion','snapshot_version']), biography: value.biography || value.description || null,
+            providerIds: _sfProviderIds(value), lastFmUrl: _sfFirst(value, ['lastFmUrl','last_fm_url']) };
         }
         function _sfSearchFilter(filter) {
           var declared = (_sfManifest.searchBehavior || {}).filters;

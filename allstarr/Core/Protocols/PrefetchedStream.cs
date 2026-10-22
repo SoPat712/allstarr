@@ -14,13 +14,25 @@ internal sealed class PrefetchedStream(Stream source, HttpContent owner, ReadOnl
     {
         var content = response.Content;
         var source = await content.ReadAsStreamAsync(cancellationToken);
-        var prefix = new byte[1];
-        if (await source.ReadAsync(prefix, cancellationToken) == 0) return false;
-        var replacement = new StreamContent(new PrefetchedStream(source, content, prefix));
+        var prefix = new byte[4096];
+        var count = await source.ReadAsync(prefix, cancellationToken);
+        if (count == 0) return false;
+        var start = content.Headers.ContentRange?.From;
+        var size = content.Headers.ContentRange?.Length ?? content.Headers.ContentLength;
+        var facts = start is null or 0 ? allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size) : null;
+        var replacement = new PreparedContent(new PrefetchedStream(source, content, prefix.AsMemory(0, count)), facts);
         foreach (var header in content.Headers)
             replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);
         response.Content = replacement;
+        if (facts != null) replacement.Headers.ContentType = new(facts.Media.MimeType);
         return true;
+    }
+
+    internal static allstarr.Core.Music.TrackMediaFacts? Facts(HttpContent content) => (content as PreparedContent)?.Facts;
+
+    private sealed class PreparedContent(Stream stream, allstarr.Core.Music.TrackMediaFacts? facts) : StreamContent(stream)
+    {
+        internal allstarr.Core.Music.TrackMediaFacts? Facts { get; } = facts;
     }
 
     public override int Read(byte[] buffer, int offset, int count)

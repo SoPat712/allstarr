@@ -32,7 +32,8 @@ public sealed class JellyfinAudioShapeTests
         using var fixture = JsonDocument.Parse(File.ReadAllText(Path.Combine(
             AppContext.BaseDirectory, "Fixtures", "Protocols", "jellyfin-audio-shape.json")));
         var shape = fixture.RootElement.GetProperty(includeFields ? "feishin_fields" : "no_fields");
-        AssertKeys(shape.GetProperty("ItemKeys"), item.Keys, "ImageBlurHashes", "Container");
+        AssertKeys(shape.GetProperty("ItemKeys"), item.Keys, "ImageBlurHashes", "Container", "NormalizationGain", "ParentIndexNumber", "DateCreated");
+        Assert.False(item.ContainsKey("NormalizationGain"));
         Assert.False(item.ContainsKey("Container"));
         Assert.Equal(ServerId, item["ServerId"]);
         Assert.IsType<long>(item["RunTimeTicks"]);
@@ -47,7 +48,7 @@ public sealed class JellyfinAudioShapeTests
         // The eventual source size and bitrate are unknown until playback opens it.
         // Keep playback URLs for clients that open streams from item lists.
         AssertKeys(shape.GetProperty("MediaSourceKeys"),
-            source.Keys.Except(["DirectStreamUrl", "TranscodingUrl"]), "Size", "Bitrate");
+            source.Keys.Except(["DirectStreamUrl", "TranscodingUrl"]), "Size", "Bitrate", "Container");
         var streams = Assert.IsType<Dictionary<string, object?>[]>(source["MediaStreams"]);
         var stream = Assert.Single(streams, entry => Equals(entry["Type"], "Audio"));
         Assert.Single(streams, entry => Equals(entry["Type"], "Lyric"));

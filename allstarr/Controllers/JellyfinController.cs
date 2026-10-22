@@ -542,6 +542,9 @@ public partial class JellyfinController : ControllerBase
 
                     var coverUrl = await GetProviderImageUrlAsync(
                         provider, resourceKind, resourceId, token);
+                    if (ProviderArtworkFallback.IsFallback(provider, coverUrl, resourceKind))
+                        return await ProviderArtworkFallback.ReadAsync(HttpContext.RequestServices, provider,
+                            width.HasValue && height.HasValue ? Math.Max(width.Value, height.Value) : width ?? height, token, coverUrl);
                     if (!OutboundRequestGuard.TryCreateSafeHttpUri(
                             coverUrl, out var coverUri, out var validationReason) ||
                         coverUri == null)
@@ -705,6 +708,7 @@ public partial class JellyfinController : ControllerBase
             contentType,
             Request.Headers);
         Response.Headers.ETag = response.ETag;
+        Response.Headers.CacheControl = "private, max-age=86400";
 
         if (response.StatusCode == StatusCodes.Status304NotModified)
         {

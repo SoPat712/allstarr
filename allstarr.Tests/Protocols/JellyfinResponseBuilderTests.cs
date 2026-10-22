@@ -145,7 +145,7 @@ public class JellyfinResponseBuilderTests
     }
 
     [Fact]
-    public void ConvertSongToJellyfinItem_ExternalSong_DoesNotPresentSourceBitrateAsServedFlacBitrate()
+    public void ConvertSongToJellyfinItem_ExternalSong_UsesDeclaredBitrateWithoutInventingFormat()
     {
         var result = _builder.ConvertSongToJellyfinItem(new Song
         {
@@ -163,8 +163,10 @@ public class JellyfinResponseBuilderTests
             Assert.IsAssignableFrom<object[]>(result["MediaSources"])[0]);
         var mediaStream = Assert.IsType<Dictionary<string, object?>>(
             Assert.IsAssignableFrom<object[]>(mediaSource["MediaStreams"])[0]);
-        Assert.False(mediaSource.ContainsKey("Bitrate"));
-        Assert.False(mediaStream.ContainsKey("BitRate"));
+        Assert.Equal(320_000, mediaSource["Bitrate"]);
+        Assert.Equal(320_000, mediaStream["BitRate"]);
+        Assert.False(mediaSource.ContainsKey("Container"));
+        Assert.False(mediaStream.ContainsKey("Codec"));
         Assert.False(mediaSource.ContainsKey("Size"));
     }
 
@@ -185,7 +187,8 @@ public class JellyfinResponseBuilderTests
             Artist = "Artwork Artist",
             IsLocal = false,
             ExternalProvider = "applemusic",
-            ExternalId = "42"
+            ExternalId = "42",
+            CoverArtUrl = "https://images.example.test/cover.jpg"
         });
 
         Assert.Equal("backend-server", result["ServerId"]);
@@ -208,7 +211,8 @@ public class JellyfinResponseBuilderTests
             AlbumId = "ext-apple-musickit-album-i.album",
             IsLocal = false,
             ExternalProvider = "apple-musickit",
-            ExternalId = "i.song"
+            ExternalId = "i.song",
+            CoverArtUrl = "https://images.example.test/cover.jpg"
         };
 
         var result = _builder.ConvertSongToJellyfinItem(song);

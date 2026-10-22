@@ -22,7 +22,8 @@ public sealed class ProviderCtsDiagnosticRunner(
     ProtocolExecutionOptions? executionOptions = null,
     TimeProvider? timeProvider = null,
     IProviderCheckSessions? sessions = null,
-    ProviderStatusManager? statusManager = null)
+    ProviderStatusManager? statusManager = null,
+    allstarr.Core.Matching.ITrackIdentityService? identities = null)
 {
     private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
 
@@ -355,6 +356,8 @@ public sealed class ProviderCtsDiagnosticRunner(
 
                 await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 var buffer = new byte[32 * 1024];
+                var prefix = new byte[4096];
+                var prefixLength = 0;
                 var bytesRead = 0;
                 double? firstByteMilliseconds = null;
                 var transferStart = total.Elapsed;
@@ -364,6 +367,9 @@ public sealed class ProviderCtsDiagnosticRunner(
                     var count = await stream.ReadAsync(
                         buffer.AsMemory(0, Math.Min(buffer.Length, SampleLimitBytes - bytesRead)), cancellationToken);
                     if (count == 0) break;
+                    var retained = Math.Min(count, prefix.Length - prefixLength);
+                    buffer.AsSpan(0, retained).CopyTo(prefix.AsSpan(prefixLength));
+                    prefixLength += retained;
                     bytesRead += count;
                     sampleHash.AppendData(buffer, 0, count);
                     firstByteMilliseconds ??= total.Elapsed.TotalMilliseconds;
@@ -380,6 +386,10 @@ public sealed class ProviderCtsDiagnosticRunner(
                 var totalMilliseconds = total.Elapsed.TotalMilliseconds;
                 health.Observe(execution, ProviderCapabilityKind.Streaming, null,
                     TimeSpan.FromMilliseconds(firstByteMilliseconds.Value));
+                var facts = AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, prefixLength),
+                    response.Content.Headers.ContentRange?.Length ?? response.Content.Headers.ContentLength);
+                if (facts != null && identities is allstarr.Core.Matching.ITrackMediaFactsStore store)
+                    await store.RememberMediaFactsAsync(execution, new(providerId, ProviderResourceKind.Track, trackId!), facts, cancellationToken);
                 var success = ProviderCtsDiagnosticResult.Success(
                     providerId,
                     providerAccountId,
@@ -405,7 +415,7 @@ public sealed class ProviderCtsDiagnosticRunner(
                     Convert.ToHexString(sampleHash.GetHashAndReset()).ToLowerInvariant(),
                     lease.SupportsByteRanges,
                     lease.SupportsSeeking,
-                    lease.Media,
+                    facts?.Media ?? lease.Media,
                     lease.QualityDowngradeReason,
                     DateTimeOffset.UtcNow,
                     sampleRequest.Headers.Range?.ToString());

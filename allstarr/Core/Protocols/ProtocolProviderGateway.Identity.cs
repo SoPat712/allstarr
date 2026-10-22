@@ -20,8 +20,12 @@ public sealed partial class ProtocolProviderGateway
         var actor = protocol.Actor ?? new ProviderActorContext(ProviderActorKind.PublicRead, null);
         // Explicit selections keep their source metadata and never consult recording aliases.
         if (providerId != "allstarr" && !IsAutomaticProvider(providerId, policy))
-            return await ReadCachedSongAsync(actor, providerId, externalId) is { } selected && policy?.Includes(selected) != false
-                ? selected : null;
+        {
+            var selected = await ReadCachedSongAsync(actor, providerId, externalId);
+            if (selected == null || policy?.Includes(selected) == false) return null;
+            if (MediaFacts is { } selectedStore) await selectedStore.ApplyStoredMediaFactsAsync(actor, [selected], protocol.CancellationToken);
+            return selected;
+        }
         var itemId = $"ext-{NormalizeProvider(providerId)}-song-{externalId}";
         var songs = identities == null ? [] :
             (await identities.GetStoredSongsAsync(actor, itemId, protocol.CancellationToken))?.ToList() ?? [];
@@ -62,6 +66,7 @@ public sealed partial class ProtocolProviderGateway
             chosen.Channels = keptSource.Channels;
         }
         NormalizeDisplaySource(chosen);
+        if (MediaFacts is { } store) await store.ApplyStoredMediaFactsAsync(actor, [chosen], protocol.CancellationToken);
         return chosen;
     }
 
@@ -115,6 +120,12 @@ public sealed partial class ProtocolProviderGateway
         song.Track = source.Track;
         song.DiscNumber = source.DiscNumber;
         song.TotalTracks = source.TotalTracks;
+        song.TotalDiscs = source.TotalDiscs;
+        song.Upc = source.Upc;
+        song.MusicalKey = source.MusicalKey;
+        song.Notes = source.Notes;
+        song.ReplayGain = source.ReplayGain;
+        song.Genres = source.Genres.ToList();
         song.Genre = source.Genre;
         song.ReleaseDate = source.ReleaseDate;
         song.ExplicitContentLyrics = source.ExplicitContentLyrics;
@@ -256,6 +267,7 @@ public sealed partial class ProtocolProviderGateway
     private async Task ApplyKnownPublicIdsAsync(ProviderExecutionContext context, IReadOnlyList<Song> songs,
         ProtocolExecutionContext? protocol = null, EffectiveProviderPolicySnapshot? policy = null)
     {
+        if (MediaFacts is { } store) await store.ApplyStoredMediaFactsAsync(context.Actor, songs, context.CancellationToken);
         await CacheSongsAsync(context, songs);
         if (identities == null || songs.Count == 0) return;
         if (policy == null && protocol != null)

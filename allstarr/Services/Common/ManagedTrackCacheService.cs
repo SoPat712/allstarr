@@ -124,6 +124,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         }
         var path = await localLibrary.GetLocalPathForExternalSongAsync(scope, track.ProviderId, track.Value);
         if (path == null) return null;
+        FileStream? file = null;
         try
         {
             if (Path.GetExtension(path).Equals(".flac", StringComparison.OrdinalIgnoreCase) &&
@@ -132,7 +133,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 File.Move(path, path + $".legacy-id3-{Guid.NewGuid():N}");
                 return null;
             }
-            var file = File.OpenRead(path);
+            file = File.OpenRead(path);
             if (file.Length == 0) { file.Dispose(); return null; }
             var extension = Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
             var mime = extension switch
@@ -145,17 +146,25 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 "wav" => "audio/wav",
                 _ => "audio/mpeg"
             };
+            var facts = completedMedia.Get<TrackMediaFacts>(path) ??
+                await AudioMediaFacts.ReadFileAsync(path, cancellationToken) ?? new(ReadFileMedia(path, mime, extension), file.Length);
+            var media = facts.Media;
+            completedMedia.Set(path, facts, new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(file) };
-            response.Content.Headers.ContentType = new(mime);
+            response.Content.Headers.ContentLength = file.Length;
+            file = null;
+            response.Content.Headers.ContentType = new(media.MimeType);
             try { File.SetLastWriteTimeUtc(path, DateTime.UtcNow); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
-            return new(response, CacheLease(completedMedia.Get<ProviderMediaFormat>(path) ?? ReadFileMedia(path, mime, extension), true), track.ProviderId, track.Value,
+            return new(response, CacheLease(media, true), track.ProviderId, track.Value,
                 scope.ProviderAccountId, IsCached: true, EffectiveQuality: scope.AudioQuality,
-                ServingAccountRevision: accountRevision);
+                ServingAccountRevision: accountRevision)
+            { FileFacts = new() { Measured = facts, Media = facts.Media, Size = facts.Size } };
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
+        finally { file?.Dispose(); }
     }
 
     public bool CanPrepare(ProtocolExecutionContext context) => IsCacheMode() &&
@@ -270,7 +279,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 properties.AudioChannels > 0 ? properties.AudioChannels : media.Channels);
         }
         catch (Exception) { }
-        completedMedia.Set(path, media, new MemoryCacheEntryOptions
+        completedMedia.Set(path, new TrackMediaFacts(media, new FileInfo(path).Length), new MemoryCacheEntryOptions
         { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
         return media;
     }
@@ -457,6 +466,16 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 original.Dispose();
                 verified = true;
                 FileFacts.Size = available;
+                var measured = await AudioMediaFacts.ReadFileAsync(path, cancel.Token) ?? new TrackMediaFacts(Media, available);
+                Media = measured.Media;
+                FileFacts.Media = Media;
+                FileFacts.Measured = measured;
+                if (FileFacts.RecordAsync is { } record)
+                {
+                    try { await record(measured, cancel.Token); }
+                    catch (Exception error) when (error is not OperationCanceledException)
+                    { owner.logger.LogDebug("Could not retain completed media facts ({ErrorType})", error.GetType().Name); }
+                }
                 Advance(end: true);
                 if (retain) published = await PublishAsync(metadataTask);
                 else
@@ -535,7 +554,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 lock (gate) { File.Move(path, final); path = final; }
             }
             song.LocalPath = final;
-            Media = owner.ReadFileMedia(final, Media.MimeType, Media.Container, Media);
+            owner.completedMedia.Set(final, FileFacts.Measured ?? new TrackMediaFacts(Media, available),
+                new MemoryCacheEntryOptions { Size = 1, AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1) });
             FileFacts.Media = Media;
             await owner.localLibrary.RegisterDownloadedSongAsync(scope, song, final);
             if (!preparation)

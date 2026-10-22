@@ -2,6 +2,8 @@ namespace allstarr.Services.Common;
 
 public static partial class FuzzyMatcher
 {
+    public static string StripBestVersionPrefix(string title) => title.TrimStart().TrimStart('⭐', '\uFE0F').TrimStart();
+
     private const int StackallocLevenshteinLimit = 128;
 
     [System.Text.RegularExpressions.GeneratedRegex(@"\s*[\(\[]?\s*\b(feat\.?|ft\.?|with|featuring)\s+[^\)\]]+[\)\]]?", System.Text.RegularExpressions.RegexOptions.IgnoreCase)]
@@ -85,7 +87,7 @@ public static partial class FuzzyMatcher
             return string.Empty;
         }
 
-        var cleaned = allstarr.Core.Protocols.ExternalTrackPresentation.StripBestVersionPrefix(title);
+        var cleaned = StripBestVersionPrefix(title);
 
         cleaned = ParenthesizedCreditsRegex().Replace(cleaned, "");
         cleaned = FeatDecoratorRegex().Replace(cleaned, "");
@@ -113,7 +115,7 @@ public static partial class FuzzyMatcher
         }
 
         var cleaned = BracketedTitlePartRegex().Replace(
-            allstarr.Core.Protocols.ExternalTrackPresentation.StripBestVersionPrefix(title),
+            StripBestVersionPrefix(title),
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);
         cleaned = DashTitlePartRegex().Replace(cleaned,
             match => IsOwnCredit(match.Groups[1].Value) ? " " : match.Value);

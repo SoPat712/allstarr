@@ -4,9 +4,9 @@ using allstarr.Models.Domain;
 
 namespace allstarr.Services.Jellyfin;
 
-internal sealed record JellyfinDownloadMetadata(string Name, string? Container)
+internal sealed record JellyfinDownloadMetadata(string Name, string? Container, string VirtualPath)
 {
-    public string Path => $"/music/external/{Name}{(Container == null ? "" : "." + Container)}";
+    public string Path => VirtualPath;
 
     public static JellyfinDownloadMetadata ForSong(Song song)
     {
@@ -23,9 +23,11 @@ internal sealed record JellyfinDownloadMetadata(string Name, string? Container)
         }
         // The complete identity keeps repeated titles and sanitized names distinct within an album.
         var identity = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(song.Id))).ToLowerInvariant();
-        var extension = System.IO.Path.GetExtension(song.LocalPath)?.TrimStart('.').ToLowerInvariant();
+        var extension = song.Container is { Length: > 0 } known && known != "unknown" ? known :
+            System.IO.Path.GetExtension(song.LocalPath)?.TrimStart('.').ToLowerInvariant();
         var container = extension is "flac" or "mp3" or "m4a" or "mp4" or "aac" or "ogg" or "opus" or "wav" or "aif" or "aiff" or "wma"
             ? extension : null;
-        return new($"{readable.ToString().Trim()} - {identity}", container);
+        return new($"{readable.ToString().Trim()} - {identity}", container,
+            allstarr.Core.Protocols.ExternalTrackPresentation.VirtualPath(song, container));
     }
 }

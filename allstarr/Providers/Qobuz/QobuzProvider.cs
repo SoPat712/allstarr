@@ -613,6 +613,13 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
     private Song ParseQobuzTrackFull(JsonElement track)
     {
         var song = ParseQobuzTrack(track);
+        song.Notes = CatalogDescriptiveMetadata.Text(track, "description");
+        if (track.TryGetProperty("parental_warning", out var warning) && warning.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            song.ExplicitContentLyrics = warning.GetBoolean() ? 1 : 0;
+        var trackGain = QobuzReplayGain(track, "replaygain_track_gain");
+        var trackPeak = QobuzReplayGain(track, "replaygain_track_peak", true);
+        double? albumGain = QobuzReplayGain(track, "replaygain_album_gain");
+        double? albumPeak = QobuzReplayGain(track, "replaygain_album_peak", true);
 
         if (track.TryGetProperty("composer", out var composer) &&
             composer.TryGetProperty("name", out var composerName))
@@ -643,20 +650,34 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
 
             if (album.TryGetProperty("tracks_count", out var tracksCount))
             {
-                song.TotalTracks = tracksCount.GetInt32();
+                song.TotalTracks = tracksCount.TryGetInt32(out var count) && count > 0 ? count : null;
             }
+
+            song.TotalDiscs = album.TryGetProperty("media_count", out var mediaCount) && mediaCount.TryGetInt32(out var discs) && discs > 0 ? discs : null;
+            song.Upc = album.TryGetProperty("upc", out var upc) && upc.ValueKind is JsonValueKind.String or JsonValueKind.Number ? upc.ToString() : null;
+            song.Notes ??= CatalogDescriptiveMetadata.Text(album, "description");
+            albumGain ??= QobuzReplayGain(album, "replaygain_album_gain");
+            albumPeak ??= QobuzReplayGain(album, "replaygain_album_peak", true);
 
             if (album.TryGetProperty("genres_list", out var genres))
             {
-                song.Genre = FormatGenres(genres);
+                song.Genres = ParseGenres(genres);
+                song.Genre = string.Join(", ", song.Genres);
             }
 
             song.Label = CatalogDescriptiveMetadata.Label(album);
             song.CoverArtUrlLarge = GetLargeCoverArtUrl(album);
         }
 
+        if (trackGain != null || trackPeak != null || albumGain != null || albumPeak != null)
+            song.ReplayGain = new() { TrackGain = trackGain, TrackPeak = trackPeak, AlbumGain = albumGain, AlbumPeak = albumPeak };
+
         return song;
     }
+
+    private static double? QobuzReplayGain(JsonElement value, string name, bool peak = false) =>
+        value.TryGetProperty(name, out var item) && item.ValueKind == JsonValueKind.Number &&
+        item.TryGetDouble(out var number) && double.IsFinite(number) && (!peak || number >= 0) ? number : null;
 
     private Album ParseQobuzAlbum(JsonElement album)
     {
@@ -737,15 +758,17 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             element = album;
         }
 
+        if (GetLargeCoverArtUrl(element) is { } largest) return largest;
+
         if (element.TryGetProperty("image", out var image))
         {
-            if (image.TryGetProperty("thumbnail", out var thumbnail))
-            {
-                return thumbnail.GetString();
-            }
             if (image.TryGetProperty("small", out var small))
             {
                 return small.GetString();
+            }
+            if (image.TryGetProperty("thumbnail", out var thumbnail))
+            {
+                return thumbnail.GetString();
             }
         }
 
@@ -777,13 +800,17 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
     }
 
     // Qobuz encodes genres as hierarchical paths such as Pop/Rock→Alternative.
-    private string FormatGenres(JsonElement genresList)
+    private string FormatGenres(JsonElement genresList) => string.Join(", ", ParseGenres(genresList));
+
+    private static List<string> ParseGenres(JsonElement genresList)
     {
         var genres = new List<string>();
 
+        if (genresList.ValueKind != JsonValueKind.Array) return genres;
+
         foreach (var genre in genresList.EnumerateArray())
         {
-            var genreStr = genre.GetString();
+            var genreStr = genre.ValueKind == JsonValueKind.String ? genre.GetString() : null;
             if (!string.IsNullOrEmpty(genreStr))
             {
                 var parts = genreStr.Split(new[] { '/', '→' }, StringSplitOptions.RemoveEmptyEntries);
@@ -798,7 +825,7 @@ public sealed class QobuzProvider : ProviderCatalogMetadata
             }
         }
 
-        return string.Join(", ", genres);
+        return genres;
     }
 
     private string FormatCopyright(string copyright)
