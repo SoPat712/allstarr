@@ -64,7 +64,7 @@ public static class ApplicationCachePolicyRegistry
         if (key.StartsWith("audio_quality:", StringComparison.Ordinal))
             category = ApplicationCacheCategory.AudioQuality;
         if (CacheKeyBuilder.IsMediaAssetPayloadKey(key) ||
-            StartsWithAny(key, "media:descriptor:v4:", "playlist:artwork-descriptor:v1:"))
+            StartsWithAny(key, "media:descriptor:v5:", "playlist:artwork-descriptor:v1:"))
             category = ApplicationCacheCategory.Artwork;
         if (StartsWithAny(key, "lyrics:v2:", "lyrics:v3:", "lyrics:v4:", "lyrics:id:v2:", "lrclib:automatic:v2:"))
             category = ApplicationCacheCategory.Lyrics;

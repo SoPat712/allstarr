@@ -140,6 +140,13 @@ public sealed partial class ProtocolRouteFixtureTests
             using var small = SKBitmap.Decode(await thumbnail.Content.ReadAsByteArrayAsync());
             Assert.Equal(96, small.Width);
             Assert.Equal(96, small.Height);
+            using var fullAgain = await client.GetAsync(url);
+            Assert.Equal(bytes, await fullAgain.Content.ReadAsByteArrayAsync());
+            Assert.Equal(response.Headers.ETag, fullAgain.Headers.ETag);
+            using var conditionalAgain = new HttpRequestMessage(HttpMethod.Get, url);
+            conditionalAgain.Headers.IfNoneMatch.Add(response.Headers.ETag!);
+            using var unchanged = await client.SendAsync(conditionalAgain);
+            Assert.Equal(HttpStatusCode.NotModified, unchanged.StatusCode);
         }
     }
 }

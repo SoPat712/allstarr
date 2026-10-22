@@ -558,6 +558,7 @@ public partial class JellyfinController : ControllerBase
                         return null;
                     }
 
+                    var originalCoverUri = coverUri;
                     coverUri = SelectExternalArtworkVariant(
                         coverUri, provider, width, height);
                     using var response = await _proxyService.HttpClient.GetAsync(coverUri, token);
@@ -576,7 +577,8 @@ public partial class JellyfinController : ControllerBase
                         bytes,
                         contentType ?? DetectImageContentType(bytes),
                         response.Headers.ETag?.Tag,
-                        response.Content.Headers.LastModified);
+                        response.Content.Headers.LastModified,
+                        IsSizeSpecific: coverUri != originalCoverUri);
                 }
 
                 return retryTransientFailures

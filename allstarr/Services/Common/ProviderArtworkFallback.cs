@@ -13,7 +13,7 @@ internal static class ProviderArtworkFallback
 
     internal static string CoverPath(string provider) => Prefix + Uri.EscapeDataString(provider) + "/cover";
 
-    internal static string Tag(string? provider, string? cover = null) => "provider-cover-v1-" +
+    internal static string Tag(string? provider, string? cover = null) => "provider-cover-v2-" +
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(SourceProvider(provider, cover))))[..16];
 
     internal static bool IsFallback(string? provider, string? cover, string kind) =>
@@ -45,7 +45,7 @@ internal static class ProviderArtworkFallback
         {
             var package = (await extensions.ListPackagesAsync(provider, token)).FirstOrDefault(item => item.State == ExtensionPackageState.Active);
             if (package != null && await ExtensionPackageIcon.ReadAsync(package, token) is { } icon && Render(icon, dimension) is { } rendered)
-                return rendered;
+                return rendered with { IsSizeSpecific = dimension < 600 };
         }
         var name = BundledIcon(provider, descriptor?.Branding?.LogoReference);
         var file = File(environment, $"images/providers/{name}-cover{(dimension == 96 ? "-96" : "")}.png");
@@ -54,14 +54,14 @@ internal static class ProviderArtworkFallback
             await using var source = file.CreateReadStream();
             using var output = new MemoryStream();
             await source.CopyToAsync(output, token);
-            return new(output.ToArray(), "image/png");
+            return new(output.ToArray(), "image/png", IsSizeSpecific: dimension < 600);
         }
         var label = descriptor?.DisplayName ?? provider.Replace("spotiflac-", "", StringComparison.Ordinal);
         var font = File(environment, "fonts/inter-cover.ttf");
         await using var fontSource = font.CreateReadStream();
         using var fontBytes = new MemoryStream();
         await fontSource.CopyToAsync(fontBytes, token);
-        return Monogram(label, dimension, fontBytes.ToArray());
+        return Monogram(label, dimension, fontBytes.ToArray()) with { IsSizeSpecific = dimension < 600 };
     }
 
     private static Microsoft.Extensions.FileProviders.IFileInfo File(IWebHostEnvironment environment, string path)
