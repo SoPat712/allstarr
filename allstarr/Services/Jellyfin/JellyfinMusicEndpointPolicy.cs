@@ -539,7 +539,8 @@ public static class JellyfinMusicEndpointPolicy
 
         if (segments.Length == 4 &&
             segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
-            segments[2].Equals("items", StringComparison.OrdinalIgnoreCase)) return true;
+            segments[2].Equals("items", StringComparison.OrdinalIgnoreCase) &&
+            !segments[3].Equals("latest", StringComparison.OrdinalIgnoreCase)) return true;
 
         if (segments.Length == 4 &&
             segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
@@ -627,7 +628,10 @@ public static class JellyfinMusicEndpointPolicy
 
         var isItems = path.Equals("items", StringComparison.OrdinalIgnoreCase) || IsUserItems(path);
         var isHints = path.Equals("search/hints", StringComparison.OrdinalIgnoreCase) || IsUserSearchHints(path);
-        var usesIncludeTypes = path.Equals("items/latest", StringComparison.OrdinalIgnoreCase) ||
+        var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var userLatest = segments.Length == 4 && segments[0].Equals("users", StringComparison.OrdinalIgnoreCase) &&
+            segments[2].Equals("items", StringComparison.OrdinalIgnoreCase) && segments[3].Equals("latest", StringComparison.OrdinalIgnoreCase);
+        var usesIncludeTypes = userLatest || path.Equals("items/latest", StringComparison.OrdinalIgnoreCase) ||
                                path.Equals("items/filters", StringComparison.OrdinalIgnoreCase) ||
                                path.Equals("items/filters2", StringComparison.OrdinalIgnoreCase) ||
                                path.Equals("genres", StringComparison.OrdinalIgnoreCase);

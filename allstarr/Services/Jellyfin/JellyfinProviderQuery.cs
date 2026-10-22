@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace allstarr.Services.Jellyfin;
 
-internal sealed class JellyfinProviderQuery(IQueryCollection query, string? searchTerm = null, int defaultLimit = int.MaxValue)
+internal sealed class JellyfinProviderQuery(IQueryCollection query, string? searchTerm = null, int defaultLimit = int.MaxValue, bool membership = false)
 {
     public int StartIndex => int.TryParse(query["StartIndex"], out var value) ? Math.Max(0, value) : 0;
     public int Limit => int.TryParse(query["Limit"], out var value) ? Math.Max(0, value) : Math.Max(0, defaultLimit);
@@ -52,6 +52,10 @@ internal sealed class JellyfinProviderQuery(IQueryCollection query, string? sear
         var search = (searchTerm ?? query["SearchTerm"].ToString()).Trim().Trim('"');
         if (search.Length > 0 && !new[] { Read("Name"), Read("Album"), Read("AlbumArtist") }
             .Concat(Strings(root, "Artists")).Any(value => value.Contains(search, StringComparison.OrdinalIgnoreCase))) return false;
+        var name = Read("Name");
+        if (!string.IsNullOrEmpty(query["NameStartsWith"]) && !name.StartsWith(query["NameStartsWith"].ToString(), StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.IsNullOrEmpty(query["NameStartsWithOrGreater"]) && StringComparer.OrdinalIgnoreCase.Compare(name, query["NameStartsWithOrGreater"].ToString()) < 0) return false;
+        if (!string.IsNullOrEmpty(query["NameLessThan"]) && StringComparer.OrdinalIgnoreCase.Compare(name, query["NameLessThan"].ToString()) >= 0) return false;
         if (Values(query["ExcludeItemIds"].ToString()).Contains(Read("Id"), StringComparer.OrdinalIgnoreCase)) return false;
         if (!MatchAny(query["IncludeItemTypes"].ToString(), [Read("Type")])) return false;
         if (Values(query["ExcludeItemTypes"].ToString()).Contains(Read("Type"), StringComparer.OrdinalIgnoreCase)) return false;
@@ -84,7 +88,7 @@ internal sealed class JellyfinProviderQuery(IQueryCollection query, string? sear
         item.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.Array ? value.EnumerateArray() : [];
     private static IEnumerable<string> Strings(JsonElement item, string key) => Objects(item, key).Select(value => value.ToString());
 
-    private static string SortKey(string field) => field.ToLowerInvariant() switch
+    private string SortKey(string field) => field.ToLowerInvariant() switch
     {
         "sortname" => "SortName",
         "name" => "Name",
@@ -93,22 +97,39 @@ internal sealed class JellyfinProviderQuery(IQueryCollection query, string? sear
         "albumartist" => "AlbumArtist",
         "productionyear" => "ProductionYear",
         "premieredate" => "PremiereDate",
+        "datecreated" => membership ? "DateCreated" : "",
+        "playcount" => membership ? "PlayCount" : "",
+        "dateplayed" => membership ? "LastPlayedDate" : "",
         "indexnumber" => "IndexNumber",
         "parentindexnumber" => "ParentIndexNumber",
         "runtime" => "RunTimeTicks",
         _ => ""
     };
 
-    private static int Compare(Dictionary<string, object?> left, Dictionary<string, object?> right, string field)
+    private int Compare(Dictionary<string, object?> left, Dictionary<string, object?> right, string field)
     {
         var key = SortKey(field);
         if (key.Length == 0) return 0;
+        if (key == "PlayCount") return HistoryNumber(left).CompareTo(HistoryNumber(right));
+        if (key == "LastPlayedDate") return Nullable.Compare(Date(HistoryText(left, key)), Date(HistoryText(right, key)));
+        if (key == "DateCreated") return Nullable.Compare(Date(Text(left, key)), Date(Text(right, key)));
         if (key is "ProductionYear" or "IndexNumber" or "ParentIndexNumber" or "RunTimeTicks")
             return Nullable.Compare(Number(left, key), Number(right, key));
         if (key == "Artists")
             return StringComparer.OrdinalIgnoreCase.Compare(Artist(left), Artist(right));
         return StringComparer.OrdinalIgnoreCase.Compare(SortText(left, key), SortText(right, key));
     }
+
+    internal static DateTimeOffset? Date(string value) => DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture,
+        DateTimeStyles.AssumeUniversal, out var date) ? date : null;
+
+    private static string HistoryText(Dictionary<string, object?> item, string key)
+    {
+        var root = JsonSerializer.SerializeToElement(item);
+        return root.TryGetProperty("UserData", out var data) ? String(data, key) : "";
+    }
+
+    private static long HistoryNumber(Dictionary<string, object?> item) => long.TryParse(HistoryText(item, "PlayCount"), out var count) ? count : 0;
 
     private static string SortText(Dictionary<string, object?> item, string key) => key == "SortName" && string.IsNullOrWhiteSpace(Text(item, key))
         ? Text(item, "Name") : Text(item, key);

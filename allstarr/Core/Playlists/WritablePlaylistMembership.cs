@@ -161,7 +161,7 @@ public sealed class WritablePlaylistMembership(
     public static bool HasProviderIds(IEnumerable<string> ids) => ids.Any(id => id.StartsWith("ext-", StringComparison.OrdinalIgnoreCase));
     private static bool SameNativeId(string left, string right) => left == right ||
         Guid.TryParse(left, out var leftId) && Guid.TryParse(right, out var rightId) && leftId == rightId;
-    private static string Key(ProtocolExecutionContext context, string id)
+    internal static string Key(ProtocolExecutionContext context, string id)
     {
         if (context.Protocol == ProtocolKind.Jellyfin && Guid.TryParse(id, out var guid)) id = guid.ToString("N");
         return Hash($"{context.Protocol}\n{context.BackendInstanceId}\n{id}");

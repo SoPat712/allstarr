@@ -12,7 +12,7 @@ public partial class SubsonicController
     [HttpPost("rest/getArtists")]
     [HttpGet("rest/getArtists.view")]
     [HttpPost("rest/getArtists.view")]
-    public Task<IActionResult> GetArtists() => ReadStarredAsync("artists");
+    public Task<IActionResult> GetArtists() => ReadSavedBrowseAsync("artists");
 
     [HttpGet("rest/getStarred")]
     [HttpPost("rest/getStarred")]

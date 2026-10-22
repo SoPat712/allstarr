@@ -13,6 +13,7 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
 
     public string[] ArtistIds { get; init; } = [];
     public string[] AlbumArtistIds { get; init; } = [];
+    public string[] AlbumArtists { get; init; } = [];
     public string? AlbumId { get; init; }
     public string[] Genres { get; init; } = [];
 
@@ -59,6 +60,7 @@ public sealed record FavoriteDisplaySnapshot(int Version, string ItemId, string 
         Year is null or >= 0 and <= 9999 && Count is null or >= 0 &&
         ArtistIds is { Length: <= 20 } && ArtistIds.All(Text) &&
         AlbumArtistIds is { Length: <= 20 } && AlbumArtistIds.All(Text) &&
+        AlbumArtists is { Length: <= 20 } && AlbumArtists.All(Text) &&
         (AlbumId == null || Text(AlbumId)) && Genres is { Length: <= 20 } && Genres.All(Text) &&
         Resource(ItemId) is { } resource && Kind == KindName(resource.ResourceKind);
 
@@ -89,6 +91,13 @@ public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId 
         ArtistIds = Display.ArtistIds.ToList(),
         Album = Display.Album ?? string.Empty,
         AlbumId = Display.AlbumId,
+        AlbumArtist = Display.AlbumArtists.FirstOrDefault(),
+        AlbumArtists = Display.AlbumArtistIds.Select((id, index) => new Artist
+        {
+            Id = id,
+            Name = Display.AlbumArtists.ElementAtOrDefault(index) ??
+                (Array.IndexOf(Display.ArtistIds, id) is var artistIndex && artistIndex >= 0 ? Display.Artists.ElementAtOrDefault(artistIndex) : null) ?? "Saved artist"
+        }).ToList(),
         Genre = Display.Genres.FirstOrDefault(),
         Year = Display.Year,
         Duration = Display.DurationMilliseconds is { } milliseconds ? (int)(milliseconds / 1000) : null,
@@ -101,7 +110,7 @@ public sealed record FavoriteViewItem(string ItemId, ProviderExternalResourceId 
         ExternalProvider = Resource.ProviderId,
         ExternalId = Resource.Value,
         Title = Display.Title,
-        Artist = Display.Artists.FirstOrDefault() ?? "Unknown artist",
+        Artist = Display.AlbumArtists.FirstOrDefault() ?? Display.Artists.FirstOrDefault() ?? "Unknown artist",
         ArtistId = Display.AlbumArtistIds.FirstOrDefault() ?? Display.ArtistIds.FirstOrDefault(),
         Genre = Display.Genres.FirstOrDefault(),
         Year = Display.Year,

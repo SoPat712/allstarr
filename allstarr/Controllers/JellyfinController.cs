@@ -362,6 +362,9 @@ public partial class JellyfinController : ControllerBase
             return await ReadArtistSearchAsync(searchTerm.Trim().Trim('"'), limit);
         }
 
+        var savedBrowse = await TryReadSavedBrowseAsync("MusicArtist");
+        if (savedBrowse != null) return savedBrowse;
+
         // Browse is a transparent relay; preserve the client's route and query semantics.
         var endpoint = Request.Path.Value?.TrimStart('/') ?? "Artists";
         if (Request.QueryString.HasValue)

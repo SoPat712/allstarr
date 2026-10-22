@@ -13,8 +13,13 @@ public partial class JellyfinController
     [HttpGet("Items/Filters2", Order = 1)]
     [HttpGet("Genres", Order = 1)]
     [HttpGet("Items/Latest", Order = 1)]
-    public Task<IActionResult> GetConstrainedMusicBrowse() =>
-        ProxyConstrainedMusicQueryAsync("IncludeItemTypes", JellyfinMusicEndpointPolicy.DefaultMusicItemTypes);
+    [HttpGet("Users/{userId}/Items/Latest", Order = 1)]
+    public async Task<IActionResult> GetConstrainedMusicBrowse()
+    {
+        var latest = Request.Path.Value!.EndsWith("Latest", StringComparison.OrdinalIgnoreCase);
+        var savedBrowse = await TryReadSavedBrowseAsync(facets: !latest, latest: latest);
+        return savedBrowse ?? await ProxyConstrainedMusicQueryAsync("IncludeItemTypes", JellyfinMusicEndpointPolicy.DefaultMusicItemTypes);
+    }
 
     [HttpGet("Items/Suggestions", Order = 1)]
     public Task<IActionResult> GetConstrainedMusicSuggestions() =>

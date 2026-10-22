@@ -13,6 +13,7 @@ public static class ProtocolRegistration
         _ = options.GetDownloadDiagnosticTimeout();
         services.AddSingleton(options);
         services.AddSingleton<allstarr.Core.Playlists.WritablePlaylistMembership>();
+        services.AddSingleton<allstarr.Core.Music.SavedLibraryReader>();
         services.AddSingleton<ProtocolExecutionContextFactory>();
         services.AddHttpClient(BackendLibraryAccessResolver.HttpClientName);
         services.AddSingleton<IBackendLibraryPermissionSource, BackendLibraryPermissionSource>();

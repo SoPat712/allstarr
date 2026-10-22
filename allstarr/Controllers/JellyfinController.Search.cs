@@ -57,6 +57,12 @@ public partial class JellyfinController
             searchTerm ?? string.Empty,
             includeItemTypes ?? string.Empty);
 
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            var savedBrowse = await TryReadSavedBrowseAsync(includeItemTypes);
+            if (savedBrowse != null) return savedBrowse;
+        }
+
         var externalQuery = await TryReadExternalQueryAsync(includeItemTypes, userId);
         if (externalQuery != null) return externalQuery;
 

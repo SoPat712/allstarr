@@ -295,6 +295,8 @@ public sealed class PlaylistPersistenceService : IPlaylistPersistenceService
             await _kept.StagePlaylistInterestsAsync(db, record, BackendLibraryAccessContext.Unavailable,
                 context.CorrelationId, cancellationToken, deleting: true);
 
+        await allstarr.Core.Music.SavedLibraryReader.ArchiveSourceAsync(db, context, record, _clock.UtcNow, cancellationToken);
+
         var snapshotIds = await db.PlaylistSourceSnapshots
             .Where(item => item.PlaylistLinkId == linkId)
             .Select(item => item.Id).ToListAsync(cancellationToken);

@@ -52,6 +52,7 @@ public sealed partial class JellyfinItemResponseFilter(JellyfinProxyService prox
         var saved = favorites == null ? [] : (await favorites.ReadForRequestAsync(http))
             .Select(item => item.ItemId).ToHashSet(StringComparer.Ordinal);
         await HydrateItemUserDataAsync(items, http);
+        await HydrateSavedMembershipAsync(items, http);
         foreach (var item in items)
         {
             item.Remove("ServerId");
