@@ -225,6 +225,51 @@ test("MatchDialog marks only the current candidate in the existing list", async 
   await expect(candidates.getByRole("button", { name: "Choose candidate" })).toHaveCount(2);
 });
 
+test("match titles mark only flagged ArtistGrid versions and preserve their scoring reason", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  const variants = [
+    { id: "best", title: "Preferred version", provider: "artistgrid", isBestVersion: true },
+    { id: "ordinary", title: "Ordinary version", provider: "artistgrid", isBestVersion: false },
+    { id: "legacy", title: "Older result", provider: "artistgrid" },
+    { id: "other", title: "Other source", provider: "qobuz", isBestVersion: true },
+    { id: "local", title: "Library result", provider: "", isBestVersion: true },
+  ];
+  await mockMatching(page, {
+    administrator: false,
+    providers: [
+      { id: "spotify", name: "Spotify", categories: ["metadata"] },
+      { id: "artistgrid", name: "ArtistGrid", categories: ["metadata", "streaming"] },
+      { id: "qobuz", name: "Qobuz", categories: ["streaming"] },
+    ],
+    match: { candidates: variants.map(({ id, title, provider, ...flags }) => ({
+      ...matchFixture(false).candidates[0], libraryTrackId: id, backendItemId: id, title,
+      isLocal: !provider, providerTrackIds: provider ? { [provider]: id } : {}, ...flags,
+      reasons: id === "best" ? ["ArtistGrid best version +5"] : [],
+    })) },
+  });
+  await page.route("**/api/admin/track-matches/targets/*?*", route => json(route, {
+    tracks: variants.filter(item => Boolean(item.provider) === new URL(route.request().url()).pathname.endsWith("/provider"))
+      .map(({ id, provider, ...track }) => ({ id, externalId: provider ? id : null, externalProvider: provider || null, ...track })),
+    providers: ["artistgrid", "qobuz"],
+  }));
+  await page.goto("#/library/mappings");
+  await page.getByRole("button", { name: "Interactive search" }).click();
+  const dialog = page.getByRole("dialog", { name: "Layered song" });
+  const candidates = dialog.locator(".candidate-card");
+  await expect(candidates).toHaveCount(5);
+  const marker = candidates.getByRole("img", { name: "Best version on ArtistGrid", exact: true });
+  await expect(marker).toHaveCount(1);
+  await expect(marker).toHaveAttribute("title", "Best version on ArtistGrid");
+  await expect(candidates.filter({ hasText: "Preferred version" }).locator(".candidate-copy strong")).toContainText("⭐");
+  await expect(candidates.locator(".candidate-reasons")).toHaveText("ArtistGrid best version +5");
+  await dialog.getByRole("button", { name: "Search", exact: true }).click();
+  const targets = dialog.locator(".target-results button.match-row");
+  await expect(targets).toHaveCount(5);
+  await expect(targets.getByRole("img", { name: "Best version on ArtistGrid", exact: true })).toHaveCount(1);
+  await expect(targets.filter({ hasText: "Preferred version" }).locator("strong").first()).toContainText("⭐");
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+});
+
 test("listener uses personal authority and cannot choose or edit household", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   let resolution: Record<string, unknown> | null = null;

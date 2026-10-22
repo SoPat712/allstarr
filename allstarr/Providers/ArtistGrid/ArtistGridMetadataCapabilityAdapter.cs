@@ -347,7 +347,8 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
             duration: track.Duration,
             snapshotVersion: tracker.ETag,
             albumArtist: artistName,
-            contributors: track.Contributors);
+            contributors: track.Contributors,
+            isBestVersion: track.BestVersion);
     }
 
     private static bool IsUsableTrack(ArtistGridRawTrack track) => track.Sources.Count > 0;

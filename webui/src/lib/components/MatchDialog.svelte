@@ -129,6 +129,7 @@
   }
 
   const evidenceLabels: Record<string, string> = {
+    "ArtistGrid best version +5": "ArtistGrid best version +5",
     title_case_folded: "Title matches ignoring case",
     title_normalized: "Title matches after normalization",
     title_decorators_ignored: "Title matches without release labels",
@@ -288,7 +289,7 @@
                   <div class="match-row">
                     <MediaArtwork class="mapping-art" url={candidateArtwork(candidate)} fallback="♫" />
                     <div class="candidate-copy">
-                      <strong>{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
+                      <strong>{#if candidate.isBestVersion && candidateProvider(candidate).toLowerCase() === "artistgrid"}<span role="img" aria-label="Best version on ArtistGrid" title="Best version on ArtistGrid">⭐</span> {/if}{candidate.title || candidate.backendItemId || "Indexed track"}</strong>
                       <small>{candidate.artist || "Unknown artist"}{candidate.album ? ` · ${candidate.album}` : ""}</small>
                       <small>{formatDuration(candidate.durationMilliseconds)}{candidate.candidateIsrc ? ` · ISRC ${candidate.candidateIsrc}` : ""}</small>
                       <span class="candidate-provider">
@@ -410,7 +411,7 @@
               >
                 <MediaArtwork class="mapping-art" url={target.artworkUrl} />
                 <span class="target-copy">
-                  <strong>{target.title}</strong>
+                  <strong>{#if target.isBestVersion && target.externalProvider?.toLowerCase() === "artistgrid"}<span role="img" aria-label="Best version on ArtistGrid" title="Best version on ArtistGrid">⭐</span> {/if}{target.title}</strong>
                   <small>{target.artist || "Unknown artist"} · {target.album || "Unknown album"}</small>
                   <span class="candidate-provider">
                     <ProviderMark

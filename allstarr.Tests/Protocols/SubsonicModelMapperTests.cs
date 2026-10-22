@@ -24,6 +24,18 @@ public class SubsonicModelMapperTests
         _mapper = new SubsonicModelMapper(_responseBuilder, _mockLogger.Object);
     }
 
+    [Theory]
+    [InlineData("artistgrid", true, "⭐ Song [A]")]
+    [InlineData("artistgrid", false, "Song [A]")]
+    [InlineData("deezer", true, "Song [A]")]
+    public void BestVersionMarkerIsProjectedInBothSubsonicFormats(string provider, bool best, string expected)
+    {
+        var song = new Song { Title = "Song", Artist = "Artist", ExternalProvider = provider, ExternalId = "version", IsBestVersion = best };
+        Assert.Equal(expected, _responseBuilder.ConvertSongToJson(song)["title"]);
+        Assert.Equal(expected, _responseBuilder.ConvertSongToXml(song, "http://subsonic.org/restapi").Attribute("title")!.Value);
+        Assert.Equal("Song", song.Title);
+    }
+
     [Fact]
     public void ParseSearchResponse_JsonWithSongs_ParsesCorrectly()
     {

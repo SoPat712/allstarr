@@ -559,6 +559,7 @@ export type ProviderTryRequest = {
 
 export type ProviderTryTrack = {
   id: string;
+  isBestVersion?: boolean;
   title: string;
   artists: string[];
   album: string | null;
@@ -870,6 +871,7 @@ export type TargetPlaylist = {
 
 export type MatchCandidate = {
   isCurrent?: boolean;
+  isBestVersion?: boolean;
   libraryTrackId?: string | null;
   backendItemId?: string | null;
   confidence?: number | null;
@@ -1008,6 +1010,7 @@ export type TrackRematchAllPreview = {
 
 export type MatchTarget = {
   id: string;
+  isBestVersion?: boolean;
   backendItemId?: string | null;
   externalId?: string | null;
   externalProvider?: string | null;

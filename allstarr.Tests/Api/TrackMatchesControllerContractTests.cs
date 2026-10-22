@@ -10,6 +10,24 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchesControllerContractTests
 {
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ReviewCandidateProjectionPreservesBestVersionAndEvidence(bool best)
+    {
+        var score = new TrackMatchCandidateScore(Guid.CreateVersion7(), "version", .85,
+            best ? ["ArtistGrid best version +5"] : [], [], Title: "Song",
+            ProviderTrackIds: new Dictionary<string, string> { ["artistgrid"] = "version" },
+            IsLocal: false, IsBestVersion: best);
+        var parse = typeof(TrackMatchesController).GetMethod("ParseCandidates", BindingFlags.Static | BindingFlags.NonPublic)!;
+        var projected = JsonSerializer.SerializeToElement(parse.Invoke(null,
+            [JsonSerializer.Serialize(new[] { score }), new HashSet<string>(["artistgrid"]), new HashSet<Guid>()]));
+        var candidate = Assert.Single(projected.EnumerateArray());
+        Assert.Equal(best, candidate.GetProperty("isBestVersion").GetBoolean());
+        Assert.Equal(best, candidate.GetProperty("reasons").EnumerateArray()
+            .Any(reason => reason.GetString() == "ArtistGrid best version +5"));
+    }
+
     [Fact]
     public void ProviderSearchUsesTheNormalSearchWithoutASourcePicker()
     {

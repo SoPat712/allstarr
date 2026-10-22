@@ -47,7 +47,8 @@ public sealed record ProviderTrackMetadata
         int? explicitContentLyrics = null,
         int? bitrate = null,
         IEnumerable<ProviderArtistCredit>? albumArtists = null,
-        IReadOnlyDictionary<string, string>? providerIds = null)
+        IReadOnlyDictionary<string, string>? providerIds = null,
+        bool isBestVersion = false)
     {
         ArgumentNullException.ThrowIfNull(id);
         id.RequireOwner(id.ProviderId, ProviderResourceKind.Track);
@@ -90,6 +91,7 @@ public sealed record ProviderTrackMetadata
 
         Id = id;
         Title = ProviderContractValidation.RequiredText(title, nameof(title), 500);
+        IsBestVersion = isBestVersion;
         Artists = artistList;
         AlbumId = albumId;
         AlbumTitle = ProviderContractValidation.OptionalText(albumTitle, nameof(albumTitle), 500);
@@ -129,6 +131,8 @@ public sealed record ProviderTrackMetadata
     public ProviderExternalResourceId Id { get; }
 
     public string Title { get; }
+
+    public bool IsBestVersion { get; }
 
     public IReadOnlyList<ProviderArtistCredit> Artists { get; }
 

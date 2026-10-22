@@ -58,7 +58,9 @@ public sealed record LocalTrackMatchCandidate(
     string? MusicBrainzRecordingId,
     bool? IsExplicit,
     IReadOnlyDictionary<string, string>? ProviderTrackIds = null,
-    bool IsLocal = true);
+    bool IsLocal = true,
+    bool IsBestVersion = false,
+    string? ExternalProvider = null);
 
 public sealed record ScopedTrackMatchOverride(
     Guid UserId,
@@ -86,7 +88,8 @@ public sealed record TrackMatchCandidateScore(
     double? ArtistOverlap = null,
     double? AlbumEvidence = null,
     long? DurationDeltaMilliseconds = null,
-    bool IsLocal = true);
+    bool IsLocal = true,
+    bool IsBestVersion = false);
 
 public sealed record TrackMatchDecision(
     TrackMatchReviewState State,
@@ -484,7 +487,12 @@ public sealed class TrackMatchDecisionEngine
         LocalTrackMatchCandidate candidate)
     {
         var outcome = TrackMatchRuleSet.Evaluate(source, candidate, _policy);
-        return Score(source, candidate, outcome.Confidence, outcome.Reasons, outcome.Warnings, outcome.Components);
+        var score = Score(source, candidate, outcome.Confidence, outcome.Reasons, outcome.Warnings, outcome.Components);
+        return score.IsBestVersion ? score with
+        {
+            Confidence = Math.Min(1, score.Confidence + 0.05),
+            Reasons = score.Reasons.Append("ArtistGrid best version +5").ToArray()
+        } : score;
     }
 
     internal static bool SameRecordingIdentity(
@@ -614,7 +622,9 @@ public sealed class TrackMatchDecisionEngine
         source.DurationMilliseconds.HasValue && candidate.DurationMilliseconds.HasValue
             ? Math.Abs(source.DurationMilliseconds.Value - candidate.DurationMilliseconds.Value)
             : null,
-        candidate.IsLocal);
+        candidate.IsLocal,
+        !candidate.IsLocal && candidate.IsBestVersion &&
+        string.Equals(candidate.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase));
 
     private static double? AlbumEvidence(
         ExternalTrackMatchSnapshot source,

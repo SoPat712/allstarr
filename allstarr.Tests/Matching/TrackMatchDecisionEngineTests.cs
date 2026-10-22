@@ -10,6 +10,50 @@ namespace allstarr.Tests;
 
 public sealed class TrackMatchDecisionEngineTests(ITestOutputHelper output)
 {
+    [Theory]
+    [InlineData("artistgrid", true, false, .05)]
+    [InlineData("artistgrid", false, false, 0)]
+    [InlineData("deezer", true, false, 0)]
+    [InlineData("artistgrid", true, true, 0)]
+    public void BestVersionBonusRequiresAnArtistGridExternalRecommendation(string provider, bool best, bool local, double bonus)
+    {
+        var candidate = Candidate(Scope()) with
+        {
+            CanonicalRecordingId = null,
+            Title = "A Sng",
+            Album = "Other album",
+            Isrc = null,
+            IsLocal = local,
+            ExternalProvider = provider,
+            IsBestVersion = best
+        };
+        var engine = new TrackMatchDecisionEngine();
+        var baseline = Assert.Single(engine.ScoreCandidates(Source(), [candidate with { IsBestVersion = false }]));
+        var score = Assert.Single(engine.ScoreCandidates(Source(), [candidate]));
+        Assert.Equal(Math.Min(1, baseline.Confidence + bonus), score.Confidence, 8);
+        Assert.Equal(bonus > 0, score.Reasons.Contains("ArtistGrid best version +5"));
+        Assert.Equal(bonus > 0, score.IsBestVersion);
+    }
+
+    [Fact]
+    public void ArtistGridBestVersionBonusCapsAtOneHundredAndRanksFirst()
+    {
+        var candidate = Candidate(Scope()) with
+        {
+            CanonicalRecordingId = null,
+            IsLocal = false,
+            ExternalProvider = "artistgrid"
+        };
+        var best = candidate with { LibraryTrackId = Guid.CreateVersion7(), IsBestVersion = true };
+        var scores = new TrackMatchDecisionEngine().ScoreCandidates(Source(), [candidate, best]);
+        Assert.Equal(1, scores[0].Confidence);
+        Assert.Contains("ArtistGrid best version +5", scores.Single(score => score.LibraryTrackId == best.LibraryTrackId).Reasons);
+        var lower = candidate with { Title = "A Sng", Album = "Other album", Isrc = null };
+        scores = new TrackMatchDecisionEngine().ScoreCandidates(Source(),
+            [lower, lower with { LibraryTrackId = best.LibraryTrackId, IsBestVersion = true }]);
+        Assert.Equal(best.LibraryTrackId, scores[0].LibraryTrackId);
+    }
+
     [Fact]
     public void AWrongVersionCannotMakeTheCorrectRecordingAmbiguous()
     {

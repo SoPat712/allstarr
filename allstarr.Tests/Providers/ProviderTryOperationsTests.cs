@@ -8,6 +8,21 @@ namespace allstarr.Tests;
 public sealed partial class ProviderTryOperationsTests
 {
     [Fact]
+    public async Task MetadataSearchProjectsBestVersionFlag()
+    {
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture",
+                [new ProviderTrackMetadata(new("fixture", ProviderResourceKind.Track, "version"), "Song", [new("Artist")], isBestVersion: true)])));
+        var registry = new Mock<IProviderRegistry>();
+        registry.Setup(item => item.GetRequiredCapability<IProviderMetadataCapability>("fixture", ProviderCapabilityKind.Metadata)).Returns(metadata.Object);
+        var result = await new ProviderTryOperations(registry.Object).ExecuteAsync(Context(),
+            new ProviderTryRequest { Capability = "metadata", Operation = "search", Query = "Song", Kind = "tracks" });
+        var track = JsonSerializer.SerializeToElement(Assert.Single(result.Tracks!));
+        Assert.True(track.GetProperty("isBestVersion").GetBoolean());
+    }
+
+    [Fact]
     public void Catalog_UsesOnlyDeclaredHooksAndSelectedAccounts()
     {
         var descriptor = Descriptor(new ProviderCapabilityDescriptor(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,

@@ -563,6 +563,7 @@ public sealed class TrackMatchesController(
                     id = song.ExternalId,
                     externalId = song.ExternalId,
                     externalProvider = song.ExternalProvider,
+                    isBestVersion = song.IsBestVersion && string.Equals(song.ExternalProvider, "artistgrid", StringComparison.OrdinalIgnoreCase),
                     title = song.Title,
                     artist = song.Artist,
                     album = song.Album,
@@ -1100,7 +1101,9 @@ public sealed class TrackMatchesController(
             {
                 [song.ExternalProvider] = song.ExternalId
             },
-        IsLocal: false);
+        IsLocal: false,
+        IsBestVersion: song.IsBestVersion,
+        ExternalProvider: song.ExternalProvider);
 
     private static long? DurationMilliseconds(JsonElement root)
     {
@@ -1239,6 +1242,7 @@ public sealed class TrackMatchesController(
                     backendItemId = Text(item, "backendItemId") ?? Text(item, "BackendItemId"),
                     confidence = Number(item, "confidence") ?? Number(item, "Confidence"),
                     title = Text(item, "title") ?? Text(item, "Title"),
+                    isBestVersion = Boolean(item, "isBestVersion") ?? Boolean(item, "IsBestVersion") ?? false,
                     artist = Text(item, "artist") ?? Text(item, "Artist"),
                     album = Text(item, "album") ?? Text(item, "Album"),
                     durationMilliseconds = Number(item, "durationMilliseconds") ??

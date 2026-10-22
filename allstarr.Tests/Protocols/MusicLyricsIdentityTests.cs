@@ -42,7 +42,7 @@ public sealed class MusicLyricsIdentityTests
             Isrc = "USRC17607839",
             IsLocal = true,
             LocalPath = "/untrusted/not-authority.flac",
-            Title = "Song [A]",
+            Title = "⭐ Song [A]",
             Artist = "Artist [E]",
             Artists = ["Artist [E]"],
             Album = "Album [A]",

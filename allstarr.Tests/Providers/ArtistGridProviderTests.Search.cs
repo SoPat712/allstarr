@@ -136,6 +136,9 @@ public sealed partial class ArtistGridProviderTests
         Assert.All(tracks, track => Assert.Equal(track.Title.Trim(), track.Title));
         Assert.Equal("Communicate [V3] [OG File]", tracks[0].Title);
         Assert.Equal(TimeSpan.FromSeconds(115), tracks[0].Duration);
+        Assert.True(tracks[0].IsBestVersion);
+        Assert.All(tracks.Skip(1), track => Assert.False(track.IsBestVersion));
+        Assert.True(allstarr.Core.Protocols.ProtocolProviderGateway.Map(tracks[0]).IsBestVersion);
         Assert.Contains(tracks, track => track.Title == "Diva Shit [V1]");
         Assert.Contains(tracks, track => track.Title == "Communicate [V2]");
         Assert.Contains(tracks, track => track.Title == "Communicate [V4] [OG File]");
@@ -146,6 +149,7 @@ public sealed partial class ArtistGridProviderTests
             var lookup = (await metadata.GetTrackAsync(Context(), new(track.Id))).RequireValue();
             Assert.Equal(track.Title, lookup.Title);
             Assert.Equal(track.Artists, lookup.Artists);
+            Assert.Equal(track.IsBestVersion, lookup.IsBestVersion);
         }
     }
 
