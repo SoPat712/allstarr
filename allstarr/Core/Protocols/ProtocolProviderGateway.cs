@@ -1133,7 +1133,7 @@ public sealed partial class ProtocolProviderGateway(
             providerId, ProviderResourceKind.Track, externalId);
         var itemId = protocol.RequestedItemId ?? ProtocolItemId(trackId);
         if (protocol.IsPreparation && playbackActivity?.WasStreamOpened(itemId) == true) return null;
-        var previous = protocol.IsOriginalDownload ? null : playbackActivity?.StreamFor(protocol, itemId, quality);
+        var previous = playbackActivity?.StreamFor(protocol, itemId, quality);
         var hasPlaybackIdentity = !protocol.IsOriginalDownload && !string.IsNullOrWhiteSpace(protocol.Client.DeviceId);
         if (resuming && hasPlaybackIdentity && playbackActivity != null && previous == null)
             throw new HttpRequestException("Restart playback before seeking this external track.", null,
@@ -1181,7 +1181,7 @@ public sealed partial class ProtocolProviderGateway(
         }
         if (resuming)
         {
-            if (!hasPlaybackIdentity && providerId == "allstarr")
+            if (!hasPlaybackIdentity && providerId == "allstarr" && (!protocol.IsOriginalDownload || previous == null))
                 throw new HttpRequestException("Restart playback before seeking this recording.", null,
                     HttpStatusCode.Conflict);
             // Byte offsets cannot be transferred between two encodings of the same recording.
@@ -1467,7 +1467,7 @@ public sealed partial class ProtocolProviderGateway(
             stream.Response.Headers.Add("X-Allstarr-Provider", stream.ServingProviderId);
             stream.Response.Headers.Remove("X-Allstarr-Route-Reason");
             stream.Response.Headers.Add("X-Allstarr-Route-Reason", stream.SelectionReason);
-            if (!protocol.IsOriginalDownload && !protocol.IsReadOnly && !headOnly && !protocol.IsPreparation)
+            if (!protocol.IsReadOnly && !headOnly && !protocol.IsPreparation)
                 playbackActivity?.StreamOpened(protocol, itemId, quality, stream);
             if (!protocol.IsPreparation)
                 logger?.LogInformation("Opened external playback from {Provider} (cached: {Cached})",

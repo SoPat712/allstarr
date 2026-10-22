@@ -113,7 +113,7 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         ProviderAudioQuality quality, ProtocolProviderStream stream)
     {
         if (context.IsPreparation || context.Actor?.EffectiveUserId == null || stream.ServingExternalId == null) return;
-        _delivered.Set((StreamItemKey(itemId), "opened"), true, new MemoryCacheEntryOptions
+        if (!context.IsOriginalDownload) _delivered.Set((StreamItemKey(itemId), "opened"), true, new MemoryCacheEntryOptions
         {
             AbsoluteExpirationRelativeToNow = Retention,
             Size = 1
@@ -147,15 +147,15 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
         var key = (userId, deviceId, StreamItemKey(itemId));
         lock (sourceGate)
         {
-            Set(key, source);
-            Set((key, context.Protocol, context.BackendInstanceId, quality), source);
+            if (!context.IsOriginalDownload) Set(key, source);
+            Set(ContinuationKey(userId, context, itemId, quality), source);
         }
     }
 
     public void SeekRungSelected(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality, ProtocolProviderStream stream, string rung)
     {
-        if (context.IsPreparation || context.Actor?.EffectiveUserId is not { } userId ||
+        if (context.IsOriginalDownload || context.IsPreparation || context.Actor?.EffectiveUserId is not { } userId ||
             string.IsNullOrWhiteSpace(StreamDeviceId(context))) return;
         var key = (userId, StreamDeviceId(context), StreamItemKey(itemId));
         var exactKey = (key, context.Protocol, context.BackendInstanceId, quality);
@@ -176,9 +176,16 @@ public sealed class PlaybackDeliveryActivityStore : IPlaybackDeliveryActivitySou
 
     public PlaybackStreamSource? StreamFor(ProtocolExecutionContext context, string itemId,
         ProviderAudioQuality quality) => context.Actor?.EffectiveUserId is { } userId
-        ? _delivered.Get<PlaybackStreamSource>(((userId, StreamDeviceId(context), StreamItemKey(itemId)),
-            context.Protocol, context.BackendInstanceId, quality))
+        ? _delivered.Get<PlaybackStreamSource>(ContinuationKey(userId, context, itemId, quality))
         : null;
+
+    private static object ContinuationKey(Guid userId, ProtocolExecutionContext context, string itemId, ProviderAudioQuality quality)
+    {
+        var key = (userId, StreamDeviceId(context), StreamItemKey(itemId));
+        return context.IsOriginalDownload
+            ? (key, context.Protocol, context.BackendInstanceId, quality, "original-download")
+            : (key, context.Protocol, context.BackendInstanceId, quality);
+    }
 
     public PlaybackStreamSource? StreamFor(Guid? userId, string? deviceId, string itemId) =>
         userId is { } user && !string.IsNullOrWhiteSpace(deviceId)
