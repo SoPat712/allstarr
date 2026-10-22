@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using allstarr.Core.Capabilities;
 using allstarr.Services.Common;
 
@@ -49,7 +50,19 @@ internal sealed record ArtistGridRawTrack(
     TimeSpan? Duration,
     string? AlbumTitle,
     string? Quality,
-    string? AvailableLength);
+    string? AvailableLength)
+{
+    public IReadOnlyList<string> AlternateTitles { get; init; } = [];
+    public IReadOnlyList<string> Contributors { get; init; } = [];
+    public bool BestVersion { get; init; }
+
+    public int LengthRank => AvailableLength?.Trim().ToLowerInvariant() switch
+    {
+        null or "" or "full" or "og file" or "tagged" or "full (tagged)" => 0,
+        "partial" or "snippet" or "beat only" or "stem bounce" => 2,
+        _ => 1
+    };
+}
 
 internal sealed record ArtistGridTracker(
     string Tracker,
@@ -616,7 +629,14 @@ public sealed class ArtistGridCatalog
             : name.ValueKind == JsonValueKind.String ? name.GetString() : null;
         if (string.IsNullOrWhiteSpace(title)) return false;
 
+        var lines = title.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var bestVersion = lines[0].Contains('⭐');
+        title = lines[0].Replace("⭐", string.Empty, StringComparison.Ordinal).Trim();
+        if (title.Length == 0) return false;
         var credits = new List<string>();
+        var contributors = new List<string>();
+        var alternateTitles = new List<string>();
+        foreach (var line in lines.Skip(1)) ParseCredits(line);
         var creditValues = name.ValueKind == JsonValueKind.Object ? Property(name, "credits") : default;
         if (creditValues.ValueKind == JsonValueKind.Array)
         {
@@ -627,9 +647,35 @@ public sealed class ArtistGridCatalog
                     : credit.ValueKind == JsonValueKind.Object
                         ? String(credit, "name") ?? String(credit, "raw") ?? String(credit, "title")
                         : null;
-                if (!string.IsNullOrWhiteSpace(creditName) && !credits.Contains(creditName.Trim(), StringComparer.Ordinal))
-                    credits.Add(creditName.Trim());
+                if (!string.IsNullOrWhiteSpace(creditName)) ParseCredits(creditName);
             }
+        }
+
+        void ParseCredits(string text)
+        {
+            var groups = Regex.Matches(text, @"\(([^()]*)\)");
+            if (groups.Count == 0)
+            {
+                AddCredit(text.Trim(), parenthesized: false);
+                return;
+            }
+            foreach (Match group in groups) AddCredit(group.Groups[1].Value.Trim(), parenthesized: true);
+        }
+
+        void AddCredit(string text, bool parenthesized)
+        {
+            if (text.Length == 0) return;
+            if (text.StartsWith("prod. ", StringComparison.OrdinalIgnoreCase) ||
+                text.StartsWith("ref. ", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!contributors.Contains(text, StringComparer.OrdinalIgnoreCase)) contributors.Add(text);
+                return;
+            }
+            var prefix = new[] { "feat. ", "ft. ", "with " }.FirstOrDefault(value =>
+                text.StartsWith(value, StringComparison.OrdinalIgnoreCase));
+            if (prefix != null) text = text[prefix.Length..].Trim();
+            var target = prefix != null || !parenthesized ? credits : alternateTitles;
+            if (text.Length > 0 && !target.Contains(text, StringComparer.OrdinalIgnoreCase)) target.Add(text);
         }
 
         var sources = new List<ArtistGridSource>();
@@ -652,7 +698,12 @@ public sealed class ArtistGridCatalog
             ParseDuration(String(value, "track_length")),
             album,
             String(value, "quality"),
-            String(value, "available_length"));
+            String(value, "available_length")?.Trim())
+        {
+            AlternateTitles = alternateTitles,
+            Contributors = contributors,
+            BestVersion = bestVersion
+        };
         return true;
     }
 
@@ -688,7 +739,7 @@ public sealed class ArtistGridCatalog
         string kind;
         string sourceId;
         Uri endpoint;
-        if (host == "pillows.su" && segments is ["f", var pillowsId])
+        if ((host is "pillows.su" or "pillowcase.su") && segments is ["f", var pillowsId])
         {
             kind = "pillows";
             sourceId = pillowsId;
@@ -727,8 +778,7 @@ public sealed class ArtistGridCatalog
         value.All(character => char.IsLetterOrDigit(character) || character is '.' or '-' or '_' or '~');
 
     private static bool IsUsableTrack(ArtistGridRawTrack track) =>
-        track.Sources.Count > 0 && (string.IsNullOrWhiteSpace(track.AvailableLength) ||
-            track.AvailableLength.Equals("full", StringComparison.OrdinalIgnoreCase));
+        track.Sources.Count > 0;
 
     private static bool IsSafeMetadataText(string? value, int maximumLength) =>
         !string.IsNullOrWhiteSpace(value) && value.Length <= maximumLength &&

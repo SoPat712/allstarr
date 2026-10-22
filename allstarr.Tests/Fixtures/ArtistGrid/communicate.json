@@ -1,0 +1,116 @@
+{
+  "name": "Ariana Grande Public Version NEW lol",
+  "tab": {
+    "name": "Unreleased",
+    "slug": "main",
+    "gid": "503467644"
+  },
+  "eras": [
+    {
+      "name": "Positions",
+      "tracks": [
+        {
+          "name": {
+            "raw": "Diva Shit [V1]\n(prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)\n(So Crazy) (Communicate)",
+            "title": "Diva Shit [V1]",
+            "credits": [
+              "(prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)",
+              "(So Crazy) (Communicate)"
+            ]
+          },
+          "notes": "Early mumble demo for \"Communicate\" bounced from the session. This early version was found to be titled \"Diva Shit\" as marked in the session.",
+          "track_length": "2:36",
+          "file_date": null,
+          "leak_date": "Jun 19, 2023",
+          "type": "Demo",
+          "available_length": "Full",
+          "quality": "Lossless",
+          "links": [
+            {
+              "url": "https://pillows.su/f/ff7439318914c3411b075d2f66724e0b"
+            }
+          ],
+          "sub_era": "Throwaways"
+        },
+        {
+          "name": {
+            "raw": "Communicate [V2]\n(ref. Tayla Parx) (prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)\n(So Crazy)",
+            "title": "Communicate [V2]",
+            "credits": [
+              "(ref. Tayla Parx) (prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)",
+              "(So Crazy)"
+            ]
+          },
+          "notes": "Later reference track by Tayla with only the 2nd verse, the pre chorus and chorus which are all finished.",
+          "track_length": "1:55",
+          "file_date": null,
+          "leak_date": null,
+          "type": "Demo",
+          "available_length": "Full",
+          "quality": "CD Quality",
+          "links": [
+            {
+              "url": "https://pillowcase.su/f/dff91c827e764909960ea23c16f77bff",
+              "text": "https://pillows.su/f/dff91c827e764909960ea23c16f77bff"
+            }
+          ],
+          "sub_era": "Throwaways"
+        },
+        {
+          "name": {
+            "raw": "⭐Communicate [V3]\n(prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)\n(So Crazy)",
+            "title": "⭐Communicate [V3]",
+            "credits": [
+              "(prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)",
+              "(So Crazy)"
+            ]
+          },
+          "notes": "Throwaway from \"Positions\" that was being sold by skyupsahl in 2022. However later leaked seperatly to the sellers listing.",
+          "track_length": "1:55",
+          "file_date": "Jan 29, 2020",
+          "leak_date": "Mar 13, 2023",
+          "type": "Demo",
+          "available_length": "OG File",
+          "quality": "Lossless",
+          "links": [
+            {
+              "url": "https://pillows.su/f/fec8c011235f0e6ebf7517da05bd016a"
+            }
+          ],
+          "sub_era": "Throwaways",
+          "notes_segments": [
+            {
+              "text": "Throwaway from \"Positions\" that was being sold by skyupsahl in 2022. However later leaked seperatly to the sellers listing.",
+              "color": "#ffffff"
+            }
+          ],
+          "og_filename": "Communicate_Abm_150_1.29.20_1-2"
+        },
+        {
+          "name": {
+            "raw": "Communicate [V4]\n(prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)\n(So Crazy)",
+            "title": "Communicate [V4]",
+            "credits": [
+              "(prod. TBHits, Tommy Wayne, Michael Foster, Charles Anderson & Mr. Franks)",
+              "(So Crazy)"
+            ]
+          },
+          "notes": "No talking in the intro and different vocal takes. Bounced from session.",
+          "track_length": "1:55",
+          "file_date": "Jan 30, 2020",
+          "leak_date": "Oct 28, 2023",
+          "type": "Throwaway",
+          "available_length": "OG File",
+          "quality": "Lossless",
+          "links": [
+            {
+              "url": "https://pillows.su/f/e155e1f6098b47314520d1e9a780e35a"
+            }
+          ],
+          "sub_era": "Throwaways",
+          "og_filename": "Communicate_Abm_150_1.30.20_1-2"
+        }
+      ]
+    }
+  ]
+}
