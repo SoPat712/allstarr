@@ -16,6 +16,38 @@ namespace allstarr.Tests;
 public sealed class ProviderCtsDiagnosticRunnerTests
 {
     [Theory]
+    [InlineData(ProviderErrorKind.RateLimited, "rate-limited")]
+    [InlineData(ProviderErrorKind.TransientFailure, "transient-failure")]
+    [InlineData(ProviderErrorKind.IncompatibleMedia, "container-conversion-failed")]
+    [InlineData(ProviderErrorKind.CapabilityUnavailable, "media-tools-unavailable")]
+    public async Task Measure_PreservesDownloadFailureCodes(ProviderErrorKind kind, string expected)
+    {
+        var streaming = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
+        streaming.As<IProviderDownloadStreamingCapability>();
+        var error = expected switch
+        {
+            "container-conversion-failed" => ProviderError.DownloadContainerConversionFailed(),
+            "media-tools-unavailable" => ProviderError.DownloadMediaToolsUnavailable(),
+            _ => new ProviderError(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromSeconds(30) : null)
+        };
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Failure(error));
+        var registry = AccountFreeRegistry("fixture", streaming.Object, Mock.Of<IProviderMetadataCapability>(MockBehavior.Strict));
+        using var selector = new ProviderCtsTrackSelector(Mock.Of<IDbContextFactory<AllstarrDbContext>>(MockBehavior.Strict));
+        var health = new Mock<IProviderOutcomeObserver>(MockBehavior.Strict);
+        health.Setup(item => item.Observe(It.IsAny<ProviderExecutionContext>(), ProviderCapabilityKind.Streaming,
+            It.Is<ProviderError?>(failure => failure == error), It.IsAny<TimeSpan>()));
+        var runner = new ProviderCtsDiagnosticRunner(registry.Object, Mock.Of<IProviderRouteAccountResolver>(MockBehavior.Strict),
+            selector, health.Object);
+
+        var result = await runner.MeasureAsync(Actor(), "fixture", null, ProviderAudioQuality.Any, "failure-code", "track");
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(expected, result.ReasonCode);
+        health.VerifyAll();
+    }
+
+    [Theory]
     [InlineData("spotiflac-jiosaavn", "Arijit Singh")]
     [InlineData("spotiflac-jiosaavn", "A. R. Rahman")]
     [InlineData("spotiflac-jiosaavn", "Shreya Ghoshal")]

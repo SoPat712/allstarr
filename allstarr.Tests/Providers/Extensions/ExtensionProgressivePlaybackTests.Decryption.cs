@@ -69,7 +69,7 @@ public sealed partial class ExtensionProgressivePlaybackTests
         Assert.Equal(HttpStatusCode.PartialContent, range.StatusCode);
         Assert.Equal(decrypted[4..16], await range.Content.ReadAsByteArrayAsync());
         Assert.Equal(1, requests);
-        var message = Assert.Single(logger.Messages, message => message.Contains(" decryption ", StringComparison.Ordinal));
+        var message = Assert.Single(logger.Messages, message => message.Contains(" audio processing ", StringComparison.Ordinal));
         Assert.Contains("success", message);
         Assert.DoesNotContain(ExtensionDownloadDecryptionTests.Key, message);
         Assert.DoesNotContain(root, message);
@@ -95,6 +95,6 @@ public sealed partial class ExtensionProgressivePlaybackTests
         Assert.False(result.IsSuccess);
         Assert.Equal(ProviderErrorKind.IncompatibleMedia, result.Error!.Kind);
         Assert.Empty(Directory.GetFiles(options.RootPath, "*", SearchOption.AllDirectories));
-        Assert.Single(logger.Messages, message => message.Contains(" decryption ", StringComparison.Ordinal));
+        Assert.Single(logger.Messages, message => message.Contains(" audio processing ", StringComparison.Ordinal));
     }
 }

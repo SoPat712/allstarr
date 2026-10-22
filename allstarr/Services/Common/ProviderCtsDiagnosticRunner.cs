@@ -214,10 +214,10 @@ public sealed class ProviderCtsDiagnosticRunner(
             var resolveMilliseconds = preparationMilliseconds;
             if (!leaseOutcome.IsSuccess)
             {
-                var error = leaseOutcome.Error!.Code == "service_unavailable" ||
-                    streaming is IProviderDownloadStreamingCapability && leaseOutcome.Error.Kind == ProviderErrorKind.TransientFailure
-                    ? "service_unavailable" : leaseOutcome.Error.Kind.ToString();
-                RecordFailure(execution, error, resolveMilliseconds);
+                var error = streaming is IProviderDownloadStreamingCapability || leaseOutcome.Error!.Code == "service_unavailable"
+                    ? leaseOutcome.Error!.Code : leaseOutcome.Error.Kind.ToString();
+                health.Observe(execution, ProviderCapabilityKind.Streaming, leaseOutcome.Error,
+                    TimeSpan.FromMilliseconds(resolveMilliseconds));
                 return ProviderCtsDiagnosticResult.Failure(
                     StatusCodes.Status422UnprocessableEntity, providerId, providerAccountId,
                     "resolve", error, resolveMilliseconds);

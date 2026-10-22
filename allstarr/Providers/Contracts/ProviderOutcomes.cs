@@ -75,6 +75,21 @@ public sealed record ProviderError
         "service_unavailable",
         "The service's download server is unavailable.");
 
+    public static ProviderError DownloadContainerConversionFailed() => new(
+        ProviderErrorKind.IncompatibleMedia,
+        "container-conversion-failed",
+        "The downloaded audio could not be copied to its native container.");
+
+    public static ProviderError DownloadMediaToolsUnavailable() => new(
+        ProviderErrorKind.CapabilityUnavailable,
+        "media-tools-unavailable",
+        "Download processing requires ffmpeg and ffprobe on the server.");
+
+    public static ProviderError DownloadVerificationRequired() => new(
+        ProviderErrorKind.CapabilityUnavailable,
+        "verification-required",
+        "The download service requires verification.");
+
     public static ProviderError BlockedByChallenge() => new(
         ProviderErrorKind.CapabilityUnavailable,
         "blocked-by-challenge",

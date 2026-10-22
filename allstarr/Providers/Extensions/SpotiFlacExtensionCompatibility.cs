@@ -204,13 +204,15 @@ public static class SpotiFlacExtensionCompatibility
                 patterns = handler["patterns"] as JsonArray;
         }
         root["urlPatterns"] = patterns?.DeepClone() ?? new JsonArray();
-        if (original?["serviceHealth"] is JsonArray endpoints && endpoints.OfType<JsonObject>().Any(item =>
+        var hasServiceHealth = original?["serviceHealth"] is JsonArray endpoints && endpoints.OfType<JsonObject>().Any(item =>
                 Uri.TryCreate(Text(item, "url"), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
-                Text(item, "method", "GET").ToUpperInvariant() is "GET" or "HEAD"))
+                Text(item, "method", "GET").ToUpperInvariant() is "GET" or "HEAD");
+        if (hasServiceHealth || capabilities.OfType<JsonObject>().Any(item => Text(item, "kind") == "Download"))
         {
             var hooks = capabilities.OfType<JsonObject>()
                 .Select(item => Text(item, "kind"))
                 .Where(kind => kind is "Metadata" or "Playlist" or "Streaming" or "Download" or "Intelligence")
+                .Where(kind => hasServiceHealth || kind == "Download")
                 .Select(kind => (JsonNode?)JsonValue.Create("probe" + kind)).ToArray();
             if (hooks.Length > 0)
             {
@@ -601,14 +603,24 @@ public static class SpotiFlacExtensionCompatibility
           };
         })(JSON.parse(_allstarrQualityOptionsJson));
         function _sfDownloadError(value) {
-          return value instanceof Error ? value
-            : new Error(typeof value === 'string' ? value : value && (value.error_message || value.error) || 'SpotiFLAC download failed');
+          var message = value instanceof Error ? value.message
+            : typeof value === 'string' ? value : value && (value.error_message || value.error) || 'SpotiFLAC download failed';
+          var reason = [value && value.error_type, value && value.code, message].join(' ');
+          if (value && (Number(value.statusCode) === 429 || String(value.code) === '429') ||
+              /\brate[ _-]*limit(?:ed)?(?:\b|_)|\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*429\b|^\s*429\b|\btoo many requests\b/i.test(reason)) {
+            var retry = Math.max(1, Math.min(3600, Number(value && value.retry_after_seconds) || Math.ceil(Number(value && value.retryAfterMs) / 1000) || 30));
+            return new Error('rate_limited retry_after_seconds=' + retry + ' ' + message);
+          }
+          if (value && value.needsVerification === true || /\bverification[ _-]*required\b/i.test(reason))
+            return new Error('Verification required');
+          return value instanceof Error ? value : new Error(message);
         }
         function _sfStopQualityFallback(error) {
           var reason = [error && error.error_type, error && error.code, error && error.error,
             error && error.error_message, error && error.message, error && error.name, String(error)].join(' ');
-          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true)
-            || /\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b|\b(?:not[ _-]*found|track[ _-]+unavailable)\b|\bHTTP\s*[:=]?\s*(?:404|410)\b/i.test(reason);
+          return error && (error.needsVerification === true || error.cancelled === true || error.canceled === true ||
+              Number(error.statusCode) === 429 || String(error.code) === '429')
+            || /\brate[ _-]*limit(?:ed)?(?:\b|_)|\b(?:http(?:\s+(?:status|error))?|status(?:\s+code)?)\s*[:=]?\s*429\b|^\s*429\b|\btoo many requests\b|\b(?:verify|verification)[ _-]*required\b|\b(?:cancel(?:led|ed|lation)?|AbortError)\b|\b(?:not[ _-]*found|track[ _-]+unavailable)\b|\bHTTP\s*[:=]?\s*(?:404|410)\b/i.test(reason);
         }
         function _sfQualitySelection(request) {
           var selection = _sfQualitySelections[request.requestedQuality] || _sfQualitySelections.Any;
@@ -834,6 +846,7 @@ public static class SpotiFlacExtensionCompatibility
             return item && /^https:\/\//i.test(String(item.url || '')) && /^(GET|HEAD)$/i.test(String(item.method || 'GET'));
           }).slice(0, 16);
           var status = endpoints.length === (_sfManifest.serviceHealth || []).length ? 'Healthy' : 'Unavailable';
+          var safeCode = null;
           for (var i = 0; i < endpoints.length; i++) {
             var endpoint = endpoints[i];
             var response = null;
@@ -841,12 +854,21 @@ public static class SpotiFlacExtensionCompatibility
             catch (_) {}
             var code = response && Number(response.statusCode || response.status || 0);
             if (!(code >= 200 && code < 300)) {
+              if (code === 429) safeCode = 'rate-limited';
               if (endpoint.required !== false) status = 'Unavailable';
               else if (status === 'Healthy') status = 'Degraded';
             }
           }
           return { status: endpoints.length ? status : 'Unavailable', observedAt: new Date().toISOString(),
-            latencyMs: Math.max(0, Date.now() - started), safeCode: endpoints.length && status === 'Healthy' ? null : 'service_unavailable' };
+            latencyMs: Math.max(0, Date.now() - started), safeCode: endpoints.length && status === 'Healthy' ? null : safeCode || 'service_unavailable' };
+        }
+        function _sfProbeDownload() {
+          var result = _sfProbeServiceHealth();
+          if (result.status === 'Healthy' || !(_sfManifest.serviceHealth || []).length) {
+            result.status = 'Degraded';
+            result.safeCode = 'download-not-verified';
+          }
+          return result;
         }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
@@ -902,7 +924,7 @@ public static class SpotiFlacExtensionCompatibility
           probeMetadata: _sfProbeServiceHealth,
           probePlaylist: _sfProbeServiceHealth,
           probeStreaming: _sfProbeServiceHealth,
-          probeDownload: _sfProbeServiceHealth,
+          probeDownload: _sfProbeDownload,
           probeIntelligence: _sfProbeServiceHealth,
           handleUrl: function(request) {
             return typeof _spotiflacExtension.handleUrl === 'function' ? _spotiflacExtension.handleUrl(request.url) : null;
@@ -1035,16 +1057,14 @@ public static class SpotiFlacExtensionCompatibility
             }
             if (!result || result.success === false) throw _sfDownloadError(result);
             var path = String(result.file_path || result.path || output);
-            if (result.decryption || result.decryption_key || result.encrypted || result.needs_decryption || result.encryption_scheme) {
+            if (result.decryption || result.decryption_key || result.encrypted || result.needs_decryption || result.encryption_scheme || result.requires_container_conversion) {
               var metadata = track || (_sfPreparedFor(trackId, request.trackId) || {}).host_track || {};
               var processing = Object.assign({}, result, { duration_ms: result.duration_ms ||
                 (result.duration ? Number(result.duration) * 1000 : metadata.duration_ms || metadata.durationMs || 0) });
               var processed = host.ProcessDownloadResult(path, JSON.stringify(processing));
-              result.actual_extension = '.m4a';
-              result.output_extension = '.m4a';
+              result.actual_extension = '.' + processed.container;
+              result.output_extension = '.' + processed.container;
               result.audio_codec = processed.codec;
-            } else if (result.requires_container_conversion) {
-              throw new Error('Download requires unsupported audio post-processing');
             }
             var extension = String(result.actual_extension || result.output_extension || path.substring(path.lastIndexOf('.')) || '.audio').toLowerCase();
             if (extension.charAt(0) !== '.') extension = '.' + extension;

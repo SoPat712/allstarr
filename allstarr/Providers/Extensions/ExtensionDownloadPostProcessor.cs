@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
@@ -13,9 +14,91 @@ internal delegate Task<string> ExtensionMediaProcessRunner(string executable, IE
 internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, ExtensionMediaProcessRunner? runner = null)
 {
     internal const string FailureMessage = "Download decryption failed.";
+    internal const string ConversionFailureMessage = "Download container conversion failed.";
+    internal const string ToolsUnavailableMessage = "Download media tools are unavailable.";
     private readonly ExtensionMediaProcessRunner run = runner ?? RunAsync;
 
     public async Task<ExtensionDecryptedMedia> ProcessAsync(string input, string resultJson, long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var conversion = false;
+        try
+        {
+            if (resultJson.Length > 64 * 1024) throw new InvalidDataException();
+            using var result = JsonDocument.Parse(resultJson, new JsonDocumentOptions { MaxDepth = 16 });
+            var value = result.RootElement;
+            conversion = value.TryGetProperty("requires_container_conversion", out var flag) && flag.ValueKind == JsonValueKind.True;
+            var encrypted = new[] { "decryption", "decryption_key", "encrypted", "needs_decryption", "encryption_scheme" }
+                .Any(name => value.TryGetProperty(name, out var marker) && marker.ValueKind is not
+                    (JsonValueKind.Null or JsonValueKind.False) && marker.ToString().Length > 0);
+            if (encrypted || !conversion)
+            {
+                var decrypted = await DecryptAsync(input, resultJson, maximumBytes, cancellationToken);
+                if (!conversion && decrypted.Codec != "flac") return decrypted;
+                conversion = true;
+            }
+            return await ConvertContainerAsync(input, value, maximumBytes, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (InvalidDataException exception) when (exception.Message is FailureMessage or ConversionFailureMessage or ToolsUnavailableMessage) { throw; }
+        catch { throw new InvalidDataException(conversion ? ConversionFailureMessage : FailureMessage); }
+    }
+
+    private async Task<ExtensionDecryptedMedia> ConvertContainerAsync(string input, JsonElement value, long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        var output = Path.Combine(Path.GetDirectoryName(input)!, $"convert-{Guid.NewGuid():N}.flac");
+        using var deadline = new CancellationTokenSource(timeout);
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
+        var token = linked.Token;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            var codec = Text(value, "audio_codec");
+            if (codec is not ("flac" or "alac") ||
+                Path.GetExtension(input).ToLowerInvariant() is not (".mp4" or ".m4a")) throw new InvalidDataException();
+            ValidateSize(input, maximumBytes);
+            var declared = Duration(value);
+            var before = await ProbeAsync(input, null, token);
+            Validate(before, codec, declared);
+            if (codec == "alac") return new("m4a", "alac");
+            var expectedDuration = declared ?? ProbeDuration(before);
+            await run("ffmpeg", ["-v", "error", "-nostdin", "-y", "-threads", "1", "-protocol_whitelist", "file",
+                "-f", "mov", "-i", input, "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
+                "-c", "copy", "-fs", maximumBytes.ToString(CultureInfo.InvariantCulture), "-f", "flac", output],
+                output, maximumBytes, token);
+            ValidateSize(output, maximumBytes);
+            using (var stream = File.OpenRead(output))
+            {
+                var magic = new byte[4];
+                if (stream.ReadAtLeast(magic, magic.Length, throwOnEndOfStream: false) != magic.Length ||
+                    !magic.AsSpan().SequenceEqual("fLaC"u8)) throw new InvalidDataException();
+            }
+            Validate(await ProbeAsync(output, null, token, "flac"), codec, expectedDuration, "flac");
+            await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
+                "-protocol_whitelist", "file", "-f", "flac", "-i", output, "-map", "0:a:0", "-threads", "1", "-f", "null", "-"],
+                null, maximumBytes, token);
+            token.ThrowIfCancellationRequested();
+            File.Move(output, input, overwrite: true);
+            return new("flac", "flac");
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 2) { throw new InvalidDataException(ToolsUnavailableMessage); }
+        catch { throw new InvalidDataException(ConversionFailureMessage); }
+        finally
+        {
+            try { if (File.Exists(output)) File.Delete(output); }
+            catch { }
+        }
+    }
+
+    private static void ValidateSize(string path, long maximumBytes)
+    {
+        var size = new FileInfo(path).Length;
+        if (size < 1 || size > maximumBytes) throw new InvalidDataException();
+    }
+
+    private async Task<ExtensionDecryptedMedia> DecryptAsync(string input, string resultJson, long maximumBytes,
         CancellationToken cancellationToken)
     {
         var output = Path.Combine(Path.GetDirectoryName(input)!, $"decrypt-{Guid.NewGuid():N}.m4a");
@@ -68,6 +151,7 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
             return new("m4a", codec!);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Win32Exception exception) when (exception.NativeErrorCode == 2) { throw new InvalidDataException(ToolsUnavailableMessage); }
         catch { throw new InvalidDataException(FailureMessage); }
         finally
         {
@@ -92,11 +176,11 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
         return duration > 0 ? duration : null;
     }
 
-    private async Task<JsonElement> ProbeAsync(string path, string? key, CancellationToken token)
+    private async Task<JsonElement> ProbeAsync(string path, string? key, CancellationToken token, string container = "mov")
     {
         List<string> arguments = ["-v", "error", "-threads", "1", "-protocol_whitelist", "file"];
         if (key != null) arguments.AddRange(["-decryption_key", key]);
-        arguments.AddRange(["-f", "mov", "-i", path, "-show_entries", "stream=codec_type,codec_name,duration:format=format_name,duration", "-of", "json"]);
+        arguments.AddRange(["-f", container, "-i", path, "-show_entries", "stream=codec_type,codec_name,duration:format=format_name,duration", "-of", "json"]);
         using var document = JsonDocument.Parse(await run("ffprobe", arguments, null, 0, token));
         return document.RootElement.Clone();
     }
@@ -109,11 +193,11 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
         return duration;
     }
 
-    private static void Validate(JsonElement probe, string? codec, double? expectedDuration)
+    private static void Validate(JsonElement probe, string? codec, double? expectedDuration, string container = "mp4")
     {
         var streams = probe.GetProperty("streams").EnumerateArray().ToArray();
         if (streams.Length != 1 || Text(streams[0], "codec_type") != "audio" || Text(streams[0], "codec_name") != codec ||
-            !(Text(probe.GetProperty("format"), "format_name") ?? "").Split(',').Contains("mp4"))
+            !(Text(probe.GetProperty("format"), "format_name") ?? "").Split(',').Contains(container))
             throw new InvalidDataException();
         var duration = ProbeDuration(probe);
         if (expectedDuration.HasValue && Math.Abs(duration - expectedDuration.Value) > Math.Max(0.25, expectedDuration.Value * 0.02))

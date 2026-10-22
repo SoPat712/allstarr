@@ -1714,6 +1714,7 @@ public partial class ExtensionHostBridge
                 success = false,
                 path = "",
                 error = exception is UnauthorizedAccessException ? "permission_denied" :
+                exception is HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } ? "rate_limited" :
                 exception is HttpRequestException { StatusCode: >= HttpStatusCode.InternalServerError } ? "service_unavailable" : "download_failed"
             };
         }
@@ -1776,13 +1777,16 @@ public partial class ExtensionHostBridge
                 .ProcessAsync(resolved, resultJson, scope.MaximumBytes, scope.CancellationToken).GetAwaiter().GetResult();
             bytes = new FileInfo(resolved).Length;
             outcome = "success";
-            return new { codec = media.Codec };
+            return new { codec = media.Codec, container = media.Container };
         }
         catch (OperationCanceledException) { outcome = "canceled"; throw; }
+        catch (InvalidDataException exception) when (exception.Message is ExtensionDownloadPostProcessor.ConversionFailureMessage or
+            ExtensionDownloadPostProcessor.ToolsUnavailableMessage)
+        { throw; }
         catch { throw new InvalidDataException(ExtensionDownloadPostProcessor.FailureMessage); }
         finally
         {
-            _logger.LogInformation("Extension {ExtensionId} decryption {Outcome} in {ElapsedMs} ms, {Bytes} bytes",
+            _logger.LogInformation("Extension {ExtensionId} audio processing {Outcome} in {ElapsedMs} ms, {Bytes} bytes",
                 _extensionId, outcome, (long)System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds, bytes);
         }
     }

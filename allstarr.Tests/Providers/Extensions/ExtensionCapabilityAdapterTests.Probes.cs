@@ -10,6 +10,48 @@ namespace allstarr.Tests;
 public sealed partial class ExtensionCapabilityAdapterTests
 {
     [Theory]
+    [InlineData(false, 200, ProviderProbeStatus.Degraded, "download-not-verified")]
+    [InlineData(true, 200, ProviderProbeStatus.Degraded, "download-not-verified")]
+    [InlineData(true, 429, ProviderProbeStatus.Unavailable, "rate-limited")]
+    [InlineData(true, 503, ProviderProbeStatus.Unavailable, "service_unavailable")]
+    public async Task DownloadProbe_DistinguishesServiceHealthFromVerifiedDownloads(bool hasEndpoint, int status,
+        ProviderProbeStatus expected, string reason)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "allstarr-download-probe", Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = JsonSerializer.Serialize(new
+            {
+                name = "download-health-fixture",
+                type = new[] { "download_provider" },
+                permissions = new { network = new[] { "health.example.test" } },
+                serviceHealth = hasEndpoint ? new[] { new { url = "https://health.example.test/", method = "GET" } } : []
+            });
+            const string script = "registerExtension({download:function(){throw new Error('Unexpected download');}});";
+            var normalized = SpotiFlacExtensionCompatibility.NormalizeManifest(source, script);
+            var manifest = ExtensionSdkV1.ParseManifest(normalized);
+            var requests = 0;
+            var handler = new AppleProviderTestFactory.Handler(request =>
+            {
+                requests++;
+                return new HttpResponseMessage((HttpStatusCode)status) { RequestMessage = request };
+            });
+            var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
+                new ExtensionRuntimePermissionSet(new HashSet<string>(["https://health.example.test/"]),
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+
+            var result = await new ExtensionHealthCapabilityAdapter(sandbox, manifest)
+                .ProbeAsync(Context(manifest.Id), new(ProviderCapabilityKind.Download));
+
+            Assert.True(result.IsSuccess, result.Error?.Code);
+            Assert.Equal(expected, result.RequireValue().Status);
+            Assert.Equal(reason, result.RequireValue().SafeCode);
+            Assert.Equal(hasEndpoint ? 1 : 0, requests);
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    [Theory]
     [InlineData("null")]
     [InlineData("'unknown'")]
     [InlineData("-1")]
@@ -46,6 +88,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData("throw new Error('HTTP 404');", 1)]
     [InlineData("throw new Error('Operation canceled');", 1)]
     [InlineData("return {success:false,needsVerification:true};", 1)]
+    [InlineData("return {success:false,error_type:'rate_limited'};", 1)]
+    [InlineData("throw new Error('HTTP 429');", 1)]
     public async Task StreamingQuality_BoundsFallbackAndPreservesFailures(string failure, int attempts)
     {
         var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions,
@@ -54,6 +98,22 @@ public sealed partial class ExtensionCapabilityAdapterTests
         Assert.False(outcome.IsSuccess);
         Assert.Equal(attempts, observed.GetProperty("calls").GetArrayLength());
         if (attempts == 2) Assert.Equal("service_unavailable", outcome.Error?.Code);
+    }
+
+    [Theory]
+    [InlineData("return {success:false,error_type:'rate_limited',error_message:'Upstream busy',retry_after_seconds:77};", "rate-limited", 77)]
+    [InlineData("return {success:false,error_type:'RATE_LIMIT_EXCEEDED',error_message:'Upstream busy',retry_after_seconds:77};", "rate-limited", 77)]
+    [InlineData("throw Object.assign(new Error('Upstream busy'),{code:'RATE_LIMITED',retryAfterMs:77000});", "rate-limited", 77)]
+    [InlineData("return {success:false,needsVerification:true};", "verification-required", 0)]
+    public async Task DownloadFailure_PreservesStructuredFailureReason(string failure, string expected, int retrySeconds)
+    {
+        var (outcome, observed) = await RunDeclaredQualityDownload(MixedQualityOptions,
+            ProviderAudioQuality.HighResolution, failure, streaming: true);
+
+        Assert.False(outcome.IsSuccess);
+        Assert.Equal(expected, outcome.Error?.Code);
+        Assert.Equal(retrySeconds > 0 ? TimeSpan.FromSeconds(retrySeconds) : (TimeSpan?)null, outcome.Error?.RetryAfter);
+        Assert.Single(observed.GetProperty("calls").EnumerateArray());
     }
 
     [Fact]
@@ -85,6 +145,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData(ProviderCapabilityKind.Metadata, 200, ProviderProbeStatus.Healthy)]
     [InlineData(ProviderCapabilityKind.Streaming, 200, ProviderProbeStatus.Healthy)]
     [InlineData(ProviderCapabilityKind.Download, 502, ProviderProbeStatus.Unavailable)]
+    [InlineData(ProviderCapabilityKind.Download, 200, ProviderProbeStatus.Degraded)]
     public async Task DeclaredServiceHealth_ProbesSoundCloudHomepageWithoutParsingHtml(
         ProviderCapabilityKind capability, int status, ProviderProbeStatus expected)
     {
@@ -118,7 +179,8 @@ public sealed partial class ExtensionCapabilityAdapterTests
             Assert.Equal(expected, result.RequireValue().Status);
             Assert.Equal(["GET https://soundcloud.com/"], requests);
             Assert.True(result.RequireValue().Latency >= TimeSpan.Zero);
-            Assert.Equal(status == 200 ? null : "service_unavailable", result.RequireValue().SafeCode);
+            Assert.Equal(status != 200 ? "service_unavailable" : capability == ProviderCapabilityKind.Download
+                ? "download-not-verified" : null, result.RequireValue().SafeCode);
             var unsupported = await adapter.ProbeAsync(Context(manifest.Id), new(ProviderCapabilityKind.Intelligence));
             Assert.Equal(ProviderErrorKind.NotSupported, unsupported.Error?.Kind);
             Assert.Single(requests);
