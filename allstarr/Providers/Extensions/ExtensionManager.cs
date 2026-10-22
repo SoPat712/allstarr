@@ -1768,22 +1768,44 @@ public partial class ExtensionHostBridge
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var outcome = "failed";
         long bytes = 0;
+        var step = "invocation-scope";
         try
         {
             var scope = RequireFileScope();
+            step = "processing-state";
             if (scope.Progressive?.Published == true) throw new InvalidDataException();
+            step = "resolve-input-path";
             var resolved = scope.ResolveTemporaryPath(path);
+            step = "post-processing";
             var media = DownloadPostProcessor
                 .ProcessAsync(resolved, resultJson, scope.MaximumBytes, scope.CancellationToken).GetAwaiter().GetResult();
             bytes = new FileInfo(resolved).Length;
             outcome = "success";
             return new { codec = media.Codec, container = media.Container };
         }
-        catch (OperationCanceledException) { outcome = "canceled"; throw; }
-        catch (InvalidDataException exception) when (exception.Message is ExtensionDownloadPostProcessor.ConversionFailureMessage or
-            ExtensionDownloadPostProcessor.ToolsUnavailableMessage)
-        { throw; }
-        catch { throw new InvalidDataException(ExtensionDownloadPostProcessor.FailureMessage); }
+        catch (OperationCanceledException exception)
+        {
+            outcome = "canceled";
+            if (exception.Data[ExtensionDownloadPostProcessor.DiagnosticKey] is ExtensionMediaProcessingDiagnostic diagnostic)
+                _logger.LogInformation("Extension {ExtensionId} audio processing canceled at {Step}, elapsed {ElapsedMs} ms, stderr: {Stderr}",
+                    _extensionId, diagnostic.Step, diagnostic.ElapsedMs, diagnostic.Stderr);
+            throw;
+        }
+        catch (Exception exception)
+        {
+            if (exception.Data[ExtensionDownloadPostProcessor.DiagnosticKey] is ExtensionMediaProcessingDiagnostic diagnostic)
+                _logger.LogWarning("Extension {ExtensionId} audio {Operation} failed at {Step}: {Failure}, exit code {ExitCode}, " +
+                    "input {InputBytes} bytes, output {OutputBytes} bytes, duration declared/input/output {DeclaredDuration}/{InputDuration}/{OutputDuration}, " +
+                    "elapsed {ElapsedMs} ms, stderr: {Stderr}", _extensionId, diagnostic.Operation, diagnostic.Step, diagnostic.Failure,
+                    diagnostic.ExitCode, diagnostic.InputBytes, diagnostic.OutputBytes, diagnostic.DeclaredDuration,
+                    diagnostic.InputDuration, diagnostic.OutputDuration, diagnostic.ElapsedMs, diagnostic.Stderr);
+            else
+                _logger.LogWarning("Extension {ExtensionId} audio processing failed at {Step}: {Failure}",
+                    _extensionId, step, exception.GetType().Name);
+            if (exception is InvalidDataException && exception.Message is ExtensionDownloadPostProcessor.ConversionFailureMessage or
+                ExtensionDownloadPostProcessor.ToolsUnavailableMessage or ExtensionDownloadPostProcessor.FailureMessage) throw;
+            throw new InvalidDataException(ExtensionDownloadPostProcessor.FailureMessage);
+        }
         finally
         {
             _logger.LogInformation("Extension {ExtensionId} audio processing {Outcome} in {ElapsedMs} ms, {Bytes} bytes",

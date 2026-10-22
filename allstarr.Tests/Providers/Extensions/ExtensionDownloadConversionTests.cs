@@ -297,7 +297,10 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         if (cancelCaller)
         {
             cancellation.Cancel();
-            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+            var error = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+            var diagnostic = Assert.IsType<ExtensionMediaProcessingDiagnostic>(error.Data[ExtensionDownloadPostProcessor.DiagnosticKey]);
+            Assert.Equal(duringHash ? "input-hash" : "encode", diagnostic.Step);
+            Assert.Equal("canceled", diagnostic.Failure);
         }
         else Assert.Equal("Download container conversion failed.", (await Assert.ThrowsAsync<InvalidDataException>(() => pending)).Message);
         await AssertOriginalAsync();
@@ -324,7 +327,12 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
             "-i", input, "-map", "0:a:0", "-threads", "1", "-c:a", pcmCodec, "-f", "md5", "-"]);
         // No declared duration: the conversion must use the fragmented input's probed duration.
         var descriptor = JsonSerializer.Serialize(new { requires_container_conversion = true, audio_codec = "flac" });
-        var media = await new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(10)).ProcessAsync(input, descriptor, 100_000, default);
+        ExtensionDecryptedMedia media;
+        try { media = await new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(10)).ProcessAsync(input, descriptor, 1_000_000, default); }
+        catch (InvalidDataException exception)
+        {
+            throw new Xunit.Sdk.XunitException(JsonSerializer.Serialize(exception.Data[ExtensionDownloadPostProcessor.DiagnosticKey]));
+        }
         Assert.Equal("flac", media.Container);
         Assert.Equal("fLaC", System.Text.Encoding.ASCII.GetString((await File.ReadAllBytesAsync(input))[..4]));
         using var probe = JsonDocument.Parse(await ExtensionDownloadDecryptionTests.RunAsync("ffprobe", ["-v", "error",
