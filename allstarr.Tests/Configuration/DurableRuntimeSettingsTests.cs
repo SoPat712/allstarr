@@ -118,6 +118,19 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         {
             foreach (var owner in new Guid?[] { null, _userId })
             {
+                foreach (var key in owner == null ? new[] { "SpotifyApi:Enabled", "MusicBrainz:Enabled" } : [])
+                    db.RuntimeSettings.Add(new()
+                    {
+                        Id = Guid.CreateVersion7(),
+                        OwnerUserId = owner,
+                        Key = key,
+                        ValueType = RuntimeSettingValueType.Boolean,
+                        ValueJson = "false",
+                        Source = "fixture",
+                        Revision = 1,
+                        CreatedAt = _clock.UtcNow,
+                        UpdatedAt = _clock.UtcNow
+                    });
                 db.RuntimeSettings.Add(new()
                 {
                     Id = Guid.CreateVersion7(),
@@ -459,6 +472,45 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
             [new("SpotifyApi:LyricsApiUrl", "http://obsolete.example.test")], "webui", _userId));
     }
 
+    [Theory]
+    [InlineData("SpotifyApi:Enabled")]
+    [InlineData("MusicBrainz:Enabled")]
+    public async Task DuplicateSourceSwitchCannotBeWrittenOrProjectedFromSavedState(string key)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [key] = "false"
+        }).Build();
+        var spotify = new SpotifyApiSettings();
+        configuration.GetSection("SpotifyApi").Bind(spotify);
+        Assert.True(spotify.Enabled);
+        var musicBrainz = new MusicBrainzSettings();
+        configuration.GetSection("MusicBrainz").Bind(musicBrainz);
+        Assert.True(musicBrainz.Enabled);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            db.RuntimeSettings.Add(new()
+            {
+                Id = Guid.CreateVersion7(),
+                Key = key,
+                ValueType = RuntimeSettingValueType.Boolean,
+                ValueJson = "false",
+                Source = "fixture",
+                Revision = 1,
+                CreatedAt = _clock.UtcNow,
+                UpdatedAt = _clock.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+        var service = new DurableRuntimeSettingsService(_factory, configuration, _clock,
+            new RuntimeSettingsChangeSignal());
+        await LiveOptions(configuration, new PlaybackSettings(), spotify).ProjectAsync(service, default);
+        Assert.True(spotify.Enabled);
+        Assert.DoesNotContain(key, RuntimeSettingCatalog.Definitions.Keys);
+        await Assert.ThrowsAsync<ArgumentException>(() => service.ApplyBatchAsync(
+            [new(key, "false", 1)], "webui", _userId));
+    }
+
     [Fact]
     public async Task Get_ReportsBootstrapFallbackThenTypedDurableOverride()
     {
@@ -543,15 +595,15 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
     public async Task ApplyBatch_UsesCreateOnlyAndOptimisticRevisionContracts()
     {
         var service = CreateService([]);
-        var created = await service.ApplyBatchAsync([new("MusicBrainz:Enabled", "false")], "webui", _userId);
+        var created = await service.ApplyBatchAsync([new("SpotifyApi:PreferIsrcMatching", "false")], "webui", _userId);
         Assert.Equal(1, Assert.Single(created.Settings).Revision);
         await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.ApplyBatchAsync(
-            [new("MusicBrainz:Enabled", "true")], "webui", _userId));
+            [new("SpotifyApi:PreferIsrcMatching", "true")], "webui", _userId));
         await Assert.ThrowsAsync<RuntimeSettingConflictException>(() => service.ApplyBatchAsync(
-            [new("MusicBrainz:Enabled", "true", 99)], "webui", _userId));
+            [new("SpotifyApi:PreferIsrcMatching", "true", 99)], "webui", _userId));
         _clock.UtcNow = _clock.UtcNow.AddMinutes(1);
         var updated = await service.ApplyBatchAsync(
-            [new("MusicBrainz:Enabled", "true", 1)], "webui", _userId);
+            [new("SpotifyApi:PreferIsrcMatching", "true", 1)], "webui", _userId);
         var value = Assert.Single(updated.Settings);
         Assert.Equal(2, value.Revision); Assert.Equal(true, value.Value);
         Assert.Equal(_clock.UtcNow, value.UpdatedAt);
@@ -646,7 +698,7 @@ public sealed class DurableRuntimeSettingsTests : IAsyncLifetime
         await using var db = await _factory.CreateDbContextAsync();
         await using var transaction = await db.Database.BeginTransactionAsync();
         var staged = await service.StageBatchAsync(db,
-            [new("SpotifyApi:Enabled", "true")], "legacy-import", _userId);
+            [new("SpotifyApi:PreferIsrcMatching", "true")], "legacy-import", _userId);
         Assert.Single(staged);
         await db.SaveChangesAsync(); await transaction.RollbackAsync();
         Assert.False(await db.RuntimeSettings.AsNoTracking().AnyAsync());

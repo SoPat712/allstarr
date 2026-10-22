@@ -4,6 +4,7 @@ using allstarr.Core.Jobs;
 using allstarr.Core.Operations;
 using allstarr.Core.Playback;
 using allstarr.Core.Storage;
+using allstarr.Core.Settings;
 using allstarr.Models.Settings;
 using allstarr.Services.MusicBrainz;
 using Microsoft.EntityFrameworkCore;
@@ -17,10 +18,16 @@ public sealed record MusicBrainzListeningEnrichmentPayload(
 
 public sealed class MusicBrainzListeningEnrichmentQueue(
     DurableJobQueue jobs,
-    IOptions<MusicBrainzSettings> settings)
+    IOptions<MusicBrainzSettings> settings,
+    IEffectiveProviderPolicyResolver? providerPolicies = null)
 {
     public const string JobType = "listening.musicbrainz.enrich";
-    public bool Enabled => settings.Value.Enabled;
+    public async Task<bool> IsEnabledForAsync(IntelligenceScope scope, CancellationToken cancellationToken)
+    {
+        _ = settings;
+        return providerPolicies == null || (await providerPolicies.ResolveForUserAsync(
+            scope.OwnerUserId, cancellationToken)).IsAutomatic("musicbrainz");
+    }
 
     public async Task<DurableJobEnqueueResult?> EnqueueAsync(
         IntelligenceScope scope,
@@ -28,7 +35,7 @@ public sealed class MusicBrainzListeningEnrichmentQueue(
         string correlationId,
         CancellationToken cancellationToken)
     {
-        if (!Enabled) return null;
+        if (!await IsEnabledForAsync(scope, cancellationToken)) return null;
         return await jobs.EnqueueAsync(new DurableJobEnqueueRequest<MusicBrainzListeningEnrichmentPayload>(
             JobType,
             PlaybackSignalPipeline.Hash($"{occurrenceKey}|{MusicBrainzService.SourceRevision}"),
@@ -44,7 +51,7 @@ public sealed class MusicBrainzListeningEnrichmentQueue(
         string correlationId,
         CancellationToken cancellationToken)
     {
-        if (!Enabled) return null;
+        if (!await IsEnabledForAsync(scope, cancellationToken)) return null;
         if (string.IsNullOrWhiteSpace(trackReference) || trackReference.Length > 500)
             throw new ArgumentException("The imported track reference is invalid.", nameof(trackReference));
         return await jobs.EnqueueAsync(new DurableJobEnqueueRequest<MusicBrainzListeningEnrichmentPayload>(
@@ -59,7 +66,8 @@ public sealed class MusicBrainzListeningEnrichmentQueue(
 public sealed class MusicBrainzListeningEnrichmentJobHandler(
     IDbContextFactory<AllstarrDbContext> factory,
     MusicBrainzService musicBrainz,
-    IPlatformClock clock) : IDurableJobHandler
+    IPlatformClock clock,
+    IEffectiveProviderPolicyResolver? providerPolicies = null) : IDurableJobHandler
 {
     public string JobType => MusicBrainzListeningEnrichmentQueue.JobType;
 
@@ -74,6 +82,10 @@ public sealed class MusicBrainzListeningEnrichmentJobHandler(
             return DurableJobCompletion.Failure(
                 "musicbrainz_enrichment_scope_invalid",
                 "The saved MusicBrainz enrichment scope is invalid.");
+
+        if (providerPolicies != null && !(await providerPolicies.ResolveForUserAsync(
+                payload.Scope.OwnerUserId, cancellationToken)).IsAutomatic("musicbrainz"))
+            return DurableJobCompletion.Success();
 
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         if (!await IntelligencePolicyService.OwnsBackendAsync(db, payload.Scope, cancellationToken))

@@ -30,6 +30,17 @@ export interface CheckGuide {
 
 // Plain labels and one next step for the reasons automatic checks report.
 const checkGuides: Record<string, CheckGuide> = {
+  probe_not_available: { label: "Not checked yet", step: "This capability has no automatic check." },
+  "download-not-verified": { label: "Not verified", step: "Downloads have not been verified. Run a playback check to verify the download path." },
+  "sample-unavailable": { label: "Sample unavailable", step: "Sample unavailable, retrying another recording." },
+  "authentication-required": { label: "Source requires authentication", step: "The source endpoint requires authentication. Check its sign-in." },
+  "access-denied": { label: "Source denied access", step: "The source endpoint denied access. Try again later." },
+  "playlist-not-found": { label: "Test playlist unavailable", step: "The source returned no test playlist. Try again later." },
+  "playlist-empty": { label: "Test playlist is empty", step: "The source returned a playlist without songs. Try again later." },
+  "playlist-invalid": { label: "Invalid playlist response", step: "The source returned unusable playlist data. Try again later." },
+  "metadata-not-found": { label: "Test song unavailable", step: "The source returned no test song. Try again later." },
+  "metadata-invalid": { label: "Invalid song response", step: "The source returned unusable song data. Try again later." },
+  "probe-limit-exceeded": { label: "Check limit reached", step: "The source exceeded the check's request or time limit. Try again later." },
   sign_in_needed: { label: "Needs verification", step: "Sign in again in this source's Sign-in section.", signIn: true },
   verification_required: { label: "Needs verification", step: "Sign in again in this source's Sign-in section.", signIn: true },
   "track-selection": {
@@ -64,8 +75,8 @@ export const checkGuide = (reasonCode?: string | null): CheckGuide | null =>
 export function sourceProblemLabel(provider: ProviderDefinition, accounts: ProviderAccount[], health: ProviderHealth[]) {
   const ids = new Set(accounts.filter((item) =>
     item.providerId.toLowerCase() === provider.id.toLowerCase() && item.enabled).map((item) => item.id));
-  const failing = health.filter((item) => item.health === "degraded" &&
-    (ids.has(item.providerAccountId) || item.provider?.toLowerCase() === provider.id.toLowerCase()));
+  const failing = health.filter((item) => isChecked(item) && item.health === "degraded" &&
+    (item.providerAccountId != null && ids.has(item.providerAccountId) || item.provider?.toLowerCase() === provider.id.toLowerCase()));
   for (const item of failing) {
     const guide = checkGuide(item.reasonCode);
     if (guide) return guide.label;
@@ -81,6 +92,9 @@ export function sourceStatusLabel(state: string) {
 }
 
 export function checkStatusLabel(check: Omit<SourceCheck, "id">) {
+  if (check.reasonCode === "probe_not_available") return "Not checked yet";
+  if (check.reasonCode === "download-not-verified") return "Not verified";
+  if (check.reasonCode === "sample-unavailable") return "Sample unavailable";
   if (check.ready) return "Ready";
   const guide = checkGuide(check.reasonCode);
   if (guide) return guide.label;
@@ -94,6 +108,7 @@ export function checkStatusLabel(check: Omit<SourceCheck, "id">) {
 }
 
 export function checkStatusState(check: Omit<SourceCheck, "id">) {
+  if (isNeutralCheck(check)) return "";
   if (check.ready) return "healthy";
   if (checkGuide(check.reasonCode)?.signIn) return "needs_verification";
   if (check.health === "degraded" || check.health === "unavailable") return "degraded";
@@ -182,43 +197,45 @@ export function sourceStatus(
   if (provider.status === "disabled") return "disabled";
   const connected = accounts.filter((item) =>
     item.providerId.toLowerCase() === provider.id.toLowerCase() && item.enabled);
+  const checks = sourceChecks(provider, health).filter(isChecked);
+  const failing = checks.filter((item) => item.health === "degraded" || item.health === "unavailable");
+  if (failing.some((item) => checkGuide(item.reasonCode)?.signIn)) return "needs_verification";
+  if (failing.length) return "degraded";
+  if (checks.some((item) => item.health === "healthy")) return "healthy";
   if (connected.length) {
-    const ids = new Set(connected.map((item) => item.id));
-    const checks = health.filter((item) => ids.has(item.providerAccountId) && item.canTest);
-    const failing = checks.filter((item) => item.health === "degraded");
-    // A sign-in is the one failure the owner can fix, so it leads even when other checks also fail.
-    if (failing.some((item) => checkGuide(item.reasonCode)?.signIn)) return "needs_verification";
-    if (failing.length) return "degraded";
-    if (checks.length && checks.every((item) => item.health === "healthy")) return "healthy";
     // Signed extensions keep their sign-in outside the credential store; the sign-in panel shows its state.
     return provider.usesSignedSession || connected.every((item) => item.secret.configured && !item.secret.revoked)
       ? "configured"
       : "needs_config";
   }
   if (sourceNeedsAccount(provider)) return "needs_config";
-  return provider.status || "available";
+  return ["healthy", "degraded"].includes(provider.status ?? "") ? "available" : provider.status || "available";
+}
+
+const isNeutralCheck = (check: { reasonCode?: string | null }) =>
+  check.reasonCode === "probe_not_available" || check.reasonCode === "download-not-verified" ||
+  check.reasonCode === "sample-unavailable";
+
+const isChecked = (check: { health?: string | null; reasonCode?: string | null; canTest?: boolean; supported?: boolean; enabled?: boolean }) =>
+  check.enabled !== false && check.supported !== false && check.canTest !== false && !isNeutralCheck(check) &&
+  ["healthy", "degraded", "unavailable"].includes(check.health ?? "");
+
+function sourceChecks(provider: ProviderDefinition, health: ProviderHealth[]) {
+  const checks = health.filter((item) =>
+    item.provider.toLowerCase() === provider.id.toLowerCase());
+  return checks.length ? checks.filter((item) => item.enabled !== false) : provider.runtimeCapabilities ?? [];
 }
 
 export function sourceMetrics(
   provider: ProviderDefinition,
-  summary: ProviderSummary | undefined,
   health: ProviderHealth[],
 ) {
-  const checks = health.filter((item) =>
-    item.provider.toLowerCase() === provider.id.toLowerCase() && item.canTest);
-  const runtime = (provider.runtimeCapabilities ?? [])
-    .filter((item) => item.supported !== false);
-  const hasSummary = (summary?.capabilityTotal ?? 0) > 0;
+  const checks = sourceChecks(provider, health).filter(isChecked);
   return {
-    total: hasSummary ? summary!.capabilityTotal : runtime.length || checks.length,
-    passing: hasSummary ? summary!.healthyCapabilityCount :
-      runtime.length ? runtime.filter((item) => item.ready).length :
-      checks.filter((item) => item.health === "healthy").length,
-    failed: hasSummary ? summary!.failedCapabilityCount :
-      runtime.length ? runtime.filter((item) => item.health === "degraded").length :
-      checks.filter((item) => item.health === "degraded").length,
-    checkedAt: summary?.lastCheckedAt ??
-      runtime.map((item) => item.testedAt).filter(Boolean).toSorted().at(-1) ??
+    total: checks.length,
+    passing: checks.filter((item) => item.health === "healthy").length,
+    failed: checks.filter((item) => item.health === "degraded" || item.health === "unavailable").length,
+    checkedAt:
       checks.map((item) => item.testedAt).filter(Boolean).toSorted().at(-1) ??
       null,
   };
@@ -304,6 +321,14 @@ export function settingDefault(field: ProviderSetting) {
   } catch {
     return field.type === "toggle" ? false : "";
   }
+}
+
+export function sourceServerFields(provider: ProviderDefinition) {
+  const fields = provider.configSchema ?? [];
+  return {
+    standard: fields.filter(field => !field.advanced),
+    advanced: fields.filter(field => field.advanced),
+  };
 }
 
 export const sourceNeedsAccount = (provider: ProviderDefinition) =>

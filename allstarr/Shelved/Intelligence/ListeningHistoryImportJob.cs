@@ -88,7 +88,8 @@ public sealed class ListeningHistoryImportJobHandler(
                       ?? throw new ListeningHistoryImportException(
                           "history_import_preview_invalid",
                           "The saved history import preview is invalid.");
-        var accumulator = new ApplyAccumulator(factory, payload, execution.Claim.JobId, clock, musicBrainz.Enabled, libraryAccess);
+        var accumulator = new ApplyAccumulator(factory, payload, execution.Claim.JobId, clock,
+            await musicBrainz.IsEnabledForAsync(payload.Scope, cancellationToken), libraryAccess);
         try
         {
             var scan = await importers.ScanAsync(
@@ -149,7 +150,7 @@ public sealed class ListeningHistoryImportJobHandler(
         DurableJobExecutionContext execution,
         CancellationToken cancellationToken)
     {
-        if (!musicBrainz.Enabled) return;
+        if (!await musicBrainz.IsEnabledForAsync(payload.Scope, cancellationToken)) return;
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         var provenance = $"history-import:{payload.ImportId:N}:";
         var candidates = await db.ListeningEvents.AsNoTracking().Where(item =>

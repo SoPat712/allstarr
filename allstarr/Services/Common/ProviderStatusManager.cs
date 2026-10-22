@@ -26,15 +26,16 @@ namespace allstarr.Services.Common;
 /// </summary>
 public class ProviderStatusManager
 {
+    private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
+
     private readonly ConcurrentDictionary<ProviderRuntimeStatusKey,
         (long? Revision, ProviderRuntimeStatus Status)> _recordedChecks = new();
 
     private readonly record struct ProbeOutcome(
         bool Success,
         string? ReasonCode = null,
-        bool MeasuresLatency = true);
+        bool MeasuresLatency = true, bool IsNeutral = false);
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(5);
-    private const string SpotifyLyricsTestTrackId = "3yII7UwgLF6K5zW3xad3MP";
     private static readonly (string Provider, string Capability, ProviderAccountRequirement AccountRequirement)[] KnownCapabilities =
     [
         ("spotify", ProviderCapabilities.Playlist, ProviderAccountRequirement.Required),
@@ -283,6 +284,8 @@ public class ProviderStatusManager
     public void RestoreCheckResult(ProviderRuntimeStatusKey key, long? revision, ProviderRuntimeStatus status)
     {
         if (!IsCapabilitySupported(key.Provider, key.Capability)) return;
+        if (ProviderRuntimeStatus.IsNeutralReason(status.ReasonCode))
+            status = status with { Health = ProviderHealthState.Unknown, CircuitOpen = false };
         _recordedChecks.AddOrUpdate(key, (revision, status), (_, previous) =>
             previous.Revision > revision || previous.Status.TestedAt > status.TestedAt ? previous : (revision, status));
     }
@@ -292,6 +295,47 @@ public class ProviderStatusManager
 
     public bool CanTestAccountFreeCapability(string provider, string capability) =>
         CanRunWithoutAccount(provider, capability) && CanTestCapability(provider, capability);
+
+    internal ProviderCheckResult? RecordDownloadVerification(ProviderCtsDiagnosticResult measurement, long? revision)
+    {
+        if (!measurement.Succeeded || !measurement.DownloadVerified || measurement.SampleBytes <= 0 ||
+            !IsCapabilitySupported(measurement.ProviderId, ProviderCapabilities.Download)) return null;
+        var key = measurement.ProviderAccountId is { } accountId
+            ? ProviderRuntimeStatusKey.CreateManaged(measurement.ProviderId, ProviderCapabilities.Download, accountId)
+            : ProviderRuntimeStatusKey.CreateAccountFree(measurement.ProviderId, ProviderCapabilities.Download);
+        _health.Record(key, revision, true, (long?)measurement.ClickToStreamMilliseconds, null);
+        var result = BuildBaselineStatus(key) with
+        {
+            Health = ProviderHealthState.Healthy,
+            TestedAt = _clock.UtcNow,
+            LatencyMilliseconds = (long?)measurement.ClickToStreamMilliseconds,
+            ReasonCode = null,
+            VerificationMeasurementId = measurement.MeasurementId,
+            VerificationMethod = "streaming-download"
+        };
+        RestoreCheckResult(key, revision, result);
+        return new(key, revision, result);
+    }
+
+    internal ProviderCheckResult? RecordStreamingMeasurement(ProviderCtsDiagnosticResult measurement, long? revision)
+    {
+        if (!IsCapabilitySupported(measurement.ProviderId, ProviderCapabilities.Streaming)) return null;
+        var key = measurement.ProviderAccountId is { } accountId
+            ? ProviderRuntimeStatusKey.CreateManaged(measurement.ProviderId, ProviderCapabilities.Streaming, accountId)
+            : ProviderRuntimeStatusKey.CreateAccountFree(measurement.ProviderId, ProviderCapabilities.Streaming);
+        var measured = !ProviderRuntimeStatus.IsNeutralReason(measurement.ReasonCode) &&
+            measurement.Stage is not ("capability" or "account-resolution" or "concurrency");
+        if (measured) _health.Record(key, revision, measurement.Succeeded, (long?)measurement.ClickToStreamMilliseconds, measurement.ReasonCode);
+        var result = BuildBaselineStatus(key) with
+        {
+            Health = !measured ? ProviderHealthState.Unknown : measurement.Succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+            TestedAt = _clock.UtcNow,
+            LatencyMilliseconds = (long?)measurement.ClickToStreamMilliseconds,
+            ReasonCode = measurement.ReasonCode
+        };
+        RestoreCheckResult(key, revision, result);
+        return new(key, revision, result, measurement.SeekRung);
+    }
 
     private ProviderRuntimeStatus GetStatusCore(
         ProviderRuntimeStatusKey key,
@@ -328,6 +372,8 @@ public class ProviderStatusManager
                 Health = recorded.Status.Health,
                 TestedAt = recorded.Status.TestedAt,
                 LatencyMilliseconds = recorded.Status.LatencyMilliseconds,
+                VerificationMeasurementId = recorded.Status.VerificationMeasurementId,
+                VerificationMethod = recorded.Status.VerificationMethod,
                 ReasonCode = BaselineReasonTakesPrecedence(baseline) ? baseline.ReasonCode : recorded.Status.ReasonCode
             };
         if (observation == null) return baseline;
@@ -419,6 +465,18 @@ public class ProviderStatusManager
                 key.Capability,
                 accountSecrets,
                 cancellationToken, providerAccountId);
+            if (key.Capability == ProviderCapabilities.Download && probe.Success)
+                probe = new(false, "download-not-verified", probe.MeasuresLatency);
+            if (probe.IsNeutral || ProviderRuntimeStatus.IsNeutralReason(probe.ReasonCode))
+            {
+                _health.CancelProbe(probeObservation);
+                var previous = GetStatusCore(key, baseline, accountRevision);
+                if (previous.VerificationMeasurementId.HasValue && previous.Health == ProviderHealthState.Healthy)
+                    return previous;
+                var neutral = baseline with { ReasonCode = probe.ReasonCode, TestedAt = _clock.UtcNow };
+                RestoreCheckResult(key, accountRevision, neutral);
+                return neutral;
+            }
             if (key.Provider == "apple-musickit")
             {
                 baseline = BuildBaselineStatus(key);
@@ -506,14 +564,14 @@ public class ProviderStatusManager
                 continue;
             }
 
-            attempted = true;
             var result = await TestManagedProviderCapabilityAsync(
                 normalized,
                 capability,
                 providerAccountId,
                 accountSecrets,
                 cancellationToken, accountRevision);
-            healthy &= result.Health == ProviderHealthState.Healthy;
+            attempted |= result.HasCheckResult;
+            healthy &= result.Health != ProviderHealthState.Degraded;
         }
 
         return attempted && healthy;
@@ -584,7 +642,7 @@ public class ProviderStatusManager
                 (ProviderConfigurationState.NeedsConfiguration, "missing_qobuz_account"),
 
             ("spotify", ProviderCapabilities.Playlist or ProviderCapabilities.Lyrics) =>
-                _spotifySettings.Enabled && IsConfiguredValue(_spotifySettings.SessionCookie)
+                IsConfiguredValue(_spotifySettings.SessionCookie)
                     ? (ProviderConfigurationState.Configured, null)
                     : (ProviderConfigurationState.NeedsConfiguration, "missing_spotify_session"),
 
@@ -681,6 +739,7 @@ public class ProviderStatusManager
     {
         if (!IsCapabilitySupported(Normalize(provider), Normalize(capability))) return;
         reasonCode = NormalizeTryReason(reasonCode);
+        if (ProviderRuntimeStatus.IsNeutralReason(reasonCode)) return;
         if (!succeeded && reasonCode is "not-found" or "incompatible-media" or "not-supported" or
             "canceled" or "busy" or "temporary-storage-full" or "invalid-input" or "needs-artist") return;
         var key = accountId.HasValue ? ProviderRuntimeStatusKey.CreateManaged(provider, capability, accountId.Value) :
@@ -721,6 +780,8 @@ public class ProviderStatusManager
             "capabilityunavailable" => "capability-unavailable",
             "applewebtokenunavailable" => "apple-web-token-unavailable",
             "unreachable" => "unreachable",
+            "downloadnotverified" => "download-not-verified",
+            "probenotavailable" => "probe_not_available",
             _ => "probe_failed"
         };
 
@@ -747,7 +808,22 @@ public class ProviderStatusManager
     private bool HasProbe(string provider, string capability)
     {
         if (TryGetExtensionCapability(provider, capability, out var extensionCapability))
-            return extensionCapability!.HasUsableImplementation;
+        {
+            if (!extensionCapability!.HasUsableImplementation) return false;
+            var descriptor = ProviderRegistry!.GetRequired(provider);
+            var kind = extensionCapability.Capability;
+            if (descriptor.HealthProbe && descriptor.Capabilities.Any(item => item.Capability == ProviderCapabilityKind.Health &&
+                item.Hooks.Contains("probe" + kind))) return true;
+            return kind switch
+            {
+                ProviderCapabilityKind.Metadata => extensionCapability.Hooks.Contains("searchTracks"),
+                ProviderCapabilityKind.Playlist => extensionCapability.Hooks.Contains("getUserPlaylists"),
+                ProviderCapabilityKind.Streaming => extensionCapability.Hooks.Contains("getStreamLease"),
+                ProviderCapabilityKind.Download => extensionCapability.Hooks.Contains("checkAvailability"),
+                ProviderCapabilityKind.Lyrics => extensionCapability.Hooks.Contains("fetchLyrics"),
+                _ => false
+            };
+        }
         return (provider, capability) switch
         {
             ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist or ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => true,
@@ -806,17 +882,17 @@ public class ProviderStatusManager
                 SecretValue(accountSecrets, "sessioncookie", "spdc", "cookie") ?? _spotifySettings.SessionCookie, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestAppleMusicAsync(capability, accountSecrets, cancellationToken),
             ("apple-musickit", ProviderCapabilities.Streaming or ProviderCapabilities.Download or ProviderCapabilities.Lyrics) => await AsOutcome(TestAppleDownloadAsync(capability, cancellationToken)),
-            ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestDeezerMetadataAsync(cancellationToken)),
+            ("deezer", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestDeezerMetadataAsync(cancellationToken),
             ("deezer", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestDeezerAccountAsync(
                 SecretValue(accountSecrets, "arl") ?? _deezerSettings.Arl,
                 cancellationToken)),
-            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await AsOutcome(TestQobuzMetadataAsync(
-                SecretValue(accountSecrets, "userauthtoken", "token"), cancellationToken)),
+            ("qobuz", ProviderCapabilities.Metadata or ProviderCapabilities.Playlist) => await TestQobuzMetadataAsync(
+                SecretValue(accountSecrets, "userauthtoken", "token"), cancellationToken),
             ("qobuz", ProviderCapabilities.Streaming or ProviderCapabilities.Download) => await AsOutcome(TestQobuzAccountAsync(
                 SecretValue(accountSecrets, "userauthtoken", "token") ?? _qobuzSettings.UserAuthToken,
                 SecretValue(accountSecrets, "userid") ?? _qobuzSettings.UserId,
                 cancellationToken)),
-            ("lrclib", ProviderCapabilities.Lyrics) => await AsOutcome(TestLrclibAsync(cancellationToken)),
+            ("lrclib", ProviderCapabilities.Lyrics) => await TestLrclibAsync(cancellationToken),
             ("lrcred" or "unison" or "paxsenix" or "genius" or "lyricsplus" or "musixmatch", ProviderCapabilities.Lyrics) => await TestMetadataLyricsAsync(provider, accountSecrets, cancellationToken),
             ("lastfm", ProviderCapabilities.Scrobbling) => await AsOutcome(TestLastFmAsync(accountSecrets, cancellationToken)),
             ("listenbrainz" or "multi-scrobbler" or "koito", ProviderCapabilities.Scrobbling) => await AsOutcome(TestListenBrainzAsync(provider, accountSecrets, cancellationToken)),
@@ -959,6 +1035,50 @@ public class ProviderStatusManager
     private async Task<ProbeOutcome> TestMetadataLyricsAsync(string provider,
         IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellationToken)
     {
+        var result = await _diagnosticSamples.CheckAsync($"{provider}:lyrics",
+            ProviderDiagnosticSamples.Recordings(provider), async (sample, token) =>
+            {
+                var outcome = await TestMetadataLyricsSampleAsync(provider, secrets, sample, token);
+                return new ProviderSampleCheck(outcome.Success, outcome.ReasonCode,
+                    outcome.ReasonCode is "sample-unavailable" or "not-found");
+            }, ct => DiscoverLyricsSamplesAsync(provider, ct), cancellationToken,
+            timeoutReason: provider == "paxsenix" ? ProviderError.LyricsUpstreamBusyOrTimedOut().Code : "timeout",
+            attemptTimeout: provider == "paxsenix" ? allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.DiagnosticLookupBudget + TimeSpan.FromSeconds(1) :
+                provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : null);
+        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
+    }
+
+    private async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverLyricsSamplesAsync(string provider,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        var selector = _services?.GetService<ProviderCtsTrackSelector>();
+        var recordings = selector == null ? [] : await selector.SelectRecordingSamplesAsync(token);
+        foreach (var recording in recordings.Take(8))
+            yield return new(recording.Title, string.Join(", ", recording.ArtistNames), recording.Isrc,
+                (int?)(recording.DurationMilliseconds / 1000) ?? 200,
+                recording.ProviderIds.TryGetValue(provider, out var id) ? id : null);
+        if (provider != "lrclib") yield break;
+        using var client = _httpClientFactory.CreateClient();
+        foreach (var query in ProviderDiagnosticSamples.DiscoveryQueries(provider).Take(4))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                $"https://lrclib.net/api/search?q={Uri.EscapeDataString(query)}");
+            using var response = await SendWithProbeTimeoutAsync(client, request, token);
+            if (!response.IsSuccessStatusCode) continue;
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+            if (document.RootElement.ValueKind != JsonValueKind.Array) continue;
+            foreach (var item in document.RootElement.EnumerateArray().Take(2))
+                if (item.TryGetProperty("trackName", out var title) && title.ValueKind == JsonValueKind.String &&
+                    item.TryGetProperty("artistName", out var artist) && artist.ValueKind == JsonValueKind.String)
+                    yield return new(title.GetString()!, artist.GetString()!, null,
+                        item.TryGetProperty("duration", out var duration) && duration.TryGetDouble(out var seconds) &&
+                        double.IsFinite(seconds) && seconds is > 0 and < 86400 ? (int)seconds : 200);
+        }
+    }
+
+    private async Task<ProbeOutcome> TestMetadataLyricsSampleAsync(string provider,
+        IReadOnlyDictionary<string, string>? secrets, ProviderDiagnosticSample sample, CancellationToken cancellationToken)
+    {
         var probeTimeout = provider == "paxsenix"
             ? allstarr.Core.Providers.Lyrics.PaxsenixCapabilityAdapter.DiagnosticLookupBudget + TimeSpan.FromSeconds(1)
             : provider == "genius" ? allstarr.Core.Providers.Lyrics.MetadataLyricsCapabilityAdapter.OverallLookupBudget : ProbeTimeout;
@@ -968,8 +1088,8 @@ public class ProviderStatusManager
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(probeTimeout);
         var request = new ProviderLyricsRequest(Guid.NewGuid(), new(provider, ProviderResourceKind.Track, "connection-probe"),
-            availabilityOnly: true, trackTitle: "Never Gonna Give You Up", artistNames: ["Rick Astley"], durationSeconds: 215,
-            isrc: provider == "paxsenix" ? "GBARL9300135" : null);
+            availabilityOnly: true, trackTitle: sample.Title, artistNames: [sample.Artist], durationSeconds: sample.DurationSeconds,
+            isrc: sample.Isrc);
         ProviderOutcome<ProviderLyricsResult> result;
         if (provider == "musixmatch")
         {
@@ -1029,19 +1149,41 @@ public class ProviderStatusManager
         cancellationToken.ThrowIfCancellationRequested();
         if (provider == "paxsenix" && result.Error?.Kind is ProviderErrorKind.TransientFailure or ProviderErrorKind.Canceled)
             return new(false, ProviderError.LyricsUpstreamBusyOrTimedOut().Code);
-        return new(result.IsSuccess, result.Error?.Code);
+        return result.IsSuccess
+            ? new(result.RequireValue().Availability == ProviderLyricsAvailabilityState.Available,
+                result.RequireValue().Availability == ProviderLyricsAvailabilityState.Available ? null : "sample-unavailable")
+            : new(false, ProviderDiagnosticSamples.FromError(result.Error!).ReasonCode);
     }
 
-    private async Task<bool> TestLrclibAsync(CancellationToken cancellationToken)
+    private async Task<ProbeOutcome> TestLrclibAsync(CancellationToken cancellationToken)
     {
-        const string url = "https://lrclib.net/api/get?artist_name=Rick%20Astley&track_name=Never%20Gonna%20Give%20You%20Up&album_name=Whenever%20You%20Need%20Somebody&duration=213";
         using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        return response.IsSuccessStatusCode || response.StatusCode is
-            System.Net.HttpStatusCode.NotFound or
-            System.Net.HttpStatusCode.TooManyRequests;
+        var result = await _diagnosticSamples.CheckAsync("lrclib:lyrics",
+            ProviderDiagnosticSamples.Recordings("lrclib"), async (sample, token) =>
+            {
+                var url = $"https://lrclib.net/api/get?artist_name={Uri.EscapeDataString(sample.Artist)}&track_name={Uri.EscapeDataString(sample.Title)}&duration={sample.DurationSeconds}";
+                using var request = new HttpRequestMessage(HttpMethod.Get, url);
+                using var response = await SendWithProbeTimeoutAsync(client, request, token);
+                var check = HttpSampleCheck(response);
+                if (!check.Success) return check;
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+                var root = document.RootElement;
+                return root.TryGetProperty("plainLyrics", out var plain) && plain.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(plain.GetString()) ||
+                    root.TryGetProperty("syncedLyrics", out var synced) && synced.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(synced.GetString()) ||
+                    root.TryGetProperty("instrumental", out var instrumental) && instrumental.ValueKind == JsonValueKind.True
+                    ? new(true) : ProviderSampleCheck.Missing;
+            }, ct => DiscoverLyricsSamplesAsync("lrclib", ct), cancellationToken);
+        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
     }
+
+    private static ProviderSampleCheck HttpSampleCheck(HttpResponseMessage response) => response.StatusCode switch
+    {
+        System.Net.HttpStatusCode.NotFound or System.Net.HttpStatusCode.Gone => ProviderSampleCheck.Missing,
+        System.Net.HttpStatusCode.TooManyRequests => new(false, "rate-limited"),
+        System.Net.HttpStatusCode.Unauthorized => new(false, "authentication-required"),
+        System.Net.HttpStatusCode.Forbidden => new(false, "access-denied"),
+        _ => response.IsSuccessStatusCode ? new(true) : new(false, "service_unavailable")
+    };
 
     private async Task<ProbeOutcome> TestSpotifyPlaylistAsync(
         string? sessionCookie,
@@ -1067,10 +1209,41 @@ public class ProviderStatusManager
         var token = await allstarr.Core.Providers.Spotify.SpotifyWebTokenExchange.ExchangeAsync(
             client, cookie, timeout.Token, _spotifySettings);
         if (!token.Success) return new(false, token.ReasonCode);
-        var result = await allstarr.Core.Providers.Spotify.SpotifyLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
-            client, token.AccessToken!, new ProviderLyricsRequest(Guid.NewGuid(),
-                new("spotify", ProviderResourceKind.Track, SpotifyLyricsTestTrackId), availabilityOnly: true), timeout.Token);
-        return new(result.IsSuccess, result.Error?.Code);
+        var result = await _diagnosticSamples.CheckAsync("spotify:lyrics", ProviderDiagnosticSamples.Recordings("spotify"),
+            async (sample, ct) =>
+            {
+                var lyrics = await allstarr.Core.Providers.Spotify.SpotifyLyricsCapabilityAdapter.ReadLyricsFromTokenAsync(
+                    client, token.AccessToken!, new ProviderLyricsRequest(Guid.NewGuid(),
+                        new("spotify", ProviderResourceKind.Track, sample.TrackId ?? "connection-probe"), availabilityOnly: true,
+                        trackTitle: sample.Title, artistNames: [sample.Artist], isrc: sample.Isrc), ct);
+                return !lyrics.IsSuccess ? ProviderDiagnosticSamples.FromError(lyrics.Error!) :
+                    lyrics.RequireValue().Availability == ProviderLyricsAvailabilityState.Available ? new(true) : ProviderSampleCheck.Missing;
+            }, ct => DiscoverSpotifyLyricsSamplesAsync(client, token.AccessToken!, ct), cancellationToken);
+        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
+    }
+
+    private async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverSpotifyLyricsSamplesAsync(HttpClient client, string accessToken,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        await foreach (var sample in DiscoverLyricsSamplesAsync("spotify", token))
+            if (sample.TrackId != null) yield return sample;
+        foreach (var query in ProviderDiagnosticSamples.DiscoveryQueries("spotify").Take(4))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get,
+                $"https://api.spotify.com/v1/search?type=track&limit=2&q={Uri.EscapeDataString(query)}");
+            request.Headers.Authorization = new("Bearer", accessToken);
+            using var response = await SendWithProbeTimeoutAsync(client, request, token);
+            if (!response.IsSuccessStatusCode) continue;
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+            if (!document.RootElement.TryGetProperty("tracks", out var tracks) ||
+                !tracks.TryGetProperty("items", out var items) || items.ValueKind != JsonValueKind.Array) continue;
+            foreach (var item in items.EnumerateArray().Take(2))
+            {
+                if (!item.TryGetProperty("id", out var id) || id.ValueKind != JsonValueKind.String ||
+                    !item.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String) continue;
+                yield return new(name.GetString()!, query, null, 200, id.GetString());
+            }
+        }
     }
 
     private async Task<ProbeOutcome> TestAppleMusicAsync(string capability,
@@ -1104,19 +1277,33 @@ public class ProviderStatusManager
                _appleDownloadSnapshot.Capability(capability).State == AppleDownloadCapabilityState.Available;
     }
 
-    private async Task<bool> TestDeezerMetadataAsync(CancellationToken cancellationToken)
+    private async Task<ProbeOutcome> TestDeezerMetadataAsync(CancellationToken cancellationToken)
     {
         using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.deezer.com/track/3135556");
-        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            return false;
-        }
+        var result = await _diagnosticSamples.CheckAsync("deezer:metadata", ProviderDiagnosticSamples.Recordings("deezer"),
+            async (sample, token) =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://api.deezer.com/search?q={Uri.EscapeDataString(sample.Query)}&limit=1");
+                using var response = await SendWithProbeTimeoutAsync(client, request, token);
+                var check = HttpSampleCheck(response);
+                if (!check.Success) return check;
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+                return document.RootElement.TryGetProperty("data", out var data) && data.ValueKind == JsonValueKind.Array &&
+                    data.EnumerateArray().Any(item => item.TryGetProperty("id", out _)) ? new(true) : ProviderSampleCheck.Missing;
+            }, token => DiscoverQueriesAsync("deezer", token), cancellationToken);
+        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
+    }
 
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.TryGetProperty("id", out _);
+    private static async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverQueriesAsync(string provider,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+    {
+        await Task.CompletedTask;
+        foreach (var query in ProviderDiagnosticSamples.DiscoveryQueries(provider))
+        {
+            token.ThrowIfCancellationRequested();
+            yield return new(query, "", null, 200);
+        }
     }
 
     private async Task<bool> TestDeezerAccountAsync(
@@ -1152,25 +1339,27 @@ public class ProviderStatusManager
         return false;
     }
 
-    private async Task<bool> TestQobuzMetadataAsync(string? userAuthToken, CancellationToken cancellationToken)
+    private async Task<ProbeOutcome> TestQobuzMetadataAsync(string? userAuthToken, CancellationToken cancellationToken)
     {
         const string appId = "798273057";
-        const string apiUrl = "https://www.qobuz.com/api.json/0.2/track/search?query=test&limit=1&app_id=" + appId;
-
         using var client = _httpClientFactory.CreateClient();
-        using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
-        request.Headers.Add("X-App-Id", appId);
-        request.Headers.Add("X-User-Auth-Token", userAuthToken);
-        request.Headers.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
-        using var response = await SendWithProbeTimeoutAsync(client, request, cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            return false;
-        }
-
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        using var document = JsonDocument.Parse(json);
-        return document.RootElement.TryGetProperty("tracks", out _);
+        var result = await _diagnosticSamples.CheckAsync("qobuz:metadata", ProviderDiagnosticSamples.Recordings("qobuz"),
+            async (sample, token) =>
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get,
+                    $"https://www.qobuz.com/api.json/0.2/track/search?query={Uri.EscapeDataString(sample.Query)}&limit=1&app_id={appId}");
+                request.Headers.Add("X-App-Id", appId);
+                request.Headers.Add("X-User-Auth-Token", userAuthToken);
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:83.0) Gecko/20100101 Firefox/83.0");
+                using var response = await SendWithProbeTimeoutAsync(client, request, token);
+                var check = HttpSampleCheck(response);
+                if (!check.Success) return check;
+                using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(token));
+                return document.RootElement.TryGetProperty("tracks", out var tracks) &&
+                    tracks.TryGetProperty("items", out var items) && items.ValueKind == JsonValueKind.Array && items.GetArrayLength() > 0
+                    ? new(true) : ProviderSampleCheck.Missing;
+            }, token => DiscoverQueriesAsync("qobuz", token), cancellationToken);
+        return new(result.Success, result.ReasonCode, IsNeutral: result.SampleUnavailable);
     }
 
     private async Task<bool> TestQobuzAccountAsync(

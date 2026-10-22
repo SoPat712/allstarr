@@ -77,6 +77,20 @@ public sealed record ProviderRuntimeStatus
 
     public string? ReasonCode { get; init; }
 
+    public Guid? VerificationMeasurementId { get; init; }
+
+    public string? VerificationMethod { get; init; }
+
+    public static bool IsNeutralReason(string? reason) => reason is "probe_not_available" or "download-not-verified" or "sample-unavailable" or
+        "not-found" or "not_found" or "NotFound" or "metadata-not-found" or "playlist-not-found" or "playlist-empty" or
+        "playlist-sample-unavailable" or "http-404" or "http-410" or "incompatible-media" or "IncompatibleMedia" ||
+        reason?.Contains("has no song to test with", StringComparison.Ordinal) == true ||
+        reason?.StartsWith("No verified catalog recordings", StringComparison.Ordinal) == true ||
+        reason?.StartsWith("The provider could not resolve any of the sampled catalog recordings", StringComparison.Ordinal) == true;
+
+    public bool HasCheckResult => IsSupported && IsEnabled && !IsNeutralReason(ReasonCode) &&
+        Health is ProviderHealthState.Healthy or ProviderHealthState.Degraded;
+
     public bool CircuitOpen { get; init; }
 
     // Readiness requires evidence; best-effort routing below also permits untested capabilities.

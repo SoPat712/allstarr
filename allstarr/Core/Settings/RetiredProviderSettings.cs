@@ -15,7 +15,9 @@ internal static class RetiredProviderSettings
         var settings = await db.RuntimeSettings.ToListAsync(token);
         foreach (var row in settings)
         {
-            if (row.Key.Split(':').Any(IsRetired))
+            if (row.Key.Split(':').Any(IsRetired) ||
+                row.Key.Equals("SpotifyApi:Enabled", StringComparison.OrdinalIgnoreCase) ||
+                row.Key.Equals("MusicBrainz:Enabled", StringComparison.OrdinalIgnoreCase))
             {
                 db.RuntimeSettings.Remove(row);
                 continue;

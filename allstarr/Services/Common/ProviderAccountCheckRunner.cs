@@ -108,6 +108,15 @@ public sealed class ProviderAccountCheckRunner(
                     result = downloadBacked ? await check.WaitAsync(linked.Token) : await check;
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException) when (downloadBacked && deadline.IsCancellationRequested)
+                {
+                    result = new(key, account?.Revision, target.Status with
+                    {
+                        Health = ProviderHealthState.Unknown,
+                        TestedAt = time.GetUtcNow(),
+                        ReasonCode = "sample-unavailable"
+                    });
+                }
                 catch (Exception exception)
                 {
                     result = new(key, account?.Revision, target.Status with
@@ -119,7 +128,7 @@ public sealed class ProviderAccountCheckRunner(
                 }
                 await history.RecordAsync(result, correlation, token, target.Status.Health);
                 status.RestoreCheckResult(key, result.Revision, result.Status);
-                if (result.Status.Health != ProviderHealthState.Healthy)
+                if (result.Status.Health == ProviderHealthState.Degraded)
                 {
                     success = false;
                     logger.LogWarning("Provider check failed for {Provider}/{Capability}, account {ProviderAccountId}, health {Health}",
@@ -163,7 +172,8 @@ public sealed class ProviderAccountCheckRunner(
                 correlation, cancellationToken: token, householdCheck: true);
             return new(key, account?.Revision, baseline with
             {
-                Health = measured.Succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
+                Health = ProviderRuntimeStatus.IsNeutralReason(measured.ReasonCode) ? ProviderHealthState.Unknown :
+                    measured.Succeeded ? ProviderHealthState.Healthy : ProviderHealthState.Degraded,
                 TestedAt = time.GetUtcNow(),
                 LatencyMilliseconds = (long?)measured.ClickToStreamMilliseconds,
                 ReasonCode = measured.ReasonCode

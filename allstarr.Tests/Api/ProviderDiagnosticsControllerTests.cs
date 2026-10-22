@@ -15,14 +15,21 @@ namespace allstarr.Tests;
 public sealed class ProviderDiagnosticsControllerTests
 {
     [Theory]
-    [InlineData("capability", "unknown")]
-    [InlineData("account-resolution", "unknown")]
-    [InlineData("track-selection", "unknown")]
-    [InlineData("concurrency", "unknown")]
-    [InlineData("resolve", "degraded")]
-    [InlineData("first-byte", "degraded")]
-    [InlineData("response-range", "degraded")]
-    public async Task Latest_DistinguishesUnmeasuredChecksFromPlaybackFailures(string stage, string health)
+    [InlineData("capability", "capability-unavailable", "unknown")]
+    [InlineData("account-resolution", "account-needs-configuration", "unknown")]
+    [InlineData("track-selection", "sample-unavailable", "unknown")]
+    [InlineData("track-selection", "No verified catalog recordings are available to test.", "unknown")]
+    [InlineData("track-selection", "service_unavailable", "degraded")]
+    [InlineData("concurrency", "busy", "unknown")]
+    [InlineData("resolve", "sample-unavailable", "unknown")]
+    [InlineData("resolve", "NotFound", "unknown")]
+    [InlineData("resolve", "incompatible-media", "unknown")]
+    [InlineData("first-byte", "http-404", "unknown")]
+    [InlineData("first-byte", "http-410", "unknown")]
+    [InlineData("resolve", "transient-failure", "degraded")]
+    [InlineData("first-byte", "http-503", "degraded")]
+    [InlineData("response-range", "range-response-mismatch", "degraded")]
+    public async Task Latest_DistinguishesUnavailableSamplesFromPlaybackFailures(string stage, string reason, string health)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var factory = new ProviderCheckServiceTests.Factory(database.Options);
@@ -34,7 +41,7 @@ public sealed class ProviderDiagnosticsControllerTests
                 Category = "provider-cts",
                 Action = "scheduled.measure",
                 Outcome = "recorded",
-                DetailsJson = JsonSerializer.Serialize(ProviderCtsDiagnosticResult.Failure(409, "artistgrid", null, stage, "sample_unavailable")),
+                DetailsJson = JsonSerializer.Serialize(ProviderCtsDiagnosticResult.Failure(409, "artistgrid", null, stage, reason)),
                 CreatedAt = DateTimeOffset.UtcNow
             });
             await db.SaveChangesAsync();
@@ -63,7 +70,7 @@ public sealed class ProviderDiagnosticsControllerTests
             Assert.IsType<OkObjectResult>(await controller.LatestDeepStream(default)).Value));
         var measurement = Assert.Single(json.RootElement.GetProperty("measurements").EnumerateArray());
         Assert.Equal(health, measurement.GetProperty("Health").GetString());
-        Assert.Equal("sample_unavailable", measurement.GetProperty("FailureCode").GetString());
+        Assert.Equal(reason, measurement.GetProperty("FailureCode").GetString());
         Assert.Equal(0, measurement.GetProperty("LatencyMs").GetDouble());
     }
 }

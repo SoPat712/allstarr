@@ -62,7 +62,6 @@ public static class RuntimeEnvConfiguration
             ["SPOTIFY_IMPORT_MATCHING_INTERVAL_HOURS"] = ["SpotifyImport:MatchingIntervalHours"],
             ["SPOTIFY_IMPORT_PLAYLISTS"] = ["SpotifyImport:Playlists"],
 
-            ["SPOTIFY_API_ENABLED"] = ["SpotifyApi:Enabled"],
             ["SPOTIFY_API_SESSION_COOKIE"] = ["SpotifyApi:SessionCookie"],
             ["SPOTIFY_API_SESSION_COOKIE_SET_DATE"] = ["SpotifyApi:SessionCookieSetDate"],
             ["LYRICSPLUS_URL"] = ["LyricsPlus:BaseUrl"],
@@ -105,7 +104,6 @@ public static class RuntimeEnvConfiguration
             ["APPLE_DOWNLOAD_URL"] = ["AppleDownload:BaseUrl"],
             ["APPLE_DOWNLOAD_QUALITY"] = ["AppleDownload:Quality"],
 
-            ["MUSICBRAINZ_ENABLED"] = ["MusicBrainz:Enabled"],
             ["MUSICBRAINZ_SOURCE_ID"] = ["MusicBrainz:SourceId"],
             ["MUSICBRAINZ_BASE_URL"] = ["MusicBrainz:BaseUrl"],
             ["MUSICBRAINZ_RATE_LIMIT_MS"] = ["MusicBrainz:RateLimitMs"],
@@ -153,6 +151,8 @@ public static class RuntimeEnvConfiguration
     private static readonly HashSet<string> IgnoredComposeOnlyKeys = new(StringComparer.OrdinalIgnoreCase)
     {
         "SPOTIFY_LYRICS_API_URL", "SpotifyApi__LyricsApiUrl",
+        "SPOTIFY_API_ENABLED", "SpotifyApi__Enabled",
+        "MUSICBRAINZ_ENABLED", "MusicBrainz__Enabled",
         "DOWNLOAD_PATH",
         "KEPT_PATH",
         "CACHE_PATH"

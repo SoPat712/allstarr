@@ -21,9 +21,13 @@ public sealed class ProviderCtsDiagnosticRunner(
     IDbContextFactory<AllstarrDbContext>? contextFactory = null,
     ProtocolExecutionOptions? executionOptions = null,
     TimeProvider? timeProvider = null,
-    IProviderCheckSessions? sessions = null)
+    IProviderCheckSessions? sessions = null,
+    ProviderStatusManager? statusManager = null)
 {
+    private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
+
     private const int SampleLimitBytes = 64 * 1024;
+    private const int MaximumTrackAttempts = 64;
     private static readonly BoundedOperationGate Concurrency = new(2);
 
     public async Task<ProviderCtsDiagnosticResult> MeasureAsync(
@@ -62,13 +66,23 @@ public sealed class ProviderCtsDiagnosticRunner(
                 await RecordResultAsync(result, actor, correlationId, householdCheck, deadline.Token).WaitAsync(deadline.Token);
                 deadline.Token.ThrowIfCancellationRequested();
             }
+            var measured = statusManager?.RecordStreamingMeasurement(result, progress.Execution?.Account?.Revision);
+            var verified = statusManager?.RecordDownloadVerification(result, progress.Execution?.Account?.Revision);
+            if (contextFactory != null)
+                foreach (var check in new[] { measured, verified }.OfType<ProviderCheckResult>())
+                    await new ProviderCheckHistory(contextFactory, clock).RecordAsync(check, correlationId, deadline.Token).WaitAsync(deadline.Token);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timer.IsCancellationRequested)
         {
-            if (progress.Execution != null)
+            var unavailable = string.IsNullOrWhiteSpace(trackId) &&
+                progress.Stage is "track-selection" or "resolve" or "lease-validation" or "first-byte" or "response-range" &&
+                progress.SelectionFailureCount + progress.SourceFailureCount < ProviderDiagnosticSamples.SourceFailureThreshold;
+            if (!unavailable && progress.Execution != null)
                 RecordFailure(progress.Execution, "timeout", clock.GetElapsedTime(startedAt).TotalMilliseconds);
             result = ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status504GatewayTimeout, providerId, providerAccountId, progress.Stage, "timeout");
+                unavailable ? StatusCodes.Status409Conflict : StatusCodes.Status504GatewayTimeout,
+                providerId, providerAccountId, progress.Stage, unavailable ? "sample-unavailable" : "timeout");
+            statusManager?.RecordStreamingMeasurement(result, progress.Execution?.Account?.Revision);
         }
         result.Limit = new ProviderCtsDiagnosticLimit { TimeoutSeconds = (int)timeout.TotalSeconds };
         return result;
@@ -84,7 +98,8 @@ public sealed class ProviderCtsDiagnosticRunner(
             ActorUserId = householdCheck ? null : actor.EffectiveUserId,
             Category = "provider-cts",
             Action = householdCheck ? "scheduled.measure" : "cold-connect.measure",
-            Outcome = householdCheck ? "recorded" : result.Succeeded ? "succeeded" : "failed",
+            Outcome = householdCheck ? "recorded" : result.Succeeded ? "succeeded" :
+                ProviderRuntimeStatus.IsNeutralReason(result.ReasonCode) ? "sample-unavailable" : "failed",
             CorrelationId = correlationId,
             DetailsJson = JsonSerializer.Serialize(result),
             CreatedAt = result.MeasuredAt
@@ -134,13 +149,30 @@ public sealed class ProviderCtsDiagnosticRunner(
         int? corpusSize = null;
         var automatic = string.IsNullOrWhiteSpace(trackId);
         var triedTracks = new HashSet<string>(StringComparer.Ordinal);
-        await using var samples = SearchSampleTracksAsync(providerId, execution, cancellationToken).GetAsyncEnumerator(cancellationToken);
+        await using var samples = SearchSampleTracksAsync(providerId, execution, progress, cancellationToken).GetAsyncEnumerator(cancellationToken);
         IReadOnlyList<ProviderRecordingAvailabilityRequest>? recordings = null;
         var recordingIndex = 0;
-        string? availabilityReason = null;
+        IReadOnlyList<ProviderCtsTrackSelection> stored = [];
+        var storedIndex = 0;
+        var cachedTrack = _diagnosticSamples.LastWorking($"{providerId}:{providerAccountId}:cts")?.TrackId;
+        ProviderError? lastSourceError = null;
         async Task<string?> NextSampleAsync()
         {
             progress.Stage = "track-selection";
+            if (triedTracks.Count >= MaximumTrackAttempts) return null;
+            if (cachedTrack != null && !triedTracks.Contains(cachedTrack))
+            {
+                selectionMode = "last-working-sample";
+                return cachedTrack;
+            }
+            while (storedIndex < stored.Count)
+            {
+                var candidate = stored[storedIndex++];
+                if (triedTracks.Contains(candidate.TrackId)) continue;
+                selectionMode = "rotating-corpus";
+                corpusSize = candidate.CorpusSize;
+                return candidate.TrackId;
+            }
             while (await samples.MoveNextAsync())
             {
                 if (triedTracks.Contains(samples.Current)) continue;
@@ -150,16 +182,26 @@ public sealed class ProviderCtsDiagnosticRunner(
             }
             if (streaming is not IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true } fallback)
                 return null;
-            recordings ??= await trackSelector.SelectRecordingSamplesAsync(cancellationToken,
-                actor.Kind == ProviderActorKind.Administrator ? actor.UserId : null);
-            while (recordingIndex < Math.Min(3, recordings.Count))
+            recordings ??= (await trackSelector.SelectRecordingSamplesAsync(cancellationToken,
+                actor.Kind == ProviderActorKind.Administrator ? actor.UserId : null))
+                .Concat(ProviderDiagnosticSamples.Recordings(providerId).Select(sample => new ProviderRecordingAvailabilityRequest(
+                    sample.Query, sample.Title, [sample.Artist], sample.Isrc, sample.DurationSeconds * 1000, new Dictionary<string, string>())))
+                .Take(ProviderDiagnosticSamples.MaximumAttempts).ToArray();
+            while (recordingIndex < recordings.Count)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var availability = await fallback.ResolveRecordingAsync(execution, recordings[recordingIndex++], quality);
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!availability.IsSuccess) continue;
+                if (!availability.IsSuccess)
+                {
+                    if (!ProviderDiagnosticSamples.FromError(availability.Error!).SampleUnavailable)
+                    {
+                        progress.SelectionError = availability.Error;
+                        if (++progress.SelectionFailureCount >= ProviderDiagnosticSamples.SourceFailureThreshold) return null;
+                    }
+                    continue;
+                }
                 var match = availability.RequireValue();
-                availabilityReason = match.Reason ?? availabilityReason;
                 if (match.TrackId is not { } id || id.ProviderId != providerId || triedTracks.Contains(id.Value)) continue;
                 selectionMode = "availability-corpus";
                 corpusSize = recordings.Count;
@@ -168,287 +210,305 @@ public sealed class ProviderCtsDiagnosticRunner(
             return null;
         }
 
+        async Task<bool> AdvanceSampleAsync(bool unavailable)
+        {
+            if (!automatic || !unavailable && ++progress.SourceFailureCount >= ProviderDiagnosticSamples.SourceFailureThreshold) return false;
+            var next = await NextSampleAsync();
+            if (next == null) return false;
+            trackId = next;
+            return true;
+        }
+
+        ProviderCtsDiagnosticResult SampleFailure(string stage, string reason, double latency, double? headers = null)
+        {
+            var neutral = automatic && progress.SourceFailureCount + progress.SelectionFailureCount < ProviderDiagnosticSamples.SourceFailureThreshold;
+            if (!neutral) RecordFailure(execution, reason, latency);
+            return ProviderCtsDiagnosticResult.Failure(neutral ? StatusCodes.Status409Conflict : StatusCodes.Status422UnprocessableEntity,
+                providerId, providerAccountId, stage, neutral ? "sample-unavailable" : reason, latency, headers);
+        }
+
         progress.Stage = "track-selection";
         if (automatic)
         {
-            var automaticTrack = await trackSelector.SelectAsync(providerId, providerAccountId, cancellationToken);
-            if (automaticTrack != null)
-            {
-                trackId = automaticTrack.TrackId;
-                selectionMode = "rotating-corpus";
-                corpusSize = automaticTrack.CorpusSize;
-            }
-            else trackId = await NextSampleAsync();
+            stored = await trackSelector.SelectCandidatesAsync(providerId, providerAccountId, cancellationToken);
+            trackId = await NextSampleAsync();
             if (trackId == null)
             {
-                var error = recordings == null
-                    ? $"{descriptor.DisplayName} has no song to test with. None of its songs appear in your playlists yet, and its search returned no results."
-                    : recordings.Count == 0
-                        ? "No verified catalog recordings with supported provider identities and song metadata are available to test."
-                        : $"The provider could not resolve any of the sampled catalog recordings through availability{(availabilityReason == null ? "." : $": {availabilityReason}.")}";
+                var reason = progress.SelectionFailureCount >= ProviderDiagnosticSamples.SourceFailureThreshold
+                    ? progress.SelectionError!.Code : "sample-unavailable";
                 return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status409Conflict, providerId, providerAccountId, "track-selection", error);
+                    StatusCodes.Status409Conflict, providerId, providerAccountId, "track-selection", reason);
             }
         }
         else trackId = trackId!.Trim();
 
-        try
+        while (true)
         {
-            var preparationStartedAt = total.Elapsed;
-            ProviderOutcome<ProviderStreamLease> leaseOutcome;
-            while (true)
+            try
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                triedTracks.Add(trackId!);
-                progress.Stage = "resolve";
-                leaseOutcome = await streaming.GetStreamLeaseAsync(execution,
-                    new ProviderStreamLeaseRequest(new(providerId, ProviderResourceKind.Track, trackId!), quality, 0));
-                cancellationToken.ThrowIfCancellationRequested();
-                if (leaseOutcome.IsSuccess || !automatic || leaseOutcome.Error!.Kind is not
-                    (ProviderErrorKind.NotFound or ProviderErrorKind.IncompatibleMedia)) break;
-                var nextTrack = await NextSampleAsync();
-                if (nextTrack == null) break;
-                trackId = nextTrack;
-            }
-            var preparationMilliseconds = (total.Elapsed - preparationStartedAt).TotalMilliseconds;
-            var resolveMilliseconds = preparationMilliseconds;
-            if (!leaseOutcome.IsSuccess)
-            {
-                var error = streaming is IProviderDownloadStreamingCapability || leaseOutcome.Error!.Code == "service_unavailable"
-                    ? leaseOutcome.Error!.Code : leaseOutcome.Error.Kind.ToString();
-                health.Observe(execution, ProviderCapabilityKind.Streaming, leaseOutcome.Error,
-                    TimeSpan.FromMilliseconds(resolveMilliseconds));
-                return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status422UnprocessableEntity, providerId, providerAccountId,
-                    "resolve", error, resolveMilliseconds);
-            }
+                var preparationStartedAt = total.Elapsed;
+                ProviderOutcome<ProviderStreamLease> leaseOutcome;
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    triedTracks.Add(trackId!);
+                    progress.Stage = "resolve";
+                    leaseOutcome = await streaming.GetStreamLeaseAsync(execution,
+                        new ProviderStreamLeaseRequest(new(providerId, ProviderResourceKind.Track, trackId!), quality, 0));
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (leaseOutcome.IsSuccess || !automatic) break;
+                    var missing = ProviderDiagnosticSamples.FromError(leaseOutcome.Error!).SampleUnavailable;
+                    if (!missing)
+                    {
+                        lastSourceError = leaseOutcome.Error;
+                        if (++progress.SourceFailureCount >= ProviderDiagnosticSamples.SourceFailureThreshold) break;
+                    }
+                    var nextTrack = await NextSampleAsync();
+                    if (nextTrack == null) break;
+                    trackId = nextTrack;
+                }
+                var preparationMilliseconds = (total.Elapsed - preparationStartedAt).TotalMilliseconds;
+                var resolveMilliseconds = preparationMilliseconds;
+                if (!leaseOutcome.IsSuccess)
+                {
+                    var failure = lastSourceError ?? progress.SelectionError ?? leaseOutcome.Error!;
+                    var unavailable = automatic && progress.SourceFailureCount + progress.SelectionFailureCount < ProviderDiagnosticSamples.SourceFailureThreshold;
+                    var error = unavailable ? "sample-unavailable" : streaming is IProviderDownloadStreamingCapability ||
+                        failure.Code == "service_unavailable" ? failure.Code : failure.Kind.ToString();
+                    if (!unavailable) health.Observe(execution, ProviderCapabilityKind.Streaming, failure,
+                        TimeSpan.FromMilliseconds(resolveMilliseconds));
+                    return ProviderCtsDiagnosticResult.Failure(
+                        unavailable ? StatusCodes.Status409Conflict : StatusCodes.Status422UnprocessableEntity, providerId, providerAccountId,
+                        "resolve", error, resolveMilliseconds);
+                }
 
-            progress.Stage = "lease-validation";
-            var lease = leaseOutcome.RequireValue();
-            if (lease.ExpiresAt <= DateTimeOffset.UtcNow)
-            {
-                RecordFailure(execution, "expired-lease", resolveMilliseconds);
-                return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status422UnprocessableEntity,
+                progress.Stage = "lease-validation";
+                var lease = leaseOutcome.RequireValue();
+                if (lease.ExpiresAt <= DateTimeOffset.UtcNow)
+                {
+                    if (await AdvanceSampleAsync(false)) continue;
+                    return SampleFailure("lease-validation", "expired-lease", resolveMilliseconds);
+                }
+
+                if (!OutboundRequestGuard.TryCreateSafeHttpUri(
+                        lease.ProtectedSourceUri.AbsoluteUri, out var safeUri, out var unsafeReason))
+                {
+                    if (await AdvanceSampleAsync(false)) continue;
+                    return SampleFailure("lease-validation", unsafeReason, resolveMilliseconds);
+                }
+
+                using var sampleClient = CreateSampleClient();
+                using var sampleRequest = new HttpRequestMessage(HttpMethod.Get, safeUri);
+                if (lease.SupportsByteRanges)
+                    sampleRequest.Headers.Range = new RangeHeaderValue(0, SampleLimitBytes - 1);
+                sampleRequest.Headers.CacheControl = new CacheControlHeaderValue
+                {
+                    NoCache = true,
+                    NoStore = true,
+                    MaxAge = TimeSpan.Zero
+                };
+                sampleRequest.Headers.Pragma.ParseAdd("no-cache");
+                progress.Stage = "first-byte";
+                var upstreamHeadersStartedAt = total.Elapsed;
+                using var response = lease.ProtectedResponseFactory != null
+                    ? await lease.ProtectedResponseFactory(sampleRequest, cancellationToken)
+                    : await sampleClient.SendAsync(
+                        sampleRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                var headersMilliseconds = total.Elapsed.TotalMilliseconds;
+                var upstreamHeadersMilliseconds = (total.Elapsed - upstreamHeadersStartedAt).TotalMilliseconds;
+                if (IsRedirect(response.StatusCode) || !response.IsSuccessStatusCode)
+                {
+                    var error = IsRedirect(response.StatusCode)
+                        ? "redirect-rejected"
+                        : $"http-{(int)response.StatusCode}";
+                    if (!IsRedirect(response.StatusCode) && response.Headers.TryGetValues("X-Allstarr-Failure-Code", out var codes) &&
+                        codes.SequenceEqual(["account_mismatch"], StringComparer.Ordinal))
+                        error = "account_mismatch";
+                    if (automatic && error != "account_mismatch")
+                    {
+                        var missing = response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Gone;
+                        if (!missing) progress.SourceFailureCount++;
+                        if (missing || progress.SourceFailureCount < ProviderDiagnosticSamples.SourceFailureThreshold)
+                        {
+                            var next = await NextSampleAsync();
+                            if (next != null) { trackId = next; continue; }
+                            return ProviderCtsDiagnosticResult.Failure(StatusCodes.Status409Conflict, providerId, providerAccountId,
+                                "track-selection", "sample-unavailable");
+                        }
+                    }
+                    RecordFailure(execution, error, headersMilliseconds);
+                    return ProviderCtsDiagnosticResult.Failure(
+                        StatusCodes.Status422UnprocessableEntity,
+                        providerId,
+                        providerAccountId,
+                        "first-byte",
+                        error,
+                        resolveMilliseconds,
+                        headersMilliseconds);
+                }
+
+                if (!StreamByteRanges.Matches(response, sampleRequest.Headers.Range))
+                {
+                    if (await AdvanceSampleAsync(false)) continue;
+                    return SampleFailure("response-range", "range-response-mismatch", resolveMilliseconds, headersMilliseconds);
+                }
+
+                await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                var buffer = new byte[32 * 1024];
+                var bytesRead = 0;
+                double? firstByteMilliseconds = null;
+                var transferStart = total.Elapsed;
+                using var sampleHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                while (bytesRead < SampleLimitBytes)
+                {
+                    var count = await stream.ReadAsync(
+                        buffer.AsMemory(0, Math.Min(buffer.Length, SampleLimitBytes - bytesRead)), cancellationToken);
+                    if (count == 0) break;
+                    bytesRead += count;
+                    sampleHash.AppendData(buffer, 0, count);
+                    firstByteMilliseconds ??= total.Elapsed.TotalMilliseconds;
+                }
+
+                if (bytesRead == 0 || !firstByteMilliseconds.HasValue)
+                {
+                    if (await AdvanceSampleAsync(false)) continue;
+                    return SampleFailure("first-byte", "empty-media-response", total.Elapsed.TotalMilliseconds, headersMilliseconds);
+                }
+
+                var transferSeconds = Math.Max((total.Elapsed - transferStart).TotalSeconds, 0.001);
+                var throughputKbps = bytesRead * 8d / 1000d / transferSeconds;
+                var totalMilliseconds = total.Elapsed.TotalMilliseconds;
+                health.Observe(execution, ProviderCapabilityKind.Streaming, null,
+                    TimeSpan.FromMilliseconds(firstByteMilliseconds.Value));
+                var success = ProviderCtsDiagnosticResult.Success(
                     providerId,
                     providerAccountId,
-                    "lease-validation",
-                    "expired-lease",
-                    resolveMilliseconds);
-            }
-
-            if (!OutboundRequestGuard.TryCreateSafeHttpUri(
-                    lease.ProtectedSourceUri.AbsoluteUri, out var safeUri, out var unsafeReason))
-            {
-                RecordFailure(execution, unsafeReason, resolveMilliseconds);
-                return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status422UnprocessableEntity,
-                    providerId,
-                    providerAccountId,
-                    "lease-validation",
-                    unsafeReason,
-                    resolveMilliseconds);
-            }
-
-            using var sampleClient = CreateSampleClient();
-            using var sampleRequest = new HttpRequestMessage(HttpMethod.Get, safeUri);
-            if (lease.SupportsByteRanges)
-                sampleRequest.Headers.Range = new RangeHeaderValue(0, SampleLimitBytes - 1);
-            sampleRequest.Headers.CacheControl = new CacheControlHeaderValue
-            {
-                NoCache = true,
-                NoStore = true,
-                MaxAge = TimeSpan.Zero
-            };
-            sampleRequest.Headers.Pragma.ParseAdd("no-cache");
-            progress.Stage = "first-byte";
-            var upstreamHeadersStartedAt = total.Elapsed;
-            using var response = lease.ProtectedResponseFactory != null
-                ? await lease.ProtectedResponseFactory(sampleRequest, cancellationToken)
-                : await sampleClient.SendAsync(
-                    sampleRequest, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            var headersMilliseconds = total.Elapsed.TotalMilliseconds;
-            var upstreamHeadersMilliseconds = (total.Elapsed - upstreamHeadersStartedAt).TotalMilliseconds;
-            if (IsRedirect(response.StatusCode) || !response.IsSuccessStatusCode)
-            {
-                var error = IsRedirect(response.StatusCode)
-                    ? "redirect-rejected"
-                    : $"http-{(int)response.StatusCode}";
-                if (!IsRedirect(response.StatusCode) && response.Headers.TryGetValues("X-Allstarr-Failure-Code", out var codes) &&
-                    codes.SequenceEqual(["account_mismatch"], StringComparer.Ordinal))
-                    error = "account_mismatch";
-                RecordFailure(execution, error, headersMilliseconds);
-                return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status422UnprocessableEntity,
-                    providerId,
-                    providerAccountId,
-                    "first-byte",
-                    error,
+                    selectionMode,
+                    corpusSize,
+                    quality,
+                    routeMilliseconds,
+                    preparationMilliseconds,
                     resolveMilliseconds,
-                    headersMilliseconds);
+                    headersMilliseconds,
+                    upstreamHeadersMilliseconds,
+                    firstByteMilliseconds.Value,
+                    totalMilliseconds,
+                    bytesRead,
+                    throughputKbps,
+                    (int)response.StatusCode,
+                    response.Content.Headers.ContentType?.MediaType,
+                    response.Content.Headers.ContentLength,
+                    response.StatusCode == HttpStatusCode.PartialContent ? response.Content.Headers.ContentRange?.ToString() : null,
+                    response.StatusCode == HttpStatusCode.PartialContent &&
+                        response.Headers.AcceptRanges.Any(value => value.Equals("bytes", StringComparison.OrdinalIgnoreCase)),
+                    CacheState(response),
+                    Convert.ToHexString(sampleHash.GetHashAndReset()).ToLowerInvariant(),
+                    lease.SupportsByteRanges,
+                    lease.SupportsSeeking,
+                    lease.Media,
+                    lease.QualityDowngradeReason,
+                    DateTimeOffset.UtcNow,
+                    sampleRequest.Headers.Range?.ToString());
+                success.SelectedTrackId = trackId;
+                success.DownloadVerified = streaming is IProviderDownloadStreamingCapability;
+                if (automatic) _diagnosticSamples.Remember($"{providerId}:{providerAccountId}:cts",
+                    new("Last working recording", "Source", null, 200, trackId));
+                return success;
             }
-
-            if (!StreamByteRanges.Matches(response, sampleRequest.Headers.Range))
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
-                RecordFailure(execution, "range-response-mismatch", headersMilliseconds);
-                return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status422UnprocessableEntity, providerId, providerAccountId,
-                    "response-range", "range-response-mismatch", resolveMilliseconds, headersMilliseconds);
+                throw;
             }
-
-            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-            var buffer = new byte[32 * 1024];
-            var bytesRead = 0;
-            double? firstByteMilliseconds = null;
-            var transferStart = total.Elapsed;
-            using var sampleHash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            while (bytesRead < SampleLimitBytes)
+            catch (OperationCanceledException)
             {
-                var count = await stream.ReadAsync(
-                    buffer.AsMemory(0, Math.Min(buffer.Length, SampleLimitBytes - bytesRead)), cancellationToken);
-                if (count == 0) break;
-                bytesRead += count;
-                sampleHash.AppendData(buffer, 0, count);
-                firstByteMilliseconds ??= total.Elapsed.TotalMilliseconds;
+                if (await AdvanceSampleAsync(false)) continue;
+                return SampleFailure(progress.Stage, "timeout", total.Elapsed.TotalMilliseconds);
             }
-
-            if (bytesRead == 0 || !firstByteMilliseconds.HasValue)
+            catch (Exception exception) when (exception is HttpRequestException or IOException)
             {
-                RecordFailure(execution, "empty-media-response", total.Elapsed.TotalMilliseconds);
-                return ProviderCtsDiagnosticResult.Failure(
-                    StatusCodes.Status422UnprocessableEntity,
-                    providerId,
-                    providerAccountId,
-                    "first-byte",
-                    "empty-media-response",
-                    resolveMilliseconds,
-                    headersMilliseconds);
+                if (await AdvanceSampleAsync(false)) continue;
+                return SampleFailure(progress.Stage, "endpoint-unreachable", total.Elapsed.TotalMilliseconds);
             }
-
-            var transferSeconds = Math.Max((total.Elapsed - transferStart).TotalSeconds, 0.001);
-            var throughputKbps = bytesRead * 8d / 1000d / transferSeconds;
-            var totalMilliseconds = total.Elapsed.TotalMilliseconds;
-            health.Observe(execution, ProviderCapabilityKind.Streaming, null,
-                TimeSpan.FromMilliseconds(firstByteMilliseconds.Value));
-            var success = ProviderCtsDiagnosticResult.Success(
-                providerId,
-                providerAccountId,
-                selectionMode,
-                corpusSize,
-                quality,
-                routeMilliseconds,
-                preparationMilliseconds,
-                resolveMilliseconds,
-                headersMilliseconds,
-                upstreamHeadersMilliseconds,
-                firstByteMilliseconds.Value,
-                totalMilliseconds,
-                bytesRead,
-                throughputKbps,
-                (int)response.StatusCode,
-                response.Content.Headers.ContentType?.MediaType,
-                response.Content.Headers.ContentLength,
-                response.StatusCode == HttpStatusCode.PartialContent ? response.Content.Headers.ContentRange?.ToString() : null,
-                response.StatusCode == HttpStatusCode.PartialContent &&
-                    response.Headers.AcceptRanges.Any(value => value.Equals("bytes", StringComparison.OrdinalIgnoreCase)),
-                CacheState(response),
-                Convert.ToHexString(sampleHash.GetHashAndReset()).ToLowerInvariant(),
-                lease.SupportsByteRanges,
-                lease.SupportsSeeking,
-                lease.Media,
-                lease.QualityDowngradeReason,
-                DateTimeOffset.UtcNow,
-                sampleRequest.Headers.Range?.ToString());
-            success.SelectedTrackId = trackId;
-            return success;
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (OperationCanceledException)
-        {
-            RecordFailure(execution, "timeout", total.Elapsed.TotalMilliseconds);
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status504GatewayTimeout,
-                providerId,
-                providerAccountId,
-                progress.Stage,
-                "timeout");
-        }
-        catch (HttpRequestException)
-        {
-            RecordFailure(execution, "endpoint-unreachable", total.Elapsed.TotalMilliseconds);
-            return ProviderCtsDiagnosticResult.Failure(
-                StatusCodes.Status502BadGateway,
-                providerId,
-                providerAccountId,
-                "first-byte",
-                "The provider media endpoint could not be reached.");
         }
     }
 
     private void RecordFailure(ProviderExecutionContext context, string failureCode, double latencyMilliseconds)
     {
+        if (ProviderRuntimeStatus.IsNeutralReason(failureCode)) return;
         var kind = Enum.TryParse<ProviderErrorKind>(failureCode, out var parsed) ? parsed : ProviderErrorKind.TransientFailure;
         health.Observe(context, ProviderCapabilityKind.Streaming,
             new ProviderError(kind, kind == ProviderErrorKind.RateLimited ? TimeSpan.FromMinutes(1) : null),
             TimeSpan.FromMilliseconds(latencyMilliseconds));
     }
 
-    private static readonly string[] SampleSearchQueries = ["Daft Punk", "Taylor Swift", "The Beatles"];
-    private static readonly Dictionary<string, string[]> ProviderSampleSearchQueries = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["jiosaavn"] = ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal"],
-        ["spotiflac-jiosaavn"] = ["Arijit Singh", "A. R. Rahman", "Shreya Ghoshal"]
-    };
-
-    /// <summary>
-    /// Falls back to the provider's own search when no known track is stored for it yet,
-    /// so a freshly connected source can still be measured.
-    /// </summary>
     private async IAsyncEnumerable<string> SearchSampleTracksAsync(
-        string providerId,
-        ProviderExecutionContext execution,
+        string providerId, ProviderExecutionContext execution, MeasurementProgress progress,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        if (!providers.TryGetCapability<IProviderMetadataCapability>(
-                providerId, ProviderCapabilityKind.Metadata, out var metadata) || metadata == null)
-            yield break;
+        providers.TryGetCapability<IProviderMetadataCapability>(providerId, ProviderCapabilityKind.Metadata, out var metadata);
+        providers.TryGetCapability<IProviderStreamingCapability>(providerId, ProviderCapabilityKind.Streaming, out var streaming);
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        if (providerId == "artistgrid")
+        var curated = _diagnosticSamples.Rotate($"{providerId}:{execution.Account?.AccountId}:cts",
+            ProviderDiagnosticSamples.Recordings(providerId));
+        var queries = curated.Concat(ProviderDiagnosticSamples.DiscoveryQueries(providerId)
+            .Select(query => new ProviderDiagnosticSample(query, "", null, 200))).Take(ProviderDiagnosticSamples.MaximumAttempts);
+        foreach (var sample in queries)
         {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (sample.TrackId != null)
+            {
+                if (seen.Add(sample.TrackId)) yield return sample.TrackId;
+                continue;
+            }
+            if (metadata == null)
+            {
+                if (providerId != "monochrome") yield break;
+                if (streaming is not IProviderRecordingStreamingCapability { SupportsRecordingAvailability: true } recording) yield break;
+                var match = sample.Isrc != null ? await recording.ResolveRecordingAsync(execution,
+                    new(sample.Query, sample.Title, [sample.Artist], sample.Isrc, sample.DurationSeconds * 1000, new Dictionary<string, string>()), ProviderAudioQuality.Lossless)
+                    : streaming is IProviderDiagnosticSampleSearch search ? await search.DiscoverSampleAsync(execution, sample.Title, ProviderAudioQuality.Lossless)
+                    : ProviderOutcome<ProviderRecordingAvailability>.Success(new(null));
+                if (!match.IsSuccess)
+                {
+                    if (SelectionFailed(match.Error!)) yield break;
+                    continue;
+                }
+                if (match.RequireValue().TrackId is { } id && id.ProviderId == providerId && seen.Add(id.Value)) yield return id.Value;
+                continue;
+            }
+            ProviderOutcome<ProviderPage<ProviderTrackMetadata>> outcome;
+            try { outcome = await metadata.SearchTracksAsync(execution, new(sample.Query.Trim(), new(3))).WaitAsync(cancellationToken); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception) { outcome = ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(new(ProviderErrorKind.TransientFailure)); }
+            if (!outcome.IsSuccess)
+            {
+                if (SelectionFailed(outcome.Error!)) yield break;
+                continue;
+            }
+            foreach (var item in outcome.RequireValue().Items.Take(3))
+                if (item.Id.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) && seen.Add(item.Id.Value)) yield return item.Id.Value;
+        }
+        if (providerId == "artistgrid" && metadata != null)
             await foreach (var track in allstarr.Core.Providers.ArtistGrid.ArtistGridDiagnosticSamples.TracksAsync(metadata, execution))
                 if (seen.Add(track.Id.Value)) yield return track.Id.Value;
-            yield break;
-        }
-        var queries = ProviderSampleSearchQueries.TryGetValue(providerId, out var providerQueries)
-            ? providerQueries.Concat(SampleSearchQueries)
-            : SampleSearchQueries;
-        foreach (var query in queries)
+
+        bool SelectionFailed(ProviderError error)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            ProviderOutcome<ProviderPage<ProviderTrackMetadata>>? outcome = null;
-            try
+            if (ProviderDiagnosticSamples.FromError(error).SampleUnavailable)
             {
-                outcome = await metadata.SearchTracksAsync(
-                    execution, new ProviderMetadataSearchRequest(query, new ProviderPageRequest(5)));
+                return false;
             }
-            catch (Exception exception) when (exception is not OperationCanceledException ||
-                                              !cancellationToken.IsCancellationRequested)
-            {
-                // A failed search only means this fallback has nothing to offer.
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            if (outcome?.IsSuccess != true) continue;
-            foreach (var item in outcome.RequireValue().Items.Take(5))
-                if (item.Id.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase) && seen.Add(item.Id.Value))
-                    yield return item.Id.Value;
+            if (error.Kind == ProviderErrorKind.NotSupported) return false;
+            progress.SelectionError = error;
+            return ++progress.SelectionFailureCount >= ProviderDiagnosticSamples.SourceFailureThreshold;
         }
     }
 
     private sealed class MeasurementProgress
     {
+        public ProviderError? SelectionError { get; set; }
+        public int SelectionFailureCount { get; set; }
+        public int SourceFailureCount { get; set; }
         public string Stage { get; set; } = "capability";
         public ProviderExecutionContext? Execution { get; set; }
     }
@@ -488,6 +548,10 @@ public sealed class ProviderCtsDiagnosticRunner(
 
 public sealed class ProviderCtsDiagnosticResult
 {
+    public Guid MeasurementId { get; init; } = Guid.CreateVersion7();
+    [JsonInclude]
+    public bool DownloadVerified { get; internal set; }
+
     [JsonIgnore]
     public int StatusCode { get; init; }
 

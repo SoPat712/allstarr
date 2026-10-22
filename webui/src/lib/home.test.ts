@@ -16,6 +16,14 @@ it("surfaces blocked playback sources once per provider", () => {
   }]);
 });
 
+it("uses managed check summaries instead of public account requirements", () => {
+  const providers = [{ id: "source", name: "Source", runtimeCapabilities: [
+    { id: "download", ready: false, canAttempt: false, reasonCode: "provider_account_required" },
+  ] }];
+  expect(playbackSourceIssues(providers, [{ providerId: "source", enabledAccountCount: 1,
+    capabilityTotal: 1, healthyCapabilityCount: 1, failedCapabilityCount: 0 }])).toEqual([]);
+});
+
 describe("summarizeHome", () => {
   it("projects the aggregate dashboard counts", () => {
     const snapshot: HomeSnapshot = {

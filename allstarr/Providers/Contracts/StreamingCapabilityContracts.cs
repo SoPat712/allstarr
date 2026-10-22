@@ -155,3 +155,9 @@ public interface IProviderRecordingStreamingCapability : IProviderStreamingCapab
 public interface IProviderDownloadStreamingCapability : IProviderRecordingStreamingCapability
 {
 }
+
+public interface IProviderDiagnosticSampleSearch
+{
+    Task<ProviderOutcome<ProviderRecordingAvailability>> DiscoverSampleAsync(
+        ProviderExecutionContext context, string query, ProviderAudioQuality quality);
+}

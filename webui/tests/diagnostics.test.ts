@@ -1,5 +1,21 @@
 import { expect, it } from "vitest";
-import { diagnosticFailureMessage } from "../src/lib/diagnostics";
+import { diagnosticFailureMessage, diagnosticIsNeutral } from "../src/lib/diagnostics";
+
+it("explains an unavailable test sample without blaming the service", () => {
+  for (const metric of ["api-latency", "cts"])
+    expect(diagnosticFailureMessage({ metric, stage: "resolve", reasonCode: "sample-unavailable" }))
+      .toBe("Sample unavailable, retrying another recording.");
+  expect(diagnosticIsNeutral({ failureCode: "sample-unavailable" })).toBe(true);
+  expect(diagnosticIsNeutral({ reasonCode: "probe_not_available" })).toBe(true);
+  expect(diagnosticIsNeutral({ reasonCode: "download-not-verified" })).toBe(true);
+  expect(diagnosticIsNeutral({ reasonCode: "service_unavailable" })).toBe(false);
+});
+
+it.each(["probe_not_available", "download-not-verified"])("explains neutral %s without calling it a failure", (reasonCode) => {
+  const message = diagnosticFailureMessage({ metric: "api-latency", capability: "download", reasonCode });
+  expect(message).not.toContain("failed");
+  expect(message).toContain(reasonCode === "probe_not_available" ? "no automatic check" : "not been verified");
+});
 
 it.each([
   ["capability", "does not offer"], ["account-resolution", "account access"],

@@ -207,24 +207,30 @@ public static class SpotiFlacExtensionCompatibility
         var hasServiceHealth = original?["serviceHealth"] is JsonArray endpoints && endpoints.OfType<JsonObject>().Any(item =>
                 Uri.TryCreate(Text(item, "url"), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
                 Text(item, "method", "GET").ToUpperInvariant() is "GET" or "HEAD");
-        if (hasServiceHealth || capabilities.OfType<JsonObject>().Any(item => Text(item, "kind") == "Download"))
-        {
-            var hooks = capabilities.OfType<JsonObject>()
-                .Select(item => Text(item, "kind"))
-                .Where(kind => kind is "Metadata" or "Playlist" or "Streaming" or "Download" or "Intelligence")
-                .Where(kind => hasServiceHealth || kind == "Download")
-                .Select(kind => (JsonNode?)JsonValue.Create("probe" + kind)).ToArray();
-            if (hooks.Length > 0)
+        var hasTrackSearch = exports.Contains("searchTracks") || exports.Contains("customSearch");
+        var hasPlaylistSearch = exports.Contains("searchPlaylists") || exports.Contains("customSearch");
+        var probeHooks = capabilities.OfType<JsonObject>()
+            .Select(item => Text(item, "kind"))
+            .Where(kind => kind switch
             {
-                var health = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Health");
-                if (health == null)
-                {
-                    health = Capability("Health", false, false);
-                    capabilities.Add(health);
-                }
-                health["hooks"] = new JsonArray(hooks);
+                "Metadata" => hasServiceHealth || hasTrackSearch,
+                "Playlist" => hasServiceHealth || hasPlaylistSearch,
+                "Streaming" or "Intelligence" => hasServiceHealth,
+                "Download" => true,
+                _ => false
+            })
+            .Select(kind => (JsonNode?)JsonValue.Create("probe" + kind)).ToArray();
+        var health = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Health");
+        if (probeHooks.Length > 0)
+        {
+            if (health == null)
+            {
+                health = Capability("Health", false, false);
+                capabilities.Add(health);
             }
+            health["hooks"] = new JsonArray(probeHooks);
         }
+        else if (health != null) capabilities.Remove(health);
         return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
 
@@ -870,6 +876,119 @@ public static class SpotiFlacExtensionCompatibility
           }
           return result;
         }
+        function _sfProbeFailure(value) {
+          var detail = value && (value.error_type || value.message || value.error || value.code) || value || '';
+          var status = Number(value && (value.upstreamStatusCode || value.statusCode || value.status) || 0);
+          if (!(status >= 400 && status <= 599) && detail && typeof detail === 'object')
+            status = Number(detail.statusCode || detail.status || detail.code || 0);
+          var reason = String(detail && typeof detail === 'object' ? detail.error_type || detail.message || detail.error || detail.code || '' : detail);
+          if (status === 429 || /\brate[ _-]*limit(?:ed)?\b|\b429\b/i.test(reason)) return 'rate-limited';
+          if (status === 401 || /\b401\b|authentication[ _-]*required/i.test(reason)) return 'authentication-required';
+          if (status === 403 || /\b403\b|access[ _-]*denied/i.test(reason)) return 'access-denied';
+          if (status >= 500) return status === 504 ? 'timeout' : 'service_unavailable';
+          if (/(?:track|recording|song|sample).{0,60}(?:unavailable|removed|not[ _-]*(?:available|playable))|^(?:unavailable|removed|not[ _-]*available)$/i.test(reason)) return 'sample-unavailable';
+          if (status === 404 || status === 410 || /\b(?:404|410)\b|not[ _-]*found|no[ _-]*(?:data|results)/i.test(reason)) return 'not-found';
+          if (status === 408 || /timeout|timed[ _-]*out|deadline/i.test(reason)) return 'timeout';
+          if (/verification[ _-]*required/i.test(reason) || value && value.needsVerification === true) return 'verification-required';
+          return 'service_unavailable';
+        }
+        function _sfProbePayloadFailure(value) {
+          return value && (value.error || value.error_type || value.success === false ||
+            Number(value.upstreamStatusCode || value.statusCode || 0) >= 400) ? _sfProbeFailure(value) : null;
+        }
+        var _sfProbeSampleId = null;
+        function _sfProbeCatalog(check) {
+          _sfProbeSampleId = null;
+          var started = Date.now(), requests = 0, exceeded = false, failure = null, sourceFailure = null, failureSamples = [];
+          function rememberFailure(reason) {
+            if (reason === 'not-found' || reason === 'sample-unavailable') return;
+            sourceFailure = sourceFailure || reason;
+            if (_sfProbeSampleId && failureSamples.indexOf(_sfProbeSampleId) < 0) failureSamples.push(_sfProbeSampleId);
+          }
+          var originals = {}, originalFetch = globalThis.fetch;
+          function bounded(method, receiver, args) {
+            if (++requests > 8 || Date.now() - started >= 20000) {
+              exceeded = true;
+              throw new Error('Probe request limit exceeded');
+            }
+            try {
+              var response = method.apply(receiver, args);
+              var status = Number(response && (response.statusCode || response.status) || 0);
+              if (!(status >= 200 && status < 300)) { failure = _sfProbeFailure(response); rememberFailure(failure); }
+              return response;
+            } catch (error) {
+              failure = _sfProbeFailure(error);
+              rememberFailure(failure);
+              throw error;
+            }
+          }
+          ['get', 'post', 'put', 'delete', 'patch', 'request'].forEach(function(name) {
+            originals[name] = http[name];
+            http[name] = function() { return bounded(originals[name], http, arguments); };
+          });
+          globalThis.fetch = function() { return bounded(originalFetch, globalThis, arguments); };
+          var reason;
+          try { reason = check(rememberFailure); }
+          catch (error) { reason = failure || _sfProbeFailure(error); }
+          finally {
+            Object.keys(originals).forEach(function(name) { http[name] = originals[name]; });
+            globalThis.fetch = originalFetch;
+          }
+          if (exceeded) reason = 'probe-limit-exceeded';
+          else if (reason && (sourceFailure || failure)) reason = sourceFailure || failure;
+          return { status: reason ? 'Unavailable' : 'Healthy', observedAt: new Date().toISOString(),
+            latencyMs: Math.max(0, Date.now() - started), safeCode: reason || null, sampleId: _sfProbeSampleId, failureSampleIds: failureSamples, catalogSample: true };
+        }
+        function _sfProbeMetadata(request) {
+          if (typeof _spotiflacExtension.searchTracks !== 'function' && typeof _spotiflacExtension.customSearch !== 'function')
+            return _sfProbeServiceHealth();
+          return _sfProbeCatalog(function() {
+            var items = _sfSearch({ query: request && request.sampleQuery || 'music', page: { limit: 1 } }, 'tracks', _sfTrack).items;
+            if (!items.length) return 'metadata-not-found';
+            _sfProbeSampleId = items[0].id;
+            var raw = typeof _spotiflacExtension.getTrack === 'function' ? _spotiflacExtension.getTrack(items[0].id) : items[0];
+            if (!raw) return 'sample-unavailable';
+            var failure = _sfProbePayloadFailure(raw);
+            if (failure) return failure;
+            var track = _sfTrack(raw);
+            return track && track.id === items[0].id && track.title ? null : 'metadata-invalid';
+          });
+        }
+        function _sfProbePlaylist(request) {
+          var hosts = (_sfManifest.permissions || {}).network || [];
+          var melon = hosts.some(function(host) { return /^(?:www\.)?melon\.com$/i.test(String(host)); });
+          if (!melon && typeof _spotiflacExtension.searchPlaylists !== 'function' && typeof _spotiflacExtension.customSearch !== 'function')
+            return _sfProbeServiceHealth();
+          return _sfProbeCatalog(function(rememberFailure) {
+            var samples = [];
+            if (melon) {
+              var response = http.get('https://www.melon.com/dj/djfind/djfind_inform.htm');
+              var html = String(response && response.body || '');
+              var pattern = /(?:plylstSeq[=:'"\s]+|goPlaylistDetail\(['"]?)([0-9]{5,12})/g;
+              var match;
+              while ((match = pattern.exec(html)) && samples.length < 8) samples.push(match[1]);
+            } else {
+              samples = _sfSearch({ query: request && request.sampleQuery || 'hits', page: { limit: 3 } }, 'playlists', _sfPlaylist)
+                .items.map(function(item) { return item.id; });
+            }
+            if (!samples.length) return 'sample-unavailable';
+            for (var i = 0; i < samples.length; i++) {
+              _sfProbeSampleId = samples[i];
+              var raw = _spotiflacExtension.getPlaylist(samples[i]);
+              if (!raw) continue;
+              var failure = _sfProbePayloadFailure(raw);
+              if (failure) { rememberFailure(failure); continue; }
+              var playlist = raw.playlist || raw;
+              var tracks = _sfArray(raw.tracks || playlist.tracks);
+              if (!tracks.length) continue;
+              if (playlist.id && tracks.some(function(value) {
+                var track = _sfTrack(value); return track.id && track.title;
+              })) return null;
+              return 'playlist-invalid';
+            }
+            return 'sample-unavailable';
+          });
+        }
         function _sfAlbum(value) {
           value = value && (value.album || value) || {};
           return { id: String(value.id || ''), title: String(value.name || value.title || ''), artists: _sfArtists(value),
@@ -921,8 +1040,8 @@ public static class SpotiFlacExtensionCompatibility
         _registeredExtension = {
           initialize: function(settings) { return typeof _spotiflacExtension.initialize === 'function' ? _allstarrInitialize(settings || {}) : true; },
           cleanup: function() { return typeof _spotiflacExtension.cleanup === 'function' ? _spotiflacExtension.cleanup() : true; },
-          probeMetadata: _sfProbeServiceHealth,
-          probePlaylist: _sfProbeServiceHealth,
+          probeMetadata: _sfProbeMetadata,
+          probePlaylist: _sfProbePlaylist,
           probeStreaming: _sfProbeServiceHealth,
           probeDownload: _sfProbeDownload,
           probeIntelligence: _sfProbeServiceHealth,

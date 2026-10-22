@@ -12,13 +12,12 @@ namespace allstarr.Tests;
 public sealed class ProviderCtsTrackSelectorTests
 {
     [Fact]
-    public async Task MonochromeTestSampleUsesReferenceFixtureWhenCatalogIsEmpty()
+    public async Task Select_EmptyCatalogRequiresSearchDiscovery()
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         using var selector = new ProviderCtsTrackSelector(new Factory(database.Options));
         var selected = await selector.SelectAsync("monochrome", null, CancellationToken.None);
-        Assert.Equal("154008664334667776", selected!.TrackId);
-        Assert.Equal(1, selected.CorpusSize);
+        Assert.Null(selected);
     }
 
     [Fact]

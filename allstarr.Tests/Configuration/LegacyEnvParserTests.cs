@@ -7,6 +7,19 @@ namespace allstarr.Tests;
 public sealed class LegacyEnvParserTests
 {
     [Theory]
+    [InlineData("SPOTIFY_API_ENABLED")]
+    [InlineData("SpotifyApi__Enabled")]
+    [InlineData("MUSICBRAINZ_ENABLED")]
+    [InlineData("MusicBrainz__Enabled")]
+    public void SourceAvailabilitySwitchIsLeftForReview(string key)
+    {
+        var entry = Assert.Single(Parse(key + "=false").Entries);
+        Assert.Equal(LegacyEnvDisposition.IgnoredDeprecated, entry.Disposition);
+        Assert.Null(entry.DurableKey);
+        Assert.Contains("source", entry.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
     [InlineData("lrclib,binilyrics,lyricsplus")]
     [InlineData("lrclib,BiniLyrics,lyricsplus")]
     public void LegacyLyricsOrderOmitsRemovedSourceAndPreservesRemainingOrder(string order)

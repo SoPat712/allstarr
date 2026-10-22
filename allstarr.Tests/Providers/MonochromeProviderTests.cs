@@ -158,7 +158,14 @@ public sealed partial class MonochromeProviderTests
         var calls = 0;
         using var http = Client(request =>
         {
-            Assert.Equal($"/track/{(++calls == 1 ? TrackId : MonochromeStreamingCapabilityAdapter.SampleTrackId)}", request.RequestUri!.AbsolutePath);
+            calls++;
+            if (request.RequestUri!.AbsolutePath == "/search/tracks")
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(new
+                    { tracks = allstarr.Services.Common.ProviderDiagnosticSamples.Recordings("monochrome").Select(sample => new { id = TrackId, isrc = sample.Isrc }) }))
+                };
+            Assert.Equal($"/track/{TrackId}", request.RequestUri.AbsolutePath);
             return Audio();
         });
         var adapter = new MonochromeStreamingCapabilityAdapter(http);

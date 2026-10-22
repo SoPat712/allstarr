@@ -223,6 +223,10 @@ public sealed class ProviderRuntimeHealth : IProviderOutcomeObserver
         "apple-web-token-unavailable" or "provider-contract-changed" or "capability-unavailable" or
         "account-needs-configuration" or "account-needs-reauthentication" or "unauthorized" or
         "rate-limited" or "transient-failure" or "permanent-failure" or "probe_failed" or "timeout" or
+        "sample-unavailable" or "service_unavailable" or "download-not-verified" or "probe_not_available" or
+        "container-conversion-failed" or "media-tools-unavailable" or "verification-required" or
+        "authentication-required" or "access-denied" or "not-found" or "metadata-not-found" or "metadata-invalid" or "playlist-not-found" or
+        "playlist-empty" or "playlist-invalid" or "playlist-sample-unavailable" or "probe-limit-exceeded" or
         "blocked-by-challenge" or "lyrics-upstream-busy-or-timed-out" or "unreachable" or "sidecar_not_installed" or "sidecar_unreachable" or "sidecar_timeout" or
         "sidecar_authentication_required" or "sidecar_version_mismatch" => reason,
         _ => "probe_failed"

@@ -177,7 +177,7 @@ public sealed class ExtensionSdkV1Tests : IDisposable
         var verified = ExtensionSdkV1.VerifyArchive(archivePath, hash, Path.Combine(_root, "spotiflac-staged"));
 
         Assert.Equal("spotiflac-demo", verified.Manifest.Id);
-        Assert.All(verified.Manifest.Capabilities, capability =>
+        Assert.All(verified.Manifest.Capabilities.Where(capability => capability.Kind != ProviderCapabilityKind.Health), capability =>
         {
             Assert.True(capability.AccountRequired);
             Assert.Contains(ProviderAccountScope.Personal, capability.AccountScopes);

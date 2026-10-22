@@ -1,5 +1,63 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+for (const width of [390, 1280]) {
+  test(`Spotify Advanced settings reset individual fields at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await mockApi(page);
+    const overrides = [
+      ["SPOTIFY_PATHFINDER_ENDPOINT", "Pathfinder endpoint", "pathfinderEndpoint", "https://service.test/query"],
+      ["SPOTIFY_LIBRARY_QUERY_HASH", "Library query hash", "libraryQueryHash", "a".repeat(64)],
+      ["SPOTIFY_PLAYLIST_QUERY_HASH", "Playlist query hash", "playlistQueryHash", "b".repeat(64)],
+      ["SPOTIFY_LIKED_SONGS_QUERY_HASH", "Liked Songs query hash", "likedSongsQueryHash", "c".repeat(64)],
+      ["SPOTIFY_TOTP_SECRETS_URL", "Public TOTP secrets URL", "totpSecretsUrl", "https://service.test/secrets.json"],
+      ["SPOTIFY_TOKEN_ENDPOINT", "Token endpoint", "tokenEndpoint", "https://service.test/token"],
+    ];
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema, providers: schema.providers.map(provider => provider.id !== "spotify" ? provider : {
+        ...provider, connectionKind: "operator_managed", configSchema: [
+          { key: "SPOTIFY_API_CACHE_DURATION_MINUTES", label: "Cache minutes", type: "number", valuePath: "spotifyApi.cacheDurationMinutes" },
+          { key: "SPOTIFY_API_PREFER_ISRC_MATCHING", label: "Prefer ISRC matching", type: "toggle", valuePath: "spotifyApi.preferIsrcMatching" },
+          ...overrides.map(([key, label, path, value]) => ({ key, label, type: "text", valuePath: `spotifyApi.${path}`,
+            advanced: true, defaultValueJson: JSON.stringify(value) })),
+        ],
+      }),
+    } }));
+    let saved: Record<string, string> | undefined;
+    await page.route("**/api/admin/config", route => {
+      if (route.request().method() === "POST") {
+        saved = route.request().postDataJSON().updates;
+        return route.fulfill({ json: { message: "Runtime configuration updated." } });
+      }
+      return route.fulfill({ json: { ...(responses["/api/admin/config"] as object), spotifyApi: {
+        cacheDurationMinutes: 60, preferIsrcMatching: true,
+        ...Object.fromEntries(overrides.map(([, , path]) => [path, "custom-override"])),
+      } } });
+    });
+    await page.goto("#/integrations/services/spotify");
+    const form = page.getByRole("form", { name: "Spotify settings" });
+    await expect(form.getByLabel("Cache minutes")).toBeVisible();
+    await expect(form.getByRole("checkbox", { name: "Prefer ISRC matching" })).toBeVisible();
+    const advanced = form.locator("details");
+    await expect(advanced).not.toHaveAttribute("open", "");
+    await expect(form.getByLabel("Pathfinder endpoint", { exact: true })).toBeHidden();
+    await advanced.getByText("Advanced", { exact: true }).click();
+    for (const [key, label, , value] of overrides) {
+      await expect(form.locator(`input[name="${key}"]`)).toHaveValue("custom-override");
+      await form.getByRole("button", { name: `Reset ${label} to default`, exact: true }).click();
+      await expect(form.locator(`input[name="${key}"]`)).toHaveValue(value);
+    }
+    expect(saved).toBeUndefined();
+    await form.getByLabel("Cache minutes").fill("45");
+    if (width < 768) await expectContainedMobileGeometry(page);
+    await advanced.getByText("Advanced", { exact: true }).click();
+    await form.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect.poll(() => saved).toEqual({
+      SPOTIFY_API_CACHE_DURATION_MINUTES: "45", SPOTIFY_API_PREFER_ISRC_MATCHING: "true",
+      ...Object.fromEntries(overrides.map(([key, , , value]) => [key, value])),
+    });
+  });
+}
+
 declare global {
   interface Window {
     __allstarrMetrics: { cls: number; lcp: number; navigation: number };

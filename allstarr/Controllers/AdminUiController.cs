@@ -203,39 +203,40 @@ public class AdminUiController : ControllerBase
         await using var context = await contextFactory.CreateDbContextAsync(cancellationToken);
         var accounts = await context.ProviderAccounts.AsNoTracking()
             .ToListAsync(cancellationToken);
-        var health = HttpContext.RequestServices.GetRequiredService<ProviderRuntimeHealth>();
-
-        var summaries = accounts
-            .GroupBy(item => item.ProviderId, StringComparer.OrdinalIgnoreCase)
-            .Select(group =>
+        accounts = accounts.Where(item => !ProviderAccountSettings.IsRemoved(item)).ToList();
+        var publicStatuses = _providerStatusManager.GetAllAccountFreeStatuses()
+            .Concat(_providerStatusManager.GetAppleDownloadEndpointStatuses()).ToList();
+        var providerIds = accounts.Select(item => item.ProviderId).Concat(publicStatuses.Select(item => item.Provider))
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+        var summaries = providerIds.Select(providerId =>
             {
-                var samples = group.SelectMany(account => _providerStatusManager.GetAllManagedStatuses(
-                        account.ProviderId, account.Id, new Dictionary<string, string>(), account.Revision)
-                    .Where(status => status.IsSupported)
-                    .Select(status => health.Get(ProviderRuntimeStatusKey.CreateManaged(
-                        account.ProviderId, status.Capability, account.Id), account.Revision)))
-                    .OfType<ProviderHealthObservation>().ToList();
-                var healthy = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Healthy);
-                var failed = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Degraded);
+                var group = accounts.Where(item => item.ProviderId.Equals(providerId, StringComparison.OrdinalIgnoreCase)).ToList();
+                var enabled = group.Where(item => item.Enabled).ToList();
+                var statuses = enabled.Count > 0
+                    ? enabled.SelectMany(account => _providerStatusManager.GetAllManagedStatuses(
+                        account.ProviderId, account.Id, new Dictionary<string, string>(), account.Revision)).ToList()
+                    : group.Count > 0 ? [] : publicStatuses.Where(item => item.Provider == providerId).ToList();
+                var samples = statuses.Where(item => item.HasCheckResult &&
+                    _providerStatusManager.CanTestCapability(item.Provider, item.Capability)).ToList();
                 return new
                 {
-                    providerId = group.Key,
-                    connectedAccountName = group.Where(item => item.Enabled)
+                    providerId,
+                    connectedAccountName = enabled
                         .Select(item => ProviderAccountNames.DisplayName(item, _providerRegistry)).FirstOrDefault(),
-                    connectedAccounts = group.Where(item => item.Enabled).OrderBy(item => item.Id).Select(item => new
+                    connectedAccounts = enabled.OrderBy(item => item.Id).Select(item => new
                     {
                         scope = item.Scope.ToString(),
                         customLabel = ProviderAccountNames.CustomLabel(item, _providerRegistry)
                     }).ToArray(),
-                    enabledAccountCount = group.Count(item => item.Enabled),
+                    enabledAccountCount = enabled.Count,
                     capabilityTotal = samples.Count,
-                    healthyCapabilityCount = healthy,
-                    failedCapabilityCount = failed,
-                    lastCheckedAt = samples.Count > 0 ? samples.Max(item => item.ObservedAt) : (DateTimeOffset?)null,
+                    healthyCapabilityCount = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Healthy),
+                    failedCapabilityCount = samples.Count(item => item.Health == Services.Common.ProviderHealthState.Degraded),
+                    lastCheckedAt = samples.Max(item => item.TestedAt),
                     successRate = (double?)null,
                     p95LatencyMilliseconds = (long?)null,
-                    lastFailureCode = samples.OrderByDescending(item => item.ObservedAt)
-                        .Select(item => item.ReasonCode).FirstOrDefault(item => !string.IsNullOrWhiteSpace(item))
+                    lastFailureCode = samples.Where(item => item.Health == Services.Common.ProviderHealthState.Degraded)
+                        .OrderByDescending(item => item.TestedAt).Select(item => item.ReasonCode).FirstOrDefault()
                 };
             })
             .OrderBy(item => item.providerId)
@@ -1060,21 +1061,19 @@ public class AdminUiController : ControllerBase
             Id = "spotify",
             Name = "Spotify",
             Icon = "spotify",
-            Status = ProviderStatus("spotify", _spotifyApiSettings.Enabled
-                ? (!string.IsNullOrWhiteSpace(_spotifyApiSettings.SessionCookie) ? "configured" : "needs_config")
-                : "disabled", disabledProviders),
+            Status = ProviderStatus("spotify", !string.IsNullOrWhiteSpace(_spotifyApiSettings.SessionCookie)
+                ? "configured" : "needs_config", disabledProviders),
             Categories = ["playlist", "lyrics"],
             ConfigSchema =
             [
-                Field("SPOTIFY_API_ENABLED", "Enabled", "toggle", "spotifyApi.enabled"),
                 Field("SPOTIFY_API_CACHE_DURATION_MINUTES", "Cache minutes", "number", "spotifyApi.cacheDurationMinutes", min: 1),
                 Field("SPOTIFY_API_PREFER_ISRC_MATCHING", "Prefer ISRC matching", "toggle", "spotifyApi.preferIsrcMatching"),
-                Field("SPOTIFY_PATHFINDER_ENDPOINT", "Pathfinder endpoint", "text", "spotifyApi.pathfinderEndpoint"),
-                Field("SPOTIFY_LIBRARY_QUERY_HASH", "Library query hash", "text", "spotifyApi.libraryQueryHash"),
-                Field("SPOTIFY_PLAYLIST_QUERY_HASH", "Playlist query hash", "text", "spotifyApi.playlistQueryHash"),
-                Field("SPOTIFY_LIKED_SONGS_QUERY_HASH", "Liked Songs query hash", "text", "spotifyApi.likedSongsQueryHash"),
-                Field("SPOTIFY_TOTP_SECRETS_URL", "Public TOTP secrets URL", "text", "spotifyApi.totpSecretsUrl"),
-                Field("SPOTIFY_TOKEN_ENDPOINT", "Token endpoint", "text", "spotifyApi.tokenEndpoint")
+                Field("SPOTIFY_PATHFINDER_ENDPOINT", "Pathfinder endpoint", "text", "spotifyApi.pathfinderEndpoint", advanced: true, defaultValue: SpotifyApiSettings.DefaultPathfinderEndpoint),
+                Field("SPOTIFY_LIBRARY_QUERY_HASH", "Library query hash", "text", "spotifyApi.libraryQueryHash", advanced: true, defaultValue: SpotifyApiSettings.DefaultLibraryQueryHash),
+                Field("SPOTIFY_PLAYLIST_QUERY_HASH", "Playlist query hash", "text", "spotifyApi.playlistQueryHash", advanced: true, defaultValue: SpotifyApiSettings.DefaultPlaylistQueryHash),
+                Field("SPOTIFY_LIKED_SONGS_QUERY_HASH", "Liked Songs query hash", "text", "spotifyApi.likedSongsQueryHash", advanced: true, defaultValue: SpotifyApiSettings.DefaultLikedSongsQueryHash),
+                Field("SPOTIFY_TOTP_SECRETS_URL", "Public TOTP secrets URL", "text", "spotifyApi.totpSecretsUrl", advanced: true, defaultValue: SpotifyApiSettings.DefaultTotpSecretsUrl),
+                Field("SPOTIFY_TOKEN_ENDPOINT", "Token endpoint", "text", "spotifyApi.tokenEndpoint", advanced: true, defaultValue: SpotifyApiSettings.DefaultTokenEndpoint)
             ]
         },
         new()
@@ -1133,12 +1132,11 @@ public class AdminUiController : ControllerBase
             Id = "musicbrainz",
             Name = "MusicBrainz enrichment",
             Icon = "musicbrainz",
-            Status = _musicBrainzSettings.Enabled ? "configured" : "disabled",
+            Status = "available",
             Categories = ["enrichment"],
             Notes = ["Genres only", "Optional enrichment"],
             ConfigSchema =
             [
-                Field("MUSICBRAINZ_ENABLED", "Enabled", "toggle", "musicBrainz.enabled"),
                 Field("MUSICBRAINZ_SOURCE_ID", "Metadata source identifier", "text", "musicBrainz.sourceId", requiresRestart: true),
                 Field("MUSICBRAINZ_BASE_URL", "Metadata service URL", "url", "musicBrainz.baseUrl", requiresRestart: true),
                 Field("MUSICBRAINZ_RATE_LIMIT_MS", "Request interval (ms)", "number", "musicBrainz.rateLimitMs", requiresRestart: true, min: 1000, max: 60000),
@@ -1372,6 +1370,8 @@ public class AdminUiController : ControllerBase
             CanTest = _providerStatusManager.CanTestCapability(status.Provider, status.Capability),
             TestedAt = status.TestedAt,
             LatencyMilliseconds = status.LatencyMilliseconds,
+            VerificationMeasurementId = status.VerificationMeasurementId,
+            VerificationMethod = status.VerificationMethod,
             ReasonCode = status.ReasonCode
         };
 
@@ -1675,7 +1675,9 @@ public class AdminUiController : ControllerBase
         bool readOnly = false,
         string? helpText = null,
         int? min = null,
-        int? max = null) =>
+        int? max = null,
+        bool advanced = false,
+        string? defaultValue = null) =>
         new()
         {
             Key = key,
@@ -1689,6 +1691,8 @@ public class AdminUiController : ControllerBase
             Ownership = ownership,
             ReadOnly = readOnly,
             HelpText = helpText,
+            Advanced = advanced,
+            DefaultValueJson = defaultValue == null ? null : JsonSerializer.Serialize(defaultValue),
             Min = min,
             Max = max
         };

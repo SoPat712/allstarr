@@ -15,7 +15,8 @@ public sealed class SpotifyApiSettings
     public const string DefaultTokenEndpoint = "https://open.spotify.com/api/token";
     public string TokenEndpoint { get; set; } = DefaultTokenEndpoint;
 
-    public bool Enabled { get; set; }
+    // Source policy controls availability; accept older binders without retaining a second switch.
+    public bool Enabled { get => true; set { } }
     public string SessionCookie { get; set; } = string.Empty;
     public int CacheDurationMinutes { get; set; } = 60;
     public int RateLimitDelayMs { get; set; } = 100;

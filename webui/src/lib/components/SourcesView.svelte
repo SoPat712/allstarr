@@ -1,7 +1,7 @@
 <script lang="ts">
   import ServicePolicyCard from "$lib/components/ServicePolicyCard.svelte";
   import ProviderUseControl from "$lib/components/ProviderUseControl.svelte";
-  import { diagnosticFailureMessage, type DiagnosticFailure } from "$lib/diagnostics";
+  import { diagnosticFailureMessage, diagnosticIsNeutral, type DiagnosticFailure } from "$lib/diagnostics";
   import { toast } from "$lib/toasts";
   import { onMount } from "svelte";
   import { DropdownMenu } from "$lib/components/ui/dropdown-menu";
@@ -20,6 +20,7 @@
     settings,
     sources,
     type ConnectivityResult,
+    type ConfigField,
     type CtsMeasurement,
     type ProviderAccount,
     type ProviderDefinition,
@@ -64,6 +65,7 @@
     sourceStatus,
     sourceTimingLabel,
     settingDefault,
+    sourceServerFields,
     supportsPlaybackDiagnostic,
   } from "$lib/sources";
   import { createRefreshScheduler, liveUpdates } from "$lib/live-updates.svelte";
@@ -373,6 +375,11 @@
     }
   }
 
+  function resetServerField(event: MouseEvent, field: ConfigField) {
+    const input = (event.currentTarget as HTMLButtonElement).form?.elements.namedItem(field.key);
+    if (input instanceof HTMLInputElement) input.value = String(settingDefault(field));
+  }
+
   function manageAccess(account: ProviderAccount) {
     selectedAccount = account;
     accessOpen = true;
@@ -409,7 +416,8 @@
       let message = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
       if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
       if (result.reasonCode) message += ` ${diagnosticFailureMessage({ ...result, capability })}`;
-      checkNotification(key, message, result.healthy ?? result.success ? "success" : "error");
+      if (diagnosticIsNeutral(result)) checkNotification(key, diagnosticFailureMessage({ ...result, capability }), "info");
+      else checkNotification(key, message, result.healthy ?? result.success ? "success" : "error");
       await refresh();
       return result;
     } catch (cause) {
@@ -428,7 +436,8 @@
       const result = await sources.testWithoutAccount(source.id, capability).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: result };
       const passed = result.healthy ?? result.success ?? false;
-      checkNotification(key, `${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage({ ...result, capability })}` : ""}`, passed ? "success" : "error");
+      if (diagnosticIsNeutral(result)) checkNotification(key, diagnosticFailureMessage({ ...result, capability }), "info");
+      else checkNotification(key, `${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage({ ...result, capability })}` : ""}`, passed ? "success" : "error");
       await refresh();
     } catch (cause) {
       checkNotification(key, diagnosticError(cause, capability ?? "connection"), "error");
@@ -450,7 +459,7 @@
       } };
       const passed = result.succeeded ?? result.healthy ?? result.success ?? false;
       const message = passed ? `${provider(account.providerId)?.name ?? account.providerId} click-to-stream measured${result.seekRung ? `: ${humanize(result.seekRung)}` : ""}.` : diagnosticFailureMessage(result);
-      toast.show(message, passed ? "success" : "error");
+      toast.show(message, passed ? "success" : diagnosticIsNeutral(result) ? "info" : "error");
       if (account.providerId === "apple-musickit") applePlaybackResult = passed ? "Playback test passed." : message;
       await refresh();
     } catch (cause) {
@@ -470,7 +479,7 @@
       const pending = toast.progress(`Measuring ${item.name} click-to-stream… This can take a few minutes.`);
       const result = await sources.deepStream(item.id).finally(() => toast.dismiss(pending));
       const passed = result.succeeded ?? result.healthy ?? result.success ?? false;
-      toast.show(passed ? `${item.name} click-to-stream measured.` : diagnosticFailureMessage(result), passed ? "success" : "error");
+      toast.show(passed ? `${item.name} click-to-stream measured.` : diagnosticFailureMessage(result), passed ? "success" : diagnosticIsNeutral(result) ? "info" : "error");
       await refresh();
     } catch (cause) {
       toast.error(diagnosticError(cause));
@@ -570,18 +579,20 @@
   </li>
 {/snippet}
 
-{#snippet serverFields(source: ProviderDefinition)}
-            {#each source.configSchema ?? [] as field}
-              <label class="settings-row setting-field" class:read-only={field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}>
-                <div><strong>{source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label}</strong>{#if source.id === "apple-musickit"}<small>{(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment ? "Configured by deployment." : "Leave blank to use the bundled gateway."}</small>{:else if field.helpText}<small>{field.helpText}</small>{/if}{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</div>
+{#snippet serverFields(source: ProviderDefinition, fields: ConfigField[])}
+            {#each fields as field}
+              <div class="settings-row setting-field" class:read-only={field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}>
+                <div><label for={field.key}><strong>{source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label}</strong></label>{#if source.id === "apple-musickit"}<small>{(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment ? "Configured by deployment." : "Leave blank to use the bundled gateway."}</small>{:else if field.helpText}<small>{field.helpText}</small>{/if}{#if field.ownership === "deployment"}<small>Deployment-owned</small>{/if}</div>
                 {#if field.readOnly || field.ownership === "deployment" || source.id === "apple-musickit" && (config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}
                   <output>{field.sensitive ? "Stored" : String(fieldValue(config, field))}</output>
                 {:else if field.type === "select"}
                   <SelectField name={field.key} label={source.id === "apple-musickit" ? "Optional playback gateway URL" : field.label} value={field.sensitive ? "" : String(fieldValue(config, field))} options={field.options ?? []} />
                 {:else if field.type === "toggle"}
-                  <span class="settings-toggle"><Checkbox name={field.key} checked={Boolean(fieldValue(config, field))} /></span>
+                  <span class="settings-toggle"><Checkbox id={field.key} name={field.key} checked={Boolean(fieldValue(config, field))} /></span>
                 {:else}
+                  <div class="source-setting-control">
                   <input
+                    id={field.key}
                     name={field.key}
                     type={field.sensitive ? "password" : field.type === "number" ? "number" : field.type === "url" ? "url" : "text"}
                     value={field.sensitive ? "" : String(fieldValue(config, field))}
@@ -590,15 +601,18 @@
                     required={field.required}
                     autocomplete="off"
                   />
+                  {#if field.defaultValueJson != null && !field.sensitive}
+                    <Button type="button" variant="secondary" size="sm" disabled={Boolean(action)} aria-label={`Reset ${field.label} to default`} onclick={(event) => resetServerField(event, field)}>Reset to default</Button>
+                  {/if}
+                  </div>
                 {/if}
-              </label>
+              </div>
             {/each}
-            {#if source.id !== "apple-musickit" || !(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}<footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${source.id}` ? "Saving…" : "Save configuration"}</Button></footer>{/if}
 {/snippet}
 
 {#snippet servicePage(source: ProviderDefinition)}
   {@const state = sourceStatus(source, accounts, health)}
-  {@const metrics = sourceMetrics(source, summary(source.id), providerHealth(source.id))}
+  {@const metrics = sourceMetrics(source, providerHealth(source.id))}
   {@const sourceAccounts = providerAccounts(source.id)}
   {@const sourceCts = measurements.find((item) => item.providerId.toLowerCase() === source.id.toLowerCase() && !item.providerAccountId)}
   {@const fields = accountSettings(source)}
@@ -748,7 +762,14 @@
         {#if administrator}
           <form class="settings-card source-configuration-form" aria-label={`${source.name} settings`} onsubmit={(event) => void saveSourceConfiguration(event)}>
             <header><div><h3>Server settings</h3><small>Shared by everyone using this service.</small></div></header>
-            {#if source.id === "apple-musickit"}<details class="source-advanced-settings"><summary>Advanced server settings</summary>{@render serverFields(source)}</details>{:else}{@render serverFields(source)}{/if}
+            {#if source.id === "apple-musickit"}
+              <details class="source-advanced-settings"><summary>Advanced server settings</summary>{@render serverFields(source, source.configSchema ?? [])}</details>
+            {:else}
+              {@const fields = sourceServerFields(source)}
+              {@render serverFields(source, fields.standard)}
+              {#if fields.advanced.length}<details class="source-advanced-settings"><summary>Advanced</summary>{@render serverFields(source, fields.advanced)}</details>{/if}
+            {/if}
+            {#if source.id !== "apple-musickit" || !(config.appleDownload as { endpointManagedByDeployment?: boolean })?.endpointManagedByDeployment}<footer><Button type="submit" disabled={Boolean(action)}>{action === `configure:${source.id}` ? "Saving…" : "Save configuration"}</Button></footer>{/if}
           </form>
         {:else}
           <p class="service-empty">Only an administrator can change this service's server settings.</p>
@@ -823,7 +844,7 @@
       <ul class="source-list" aria-label="Services">
         {#each listFilter === "attention" ? needsSetup : providers as item (item.id)}
           {@const state = sourceStatus(item, accounts, health)}
-          {@const metrics = sourceMetrics(item, summary(item.id), providerHealth(item.id))}
+          {@const metrics = sourceMetrics(item, providerHealth(item.id))}
           {@const connected = providerAccounts(item.id)}
           {@const cts = measurements.find((measurement) =>
             measurement.providerId.toLowerCase() === item.id.toLowerCase() &&
@@ -881,6 +902,19 @@
 {/if}
 
 <style>
+  .source-setting-control {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .source-setting-control input {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+
   @layer components {
     :global {
       .service-check-actions {

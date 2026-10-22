@@ -10,9 +10,8 @@ namespace allstarr.Core.Providers.Monochrome;
 
 public sealed class MonochromeStreamingCapabilityAdapter(
     HttpClient http,
-    ILogger<MonochromeStreamingCapabilityAdapter>? logger = null) : IProviderRecordingStreamingCapability
+    ILogger<MonochromeStreamingCapabilityAdapter>? logger = null) : IProviderRecordingStreamingCapability, IProviderDiagnosticSampleSearch
 {
-    public const string SampleTrackId = "154008664334667776";
     private const string Host = "tracks.monochrome.st";
     private const int MaximumSearchBytes = 256 * 1024;
     private const long MaximumAudioBytes = 2L * 1024 * 1024 * 1024;
@@ -74,16 +73,24 @@ public sealed class MonochromeStreamingCapabilityAdapter(
             ProviderOutcome<ProviderStreamProbeResult>.Failure(lease.Error!);
     }
 
-    public async Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
-        ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality)
+    public Task<ProviderOutcome<ProviderRecordingAvailability>> ResolveRecordingAsync(
+        ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality) =>
+        FindRecordingAsync(context, recording, quality, true);
+
+    public Task<ProviderOutcome<ProviderRecordingAvailability>> DiscoverSampleAsync(
+        ProviderExecutionContext context, string query, ProviderAudioQuality quality) =>
+        FindRecordingAsync(context, new("discovery", query, ["Music"], null, null, new Dictionary<string, string>()), quality, false);
+
+    private async Task<ProviderOutcome<ProviderRecordingAvailability>> FindRecordingAsync(
+        ProviderExecutionContext context, ProviderRecordingAvailabilityRequest recording, ProviderAudioQuality quality, bool exact)
     {
         var error = Validate(context);
         if (error != null) return ProviderOutcome<ProviderRecordingAvailability>.Failure(error);
         if (!AllowsLossless(context, quality)) return Failure<ProviderRecordingAvailability>(ProviderErrorKind.IncompatibleMedia);
         var isrc = NormalizeIsrc(recording.Isrc);
-        if (isrc == null || recording.Title.Length is 0 or > 500 || recording.ArtistNames.Count == 0)
+        if (exact && isrc == null || recording.Title.Length is 0 or > 500 || recording.ArtistNames.Count == 0)
             return Unresolved();
-        var query = $"{recording.ArtistNames[0]} {recording.Title}".Trim();
+        var query = exact ? $"{recording.ArtistNames[0]} {recording.Title}".Trim() : recording.Title;
         if (query.Length > 1000) return Unresolved();
         try
         {
@@ -109,11 +116,11 @@ public sealed class MonochromeStreamingCapabilityAdapter(
             if (document.RootElement.ValueKind != JsonValueKind.Object || !document.RootElement.TryGetProperty("tracks", out var tracks) || tracks.ValueKind != JsonValueKind.Array || tracks.GetArrayLength() > 100)
                 return Failure<ProviderRecordingAvailability>(ProviderErrorKind.CapabilityUnavailable);
             var matches = tracks.EnumerateArray().Where(track => track.ValueKind == JsonValueKind.Object &&
-                NormalizeIsrc(Text(track, "isrc")) == isrc &&
+                (!exact || NormalizeIsrc(Text(track, "isrc")) == isrc) &&
                 (!track.TryGetProperty("playable", out var playable) || playable.ValueKind != JsonValueKind.False))
                 .Select(track => NativeId(track, "trackId") ?? NativeId(track, "id"))
                 .Where(id => id != null && IsNativeId(id)).Distinct(StringComparer.Ordinal).ToArray();
-            return matches.Length == 1 ? ProviderOutcome<ProviderRecordingAvailability>.Success(new(
+            return (exact ? matches.Length == 1 : matches.Length > 0) ? ProviderOutcome<ProviderRecordingAvailability>.Success(new(
                 new("monochrome", ProviderResourceKind.Track, matches[0]!))) : Unresolved();
         }
         catch (OperationCanceledException) { return Failure<ProviderRecordingAvailability>(context.CancellationToken.IsCancellationRequested ? ProviderErrorKind.Canceled : ProviderErrorKind.TransientFailure); }

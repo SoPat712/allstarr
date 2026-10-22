@@ -52,37 +52,41 @@ public class OdesliService(
     }
 
     public async Task<string?> TranslateCachedTrackUrlAsync(string sourceUrl, string targetProvider,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool allowMusicBrainz = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (ParseTrackUrl(sourceUrl) is not { } source) return null;
-        var key = CacheKeyBuilder.BuildOdesliTranslationKey(BuildTrackUrl(source.Provider, source.Id)!, "platform-links-v2");
+        var key = LinkCacheKey(BuildTrackUrl(source.Provider, source.Id)!, allowMusicBrainz);
         var cached = await cache.GetAsync<Dictionary<string, string>>(key);
         cancellationToken.ThrowIfCancellationRequested();
         return cached?.GetValueOrDefault(NormalizeProviderId(targetProvider));
     }
 
     public async Task<IReadOnlyDictionary<string, string>> GetTrackLinksAsync(string sourceUrl, CancellationToken cancellationToken,
-        string? isrc = null, string? title = null, string? artist = null)
+        string? isrc = null, string? title = null, string? artist = null, bool allowMusicBrainz = true)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (settings?.Value.Enabled != true || ParseTrackUrl(sourceUrl) is not { } source)
             return new Dictionary<string, string>();
         var canonicalUrl = BuildTrackUrl(source.Provider, source.Id)!;
-        var key = CacheKeyBuilder.BuildOdesliTranslationKey(canonicalUrl, "platform-links-v2");
+        var key = LinkCacheKey(canonicalUrl, allowMusicBrainz);
         var cached = await cache.GetAsync<Dictionary<string, string>>(key);
         cancellationToken.ThrowIfCancellationRequested();
         if (cached != null) return cached;
         return await _coalescer.RunAsync(key, async () =>
         {
             var links = await _chain.ResolveAsync(canonicalUrl, settings.Value.ApiKey, settings.Value.RateLimitMs,
-                isrc, title, artist, cancellationToken);
+                isrc, title, artist, cancellationToken, allowMusicBrainz);
             cancellationToken.ThrowIfCancellationRequested();
             if (links.Count > 0)
                 await cache.SetAsync(key, links, CacheExtensions.OdesliLookupTTL);
             return links;
         }, cancellationToken);
     }
+
+    private static string LinkCacheKey(string canonicalUrl, bool allowMusicBrainz) =>
+        CacheKeyBuilder.BuildOdesliTranslationKey(canonicalUrl,
+            allowMusicBrainz ? "platform-links-v3:musicbrainz" : "platform-links-v3:without-musicbrainz");
 
     public static string? BuildTrackUrl(string provider, string trackId)
     {

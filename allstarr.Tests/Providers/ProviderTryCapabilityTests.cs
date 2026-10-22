@@ -206,7 +206,7 @@ public sealed class ProviderTryCapabilityTests
         var metadata = new Mock<IProviderMetadataCapability>(MockBehavior.Strict);
         if (metadataPresent)
             metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(),
-                    It.Is<ProviderMetadataSearchRequest>(request => request.Query == "Daft Punk Get Lucky" && request.Page.Limit == 20)))
+                    It.Is<ProviderMetadataSearchRequest>(request => request.Page.Limit == 3)))
                 .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("fixture", [Track()])));
         ProviderLyricsRequest? observed = null;
         var lyrics = new Mock<IProviderLyricsCapability>(MockBehavior.Strict);
@@ -223,9 +223,9 @@ public sealed class ProviderTryCapabilityTests
         Assert.True(result.Succeeded);
         Assert.NotNull(observed);
         Assert.Equal(metadataPresent ? "sample" : "lyrics-lookup", observed.ProviderTrackId.Value);
-        Assert.Equal(metadataPresent ? "Song" : "Get Lucky", observed.TrackTitle);
-        Assert.Equal(metadataPresent ? "Artist" : "Daft Punk", Assert.Single(observed.ArtistNames));
-        Assert.Equal(metadataPresent ? 210 : 369, observed.DurationSeconds);
+        Assert.Contains(observed.TrackTitle, metadataPresent ? ["Song"] : ProviderDiagnosticSamples.Recordings("fixture").Select(item => item.Title));
+        Assert.Contains(Assert.Single(observed.ArtistNames), metadataPresent ? ["Artist"] : ProviderDiagnosticSamples.Recordings("fixture").Select(item => item.Artist));
+        Assert.Contains(observed.DurationSeconds, metadataPresent ? [210] : ProviderDiagnosticSamples.Recordings("fixture").Select(item => (int?)item.DurationSeconds));
         Assert.Equal("USQX91300108", observed.Isrc);
         Assert.Equal("plain", Json(result).GetProperty("lyrics").GetProperty("format").GetString());
         metadata.VerifyAll();
@@ -255,8 +255,8 @@ public sealed class ProviderTryCapabilityTests
         var result = await Operations(metadata.Object, download: download.Object).ProbeAsync(
             ProviderTryOperationsTests.Context(), descriptor, ProviderCapabilityKind.Download);
 
-        Assert.Equal(success, result.Succeeded);
-        Assert.Equal(success ? null : checkAvailability ? "not_found" : "probe_not_available", result.ReasonCode);
+        Assert.False(result.Succeeded);
+        Assert.Equal(success ? "download-not-verified" : checkAvailability ? "sample-unavailable" : "probe_not_available", result.ReasonCode);
         metadata.VerifyAll();
         download.VerifyAll();
         if (!checkAvailability)

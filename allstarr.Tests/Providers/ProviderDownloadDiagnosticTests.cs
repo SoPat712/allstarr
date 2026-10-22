@@ -14,9 +14,9 @@ namespace allstarr.Tests;
 public sealed class ProviderDownloadDiagnosticTests
 {
     [Theory]
-    [InlineData(ProviderErrorKind.TransientFailure, "transient-failure", 1)]
+    [InlineData(ProviderErrorKind.TransientFailure, null, 2)]
     [InlineData(ProviderErrorKind.NotFound, null, 2)]
-    public async Task AutomaticSample_OnlyTriesAnotherTrackForATrackFailure(ProviderErrorKind failure, string? reason, int attempts)
+    public async Task AutomaticSample_TriesAnotherTrackAfterMissingOrSourceFailure(ProviderErrorKind failure, string? reason, int attempts)
     {
         await using var database = await SqliteTestDatabase.CreateAsync();
         var streaming = new Mock<IProviderDownloadStreamingCapability>(MockBehavior.Strict);
@@ -50,7 +50,7 @@ public sealed class ProviderDownloadDiagnosticTests
             Assert.Contains("\"reasonCode\":\"" + reason + "\"", json, StringComparison.Ordinal);
             Assert.Contains("\"stage\":\"resolve\"", json, StringComparison.Ordinal);
         }
-        else Assert.Equal(new[] { "first", "second" }, tracks);
+        else Assert.Equal(new[] { "first", "second" }, tracks.OrderBy(item => item, StringComparer.Ordinal));
     }
 
     [Theory]
@@ -98,9 +98,9 @@ public sealed class ProviderDownloadDiagnosticTests
         {
             var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(result.Succeeded);
-            Assert.Equal("timeout", result.ReasonCode);
+            Assert.Equal(selection ? "sample-unavailable" : "timeout", result.ReasonCode);
             Assert.Equal(selection ? "track-selection" : "resolve", result.Stage);
-            Assert.Equal(504, result.StatusCode);
+            Assert.Equal(selection ? 409 : 504, result.StatusCode);
             Assert.Equal(seconds, result.Limit.TimeoutSeconds);
             Assert.True(observed.CancellationToken.IsCancellationRequested);
         }
@@ -140,7 +140,7 @@ public sealed class ProviderDownloadDiagnosticTests
         Assert.False(pending.IsCompleted);
         clock.Advance(TimeSpan.FromSeconds(1));
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
-        Assert.Equal("timeout", result.ReasonCode);
+        Assert.Equal("sample-unavailable", result.ReasonCode);
         Assert.Equal("resolve", result.Stage);
     }
 

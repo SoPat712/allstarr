@@ -619,19 +619,83 @@ public sealed class ExtensionLyricsCapabilityAdapter : ExtensionCapabilityAdapte
 
 public sealed class ExtensionHealthCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderHealthProbeCapability
 {
+    private readonly ProviderDiagnosticSamples _diagnosticSamples = new();
     public ExtensionHealthCapabilityAdapter(ExtensionSandbox sandbox, ExtensionSdkManifest manifest,
         IProviderAccountSecretAccessor? secrets = null) : base(sandbox, manifest, ProviderCapabilityKind.Health, secrets) { }
     public ProviderCapabilityKind Capability => ProviderCapabilityKind.Health;
-    public Task<ProviderOutcome<ProviderHealthProbeResult>> ProbeAsync(ProviderExecutionContext context, ProviderHealthProbeRequest request)
+    public async Task<ProviderOutcome<ProviderHealthProbeResult>> ProbeAsync(ProviderExecutionContext context, ProviderHealthProbeRequest request)
     {
         var hook = request.TargetCapability switch { ProviderCapabilityKind.Metadata => "probeMetadata", ProviderCapabilityKind.Playlist => "probePlaylist", ProviderCapabilityKind.Streaming => "probeStreaming", ProviderCapabilityKind.Download => "probeDownload", ProviderCapabilityKind.Intelligence => "probeIntelligence", _ => "" };
         var started = Stopwatch.GetTimestamp();
-        return InvokeAsync(context, hook, new { targetCapability = request.TargetCapability.ToString(), request.NonDestructive }, value =>
-            new ProviderHealthProbeResult(EnumValue<ProviderProbeStatus>(value, "status"), value.GetProperty("observedAt").GetDateTimeOffset(),
-                value.TryGetProperty("latencyMs", out var latency) && latency.ValueKind == JsonValueKind.Number &&
-                latency.TryGetDouble(out var ms) && double.IsFinite(ms) && ms >= 0 && ms < TimeSpan.MaxValue.TotalMilliseconds / 2
-                    ? TimeSpan.FromMilliseconds(ms) : Stopwatch.GetElapsedTime(started), OptionalText(value, "safeCode")));
+        string? observedSampleId = null;
+        bool catalogSample = false;
+        ProviderOutcome<ProviderHealthProbeResult>? direct = null;
+        var failedSamples = new HashSet<string>(StringComparer.Ordinal);
+        string[] observedFailures = [];
+        Task<ProviderOutcome<ProviderHealthProbeResult>> Invoke(ProviderExecutionContext execution, ProviderDiagnosticSample? sample) =>
+            InvokeAsync(execution, hook, new
+            {
+                targetCapability = request.TargetCapability.ToString(),
+                request.NonDestructive,
+                sampleQuery = sample?.Query.Trim(),
+                sampleIsrc = sample?.Isrc
+            }, value =>
+            {
+                observedSampleId = OptionalText(value, "sampleId");
+                observedFailures = value.TryGetProperty("failureSampleIds", out var ids) && ids.ValueKind == JsonValueKind.Array
+                    ? ids.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString()!).Take(8).ToArray() : [];
+                catalogSample = value.TryGetProperty("catalogSample", out var marker) && marker.ValueKind == JsonValueKind.True;
+                return new ProviderHealthProbeResult(EnumValue<ProviderProbeStatus>(value, "status"), value.GetProperty("observedAt").GetDateTimeOffset(),
+                    value.TryGetProperty("latencyMs", out var latency) && latency.ValueKind == JsonValueKind.Number &&
+                    latency.TryGetDouble(out var ms) && double.IsFinite(ms) && ms >= 0 && ms < TimeSpan.MaxValue.TotalMilliseconds / 2
+                        ? TimeSpan.FromMilliseconds(ms) : Stopwatch.GetElapsedTime(started), OptionalText(value, "safeCode"));
+            });
+        if (!Hooks.Contains(hook) || request.TargetCapability is not (ProviderCapabilityKind.Metadata or ProviderCapabilityKind.Playlist))
+            return await Invoke(context, null);
+        var result = await _diagnosticSamples.CheckAsync($"{context.ProviderId}:{context.Account?.AccountId}:{hook}",
+            ProviderDiagnosticSamples.Recordings(context.ProviderId), async (sample, token) =>
+            {
+                var outcome = await Invoke(ProviderDiagnosticSamples.WithCancellation(context, token), sample);
+                if (!outcome.IsSuccess)
+                {
+                    var failure = ProviderDiagnosticSamples.FromError(outcome.Error!);
+                    return failure.SampleUnavailable ? failure : CountFailure(failure.ReasonCode!, ["query:" + sample.Query]);
+                }
+                var value = outcome.RequireValue();
+                if (!catalogSample)
+                {
+                    direct = outcome;
+                    return new(value.Status == ProviderProbeStatus.Healthy, value.SafeCode, Stop: true);
+                }
+                if (value.Status == ProviderProbeStatus.Healthy) return new(true);
+                if (value.SafeCode == "probe-limit-exceeded") return new(false, value.SafeCode, Stop: true);
+                if (value.SafeCode is "not-found" or "metadata-not-found" or "playlist-not-found" or "playlist-empty" or "sample-unavailable")
+                    return ProviderSampleCheck.Missing;
+                return CountFailure(value.SafeCode ?? "service_unavailable", observedFailures.Length > 0
+                    ? observedFailures.Select(id => "native:" + id) : [observedSampleId == null ? "query:" + sample.Query : "native:" + observedSampleId]);
+            }, DiscoverAsync, context.CancellationToken);
+        if (direct != null) return direct;
+        return ProviderOutcome<ProviderHealthProbeResult>.Success(new(result.Success ? ProviderProbeStatus.Healthy : ProviderProbeStatus.Unavailable,
+            DateTimeOffset.UtcNow, Stopwatch.GetElapsedTime(started), result.SampleUnavailable ? "sample-unavailable" : result.ReasonCode));
+
+        ProviderSampleCheck CountFailure(string reason, IEnumerable<string> ids)
+        {
+            failedSamples.UnionWith(ids);
+            return failedSamples.Count >= ProviderDiagnosticSamples.SourceFailureThreshold
+                ? new(false, reason, Stop: true) : ProviderSampleCheck.Missing;
+        }
+
+        async IAsyncEnumerable<ProviderDiagnosticSample> DiscoverAsync([System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken token)
+        {
+            await Task.CompletedTask;
+            foreach (var query in ProviderDiagnosticSamples.DiscoveryQueries(context.ProviderId))
+            {
+                token.ThrowIfCancellationRequested();
+                yield return new(query, "", null, 200);
+            }
+        }
     }
+
 }
 
 public sealed class ExtensionIntelligenceCapabilityAdapter : ExtensionCapabilityAdapterBase, IProviderIntelligenceCapability

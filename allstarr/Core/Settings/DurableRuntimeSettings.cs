@@ -188,7 +188,6 @@ public static class RuntimeSettingCatalog
         Int("Library:CacheDurationHours", 1, 8760, "Jellyfin:CacheDurationHours");
         items.Add(new("ProviderAccounts:ListenersCanConnectOwnAccounts", RuntimeSettingValueType.Boolean,
             "ProviderAccounts:ListenersCanConnectOwnAccounts", DefaultValue: "true"));
-        Bool("MusicBrainz:Enabled"); Bool("SpotifyApi:Enabled");
         Int("SpotifyApi:CacheDurationMinutes", 1, 10080); Int("SpotifyApi:RateLimitDelayMs", 0, 60000);
         items.Add(new("SpotifyApi:PathfinderEndpoint", RuntimeSettingValueType.String, "SpotifyApi:PathfinderEndpoint", DefaultValue: SpotifyApiSettings.DefaultPathfinderEndpoint, Choices: new HashSet<string>([SpotifyApiSettings.DefaultPathfinderEndpoint, "https://api-partner.spotify.com/pathfinder/v2/query"], Comparer)));
         items.Add(new("SpotifyApi:LibraryQueryHash", RuntimeSettingValueType.String, "SpotifyApi:LibraryQueryHash", DefaultValue: SpotifyApiSettings.DefaultLibraryQueryHash));
@@ -891,14 +890,12 @@ public sealed class RuntimeSettingsLiveOptions
             case "AppleDownload:BaseUrl":
                 if (string.IsNullOrWhiteSpace(_bootstrapAppleBaseUrl)) _apple.BaseUrl = (string)value;
                 break;
-            case "MusicBrainz:Enabled": _musicBrainz.Enabled = (bool)value; break;
             case "SpotifyApi:PathfinderEndpoint": _spotifyApi.PathfinderEndpoint = (string)value; break;
             case "SpotifyApi:LibraryQueryHash": _spotifyApi.LibraryQueryHash = (string)value; break;
             case "SpotifyApi:PlaylistQueryHash": _spotifyApi.PlaylistQueryHash = (string)value; break;
             case "SpotifyApi:LikedSongsQueryHash": _spotifyApi.LikedSongsQueryHash = (string)value; break;
             case "SpotifyApi:TotpSecretsUrl": _spotifyApi.TotpSecretsUrl = (string)value; break;
             case "SpotifyApi:TokenEndpoint": _spotifyApi.TokenEndpoint = (string)value; break;
-            case "SpotifyApi:Enabled": _spotifyApi.Enabled = (bool)value; break;
             case "SpotifyApi:CacheDurationMinutes": _spotifyApi.CacheDurationMinutes = (int)value; break;
             case "SpotifyApi:RateLimitDelayMs": _spotifyApi.RateLimitDelayMs = (int)value; break;
             case "SpotifyApi:PreferIsrcMatching": _spotifyApi.PreferIsrcMatching = (bool)value; break;

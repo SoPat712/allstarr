@@ -29,6 +29,41 @@ namespace allstarr.Tests;
 
 public class ConfigControllerAuthorizationTests : IAsyncLifetime
 {
+    [Fact]
+    public async Task PublicStreamingProbeUsesTheSameMediaMeasurement()
+    {
+        var streaming = new Mock<IProviderStreamingCapability>();
+        streaming.SetupGet(item => item.ProviderId).Returns("public-source");
+        streaming.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Streaming);
+        streaming.Setup(item => item.GetStreamLeaseAsync(It.Is<ProviderExecutionContext>(context => context.Account == null),
+                It.Is<ProviderStreamLeaseRequest>(request => request.TrackId.Value == "native-track")))
+            .ReturnsAsync(ProviderOutcome<ProviderStreamLease>.Success(new("lease", new("https://media.example.test/track"),
+                DateTimeOffset.UtcNow.AddMinutes(1), false, false, new("audio/flac", "flac", "flac"),
+                ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                { Content = new ByteArrayContent([102, 76, 97, 67]) }))));
+        var metadata = new Mock<IProviderMetadataCapability>();
+        metadata.SetupGet(item => item.ProviderId).Returns("public-source");
+        metadata.SetupGet(item => item.Capability).Returns(ProviderCapabilityKind.Metadata);
+        metadata.Setup(item => item.SearchTracksAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderMetadataSearchRequest>()))
+            .ReturnsAsync(ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Success(new("public-source",
+                [new(new("public-source", ProviderResourceKind.Track, "native-track"), "Song", [new("Artist")])])));
+        var registry = new ProviderRegistry([new(new ProviderDescriptor("public-source", "Public source", "Fixture", ProviderOrigin.Extension,
+            "1", "1", [new(ProviderCapabilityKind.Streaming, ProviderCapabilitySupportState.Supported, ProviderAccountRequirement.None,
+                "1", ["getStreamLease", "probeStream"]), new(ProviderCapabilityKind.Metadata, ProviderCapabilitySupportState.Supported,
+                ProviderAccountRequirement.None, "1", ["searchTracks"])], new(), entryPoint: "index.js"), [streaming.Object, metadata.Object])]);
+        using var selector = new ProviderCtsTrackSelector(_factory);
+        var media = new ProviderCtsDiagnosticRunner(registry, Mock.Of<IProviderRouteAccountResolver>(), selector, new ProviderRuntimeHealth());
+        var controller = CreateController(CreateHttpContextWithSession(true), diagnosticRunner: media, providerRegistry: registry);
+
+        var result = Assert.IsType<OkObjectResult>(await Diagnostics(controller).TestProvider("public-source", "streaming"));
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Assert.True(json.RootElement.GetProperty("success").GetBoolean());
+        Assert.Equal("cts", json.RootElement.GetProperty("metric").GetString());
+        Assert.Equal(4, json.RootElement.GetProperty("sampleBytes").GetInt32());
+        streaming.VerifyAll();
+    }
+
     private readonly string _root = Path.Combine(
         Path.GetTempPath(),
         "allstarr-tests",
@@ -355,10 +390,11 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var result = Assert.IsType<OkObjectResult>(await Diagnostics(controller).GetProvidersStatus());
         var json = JsonSerializer.Serialize(result.Value);
         using var document = JsonDocument.Parse(json);
-        var statuses = document.RootElement;
+        var statuses = document.RootElement.EnumerateArray().Where(item =>
+            item.GetProperty("providerAccountId").ValueKind != JsonValueKind.Null).ToArray();
 
-        Assert.Equal(4, statuses.GetArrayLength());
-        Assert.All(statuses.EnumerateArray(), status =>
+        Assert.Equal(4, statuses.Length);
+        Assert.All(statuses, status =>
         {
             Assert.Equal(_providerAccountId, status.GetProperty("providerAccountId").GetGuid());
             Assert.Equal("shared", status.GetProperty("accountScope").GetString());
@@ -451,22 +487,25 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             accountRevision = (await db.ProviderAccounts.SingleAsync()).Revision;
             var recordingId = Guid.CreateVersion7();
             db.CanonicalRecordings.Add(new CanonicalRecordingRecord { Id = recordingId, CreatedByUserId = _userId, Title = "Sample", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
-            db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+            for (var i = 0; i < 3; i++)
             {
-                Id = Guid.CreateVersion7(),
-                CanonicalRecordingId = recordingId,
-                DecisionVersion = 1,
-                VerificationMethod = "fixture",
-                ProviderId = "deezer",
-                ResourceKind = ProviderResourceKind.Track,
-                Scope = ProviderIdentityScope.Catalog,
-                ExternalId = "sample-track",
-                ExternalIdHash = new string('a', 64),
-                Verification = ProviderIdentityVerification.Verified,
-                VerifiedAt = DateTimeOffset.UtcNow,
-                CreatedAt = DateTimeOffset.UtcNow,
-                UpdatedAt = DateTimeOffset.UtcNow
-            });
+                db.ProviderTrackIdentities.Add(new ProviderTrackIdentityRecord
+                {
+                    Id = Guid.CreateVersion7(),
+                    CanonicalRecordingId = recordingId,
+                    DecisionVersion = 1,
+                    VerificationMethod = "fixture",
+                    ProviderId = "deezer",
+                    ResourceKind = ProviderResourceKind.Track,
+                    Scope = ProviderIdentityScope.Catalog,
+                    ExternalId = $"sample-track-{i}",
+                    ExternalIdHash = new string((char)('a' + i), 64),
+                    Verification = ProviderIdentityVerification.Verified,
+                    VerifiedAt = DateTimeOffset.UtcNow,
+                    CreatedAt = DateTimeOffset.UtcNow,
+                    UpdatedAt = DateTimeOffset.UtcNow
+                });
+            }
             await db.SaveChangesAsync();
         }
         var streaming = new Mock<IProviderStreamingCapability>();
@@ -478,7 +517,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
                 using var credential = await secretStore.OpenAsync(secret.Id,
                     new SecretAccessContext(null, $"provider-account:deezer:{_providerAccountId:N}", AllowShared: true));
                 Assert.Contains("selected-account-arl", credential.ReadUtf8(), StringComparison.Ordinal);
-                Assert.Equal("sample-track", request.TrackId.Value);
+                Assert.StartsWith("sample-track-", request.TrackId.Value);
                 if (serviceFailure) return ProviderOutcome<ProviderStreamLease>.Failure(ProviderError.ServiceUnavailable());
                 return ProviderOutcome<ProviderStreamLease>.Success(new ProviderStreamLease("sample",
                     new Uri("https://fixture.invalid/media"), DateTimeOffset.UtcNow.AddMinutes(1), false, false,
@@ -519,7 +558,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             using var failure = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
             Assert.Equal("service_unavailable", failure.RootElement.GetProperty("reasonCode").GetString());
             Assert.Equal("resolve", failure.RootElement.GetProperty("stage").GetString());
-            streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Once);
+            streaming.Verify(item => item.GetStreamLeaseAsync(It.IsAny<ProviderExecutionContext>(), It.IsAny<ProviderStreamLeaseRequest>()), Times.Exactly(3));
             return;
         }
 
@@ -539,6 +578,7 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         var statusResult = Assert.IsType<OkObjectResult>(await Diagnostics(restartedController).GetProvidersStatus());
         using var statusDocument = JsonDocument.Parse(JsonSerializer.Serialize(statusResult.Value));
         var download = statusDocument.RootElement.EnumerateArray().Single(item =>
+            item.GetProperty("providerAccountId").ValueKind != JsonValueKind.Null &&
             item.GetProperty("providerAccountId").GetGuid() == _providerAccountId &&
             item.GetProperty("capability").GetString() == ProviderCapabilities.Download);
         Assert.Equal("configured", download.GetProperty("configuration").GetString());
@@ -633,7 +673,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
         EncryptedSecretStore? secretStore = null,
         IApplicationCache? applicationCache = null,
         ProviderCtsDiagnosticRunner? diagnosticRunner = null,
-        MountedLegacyEnvironment? mounted = null)
+        MountedLegacyEnvironment? mounted = null,
+        IProviderRegistry? providerRegistry = null)
     {
         var logger = new Mock<ILogger<ConfigController>>();
         configValues ??= new Dictionary<string, string?>();
@@ -654,7 +695,8 @@ public class ConfigControllerAuthorizationTests : IAsyncLifetime
             Options.Create(new DeezerSettings()),
             Options.Create(new QobuzSettings()),
             extensionManager: null,
-            healthStore);
+            healthStore, services: providerRegistry == null ? null :
+                new ServiceCollection().AddSingleton(providerRegistry).BuildServiceProvider());
         var effectiveSecretStore = secretStore ?? CreateSecretStore();
         var clock = new SystemPlatformClock();
         var signal = new RuntimeSettingsChangeSignal();

@@ -16,8 +16,10 @@ export type HomeSnapshot = {
   failures: string[];
 };
 
-export function playbackSourceIssues(providers: ProviderDefinition[]) {
+export function playbackSourceIssues(providers: ProviderDefinition[], summaries: ProviderSummary[] = []) {
   return providers.flatMap((provider) => {
+    if (summaries.some((item) => item.providerId.toLowerCase() === provider.id.toLowerCase() && item.enabledAccountCount > 0))
+      return [];
     const capability = provider.runtimeCapabilities?.find((item) =>
       item.supported !== false &&
       ["streaming", "download"].includes(item.id.toLowerCase()) &&

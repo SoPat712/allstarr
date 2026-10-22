@@ -343,6 +343,44 @@ public sealed class OdesliServiceTests
         Assert.Contains("url-rels", handler.Uris[3].Query, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public async Task MusicBrainzFallbackPolicySeparatesCachedLinksAndKeepsOtherServices()
+    {
+        var clock = new ManualTimeProvider();
+        var handler = new Handler((request, _) => Task.FromResult(request.RequestUri!.Host switch
+        {
+            "song.link" => Text("<a href='https://open.spotify.com/track/abc123'>Listen</a>"),
+            "musicbrainz.test" => request.RequestUri.AbsolutePath.Contains("/isrc/", StringComparison.Ordinal)
+                ? Text("""{"recordings":[{"id":"5cdd7db3-8795-442d-8438-ddb8d7ea16a4","isrcs":["USABC1234567"]}]}""")
+                : Text("""{"relations":[{"url":{"resource":"https://deezer.com/track/92"}}]}"""),
+            _ => new(HttpStatusCode.NotFound)
+        }));
+        var catalog = new MusicBrainzService(Factory(handler), Options.Create(new MusicBrainzSettings
+        {
+            BaseUrl = "https://musicbrainz.test/ws/2",
+            RateLimitMs = 1000
+        }), Options.Create(new CacheSettings()), new TestMemoryApplicationCache(), new(new()),
+            NullLogger<MusicBrainzService>.Instance, clock);
+        var service = Create(handler, clock, musicBrainz: catalog);
+        var pending = service.GetTrackLinksAsync(Source, default, "USABC1234567");
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(12), TimeSpan.FromSeconds(1));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal("92", (await pending)["deezer"]);
+        var restricted = await service.GetTrackLinksAsync(Source, default, "USABC1234567", allowMusicBrainz: false);
+
+        Assert.Equal("abc123", restricted["spotify"]);
+        Assert.False(restricted.ContainsKey("deezer"));
+        Assert.Equal(new[] { "song.link", "api.unitune.art", "musicbrainz.test", "musicbrainz.test", "squigly.link",
+            "song.link", "api.unitune.art", "squigly.link" }, handler.Hosts);
+        var reads = handler.Hosts.Count;
+        Assert.Equal("92", (await service.GetTrackLinksAsync(Source, default, "USABC1234567"))["deezer"]);
+        Assert.False((await service.GetTrackLinksAsync(Source, default, "USABC1234567", allowMusicBrainz: false))
+            .ContainsKey("deezer"));
+        Assert.Equal("92", await service.TranslateCachedTrackUrlAsync(Source, "deezer"));
+        Assert.Null(await service.TranslateCachedTrackUrlAsync(Source, "deezer", allowMusicBrainz: false));
+        Assert.Equal(reads, handler.Hosts.Count);
+    }
+
     internal static OdesliService Create(HttpMessageHandler handler, TimeProvider? timeProvider = null, string? apiKey = null,
         Microsoft.Extensions.Logging.ILogger<OdesliService>? logger = null, MusicBrainzService? musicBrainz = null)
     {

@@ -24,7 +24,7 @@ public sealed class MonochromeDiagnosticTests
         using var http = new HttpClient(new Handler(request =>
         {
             Assert.Equal("tracks.monochrome.st", request.RequestUri!.Host);
-            Assert.Equal($"/track/{MonochromeStreamingCapabilityAdapter.SampleTrackId}", request.RequestUri.AbsolutePath);
+            Assert.Equal($"/track/{"154008664334667776"}", request.RequestUri.AbsolutePath);
             var range = request.Headers.Range!;
             requests.Add(range.ToString());
             var end = range.Ranges.Single().To!.Value;
@@ -47,7 +47,7 @@ public sealed class MonochromeDiagnosticTests
         var actor = new ProviderActorContext(ProviderActorKind.Administrator, Guid.NewGuid(), new("jellyfin", "fixture", "admin"));
 
         var result = await runner.MeasureAsync(actor, "monochrome", null, ProviderAudioQuality.HighResolution,
-            "range-measurement", householdCheck: true);
+            "range-measurement", "154008664334667776", householdCheck: true);
 
         Assert.Equal(succeeded, result.Succeeded);
         Assert.Equal(reason, result.ReasonCode);

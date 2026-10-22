@@ -59,7 +59,7 @@ public static class CurrentProviderSupportCatalog
             "monochrome", "monochrome", "Monochrome", "none",
             "Account-free lossless streaming; uses verified Tracks identities or one exact ISRC lookup during playback.",
             Capability("streaming", Supported, "Direct FLAC with measured byte ranges or duration guidance and progressive caching. Tidal IDs are a separate namespace.", "MonochromeProviderTests; TrackIdentityServiceTests"),
-            Capability("health", Supported, "Bounded stream probe using a sample from the public reference tests.", "MonochromeProviderTests; ProviderStatusManagerTests")),
+            Capability("health", Supported, "Bounded streaming checks use rotating recordings and native catalog discovery.", "MonochromeProviderTests; ProviderStatusManagerTests")),
         Provider(
             "spotify",
             "spotify",

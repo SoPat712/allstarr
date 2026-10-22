@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using allstarr.Models.Settings;
+using allstarr.Core.Settings;
 using allstarr.Services.Common;
 using Microsoft.Extensions.Options;
 
@@ -55,6 +56,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
     private readonly ApplicationCacheRequestCoalescer _coalescer;
     private readonly ILogger<MusicBrainzService> _logger;
     private readonly TimeProvider _timeProvider;
+    private readonly IEffectiveProviderPolicyResolver? _providerPolicies;
     private readonly string _sourceId;
     private readonly string _sourceRevision;
     private readonly string _userAgent;
@@ -68,7 +70,8 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         IApplicationCache cache,
         ApplicationCacheRequestCoalescer coalescer,
         ILogger<MusicBrainzService> logger,
-        TimeProvider? timeProvider = null)
+        TimeProvider? timeProvider = null,
+        IEffectiveProviderPolicyResolver? providerPolicies = null)
     {
         _settings = settings.Value;
         _sourceId = NormalizeSourceId(_settings.SourceId);
@@ -86,6 +89,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         _coalescer = coalescer;
         _logger = logger;
         _timeProvider = timeProvider ?? TimeProvider.System;
+        _providerPolicies = providerPolicies;
     }
 
     public string ConfiguredSourceId => _sourceId;
@@ -104,18 +108,18 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         return candidate;
     }
 
-    public Task<MusicBrainzRecording?> LookupByIsrcAsync(
+    public async Task<MusicBrainzRecording?> LookupByIsrcAsync(
         string isrc,
         CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeIsrc(isrc) ??
             throw new ArgumentException("ISRC must contain a valid 12-character recording code.", nameof(isrc));
-        if (!_settings.Enabled) return Task.FromResult<MusicBrainzRecording?>(null);
+        if (!await SourceAvailableAsync(false, cancellationToken)) return null;
         var key = CacheKeyBuilder.BuildMusicBrainzIsrcKey(normalized, _sourceId) + ":exact-unique";
-        return GetCachedAsync(key, token => LookupIsrcUncachedAsync(normalized, token), cancellationToken);
+        return await GetCachedAsync(key, token => LookupIsrcUncachedAsync(normalized, token), cancellationToken);
     }
 
-    public Task<IReadOnlyList<MusicBrainzRecording>> SearchRecordingsAsync(
+    public async Task<IReadOnlyList<MusicBrainzRecording>> SearchRecordingsAsync(
         string title,
         string artist,
         int limit = 10,
@@ -125,36 +129,36 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         var normalizedArtist = NormalizeRequiredText(artist, nameof(artist));
         if (limit is < 1 or > 25)
             throw new ArgumentOutOfRangeException(nameof(limit), "MusicBrainz search limit must be between 1 and 25.");
-        if (!_settings.Enabled) return Task.FromResult<IReadOnlyList<MusicBrainzRecording>>([]);
+        if (!await SourceAvailableAsync(false, cancellationToken)) return [];
         var key = CacheKeyBuilder.BuildMusicBrainzSearchKey(
             normalizedTitle,
             normalizedArtist,
             limit,
             _sourceId);
-        return GetCachedListAsync(key,
+        return await GetCachedListAsync(key,
             token => SearchUncachedAsync(normalizedTitle, normalizedArtist, limit, token), cancellationToken);
     }
 
-    public Task<MusicBrainzRecording?> LookupByMbidAsync(
+    public async Task<MusicBrainzRecording?> LookupByMbidAsync(
         string mbid,
         CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeMbid(mbid) ??
             throw new ArgumentException("MusicBrainz recording ID must be a non-empty UUID.", nameof(mbid));
-        if (!_settings.Enabled) return Task.FromResult<MusicBrainzRecording?>(null);
+        if (!await SourceAvailableAsync(false, cancellationToken)) return null;
         var key = CacheKeyBuilder.BuildMusicBrainzMbidKey(normalized, _sourceId);
-        return GetCachedAsync(key, token => LookupMbidUncachedAsync(normalized, token), cancellationToken);
+        return await GetCachedAsync(key, token => LookupMbidUncachedAsync(normalized, token), cancellationToken);
     }
 
-    public Task<MusicBrainzArtist?> LookupArtistByMbidAsync(
+    public async Task<MusicBrainzArtist?> LookupArtistByMbidAsync(
         string mbid,
         CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeMbid(mbid) ??
             throw new ArgumentException("MusicBrainz artist ID must be a non-empty UUID.", nameof(mbid));
-        if (!_settings.Enabled) return Task.FromResult<MusicBrainzArtist?>(null);
+        if (!await SourceAvailableAsync(false, cancellationToken)) return null;
         var key = CacheKeyBuilder.BuildMusicBrainzResourceKey(_sourceId, "artist", normalized);
-        return GetCachedAsync(
+        return await GetCachedAsync(
             key,
             token => GetJsonAsync<MusicBrainzArtist>(
                 $"artist/{normalized}?fmt=json&inc=aliases",
@@ -162,15 +166,15 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
             cancellationToken);
     }
 
-    public Task<MusicBrainzReleaseGroup?> LookupReleaseGroupByMbidAsync(
+    public async Task<MusicBrainzReleaseGroup?> LookupReleaseGroupByMbidAsync(
         string mbid,
         CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeMbid(mbid) ??
             throw new ArgumentException("MusicBrainz release-group ID must be a non-empty UUID.", nameof(mbid));
-        if (!_settings.Enabled) return Task.FromResult<MusicBrainzReleaseGroup?>(null);
+        if (!await SourceAvailableAsync(false, cancellationToken)) return null;
         var key = CacheKeyBuilder.BuildMusicBrainzResourceKey(_sourceId, "release-group", normalized);
-        return GetCachedAsync(
+        return await GetCachedAsync(
             key,
             token => GetJsonAsync<MusicBrainzReleaseGroup>(
                 $"release-group/{normalized}?fmt=json&inc=artist-credits+aliases",
@@ -178,15 +182,15 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
             cancellationToken);
     }
 
-    public Task<MusicBrainzRelease?> LookupReleaseByMbidAsync(
+    public async Task<MusicBrainzRelease?> LookupReleaseByMbidAsync(
         string mbid,
         CancellationToken cancellationToken = default)
     {
         var normalized = NormalizeMbid(mbid) ??
             throw new ArgumentException("MusicBrainz release ID must be a non-empty UUID.", nameof(mbid));
-        if (!_settings.Enabled) return Task.FromResult<MusicBrainzRelease?>(null);
+        if (!await SourceAvailableAsync(false, cancellationToken)) return null;
         var key = CacheKeyBuilder.BuildMusicBrainzResourceKey(_sourceId, "release", normalized);
-        return GetCachedAsync(
+        return await GetCachedAsync(
             key,
             token => GetJsonAsync<MusicBrainzRelease>(
                 $"release/{normalized}?fmt=json&inc=artist-credits+release-groups+recordings+media+labels",
@@ -197,7 +201,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
     public async Task<IReadOnlyList<string>> LookupPlatformLinksAsync(string? isrc, string? title, string? artist,
         CancellationToken cancellationToken = default)
     {
-        if (!_settings.Enabled) return [];
+        if (!await SourceAvailableAsync(true, cancellationToken)) return [];
         var requestTimeout = TimeSpan.FromSeconds(6);
         MusicBrainzRecording? recording = null;
         if (NormalizeIsrc(isrc) is { } normalizedIsrc)
@@ -265,7 +269,7 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
         long? durationMilliseconds = null,
         CancellationToken cancellationToken = default)
     {
-        if (!_settings.Enabled) return [];
+        if (!await SourceAvailableAsync(true, cancellationToken)) return [];
         var match = await ResolveRecordingAsync(
             recordingMbid, isrc, title, artist, durationMilliseconds, cancellationToken);
         if (match?.Recording.Genres is not { Count: > 0 } genres) return [];
@@ -277,6 +281,13 @@ public sealed class MusicBrainzService : IMusicBrainzCatalogClient
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(5)
             .ToArray();
+    }
+
+    private async Task<bool> SourceAvailableAsync(bool automatic, CancellationToken cancellationToken)
+    {
+        if (_providerPolicies == null) return true;
+        var policy = await _providerPolicies.ResolveAsync(cancellationToken);
+        return automatic ? policy.IsAutomatic("musicbrainz") : policy.IsEnabled("musicbrainz");
     }
 
     private async Task<MusicBrainzRecording?> LookupIsrcUncachedAsync(
