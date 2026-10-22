@@ -80,7 +80,7 @@ public sealed class AudioQualityAnalyzer(FileMediaApplicationCache cache)
             return result;
         }
         catch (OperationCanceledException) { throw; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or
             JsonException or System.ComponentModel.Win32Exception or InvalidOperationException or OverflowException or KeyNotFoundException or ArgumentException)
         {
             cancellationToken.ThrowIfCancellationRequested();

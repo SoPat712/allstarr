@@ -3,10 +3,14 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace allstarr.Core.Extensions;
 
 internal sealed record ExtensionDecryptedMedia(string Container, string Codec);
+
+internal sealed record ExtensionMediaProcessingDiagnostic(string Operation, string Step, string Failure, int? ExitCode,
+    string Stderr, long? InputBytes, long? OutputBytes, double? DeclaredDuration, double? InputDuration, double? OutputDuration, long ElapsedMs);
 
 internal delegate Task<string> ExtensionMediaProcessRunner(string executable, IEnumerable<string> arguments,
     string? output, long maximumBytes, CancellationToken token);
@@ -16,37 +20,71 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
     internal const string FailureMessage = "Download decryption failed.";
     internal const string ConversionFailureMessage = "Download container conversion failed.";
     internal const string ToolsUnavailableMessage = "Download media tools are unavailable.";
+    internal const string DiagnosticKey = "MediaProcessing";
     private readonly ExtensionMediaProcessRunner run = runner ?? RunAsync;
+
+    private sealed class ProcessingState
+    {
+        public readonly long Started = Stopwatch.GetTimestamp();
+        public string Operation = "decryption";
+        public string Step = "descriptor";
+        public long? InputBytes;
+        public long? OutputBytes;
+        public double? DeclaredDuration;
+        public double? InputDuration;
+        public double? OutputDuration;
+    }
 
     public async Task<ExtensionDecryptedMedia> ProcessAsync(string input, string resultJson, long maximumBytes,
         CancellationToken cancellationToken)
     {
         var conversion = false;
+        var state = new ProcessingState();
         try
         {
             if (resultJson.Length > 64 * 1024) throw new InvalidDataException();
             using var result = JsonDocument.Parse(resultJson, new JsonDocumentOptions { MaxDepth = 16 });
             var value = result.RootElement;
             conversion = value.TryGetProperty("requires_container_conversion", out var flag) && flag.ValueKind == JsonValueKind.True;
+            state.Operation = conversion ? "conversion" : "decryption";
             var encrypted = new[] { "decryption", "decryption_key", "encrypted", "needs_decryption", "encryption_scheme" }
                 .Any(name => value.TryGetProperty(name, out var marker) && marker.ValueKind is not
                     (JsonValueKind.Null or JsonValueKind.False) && marker.ToString().Length > 0);
             if (encrypted || !conversion)
             {
-                var decrypted = await DecryptAsync(input, resultJson, maximumBytes, cancellationToken);
+                state.Operation = "decryption";
+                var decrypted = await DecryptAsync(input, resultJson, maximumBytes, cancellationToken, state);
                 if (!conversion && decrypted.Codec != "flac") return decrypted;
                 conversion = true;
             }
-            return await ConvertContainerAsync(input, value, maximumBytes, cancellationToken);
+            state.Operation = "conversion";
+            return await ConvertContainerAsync(input, value, maximumBytes, cancellationToken, state);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (InvalidDataException exception) when (exception.Message is FailureMessage or ConversionFailureMessage or ToolsUnavailableMessage) { throw; }
-        catch { throw new InvalidDataException(conversion ? ConversionFailureMessage : FailureMessage); }
+        catch (OperationCanceledException exception) when (cancellationToken.IsCancellationRequested)
+        {
+            exception.Data[DiagnosticKey] = Diagnostic(state, exception, "canceled");
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var missingTool = exception is Win32Exception { NativeErrorCode: 2 };
+            var error = new InvalidDataException(missingTool ? ToolsUnavailableMessage :
+                state.Operation == "conversion" ? ConversionFailureMessage : FailureMessage);
+            error.Data[DiagnosticKey] = Diagnostic(state, exception,
+                exception is OperationCanceledException ? "timeout" : exception.GetType().Name);
+            throw error;
+        }
     }
 
+    private static ExtensionMediaProcessingDiagnostic Diagnostic(ProcessingState state, Exception exception, string failure) =>
+        new(state.Operation, state.Step, failure, exception.Data["MediaExitCode"] as int?, exception.Data["MediaStderr"] as string ?? "",
+            state.InputBytes, state.OutputBytes, state.DeclaredDuration, state.InputDuration, state.OutputDuration,
+            (long)Stopwatch.GetElapsedTime(state.Started).TotalMilliseconds);
+
     private async Task<ExtensionDecryptedMedia> ConvertContainerAsync(string input, JsonElement value, long maximumBytes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ProcessingState state)
     {
+        state.Step = "descriptor";
         var output = Path.Combine(Path.GetDirectoryName(input)!, $"convert-{Guid.NewGuid():N}.flac");
         using var deadline = new CancellationTokenSource(timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -54,45 +92,65 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
         try
         {
             token.ThrowIfCancellationRequested();
+            state.Step = "descriptor";
             var codec = Text(value, "audio_codec");
-            if (codec is not ("flac" or "alac") ||
+            if (codec is not (null or "" or "flac" or "alac") ||
                 Path.GetExtension(input).ToLowerInvariant() is not (".mp4" or ".m4a")) throw new InvalidDataException();
+            state.Step = "input-size";
+            state.InputBytes = new FileInfo(input).Length;
             ValidateSize(input, maximumBytes);
-            var declared = Duration(value);
+            state.Step = "declared-duration";
+            state.DeclaredDuration = Duration(value);
+            state.Step = "input-probe";
             var before = await ProbeAsync(input, null, token);
-            Validate(before, codec, declared);
+            state.Step = "input-validation";
+            if (string.IsNullOrEmpty(codec)) codec = Text(before.GetProperty("streams")[0], "codec_name");
+            if (codec is not ("flac" or "alac")) throw new InvalidDataException();
+            state.InputDuration = ProbeDuration(before);
+            Validate(before, codec, state.DeclaredDuration);
             if (codec == "alac") return new("m4a", "alac");
-            var expectedDuration = declared ?? ProbeDuration(before);
+            var expectedDuration = state.DeclaredDuration ?? state.InputDuration;
+            state.Step = "input-audio-properties";
             var audio = ProbeAudioProperties(before);
+            state.Step = "encode";
             await run("ffmpeg", ["-v", "error", "-nostdin", "-y", "-threads", "1", "-protocol_whitelist", "file",
                 "-f", "mov", "-i", input, "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
                 "-threads", "1", "-c:a", "flac", "-compression_level", "5", "-sample_fmt", audio.Bits == 16 ? "s16" : "s32",
                 "-bits_per_raw_sample", audio.Bits.ToString(CultureInfo.InvariantCulture),
                 "-fs", maximumBytes.ToString(CultureInfo.InvariantCulture), "-f", "flac", output],
                 output, maximumBytes, token);
+            state.Step = "output-size";
+            state.OutputBytes = new FileInfo(output).Length;
             ValidateSize(output, maximumBytes);
+            state.Step = "output-magic";
             using (var stream = File.OpenRead(output))
             {
                 var magic = new byte[4];
                 if (stream.ReadAtLeast(magic, magic.Length, throwOnEndOfStream: false) != magic.Length ||
                     !magic.AsSpan().SequenceEqual("fLaC"u8)) throw new InvalidDataException();
             }
+            state.Step = "output-probe";
             var after = await ProbeAsync(output, null, token, "flac");
+            state.Step = "output-validation";
+            state.OutputDuration = ProbeDuration(after);
             Validate(after, codec, expectedDuration, "flac");
+            state.Step = "output-audio-properties";
             if (ProbeAudioProperties(after) != audio) throw new InvalidDataException();
+            state.Step = "output-decode";
             await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
                 "-protocol_whitelist", "file", "-f", "flac", "-i", output, "-map", "0:a:0", "-threads", "1", "-f", "null", "-"],
                 null, maximumBytes, token);
+            state.Step = "input-hash";
             var beforeHash = await AudioHashAsync(input, "mov", audio.Bits, token);
+            state.Step = "output-hash";
             var afterHash = await AudioHashAsync(output, "flac", audio.Bits, token);
+            state.Step = "hash-comparison";
             if (!string.Equals(beforeHash, afterHash, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException();
             token.ThrowIfCancellationRequested();
+            state.Step = "replace-input";
             File.Move(output, input, overwrite: true);
             return new("flac", "flac");
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Win32Exception exception) when (exception.NativeErrorCode == 2) { throw new InvalidDataException(ToolsUnavailableMessage); }
-        catch { throw new InvalidDataException(ConversionFailureMessage); }
         finally
         {
             try { if (File.Exists(output)) File.Delete(output); }
@@ -107,8 +165,9 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
     }
 
     private async Task<ExtensionDecryptedMedia> DecryptAsync(string input, string resultJson, long maximumBytes,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, ProcessingState state)
     {
+        state.Step = "descriptor";
         var output = Path.Combine(Path.GetDirectoryName(input)!, $"decrypt-{Guid.NewGuid():N}.m4a");
         using var deadline = new CancellationTokenSource(timeout);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, deadline.Token);
@@ -137,30 +196,40 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
                 codec is not ("aac" or "alac" or "flac" or "opus" or "eac3" or "ac4") ||
                 Path.GetExtension(input).ToLowerInvariant() is not (".mp4" or ".m4a"))
                 throw new InvalidDataException();
-            var size = new FileInfo(input).Length;
-            if (size < 1 || size > maximumBytes) throw new InvalidDataException();
-            var declared = Duration(value);
+            state.Step = "input-size";
+            state.InputBytes = new FileInfo(input).Length;
+            ValidateSize(input, maximumBytes);
+            state.Step = "declared-duration";
+            state.DeclaredDuration = Duration(value);
+            state.Step = "input-probe";
             var before = await ProbeAsync(input, key, token);
-            Validate(before, codec, declared);
-            var expectedDuration = declared ?? ProbeDuration(before);
+            state.Step = "input-validation";
+            state.InputDuration = ProbeDuration(before);
+            Validate(before, codec, state.DeclaredDuration);
+            var expectedDuration = state.DeclaredDuration ?? state.InputDuration;
+            state.Step = "decrypt";
             await run("ffmpeg", ["-v", "error", "-nostdin", "-y", "-threads", "1", "-protocol_whitelist", "file",
                 "-decryption_key", key!, "-f", "mov", "-i", input, "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
                 "-c", "copy", "-strict", "experimental", "-fs", maximumBytes.ToString(CultureInfo.InvariantCulture),
                 "-f", "mp4", output], output, maximumBytes, token);
-            size = new FileInfo(output).Length;
-            if (size < 1 || size > maximumBytes) throw new InvalidDataException();
-            Validate(await ProbeAsync(output, null, token), codec, expectedDuration);
+            state.Step = "output-size";
+            state.OutputBytes = new FileInfo(output).Length;
+            ValidateSize(output, maximumBytes);
+            state.Step = "output-probe";
+            var after = await ProbeAsync(output, null, token);
+            state.Step = "output-validation";
+            state.OutputDuration = ProbeDuration(after);
+            Validate(after, codec, expectedDuration);
             // A remux can succeed with corrupt packets and a wrong key. Decode without retaining PCM.
+            state.Step = "output-decode";
             await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
                 "-protocol_whitelist", "file", "-f", "mov", "-i", output, "-map", "0:a:0", "-threads", "1", "-f", "null", "-"],
                 null, maximumBytes, token);
             token.ThrowIfCancellationRequested();
+            state.Step = "replace-input";
             File.Move(output, input, overwrite: true);
             return new("m4a", codec!);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Win32Exception exception) when (exception.NativeErrorCode == 2) { throw new InvalidDataException(ToolsUnavailableMessage); }
-        catch { throw new InvalidDataException(FailureMessage); }
         finally
         {
             try { if (File.Exists(output)) File.Delete(output); }
@@ -246,12 +315,17 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
         };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         using var process = Process.Start(start) ?? throw new InvalidDataException();
+        var stderr = ReadStderrTailAsync(process.StandardError, token);
+        void AttachDetails(Exception exception)
+        {
+            if (stderr.IsCompletedSuccessfully) exception.Data["MediaStderr"] = stderr.GetAwaiter().GetResult();
+            if (process.HasExited) exception.Data["MediaExitCode"] = process.ExitCode;
+        }
         try
         {
             try { process.PriorityClass = ProcessPriorityClass.BelowNormal; }
             catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or InvalidOperationException or PlatformNotSupportedException) { }
             var stdout = ReadBoundedAsync(process.StandardOutput, token);
-            var stderr = process.StandardError.BaseStream.CopyToAsync(Stream.Null, token);
             var completion = process.WaitForExitAsync(token);
             try
             {
@@ -277,8 +351,61 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
                 catch { }
             }
         }
-        catch (OperationCanceledException) { throw; }
-        catch { throw new InvalidDataException(FailureMessage); }
+        catch (OperationCanceledException exception) { AttachDetails(exception); throw; }
+        catch (Exception)
+        {
+            var error = new InvalidDataException(FailureMessage);
+            AttachDetails(error);
+            throw error;
+        }
+    }
+
+    private static async Task<string> ReadStderrTailAsync(StreamReader reader, CancellationToken token)
+    {
+        const int limit = 4096;
+        var lines = new Queue<string>();
+        var line = new StringBuilder();
+        var length = 0;
+        var omitted = false;
+        void AppendLine()
+        {
+            var safe = omitted ? "<stderr line omitted>" : SanitizeStderr(line.ToString());
+            while (lines.Count > 0 && length + safe.Length + 1 > limit) length -= lines.Dequeue().Length + 1;
+            lines.Enqueue(safe);
+            length += safe.Length + 1;
+            line.Clear();
+            omitted = false;
+        }
+        var buffer = new char[1024];
+        int count;
+        try
+        {
+            while ((count = await reader.ReadAsync(buffer, token)) > 0)
+            {
+                for (var index = 0; index < count; index++)
+                {
+                    if (buffer[index] == '\n') AppendLine();
+                    else if (!omitted)
+                    {
+                        if (line.Length == limit) { line.Clear(); omitted = true; }
+                        else line.Append(buffer[index]);
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { line.Clear(); omitted = false; }
+        if (omitted || line.Length > 0) AppendLine();
+        return string.Join("\n", lines);
+    }
+
+    private static string SanitizeStderr(string text)
+    {
+        text = Regex.Replace(text, @"\b[a-z][a-z0-9+.-]*://[^\s""'<>]+", "<link>", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"(authorization|password|secret|token|cookie|api[-_]?key|decryption[-_]?key|session[-_]?id|install[-_]?id|key)\b[""']?\s*[:=]\s*[""']?(?:(?:bearer|basic)\s+)?[^\s,;""'}&]+",
+            "$1=<redacted>", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\b[0-9a-f]{32,}\b", "<redacted>", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\s+", " ").Trim();
+        return text.Length < 4096 ? text : "<stderr line omitted>";
     }
 
     private static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationToken token)
