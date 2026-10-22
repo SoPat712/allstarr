@@ -2012,6 +2012,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
     public async Task DownloadStreaming_PreparesSoundCloudTransfersAndPreservesUpstreamFailure(int status, string? reason)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-prepared-stream", Guid.NewGuid().ToString("N"));
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         try
         {
             var source = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Fixtures", "Extensions", "Registry", "soundcloud.json"));
@@ -2039,7 +2040,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             });
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://api-v2.soundcloud.com/"]),
-                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var artifacts = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
             await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, artifacts, options);
@@ -2064,6 +2065,9 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 Assert.True(result.Succeeded, result.Error);
                 Assert.Equal(4, result.SampleBytes);
                 Assert.Null(result.Media!.Bitrate);
+                Assert.Single(Directory.GetDirectories(options.RootPath));
+                await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+                clock.Advance(TimeSpan.FromSeconds(10));
             }
             Assert.Empty(Directory.GetDirectories(options.RootPath));
         }
@@ -2079,6 +2083,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
     public async Task SpotiFlacStreaming_PreparesSelectedTrackAndKeepsAvailabilityAdvisory(string availability, bool streams)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-selected-stream", Guid.NewGuid().ToString("N"));
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         try
         {
             const string source = """
@@ -2106,7 +2111,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var handler = new BytesHandler([1, 2, 3, 4]);
             var sandbox = new ExtensionSandbox(root, normalized, script, new HttpClientFactory(handler), NullLogger.Instance,
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
-                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
             var context = Context(manifest.Id);
@@ -2116,7 +2121,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 ? ProviderDownloadAvailabilityState.Unavailable : ProviderDownloadAvailabilityState.Available;
             Assert.Equal(expectedAvailability, (await download.CheckAvailabilityAsync(context, new(track))).RequireValue().State);
 
-            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+            await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
             var result = await adapter.GetStreamLeaseAsync(context, new(track));
 
             Assert.Equal(streams, result.IsSuccess);
@@ -2127,6 +2132,9 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
                 using var response = await lease.ProtectedResponseFactory!(request, default);
                 Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+                Assert.Single(Directory.GetDirectories(options.RootPath));
+                await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+                clock.Advance(TimeSpan.FromSeconds(10));
                 Assert.Empty(Directory.GetDirectories(options.RootPath));
             }
             else
@@ -2153,6 +2161,7 @@ public sealed partial class ExtensionCapabilityAdapterTests
         bool requiresPreparation, string? availabilityBody, bool streams)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-download-stream", Guid.NewGuid().ToString("N"));
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         try
         {
             var manifest = DownloadManifest() with
@@ -2175,11 +2184,11 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 """{"id":"fixture-extension","displayName":"Fixture","version":"1.0.0"}""",
                 script, new HttpClientFactory(handler), NullLogger.Instance,
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
-                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
             var store = new MemoryArtifactStore();
             var resolver = new ProviderDownloadArtifactResolver(store, options);
-            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
+            await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, null, resolver, options);
 
             var result = await adapter.GetStreamLeaseAsync(Context(), new(Id(ProviderResourceKind.Track, "track-1")));
 
@@ -2192,6 +2201,9 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 using var request = new HttpRequestMessage(HttpMethod.Get, lease.ProtectedSourceUri);
                 using var response = await lease.ProtectedResponseFactory!(request, default);
                 Assert.Equal(new byte[] { 1, 2, 3, 4 }, await response.Content.ReadAsByteArrayAsync());
+                Assert.Single(Directory.GetDirectories(options.RootPath));
+                await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+                clock.Advance(TimeSpan.FromSeconds(10));
                 Assert.Empty(Directory.GetDirectories(options.RootPath));
             }
             else
@@ -2212,10 +2224,11 @@ public sealed partial class ExtensionCapabilityAdapterTests
     [InlineData("bytes=1-2,3-", false, 400, null, 0, new byte[] { })]
     [InlineData("items=1-2", false, 400, null, 0, new byte[] { })]
     [InlineData("bytes=1-2", true, 200, null, 4, new byte[] { })]
-    public async Task SpotiFlacDownloadProvider_PreparesAStreamAndDeletesItsTransientWorkspace(
+    public async Task SpotiFlacDownloadProvider_PreparesRangesAndCleansItsWorkspaceAfterIdleGrace(
         string? range, bool head, int status, string? contentRange, int length, byte[] expected)
     {
         var root = Path.Combine(Path.GetTempPath(), "allstarr-spotiflac-stream", Guid.NewGuid().ToString("N"));
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         try
         {
             const string sourceManifest = """
@@ -2232,14 +2245,14 @@ public sealed partial class ExtensionCapabilityAdapterTests
             var sandbox = new ExtensionSandbox(root, normalized, script,
                 new HttpClientFactory(new BytesHandler([1, 2, 3, 4])), NullLogger.Instance,
                 new ExtensionRuntimePermissionSet(new HashSet<string>(["https://media.example.test/"]),
-                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"));
+                    new HashSet<string>(), new HashSet<string>()), Path.Combine(root, "runtime"), timeProvider: clock);
             var options = new ProviderDownloadWorkspaceOptions
             {
                 RootPath = Path.Combine(root, "workspaces"),
                 MaximumArtifactBytes = 1024
             };
             var resolver = new ProviderDownloadArtifactResolver(new MemoryArtifactStore(), options);
-            var adapter = new ExtensionDownloadStreamingCapabilityAdapter(
+            await using var adapter = new ExtensionDownloadStreamingCapabilityAdapter(
                 sandbox, manifest, null, resolver, options);
             var outcome = await adapter.GetStreamLeaseAsync(
                 Context("spotiflac-stream-demo"),
@@ -2261,6 +2274,9 @@ public sealed partial class ExtensionCapabilityAdapterTests
                 Assert.Equal("bytes", Assert.Single(response.Headers.AcceptRanges));
                 Assert.Equal(expected, await response.Content.ReadAsByteArrayAsync());
             }
+            Assert.Single(Directory.EnumerateDirectories(options.RootPath));
+            await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+            clock.Advance(TimeSpan.FromSeconds(10));
             Assert.Empty(Directory.EnumerateDirectories(options.RootPath));
         }
         finally

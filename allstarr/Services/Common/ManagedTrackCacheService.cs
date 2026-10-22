@@ -106,11 +106,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     }
 
     public async Task<ProtocolProviderStream?> TryOpenAsync(ProviderExternalResourceId track,
-        DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null, bool preparation = false)
+        DownloadedSongMappingScope scope, CancellationToken cancellationToken, long? accountRevision = null, bool preparation = false,
+        long? requestedOffset = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if (active.TryGetValue(Key(scope, accountRevision, track.ProviderId, track.Value), out var transfer))
         {
+            if (requestedOffset is > 0 && transfer.CanFetchRange(requestedOffset.Value)) return null;
             var reader = transfer.TryOpen(!preparation);
             if (reader != null)
             {
@@ -222,7 +224,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                     partial, output, original, source,
                     stream.Response.StatusCode == HttpStatusCode.PartialContent ? original.Headers.ContentRange?.Length : original.Headers.ContentLength,
                     metadataFactory, retain, shutdown.Token, stream.FileFacts,
-                    protocol.IsPreparation ? cancellationToken : CancellationToken.None, protocol.IsPreparation, limit);
+                    protocol.IsPreparation ? cancellationToken : CancellationToken.None, protocol.IsPreparation, limit,
+                    stream.Lease.SupportsByteRanges);
                 if (protocol.IsPreparation) preparationReserved += limit;
                 active[key] = transfer;
                 transfer.StartWorker();
@@ -290,9 +293,9 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
     internal static string? SeekRung(HttpContent content) => content is ProgressiveContent progressive
         ? progressive.Reader.CanSeek ? "progressive-cache" : "sequential-cache" : null;
 
-    internal static Task WaitForRangeLengthAsync(HttpContent content, string? rangeHeader, CancellationToken cancellationToken) =>
-        content is ProgressiveContent progressive && StreamByteRanges.Parse(rangeHeader) != null
-            ? progressive.Reader.WaitForLengthAsync(cancellationToken) : Task.CompletedTask;
+    internal static Task WaitForRangeAsync(HttpContent content, string? rangeHeader, CancellationToken cancellationToken) =>
+        content is ProgressiveContent progressive && StreamByteRanges.Parse(rangeHeader) is { } range
+            ? progressive.Reader.WaitForRangeAsync(range, cancellationToken) : Task.CompletedTask;
 
     internal static CancellationToken PlaybackStarted(HttpContent content) =>
         content is ProgressiveContent progressive ? progressive.PlaybackStarted : CancellationToken.None;
@@ -324,6 +327,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         public PlaybackFileFacts FileFacts { get; }
         private readonly bool preparation;
         private readonly long maximumBytes;
+        private readonly bool supportsUpstreamRanges;
         private readonly CancellationTokenRegistration preparationCancellation;
         private volatile bool playbackOwned;
         private readonly CancellationTokenSource playbackStarted = new();
@@ -347,7 +351,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
         public Transfer(ManagedTrackCacheService owner, string key, DownloadedSongMappingScope scope,
             string provider, string track, ProviderMediaFormat media, string cacheRoot, string path, FileStream output,
             HttpContent original, Stream source, long? total, Func<Task<Song?>> metadata, bool retain, CancellationToken stopping,
-            PlaybackFileFacts fileFacts, CancellationToken preparationToken, bool preparation, long maximumBytes)
+            PlaybackFileFacts fileFacts, CancellationToken preparationToken, bool preparation, long maximumBytes,
+            bool supportsUpstreamRanges)
         {
             this.owner = owner; this.key = key; this.scope = scope; this.provider = provider; this.track = track;
             FileFacts = fileFacts;
@@ -355,6 +360,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             this.original = original; this.source = source; this.total = total; this.metadata = metadata; this.retain = retain;
             this.preparation = preparation;
             this.maximumBytes = maximumBytes;
+            this.supportsUpstreamRanges = supportsUpstreamRanges;
             PlaybackStarted = playbackStarted.Token;
             cancel = CancellationTokenSource.CreateLinkedTokenSource(stopping);
             idleTimer = owner.clock.CreateTimer(_ => StopIfIdle(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
@@ -366,6 +372,11 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
 
         public void StartWorker() => Work = Task.Run(RunAsync);
         public void Stop() => cancel.Cancel();
+
+        public bool CanFetchRange(long offset)
+        {
+            lock (gate) return supportsUpstreamRanges && !finished && offset >= available;
+        }
 
         public ProgressiveCachingStream? TryOpen(bool playback)
         {
@@ -387,8 +398,8 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 signal.TrySetResult();
                 idleTimer.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
                 return new ProgressiveCachingStream(file, Snapshot, Closed,
-                    TimeSpan.FromSeconds(60), () => ready.TrySetResult(), TimeSpan.FromSeconds(60),
-                    timeProvider: owner.clock, maximumWaitTimeout: TimeSpan.FromSeconds(60));
+                    ProgressiveCachingStream.SeekWaitTimeout, () => ready.TrySetResult(), ProgressiveCachingStream.InitialReadWaitTimeout,
+                    timeProvider: owner.clock, maximumWaitTimeout: ProgressiveCachingStream.SeekWaitTimeout);
             }
         }
 
@@ -470,13 +481,13 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
                 Media = measured.Media;
                 FileFacts.Media = Media;
                 FileFacts.Measured = measured;
+                Advance(end: true);
                 if (FileFacts.RecordAsync is { } record)
                 {
                     try { await record(measured, cancel.Token); }
-                    catch (Exception error) when (error is not OperationCanceledException)
+                    catch (Exception error) when (error is not OperationCanceledException || !cancel.IsCancellationRequested)
                     { owner.logger.LogDebug("Could not retain completed media facts ({ErrorType})", error.GetType().Name); }
                 }
-                Advance(end: true);
                 if (retain) published = await PublishAsync(metadataTask);
                 else
                 {
@@ -486,7 +497,7 @@ public sealed class ManagedTrackCacheService : IAsyncDisposable
             }
             catch (Exception)
             {
-                if (!verified) Advance(end: true, failure: true);
+                Advance(end: true, failure: !verified);
                 if (!cancel.IsCancellationRequested && !preparation)
                     owner.logger.LogWarning("The managed media transfer could not complete for {ProviderId}", provider);
             }

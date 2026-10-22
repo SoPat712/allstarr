@@ -7,7 +7,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace allstarr.Tests;
 
-public sealed class ProtocolStreamingResponseAdapterTests
+public sealed partial class ProtocolStreamingResponseAdapterTests
 {
     private readonly ProtocolStreamingResponseAdapter _adapter = new();
 

@@ -3,8 +3,9 @@ using allstarr.Services.Common;
 
 namespace allstarr.Core.Protocols;
 
-public sealed class ProtocolStreamingResponseAdapter
+public sealed class ProtocolStreamingResponseAdapter(TimeProvider? timeProvider = null)
 {
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private static readonly string[] ForwardedResponseHeaders =
     [
         "Accept-Ranges",
@@ -28,7 +29,8 @@ public sealed class ProtocolStreamingResponseAdapter
         HttpContext context,
         HttpResponseMessage response,
         CancellationToken cancellationToken,
-        bool enableRangeProcessing)
+        bool enableRangeProcessing,
+        bool providerStream = false)
     {
         ArgumentNullException.ThrowIfNull(context);
         ArgumentNullException.ThrowIfNull(response);
@@ -41,6 +43,32 @@ public sealed class ProtocolStreamingResponseAdapter
         }
 
         context.Response.RegisterForDispose(response);
+        var headOnly = HttpMethods.IsHead(context.Request.Method);
+        var partial = response.StatusCode == System.Net.HttpStatusCode.PartialContent;
+        var seeking = providerStream && (response.Content.Headers.ContentRange?.From is > 0 ||
+            StreamByteRanges.Parse(context.Request.Headers.Range) is { } requested && requested.Ranges.Single().From != 0);
+        if (providerStream && partial && response.Content.Headers.ContentRange is { From: { } from, To: { } to })
+            response.Content.Headers.ContentLength ??= to - from + 1;
+        if (!headOnly)
+        {
+            if (enableRangeProcessing && response.StatusCode == System.Net.HttpStatusCode.OK)
+                await ManagedTrackCacheService.WaitForRangeAsync(response.Content, context.Request.Headers.Range, cancellationToken);
+            if (providerStream && partial)
+            {
+                using var timeout = new CancellationTokenSource(seeking ? ProgressiveCachingStream.SeekWaitTimeout :
+                    ProgressiveCachingStream.InitialReadWaitTimeout, clock);
+                using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+                try
+                {
+                    if (!await PrefetchedStream.PrepareAsync(response, reading.Token).WaitAsync(reading.Token))
+                        throw new IOException("The provider media ended before its declared range.");
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException("The provider did not deliver the requested position before the seek timeout.");
+                }
+            }
+        }
         context.Response.StatusCode = (int)response.StatusCode;
         foreach (var header in ForwardedResponseHeaders)
         {
@@ -51,20 +79,19 @@ public sealed class ProtocolStreamingResponseAdapter
             }
         }
 
-        if (HttpMethods.IsHead(context.Request.Method))
+        if (headOnly)
         {
             context.Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg";
             return new EmptyResult();
         }
 
-        if (enableRangeProcessing && response.StatusCode == System.Net.HttpStatusCode.OK)
-            await ManagedTrackCacheService.WaitForRangeLengthAsync(response.Content, context.Request.Headers.Range, cancellationToken);
         var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         return new FileStreamResult(
-            new StartingResponseStream(stream, context.Response),
+            new StartingResponseStream(stream, context.Response, clock, providerStream, seeking,
+                providerStream && partial ? response.Content.Headers.ContentLength : null, providerStream && partial),
             response.Content.Headers.ContentType?.ToString() ?? "audio/mpeg")
         {
-            EnableRangeProcessing = enableRangeProcessing
+            EnableRangeProcessing = enableRangeProcessing && !(providerStream && partial)
         };
     }
 
@@ -95,10 +122,12 @@ public sealed class ProtocolStreamingResponseAdapter
         }
     }
 
-    private sealed class StartingResponseStream(Stream source, HttpResponse response) : Stream
+    private sealed class StartingResponseStream(Stream source, HttpResponse response, TimeProvider clock,
+        bool providerStream, bool seeking, long? remaining, bool partial) : Stream
     {
+        private bool initialRead = true;
         public override bool CanRead => source.CanRead;
-        public override bool CanSeek => source.CanSeek;
+        public override bool CanSeek => !partial && source.CanSeek;
         public override bool CanWrite => false;
         public override long Length => source.Length;
         public override long Position { get => source.Position; set => source.Position = value; }
@@ -111,7 +140,26 @@ public sealed class ProtocolStreamingResponseAdapter
         {
             if (buffer.IsEmpty) return 0;
             await response.StartAsync(cancellationToken);
-            return await source.ReadAsync(buffer, cancellationToken);
+            if (remaining == 0) return 0;
+            if (remaining is { } length && length < buffer.Length) buffer = buffer[..(int)length];
+            int read;
+            if (providerStream)
+            {
+                using var timeout = new CancellationTokenSource(!seeking && initialRead ? ProgressiveCachingStream.InitialReadWaitTimeout :
+                    ProgressiveCachingStream.SeekWaitTimeout, clock);
+                using var reading = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
+                try { read = await source.ReadAsync(buffer, reading.Token).AsTask().WaitAsync(reading.Token); }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                { throw new IOException("The provider media did not advance before the read timeout."); }
+            }
+            else read = await source.ReadAsync(buffer, cancellationToken);
+            initialRead = false;
+            if (remaining is { } expected)
+            {
+                if (read == 0) throw new IOException("The provider media ended before its declared range.");
+                remaining = expected - read;
+            }
+            return read;
         }
         protected override void Dispose(bool disposing)
         {

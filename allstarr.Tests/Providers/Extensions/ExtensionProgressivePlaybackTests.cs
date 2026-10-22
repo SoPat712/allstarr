@@ -292,7 +292,7 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Playback_LastListenerCancellationWaitsForTransferCleanup()
+    public async Task Playback_LastUnpublishedListenerCancellationRetainsTransferUntilIdleGrace()
     {
         var (adapter, context, track) = Setup(true);
         using var cancellation = new CancellationTokenSource();
@@ -304,6 +304,15 @@ public sealed partial class ExtensionProgressivePlaybackTests : IAsyncLifetime
         var result = await pending.WaitAsync(TimeSpan.FromSeconds(10));
         Assert.False(result.IsSuccess);
         Assert.Equal(ProviderErrorKind.Canceled, result.Error!.Kind);
+        Assert.False(source.Canceled.Task.IsCompleted);
+        Assert.Single(Directory.GetDirectories(options.RootPath));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(9));
+        Assert.False(source.Canceled.Task.IsCompleted);
+        Assert.Single(Directory.GetDirectories(options.RootPath));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        await source.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await adapter.DisposeAsync();
         Assert.Empty(Directory.GetDirectories(options.RootPath));
     }
 

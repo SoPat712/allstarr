@@ -76,12 +76,16 @@ public sealed partial class ExtensionControlPlaneServiceTests
         string name, bool personal, bool requiresPreparation)
     {
         var fixture = await SignedRoutesAsync(name, personal, requiresPreparation);
+        await using var runtime = fixture.Runtime;
         var gateway = new ProtocolProviderGateway(fixture.Router, fixture.Registry, fixture.Clients);
         var stream = await gateway.OpenStreamAsync(fixture.Protocol, fixture.Signed.ExtensionId, "track",
             ProviderAudioQuality.Any, null);
         Assert.NotNull(stream);
         using (stream.Response)
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, await stream.Response.Content.ReadAsByteArrayAsync());
+        Assert.Single(Directory.GetDirectories(fixture.Options.RootPath));
+        await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        fixture.Clock.Advance(TimeSpan.FromSeconds(10));
         Assert.Empty(Directory.GetDirectories(fixture.Options.RootPath));
         Assert.True(fixture.Handler.CatalogCalls >= (requiresPreparation ? 2 : 1));
     }
@@ -92,6 +96,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
     public async Task SignedConnections_AutomaticStreamingCheckUsesTheSharedSession(string name)
     {
         var fixture = await SignedRoutesAsync(name, false);
+        await using var runtime = fixture.Runtime;
         using var selector = new ProviderCtsTrackSelector(_factory);
         var runner = new ProviderCtsDiagnosticRunner(fixture.Registry, fixture.Accounts, selector, new ProviderRuntimeHealth(),
             sessions: new ProviderCheckSessions(_factory, fixture.Runtime));
@@ -100,6 +105,9 @@ public sealed partial class ExtensionControlPlaneServiceTests
         Assert.True(result.Succeeded, result.Stage + ": " + result.Error);
         Assert.Equal("search", result.SelectionMode);
         Assert.Equal(4, result.SampleBytes);
+        Assert.Single(Directory.GetDirectories(fixture.Options.RootPath));
+        await fixture.Clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        fixture.Clock.Advance(TimeSpan.FromSeconds(10));
         Assert.Empty(Directory.GetDirectories(fixture.Options.RootPath));
     }
 
@@ -203,10 +211,11 @@ public sealed partial class ExtensionControlPlaneServiceTests
         clients.Setup(item => item.CreateClient(It.IsAny<string>())).Returns(() => new HttpClient(handler, false));
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(_root, "route-downloads"), MaximumArtifactBytes = 1024 };
         var artifacts = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options);
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
         var runtime = new ExtensionRuntimeCoordinator(_factory, _service, registry, registry, clients.Object,
             Mock.Of<allstarr.Core.Providers.Spotify.IProviderAccountSecretAccessor>(MockBehavior.Strict),
             artifacts, options,
-            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance);
+            _configuration, NullLogger<ExtensionRuntimeCoordinator>.Instance, timeProvider: clock);
         var signed = await RoutingPackageAsync(signedName, requiresPreparation);
         signed = await runtime.ActivateAsync(signed.Id, signed.Revision);
         var view = await runtime.CompleteSignedSessionGrantAsync(signed.Id, signed.Revision, "grant-1");
@@ -242,7 +251,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         var protocol = new ProtocolExecutionContext(ProtocolKind.Jellyfin, "fixture", "listener",
             new AllstarrPrincipal(listener, "jellyfin", "fixture", "listener", "Listener", false), "signed-routing",
             DateTimeOffset.UtcNow.AddMinutes(1), default);
-        return new(signed, expired, account, accounts, router, registry, clients.Object, handler, protocol, options, artifacts, runtime);
+        return new(signed, expired, account, accounts, router, registry, clients.Object, handler, protocol, options, artifacts, runtime, clock);
     }
 
     private async Task<ExtensionPackageRecord> RoutingPackageAsync(string name, bool requiresPreparation = true)
@@ -290,7 +299,7 @@ public sealed partial class ExtensionControlPlaneServiceTests
         ProviderAccountRecord Account, DurableProviderRouteAccountResolver Accounts, ProviderRouter Router,
         ProviderRegistry Registry, IHttpClientFactory Clients, RoutingSessionHandler Handler,
         ProtocolExecutionContext Protocol, ProviderDownloadWorkspaceOptions Options, ProviderDownloadArtifactResolver Artifacts,
-        ExtensionRuntimeCoordinator Runtime);
+        ExtensionRuntimeCoordinator Runtime, ManualTimeProvider Clock);
 
     private sealed class RoutingSessionHandler : HttpMessageHandler
     {

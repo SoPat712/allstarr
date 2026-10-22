@@ -143,7 +143,7 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
             It.Is<ProviderStreamLeaseRequest>(request => request.RangeStart == null)), Times.Once);
     }
 
-    private static ProtocolProviderGateway RangeGateway(IProviderStreamingCapability capability)
+    private static ProtocolProviderGateway RangeGateway(IProviderStreamingCapability capability, TimeProvider? clock = null)
     {
         var registry = Registry(capability);
         var router = new Mock<IProviderRouter>(MockBehavior.Strict);
@@ -152,6 +152,6 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         router.Setup(item => item.EvaluateFallback(It.IsAny<ProviderRoutePlan<IProviderStreamingCapability>>(),
                 It.IsAny<int>(), It.IsAny<ProviderError>())).Returns(new ProviderFallbackDecision<IProviderStreamingCapability>(
                     ProviderFallbackDisposition.StopFailure, "stream-range-unavailable", null));
-        return new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory());
+        return new ProtocolProviderGateway(router.Object, registry, new HttpClientFactory(), timeProvider: clock);
     }
 }

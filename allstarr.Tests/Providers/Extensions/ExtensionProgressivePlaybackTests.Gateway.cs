@@ -67,6 +67,9 @@ public sealed partial class ExtensionProgressivePlaybackTests
         }
         else
         {
+            Assert.False(seeking.IsCompleted);
+            source.Release([1, 2, 3, 4]);
+            source.Complete();
             using var resumed = (await seeking.WaitAsync(TimeSpan.FromSeconds(10)))!.Response;
             Assert.Equal(HttpStatusCode.PartialContent, resumed.StatusCode);
             Assert.Equal($"bytes {prefix.Length}-{prefix.Length + 3}/{prefix.Length + 4}",
@@ -74,11 +77,7 @@ public sealed partial class ExtensionProgressivePlaybackTests
             Assert.Equal(4, resumed.Content.Headers.ContentLength);
             Assert.Contains("bytes", resumed.Headers.AcceptRanges);
             Assert.Equal(1, requests);
-            var reading = resumed.Content.ReadAsByteArrayAsync();
-            Assert.False(reading.IsCompleted);
-            source.Release([1, 2, 3, 4]);
-            source.Complete();
-            Assert.Equal(new byte[] { 1, 2, 3, 4 }, await reading.WaitAsync(TimeSpan.FromSeconds(10)));
+            Assert.Equal(new byte[] { 1, 2, 3, 4 }, await resumed.Content.ReadAsByteArrayAsync());
             Assert.Equal(1, requests);
         }
         source.Complete();

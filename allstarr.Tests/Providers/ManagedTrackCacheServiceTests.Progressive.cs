@@ -1,6 +1,7 @@
 using System.Net;
 using allstarr.Core.Capabilities;
 using allstarr.Core.Downloads;
+using allstarr.Core.Music;
 using allstarr.Core.Protocols;
 using allstarr.Core.Routing;
 using allstarr.Core.Storage;
@@ -85,7 +86,7 @@ public sealed partial class ManagedTrackCacheServiceTests
         http.Request.Headers.Range = "bytes=10-";
         var opening = new ProtocolStreamingResponseAdapter().CreateAsync(http, cached, cancellation.Token, true);
         Assert.False(opening.IsCompleted);
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(60));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
         if (cancel)
         {
             cancellation.Cancel();
@@ -93,8 +94,8 @@ public sealed partial class ManagedTrackCacheServiceTests
         }
         else
         {
-            clock.Advance(TimeSpan.FromSeconds(60));
-            await Assert.ThrowsAsync<IOException>(() => opening.WaitAsync(TimeSpan.FromSeconds(10)));
+            clock.Advance(TimeSpan.FromSeconds(8));
+            await Assert.ThrowsAsync<TimeoutException>(() => opening.WaitAsync(TimeSpan.FromSeconds(10)));
         }
     }
 
@@ -107,9 +108,9 @@ public sealed partial class ManagedTrackCacheServiceTests
         await fixture.Source.Waiting.Task.WaitAsync(TimeSpan.FromSeconds(10));
         using var cached = (await fixture.OpenAsync())!.Response;
         var execution = ExecuteAsync(cached, "bytes=10-");
-        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(60));
-        clock.Advance(TimeSpan.FromSeconds(60));
-        await Assert.ThrowsAsync<IOException>(() => execution.WaitAsync(TimeSpan.FromSeconds(10)));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(8));
+        clock.Advance(TimeSpan.FromSeconds(8));
+        await Assert.ThrowsAsync<TimeoutException>(() => execution.WaitAsync(TimeSpan.FromSeconds(10)));
     }
 
     [Theory]
@@ -439,18 +440,18 @@ public sealed partial class ManagedTrackCacheServiceTests
     }
 
     private static async Task<(HttpContext Context, byte[] Bytes)> ExecuteAsync(HttpResponseMessage response,
-        string range, TaskCompletionSource? firstWrite = null)
+        string range, TaskCompletionSource? firstWrite = null, CancellationToken cancellationToken = default)
     {
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddControllers();
         await using var provider = services.BuildServiceProvider();
-        var context = new DefaultHttpContext { RequestServices = provider };
+        var context = new DefaultHttpContext { RequestServices = provider, RequestAborted = cancellationToken };
         context.Request.Method = "GET";
         context.Request.Headers.Range = range;
         using var body = new SignalingBody(firstWrite);
         context.Response.Body = body;
-        var result = await new ProtocolStreamingResponseAdapter().CreateAsync(context, response, CancellationToken.None, true);
+        var result = await new ProtocolStreamingResponseAdapter().CreateAsync(context, response, cancellationToken, true);
         await result.ExecuteResultAsync(new ActionContext(context, new RouteData(), new Microsoft.AspNetCore.Mvc.Abstractions.ActionDescriptor()));
         return (context, body.ToArray());
     }
@@ -480,6 +481,7 @@ public sealed partial class ManagedTrackCacheServiceTests
         public readonly ControlledSource Source;
         public readonly HttpResponseMessage Response;
         public readonly ManagedTrackCacheService Service;
+        public readonly TaskCompletionSource Published = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public string? PublishedPath;
 
         public ProgressiveFixture(bool knownLength, bool shortBody = false, bool fail = false, IHostApplicationLifetime? lifetime = null, bool registrationFails = false, int? declaredLength = null, string provider = "deezer", string mode = "Cache", TimeProvider? timeProvider = null)
@@ -493,17 +495,20 @@ public sealed partial class ManagedTrackCacheServiceTests
             local.Setup(item => item.GetLocalPathForExternalSongAsync(It.IsAny<DownloadedSongMappingScope>(), provider, "track-1"))
                 .ReturnsAsync(() => PublishedPath);
             local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
-                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) => PublishedPath = path).Returns(Task.CompletedTask);
+                .Callback<DownloadedSongMappingScope, Song, string>((_, _, path) =>
+                { PublishedPath = path; Published.TrySetResult(); }).Returns(Task.CompletedTask);
             if (registrationFails)
                 local.Setup(item => item.RegisterDownloadedSongAsync(It.IsAny<DownloadedSongMappingScope>(), It.IsAny<Song>(), It.IsAny<string>()))
                     .ThrowsAsync(new IOException("Registration unavailable"));
             Service = CreateService(Root, mode, local.Object, lifetime, timeProvider);
         }
 
-        public async Task StartAsync()
+        public async Task StartAsync(Func<TrackMediaFacts, CancellationToken, Task>? record = null)
         {
-            await Service.WrapAsync(ProviderStream(Response) with
-            { ServingProviderId = Track.ProviderId, ServingAccountId = Scope.ProviderAccountId, ServingAccountRevision = 4 }, Context(), Track.ProviderId, "track-1", false,
+            var stream = ProviderStream(Response) with
+            { ServingProviderId = Track.ProviderId, ServingAccountId = Scope.ProviderAccountId, ServingAccountRevision = 4 };
+            stream.FileFacts.RecordAsync = record;
+            await Service.WrapAsync(stream, Context(), Track.ProviderId, "track-1", false,
                 () => Task.FromResult<Song?>(new Song { Title = "Song", Artist = "Artist", Album = "Album" }), CancellationToken.None);
             using var startup = (await OpenAsync())!.Response;
             var reader = await startup.Content.ReadAsStreamAsync();
