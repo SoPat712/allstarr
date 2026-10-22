@@ -169,7 +169,16 @@ public static class SpotiFlacExtensionCompatibility
         if (Text(root, "compatibility") != Marker) return normalizedJson;
         var capabilities = root["capabilities"]!.AsArray();
         var exports = ExportedHooks(indexJs);
+        var original = root["spotiflacManifest"] as JsonObject;
         var metadata = capabilities.OfType<JsonObject>().SingleOrDefault(item => Text(item, "kind") == "Metadata");
+        if (metadata == null && original?["type"] is JsonArray types &&
+            types.Any(item => item?.GetValue<string>() == "metadata_provider"))
+        {
+            var settings = root["settings"]?.AsArray().OfType<JsonObject>().ToArray() ?? [];
+            metadata = Capability("Metadata", settings.Length > 0,
+                settings.Any(item => item["required"]?.GetValue<bool>() == true));
+            capabilities.Add(metadata);
+        }
         if (metadata != null)
         {
             var hooks = new[] { "searchTracks", "getTrack", "searchAlbums", "getAlbum", "searchArtists", "getArtist" }
@@ -194,7 +203,6 @@ public static class SpotiFlacExtensionCompatibility
         }
         else if (playlist != null) capabilities.Remove(playlist);
 
-        var original = root["spotiflacManifest"] as JsonObject;
         JsonArray? patterns = null;
         if (exports.Contains("handleUrl") && original != null)
         {
@@ -208,7 +216,9 @@ public static class SpotiFlacExtensionCompatibility
                 Uri.TryCreate(Text(item, "url"), UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
                 Text(item, "method", "GET").ToUpperInvariant() is "GET" or "HEAD");
         var hasTrackSearch = exports.Contains("searchTracks") || exports.Contains("customSearch");
-        var hasPlaylistSearch = exports.Contains("searchPlaylists") || exports.Contains("customSearch");
+        var hasNativePlaylistDiscovery = original?["permissions"]?["network"] is JsonArray hosts && hosts.Any(item =>
+            item?.GetValue<string>() is "melon.com" or "www.melon.com");
+        var hasPlaylistSearch = exports.Contains("searchPlaylists") || exports.Contains("customSearch") || hasNativePlaylistDiscovery;
         var probeHooks = capabilities.OfType<JsonObject>()
             .Select(item => Text(item, "kind"))
             .Where(kind => kind switch
@@ -961,7 +971,8 @@ public static class SpotiFlacExtensionCompatibility
             return _sfProbeServiceHealth();
           return _sfProbeCatalog(function(rememberFailure) {
             var samples = [];
-            if (melon) {
+            if (request && request.sampleId) samples = [String(request.sampleId)];
+            else if (melon) {
               var response = http.get('https://www.melon.com/dj/djfind/djfind_inform.htm');
               var html = String(response && response.body || '');
               var pattern = /(?:plylstSeq[=:'"\s]+|goPlaylistDetail\(['"]?)([0-9]{5,12})/g;
@@ -974,7 +985,9 @@ public static class SpotiFlacExtensionCompatibility
             if (!samples.length) return 'sample-unavailable';
             for (var i = 0; i < samples.length; i++) {
               _sfProbeSampleId = samples[i];
-              var raw = _spotiflacExtension.getPlaylist(samples[i]);
+              var raw;
+              try { raw = _spotiflacExtension.getPlaylist(samples[i]); }
+              catch (error) { rememberFailure(_sfProbeFailure(error)); continue; }
               if (!raw) continue;
               var failure = _sfProbePayloadFailure(raw);
               if (failure) { rememberFailure(failure); continue; }
@@ -984,7 +997,6 @@ public static class SpotiFlacExtensionCompatibility
               if (playlist.id && tracks.some(function(value) {
                 var track = _sfTrack(value); return track.id && track.title;
               })) return null;
-              return 'playlist-invalid';
             }
             return 'sample-unavailable';
           });
