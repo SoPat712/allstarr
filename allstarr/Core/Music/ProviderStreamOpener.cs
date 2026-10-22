@@ -145,7 +145,7 @@ public sealed class ProviderStreamOpener(
                 if (!headOnly && cacheRung != null) Selected(cacheRung);
             }
             return await responses.CreateAsync(http, routed.Response, http.RequestAborted,
-                enableRangeProcessing: routed.IsCached || cacheRung != null);
+                enableRangeProcessing: routed.IsCached || cacheRung != null, providerStream: true);
         }
         catch
         {

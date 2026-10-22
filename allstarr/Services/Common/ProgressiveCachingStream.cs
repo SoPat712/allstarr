@@ -13,6 +13,8 @@ internal readonly record struct ProgressiveCacheReadState(
 /// </summary>
 public sealed class ProgressiveCachingStream : Stream
 {
+    internal static readonly TimeSpan SeekWaitTimeout = TimeSpan.FromSeconds(8);
+    internal static readonly TimeSpan InitialReadWaitTimeout = TimeSpan.FromSeconds(60);
     private readonly Stream source;
     private readonly Func<ProgressiveCacheReadState> readState;
     private readonly Action closed;
@@ -148,7 +150,7 @@ public sealed class ProgressiveCachingStream : Stream
             }
             var timeout = observedLength == 0 ? initialWaitTimeout : waitTimeout;
             var remaining = timeout - timeProvider.GetElapsedTime(waitingSince);
-            if (maximumWaitTimeout is { } maximum)
+            if (maximumWaitTimeout is { } maximum && (position > 0 || observedLength > 0))
             {
                 var budget = maximum - timeProvider.GetElapsedTime(waitingStarted);
                 if (budget < remaining) remaining = budget;
@@ -157,11 +159,12 @@ public sealed class ProgressiveCachingStream : Stream
         }
     }
 
-    internal async Task WaitForLengthAsync(CancellationToken cancellationToken)
+    internal async Task WaitForRangeAsync(System.Net.Http.Headers.RangeHeaderValue range, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
+        if (range.Ranges.Single().From == 0) return;
         InvokeStarted();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60), timeProvider);
+        using var timeout = new CancellationTokenSource(SeekWaitTimeout, timeProvider);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try
         {
@@ -169,14 +172,18 @@ public sealed class ProgressiveCachingStream : Stream
             {
                 var snapshot = readState();
                 if (snapshot.Failed) throw FailedTransfer();
-                if (snapshot.TotalLength.HasValue) return;
+                if (snapshot.TotalLength is { } total)
+                {
+                    if (!StreamByteRanges.TryResolve(range, total, out var start, out _) || snapshot.AvailableLength > start)
+                        return;
+                }
                 if (snapshot.Finished) throw FailedTransfer();
                 await snapshot.Changed.WaitAsync(linked.Token);
             }
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
-            throw new IOException("The progressive media cache did not establish its length before the seek timeout.");
+            throw new TimeoutException("The progressive media cache did not reach the requested position before the seek timeout.");
         }
     }
 

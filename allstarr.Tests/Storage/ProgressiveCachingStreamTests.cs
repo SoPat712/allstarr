@@ -5,6 +5,23 @@ namespace allstarr.Tests;
 public sealed class ProgressiveCachingStreamTests
 {
     [Fact]
+    public async Task InitialPreparationWindowIsSeparateFromTheSeekWaitBudget()
+    {
+        var clock = new ManualTimeProvider();
+        await using var file = FixtureFile([]);
+        await using var stream = new ProgressiveCachingStream(file,
+            () => new(0, null, false, false, NeverCompletingTask(), NeverCompletingTask()), static () => { },
+            TimeSpan.FromSeconds(8), initialWaitTimeout: TimeSpan.FromSeconds(60), timeProvider: clock,
+            maximumWaitTimeout: TimeSpan.FromSeconds(8));
+        var pending = stream.ReadAsync(new byte[1]).AsTask();
+        Assert.Equal(TimeSpan.FromSeconds(60), await clock.NextTimerAsync());
+        clock.Advance(TimeSpan.FromSeconds(8));
+        Assert.False(pending.IsCompleted);
+        clock.Advance(TimeSpan.FromSeconds(52));
+        await Assert.ThrowsAsync<IOException>(() => pending.WaitAsync(TimeSpan.FromSeconds(5)));
+    }
+
+    [Fact]
     public async Task UnknownLength_ReadsOnlyAdvertisedBytesAndAwaitsCompletionAtTrueEof()
     {
         var payload = Enumerable.Range(0, 8).Select(value => (byte)value).ToArray();
@@ -234,8 +251,8 @@ public sealed class ProgressiveCachingStreamTests
             () => new(3, null, false, false, NeverCompletingTask(), NeverCompletingTask()),
             static () => { }, TimeSpan.FromSeconds(60), timeProvider: clock);
         using var cancellation = new CancellationTokenSource();
-        var waiting = reader.WaitForLengthAsync(cancellation.Token);
-        Assert.Equal(TimeSpan.FromSeconds(60), await clock.NextTimerAsync());
+        var waiting = reader.WaitForRangeAsync(new System.Net.Http.Headers.RangeHeaderValue(8, null), cancellation.Token);
+        Assert.Equal(TimeSpan.FromSeconds(8), await clock.NextTimerAsync());
         if (cancel)
         {
             cancellation.Cancel();
@@ -243,8 +260,8 @@ public sealed class ProgressiveCachingStreamTests
         }
         else
         {
-            clock.Advance(TimeSpan.FromSeconds(60));
-            await Assert.ThrowsAsync<IOException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(10)));
+            clock.Advance(TimeSpan.FromSeconds(8));
+            await Assert.ThrowsAsync<TimeoutException>(() => waiting.WaitAsync(TimeSpan.FromSeconds(10)));
         }
     }
 

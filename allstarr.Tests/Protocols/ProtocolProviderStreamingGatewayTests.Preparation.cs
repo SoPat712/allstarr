@@ -222,17 +222,26 @@ public sealed partial class ProtocolProviderStreamingGatewayTests
         public readonly ProtocolProviderGateway Gateway;
         public int Fetches;
 
-        public PreparationStreamFixture(bool supportsRanges = true)
+        public PreparationStreamFixture(bool supportsRanges = true, string provider = "apple-musickit", string container = "flac")
         {
-            var apple = Capability("apple-musickit", ProviderOutcome<ProviderStreamLease>.Success(new(
+            var apple = Capability(provider, ProviderOutcome<ProviderStreamLease>.Success(new(
                 "lease", new Uri("https://media.example.test/audio"), DateTimeOffset.UtcNow.AddMinutes(1),
-                supportsRanges, supportsRanges, new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry,
-                async (_, cancellationToken) =>
+                supportsRanges, supportsRanges, new($"audio/{container}", container, container), ProviderStreamRetryBehavior.DoNotRetry,
+                async (request, cancellationToken) =>
                 {
-                    Interlocked.Increment(ref Fetches);
+                    var fetch = Interlocked.Increment(ref Fetches);
                     Opening.TrySetResult();
                     await OpenResponse.Task.WaitAsync(cancellationToken);
-                    var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(Source) };
+                    if (supportsRanges && request.Headers.Range?.Ranges.Single().From is { } start && start > 0)
+                    {
+                        var end = request.Headers.Range.Ranges.Single().To ?? Source.Bytes.Length - 1;
+                        var partial = new HttpResponseMessage(HttpStatusCode.PartialContent)
+                        { Content = new ByteArrayContent(Source.Bytes[(int)start..((int)end + 1)]) };
+                        partial.Content.Headers.ContentRange = new(start, end, Source.Bytes.Length);
+                        return partial;
+                    }
+                    var response = new HttpResponseMessage(HttpStatusCode.OK)
+                    { Content = new StreamContent(fetch == 1 ? Source : new MemoryStream(Source.Bytes)) };
                     response.Content.Headers.ContentLength = Source.Bytes.Length;
                     return response;
                 })));

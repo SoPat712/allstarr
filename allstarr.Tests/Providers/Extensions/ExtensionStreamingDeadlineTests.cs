@@ -18,11 +18,12 @@ using Moq;
 
 namespace allstarr.Tests;
 
-public sealed class ExtensionStreamingDeadlineTests : IDisposable
+public sealed class ExtensionStreamingDeadlineTests : IAsyncLifetime
 {
     private readonly string root = Path.Combine(Path.GetTempPath(), "allstarr-stream-deadline", Guid.NewGuid().ToString("N"));
     private readonly ManualTimeProvider clock = new(DateTimeOffset.UtcNow);
     private readonly WaitingHandler handler = new();
+    private ExtensionDownloadStreamingCapabilityAdapter? downloadAdapter;
 
     [Theory]
     [InlineData(31, null)]
@@ -45,6 +46,9 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         Assert.False(handler.Canceled.Task.IsCompleted);
         using (stream.Response)
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, await stream.Response.Content.ReadAsByteArrayAsync());
+        Assert.Single(Directory.GetDirectories(options.RootPath));
+        await clock.WaitForTimersAsync(TimeSpan.FromSeconds(10));
+        clock.Advance(TimeSpan.FromSeconds(10));
         Assert.Empty(Directory.GetDirectories(options.RootPath));
     }
 
@@ -69,7 +73,14 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending.WaitAsync(TimeSpan.FromSeconds(10)));
 
-        Assert.True(handler.Canceled.Task.IsCompleted);
+        if (cancelCaller)
+        {
+            Assert.False(handler.Canceled.Task.IsCompleted);
+            Assert.Single(Directory.GetDirectories(options.RootPath));
+            clock.Advance(TimeSpan.FromSeconds(1));
+        }
+        await handler.Canceled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        await downloadAdapter!.DisposeAsync();
         Assert.Empty(Directory.GetDirectories(options.RootPath));
     }
 
@@ -153,7 +164,7 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         var options = new ProviderDownloadWorkspaceOptions { RootPath = Path.Combine(root, "workspaces"), MaximumArtifactBytes = 1024 };
         var artifacts = new ProviderDownloadArtifactResolver(Mock.Of<IProviderDownloadArtifactStore>(), options);
         var values = new AccountValues();
-        IProviderStreamingCapability streaming = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, values, artifacts, options);
+        IProviderStreamingCapability streaming = downloadAdapter = new ExtensionDownloadStreamingCapabilityAdapter(sandbox, manifest, values, artifacts, options);
         if (direct)
         {
             var capability = new Mock<IProviderStreamingCapability>(MockBehavior.Strict);
@@ -193,9 +204,12 @@ public sealed class ExtensionStreamingDeadlineTests : IDisposable
         return (gateway, protocol, manifest.Id, options);
     }
 
-    public void Dispose()
+    public Task InitializeAsync() => Task.CompletedTask;
+
+    public async Task DisposeAsync()
     {
         handler.Release.TrySetResult();
+        if (downloadAdapter != null) await downloadAdapter.DisposeAsync();
         if (Directory.Exists(root)) Directory.Delete(root, true);
     }
 

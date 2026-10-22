@@ -42,6 +42,7 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
                 sessions.Add(key, session);
             }
             session.IdleTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            session.IdleScheduled = false;
             session.Listeners++;
             listener = new Listener(() => Release(key, session));
             if (session.Completion == null)
@@ -101,9 +102,6 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         catch (OperationCanceledException)
         {
             listener.Dispose();
-            bool last;
-            lock (sessionsGate) last = session.Listeners == 0;
-            if (last) await session.Completion;
             return Failure<ProviderStreamLease>(ProviderErrorKind.Canceled);
         }
         catch
@@ -123,7 +121,12 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         lock (sessionsGate)
         {
             session.Finished = true;
-            if (session.Listeners == 0) CleanupSession(key, session);
+            session.Succeeded = result.IsSuccess;
+            if (session.Listeners == 0)
+            {
+                if (!result.IsSuccess || session.Cancellation.IsCancellationRequested) CleanupSession(key, session);
+                else RetainIdleSession(session);
+            }
         }
         return result;
     }
@@ -133,20 +136,28 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         lock (sessionsGate)
         {
             if (--session.Listeners != 0) return;
-            if (session.Finished) CleanupSession(key, session);
-            else if (session.Transfer.Published)
-                session.IdleTimer?.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
-            else session.Cancellation.Cancel();
+            if (session.Finished && !session.Succeeded) CleanupSession(key, session);
+            else RetainIdleSession(session);
         }
+    }
+
+    private static void RetainIdleSession(DownloadSession session)
+    {
+        if (session.IdleScheduled) return;
+        session.IdleScheduled = true;
+        session.IdleTimer?.Change(TimeSpan.FromSeconds(10), Timeout.InfiniteTimeSpan);
     }
 
     private void Abandon(SessionKey key, DownloadSession session)
     {
         lock (sessionsGate)
         {
-            if (sessions.TryGetValue(key, out var current) && ReferenceEquals(current, session) &&
-                session.Listeners == 0 && !session.Finished)
-                session.Cancellation.Cancel();
+            if (sessions.TryGetValue(key, out var current) && ReferenceEquals(current, session) && session.Listeners == 0)
+            {
+                session.IdleScheduled = false;
+                if (session.Finished) CleanupSession(key, session);
+                else session.Cancellation.Cancel();
+            }
         }
     }
 
@@ -195,6 +206,8 @@ public sealed partial class ExtensionDownloadStreamingCapabilityAdapter
         public ITimer? IdleTimer { get; set; }
         public int Listeners { get; set; }
         public bool Finished { get; set; }
+        public bool Succeeded { get; set; }
+        public bool IdleScheduled { get; set; }
     }
 
     private sealed class Listener(Action close) : IDisposable

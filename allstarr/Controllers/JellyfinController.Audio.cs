@@ -200,7 +200,7 @@ public partial class JellyfinController
             return (StatusCodes.Status403Forbidden, "External provider account is unavailable");
         }
 
-        if (ex is TimeoutException || ex is TaskCanceledException)
+        if (ex is TimeoutException or OperationCanceledException)
         {
             return (StatusCodes.Status504GatewayTimeout, "External provider timed out");
         }
