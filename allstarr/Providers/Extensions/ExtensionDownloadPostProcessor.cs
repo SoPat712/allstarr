@@ -63,9 +63,12 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
             Validate(before, codec, declared);
             if (codec == "alac") return new("m4a", "alac");
             var expectedDuration = declared ?? ProbeDuration(before);
+            var audio = ProbeAudioProperties(before);
             await run("ffmpeg", ["-v", "error", "-nostdin", "-y", "-threads", "1", "-protocol_whitelist", "file",
                 "-f", "mov", "-i", input, "-map", "0:a:0", "-map_metadata", "-1", "-map_chapters", "-1",
-                "-c", "copy", "-fs", maximumBytes.ToString(CultureInfo.InvariantCulture), "-f", "flac", output],
+                "-threads", "1", "-c:a", "flac", "-compression_level", "5", "-sample_fmt", audio.Bits == 16 ? "s16" : "s32",
+                "-bits_per_raw_sample", audio.Bits.ToString(CultureInfo.InvariantCulture),
+                "-fs", maximumBytes.ToString(CultureInfo.InvariantCulture), "-f", "flac", output],
                 output, maximumBytes, token);
             ValidateSize(output, maximumBytes);
             using (var stream = File.OpenRead(output))
@@ -74,10 +77,15 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
                 if (stream.ReadAtLeast(magic, magic.Length, throwOnEndOfStream: false) != magic.Length ||
                     !magic.AsSpan().SequenceEqual("fLaC"u8)) throw new InvalidDataException();
             }
-            Validate(await ProbeAsync(output, null, token, "flac"), codec, expectedDuration, "flac");
+            var after = await ProbeAsync(output, null, token, "flac");
+            Validate(after, codec, expectedDuration, "flac");
+            if (ProbeAudioProperties(after) != audio) throw new InvalidDataException();
             await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
                 "-protocol_whitelist", "file", "-f", "flac", "-i", output, "-map", "0:a:0", "-threads", "1", "-f", "null", "-"],
                 null, maximumBytes, token);
+            var beforeHash = await AudioHashAsync(input, "mov", audio.Bits, token);
+            var afterHash = await AudioHashAsync(output, "flac", audio.Bits, token);
+            if (!string.Equals(beforeHash, afterHash, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException();
             token.ThrowIfCancellationRequested();
             File.Move(output, input, overwrite: true);
             return new("flac", "flac");
@@ -180,9 +188,30 @@ internal sealed class ExtensionDownloadPostProcessor(TimeSpan timeout, Extension
     {
         List<string> arguments = ["-v", "error", "-threads", "1", "-protocol_whitelist", "file"];
         if (key != null) arguments.AddRange(["-decryption_key", key]);
-        arguments.AddRange(["-f", container, "-i", path, "-show_entries", "stream=codec_type,codec_name,duration:format=format_name,duration", "-of", "json"]);
+        arguments.AddRange(["-f", container, "-i", path, "-show_entries", "stream=codec_type,codec_name,duration,sample_rate,channels,bits_per_raw_sample:format=format_name,duration", "-of", "json"]);
         using var document = JsonDocument.Parse(await run("ffprobe", arguments, null, 0, token));
         return document.RootElement.Clone();
+    }
+
+    private static (int SampleRate, int Channels, int Bits) ProbeAudioProperties(JsonElement probe)
+    {
+        var stream = probe.GetProperty("streams")[0];
+        if (!int.TryParse(Text(stream, "sample_rate"), NumberStyles.None, CultureInfo.InvariantCulture, out var sampleRate) ||
+            sampleRate <= 0 || !stream.GetProperty("channels").TryGetInt32(out var channels) || channels <= 0 ||
+            !int.TryParse(Text(stream, "bits_per_raw_sample"), NumberStyles.None, CultureInfo.InvariantCulture, out var bits) ||
+            bits is not (16 or 24)) throw new InvalidDataException();
+        return (sampleRate, channels, bits);
+    }
+
+    private async Task<string> AudioHashAsync(string path, string container, int bits, CancellationToken token)
+    {
+        // Hash full-precision PCM so 24-bit differences cannot disappear through a 16-bit decode.
+        var hash = (await run("ffmpeg", ["-v", "error", "-nostdin", "-xerror", "-err_detect", "explode", "-threads", "1",
+            "-protocol_whitelist", "file", "-f", container, "-i", path, "-map", "0:a:0", "-threads", "1",
+            "-c:a", bits == 16 ? "pcm_s16le" : "pcm_s24le", "-f", "md5", "-"], null, 0, token)).Trim();
+        if (hash.Length != 36 || !hash.StartsWith("MD5=", StringComparison.Ordinal) || !hash[4..].All(char.IsAsciiHexDigit))
+            throw new InvalidDataException();
+        return hash;
     }
 
     private static double ProbeDuration(JsonElement probe)
