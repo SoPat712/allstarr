@@ -12,7 +12,7 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     internal static readonly byte[] Converted = [102, 76, 97, 67, 0, 0, 0, 0];
 
     [Fact]
-    public async Task Conversion_CopiesFlacAndVerifiesBeforeReplacingInput()
+    public async Task Conversion_ReencodesFlacAndVerifiesBeforeReplacingInput()
     {
         var calls = new List<string>();
         async Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
@@ -25,8 +25,135 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         Assert.Equal("flac", media.Container);
         Assert.Equal("flac", media.Codec);
         Assert.Equal(Converted, await File.ReadAllBytesAsync(input));
-        Assert.Equal(["ffprobe", "ffmpeg", "ffprobe", "ffmpeg"], calls);
+        Assert.Equal(["ffprobe", "ffmpeg", "ffprobe", "ffmpeg", "ffmpeg", "ffmpeg"], calls);
         Assert.Single(Directory.GetFiles(root));
+    }
+
+    [Theory]
+    [InlineData(16, "s16", "pcm_s16le", "44100", 1)]
+    [InlineData(24, "s32", "pcm_s24le", "96000", 2)]
+    public async Task Conversion_PreservesAudioPropertiesAndHashesFullPrecisionPcm(int bits, string sampleFormat,
+        string pcmCodec, string sampleRate, int channels)
+    {
+        var hashes = new List<string>();
+        var decoded = false;
+        async Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            var args = arguments.ToArray();
+            if (executable == "ffprobe")
+            {
+                var entries = args[Array.IndexOf(args, "-show_entries") + 1];
+                Assert.Contains("sample_rate", entries);
+                Assert.Contains("channels", entries);
+                Assert.Contains("bits_per_raw_sample", entries);
+                return Probe("flac", args.Contains("flac") ? "flac" : "mov,mp4,m4a", bits: bits, sampleRate: sampleRate, channels: channels);
+            }
+            if (output != null)
+            {
+                Assert.Equal(sampleFormat, args[Array.IndexOf(args, "-sample_fmt") + 1]);
+                Assert.Equal(bits.ToString(), args[Array.IndexOf(args, "-bits_per_raw_sample") + 1]);
+                Assert.DoesNotContain("-ar", args);
+                Assert.DoesNotContain("-ac", args);
+                return await FixtureRunner(executable, args, output, limit, token);
+            }
+            if (args.Contains("md5"))
+            {
+                Assert.True(decoded);
+                Assert.Contains("-xerror", args);
+                Assert.Equal(pcmCodec, args[Array.IndexOf(args, "-c:a") + 1]);
+                hashes.Add(args[Array.IndexOf(args, "-f") + 1]);
+                Assert.Equal(Original, await File.ReadAllBytesAsync(input, token));
+                return "MD5=0123456789abcdef0123456789abcdef\n";
+            }
+            decoded = true;
+            return await FixtureRunner(executable, args, output, limit, token);
+        }
+        await ProcessAsync(Run);
+        Assert.Equal(["mov", "flac"], hashes);
+        Assert.Equal(Converted, await File.ReadAllBytesAsync(input));
+    }
+
+    [Theory]
+    [InlineData("sample_rate", "\"48000\"")]
+    [InlineData("channels", "1")]
+    [InlineData("bits_per_raw_sample", "\"24\"")]
+    [InlineData("bits_per_raw_sample", "null")]
+    [InlineData("duration", "null")]
+    public async Task Conversion_RejectsChangedOrMissingOutputProperties(string property, string json)
+    {
+        var inspected = false;
+        async Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            var response = await FixtureRunner(executable, arguments, output, limit, token);
+            if (executable != "ffprobe" || !arguments.Contains("flac")) return response;
+            inspected = true;
+            var probe = System.Text.Json.Nodes.JsonNode.Parse(response)!;
+            probe["streams"]![0]![property] = System.Text.Json.Nodes.JsonNode.Parse(json);
+            if (property == "duration") probe["format"]![property] = null;
+            return probe.ToJsonString();
+        }
+        await AssertFailureAsync(Run);
+        Assert.True(inspected);
+    }
+
+    [Theory]
+    [InlineData("sample_rate", "null")]
+    [InlineData("sample_rate", "\"0\"")]
+    [InlineData("channels", "0")]
+    [InlineData("bits_per_raw_sample", "null")]
+    [InlineData("bits_per_raw_sample", "\"0\"")]
+    [InlineData("bits_per_raw_sample", "\"32\"")]
+    public async Task Conversion_RejectsUnusableInputAudioPropertiesBeforeEncoding(string property, string json)
+    {
+        var calls = new List<string>();
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            calls.Add(executable);
+            Assert.Equal("ffprobe", executable);
+            var probe = System.Text.Json.Nodes.JsonNode.Parse(Probe("flac", "mov,mp4,m4a"))!;
+            probe["streams"]![0]![property] = System.Text.Json.Nodes.JsonNode.Parse(json);
+            return Task.FromResult(probe.ToJsonString());
+        }
+        await AssertFailureAsync(Run);
+        Assert.Equal(["ffprobe"], calls);
+    }
+
+    [Theory]
+    [InlineData("MD5=ffffffffffffffffffffffffffffffff")]
+    [InlineData("")]
+    [InlineData("MD5=invalid")]
+    [InlineData("MD5=zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")]
+    public async Task Conversion_RejectsDifferentOrInvalidDecodedAudioHash(string hash)
+    {
+        var hashes = 0;
+        async Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
+        {
+            var response = await FixtureRunner(executable, arguments, output, limit, token);
+            if (!arguments.Contains("md5")) return response;
+            hashes++;
+            return arguments.Contains("flac") ? hash : response;
+        }
+        await AssertFailureAsync(Run);
+        Assert.Equal(2, hashes);
+    }
+
+    [Fact]
+    public async Task Conversion_RejectsEmptyHashesEvenWhenBothMatch()
+    {
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token) =>
+            arguments.Contains("md5") ? Task.FromResult("") : FixtureRunner(executable, arguments, output, limit, token);
+        await AssertFailureAsync(Run);
+    }
+
+    [Theory]
+    [InlineData("mov")]
+    [InlineData("flac")]
+    public async Task Conversion_RejectsFailedAudioHashProcess(string container)
+    {
+        Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token) =>
+            arguments.Contains("md5") && arguments.Contains(container) ? throw new InvalidDataException()
+                : FixtureRunner(executable, arguments, output, limit, token);
+        await AssertFailureAsync(Run);
     }
 
     [Fact]
@@ -47,9 +174,11 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Conversion_DecryptsFlacBeforeCopyingToNativeContainer(bool explicitConversion)
+    [InlineData(false, 16)]
+    [InlineData(true, 16)]
+    [InlineData(false, 24)]
+    [InlineData(true, 24)]
+    public async Task Conversion_DecryptsFlacBeforeReencodingToNativeContainer(bool explicitConversion, int bits)
     {
         var descriptor = System.Text.Json.Nodes.JsonNode.Parse(ExtensionDownloadDecryptionTests.Descriptor(codec: "flac"))!;
         descriptor["requires_container_conversion"] = explicitConversion;
@@ -63,7 +192,18 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
                 await File.WriteAllBytesAsync(output, Original, token);
                 return "";
             }
-            if (output != null) copies.Add("conversion");
+            if (executable == "ffprobe") return Probe("flac", arguments.Contains("flac") ? "flac" : "mov,mp4,m4a", bits: bits);
+            if (arguments.Contains("md5"))
+            {
+                Assert.Contains(bits == 16 ? "pcm_s16le" : "pcm_s24le", arguments);
+                return "MD5=0123456789abcdef0123456789abcdef\n";
+            }
+            if (output != null)
+            {
+                copies.Add("conversion");
+                var args = arguments.ToArray();
+                Assert.Equal(bits.ToString(), args[Array.IndexOf(args, "-bits_per_raw_sample") + 1]);
+            }
             return await FixtureRunner(executable, arguments, output, limit, token);
         }
         var media = await new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(5), Run)
@@ -133,16 +273,18 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         await AssertFailureAsync(FixtureRunner, maximumBytes: Original.Length - 1);
 
     [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task Conversion_CancellationOrTimeoutPreservesInput(bool cancelCaller)
+    [InlineData(true, false)]
+    [InlineData(false, false)]
+    [InlineData(true, true)]
+    [InlineData(false, true)]
+    public async Task Conversion_CancellationOrTimeoutPreservesInput(bool cancelCaller, bool duringHash)
     {
         using var cancellation = new CancellationTokenSource();
         var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         async Task<string> Run(string executable, IEnumerable<string> arguments, string? output, long limit, CancellationToken token)
         {
             var response = await FixtureRunner(executable, arguments, output, limit, token);
-            if (output != null)
+            if (duringHash ? arguments.Contains("md5") : output != null)
             {
                 entered.TrySetResult();
                 await Task.Delay(Timeout.InfiniteTimeSpan, token);
@@ -162,19 +304,42 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     }
 
     [MediaToolsFact]
-    public async Task Conversion_RealProcessesCopyFlacPacketsWithoutChangingAudio()
+    public Task Conversion_RealProcessesPreserveFragmentedFlac16BitAudio() =>
+        AssertFragmentedConversionAsync(16, "44100", 1);
+
+    [MediaToolsFact]
+    public Task Conversion_RealProcessesPreserveFragmentedFlac24BitAudio() =>
+        AssertFragmentedConversionAsync(24, "48000", 2);
+
+    private async Task AssertFragmentedConversionAsync(int bits, string sampleRate, int channels)
     {
-        var native = Path.Combine(root, "source.flac");
-        await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-nostdin", "-f", "lavfi", "-i",
-            "sine=frequency=440:duration=1", "-threads", "1", "-c:a", "flac", native]);
-        await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-nostdin", "-y", "-i", native,
-            "-threads", "1", "-c:a", "copy", "-strict", "experimental", input]);
-        var media = await new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(10)).ProcessAsync(input, Descriptor(), 100_000, default);
+        var signal = channels == 1 ? "0.25*sin(2*PI*997*t)" : "0.25*sin(2*PI*997*t)|0.125*sin(2*PI*659*t)";
+        await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-nostdin", "-y", "-filter_threads", "1",
+            "-f", "lavfi", "-i", $"aevalsrc={signal}:s={sampleRate}:d=1", "-threads", "1", "-c:a", "flac",
+            "-sample_fmt", bits == 16 ? "s16" : "s32", "-bits_per_raw_sample", bits.ToString(), "-strict", "experimental",
+            "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-frag_duration", "250000", "-f", "mp4", input]);
+        Assert.Contains("moof", System.Text.Encoding.ASCII.GetString(await File.ReadAllBytesAsync(input)));
+        var pcmCodec = bits == 16 ? "pcm_s16le" : "pcm_s24le";
+        var expected = await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-nostdin", "-f", "mov",
+            "-i", input, "-map", "0:a:0", "-threads", "1", "-c:a", pcmCodec, "-f", "md5", "-"]);
+        // No declared duration: the conversion must use the fragmented input's probed duration.
+        var descriptor = JsonSerializer.Serialize(new { requires_container_conversion = true, audio_codec = "flac" });
+        var media = await new ExtensionDownloadPostProcessor(TimeSpan.FromSeconds(10)).ProcessAsync(input, descriptor, 100_000, default);
         Assert.Equal("flac", media.Container);
         Assert.Equal("fLaC", System.Text.Encoding.ASCII.GetString((await File.ReadAllBytesAsync(input))[..4]));
-        var expected = await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-i", native, "-threads", "1", "-f", "hash", "-hash", "sha256", "-"]);
-        var actual = await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-f", "flac", "-i", input, "-threads", "1", "-f", "hash", "-hash", "sha256", "-"]);
+        using var probe = JsonDocument.Parse(await ExtensionDownloadDecryptionTests.RunAsync("ffprobe", ["-v", "error",
+            "-f", "flac", "-i", input, "-show_entries", "stream=sample_fmt,sample_rate,channels,bits_per_raw_sample:format=duration", "-of", "json"]));
+        var stream = Assert.Single(probe.RootElement.GetProperty("streams").EnumerateArray());
+        Assert.Equal(bits.ToString(), stream.GetProperty("bits_per_raw_sample").GetString());
+        Assert.Equal(bits == 16 ? "s16" : "s32", stream.GetProperty("sample_fmt").GetString());
+        Assert.Equal(sampleRate, stream.GetProperty("sample_rate").GetString());
+        Assert.Equal(channels, stream.GetProperty("channels").GetInt32());
+        Assert.InRange(double.Parse(probe.RootElement.GetProperty("format").GetProperty("duration").GetString()!,
+            System.Globalization.CultureInfo.InvariantCulture), 0.99, 1.01);
+        var actual = await ExtensionDownloadDecryptionTests.RunAsync("ffmpeg", ["-v", "error", "-nostdin", "-f", "flac",
+            "-i", input, "-map", "0:a:0", "-threads", "1", "-c:a", pcmCodec, "-f", "md5", "-"]);
         Assert.Equal(expected, actual);
+        Assert.Single(Directory.GetFiles(root));
     }
 
     [MediaToolsFact]
@@ -213,11 +378,13 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
     internal static string Descriptor(string codec = "flac") => JsonSerializer.Serialize(new
     { requires_container_conversion = true, audio_codec = codec, actual_extension = ".m4a", duration_ms = 1000 });
 
-    internal static string Probe(string codec, string container, string duration = "1") => JsonSerializer.Serialize(new
-    {
-        streams = new[] { new { codec_type = "audio", codec_name = codec, duration } },
-        format = new { format_name = container, duration }
-    });
+    internal static string Probe(string codec, string container, string duration = "1", int bits = 16,
+        string sampleRate = "44100", int channels = 2) => JsonSerializer.Serialize(new
+        {
+            streams = new[] { new { codec_type = "audio", codec_name = codec, duration, sample_fmt = bits == 16 ? "s16" : "s32",
+                sample_rate = sampleRate, channels, bits_per_raw_sample = bits.ToString() } },
+            format = new { format_name = container, duration }
+        });
 
     internal static async Task<string> FixtureRunner(string executable, IEnumerable<string> arguments, string? output,
         long maximumBytes, CancellationToken token)
@@ -231,12 +398,24 @@ public sealed class ExtensionDownloadConversionTests : IAsyncLifetime
         Assert.Contains("file", args);
         if (output != null)
         {
-            Assert.Equal("copy", args[Array.IndexOf(args, "-c") + 1]);
+            Assert.Contains("-c:a", args);
+            Assert.Equal("flac", args[Array.IndexOf(args, "-c:a") + 1]);
+            Assert.Equal("5", args[Array.IndexOf(args, "-compression_level") + 1]);
+            Assert.DoesNotContain("copy", args);
             Assert.Equal("flac", args[Array.LastIndexOf(args, "-f") + 1]);
             Assert.Contains("-fs", args);
             await File.WriteAllBytesAsync(output, Converted, token);
         }
-        else Assert.Contains("-xerror", args);
+        else
+        {
+            Assert.Contains("-xerror", args);
+            if (args.Contains("md5"))
+            {
+                Assert.Contains("pcm_s16le", args);
+                return "MD5=0123456789abcdef0123456789abcdef\n";
+            }
+            Assert.Contains("null", args);
+        }
         return "";
     }
 
