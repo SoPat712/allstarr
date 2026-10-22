@@ -9,6 +9,13 @@ namespace allstarr.Services.Common;
 
 internal static class AudioMediaFacts
 {
+    internal static bool IsPartialHeader(ReadOnlySpan<byte> bytes) => !bytes.IsEmpty &&
+        (Partial(bytes, "RIFF"u8) || Partial(bytes, "fLaC"u8) || Partial(bytes, "OggS"u8) ||
+         Partial(bytes, "ID3"u8) || bytes[0] == 0xff);
+
+    private static bool Partial(ReadOnlySpan<byte> bytes, ReadOnlySpan<byte> signature) =>
+        bytes.Length < signature.Length ? signature.StartsWith(bytes) : bytes.StartsWith(signature);
+
     public static TrackMediaFacts? ReadPrefix(ReadOnlySpan<byte> bytes, long? size)
     {
         if (bytes.Length >= 12 && bytes[..4].SequenceEqual("RIFF"u8) && bytes.Slice(8, 4).SequenceEqual("WAVE"u8))

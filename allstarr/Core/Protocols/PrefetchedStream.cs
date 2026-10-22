@@ -1,6 +1,6 @@
 namespace allstarr.Core.Protocols;
 
-// Verify the first byte before committing response headers, then replay it without buffering the song.
+// Verify a bounded prefix before committing response headers, then replay it without buffering the song.
 internal sealed class PrefetchedStream(Stream source, HttpContent owner, ReadOnlyMemory<byte> prefix) : Stream
 {
     private int position;
@@ -20,6 +20,14 @@ internal sealed class PrefetchedStream(Stream source, HttpContent owner, ReadOnl
         var start = content.Headers.ContentRange?.From;
         var size = content.Headers.ContentRange?.Length ?? content.Headers.ContentLength;
         var facts = start is null or 0 ? allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size) : null;
+        while (start is null or 0 && facts == null && count < prefix.Length &&
+            allstarr.Services.Common.AudioMediaFacts.IsPartialHeader(prefix.AsSpan(0, count)))
+        {
+            var read = await source.ReadAsync(prefix.AsMemory(count), cancellationToken);
+            if (read == 0) break;
+            count += read;
+            facts = allstarr.Services.Common.AudioMediaFacts.ReadPrefix(prefix.AsSpan(0, count), size);
+        }
         var replacement = new PreparedContent(new PrefetchedStream(source, content, prefix.AsMemory(0, count)), facts);
         foreach (var header in content.Headers)
             replacement.Headers.TryAddWithoutValidation(header.Key, header.Value);

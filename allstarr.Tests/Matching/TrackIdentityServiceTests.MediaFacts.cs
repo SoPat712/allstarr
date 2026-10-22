@@ -97,8 +97,11 @@ public sealed partial class TrackIdentityServiceTests
         Assert.Equal(115, song.Duration);
     }
 
-    [Fact]
-    public async Task StreamingOnceRetainsMeasuredFormatForLaterDetailWithoutProviderCalls()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(12)]
+    [InlineData(4096)]
+    public async Task StreamingOnceRetainsMeasuredFormatForLaterDetailWithoutProviderCalls(int chunkSize)
     {
         var bytes = AudioMediaFactsTests.Wave();
         System.Buffers.Binary.BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(40), 36);
@@ -110,7 +113,8 @@ public sealed partial class TrackIdentityServiceTests
             .ReturnsAsync(new ProviderOutcomeFactory().Lease(() =>
             {
                 opened++;
-                var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new ByteArrayContent(bytes) };
+                var response = new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                { Content = new StreamContent(new ChunkedMediaStream(bytes, chunkSize)) };
                 response.Content.Headers.ContentType = new("audio/wav");
                 return response;
             }));
@@ -175,6 +179,12 @@ public sealed partial class TrackIdentityServiceTests
         public ProviderOutcome<ProviderStreamLease> Lease(Func<HttpResponseMessage> open) => ProviderOutcome<ProviderStreamLease>.Success(new(
             "wave", new Uri("https://media.example.test/wave"), DateTimeOffset.UtcNow.AddMinutes(5), true, true,
             new("audio/flac", "flac", "flac"), ProviderStreamRetryBehavior.DoNotRetry, (_, _) => Task.FromResult(open())));
+    }
+
+    private sealed class ChunkedMediaStream(byte[] bytes, int chunkSize) : MemoryStream(bytes)
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            base.ReadAsync(buffer[..Math.Min(buffer.Length, chunkSize)], cancellationToken);
     }
 
     [Fact]
