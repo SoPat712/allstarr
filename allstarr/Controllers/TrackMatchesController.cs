@@ -510,12 +510,25 @@ public sealed class TrackMatchesController(
         {
             return StatusCode(403, new { error = "The linked backend identity is unavailable" });
         }
-        var songs = (await providerGateway.SearchPlayableSongsAsync(execution, query, limit))
-            .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
-                playableProviders.Any(item => SameProvider(item, song.ExternalProvider)))
-            .Take(limit)
-            .ToArray();
         var source = await ReviewSourceAsync(session!, externalSnapshotId, cancellationToken);
+        var songs = await SearchAsync(query);
+        var missingProviders = playableProviders.Where(provider =>
+            !songs.Any(song => SameProvider(provider, song.ExternalProvider!))).ToArray();
+        if (missingProviders.Length > 0 && source != null && source.Title.Trim().Length >= 2 &&
+            !string.IsNullOrWhiteSpace(source.Artist))
+        {
+            var normalizedQuery = TrackMatchReviewSearch.Normalize(query);
+            var normalizedTitle = TrackMatchReviewSearch.Normalize(source.Title);
+            if (normalizedQuery != normalizedTitle &&
+                (normalizedQuery == TrackMatchReviewSearch.Normalize($"{source.Title} {source.Artist}") ||
+                 normalizedQuery == TrackMatchReviewSearch.Normalize($"{source.Artist} {source.Title}")))
+            {
+                var fallback = await SearchAsync(source.Title.Trim());
+                songs = songs.Concat(fallback.Where(song => missingProviders.Any(provider =>
+                        SameProvider(provider, song.ExternalProvider!))))
+                    .Take(limit).ToArray();
+            }
+        }
         var effectiveMatcher = await MatchingEngineAsync(userId, cancellationToken);
         var candidates = songs.Select(song => new
         {
@@ -567,6 +580,13 @@ public sealed class TrackMatchesController(
             }),
             providers = playableProviders
         });
+
+        async Task<Song[]> SearchAsync(string searchQuery) =>
+            (await providerGateway.SearchPlayableSongsAsync(execution, searchQuery, limit))
+                .Where(song => !string.IsNullOrWhiteSpace(song.ExternalProvider) &&
+                    playableProviders.Any(item => SameProvider(item, song.ExternalProvider)))
+                .Take(limit)
+                .ToArray();
     }
 
     [HttpPost("{externalSnapshotId:guid}/resolve")]

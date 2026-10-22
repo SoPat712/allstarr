@@ -60,30 +60,54 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
             if (!indexResult.IsSuccess && cached.Count == 0)
                 return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(indexResult.Error!);
             candidates.AddRange(cached);
+            if (indexResult.IsSuccess)
+            {
+                var cachedTrackers = cached.Select(item => item.Tracker.Tracker).ToHashSet(StringComparer.Ordinal);
+                var popularArtists = new[] { "Ariana Grande", "Taylor Swift", "Drake", "The Weeknd" };
+                var discovery = indexResult.RequireValue().Artists
+                    .Where(artist => !cachedTrackers.Contains(artist.Tracker))
+                    .OrderBy(artist => Array.IndexOf(popularArtists, artist.Name) is var rank && rank >= 0 ? rank : int.MaxValue)
+                    .ThenByDescending(artist => string.Equals(artist.Best, "true", StringComparison.OrdinalIgnoreCase))
+                    .ThenBy(artist => Normalize(artist.Name), StringComparer.Ordinal)
+                    .DistinctBy(artist => artist.Tracker)
+                    .Take(8);
+                foreach (var artist in discovery)
+                {
+                    var trackerResult = await _catalog.GetTrackerAsync(artist.Tracker, gid: null,
+                        allowNetwork: true, forceRefresh: false, context.CancellationToken).ConfigureAwait(false);
+                    if (trackerResult.IsSuccess) candidates.Add((artist, trackerResult.RequireValue()));
+                    else failures.Add(trackerResult.Error!);
+                }
+            }
         }
 
         var queryTitleTokens = matches.Count > 0
-            ? FindArtists(indexResult.RequireValue(), tokens).First().RemainingTitleTokens
+            ? matches[0].RemainingTitleTokens
             : tokens;
-        var tracks = new List<ProviderTrackMetadata>();
+        var tracks = new List<(ProviderTrackMetadata Metadata, int LengthRank, bool BestVersion)>();
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (artist, tracker) in candidates)
         {
             foreach (var rawTrack in tracker.Tracks)
             {
-                if (!IsTitleMatch(rawTrack.Title, queryTitleTokens)) continue;
-                var source = SelectSource(rawTrack.Sources);
-                if (source == null || !IsUsableTrack(rawTrack)) continue;
-                var metadata = TryMapTrack(artist, tracker, rawTrack, source);
-                if (metadata != null && seenIds.Add(metadata.Id.Value)) tracks.Add(metadata);
+                if (!IsTitleMatch(rawTrack, queryTitleTokens)) continue;
+                foreach (var source in rawTrack.Sources)
+                {
+                    var metadata = TryMapTrack(artist, tracker, rawTrack, source);
+                    if (metadata != null && seenIds.Add(metadata.Id.Value))
+                        tracks.Add((metadata, rawTrack.LengthRank, rawTrack.BestVersion));
+                }
             }
         }
 
         var ordered = tracks
-            .OrderBy(item => Normalize(item.Artists.FirstOrDefault()?.Name ?? string.Empty), StringComparer.Ordinal)
-            .ThenBy(item => Normalize(item.Title), StringComparer.Ordinal)
-            .ThenBy(item => Normalize(item.AlbumTitle ?? string.Empty), StringComparer.Ordinal)
-            .ThenBy(item => item.Id.Value, StringComparer.Ordinal)
+            .OrderBy(item => item.LengthRank)
+            .ThenByDescending(item => item.BestVersion)
+            .ThenBy(item => Normalize(item.Metadata.Artists.FirstOrDefault()?.Name ?? string.Empty), StringComparer.Ordinal)
+            .ThenBy(item => Normalize(item.Metadata.Title), StringComparer.Ordinal)
+            .ThenBy(item => Normalize(item.Metadata.AlbumTitle ?? string.Empty), StringComparer.Ordinal)
+            .ThenBy(item => item.Metadata.Id.Value, StringComparer.Ordinal)
+            .Select(item => item.Metadata)
             .ToArray();
         if (ordered.Length == 0 && failures.Count > 0)
             return ProviderOutcome<ProviderPage<ProviderTrackMetadata>>.Failure(failures[0]);
@@ -299,6 +323,11 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
             track.Credits.Any(value => !SafeText(value, 300)) ||
             !SafeText(artist.Name, 500) ||
             artist.Credit != null && !SafeText(artist.Credit, 500)) return null;
+        var title = track.Title;
+        if (!string.IsNullOrWhiteSpace(track.AvailableLength) &&
+            !track.AvailableLength.Equals("full", StringComparison.OrdinalIgnoreCase))
+            title += $" [{track.AvailableLength}]";
+        if (!SafeText(title, 500)) return null;
         var idValue = ArtistGridTrackId.Create(tracker.Tracker, tracker.Gid, source.Hash);
         if (idValue.Length > 200 - "ext-artistgrid-song-".Length) return null;
         var artistName = artist.Name;
@@ -312,23 +341,20 @@ public sealed class ArtistGridMetadataCapabilityAdapter : IProviderMetadataCapab
             .ToArray();
         return new ProviderTrackMetadata(
             new ProviderExternalResourceId(ArtistGridConstants.ProviderId, ProviderResourceKind.Track, idValue),
-            track.Title,
+            title,
             artistCredits,
             albumTitle: track.AlbumTitle,
             duration: track.Duration,
             snapshotVersion: tracker.ETag,
-            albumArtist: artistName);
+            albumArtist: artistName,
+            contributors: track.Contributors);
     }
 
-    private static ArtistGridSource? SelectSource(IReadOnlyList<ArtistGridSource> sources) =>
-        sources.OrderBy(source => source.CanonicalUrl, StringComparer.Ordinal).FirstOrDefault();
+    private static bool IsUsableTrack(ArtistGridRawTrack track) => track.Sources.Count > 0;
 
-    private static bool IsUsableTrack(ArtistGridRawTrack track) =>
-        track.Sources.Count > 0 && (string.IsNullOrWhiteSpace(track.AvailableLength) ||
-            track.AvailableLength.Equals("full", StringComparison.OrdinalIgnoreCase));
-
-    private static bool IsTitleMatch(string title, IReadOnlyList<string> tokens) =>
-        tokens.Count == 0 || Tokens(title).ToHashSet(StringComparer.Ordinal).IsSupersetOf(tokens);
+    private static bool IsTitleMatch(ArtistGridRawTrack track, IReadOnlyList<string> tokens) =>
+        tokens.Count == 0 || Tokens(string.Join(' ', new[] { track.Title }.Concat(track.AlternateTitles)))
+            .ToHashSet(StringComparer.Ordinal).IsSupersetOf(tokens);
 
     private static IReadOnlyList<string> Tokens(string value)
     {
