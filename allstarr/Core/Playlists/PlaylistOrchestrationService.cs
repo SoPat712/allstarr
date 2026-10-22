@@ -672,7 +672,12 @@ public sealed class PlaylistOrchestrationService : IPlaylistOrchestrationService
                     entry.Isrc,
                     entry.IsExplicit,
                     entry.ArtworkUrl,
-                    entry.CanonicalRecordingId
+                    entry.CanonicalRecordingId,
+                    entry.AlbumId,
+                    entry.ArtistIds,
+                    entry.AlbumArtists,
+                    entry.Year,
+                    entry.Genre
                 });
                 return (Payload: payload, PayloadHash: Hash(payload));
             },

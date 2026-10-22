@@ -61,6 +61,17 @@ public sealed class ProviderPlaylistSnapshotCollectorTests
     }
 
     [Fact]
+    public async Task CollectorRetainsLibraryRelationshipsForStoredBrowsing()
+    {
+        var playlist = PlaylistId("saved-playlist");
+        var capability = new FakePlaylistCapability("spotify", Page(Summary(playlist, 1), [Track(0, "saved-track")]));
+        var result = await new ProviderPlaylistSnapshotCollector().CollectAsync(capability, Context("spotify"), new(playlist));
+        var entry = Assert.Single(result.Snapshot!.Entries);
+        Assert.Equal("ext-spotify-album-album-0", entry.AlbumId);
+        Assert.Equal(["ext-spotify-artist-artist-0"], entry.ArtistIds);
+    }
+
+    [Fact]
     public async Task Row_identity_does_not_change_when_only_provider_revision_changes()
     {
         var playlist = PlaylistId("playlist");

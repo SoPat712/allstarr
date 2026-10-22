@@ -27,6 +27,14 @@ public sealed record CollectedPlaylistSourceEntry(
 {
     [JsonIgnore]
     public ProviderExternalResourceId? TrackId { get; init; }
+    [JsonIgnore]
+    public string? AlbumId { get; init; }
+    [JsonIgnore]
+    public IReadOnlyList<string> ArtistIds { get; init; } = [];
+    [JsonIgnore]
+    public IReadOnlyList<allstarr.Models.Domain.Artist> AlbumArtists { get; init; } = [];
+    public int? Year { get; init; }
+    public string? Genre { get; init; }
 }
 
 public sealed record CollectedPlaylistSourceSnapshot(
@@ -206,7 +214,18 @@ public sealed class ProviderPlaylistSnapshotCollector
             metadata?.Isrc,
             metadata?.IsExplicit,
             metadata?.Artwork?.PublicUri?.AbsoluteUri)
-        { TrackId = track.TrackId };
+        {
+            TrackId = track.TrackId,
+            AlbumId = metadata?.AlbumId is { } album ? $"ext-{album.ProviderId}-album-{album.Value}" : null,
+            ArtistIds = metadata?.Artists.Select(artist => artist.ArtistId is { } id ? $"ext-{id.ProviderId}-artist-{id.Value}" : "").ToArray() ?? [],
+            AlbumArtists = metadata?.AlbumArtists.Where(artist => artist.ArtistId != null).Select(artist => new allstarr.Models.Domain.Artist
+            {
+                Id = $"ext-{artist.ArtistId!.ProviderId}-artist-{artist.ArtistId.Value}",
+                Name = artist.Name
+            }).ToArray() ?? [],
+            Year = metadata?.Year,
+            Genre = metadata?.Genre
+        };
     }
 
     private static string? StableArtworkReference(ProviderArtworkReference? artwork)

@@ -99,7 +99,8 @@ public sealed partial class FavoriteActionPipeline
             duration is >= 0 and <= 86_400_000 ? (long)Math.Round(duration.Value) : null, song.Year)
         {
             ArtistIds = Names(song.ArtistIds.Prepend(song.ArtistId ?? "")),
-            AlbumArtistIds = Names(string.IsNullOrWhiteSpace(song.AlbumArtist) ||
+            AlbumArtists = Names(song.AlbumArtists.Count > 0 ? song.AlbumArtists.Select(artist => artist.Name) : [song.AlbumArtist ?? song.Artist]),
+            AlbumArtistIds = Names(song.AlbumArtists.Count > 0 ? song.AlbumArtists.Select(artist => artist.Id) : string.IsNullOrWhiteSpace(song.AlbumArtist) ||
                 string.Equals(song.AlbumArtist, song.Artist, StringComparison.OrdinalIgnoreCase)
                 ? [song.ArtistId ?? ""]
                 : song.Artists.Select((name, index) => string.Equals(name, song.AlbumArtist, StringComparison.OrdinalIgnoreCase) &&
