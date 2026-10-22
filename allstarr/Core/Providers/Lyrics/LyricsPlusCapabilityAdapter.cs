@@ -31,6 +31,9 @@ public sealed class LyricsPlusCapabilityAdapter(
             return Failure(ProviderErrorKind.Forbidden);
         if (context.CancellationToken.IsCancellationRequested) return Failure(ProviderErrorKind.Canceled);
         if (context.IsExpired(DateTimeOffset.UtcNow)) return Failure(ProviderErrorKind.CapabilityUnavailable);
+        if (request.ArtistNames.Count == 0 &&
+            (!string.IsNullOrWhiteSpace(request.TrackTitle) || !string.IsNullOrWhiteSpace(request.Isrc)))
+            return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
         if (string.IsNullOrWhiteSpace(request.TrackTitle) || request.ArtistNames.Count == 0)
             return Unavailable();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(context.CancellationToken);

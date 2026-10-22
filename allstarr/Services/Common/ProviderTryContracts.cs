@@ -49,10 +49,10 @@ public sealed class ProviderTryRequest
             "search" when string.IsNullOrWhiteSpace(Query) => "A search query is required.",
             "track" when string.IsNullOrWhiteSpace(Id) => "A track id is required.",
             "isrc" when string.IsNullOrWhiteSpace(Isrc) => "An ISRC is required.",
-            "isrc" when Isrc!.Length > 20 => "An ISRC must be at most 20 characters.",
+            "isrc" or "lyrics" when Isrc?.Length > 20 => "An ISRC must be at most 20 characters.",
             "playlist" when string.IsNullOrWhiteSpace(Url) => "A playlist URL or id is required.",
             "download" when string.IsNullOrWhiteSpace(TrackId) => "A track id is required.",
-            "lyrics" when string.IsNullOrWhiteSpace(Title) && string.IsNullOrWhiteSpace(TrackId) => "A title or track id is required.",
+            "lyrics" when string.IsNullOrWhiteSpace(Title) && string.IsNullOrWhiteSpace(Isrc) => "A title or ISRC is required.",
             _ => null
         };
     }

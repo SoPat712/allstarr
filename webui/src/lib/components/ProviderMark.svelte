@@ -9,6 +9,7 @@
     label = definition?.name ?? id,
   }: { id: string; definition?: ProviderDefinition; label?: string } = $props();
   let failed = $state(false);
+  let loaded = $state(false);
   // Extensions and variants reuse the bundled mark of the service they reach.
   const aliases: Record<string, string> = {
     amazon: "amazonmusic", appledownload: "applemusic", applemusicdownload: "applemusic", applemusickit: "applemusic", spotifyweb: "spotify",
@@ -30,14 +31,25 @@
   $effect(() => {
     source;
     failed = false;
+    loaded = false;
   });
 </script>
 
-<span class="provider-mark" style={`--route-color:${providerColor(id)}`}>
+<span class="provider-mark" class:provider-mark--monogram={!loaded} style={`--route-color:${providerColor(id)}`}>
+  {#if !loaded}<span class="provider-monogram" aria-hidden="true">{(label.trim() || id)[0]?.toUpperCase() ?? "?"}</span>{/if}
   {#if !failed}
-    <img src={source} alt="" onerror={() => { failed = true; }} />
-  {:else}
-    <span aria-hidden="true">{label[0]?.toUpperCase() ?? "?"}</span>
+    <img src={source} alt="" hidden={!loaded} onload={() => { loaded = true; }} onerror={() => { failed = true; loaded = false; }} />
   {/if}
   <span class="sr-only">{label}</span>
 </span>
+
+<style>
+  .provider-mark--monogram {
+    border-color: transparent;
+    border-radius: var(--radius-sm);
+    background: var(--md-sys-color-primary-container);
+    color: var(--md-sys-color-on-primary-container);
+  }
+  .provider-monogram { display: grid; width: 100%; height: 100%; place-items: center; }
+  img[hidden] { display: none; }
+</style>

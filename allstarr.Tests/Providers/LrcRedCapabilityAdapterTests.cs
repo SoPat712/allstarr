@@ -73,6 +73,22 @@ public sealed class LrcRedCapabilityAdapterTests
         Assert.Equal(3, handler.Requests.Count);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, null)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, ProviderErrorKind.TransientFailure)]
+    [InlineData(HttpStatusCode.TooManyRequests, ProviderErrorKind.RateLimited)]
+    [InlineData(HttpStatusCode.BadRequest, ProviderErrorKind.PermanentFailure)]
+    public async Task IsrcOutcomeIsPreservedWhenArtistIsMissing(HttpStatusCode status, ProviderErrorKind? error)
+    {
+        var handler = new Handler((_, _) => new(status));
+        var request = new ProviderLyricsRequest(Guid.CreateVersion7(), new("lrcred", ProviderResourceKind.Track, "lookup"),
+            trackTitle: "Fixture", isrc: "USABC1234567");
+        var result = await Adapter(handler).FetchLyricsAsync(Context(), request);
+        if (error.HasValue) Assert.Equal(error.Value, result.Error!.Kind);
+        else Assert.Equal(ProviderLyricsAvailabilityState.Unavailable, result.RequireValue().Availability);
+        Assert.Equal("/s/USABC1234567.ttml", Assert.Single(handler.Requests).AbsolutePath);
+    }
+
     [Fact]
     public async Task NetworkFailureStillTriesMetadataWithinTheBudget()
     {

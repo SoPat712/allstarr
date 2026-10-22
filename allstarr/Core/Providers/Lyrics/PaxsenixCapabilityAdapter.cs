@@ -122,6 +122,9 @@ public sealed class PaxsenixCapabilityAdapter : PublicLyricsCapabilityAdapter
             }
             if (sent == 3) break;
         }
+        if (attempted.Count == 0 && string.IsNullOrWhiteSpace(request.Isrc) &&
+            !string.IsNullOrWhiteSpace(request.TrackTitle) && request.ArtistNames.Count == 0)
+            return ProviderOutcome<ProviderLyricsResult>.Failure(ProviderError.LyricsArtistRequired());
         return unavailable || transient == null ? Unavailable() : ProviderOutcome<ProviderLyricsResult>.Failure(transient);
     }
 

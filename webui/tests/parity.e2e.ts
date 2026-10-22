@@ -7291,7 +7291,7 @@ test("Source test panel searches one source and sends a result to lyrics, playba
 
   await dialog.getByRole("button", { name: "Get lyrics for Get Lucky (feat. Pharrell Williams and Nile Rodgers)" }).click();
   await expect(dialog.getByRole("tab", { name: "Lyrics" })).toHaveAttribute("aria-selected", "true");
-  await expect(dialog.getByLabel("Title")).toHaveValue("Get Lucky (feat. Pharrell Williams and Nile Rodgers)");
+  await expect(dialog.getByRole("searchbox", { name: "Song", exact: true })).toHaveValue("Get Lucky (feat. Pharrell Williams and Nile Rodgers)");
   await expect(dialog.getByText("Word-timed")).toBeVisible();
   await expect(dialog.locator(".try-lyric-lines time").first()).toHaveText("0:31.40");
   expect(requests.at(-1)).toMatchObject({ capability: "lyrics", trackId: "lumen-71230", isrc: "USQX91300108", durationSeconds: 369, accountId: null });
@@ -7311,6 +7311,170 @@ test("Source test panel searches one source and sends a result to lyrics, playba
   await expect(dialog.locator(".try-media-facts")).toContainText("24-bit / 96 kHz");
   await expect(dialog.locator(".try-media-facts")).toContainText("44.0 MB");
 });
+
+async function openLyricsTry(page: Page, requests: Record<string, unknown>[]) {
+  await mockApi(page);
+  await mockTry(page, requests);
+  await page.goto("#/integrations/accounts");
+  await page.getByRole("link", { name: "Open Lumen Audio account" }).click();
+  await page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" })
+    .getByRole("button", { name: "Open Metadata tests" }).click();
+  const dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
+  await dialog.getByRole("tab", { name: "Lyrics" }).click();
+  return dialog;
+}
+
+for (const [text, expected] of [
+  ["Espresso", { title: "Espresso" }],
+  ["Daft Punk - Get Lucky", { title: "Get Lucky", artist: "Daft Punk" }],
+  ["Get Lucky — Daft Punk", { title: "Get Lucky", artist: "Daft Punk" }],
+] as const) {
+  test(`Lyrics direct text lookup accepts ${text}`, async ({ page }) => {
+    const requests: Record<string, unknown>[] = [];
+    const dialog = await openLyricsTry(page, requests);
+    await dialog.getByRole("searchbox", { name: "Song", exact: true }).fill(text);
+    await dialog.getByRole("button", { name: "Use what I typed" }).click();
+    await expect(dialog.getByRole("region", { name: "Lyrics", exact: true })).toBeVisible();
+    expect(requests.at(-1)).toMatchObject({ capability: "lyrics", operation: "lyrics", ...expected });
+    if (!("artist" in expected)) expect(requests.at(-1)).not.toHaveProperty("artist");
+  });
+}
+
+test("Lyrics details allow ISRC alone, refine text and remember disclosure for the session", async ({ page }) => {
+  const requests: Record<string, unknown>[] = [];
+  let dialog = await openLyricsTry(page, requests);
+  const more = dialog.getByRole("button", { name: "More details" });
+  await expect(more).toHaveAttribute("aria-expanded", "false");
+  await expect(dialog.getByLabel("Artist", { exact: true })).toHaveCount(0);
+  await more.click();
+  await dialog.getByLabel("ISRC", { exact: true }).fill("USQX91300108");
+  await dialog.getByRole("button", { name: "Use what I typed" }).click();
+  await expect.poll(() => requests.at(-1)).toMatchObject({ capability: "lyrics", isrc: "USQX91300108" });
+  expect(requests.at(-1)).not.toHaveProperty("title");
+  await expect(dialog.getByRole("region", { name: "Lyrics", exact: true })).toBeVisible();
+  await dialog.getByRole("searchbox", { name: "Song", exact: true }).fill("Get Lucky");
+  await dialog.getByLabel("Artist", { exact: true }).fill("Daft Punk");
+  await dialog.getByLabel("Album", { exact: true }).fill("Random Access Memories");
+  await dialog.getByLabel("Length", { exact: true }).fill("6:09");
+  await dialog.getByRole("button", { name: "Use what I typed" }).click();
+  await expect.poll(() => requests.at(-1)).toMatchObject({ title: "Get Lucky", artist: "Daft Punk", album: "Random Access Memories", durationSeconds: 369 });
+  await dialog.getByRole("button", { name: "Done", exact: true }).click();
+  await page.reload();
+  await page.locator(".service-account.focused .service-check").filter({ hasText: "Metadata" })
+    .getByRole("button", { name: "Open Metadata tests" }).click();
+  dialog = page.getByRole("dialog", { name: "Test Lumen Audio" });
+  await dialog.getByRole("tab", { name: "Lyrics" }).click();
+  await expect(dialog.getByRole("button", { name: "More details" })).toHaveAttribute("aria-expanded", "true");
+});
+
+test("Lyrics search picks full song metadata and suggestions run immediately", async ({ page }) => {
+  const requests: Record<string, unknown>[] = [];
+  const dialog = await openLyricsTry(page, requests);
+  await expect(dialog).toContainText("Try a song you know has lyrics");
+  await dialog.getByRole("button", { name: "Espresso · Sabrina Carpenter", exact: true }).click();
+  await expect.poll(() => requests.at(-1)).toMatchObject({ capability: "lyrics", title: "Espresso", artist: "Sabrina Carpenter" });
+  await expect(dialog.getByRole("region", { name: "Lyrics", exact: true })).toBeVisible();
+  await dialog.getByRole("searchbox", { name: "Song", exact: true }).fill("get lucky");
+  await dialog.getByRole("searchbox", { name: "Song", exact: true }).press("Enter");
+  await expect(dialog.getByRole("list", { name: "Songs to test" }).getByRole("listitem")).toHaveCount(2);
+  await dialog.getByRole("button", { name: `Get lyrics for ${tryTracks[0].title}` }).click();
+  await expect.poll(() => requests.at(-1)).toMatchObject({ capability: "lyrics", title: tryTracks[0].title,
+    artist: tryTracks[0].artists.join(", "), album: tryTracks[0].album, durationSeconds: 369, isrc: "USQX91300108", trackId: "lumen-71230" });
+  await expect(dialog.locator(".try-lyrics header")).toContainText("3 lines");
+  await expect(dialog.locator(".try-lyrics header")).toContainText("1.3 s");
+});
+
+test("Lyrics search limits matches to five and leaves direct lookup available after no matches", async ({ page }) => {
+  const requests: Record<string, unknown>[] = [];
+  const dialog = await openLyricsTry(page, requests);
+  await page.route("**/api/admin/providers/lumen-audio/try", route => {
+    const body = route.request().postDataJSON();
+    if (body.operation !== "search") return route.fallback();
+    return route.fulfill({ json: { provider: "lumen-audio", capability: "metadata", operation: "search", succeeded: true, elapsedMs: 100,
+      tracks: body.query === "nothing" ? [] : Array.from({ length: 7 }, (_, index) => ({ ...tryTracks[0], id: `result-${index}` })),
+    } });
+  });
+  const song = dialog.getByRole("searchbox", { name: "Song", exact: true });
+  await song.fill("get lucky");
+  await song.press("Enter");
+  await expect(dialog.getByRole("list", { name: "Songs to test" }).getByRole("listitem")).toHaveCount(5);
+  await song.fill("nothing");
+  await song.press("Enter");
+  await expect(dialog.getByRole("list", { name: "Songs to test" })).toHaveCount(0);
+  await expect(dialog).toContainText("No matching songs found.");
+  await dialog.getByRole("button", { name: "Use what I typed" }).click();
+  await expect.poll(() => requests.at(-1)).toMatchObject({ capability: "lyrics", title: "nothing" });
+});
+
+for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const) {
+  test(`Lyrics source uses household search, a monogram and one inline failure at ${width}px ${scheme}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.addInitScript(value => localStorage.setItem("allstarr.theme", value), scheme);
+    await page.route("**/*", route => new URL(route.request().url()).hostname === "127.0.0.1" ? route.continue() : route.abort());
+    await mockApi(page);
+    const searches: Record<string, unknown>[] = [];
+    const lyrics: Record<string, unknown>[] = [];
+    let needsArtist = true;
+    await mockTry(page, searches);
+    await page.route("**/api/admin/ui/schema", route => route.fulfill({ json: {
+      ...schema, priorityGroups: [{ id: "metadata", label: "Metadata search order", providers: ["lumen-audio"] }],
+      providers: [...schema.providers, { id: "paxsenix", name: "Paxsenix", categories: ["lyrics"], runtimeCapabilities: [
+        { id: "lyrics", supported: true, ready: true, canAttempt: true, canTest: true, configuration: "not_required" },
+      ] }],
+    } }));
+    await page.route("**/images/providers/paxsenix.svg", route => route.abort());
+    await page.route("**/api/admin/providers/paxsenix/try**", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { provider: "paxsenix", capabilities: [tryCatalog.capabilities[1]] } });
+      const body = route.request().postDataJSON();
+      lyrics.push(body);
+      return route.fulfill({ json: { provider: "paxsenix", capability: "lyrics", operation: "lyrics", succeeded: false,
+        elapsedMs: 240, reasonCode: needsArtist ? "needs_artist" : null, message: needsArtist ? "This source needs the artist too" : null,
+        ...(needsArtist ? {} : { succeeded: true, lyrics: { format: "line", source: "Paxsenix", language: "en", lineCount: 80,
+          lines: Array.from({ length: 80 }, (_, index) => ({ startMs: index * 2000, text: `Fixture lyric line ${index + 1}` })) } }),
+      } });
+    });
+    await page.goto("#/integrations/services/paxsenix");
+    await page.getByRole("button", { name: "Open Lyrics tests" }).click();
+    const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
+    await expect(dialog.locator(".try-mark .provider-monogram")).toHaveText("P");
+    await page.screenshot({ path: `test-results/try-lyrics-empty-${width}-${scheme}.png` });
+    await dialog.getByRole("searchbox", { name: "Song", exact: true }).fill("get lucky");
+    await dialog.getByRole("button", { name: "Find", exact: true }).click();
+    await expect.poll(() => searches.at(-1)).toMatchObject({ capability: "metadata", query: "get lucky", accountId: "account" });
+    await expect(dialog.getByRole("list", { name: "Songs to test" }).getByRole("listitem")).toHaveCount(2);
+    await page.screenshot({ path: `test-results/try-lyrics-matches-${width}-${scheme}.png` });
+    expect(lyrics).toHaveLength(0);
+    await dialog.getByRole("button", { name: "Use what I typed" }).click();
+    await expect(dialog.getByRole("alert")).toHaveText("This source needs the artist too");
+    await expect(page.getByRole("alert")).toHaveCount(1);
+    await expect(page.locator(".toaster .toast")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "More details" }).click();
+    await expect(dialog.getByLabel("Artist", { exact: true })).toBeVisible();
+    await dialog.locator(".try-body").evaluate(element => element.scrollTo(0, element.scrollHeight));
+    await expect(dialog.getByRole("searchbox", { name: "Song", exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(dialog.getByRole("button", { name: "Done", exact: true })).toBeInViewport({ ratio: 1 });
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: `test-results/try-lyrics-failure-details-${width}-${scheme}.png` });
+    needsArtist = false;
+    await dialog.getByLabel("Artist", { exact: true }).fill("Daft Punk");
+    await dialog.getByRole("button", { name: "More details" }).click();
+    await dialog.getByRole("button", { name: `Get lyrics for ${tryTracks[0].title}` }).click();
+    await expect.poll(() => lyrics.at(-1)).toMatchObject({ title: tryTracks[0].title, artist: tryTracks[0].artists.join(", "),
+      album: tryTracks[0].album, durationSeconds: 369, isrc: "USQX91300108" });
+    expect(lyrics.at(-1)).not.toHaveProperty("trackId");
+    const card = dialog.getByRole("region", { name: "Lyrics", exact: true });
+    await expect(card).toBeVisible();
+    await expect(card.locator("header")).toContainText("80 lines found in 240 ms");
+    const scroller = card.getByRole("region", { name: "Lyric lines", exact: true });
+    expect(await scroller.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+    expect(await card.evaluate(element => element.getBoundingClientRect().height)).toBeLessThanOrEqual(width < 600 ? 450 : 360);
+    await expect(card).toBeInViewport();
+    await expect(dialog.getByRole("searchbox", { name: "Song", exact: true })).toBeInViewport({ ratio: 1 });
+    await expect(dialog.getByRole("button", { name: "Done", exact: true })).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: `test-results/try-lyrics-results-${width}-${scheme}.png` });
+  });
+}
 
 for (const [width, colorScheme] of [[390, "light"], [390, "dark"], [1280, "light"], [1280, "dark"]] as const) {
   test(`Source use switch sets the household and personal positions at ${width}px ${colorScheme}`, async ({ page }) => {
@@ -7377,7 +7541,7 @@ test("Sources without an account can be tested in detail", async ({ page }) => {
   const dialog = page.getByRole("dialog", { name: "Test LRCLIB" });
   await expect(dialog).toContainText("Runs on LRCLIB only");
   await expect(dialog.getByRole("tablist")).toHaveCount(0);
-  await expect(dialog.getByRole("button", { name: "Get lyrics" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Use what I typed" })).toBeDisabled();
 });
 
 
@@ -7414,12 +7578,14 @@ test("Lyrics-only source checks show lyrics outcomes and no playback controls", 
   const error = page.getByRole("alert").filter({ hasText: "The lyrics check failed." });
   await expect(error).toBeVisible();
   await expect(error).not.toContainText("Playback");
+  await expect(page.locator(".toaster [role=alert]")).toHaveCount(1);
   expect(requests).toEqual(["/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics", "/api/admin/providers/test/paxsenix/lyrics"]);
   await row.getByRole("button", { name: "Open Lyrics tests" }).click();
   const dialog = page.getByRole("dialog", { name: "Test Paxsenix" });
-  await expect(dialog.getByRole("button", { name: "Get lyrics" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Use what I typed" })).toBeDisabled();
   await expect(dialog.getByRole("tab", { name: /stream|download/i })).toHaveCount(0);
   await expect(dialog.locator("audio")).toHaveCount(0);
+  await expect(page.locator(".toaster [role=alert]")).toHaveCount(0);
 });
 
 for (const width of [390, 1280]) for (const scheme of ["light", "dark"] as const) {

@@ -107,10 +107,25 @@
   let appleDownloadOpen = $state(false);
   let tryOpen = $state(false);
   let tryTarget = $state<{ provider: ProviderDefinition; account: ProviderAccount | null; capability: string } | null>(null);
+  const checkToasts = new Map<string, number>();
+  const lyricSearchSources = $derived.by(() => {
+    const ordered = schema?.priorityGroups?.find(group => group.id === "metadata")?.providers ?? [];
+    const candidates = schema?.providers.filter(item => item.useMode !== "off" && item.status !== "disabled" &&
+      (item.categories?.includes("metadata") || item.runtimeCapabilities?.some(capability => capability.id === "metadata" && capability.canAttempt))) ?? [];
+    return candidates.toSorted((a, b) => {
+      const rank = (id: string) => ordered.includes(id) ? ordered.indexOf(id) : ordered.length;
+      return rank(a.id) - rank(b.id);
+    }).map(provider => ({ provider, account: accounts.find(item => item.providerId === provider.id && item.enabled && item.ownerUserId === currentUserId) ??
+      accounts.find(item => item.providerId === provider.id && item.enabled && item.scope === "Shared") ?? null }));
+  });
   const tryable = new Set(["metadata", "lyrics", "playlist", "streaming", "download", "scrobbling"]);
 
   function openTry(providerDefinition: ProviderDefinition | undefined, account: ProviderAccount | null, capability: string) {
     if (!providerDefinition) return;
+    const key = `${account?.id ?? providerDefinition.id}:${capability}`;
+    const notification = checkToasts.get(key);
+    if (notification !== undefined) toast.dismiss(notification);
+    checkToasts.delete(key);
     tryTarget = { provider: providerDefinition, account, capability };
     tryOpen = true;
   }
@@ -376,6 +391,12 @@
     }
   }
 
+  function checkNotification(key: string, message: string, kind: "success" | "error" | "info") {
+    const previous = checkToasts.get(key);
+    if (previous !== undefined) toast.dismiss(previous);
+    if (!tryOpen) checkToasts.set(key, toast.show(message, kind));
+  }
+
   async function test(account: ProviderAccount, capability?: string) {
     const key = `${account.id}:${capability ?? "all"}`;
     if (action) return;
@@ -388,11 +409,11 @@
       let message = `${provider(account.providerId)?.name ?? account.providerId} ${capability ? humanize(capability) : "connection"} ${result.healthy ?? result.success ? "passed" : "needs attention"}.`;
       if (result.seekRung) message += ` Playback: ${humanize(result.seekRung)}${result.sampleBytes ? ` (${result.sampleBytes.toLocaleString()} bytes sampled)` : ""}.`;
       if (result.reasonCode) message += ` ${diagnosticFailureMessage({ ...result, capability })}`;
-      toast.show(message, result.healthy ?? result.success ? "success" : "error");
+      checkNotification(key, message, result.healthy ?? result.success ? "success" : "error");
       await refresh();
       return result;
     } catch (cause) {
-      toast.error(diagnosticError(cause, capability ?? "connection"));
+      checkNotification(key, diagnosticError(cause, capability ?? "connection"), "error");
     } finally {
       action = "";
     }
@@ -407,10 +428,10 @@
       const result = await sources.testWithoutAccount(source.id, capability).finally(() => toast.dismiss(pending));
       testResults = { ...testResults, [key]: result };
       const passed = result.healthy ?? result.success ?? false;
-      toast.show(`${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage({ ...result, capability })}` : ""}`, passed ? "success" : "error");
+      checkNotification(key, `${source.name} ${humanize(capability)} ${passed ? "passed" : "needs attention"}.${result.reasonCode ? ` ${diagnosticFailureMessage({ ...result, capability })}` : ""}`, passed ? "success" : "error");
       await refresh();
     } catch (cause) {
-      toast.error(diagnosticError(cause, capability ?? "connection"));
+      checkNotification(key, diagnosticError(cause, capability ?? "connection"), "error");
     } finally {
       action = "";
     }
@@ -845,7 +866,7 @@
 
   <ConnectSourceDialog bind:open={connectOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} initialProviderId={connectProviderId} onSaved={completed} />
   <ConnectSourceDialog bind:open={configureOpen} {providers} administrator={canManageAllAccounts} users={audienceUsers} {currentUserId} testConnection={administrator} account={selectedAccount} onSaved={completed} />
-  {#if tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} />{/if}
+  {#if tryTarget}<ProviderTryDialog bind:open={tryOpen} provider={tryTarget.provider} account={tryTarget.account} capability={tryTarget.capability} searchSources={lyricSearchSources} />{/if}
   <AppleDownloadDialog bind:open={appleDownloadOpen} onStatus={(status) => { appleRequest++; appleStatus = status; appleStatusError = ""; }} />
   {#if administrator}<ExtensionsView view="catalog" bind:open={addSourceOpen} onchanged={refresh} />{/if}
   <AccountAccessDialog bind:open={accessOpen} account={selectedAccount} users={audienceUsers} onSaved={completed} />

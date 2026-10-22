@@ -12,6 +12,7 @@ public sealed class UnisonCapabilityAdapter(
     private static readonly SemaphoreSlim _requests = new(1, 1);
     private static long _lastRequest;
     public override string ProviderId => "unison";
+    protected override bool RequiresArtist => true;
 
     protected override async Task BeforeRequestAsync(CancellationToken token)
     {

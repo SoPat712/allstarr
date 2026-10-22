@@ -152,6 +152,9 @@ public sealed class ProviderStatusManagerTests
     [InlineData("temporary_storage_full")]
     [InlineData("TemporaryStorageFull")]
     [InlineData("invalid_input")]
+    [InlineData("needs_artist")]
+    [InlineData("needs-artist")]
+    [InlineData("NeedsArtist")]
     public void TryResourceAndLocalOutcomesDoNotRecordHealth(string reason)
     {
         var clock = new FakeClock(new DateTimeOffset(2026, 8, 24, 12, 0, 0, TimeSpan.Zero));
